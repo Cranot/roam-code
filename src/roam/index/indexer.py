@@ -329,25 +329,10 @@ class Indexer:
                 unchanged = [p for p in all_files if p not in processed_set]
                 if unchanged:
                     _log(f"Re-extracting references from {len(unchanged)} unchanged files...")
-                    # Delete edges involving symbols from modified/added files
-                    modified_file_ids = [file_id_by_path[p] for p in files_to_process if p in file_id_by_path]
-                    if modified_file_ids:
-                        placeholders = ",".join("?" * len(modified_file_ids))
-                        conn.execute(
-                            f"DELETE FROM edges WHERE source_id IN "
-                            f"(SELECT id FROM symbols WHERE file_id IN ({placeholders})) "
-                            f"OR target_id IN "
-                            f"(SELECT id FROM symbols WHERE file_id IN ({placeholders}))",
-                            modified_file_ids + modified_file_ids,
-                        )
-                        conn.execute(
-                            f"DELETE FROM file_edges WHERE source_file_id IN ({placeholders}) "
-                            f"OR target_file_id IN ({placeholders})",
-                            modified_file_ids + modified_file_ids,
-                        )
-                    else:
-                        conn.execute("DELETE FROM edges")
-                        conn.execute("DELETE FROM file_edges")
+                    # Delete ALL edges and file_edges — we rebuild them entirely
+                    # from all_references (unchanged + modified files).
+                    conn.execute("DELETE FROM edges")
+                    conn.execute("DELETE FROM file_edges")
 
                     for rel_path in unchanged:
                         full_path = self.root / rel_path

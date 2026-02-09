@@ -66,14 +66,16 @@ ALL_EDGES = "SELECT * FROM edges"
 
 # File edge queries
 FILE_IMPORTS = """
-    SELECT f.*, fe.symbol_count
+    SELECT f.*, SUM(fe.symbol_count) as symbol_count
     FROM file_edges fe JOIN files f ON fe.target_file_id = f.id
     WHERE fe.source_file_id = ?
+    GROUP BY fe.target_file_id
 """
 FILE_IMPORTED_BY = """
-    SELECT f.*, fe.symbol_count
+    SELECT f.*, SUM(fe.symbol_count) as symbol_count
     FROM file_edges fe JOIN files f ON fe.source_file_id = f.id
     WHERE fe.target_file_id = ?
+    GROUP BY fe.source_file_id
 """
 ALL_FILE_EDGES = "SELECT * FROM file_edges"
 

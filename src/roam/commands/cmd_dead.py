@@ -35,24 +35,43 @@ def dead(show_all):
             imported_files.add(r["target_file_id"])
 
         # Filter out symbols consumed transitively:
-        # If a same-named symbol in a file that imports THIS file has incoming edges,
-        # the export is alive (consumed through the import chain).
+        # Build importer graph for multi-hop barrel export resolution.
+        # If a same-named symbol in any downstream file (up to 3 hops through
+        # file_edges) has incoming edges, the export is alive.
+        importers_of: dict = {}  # file_id -> set of file_ids that import from it
+        for fe in conn.execute(
+            "SELECT source_file_id, target_file_id FROM file_edges"
+        ).fetchall():
+            importers_of.setdefault(fe["target_file_id"], set()).add(fe["source_file_id"])
+
         transitively_alive = set()
         for r in rows:
             fid = r["file_id"]
             if fid not in imported_files:
                 continue
-            # Check: does any symbol with this name, in a file that imports from
-            # this symbol's file, have incoming edges?
+            # Collect downstream files up to 3 hops (handles barrel re-exports)
+            downstream = set()
+            frontier = {fid}
+            for _ in range(3):
+                next_hop = set()
+                for f in frontier:
+                    for imp_fid in importers_of.get(f, set()):
+                        if imp_fid not in downstream:
+                            downstream.add(imp_fid)
+                            next_hop.add(imp_fid)
+                frontier = next_hop
+                if not frontier:
+                    break
+            if not downstream:
+                continue
+            ph = ",".join("?" for _ in downstream)
             alive = conn.execute(
-                """SELECT 1 FROM edges e
-                   JOIN symbols s ON e.target_id = s.id
-                   WHERE s.name = ?
-                   AND s.file_id IN (
-                       SELECT source_file_id FROM file_edges WHERE target_file_id = ?
-                   )
-                   LIMIT 1""",
-                (r["name"], fid),
+                f"""SELECT 1 FROM edges e
+                    JOIN symbols s ON e.target_id = s.id
+                    WHERE s.name = ?
+                    AND s.file_id IN ({ph})
+                    LIMIT 1""",
+                [r["name"]] + list(downstream),
             ).fetchone()
             if alive:
                 transitively_alive.add(r["id"])

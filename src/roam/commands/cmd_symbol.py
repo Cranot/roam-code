@@ -18,6 +18,22 @@ def _ensure_index():
         Indexer().run()
 
 
+def _pick_best(conn, rows):
+    """Pick the most-referenced symbol from ambiguous matches."""
+    ids = [r["id"] for r in rows]
+    ph = ",".join("?" for _ in ids)
+    counts = conn.execute(
+        f"SELECT target_id, COUNT(*) as cnt FROM edges "
+        f"WHERE target_id IN ({ph}) GROUP BY target_id",
+        ids,
+    ).fetchall()
+    ref_map = {c["target_id"]: c["cnt"] for c in counts}
+    best = max(rows, key=lambda r: ref_map.get(r["id"], 0))
+    if ref_map.get(best["id"], 0) > 0:
+        return best
+    return None
+
+
 def _find_symbol(conn, name):
     """Find a symbol by exact name, qualified name, or fuzzy match."""
     row = conn.execute(SYMBOL_BY_QUALIFIED, (name,)).fetchone()
@@ -27,11 +43,17 @@ def _find_symbol(conn, name):
     if len(rows) == 1:
         return rows[0]
     if len(rows) > 1:
+        best = _pick_best(conn, rows)
+        if best:
+            return best
         return rows  # Ambiguous
     rows = conn.execute(SEARCH_SYMBOLS, (f"%{name}%", 10)).fetchall()
     if len(rows) == 1:
         return rows[0]
     if rows:
+        best = _pick_best(conn, rows)
+        if best:
+            return best
         return rows  # Ambiguous
     return None
 
