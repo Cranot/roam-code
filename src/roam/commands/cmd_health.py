@@ -69,9 +69,8 @@ def health():
         bn_rows = []
         for r in rows:
             bw = r["betweenness"] or 0
-            if bw > 0:
-                # Use scientific notation for very small values
-                bw_str = f"{bw:.4f}" if bw >= 0.0001 else f"{bw:.2e}"
+            if bw > 0.5:
+                bw_str = f"{bw:.0f}" if bw >= 10 else f"{bw:.1f}"
                 bn_rows.append([
                     r["name"],
                     abbrev_kind(r["kind"]),

@@ -27,7 +27,7 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     if len(G) == 0:
         return {}
 
-    betweenness = nx.betweenness_centrality(G)
+    betweenness = nx.betweenness_centrality(G, normalized=False)
     result: dict[int, dict] = {}
     for node in G.nodes:
         result[node] = {

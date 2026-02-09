@@ -209,6 +209,14 @@ class JavaScriptExtractor(LanguageExtractor):
                 if name_node is None:
                     continue
 
+                # Handle destructured bindings: const { a, b } = ... or const [a, b] = ...
+                if name_node.type in ("object_pattern", "array_pattern"):
+                    self._extract_destructured(
+                        name_node, node, source, symbols,
+                        parent_name, is_exported, decl_kind_text, value_node,
+                    )
+                    continue
+
                 name = self.node_text(name_node, source)
                 qualified = f"{parent_name}.{name}" if parent_name else name
 
@@ -275,6 +283,58 @@ class JavaScriptExtractor(LanguageExtractor):
                             if sym["name"] == name:
                                 sym["is_exported"] = True
 
+    def _extract_destructured(self, pattern_node, decl_node, source, symbols,
+                              parent_name, is_exported, decl_kind, value_node):
+        """Extract individual bindings from destructured patterns."""
+        names = self._collect_pattern_names(pattern_node, source)
+        kind = "constant" if decl_kind == "const" else "variable"
+        for name in names:
+            qualified = f"{parent_name}.{name}" if parent_name else name
+            sig = f"{decl_kind} {name}"
+            symbols.append(self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=decl_node.start_point[0] + 1,
+                line_end=decl_node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                is_exported=is_exported,
+                parent_name=parent_name,
+            ))
+
+    def _collect_pattern_names(self, pattern_node, source):
+        """Collect all identifier names from a destructuring pattern."""
+        names = []
+        for child in pattern_node.children:
+            if child.type in ("shorthand_property_identifier_pattern",
+                              "shorthand_property_identifier",
+                              "identifier"):
+                names.append(self.node_text(child, source))
+            elif child.type == "pair_pattern":
+                # { key: localVar } — extract the local binding
+                value = child.child_by_field_name("value")
+                if value:
+                    if value.type == "identifier":
+                        names.append(self.node_text(value, source))
+                    elif value.type in ("object_pattern", "array_pattern"):
+                        names.extend(self._collect_pattern_names(value, source))
+            elif child.type == "rest_pattern":
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        names.append(self.node_text(sub, source))
+            elif child.type == "assignment_pattern":
+                # { x = defaultValue } — extract x
+                left = child.child_by_field_name("left")
+                if left:
+                    if left.type == "identifier":
+                        names.append(self.node_text(left, source))
+                    elif left.type in ("shorthand_property_identifier_pattern",
+                                       "shorthand_property_identifier"):
+                        names.append(self.node_text(left, source))
+            elif child.type in ("object_pattern", "array_pattern"):
+                names.extend(self._collect_pattern_names(child, source))
+        return names
+
     # ---- Reference extraction ----
 
     def _walk_refs(self, node, source, refs, scope_name):
@@ -292,6 +352,15 @@ class JavaScriptExtractor(LanguageExtractor):
                     if n:
                         fname = self.node_text(n, source)
                         new_scope = f"{scope_name}.{fname}" if scope_name else fname
+                elif child.type in ("lexical_declaration", "variable_declaration"):
+                    # Track const/let/var declarations as scope for their initializers
+                    for sub in child.children:
+                        if sub.type == "variable_declarator":
+                            n = sub.child_by_field_name("name")
+                            if n and n.type == "identifier":
+                                vname = self.node_text(n, source)
+                                new_scope = f"{scope_name}.{vname}" if scope_name else vname
+                                break
                 self._walk_refs(child, source, refs, new_scope)
 
     def _extract_esm_import(self, node, source, refs, scope_name):
