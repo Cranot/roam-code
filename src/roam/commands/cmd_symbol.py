@@ -10,6 +10,8 @@ from roam.output.formatter import (
     truncate_lines, section,
 )
 
+_EDGE_PRIORITY = {"call": 0, "template": 0, "inherits": 1, "implements": 2, "import": 3}
+
 
 def _ensure_index():
     if not db_exists():
@@ -103,7 +105,6 @@ def symbol(name, full):
         callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()
         if callers:
             # Dedup by source symbol: prefer call > inherits > implements > import
-            _EDGE_PRIORITY = {"call": 0, "template": 0, "inherits": 1, "implements": 2, "import": 3}
             best = {}
             for c in callers:
                 sid = c["id"]

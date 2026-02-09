@@ -39,18 +39,19 @@ def deps(path, full):
         imports = conn.execute(FILE_IMPORTS, (frow["id"],)).fetchall()
         if imports:
             # Build symbol breakdown: which symbols from each imported file are used
-            import_file_ids = [i["id"] for i in imports]
+            import_file_ids = set(i["id"] for i in imports)
             sym_edges = conn.execute(
-                "SELECT e.target_id, s_src.file_id as src_fid, s_tgt.file_id as tgt_fid, s_tgt.name as tgt_name "
+                "SELECT s_tgt.file_id as tgt_fid, s_tgt.name as tgt_name "
                 "FROM edges e "
                 "JOIN symbols s_src ON e.source_id = s_src.id "
                 "JOIN symbols s_tgt ON e.target_id = s_tgt.id "
-                "WHERE s_src.file_id = ?",
-                (frow["id"],),
+                "WHERE s_src.file_id = ? AND s_tgt.file_id != ?",
+                (frow["id"], frow["id"]),
             ).fetchall()
             used_from: dict = {}
             for se in sym_edges:
-                used_from.setdefault(se["tgt_fid"], set()).add(se["tgt_name"])
+                if se["tgt_fid"] in import_file_ids:
+                    used_from.setdefault(se["tgt_fid"], set()).add(se["tgt_name"])
 
             rows = []
             for i in imports:

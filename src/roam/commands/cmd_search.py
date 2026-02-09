@@ -37,7 +37,19 @@ def search(pattern, full, kind_filter):
             click.echo(f"No symbols matching '{pattern}'{suffix}")
             return
 
-        click.echo(f"=== Symbols matching '{pattern}' ({len(rows)}) ===")
+        total = len(rows)
+        if not full and total == 50:
+            # Hit the limit; get actual count
+            cnt = conn.execute(
+                "SELECT COUNT(*) FROM symbols WHERE name LIKE ? COLLATE NOCASE",
+                (like_pattern,),
+            ).fetchone()[0]
+            if kind_filter:
+                click.echo(f"=== Symbols matching '{pattern}' ({total} of {cnt}, use --full for all) ===")
+            else:
+                click.echo(f"=== Symbols matching '{pattern}' ({total} of {cnt}, use --full for all) ===")
+        else:
+            click.echo(f"=== Symbols matching '{pattern}' ({total}) ===")
 
         # Batch-fetch incoming edge counts for all matched symbols
         sym_ids = [r["id"] for r in rows]
