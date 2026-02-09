@@ -31,7 +31,7 @@ SYMBOL_BY_ID = """
 SEARCH_SYMBOLS = """
     SELECT s.*, f.path as file_path
     FROM symbols s JOIN files f ON s.file_id = f.id
-    WHERE s.name LIKE ? ORDER BY s.name LIMIT ?
+    WHERE s.name LIKE ? COLLATE NOCASE ORDER BY s.name LIMIT ?
 """
 EXPORTED_SYMBOLS = """
     SELECT s.*, f.path as file_path
@@ -133,7 +133,7 @@ UNREFERENCED_EXPORTS = """
     JOIN files f ON s.file_id = f.id
     WHERE s.is_exported = 1
     AND s.id NOT IN (SELECT target_id FROM edges)
-    AND s.kind IN ('function', 'class', 'method')
+    AND s.kind IN ('function', 'class', 'method', 'constant')
     ORDER BY f.path, s.line_start
 """
 

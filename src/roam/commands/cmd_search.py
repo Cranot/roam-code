@@ -1,4 +1,4 @@
-"""Find symbols matching a name substring."""
+"""Find symbols matching a name substring (case-insensitive)."""
 
 import click
 
@@ -18,7 +18,7 @@ def _ensure_index():
 @click.argument('pattern')
 @click.option('--full', is_flag=True, help='Show all results without truncation')
 def search(pattern, full):
-    """Find symbols matching a name substring (case-sensitive)."""
+    """Find symbols matching a name substring (case-insensitive)."""
     _ensure_index()
     like_pattern = f"%{pattern}%"
     with open_db(readonly=True) as conn:
