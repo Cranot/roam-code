@@ -1,37 +1,36 @@
-# Roam
+<div align="center">
+
+# roam
+
+**give your AI agent a senior developer's intuition about your codebase**
+
+one command. instant answers. zero round-trips.
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/ci.yml)
 
-**Your AI coding agent explores codebases like this:**
+</div>
 
-```
-Agent: Let me search for this function...     [Glob]
-Agent: Found 3 files, let me read them...     [Read x3]
-Agent: Now let me find what calls it...        [Grep]
-Agent: Let me check those files too...         [Read x2]
-Agent: I found 4 callers across 3 files.       5 turns, ~30 seconds
-```
+---
 
-**With Roam, it does this instead:**
+Your agent burns 5 tool calls and 30 seconds to answer "what calls this function?"
+
+Roam answers it in 0.3 seconds:
 
 ```
 $ roam symbol Flask
 cls  Flask
   class Flask(App)
   src/flask/app.py:76
-  | The flask object implements a WSGI application...
-  PR=0.0312  in=47  out=3          # PageRank, 47 callers, 3 dependencies
+  PR=0.0312  in=47  out=3
 Callers (47):
   fn  create_app   (call)    src/flask/testing.py:18
   fn  test_config  (import)  tests/test_config.py:4
   ...
-
-1 command. Instant. Zero round-trips.
 ```
 
-Roam builds a pre-indexed understanding of your entire codebase -- symbols, call graphs, dependencies, architecture, git history -- then answers questions in a single shell command.
+Roam pre-indexes your entire codebase -- symbols, call graphs, dependencies, architecture, git history -- so any question is a single shell command away.
 
 ## Table of Contents
 
@@ -138,6 +137,7 @@ roam health
 | `roam search <pattern> [--full]` | Find symbols matching a name pattern |
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
+| `roam diff [--staged] [--full]` | Blast radius of uncommitted changes |
 
 ### Architecture
 
@@ -270,6 +270,7 @@ Run `roam index` once, then use these commands instead of Glob/Grep/Read explora
 - `roam health` -- architecture problems
 - `roam weather` -- hotspots (churn x complexity)
 - `roam impact <symbol>` -- blast radius (what breaks if changed)
+- `roam diff` -- blast radius of uncommitted changes
 - `roam owner <path>` -- code ownership (who should review)
 - `roam coupling` -- temporal coupling (hidden dependencies)
 - `roam fan [symbol|file]` -- fan-in/fan-out (god objects)
@@ -477,7 +478,7 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (~185 tests across 14 languages, 3 OS, Python 3.10-3.13)
+# Run tests (~195 tests across 14 languages, 3 OS, Python 3.10-3.13)
 pytest tests/
 
 # Index roam itself
@@ -503,7 +504,7 @@ roam map
 roam-code/
 ├── pyproject.toml
 ├── src/roam/
-│   ├── cli.py                      # Click CLI entry point (19 commands)
+│   ├── cli.py                      # Click CLI entry point (20 commands)
 │   ├── db/
 │   │   ├── connection.py           # SQLite connection (WAL, pragmas)
 │   │   ├── schema.py               # 10 tables, 20+ indexes
