@@ -30,15 +30,27 @@ def weather(count):
             churn = r["total_churn"] or 0
             complexity = r["complexity"] or 1
             score = churn * complexity
-            scored.append((score, churn, complexity, r["path"], r["language"] or ""))
+            commits = r["commit_count"] or 0
+            authors = r["distinct_authors"] or 0
+            # Determine the primary driver
+            if churn > 100 and complexity > 5:
+                reason = "BOTH"
+            elif churn > complexity * 20:
+                reason = "HIGH-CHURN"
+            else:
+                reason = "HIGH-COMPLEXITY"
+            scored.append((score, churn, complexity, commits, authors, reason, r["path"]))
         scored.sort(reverse=True)
 
         table_rows = []
-        for score, churn, complexity, path, lang in scored[:count]:
-            table_rows.append([f"{score:.0f}", str(churn), f"{complexity:.1f}", path, lang])
+        for score, churn, complexity, commits, authors, reason, path in scored[:count]:
+            table_rows.append([
+                f"{score:.0f}", str(churn), f"{complexity:.1f}",
+                str(commits), str(authors), reason, path,
+            ])
 
         click.echo("=== Hotspots (churn x complexity) ===")
         click.echo(format_table(
-            ["Score", "Churn", "Complexity", "Path", "Lang"],
+            ["Score", "Churn", "Cmplx", "Commits", "Authors", "Reason", "Path"],
             table_rows,
         ))

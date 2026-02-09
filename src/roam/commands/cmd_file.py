@@ -1,3 +1,5 @@
+from collections import Counter
+
 import click
 
 from roam.db.connection import open_db, db_exists
@@ -42,6 +44,12 @@ def file_cmd(path, full):
         if not symbols:
             click.echo("  (no symbols)")
             return
+
+        # Symbol type summary
+        kind_counts = Counter(abbrev_kind(s["kind"]) for s in symbols)
+        summary_parts = [f"{k}:{v}" for k, v in kind_counts.most_common()]
+        click.echo("  ".join(summary_parts))
+        click.echo()
 
         # Build parent lookup for indentation
         parent_ids = {s["id"]: s["parent_id"] for s in symbols}

@@ -36,8 +36,15 @@ def map_cmd(count, full):
         lang_counts = Counter(f["language"] for f in files if f["language"])
         lang_str = ", ".join(f"{lang}={n}" for lang, n in lang_counts.most_common(8))
 
+        # Edge kind distribution
+        edge_kinds = conn.execute(
+            "SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC"
+        ).fetchall()
+        edge_str = ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds) if edge_kinds else "none"
+
         click.echo(f"Files: {total_files}  Symbols: {sym_count}  Edges: {edge_count}")
         click.echo(f"Languages: {lang_str}")
+        click.echo(f"Edge kinds: {edge_str}")
         click.echo()
 
         # --- Top directories ---

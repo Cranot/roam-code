@@ -49,5 +49,15 @@ def trace(source, target):
         annotated = format_path(best, conn)
         click.echo(f"Path ({len(annotated)} hops):")
         for i, node in enumerate(annotated):
-            arrow = "  " if i == 0 else "-> "
-            click.echo(f"  {arrow}{abbrev_kind(node['kind'])}  {node['name']}  {loc(node['file_path'], node['line'])}")
+            if i == 0:
+                click.echo(f"    {abbrev_kind(node['kind'])}  {node['name']}  {loc(node['file_path'], node['line'])}")
+            else:
+                # Look up edge kind between previous and current node
+                prev_id = best[i - 1]
+                curr_id = best[i]
+                edge_kind = G.edges.get((prev_id, curr_id), {}).get("kind", "")
+                if not edge_kind:
+                    # Check reverse edge (undirected fallback)
+                    edge_kind = G.edges.get((curr_id, prev_id), {}).get("kind", "")
+                edge_label = f"[{edge_kind}] " if edge_kind else ""
+                click.echo(f"  -> {edge_label}{abbrev_kind(node['kind'])}  {node['name']}  {loc(node['file_path'], node['line'])}")

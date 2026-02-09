@@ -46,18 +46,36 @@ def dead(show_all):
 
         click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===\n")
 
+        # Build imported-by lookup for high-confidence results
         if high:
+            high_file_ids = {r["file_id"] for r in high}
+            ph = ",".join("?" for _ in high_file_ids)
+            importer_rows = conn.execute(
+                f"SELECT fe.target_file_id, f.path "
+                f"FROM file_edges fe JOIN files f ON fe.source_file_id = f.id "
+                f"WHERE fe.target_file_id IN ({ph})",
+                list(high_file_ids),
+            ).fetchall()
+            importers_by_file: dict = {}
+            for ir in importer_rows:
+                importers_by_file.setdefault(ir["target_file_id"], []).append(ir["path"])
+
             click.echo(f"-- High confidence ({len(high)}) --")
             click.echo("(file is imported but symbol has no references)")
             table_rows = []
             for r in high:
+                imp_list = importers_by_file.get(r["file_id"], [])
+                imp_str = ", ".join(imp_list[:3])
+                if len(imp_list) > 3:
+                    imp_str += f" (+{len(imp_list) - 3})"
                 table_rows.append([
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
+                    imp_str,
                 ])
             click.echo(format_table(
-                ["Name", "Kind", "Location"],
+                ["Name", "Kind", "Location", "Imported by"],
                 table_rows,
                 budget=50,
             ))

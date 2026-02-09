@@ -25,7 +25,8 @@ def fan(mode, count):
             rows = conn.execute("""
                 SELECT s.name, s.kind, f.path as file_path, s.line_start,
                        gm.in_degree, gm.out_degree,
-                       (gm.in_degree + gm.out_degree) as total
+                       (gm.in_degree + gm.out_degree) as total,
+                       gm.betweenness, gm.pagerank
                 FROM graph_metrics gm
                 JOIN symbols s ON gm.symbol_id = s.id
                 JOIN files f ON s.file_id = f.id
@@ -48,19 +49,26 @@ def fan(mode, count):
                 elif r["out_degree"] > 10:
                     flag = "spreader"
 
+                bw = r["betweenness"] or 0
+                bw_str = f"{bw:.0f}" if bw >= 10 else (f"{bw:.1f}" if bw > 0.5 else "")
+                pr = r["pagerank"] or 0
+                pr_str = f"{pr:.4f}" if pr > 0 else ""
+
                 table_rows.append([
                     abbrev_kind(r["kind"]),
                     r["name"],
                     str(r["in_degree"]),
                     str(r["out_degree"]),
                     str(r["total"]),
+                    bw_str,
+                    pr_str,
                     flag,
                     loc(r["file_path"], r["line_start"]),
                 ])
 
             click.echo("=== Fan-in/Fan-out (symbol level) ===")
             click.echo(format_table(
-                ["kind", "name", "fan-in", "fan-out", "total", "flag", "location"],
+                ["kind", "name", "fan-in", "fan-out", "total", "btwn", "PR", "flag", "location"],
                 table_rows,
             ))
 

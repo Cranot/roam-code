@@ -88,28 +88,40 @@ def impact(name):
             click.echo("No dependents found.")
             return
 
-        # Collect affected files
+        # Collect affected files and group direct callers by edge kind
         affected_files = set()
         direct_callers = set(RG.successors(sym_id))
-        rows = []
+        by_kind: dict[str, list] = {}
         for dep_id in dependents:
             node = G.nodes.get(dep_id, {})
             if not node:
                 continue
             affected_files.add(node.get("file_path", "?"))
             if dep_id in direct_callers:
-                rows.append([
+                edge_data = G.edges.get((dep_id, sym_id), {})
+                edge_kind = edge_data.get("kind", "unknown")
+                by_kind.setdefault(edge_kind, []).append([
                     abbrev_kind(node.get("kind", "?")),
                     node.get("name", "?"),
                     loc(node.get("file_path", "?"), None),
-                    "direct",
                 ])
 
         click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")
         click.echo()
 
-        if rows:
-            click.echo("Direct dependents:")
-            click.echo(format_table(["kind", "name", "file", "relation"], rows))
+        if by_kind:
+            for edge_kind in sorted(by_kind.keys()):
+                items = by_kind[edge_kind]
+                click.echo(f"Direct dependents ({edge_kind}, {len(items)}):")
+                click.echo(format_table(["kind", "name", "file"], items, budget=15))
+                click.echo()
             if len(dependents) > len(direct_callers):
-                click.echo(f"\n(+{len(dependents) - len(direct_callers)} transitive dependents)")
+                click.echo(f"(+{len(dependents) - len(direct_callers)} transitive dependents)")
+
+        # List affected files
+        if affected_files:
+            click.echo(f"\nAffected files ({len(affected_files)}):")
+            for fp in sorted(affected_files)[:20]:
+                click.echo(f"  {fp}")
+            if len(affected_files) > 20:
+                click.echo(f"  (+{len(affected_files) - 20} more)")
