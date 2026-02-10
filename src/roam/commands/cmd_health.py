@@ -182,14 +182,35 @@ def health(ctx, no_framework):
             -g["degree"],
         ))
 
+        bn_actionable = 0
+        bn_utility = 0
         for b in bn_items:
-            if b["betweenness"] > 5.0:
-                b["severity"] = "CRITICAL"
-            elif b["betweenness"] > 1.0:
-                b["severity"] = "WARNING"
+            is_util = _is_utility_path(b["file"])
+            b["category"] = "utility" if is_util else "actionable"
+            if is_util:
+                bn_utility += 1
+                # Relaxed thresholds for utilities (3x)
+                if b["betweenness"] > 15.0:
+                    b["severity"] = "CRITICAL"
+                elif b["betweenness"] > 3.0:
+                    b["severity"] = "WARNING"
+                else:
+                    b["severity"] = "INFO"
             else:
-                b["severity"] = "INFO"
+                bn_actionable += 1
+                if b["betweenness"] > 5.0:
+                    b["severity"] = "CRITICAL"
+                elif b["betweenness"] > 1.0:
+                    b["severity"] = "WARNING"
+                else:
+                    b["severity"] = "INFO"
             sev_counts[b["severity"]] += 1
+
+        # Sort: actionable first, then utilities; within each group by betweenness desc
+        bn_items.sort(key=lambda b: (
+            0 if b["category"] == "actionable" else 1,
+            -b["betweenness"],
+        ))
 
         for v in violations:
             v["severity"] = "WARNING"
@@ -215,7 +236,8 @@ def health(ctx, no_framework):
                     for g in god_items
                 ],
                 "bottlenecks": [
-                    {**b, "severity": b["severity"]} for b in bn_items
+                    {**b, "severity": b["severity"], "category": b["category"]}
+                    for b in bn_items
                 ],
                 "layer_violations": [
                     {
@@ -240,7 +262,9 @@ def health(ctx, no_framework):
             god_detail += f" ({actionable_count} actionable, {utility_count} expected utilities)"
             parts.append(god_detail)
         if bn_items:
-            parts.append(f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}")
+            bn_detail = f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}"
+            bn_detail += f" ({bn_actionable} actionable, {bn_utility} expected utilities)"
+            parts.append(bn_detail)
         if violations:
             parts.append(f"{len(violations)} layer violation{'s' if len(violations) != 1 else ''}")
         if issue_count == 0:
@@ -293,8 +317,10 @@ def health(ctx, no_framework):
             for b in bn_items:
                 bw_str = f"{b['betweenness']:.0f}" if b["betweenness"] >= 10 else f"{b['betweenness']:.1f}"
                 bn_rows.append([b["severity"], b["name"], abbrev_kind(b["kind"]),
-                                bw_str, loc(b["file"])])
-            click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "File"],
+                                bw_str,
+                                "util" if b["category"] == "utility" else "act",
+                                loc(b["file"])])
+            click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "Cat", "File"],
                                     bn_rows, budget=15))
         else:
             click.echo("  (none)")

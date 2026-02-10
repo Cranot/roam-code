@@ -30,6 +30,40 @@ def _classify_coupling(hops):
     return "weak (via imports/template)"
 
 
+def _detect_hubs(path_ids, G, threshold=50):
+    """Detect hub nodes (high-degree) in path intermediates.
+
+    Returns list of (node_id, degree) for intermediate nodes exceeding threshold.
+    Skips first and last node (source/target are intentional).
+    """
+    hubs = []
+    for node_id in path_ids[1:-1]:  # Skip source and target
+        degree = G.in_degree(node_id) + G.out_degree(node_id)
+        if degree > threshold:
+            hubs.append((node_id, degree))
+    return hubs
+
+
+def _path_quality(hops, hubs):
+    """Score path quality (higher = better). Prefers direct call chains, penalizes hubs.
+
+    Returns float score where higher is better.
+    """
+    if not hops:
+        return 0.0
+
+    # Base: ratio of call/uses edges (direct coupling)
+    kinds = [h.get("edge_kind", "") for h in hops[1:] if h.get("edge_kind")]
+    total = len(kinds) or 1
+    call_ratio = sum(1 for k in kinds if k in ("call", "uses", "uses_trait")) / total
+
+    # Penalties
+    hub_penalty = len(hubs) * 0.3  # Each hub deducts 0.3
+    length_penalty = max(0, (len(hops) - 3)) * 0.1  # Paths > 3 hops get penalized
+
+    return call_ratio - hub_penalty - length_penalty
+
+
 def _build_hops(path_ids, annotated, G):
     """Build hop annotations for a single path."""
     hops = []
@@ -129,19 +163,36 @@ def trace(ctx, source, target, k_paths):
                 click.echo("These symbols are independent — changes to one cannot affect the other.")
             return
 
-        # Annotate all paths
+        # Annotate all paths with hub detection and quality scoring
         annotated_paths = []
         for path_ids in unique_paths:
             annotated = format_path(path_ids, conn)
             hops = _build_hops(path_ids, annotated, G)
+            hubs = _detect_hubs(path_ids, G)
             coupling = _classify_coupling(hops)
+            quality = _path_quality(hops, hubs)
+
+            # Mark hub nodes in hops
+            hub_ids = {h[0] for h in hubs}
+            hub_degrees = {h[0]: h[1] for h in hubs}
+            for i, node_id in enumerate(path_ids):
+                if node_id in hub_ids:
+                    hops[i]["is_hub"] = True
+                    hops[i]["hub_degree"] = hub_degrees[node_id]
+
             annotated_paths.append({
                 "path_ids": path_ids,
                 "hops": hops,
                 "coupling": coupling,
+                "quality": round(quality, 2),
+                "hub_count": len(hubs),
             })
 
-        # Overall coupling summary from shortest path
+        # Sort by quality (desc), then length (asc)
+        annotated_paths.sort(key=lambda ap: (-ap["quality"], len(ap["hops"])))
+        annotated_paths = annotated_paths[:k_paths]
+
+        # Coupling summary from best-quality path
         coupling_summary = annotated_paths[0]["coupling"] if annotated_paths else "none"
 
         if json_mode:
@@ -157,6 +208,8 @@ def trace(ctx, source, target, k_paths):
                     {
                         "hops": len(ap["hops"]),
                         "coupling": ap["coupling"],
+                        "quality": ap["quality"],
+                        "hub_count": ap["hub_count"],
                         "path": ap["hops"],
                     }
                     for ap in annotated_paths
@@ -167,12 +220,15 @@ def trace(ctx, source, target, k_paths):
         # --- Text output ---
         if len(annotated_paths) == 1:
             ap = annotated_paths[0]
-            click.echo(f"Path ({len(ap['hops'])} hops, {ap['coupling']}):")
+            hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
+            click.echo(f"Path ({len(ap['hops'])} hops, quality={ap['quality']}, {ap['coupling']}{hub_note}):")
             _print_path(ap["hops"])
         else:
             for idx, ap in enumerate(annotated_paths, 1):
+                hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
                 click.echo(f"\n=== Path {idx} of {len(annotated_paths)} "
-                           f"({len(ap['hops'])} hops, {ap['coupling']}) ===")
+                           f"({len(ap['hops'])} hops, quality={ap['quality']}, "
+                           f"{ap['coupling']}{hub_note}) ===")
                 _print_path(ap["hops"])
 
         click.echo(f"\nCoupling: {coupling_summary}")
@@ -187,3 +243,5 @@ def _print_path(hops):
             edge = hop.get("edge_kind", "")
             edge_label = f"--{edge}-->" if edge else "->"
             click.echo(f"  {edge_label}  {abbrev_kind(hop['kind'])}  {hop['name']}  {hop['location']}")
+        if hop.get("is_hub"):
+            click.echo(f"           ^ hub (degree {hop['hub_degree']})")

@@ -27,15 +27,15 @@ _DEFAULT_DOMAINS = {
     "currency": 8, "billing": 8, "refund": 8, "receipt": 8,
     "accounting": 10, "fiscal": 10, "journal": 8,
     # Auth / security (critical -- bugs leak data)
-    "auth": 8, "password": 10, "token": 8, "session": 6,
+    "auth": 8, "password": 10, "token": 8, "session": 3,
     "permission": 8, "encrypt": 10, "decrypt": 10, "secret": 10,
     "credential": 10, "login": 6, "logout": 4,
     # Data integrity
     "delete": 6, "destroy": 6, "migrate": 6, "truncate": 8,
-    "backup": 6, "restore": 6, "sync": 4, "import": 4, "export": 4,
+    "backup": 6, "restore": 6, "sync": 4, "import": 1.5, "export": 1.5,
     # Business logic (medium)
-    "order": 5, "customer": 5, "user": 4, "account": 5,
-    "calculate": 5, "validate": 4, "process": 3, "approve": 5,
+    "order": 2, "customer": 5, "user": 4, "account": 5,
+    "calculate": 5, "validate": 4, "process": 1.5, "approve": 5,
     "schedule": 4, "notify": 3, "report": 4,
     # UI / presentation (dampened -- less risky than business logic)
     "render": 0.3, "display": 0.3, "show": 0.3, "hide": 0.3, "style": 0.3,
@@ -65,7 +65,7 @@ def _load_custom_domains():
 # ---- Path-zone matching ----
 
 _DEFAULT_PATH_ZONES = {
-    "accounting": (("kiniseis/", "accounting/", "vat/", "ledger/", "journal/"), 8),
+    "accounting": (("kiniseis/", "accounting/", "vat/", "ledger/", "journal/"), 10),
     "auth": (("auth/", "login/", "session/"), 8),
     "backup": (("backup/", "restore/"), 6),
     "data": (("migration", "seed"), 4),
@@ -285,7 +285,7 @@ def risk(ctx, count, domain_keywords):
             # a non-UI domain keyword (e.g. "restore" in a component),
             # halve the domain weight to avoid false positives
             ui_dampened = False
-            if domain_weight > 1 and _is_ui_file(r["file_path"]):
+            if domain_weight > 1 and domain_source != "zone" and _is_ui_file(r["file_path"]):
                 domain_weight = max(1, domain_weight * 0.5)
                 ui_dampened = True
 
