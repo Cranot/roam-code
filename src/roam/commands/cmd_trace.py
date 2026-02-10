@@ -11,17 +11,57 @@ def _ensure_index():
         Indexer().run()
 
 
+def _classify_coupling(hops):
+    """Classify path coupling strength from edge kinds.
+
+    Returns a label like "strong (direct call chain)" based on the
+    ratio of call/uses edges vs import/template edges.
+    """
+    kinds = [h.get("edge_kind", "") for h in hops[1:] if h.get("edge_kind")]
+    total = len(kinds)
+    if total == 0:
+        return "none"
+    call_count = sum(1 for k in kinds if k in ("call", "uses", "uses_trait"))
+    ratio = call_count / total
+    if ratio == 1.0:
+        return "strong (direct call chain)"
+    if ratio >= 0.5:
+        return "moderate (mixed call + import)"
+    return "weak (via imports/template)"
+
+
+def _build_hops(path_ids, annotated, G):
+    """Build hop annotations for a single path."""
+    hops = []
+    for i, node in enumerate(annotated):
+        hop = {
+            "name": node["name"],
+            "kind": node["kind"],
+            "location": loc(node["file_path"], node["line"]),
+        }
+        if i > 0:
+            prev_id = path_ids[i - 1]
+            curr_id = path_ids[i]
+            edge_kind = G.edges.get((prev_id, curr_id), {}).get("kind", "")
+            if not edge_kind:
+                edge_kind = G.edges.get((curr_id, prev_id), {}).get("kind", "")
+            hop["edge_kind"] = edge_kind
+        hops.append(hop)
+    return hops
+
+
 @click.command()
 @click.argument('source')
 @click.argument('target')
+@click.option('-k', 'k_paths', default=3, help='Number of alternative paths to find')
 @click.pass_context
-def trace(ctx, source, target):
+def trace(ctx, source, target, k_paths):
     """Show shortest path between two symbols."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     _ensure_index()
 
     from roam.graph.builder import build_symbol_graph
-    from roam.graph.pathfinding import find_path, find_symbol_id, format_path
+    from roam.graph.pathfinding import find_k_paths, find_symbol_id, format_path
 
     with open_db(readonly=True) as conn:
         src_ids = find_symbol_id(conn, source)
@@ -37,14 +77,14 @@ def trace(ctx, source, target):
         G = build_symbol_graph(conn)
 
         # Pre-check: direct file-level imports beat graph pathfinding.
-        # If source's file imports target's file, that's a 1-hop import.
         _file_ids = {}
         for _sid in src_ids + tgt_ids:
             row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (_sid,)).fetchone()
             if row:
                 _file_ids[_sid] = row["file_id"]
 
-        best = None
+        # Collect all paths across all source/target combinations
+        all_paths = []
         for sid in src_ids:
             for tid in tgt_ids:
                 if sid == tid:
@@ -57,46 +97,93 @@ def trace(ctx, source, target):
                         "SELECT 1 FROM file_edges WHERE source_file_id = ? AND target_file_id = ?",
                         (src_fid, tgt_fid),
                     ).fetchone()
-                    if fe and (best is None or len(best) > 2):
-                        best = [sid, tid]
-                        continue
+                    if fe:
+                        all_paths.append([sid, tid])
 
-                p = find_path(G, sid, tid)
-                if p and (best is None or len(p) < len(best)):
-                    best = p
+                paths = find_k_paths(G, sid, tid, k=k_paths)
+                for p in paths:
+                    all_paths.append(p)
 
-        if best is None:
+        # Deduplicate and sort by length
+        seen = set()
+        unique_paths = []
+        for p in all_paths:
+            key = tuple(p)
+            if key not in seen:
+                seen.add(key)
+                unique_paths.append(p)
+        unique_paths.sort(key=len)
+        unique_paths = unique_paths[:k_paths]
+
+        if not unique_paths:
             if json_mode:
-                click.echo(to_json({"source": source, "target": target, "path": None}))
+                click.echo(to_json({
+                    "source": source,
+                    "target": target,
+                    "path": None,
+                    "paths": [],
+                    "coupling_summary": "none — no dependency path exists",
+                }))
             else:
-                click.echo(f"No path from '{source}' to '{target}'.")
+                click.echo(f"No dependency path between '{source}' and '{target}'.")
+                click.echo("These symbols are independent — changes to one cannot affect the other.")
             return
 
-        annotated = format_path(best, conn)
+        # Annotate all paths
+        annotated_paths = []
+        for path_ids in unique_paths:
+            annotated = format_path(path_ids, conn)
+            hops = _build_hops(path_ids, annotated, G)
+            coupling = _classify_coupling(hops)
+            annotated_paths.append({
+                "path_ids": path_ids,
+                "hops": hops,
+                "coupling": coupling,
+            })
 
-        # Build edge kinds for each hop
-        hops = []
-        for i, node in enumerate(annotated):
-            hop = {"name": node["name"], "kind": node["kind"],
-                   "location": loc(node["file_path"], node["line"])}
-            if i > 0:
-                prev_id = best[i - 1]
-                curr_id = best[i]
-                edge_kind = G.edges.get((prev_id, curr_id), {}).get("kind", "")
-                if not edge_kind:
-                    edge_kind = G.edges.get((curr_id, prev_id), {}).get("kind", "")
-                hop["edge_kind"] = edge_kind
-            hops.append(hop)
+        # Overall coupling summary from shortest path
+        coupling_summary = annotated_paths[0]["coupling"] if annotated_paths else "none"
 
         if json_mode:
-            click.echo(to_json({"source": source, "target": target, "hops": len(hops), "path": hops}))
+            # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
+            first = annotated_paths[0]
+            click.echo(to_json({
+                "source": source,
+                "target": target,
+                "hops": len(first["hops"]),
+                "path": first["hops"],
+                "coupling_summary": coupling_summary,
+                "paths": [
+                    {
+                        "hops": len(ap["hops"]),
+                        "coupling": ap["coupling"],
+                        "path": ap["hops"],
+                    }
+                    for ap in annotated_paths
+                ],
+            }))
             return
 
         # --- Text output ---
-        click.echo(f"Path ({len(annotated)} hops):")
-        for i, node in enumerate(annotated):
-            if i == 0:
-                click.echo(f"    {abbrev_kind(node['kind'])}  {node['name']}  {loc(node['file_path'], node['line'])}")
-            else:
-                edge_label = f"[{hops[i].get('edge_kind', '')}] " if hops[i].get("edge_kind") else ""
-                click.echo(f"  -> {edge_label}{abbrev_kind(node['kind'])}  {node['name']}  {loc(node['file_path'], node['line'])}")
+        if len(annotated_paths) == 1:
+            ap = annotated_paths[0]
+            click.echo(f"Path ({len(ap['hops'])} hops, {ap['coupling']}):")
+            _print_path(ap["hops"])
+        else:
+            for idx, ap in enumerate(annotated_paths, 1):
+                click.echo(f"\n=== Path {idx} of {len(annotated_paths)} "
+                           f"({len(ap['hops'])} hops, {ap['coupling']}) ===")
+                _print_path(ap["hops"])
+
+        click.echo(f"\nCoupling: {coupling_summary}")
+
+
+def _print_path(hops):
+    """Print a single path in the text format."""
+    for i, hop in enumerate(hops):
+        if i == 0:
+            click.echo(f"    {abbrev_kind(hop['kind'])}  {hop['name']}  {hop['location']}")
+        else:
+            edge = hop.get("edge_kind", "")
+            edge_label = f"--{edge}-->" if edge else "->"
+            click.echo(f"  {edge_label}  {abbrev_kind(hop['kind'])}  {hop['name']}  {hop['location']}")

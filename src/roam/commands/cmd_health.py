@@ -41,6 +41,33 @@ _FRAMEWORK_NAMES = frozenset({
 })
 
 
+# ---- Location-aware utility detection ----
+
+_UTILITY_PATH_PATTERNS = (
+    "composables/", "utils/", "services/", "lib/", "helpers/",
+    "shared/", "config/", "core/", "hooks/", "stores/",
+)
+
+
+def _is_utility_path(file_path):
+    """Check if a file is in a utility/infrastructure directory."""
+    p = file_path.replace("\\", "/").lower()
+    return any(pat in p for pat in _UTILITY_PATH_PATTERNS)
+
+
+def _unique_dirs(file_paths):
+    """Extract unique parent directory names from a list of file paths."""
+    dirs = set()
+    for fp in file_paths:
+        p = fp.replace("\\", "/")
+        last_slash = p.rfind("/")
+        if last_slash >= 0:
+            dirs.add(p[:last_slash])
+        else:
+            dirs.add(".")
+    return dirs
+
+
 def _ensure_index():
     from roam.db.connection import db_exists
     if not db_exists():
@@ -107,26 +134,53 @@ def health(ctx, no_framework):
             ).fetchall():
                 v_lookup[r["id"]] = r
 
-        # Classify issue severity
+        # ---- Classify issue severity (location-aware) ----
         sev_counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
 
+        # Cycle severity: directory-aware
         for cyc in formatted_cycles:
-            if len(cyc["files"]) > 1:
-                cyc["severity"] = "CRITICAL"
-            elif cyc["size"] > 3:
-                cyc["severity"] = "WARNING"
-            else:
+            dirs = _unique_dirs(cyc["files"])
+            cyc["directories"] = len(dirs)
+            if len(dirs) <= 1:
+                # All symbols in same directory — cohesive internal pattern
                 cyc["severity"] = "INFO"
+            elif len(cyc["files"]) > 3:
+                cyc["severity"] = "CRITICAL"
+            else:
+                cyc["severity"] = "WARNING"
             sev_counts[cyc["severity"]] += 1
 
+        # God component severity: location-aware thresholds
+        actionable_count = 0
+        utility_count = 0
         for g in god_items:
-            if g["degree"] > 50:
-                g["severity"] = "CRITICAL"
-            elif g["degree"] > 30:
-                g["severity"] = "WARNING"
+            is_util = _is_utility_path(g["file"])
+            g["category"] = "utility" if is_util else "actionable"
+            if is_util:
+                utility_count += 1
+                # Relaxed thresholds for utilities (3x)
+                if g["degree"] > 150:
+                    g["severity"] = "CRITICAL"
+                elif g["degree"] > 90:
+                    g["severity"] = "WARNING"
+                else:
+                    g["severity"] = "INFO"
             else:
-                g["severity"] = "INFO"
+                actionable_count += 1
+                # Standard thresholds for non-utility code
+                if g["degree"] > 50:
+                    g["severity"] = "CRITICAL"
+                elif g["degree"] > 30:
+                    g["severity"] = "WARNING"
+                else:
+                    g["severity"] = "INFO"
             sev_counts[g["severity"]] += 1
+
+        # Sort: actionable first, then utilities; within each group by degree desc
+        god_items.sort(key=lambda g: (
+            0 if g["category"] == "actionable" else 1,
+            -g["degree"],
+        ))
 
         for b in bn_items:
             if b["betweenness"] > 5.0:
@@ -147,14 +201,18 @@ def health(ctx, no_framework):
                 "issue_count": j_issue_count,
                 "severity": sev_counts,
                 "framework_filtered": filtered_count,
+                "actionable_count": actionable_count,
+                "utility_count": utility_count,
                 "cycles": [
                     {"size": c["size"], "severity": c["severity"],
+                     "directories": c["directories"],
                      "symbols": [s["name"] for s in c["symbols"]],
                      "files": c["files"]}
                     for c in formatted_cycles
                 ],
                 "god_components": [
-                    {**g, "severity": g["severity"]} for g in god_items
+                    {**g, "severity": g["severity"], "category": g["category"]}
+                    for g in god_items
                 ],
                 "bottlenecks": [
                     {**b, "severity": b["severity"]} for b in bn_items
@@ -178,7 +236,9 @@ def health(ctx, no_framework):
         if cycles:
             parts.append(f"{len(cycles)} cycle{'s' if len(cycles) != 1 else ''}")
         if god_items:
-            parts.append(f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}")
+            god_detail = f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}"
+            god_detail += f" ({actionable_count} actionable, {utility_count} expected utilities)"
+            parts.append(god_detail)
         if bn_items:
             parts.append(f"{len(bn_items)} bottleneck{'s' if len(bn_items) != 1 else ''}")
         if violations:
@@ -206,7 +266,8 @@ def health(ctx, no_framework):
             for i, cyc in enumerate(formatted_cycles, 1):
                 names = [s["name"] for s in cyc["symbols"]]
                 sev = cyc["severity"]
-                click.echo(f"  [{sev}] cycle {i} ({cyc['size']} symbols): {', '.join(names[:10])}")
+                dir_note = f", {cyc['directories']} dir{'s' if cyc['directories'] != 1 else ''}"
+                click.echo(f"  [{sev}] cycle {i} ({cyc['size']} symbols{dir_note}): {', '.join(names[:10])}")
                 if len(names) > 10:
                     click.echo(f"    (+{len(names) - 10} more)")
                 click.echo(f"    files: {', '.join(cyc['files'][:5])}")
@@ -217,9 +278,11 @@ def health(ctx, no_framework):
         click.echo("\n=== God Components (degree > 20) ===")
         if god_items:
             god_rows = [[g["severity"], g["name"], abbrev_kind(g["kind"]),
-                         str(g["degree"]), loc(g["file"])]
+                         str(g["degree"]),
+                         "util" if g["category"] == "utility" else "act",
+                         loc(g["file"])]
                         for g in god_items]
-            click.echo(format_table(["Sev", "Name", "Kind", "Degree", "File"],
+            click.echo(format_table(["Sev", "Name", "Kind", "Degree", "Cat", "File"],
                                     god_rows, budget=20))
         else:
             click.echo("  (none)")

@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI**
 
-29 commands · one pre-built index · instant answers
+v4.0.0 · 29 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -136,13 +136,13 @@ roam health
 | `roam file <path> [--full]` | File skeleton: all definitions with signatures, no bodies |
 | `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics |
 | `roam context <symbol>` | AI-optimized context: definition + callers + callees + files-to-read with line ranges (PageRank-capped) |
-| `roam trace <source> <target>` | Shortest dependency path between two symbols (file-level import shortcut for direct deps) |
+| `roam trace <source> <target> [-k N]` | Dependency paths between two symbols with coupling strength assessment. Shows up to k paths (default 3) with edge-kind labels and coupling classification (strong/moderate/weak). File-level import shortcut for direct deps |
 | `roam deps <path> [--full]` | What a file imports and what imports it |
 | `roam search <pattern> [--kind KIND] [--full]` | Find symbols by name pattern — PageRank-ranked with signatures |
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
 | `roam split <file>` | Analyze a file's internal structure: symbol groups, isolation %, cross-group coupling, extraction suggestions |
-| `roam risk` | Domain-weighted risk ranking: static risk × domain keyword weight. Symbols in UI files (components/, .vue, .tsx) get dampened for non-UI keywords. Configurable via `.roam/domain-weights.json` |
+| `roam risk [-n N] [--domain KW]` | Domain-weighted risk ranking using three-source matching: symbol name keywords, callee-chain analysis (up to 3 hops with decay), and file path-zone matching. UI files auto-dampened. Configurable via `.roam/domain-weights.json` and `.roam/path-zones.json` |
 | `roam why <name> [name2 ...]` | Explain why a symbol matters: role classification (Core utility/Hub/Bridge/Leaf/Internal), transitive reach, critical path, cluster, one-line verdict. Batch mode for triage |
 | `roam safe-delete <symbol>` | Check if a symbol can be safely deleted — SAFE/REVIEW/UNSAFE verdict with reasoning |
 | `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range (e.g., `HEAD~3..HEAD`) |
@@ -155,7 +155,7 @@ roam health
 
 | Command | Description |
 |---------|-------------|
-| `roam health [--no-framework]` | Cycles, god components, bottlenecks, layer violations — CRITICAL/WARNING/INFO severity tiers. `--no-framework` filters framework primitives (computed, ref, useState, etc.) |
+| `roam health [--no-framework]` | Cycles, god components, bottlenecks, layer violations — location-aware severity. Utility paths (composables/, utils/, services/) get relaxed thresholds (3x). God components categorized as "actionable" vs "utility". Cycle severity is directory-aware (single-dir cycles capped at INFO). `--no-framework` filters framework primitives |
 | `roam clusters [--min-size N]` | Community detection vs directory structure — cohesion %, coupling matrices, split suggestions for mega-clusters |
 | `roam layers` | Topological dependency layers + directory breakdown per layer + upward violations |
 | `roam dead [--all]` | Unreferenced exported symbols with SAFE/REVIEW/INTENTIONAL verdicts and reason column. Lifecycle hooks (onMounted, componentDidMount, etc.) auto-classified as INTENTIONAL |
@@ -184,7 +184,7 @@ roam health
 
 ```bash
 # Examples
-roam --json health          # {"cycles": [...], "god_components": [...], ...}
+roam --json health          # {"cycles": [...], "god_components": [...], "actionable_count": 5, ...}
 roam --json symbol Flask    # {"name": "Flask", "callers": [...], "callees": [...]}
 roam --json why Flask         # {"symbols": [{"name": "Flask", "role": "Hub", "reach": 89, ...}]}
 roam --json diff HEAD~3..HEAD  # {"changed_files": 11, "affected_symbols": 405, ...}
@@ -264,14 +264,19 @@ Score  Churn  Complexity  Path                    Lang
 
 ```
 $ roam health
+Health: 1 issue — 1 WARNING
+  (1 god component (1 actionable, 0 expected utilities))
+
 === Cycles ===
   (none)
 
 === God Components (degree > 20) ===
-Name   Kind  Degree  File
------  ----  ------  ------------------
-Flask  cls   47      src/flask/app.py
+Sev      Name   Kind  Degree  Cat  File
+-------  -----  ----  ------  ---  ------------------
+WARNING  Flask  cls   47      act  src/flask/app.py
 ```
+
+God components in utility paths (`composables/`, `utils/`, `services/`, etc.) get relaxed thresholds and are categorized separately, so infrastructure symbols don't drown out genuinely problematic code.
 
 **Step 6: Get AI-ready context for a symbol**
 
@@ -356,14 +361,14 @@ Run `roam index` once, then use these commands instead of Glob/Grep/Read explora
 - `roam symbol <name>` -- definition + callers + callees
 - `roam context <name>` -- AI context: definition + callers + callees + files-to-read with line ranges
 - `roam deps <path>` -- file import/imported-by graph
-- `roam trace <source> <target>` -- shortest path between symbols
+- `roam trace <source> <target>` -- dependency paths with coupling strength (multi-path, edge labels)
 - `roam search <pattern>` -- find symbols by name (PageRank-ranked with signatures)
 - `roam grep <pattern>` -- text search with symbol context
-- `roam health` -- architecture problems with CRITICAL/WARNING/INFO severity (`--no-framework` filters primitives)
+- `roam health` -- architecture problems with location-aware severity (utility paths get relaxed thresholds, `--no-framework` filters primitives)
 - `roam weather` -- hotspots (churn x complexity)
 - `roam impact <symbol>` -- blast radius (what breaks if changed)
 - `roam split <file>` -- internal symbol groups with isolation % and extraction suggestions
-- `roam risk` -- domain-weighted risk ranking (UI files auto-dampened, configurable weights)
+- `roam risk` -- domain-weighted risk ranking (3-source matching: name + callee-chain + path-zone, UI auto-dampened)
 - `roam why <name>` -- role, reach, criticality, verdict (batch: `roam why A B C`)
 - `roam safe-delete <symbol>` -- check if safe to delete (SAFE/REVIEW/UNSAFE verdict)
 - `roam diff` -- blast radius of uncommitted changes
@@ -413,7 +418,7 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | "Understand project architecture" | `roam map` + `roam health` | Manual exploration (many tool calls) |
 | "What breaks if I change X?" | `roam impact <symbol>` | No direct equivalent |
 | "How should I split this large file?" | `roam split <file>` | Manual reading + guessing (error-prone, slow) |
-| "What's the riskiest code?" | `roam risk` | Manual review (no domain weighting) |
+| "What's the riskiest code?" | `roam risk` | Manual review (no domain weighting, no callee-chain analysis) |
 | "Why does this symbol exist?" | `roam why <name>` | `roam context` + `roam impact` + `roam fan` (3 commands) |
 | "Can I safely delete this?" | `roam safe-delete <symbol>` | `roam dead` + manual grep (slow, error-prone) |
 | "Review blast radius of a PR" | `roam pr-risk HEAD~3..HEAD` | Manual `git diff` + tracing (slow, incomplete) |
@@ -558,7 +563,7 @@ After the first full index, `roam index` only re-processes changed files (by mti
 - **Tarjan's SCC** -- detects dependency cycles (`health`)
 - **Louvain community detection** -- groups related symbols into clusters, compared against directory structure to find hidden coupling (`clusters`)
 - **Topological sort** -- computes dependency layers and finds upward violations (`layers`)
-- **Shortest path** -- traces dependency chains between any two symbols (`trace`)
+- **k-shortest simple paths** -- traces up to k dependency paths between any two symbols with coupling strength classification (`trace`)
 
 ### Storage
 

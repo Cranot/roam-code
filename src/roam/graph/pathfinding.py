@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import sqlite3
 
 import networkx as nx
@@ -51,6 +52,39 @@ def find_path(
         return list(nx.shortest_path(undirected, source_id, target_id, weight="weight"))
     except (nx.NetworkXNoPath, nx.NodeNotFound):
         return None
+
+
+def find_k_paths(
+    G: nx.DiGraph, source_id: int, target_id: int, k: int = 3
+) -> list[list[int]]:
+    """Find up to *k* shortest simple paths from *source_id* to *target_id*.
+
+    Uses Yen's algorithm via ``nx.shortest_simple_paths``.  Falls back to an
+    undirected single-path search when no directed path exists.  Returns an
+    empty list when the nodes are completely disconnected.
+    """
+    if source_id not in G or target_id not in G:
+        return []
+
+    _ensure_weights(G)
+
+    # Directed: k-shortest simple paths
+    try:
+        paths = list(itertools.islice(
+            nx.shortest_simple_paths(G, source_id, target_id, weight="weight"),
+            k,
+        ))
+        if paths:
+            return paths
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        pass
+
+    # Undirected fallback (single path only)
+    try:
+        undirected = G.to_undirected()
+        return [list(nx.shortest_path(undirected, source_id, target_id, weight="weight"))]
+    except (nx.NetworkXNoPath, nx.NodeNotFound):
+        return []
 
 
 def find_symbol_id(conn: sqlite3.Connection, name: str) -> list[int]:
