@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI**
 
-v4.2.0 · 29 commands · one pre-built index · instant answers
+v4.3.1 · 29 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -615,7 +615,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 | `.vue` / `.svelte` files not indexed | Both are Tier 1 (script block extraction). Ensure files have a `<script>` tag. Other SFC frameworks -- file an issue. |
 | Too many false positives in `roam dead` | Check the "N files had no symbols extracted" note. Files without parsers don't produce symbols, so their exports appear unreferenced. |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` to disambiguate. |
-| Vue template functions show fan-in:0 | Rebuild the index with `roam index --force` (v4.2.0 fixed template edge attribution). |
+| Vue template functions show fan-in:0 | Rebuild the index with `roam index --force` (v4.3.1 fixed multi-line attribute detection + callback references + shorthand properties). |
 | Slow first index | Expected for large projects. Use `roam index --verbose` to monitor progress. Subsequent runs are incremental. |
 
 ## Update / Uninstall

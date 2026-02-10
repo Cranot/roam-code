@@ -466,6 +466,13 @@ class JavaScriptExtractor(LanguageExtractor):
 
     # ---- Reference extraction ----
 
+    # JS keywords to skip when extracting identifier references from arguments
+    _JS_KEYWORDS = frozenset({
+        "true", "false", "null", "undefined", "this", "super", "arguments",
+        "new", "void", "typeof", "instanceof", "in", "of", "async", "await",
+        "yield", "return", "throw", "delete", "NaN", "Infinity",
+    })
+
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
             if child.type == "import_statement":
@@ -476,6 +483,29 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._extract_call(child, source, refs, scope_name)
             elif child.type == "new_expression":
                 self._extract_new(child, source, refs, scope_name)
+            elif child.type == "identifier" and node.type == "arguments":
+                # Bug 2: Identifiers passed as function arguments (callbacks by reference)
+                # e.g. addEventListener('keydown', handleKeyboardShortcut)
+                name = self.node_text(child, source)
+                if name and name not in self._JS_KEYWORDS:
+                    refs.append(self._make_reference(
+                        target_name=name,
+                        kind="reference",
+                        line=child.start_point[0] + 1,
+                        source_name=scope_name,
+                    ))
+            elif child.type == "shorthand_property_identifier":
+                # Bug 3: Shorthand properties are always variable references
+                # e.g. defineExpose({ resetForm, populateFromKinisi })
+                name = self.node_text(child, source)
+                if name:
+                    refs.append(self._make_reference(
+                        target_name=name,
+                        kind="reference",
+                        line=child.start_point[0] + 1,
+                        source_name=scope_name,
+                    ))
+                # No recursion needed — shorthand_property_identifier is a leaf node
             else:
                 new_scope = scope_name
                 if child.type in ("function_declaration", "class_declaration", "generator_function_declaration"):
