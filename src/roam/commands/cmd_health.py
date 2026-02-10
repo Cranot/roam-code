@@ -55,6 +55,14 @@ def _is_utility_path(file_path):
     return any(pat in p for pat in _UTILITY_PATH_PATTERNS)
 
 
+def _percentile(sorted_values, pct):
+    """Return the value at the given percentile (0-100) from a sorted list."""
+    if not sorted_values:
+        return 0
+    idx = int(pct / 100 * len(sorted_values))
+    return sorted_values[min(idx, len(sorted_values) - 1)]
+
+
 def _unique_dirs(file_paths):
     """Extract unique parent directory names from a list of file paths."""
     dirs = set()
@@ -101,7 +109,18 @@ def health(ctx, no_framework):
                     "degree": total, "file": r["file_path"],
                 })
 
-        # --- Bottlenecks ---
+        # --- Bottlenecks (percentile-based severity) ---
+        # Fetch all non-zero betweenness values to compute percentile thresholds.
+        # Raw betweenness is unnormalized (shortest-path counts), so absolute
+        # thresholds don't scale across codebase sizes. Percentiles do.
+        all_bw = sorted(
+            r[0] for r in conn.execute(
+                "SELECT betweenness FROM graph_metrics WHERE betweenness > 0"
+            ).fetchall()
+        )
+        bn_p70 = _percentile(all_bw, 70)
+        bn_p90 = _percentile(all_bw, 90)
+
         bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
         bn_items = []
         for r in bw_rows:
@@ -182,28 +201,25 @@ def health(ctx, no_framework):
             -g["degree"],
         ))
 
+        # Bottleneck severity: percentile-based thresholds.
+        # Utilities get 1.5x multiplied thresholds (higher bar for severity).
+        _BN_UTIL_MULT = 1.5
         bn_actionable = 0
         bn_utility = 0
         for b in bn_items:
             is_util = _is_utility_path(b["file"])
             b["category"] = "utility" if is_util else "actionable"
+            mult = _BN_UTIL_MULT if is_util else 1.0
             if is_util:
                 bn_utility += 1
-                # Relaxed thresholds for utilities (3x)
-                if b["betweenness"] > 15.0:
-                    b["severity"] = "CRITICAL"
-                elif b["betweenness"] > 3.0:
-                    b["severity"] = "WARNING"
-                else:
-                    b["severity"] = "INFO"
             else:
                 bn_actionable += 1
-                if b["betweenness"] > 5.0:
-                    b["severity"] = "CRITICAL"
-                elif b["betweenness"] > 1.0:
-                    b["severity"] = "WARNING"
-                else:
-                    b["severity"] = "INFO"
+            if b["betweenness"] > bn_p90 * mult:
+                b["severity"] = "CRITICAL"
+            elif b["betweenness"] > bn_p70 * mult:
+                b["severity"] = "WARNING"
+            else:
+                b["severity"] = "INFO"
             sev_counts[b["severity"]] += 1
 
         # Sort: actionable first, then utilities; within each group by betweenness desc
@@ -235,6 +251,12 @@ def health(ctx, no_framework):
                     {**g, "severity": g["severity"], "category": g["category"]}
                     for g in god_items
                 ],
+                "bottleneck_thresholds": {
+                    "p70": round(bn_p70, 1),
+                    "p90": round(bn_p90, 1),
+                    "utility_multiplier": _BN_UTIL_MULT,
+                    "population": len(all_bw),
+                },
                 "bottlenecks": [
                     {**b, "severity": b["severity"], "category": b["category"]}
                     for b in bn_items
