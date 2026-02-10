@@ -44,16 +44,6 @@ def module(ctx, path):
             click.echo(f"No files found under: {path}/")
             raise SystemExit(1)
 
-        click.echo(f"Module: {path}/  ({len(files)} files)")
-        click.echo()
-
-        # --- Files ---
-        file_rows = [[f["path"], f["language"] or "?", str(f["line_count"])]
-                     for f in files]
-        click.echo("Files:")
-        click.echo(format_table(["path", "lang", "lines"], file_rows, budget=30))
-        click.echo()
-
         # --- Exported symbols ---
         if path == ".":
             symbols = conn.execute(
@@ -63,24 +53,10 @@ def module(ctx, path):
                    ORDER BY f.path, s.line_start""",
             ).fetchall()
         else:
-            pattern = f"{path}/%"
-            symbols = conn.execute(SYMBOLS_IN_DIR, (pattern,)).fetchall()
+            sym_pattern = f"{path}/%"
+            symbols = conn.execute(SYMBOLS_IN_DIR, (sym_pattern,)).fetchall()
             if not symbols:
                 symbols = conn.execute(SYMBOLS_IN_DIR, (f"%{path}/%",)).fetchall()
-
-        if symbols:
-            sym_lines = []
-            for s in symbols:
-                sig = format_signature(s["signature"], max_len=60)
-                parts = [abbrev_kind(s["kind"]), s["name"]]
-                if sig:
-                    parts.append(sig)
-                parts.append(loc(s["file_path"], s["line_start"]))
-                sym_lines.append("  " + "  ".join(parts))
-            click.echo(section(f"Exports ({len(symbols)}):", sym_lines, budget=40))
-        else:
-            click.echo("Exports: (none)")
-        click.echo()
 
         # --- Module-level dependencies ---
         file_ids = [f["id"] for f in files]
@@ -101,26 +77,7 @@ def module(ctx, path):
                         imported_by_external.get(row["path"], 0) + row["symbol_count"]
                     )
 
-        if imports_external:
-            sorted_imp = sorted(imports_external.items(), key=lambda x: -x[1])
-            rows = [[p, str(c)] for p, c in sorted_imp]
-            click.echo("External imports:")
-            click.echo(format_table(["file", "symbols"], rows, budget=20))
-        else:
-            click.echo("External imports: (none)")
-        click.echo()
-
-        if imported_by_external:
-            sorted_by = sorted(imported_by_external.items(), key=lambda x: -x[1])
-            rows = [[p, str(c)] for p, c in sorted_by]
-            click.echo("Imported by (external):")
-            click.echo(format_table(["file", "symbols"], rows, budget=20))
-        else:
-            click.echo("Imported by (external): (none)")
-
         # --- Module metrics ---
-        click.echo()
-        # Total symbols in module (including non-exported)
         all_sym_ids = set()
         for f in files:
             sym_rows = conn.execute(
@@ -133,7 +90,6 @@ def module(ctx, path):
         exported_count = len(symbols) if symbols else 0
         api_surface = exported_count * 100 / total_syms if total_syms else 0
 
-        # Cohesion: internal edges / total edges involving module symbols
         if all_sym_ids:
             ph = ",".join("?" for _ in all_sym_ids)
             ids_list = list(all_sym_ids)
@@ -173,6 +129,48 @@ def module(ctx, path):
             }))
             return
 
+        # --- Text output ---
+        click.echo(f"Module: {path}/  ({len(files)} files)")
+        click.echo()
+
+        file_rows = [[f["path"], f["language"] or "?", str(f["line_count"])]
+                     for f in files]
+        click.echo("Files:")
+        click.echo(format_table(["path", "lang", "lines"], file_rows, budget=30))
+        click.echo()
+
+        if symbols:
+            sym_lines = []
+            for s in symbols:
+                sig = format_signature(s["signature"], max_len=60)
+                parts = [abbrev_kind(s["kind"]), s["name"]]
+                if sig:
+                    parts.append(sig)
+                parts.append(loc(s["file_path"], s["line_start"]))
+                sym_lines.append("  " + "  ".join(parts))
+            click.echo(section(f"Exports ({len(symbols)}):", sym_lines, budget=40))
+        else:
+            click.echo("Exports: (none)")
+        click.echo()
+
+        if imports_external:
+            sorted_imp = sorted(imports_external.items(), key=lambda x: -x[1])
+            rows = [[p, str(c)] for p, c in sorted_imp]
+            click.echo("External imports:")
+            click.echo(format_table(["file", "symbols"], rows, budget=20))
+        else:
+            click.echo("External imports: (none)")
+        click.echo()
+
+        if imported_by_external:
+            sorted_by = sorted(imported_by_external.items(), key=lambda x: -x[1])
+            rows = [[p, str(c)] for p, c in sorted_by]
+            click.echo("Imported by (external):")
+            click.echo(format_table(["file", "symbols"], rows, budget=20))
+        else:
+            click.echo("Imported by (external): (none)")
+
+        click.echo()
         click.echo(f"Cohesion: {cohesion:.0f}% ({internal_edges}/{total_edges} edges are internal)")
         click.echo(f"API surface: {api_surface:.0f}% exported ({exported_count}/{total_syms} symbols)")
         click.echo(f"Reused by: {ext_importers} external files")
