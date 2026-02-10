@@ -20,7 +20,12 @@ def _classify_coupling(hops):
     kinds = [h.get("edge_kind", "") for h in hops[1:] if h.get("edge_kind")]
     total = len(kinds)
     if total == 0:
-        return "none"
+        # No symbol-level edges. 2-hop paths are file-level import shortcuts
+        # (the code adds these when source file imports target file).
+        # Longer paths with no edges shouldn't happen, but handle gracefully.
+        if len(hops) == 2:
+            return "structural (file import)"
+        return "unknown"
     call_count = sum(1 for k in kinds if k in ("call", "uses", "uses_trait"))
     ratio = call_count / total
     if ratio == 1.0:
@@ -45,23 +50,47 @@ def _detect_hubs(path_ids, G, threshold=50):
 
 
 def _path_quality(hops, hubs):
-    """Score path quality (higher = better). Prefers direct call chains, penalizes hubs.
+    """Score path quality (higher = better). Three factors:
 
-    Returns float score where higher is better.
+    1. Coupling: call/uses edges = 1.0 (runtime dependency), file imports = 0.5
+       (structural dependency), import-only = 0.0 (weak).
+    2. Directness: shorter paths are inherently more meaningful. 2-hop = 1.0,
+       each extra hop reduces by 0.15.
+    3. Hub penalty: high-degree intermediates make connections coincidental.
+       Scales with degree — a mega-hub (degree 500+) penalizes more than a
+       borderline hub (degree 50).
+
+    Combined: coupling * 0.7 + directness * 0.3 - hub_penalty.
     """
     if not hops:
         return 0.0
 
-    # Base: ratio of call/uses edges (direct coupling)
+    n_hops = len(hops)
+
+    # --- Coupling score ---
     kinds = [h.get("edge_kind", "") for h in hops[1:] if h.get("edge_kind")]
-    total = len(kinds) or 1
-    call_ratio = sum(1 for k in kinds if k in ("call", "uses", "uses_trait")) / total
+    if kinds:
+        total = len(kinds)
+        coupling = sum(1 for k in kinds if k in ("call", "uses", "uses_trait")) / total
+    else:
+        # No edge kind info — file-level import shortcut paths.
+        # These represent intentional structural dependencies (someone wrote
+        # the import), so they deserve moderate coupling, not zero.
+        coupling = 0.5
 
-    # Penalties
-    hub_penalty = len(hubs) * 0.3  # Each hub deducts 0.3
-    length_penalty = max(0, (len(hops) - 3)) * 0.1  # Paths > 3 hops get penalized
+    # --- Directness bonus ---
+    # 2 hops = 1.0, 3 hops = 0.85, 4 hops = 0.7, 5 hops = 0.55, ...
+    directness = max(0.0, min(1.0, 1.0 - (n_hops - 2) * 0.15))
 
-    return call_ratio - hub_penalty - length_penalty
+    base = coupling * 0.7 + directness * 0.3
+
+    # --- Hub penalty (scales with degree) ---
+    hub_penalty = 0.0
+    for _, degree in hubs:
+        # degree 50 → 0.30, degree 100 → 0.40, degree 250+ → 0.50 (capped)
+        hub_penalty += min(0.5, 0.2 + degree / 500)
+
+    return base - hub_penalty
 
 
 def _build_hops(path_ids, annotated, G):
@@ -192,8 +221,20 @@ def trace(ctx, source, target, k_paths):
         annotated_paths.sort(key=lambda ap: (-ap["quality"], len(ap["hops"])))
         annotated_paths = annotated_paths[:k_paths]
 
-        # Coupling summary from best-quality path
-        coupling_summary = annotated_paths[0]["coupling"] if annotated_paths else "none"
+        # Coupling summary: strongest coupling across ALL paths (not just best-quality).
+        # A hub-mediated call chain may rank lower on quality but still reveals
+        # that runtime coupling exists — the summary should reflect that.
+        _COUPLING_RANK = {
+            "strong (direct call chain)": 4,
+            "moderate (mixed call + import)": 3,
+            "weak (via imports/template)": 2,
+            "structural (file import)": 1,
+        }
+        coupling_summary = max(
+            (ap["coupling"] for ap in annotated_paths),
+            key=lambda c: _COUPLING_RANK.get(c, 0),
+            default="none",
+        )
 
         if json_mode:
             # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
