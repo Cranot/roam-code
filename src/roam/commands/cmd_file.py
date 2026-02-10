@@ -2,16 +2,10 @@ from collections import Counter
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
 from roam.output.formatter import abbrev_kind, loc, format_signature, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command("file")
@@ -21,7 +15,7 @@ def _ensure_index():
 def file_cmd(ctx, path, full):
     """Show file skeleton: all definitions with signatures."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     # Normalise separators
     path = path.replace("\\", "/")

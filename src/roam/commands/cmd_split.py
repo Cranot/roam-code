@@ -6,15 +6,9 @@ from collections import Counter
 import click
 import networkx as nx
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _label_group(symbols):
@@ -71,7 +65,7 @@ def split(ctx, path, min_group):
     patterns, with coupling metrics and extraction suggestions.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     path = path.replace("\\", "/")
 

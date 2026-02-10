@@ -5,17 +5,11 @@ from collections import Counter
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.clusters import compare_with_directories
 from roam.output.formatter import abbrev_kind, format_table, to_json
-
-
-def _ensure_index():
-    from roam.db.connection import db_exists
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command()
@@ -24,7 +18,7 @@ def _ensure_index():
 def clusters(ctx, min_size):
     """Show code clusters and directory mismatches."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(ALL_CLUSTERS).fetchall()
 

@@ -4,15 +4,9 @@ import subprocess
 
 import click
 
-from roam.db.connection import open_db, db_exists, find_project_root
+from roam.db.connection import open_db, find_project_root
 from roam.output.formatter import format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _get_changed_files(root, staged, commit_range=None):
@@ -50,7 +44,7 @@ def diff_cmd(ctx, commit_range, staged, full):
     to analyze committed changes instead of uncommitted ones.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     root = find_project_root()
 
     changed = _get_changed_files(root, staged, commit_range)

@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI**
 
-v4.1.0 · 29 commands · one pre-built index · instant answers
+v4.2.0 · 29 commands · one pre-built index · instant answers
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
@@ -134,7 +134,7 @@ roam health
 | `roam map [-n N] [--full]` | Project skeleton: files, languages, entry points, top symbols by PageRank |
 | `roam module <path>` | Directory contents: exports, signatures, dependencies, cohesion rating |
 | `roam file <path> [--full]` | File skeleton: all definitions with signatures, no bodies |
-| `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics |
+| `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics. Supports `file:symbol` syntax for disambiguation (e.g., `roam symbol app:Flask`) |
 | `roam context <symbol>` | AI-optimized context: definition + callers + callees + files-to-read with line ranges (PageRank-capped) |
 | `roam trace <source> <target> [-k N]` | Dependency paths between two symbols with coupling strength and quality scoring. Shows up to k paths (default 3) with edge-kind labels, coupling classification (strong/moderate/weak), hub detection (high-degree intermediates flagged), and path quality ranking. Paths sorted by quality, not just length |
 | `roam deps <path> [--full]` | What a file imports and what imports it |
@@ -614,6 +614,8 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 | Unicode errors on Windows | Roam handles UTF-8 and Latin-1 files. If you see `charmap` errors, ensure your terminal uses UTF-8 (`chcp 65001`). |
 | `.vue` / `.svelte` files not indexed | Both are Tier 1 (script block extraction). Ensure files have a `<script>` tag. Other SFC frameworks -- file an issue. |
 | Too many false positives in `roam dead` | Check the "N files had no symbols extracted" note. Files without parsers don't produce symbols, so their exports appear unreferenced. |
+| Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` to disambiguate. |
+| Vue template functions show fan-in:0 | Rebuild the index with `roam index --force` (v4.2.0 fixed template edge attribution). |
 | Slow first index | Expected for large projects. Use `roam index --verbose` to monitor progress. Subsequent runs are incremental. |
 
 ## Update / Uninstall
@@ -640,7 +642,7 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (~260 tests across 16 languages, 3 OS, Python 3.10-3.13)
+# Run tests (~276 tests across 16 languages, 3 OS, Python 3.10-3.13)
 pytest tests/
 
 # Index roam itself
@@ -700,14 +702,17 @@ roam-code/
 │   │   ├── pathfinding.py          # Shortest path for trace
 │   │   └── split.py                # Intra-file decomposition analysis
 │   │   └── why.py                  # Symbol role classification + verdict
-│   ├── commands/                    # One module per CLI command
+│   ├── commands/
+│   │   ├── resolve.py              # Shared symbol resolution + ensure_index
+│   │   └── cmd_*.py                # One module per CLI command (29 total)
 │   └── output/
 │       └── formatter.py            # Token-efficient text formatting
 └── tests/
     ├── test_basic.py               # Core functionality tests
     ├── test_fixes.py               # Regression tests
     ├── test_comprehensive.py       # Language and command tests
-    └── test_performance.py         # Performance, stress, and resilience tests
+    ├── test_performance.py         # Performance, stress, and resilience tests
+    └── test_resolve.py             # Symbol resolution + line_start attribution tests
 ```
 
 </details>

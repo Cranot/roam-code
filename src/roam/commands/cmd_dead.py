@@ -4,9 +4,10 @@ import os
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import UNREFERENCED_EXPORTS
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.commands.resolve import ensure_index
 
 
 _ENTRY_NAMES = {
@@ -63,20 +64,13 @@ def _dead_action(r, file_imported):
     return "SAFE"
 
 
-def _ensure_index():
-    from roam.db.connection import db_exists
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
-
-
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
 @click.pass_context
 def dead(ctx, show_all):
     """Show unreferenced exported symbols (dead code)."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
 

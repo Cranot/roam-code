@@ -2,14 +2,9 @@
 
 import click
 
-from roam.db.connection import db_exists, open_db
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command()
@@ -19,7 +14,7 @@ def _ensure_index():
 def uses(ctx, name, full):
     """Show all consumers of a symbol: callers, importers, inheritors."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
         # Find the target symbol(s) by name

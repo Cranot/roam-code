@@ -4,8 +4,9 @@ import os
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json
+from roam.commands.resolve import ensure_index, find_symbol
 
 
 TEST_PATTERNS_NAME = ["test_", "_test.", ".test.", ".spec."]
@@ -21,70 +22,6 @@ def _is_test_file(path):
     if any(d in p for d in TEST_PATTERNS_DIR):
         return True
     return False
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
-
-
-def _find_symbol(conn, name):
-    """Find a symbol by exact name, qualified name, or fuzzy match."""
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE s.qualified_name = ?",
-        (name,),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE s.name = ?",
-        (name,),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-
-    # Disambiguate: pick most-referenced
-    if len(rows) > 1:
-        ids = [r["id"] for r in rows]
-        ph = ",".join("?" for _ in ids)
-        counts = conn.execute(
-            f"SELECT target_id, COUNT(*) as cnt FROM edges "
-            f"WHERE target_id IN ({ph}) GROUP BY target_id",
-            ids,
-        ).fetchall()
-        ref_map = {c["target_id"]: c["cnt"] for c in counts}
-        best = max(rows, key=lambda r: ref_map.get(r["id"], 0))
-        if ref_map.get(best["id"], 0) > 0:
-            return best
-        return rows[0]
-
-    # Fuzzy match
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE s.name LIKE ? COLLATE NOCASE LIMIT 10",
-        (f"%{name}%",),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-    if rows:
-        ids = [r["id"] for r in rows]
-        ph = ",".join("?" for _ in ids)
-        counts = conn.execute(
-            f"SELECT target_id, COUNT(*) as cnt FROM edges "
-            f"WHERE target_id IN ({ph}) GROUP BY target_id",
-            ids,
-        ).fetchall()
-        ref_map = {c["target_id"]: c["cnt"] for c in counts}
-        best = max(rows, key=lambda r: ref_map.get(r["id"], 0))
-        if ref_map.get(best["id"], 0) > 0:
-            return best
-
-    return None
 
 
 def _test_map_symbol(conn, sym):
@@ -233,7 +170,7 @@ def _test_map_file(conn, path):
 def test_map(ctx, name):
     """Map a symbol or file to its test coverage."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     name_norm = name.replace("\\", "/")
 
@@ -251,7 +188,7 @@ def test_map(ctx, name):
                     _test_map_file(conn, name_norm)
                 return
 
-        sym = _find_symbol(conn, name)
+        sym = find_symbol(conn, name)
         if sym:
             if json_mode:
                 _test_map_symbol_json(conn, sym)

@@ -2,7 +2,7 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import TOP_BY_DEGREE, TOP_BY_BETWEENNESS
 from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import find_cycles, format_cycles
@@ -10,6 +10,7 @@ from roam.graph.layers import detect_layers, find_violations
 from roam.output.formatter import (
     abbrev_kind, loc, section, format_table, truncate_lines, to_json,
 )
+from roam.commands.resolve import ensure_index
 
 
 _FRAMEWORK_NAMES = frozenset({
@@ -76,13 +77,6 @@ def _unique_dirs(file_paths):
     return dirs
 
 
-def _ensure_index():
-    from roam.db.connection import db_exists
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
-
-
 @click.command()
 @click.option('--no-framework', is_flag=True,
               help='Filter out framework/boilerplate symbols from god components and bottlenecks')
@@ -90,7 +84,7 @@ def _ensure_index():
 def health(ctx, no_framework):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
 

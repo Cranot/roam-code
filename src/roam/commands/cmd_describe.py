@@ -5,15 +5,9 @@ from collections import Counter
 
 import click
 
-from roam.db.connection import open_db, db_exists, find_project_root
+from roam.db.connection import open_db, find_project_root
 from roam.output.formatter import to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _section_overview(conn):
@@ -345,7 +339,7 @@ def _section_dependencies(conn):
 def describe(ctx, write, force):
     """Auto-generate a project description (suitable for CLAUDE.md)."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
         sections = []

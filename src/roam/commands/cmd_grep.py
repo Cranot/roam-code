@@ -6,14 +6,9 @@ import subprocess
 
 import click
 
-from roam.db.connection import db_exists, find_project_root, open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, loc, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _grep_files(pattern, root, glob_filter=None):
@@ -118,7 +113,7 @@ def _find_enclosing_symbol(conn, file_path, line_num):
 def grep_cmd(ctx, pattern, glob_filter, count):
     """Context-enriched grep: search with enclosing symbol annotation."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     root = find_project_root()
 
     # Normalize shorthand extensions: "ts" or ".ts" → "*.ts"

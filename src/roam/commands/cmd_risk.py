@@ -6,15 +6,9 @@ import re
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 # Default domain keyword -> weight multiplier mapping.
@@ -207,7 +201,7 @@ def risk(ctx, count, domain_keywords):
     - File path zone matching (e.g. kiniseis/ -> accounting zone)
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     # Build domain map: defaults -> .roam/domain-weights.json -> CLI overrides
     domains = dict(_DEFAULT_DOMAINS)

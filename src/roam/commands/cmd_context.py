@@ -4,8 +4,9 @@ import os
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.commands.resolve import ensure_index, find_symbol
 
 
 _TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
@@ -18,50 +19,6 @@ def _is_test_file(path):
     return any(pat in bn for pat in _TEST_NAME_PATS) or any(d in p for d in _TEST_DIR_PATS)
 
 
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
-
-
-def _find_symbol(conn, name):
-    """Find symbol by exact name, qualified name, or fuzzy match."""
-    row = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE s.qualified_name = ?",
-        (name,),
-    ).fetchone()
-    if row:
-        return row
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id WHERE s.name = ?",
-        (name,),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        ids = [r["id"] for r in rows]
-        ph = ",".join("?" for _ in ids)
-        counts = conn.execute(
-            f"SELECT target_id, COUNT(*) as cnt FROM edges "
-            f"WHERE target_id IN ({ph}) GROUP BY target_id", ids,
-        ).fetchall()
-        ref_map = {c["target_id"]: c["cnt"] for c in counts}
-        best = max(rows, key=lambda r: ref_map.get(r["id"], 0))
-        return best if ref_map.get(best["id"], 0) > 0 else rows[0]
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "WHERE s.name LIKE ? COLLATE NOCASE LIMIT 10",
-        (f"%{name}%",),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-    return None
-
-
 @click.command()
 @click.argument('name')
 @click.pass_context
@@ -72,10 +29,10 @@ def context(ctx, name):
     to read — everything an AI agent needs in one shot.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
-        sym = _find_symbol(conn, name)
+        sym = find_symbol(conn, name)
         if sym is None:
             click.echo(f"Symbol not found: {name}")
             raise SystemExit(1)

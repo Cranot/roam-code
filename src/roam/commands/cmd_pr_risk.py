@@ -5,8 +5,9 @@ import subprocess
 
 import click
 
-from roam.db.connection import open_db, db_exists, find_project_root
+from roam.db.connection import open_db, find_project_root
 from roam.output.formatter import format_table, to_json
+from roam.commands.resolve import ensure_index
 
 
 _TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
@@ -29,13 +30,6 @@ def _is_low_risk_file(path):
     p = path.replace("\\", "/").lower()
     _, ext = os.path.splitext(p)
     return ext in _LOW_RISK_EXTS
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
 
 
 def _get_changed_files(root, staged, commit_range=None):
@@ -95,7 +89,7 @@ def pr_risk(ctx, commit_range, staged):
     or use --staged for staged changes. Default: unstaged changes.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     root = find_project_root()
 
     changed = _get_changed_files(root, staged, commit_range)

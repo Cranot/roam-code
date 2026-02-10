@@ -2,42 +2,9 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
-
-
-def _find_symbol(conn, name):
-    """Find symbol by name or qualified name."""
-    row = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.qualified_name = ?",
-        (name,),
-    ).fetchone()
-    if row:
-        return row
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name = ?",
-        (name,),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        return rows  # ambiguous
-    rows = conn.execute(
-        "SELECT s.*, f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.name LIKE ? LIMIT 10",
-        (f"%{name}%",),
-    ).fetchall()
-    if len(rows) == 1:
-        return rows[0]
-    if rows:
-        return rows
-    return None
+from roam.commands.resolve import ensure_index, find_symbol
 
 
 @click.command()
@@ -46,30 +13,14 @@ def _find_symbol(conn, name):
 def impact(ctx, name):
     """Show blast radius: what breaks if a symbol changes."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
-        result = _find_symbol(conn, name)
+        sym = find_symbol(conn, name)
 
-        if result is None:
+        if sym is None:
             click.echo(f"Symbol not found: {name}")
             raise SystemExit(1)
-
-        if isinstance(result, list):
-            if json_mode:
-                click.echo(to_json({"error": "ambiguous", "matches": [
-                    {"name": s["qualified_name"] or s["name"], "kind": s["kind"],
-                     "location": loc(s["file_path"], s["line_start"])}
-                    for s in result
-                ]}))
-                return
-            click.echo(f"Multiple matches for '{name}':")
-            for s in result:
-                click.echo(f"  {abbrev_kind(s['kind'])}  {s['qualified_name'] or s['name']}  {loc(s['file_path'], s['line_start'])}")
-            click.echo("Use a qualified name to disambiguate.")
-            return
-
-        sym = result
         sym_id = sym["id"]
 
         if not json_mode:

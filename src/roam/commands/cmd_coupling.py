@@ -2,15 +2,9 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command()
@@ -19,7 +13,7 @@ def _ensure_index():
 def coupling(ctx, count):
     """Show temporal coupling: file pairs that change together."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
         rows = conn.execute("""

@@ -265,6 +265,7 @@ class Indexer:
                         "qualified_name": sym["qualified_name"],
                         "kind": sym["kind"],
                         "is_exported": bool(sym.get("is_exported")),
+                        "line_start": sym["line_start"],
                     }
 
                 # Extract references
@@ -303,7 +304,7 @@ class Indexer:
             if not force:
                 existing_rows = conn.execute(
                     "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
-                    "s.is_exported, f.path as file_path "
+                    "s.is_exported, s.line_start, f.path as file_path "
                     "FROM symbols s JOIN files f ON s.file_id = f.id"
                 ).fetchall()
                 for row in existing_rows:
@@ -317,6 +318,7 @@ class Indexer:
                             "qualified_name": row["qualified_name"],
                             "kind": row["kind"],
                             "is_exported": bool(row["is_exported"]),
+                            "line_start": row["line_start"],
                         }
 
             # Load all file_id_by_path from DB

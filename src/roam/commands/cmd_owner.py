@@ -4,16 +4,10 @@ from datetime import datetime, timezone
 
 import click
 
-from roam.db.connection import open_db, db_exists, find_project_root
+from roam.db.connection import open_db, find_project_root
 from roam.index.git_stats import get_blame_for_file
 from roam.output.formatter import format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _format_date(epoch: int) -> str:
@@ -63,7 +57,7 @@ def _ownership_for_file(project_root, file_path):
 def owner(ctx, path):
     """Show code ownership: who owns a file or directory."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     project_root = find_project_root()
     path = path.replace("\\", "/")
 

@@ -1,14 +1,8 @@
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 def _classify_coupling(hops):
@@ -121,7 +115,7 @@ def _build_hops(path_ids, annotated, G):
 def trace(ctx, source, target, k_paths):
     """Show shortest path between two symbols."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     from roam.graph.builder import build_symbol_graph
     from roam.graph.pathfinding import find_k_paths, find_symbol_id, format_path

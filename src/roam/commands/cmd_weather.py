@@ -2,16 +2,10 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import TOP_CHURN_FILES
 from roam.output.formatter import format_table, to_json
-
-
-def _ensure_index():
-    from roam.db.connection import db_exists
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command()
@@ -20,7 +14,7 @@ def _ensure_index():
 def weather(ctx, count):
     """Show code hotspots: churn x complexity ranking."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(TOP_CHURN_FILES, (count * 2,)).fetchall()
         if not rows:

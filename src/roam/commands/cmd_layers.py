@@ -2,19 +2,13 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers, find_violations, format_layers
 from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json
+from roam.commands.resolve import ensure_index
 
 import networkx as nx
-
-
-def _ensure_index():
-    from roam.db.connection import db_exists
-    if not db_exists():
-        from roam.index.indexer import Indexer
-        Indexer().run()
 
 
 @click.command()
@@ -22,7 +16,7 @@ def _ensure_index():
 def layers(ctx):
     """Show dependency layers and violations."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
         layer_map = detect_layers(G)

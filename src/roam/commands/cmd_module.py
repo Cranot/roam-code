@@ -1,19 +1,13 @@
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.db.queries import (
     FILES_IN_DIR, SYMBOLS_IN_DIR, FILE_IMPORTS, FILE_IMPORTED_BY,
 )
 from roam.output.formatter import (
     abbrev_kind, loc, format_signature, format_table, section, to_json,
 )
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 @click.command()
@@ -22,7 +16,7 @@ def _ensure_index():
 def module(ctx, path):
     """Show directory contents: exports, signatures, deps."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     path = path.replace("\\", "/").rstrip("/")
 

@@ -2,15 +2,9 @@
 
 import click
 
-from roam.db.connection import open_db, db_exists
+from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json
-
-
-def _ensure_index():
-    if not db_exists():
-        click.echo("No index found. Building...")
-        from roam.index.indexer import Indexer
-        Indexer().run()
+from roam.commands.resolve import ensure_index
 
 
 _FRAMEWORK_NAMES = frozenset({
@@ -50,7 +44,7 @@ _FRAMEWORK_NAMES = frozenset({
 def fan(ctx, mode, count, no_framework):
     """Show fan-in/fan-out: most connected symbols or files."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
-    _ensure_index()
+    ensure_index()
 
     with open_db(readonly=True) as conn:
         if mode == 'symbol':

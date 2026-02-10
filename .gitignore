@@ -26,6 +26,10 @@ htmlcov/
 .DS_Store
 Thumbs.db
 
+# Benchmark artifacts
+bench-*.json
+bench-repos/
+
 # Virtual environments
 venv/
 .venv/
