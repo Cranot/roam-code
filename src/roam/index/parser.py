@@ -192,15 +192,40 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
 
     Returns (template_content, start_line_number) or None if no template found.
     The start_line_number is 1-based.
+
+    Uses depth-counting to handle nested <template #slot> tags correctly.
     """
     text = source.decode("utf-8", errors="replace")
-    match = re.search(r'<template[^>]*>(.*?)</template>', text, re.DOTALL)
-    if not match:
+
+    # Find the outer <template...> open tag (the SFC root template)
+    outer_open = re.search(r'<template(\s[^>]*)?>',  text)
+    if not outer_open:
         return None
-    content = match.group(1)
-    # Count lines before the template content to get the start line
-    start_line = text[:match.start(1)].count("\n") + 1
-    return content, start_line
+
+    content_start = outer_open.end()
+    depth = 1
+
+    # Scan for all <template...> and </template> tags after the outer open
+    # Use non-greedy [^>]*? so that self-closing / isn't consumed by attributes
+    tag_re = re.compile(r'<(/?)template\b([^>]*?)(/?)>')
+    for m in tag_re.finditer(text, pos=content_start):
+        is_closing = m.group(1) == '/'
+        is_self_closing = m.group(3) == '/'
+
+        if is_self_closing:
+            continue  # <template ... /> doesn't affect depth
+        elif is_closing:
+            depth -= 1
+            if depth == 0:
+                # Found the matching close for the outer template
+                content = text[content_start:m.start()]
+                start_line = text[:content_start].count("\n") + 1
+                return content, start_line
+        else:
+            depth += 1
+
+    # No matching close tag found (malformed)
+    return None
 
 
 def scan_template_references(
@@ -236,27 +261,30 @@ def scan_template_references(
     refs = []
     seen = set()
 
+    # Pass 1: Extract identifiers from template expressions on FULL content.
+    # This handles multi-line attribute values like :class="cn(\n  isRowFocused(row)\n)"
+    # where the opening " and closing " are on different lines.
+    for pattern in expr_patterns:
+        for match in pattern.finditer(template_content):
+            expr = match.group(1)
+            # Compute line number from match position
+            line_num = start_line + template_content[:match.start()].count("\n")
+            for ident_match in ident_re.finditer(expr):
+                name = ident_match.group(1)
+                if name in known_symbols and name not in seen:
+                    seen.add(name)
+                    refs.append({
+                        "source_name": None,
+                        "target_name": name,
+                        "kind": "template",
+                        "line": line_num,
+                        "source_file": file_path,
+                    })
+
+    # Pass 2: Detect PascalCase component usage (per-line — tags don't span lines)
     lines = template_content.split("\n")
     for line_offset, line in enumerate(lines):
         line_num = start_line + line_offset
-
-        # Extract identifiers from template expressions
-        for pattern in expr_patterns:
-            for match in pattern.finditer(line):
-                expr = match.group(1)
-                for ident_match in ident_re.finditer(expr):
-                    name = ident_match.group(1)
-                    if name in known_symbols and name not in seen:
-                        seen.add(name)
-                        refs.append({
-                            "source_name": None,
-                            "target_name": name,
-                            "kind": "template",
-                            "line": line_num,
-                            "source_file": file_path,
-                        })
-
-        # Detect PascalCase component usage
         for match in component_re.finditer(line):
             name = match.group(1)
             if name in known_symbols and name not in seen:

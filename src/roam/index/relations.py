@@ -19,13 +19,21 @@ def resolve_references(
     Returns:
         List of edge dicts with source_id, target_id, kind, line.
     """
-    # Build a lookup: qualified_name -> symbol for exact matches
-    symbols_by_qualified = {}
+    # Build a lookup: qualified_name -> list of symbols (multiple files may define same qn)
+    symbols_by_qualified: dict[str, list[dict]] = {}
     for name, sym_list in symbols_by_name.items():
         for sym in sym_list:
             qn = sym.get("qualified_name")
             if qn:
-                symbols_by_qualified[qn] = sym
+                symbols_by_qualified.setdefault(qn, []).append(sym)
+
+    # Build import map: (source_file, imported_name) -> import_path
+    import_map: dict[tuple[str, str], str] = {}
+    for ref in references:
+        if ref.get("kind") == "import" and ref.get("import_path"):
+            key = (ref.get("source_file", ""), ref.get("target_name", ""))
+            if key[0] and key[1]:
+                import_map[key] = ref["import_path"]
 
     # Build fallback map: file_path -> sorted list of symbols for line-based lookup
     # Used when source_name is None/empty (top-level code, e.g. Vue <script setup>)
@@ -73,7 +81,14 @@ def resolve_references(
 
         # Find target symbol
         # 1. Try qualified name exact match
-        target_sym = symbols_by_qualified.get(target_name)
+        qn_matches = symbols_by_qualified.get(target_name, [])
+        target_sym = qn_matches[0] if len(qn_matches) == 1 else None
+        if len(qn_matches) > 1:
+            # Multiple symbols share this qualified name — disambiguate
+            target_sym = _best_match(
+                target_name, source_file, symbols_by_name,
+                ref_kind=kind, source_parent=source_parent, import_map=import_map,
+            )
         # If the qualified match is in a different file, prefer a local
         # symbol (same-file, then same-directory for Go packages).
         if target_sym is not None and target_sym.get("file_path") != source_file:
@@ -93,7 +108,10 @@ def resolve_references(
                             break
         # 2. Try by simple name with disambiguation
         if target_sym is None:
-            target_sym = _best_match(target_name, source_file, symbols_by_name, ref_kind=kind, source_parent=source_parent)
+            target_sym = _best_match(
+                target_name, source_file, symbols_by_name,
+                ref_kind=kind, source_parent=source_parent, import_map=import_map,
+            )
 
         if target_sym is None:
             continue
@@ -119,7 +137,63 @@ def resolve_references(
     return edges
 
 
-def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: str = "", source_parent: str = "") -> dict | None:
+def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
+    """Filter candidates whose file_path matches an import path string.
+
+    Handles:
+    - @/ alias → src/ (Vue convention)
+    - ./ and ../ relative prefixes (stripped for suffix matching)
+    - Barrel exports: import from '@/composables/kiniseis' matches
+      'src/composables/kiniseis/types.ts'
+    - File extension stripping on candidates
+    """
+    if not import_path:
+        return []
+
+    # Normalize import path: strip prefix, normalize separators
+    normalized = import_path.replace("\\", "/")
+    if normalized.startswith("@/"):
+        normalized = "src/" + normalized[2:]
+    elif normalized.startswith("./"):
+        normalized = normalized[2:]
+    elif normalized.startswith("../"):
+        # Keep relative — will use endswith matching
+        pass
+
+    # Strip trailing extension from normalized path if present
+    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py"):
+        if normalized.endswith(ext):
+            normalized = normalized[: -len(ext)]
+            break
+
+    matched = []
+    for cand in candidates:
+        fp = cand.get("file_path", "").replace("\\", "/")
+        # Strip file extension from candidate
+        fp_no_ext = fp
+        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py"):
+            if fp_no_ext.endswith(ext):
+                fp_no_ext = fp_no_ext[: -len(ext)]
+                break
+
+        # Direct match: candidate path ends with normalized import path
+        if fp_no_ext.endswith("/" + normalized) or fp_no_ext == normalized:
+            matched.append(cand)
+        # Barrel export: import path is a directory prefix of the candidate
+        elif fp.startswith(normalized + "/") or ("/" + normalized + "/") in fp:
+            matched.append(cand)
+
+    return matched
+
+
+def _best_match(
+    name: str,
+    source_file: str,
+    symbols_by_name: dict,
+    ref_kind: str = "",
+    source_parent: str = "",
+    import_map: dict[tuple[str, str], str] | None = None,
+) -> dict | None:
     """Find the best matching symbol for a name, preferring locality."""
     candidates = symbols_by_name.get(name, [])
     if not candidates:
@@ -164,6 +238,18 @@ def _best_match(name: str, source_file: str, symbols_by_name: dict, ref_kind: st
             return exported[0]
         return same_dir[0]
 
+    # Import-aware resolution: use import path data to narrow candidates
+    if import_map:
+        imp_path = import_map.get((source_file, name))
+        if imp_path:
+            import_matched = _match_import_path(imp_path, candidates)
+            if import_matched:
+                # Prefer exported among import-matched candidates
+                exported = [s for s in import_matched if s.get("is_exported")]
+                if exported:
+                    return exported[0]
+                return import_matched[0]
+
     # Fall back: prefer exported symbols globally
     exported = [s for s in candidates if s.get("is_exported")]
     if exported:
@@ -176,24 +262,32 @@ def _closest_symbol(
     ref_line: int | None,
     file_symbols: dict[str, list[dict]],
 ) -> dict | None:
-    """Find the closest symbol at or before ref_line in the same file.
+    """Find the symbol that contains ref_line, or fall back to file-level source.
 
-    Falls back to the first symbol in the file if ref_line is None or
-    no symbol precedes the reference.
+    Prefers the most-nested symbol whose line_start <= ref_line <= line_end.
+    When no symbol contains the reference (module-scope code like watch callbacks),
+    returns the first symbol in the file as a file-level source to avoid
+    self-references from "closest before" matching a completed function.
     """
     syms = file_symbols.get(source_file)
     if not syms:
         return None
     if ref_line is None:
         return syms[0]
-    # Find the last symbol whose line_start <= ref_line
-    best = syms[0]
+
+    # Prefer symbol that CONTAINS the reference line (most nested wins)
+    containing = None
     for sym in syms:
-        if (sym.get("line_start") or 0) <= ref_line:
-            best = sym
-        else:
-            break
-    return best
+        ls = sym.get("line_start") or 0
+        le = sym.get("line_end") or 0
+        if ls <= ref_line and le >= ref_line and le > 0:
+            containing = sym  # last containing wins (most nested)
+    if containing:
+        return containing
+
+    # No containing symbol — reference is at module scope.
+    # Return first symbol in file as a "file-level" source.
+    return syms[0]
 
 
 def build_file_edges(
