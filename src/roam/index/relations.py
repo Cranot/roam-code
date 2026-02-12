@@ -1,6 +1,7 @@
 """Import and call resolution into graph edges."""
 
 import os
+import re
 
 
 def resolve_references(
@@ -51,6 +52,9 @@ def resolve_references(
     edges = []
     seen = set()
 
+    # Pre-compute Salesforce canonical file preferences
+    sf_file_priority = _build_sf_file_priority(symbols_by_name)
+
     for ref in references:
         source_name = ref.get("source_name", "")
         target_name = ref.get("target_name", "")
@@ -79,39 +83,52 @@ def resolve_references(
         elif "." in src_qn:
             source_parent = src_qn.rsplit(".", 1)[0]
 
-        # Find target symbol
-        # 1. Try qualified name exact match
-        qn_matches = symbols_by_qualified.get(target_name, [])
-        target_sym = qn_matches[0] if len(qn_matches) == 1 else None
-        if len(qn_matches) > 1:
-            # Multiple symbols share this qualified name — disambiguate
-            target_sym = _best_match(
-                target_name, source_file, symbols_by_name,
-                ref_kind=kind, source_parent=source_parent, import_map=import_map,
+        # Salesforce resolution: handle @salesforce/ imports and controller refs
+        import_path = ref.get("import_path", "")
+        target_sym = None
+        if import_path and import_path.startswith("@salesforce/"):
+            target_sym = _resolve_salesforce_import(
+                import_path, symbols_by_name, symbols_by_qualified,
             )
-        # If the qualified match is in a different file, prefer a local
-        # symbol (same-file, then same-directory for Go packages).
-        if target_sym is not None and target_sym.get("file_path") != source_file:
-            candidates = symbols_by_name.get(target_name, [])
-            # Prefer same-file
-            for cand in candidates:
-                if cand.get("file_path") == source_file:
-                    target_sym = cand
-                    break
-            else:
-                # Prefer same-directory (Go packages, co-located modules)
-                source_dir = os.path.dirname(source_file) if source_file else ""
-                if source_dir and os.path.dirname(target_sym.get("file_path", "")) != source_dir:
-                    for cand in candidates:
-                        if os.path.dirname(cand.get("file_path", "")) == source_dir:
-                            target_sym = cand
-                            break
-        # 2. Try by simple name with disambiguation
+        elif kind in ("controller", "soql", "metadata_ref", "component_ref"):
+            target_sym = _resolve_salesforce_name(
+                target_name, kind, symbols_by_name, sf_file_priority,
+            )
+
+        # Standard resolution (skip if Salesforce already resolved)
         if target_sym is None:
-            target_sym = _best_match(
-                target_name, source_file, symbols_by_name,
-                ref_kind=kind, source_parent=source_parent, import_map=import_map,
-            )
+            # 1. Try qualified name exact match
+            qn_matches = symbols_by_qualified.get(target_name, [])
+            target_sym = qn_matches[0] if len(qn_matches) == 1 else None
+            if len(qn_matches) > 1:
+                # Multiple symbols share this qualified name — disambiguate
+                target_sym = _best_match(
+                    target_name, source_file, symbols_by_name,
+                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
+                )
+            # If the qualified match is in a different file, prefer a local
+            # symbol (same-file, then same-directory for Go packages).
+            if target_sym is not None and target_sym.get("file_path") != source_file:
+                candidates = symbols_by_name.get(target_name, [])
+                # Prefer same-file
+                for cand in candidates:
+                    if cand.get("file_path") == source_file:
+                        target_sym = cand
+                        break
+                else:
+                    # Prefer same-directory (Go packages, co-located modules)
+                    source_dir = os.path.dirname(source_file) if source_file else ""
+                    if source_dir and os.path.dirname(target_sym.get("file_path", "")) != source_dir:
+                        for cand in candidates:
+                            if os.path.dirname(cand.get("file_path", "")) == source_dir:
+                                target_sym = cand
+                                break
+            # 2. Try by simple name with disambiguation
+            if target_sym is None:
+                target_sym = _best_match(
+                    target_name, source_file, symbols_by_name,
+                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
+                )
 
         if target_sym is None:
             continue
@@ -328,3 +345,135 @@ def build_file_edges(
         }
         for (src, tgt), count in file_edge_counts.items()
     ]
+
+
+# ---------------------------------------------------------------------------
+# Salesforce cross-language resolution
+# ---------------------------------------------------------------------------
+
+# File extension priority for Salesforce disambiguation
+_SF_EXT_PRIORITY = {
+    ".cls": 0,
+    ".trigger": 1,
+    ".cmp": 2,
+    ".app": 2,
+    ".page": 3,
+    ".component": 3,
+}
+
+
+def _build_sf_file_priority(symbols_by_name: dict) -> dict[str, int]:
+    """Pre-compute file priority scores for Salesforce disambiguation."""
+    priority = {}
+    for sym_list in symbols_by_name.values():
+        for sym in sym_list:
+            fp = sym.get("file_path", "")
+            if fp not in priority:
+                _, ext = os.path.splitext(fp)
+                priority[fp] = _SF_EXT_PRIORITY.get(ext, 10)
+    return priority
+
+
+def _resolve_salesforce_import(
+    import_path: str,
+    symbols_by_name: dict,
+    symbols_by_qualified: dict,
+) -> dict | None:
+    """Resolve @salesforce/* import paths to symbols.
+
+    Handles:
+    - @salesforce/apex/ClassName.methodName → find method in .cls file
+    - @salesforce/schema/ObjectName.FieldName → match by qualified name
+    - @salesforce/label/c.LabelName → match CustomLabels
+    """
+    parts = import_path.split("/")
+    if len(parts) < 3:
+        return None
+
+    category = parts[1]  # apex, schema, label, messageChannel, etc.
+
+    if category == "apex" and len(parts) >= 3:
+        # @salesforce/apex/MyController.myMethod
+        apex_ref = parts[2]
+        if "." in apex_ref:
+            class_name, method_name = apex_ref.rsplit(".", 1)
+            # Try qualified name first: ClassName.methodName
+            qn = f"{class_name}.{method_name}"
+            candidates = symbols_by_qualified.get(qn, [])
+            if candidates:
+                # Prefer candidates from .cls files
+                cls_cands = [c for c in candidates
+                             if c.get("file_path", "").endswith(".cls")]
+                return cls_cands[0] if cls_cands else candidates[0]
+            # Try just the method name
+            method_cands = symbols_by_name.get(method_name, [])
+            for c in method_cands:
+                if c.get("file_path", "").endswith(".cls"):
+                    # Check if it belongs to the right class
+                    cqn = c.get("qualified_name", "")
+                    if cqn.startswith(class_name + "."):
+                        return c
+        else:
+            # Just class name: @salesforce/apex/MyController
+            candidates = symbols_by_name.get(apex_ref, [])
+            cls_cands = [c for c in candidates
+                         if c.get("file_path", "").endswith(".cls")
+                         and c.get("kind") == "class"]
+            if cls_cands:
+                return cls_cands[0]
+
+    elif category == "schema" and len(parts) >= 3:
+        # @salesforce/schema/Account.Name
+        schema_ref = parts[2]
+        candidates = symbols_by_qualified.get(schema_ref, [])
+        if candidates:
+            return candidates[0]
+        # Try simple name
+        name = schema_ref.rsplit(".", 1)[-1] if "." in schema_ref else schema_ref
+        candidates = symbols_by_name.get(name, [])
+        if candidates:
+            return candidates[0]
+
+    elif category == "label" and len(parts) >= 3:
+        # @salesforce/label/c.MyLabel
+        label_ref = parts[2]
+        # Strip namespace prefix (e.g. "c.MyLabel" → "MyLabel")
+        label_name = label_ref.split(".")[-1] if "." in label_ref else label_ref
+        candidates = symbols_by_name.get(label_name, [])
+        if candidates:
+            return candidates[0]
+
+    return None
+
+
+def _resolve_salesforce_name(
+    target_name: str,
+    kind: str,
+    symbols_by_name: dict,
+    sf_file_priority: dict,
+) -> dict | None:
+    """Resolve Salesforce controller/component/SOQL references by name.
+
+    Prefers .cls files for controller refs, applies SF file priority ordering.
+    """
+    candidates = symbols_by_name.get(target_name, [])
+    if not candidates:
+        return None
+    if len(candidates) == 1:
+        return candidates[0]
+
+    # For controller refs, prefer class symbols in .cls files
+    if kind == "controller":
+        cls_classes = [c for c in candidates
+                       if c.get("file_path", "").endswith(".cls")
+                       and c.get("kind") == "class"]
+        if cls_classes:
+            return cls_classes[0]
+
+    # Sort by file priority
+    def priority_key(sym):
+        fp = sym.get("file_path", "")
+        return sf_file_priority.get(fp, 10)
+
+    sorted_cands = sorted(candidates, key=priority_key)
+    return sorted_cands[0]

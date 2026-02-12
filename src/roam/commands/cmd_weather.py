@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.db.queries import TOP_CHURN_FILES
-from roam.output.formatter import format_table, to_json
+from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -19,7 +19,10 @@ def weather(ctx, count):
         rows = conn.execute(TOP_CHURN_FILES, (count * 2,)).fetchall()
         if not rows:
             if json_mode:
-                click.echo(to_json({"hotspots": []}))
+                click.echo(to_json(json_envelope("weather",
+                    summary={"hotspots": 0},
+                    hotspots=[],
+                )))
             else:
                 click.echo("No churn data available. Is this a git repository?")
             return
@@ -41,16 +44,21 @@ def weather(ctx, count):
         scored.sort(reverse=True)
 
         if json_mode:
-            click.echo(to_json({
-                "hotspots": [
-                    {
-                        "path": path, "score": round(score), "churn": churn,
-                        "complexity": round(complexity, 1), "commits": commits,
-                        "authors": authors, "reason": reason,
-                    }
-                    for score, churn, complexity, commits, authors, reason, path in scored[:count]
-                ],
-            }))
+            hotspot_list = [
+                {
+                    "path": path, "score": round(score), "churn": churn,
+                    "complexity": round(complexity, 1), "commits": commits,
+                    "authors": authors, "reason": reason,
+                }
+                for score, churn, complexity, commits, authors, reason, path in scored[:count]
+            ]
+            click.echo(to_json(json_envelope("weather",
+                summary={
+                    "hotspots": len(hotspot_list),
+                    "max_score": hotspot_list[0]["score"] if hotspot_list else 0,
+                },
+                hotspots=hotspot_list,
+            )))
             return
 
         table_rows = []

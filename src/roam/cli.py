@@ -43,6 +43,38 @@ _COMMANDS = {
     "split":       ("roam.commands.cmd_split",      "split"),
     "risk":        ("roam.commands.cmd_risk",       "risk"),
     "why":         ("roam.commands.cmd_why",        "why"),
+    "snapshot":    ("roam.commands.cmd_snapshot",   "snapshot"),
+    "trend":       ("roam.commands.cmd_trend",     "trend"),
+    "coverage-gaps": ("roam.commands.cmd_coverage_gaps", "coverage_gaps"),
+    "report":      ("roam.commands.cmd_report",    "report"),
+    "understand":  ("roam.commands.cmd_understand", "understand"),
+    "affected-tests": ("roam.commands.cmd_affected_tests", "affected_tests"),
+    "complexity":  ("roam.commands.cmd_complexity",  "complexity"),
+    "debt":        ("roam.commands.cmd_debt",        "debt"),
+    "conventions": ("roam.commands.cmd_conventions", "conventions"),
+    "bus-factor":  ("roam.commands.cmd_bus_factor",  "bus_factor"),
+    "entry-points": ("roam.commands.cmd_entry_points", "entry_points"),
+    "breaking":    ("roam.commands.cmd_breaking",     "breaking"),
+    "safe-zones":  ("roam.commands.cmd_safe_zones",  "safe_zones"),
+    "doc-staleness": ("roam.commands.cmd_doc_staleness", "doc_staleness"),
+    "fn-coupling":  ("roam.commands.cmd_fn_coupling",  "fn_coupling"),
+    "alerts":       ("roam.commands.cmd_alerts",       "alerts"),
+    "fitness":      ("roam.commands.cmd_fitness",      "fitness"),
+    "patterns":     ("roam.commands.cmd_patterns",     "patterns"),
+    "preflight":    ("roam.commands.cmd_preflight",    "preflight"),
+    "init":         ("roam.commands.cmd_init",         "init"),
+    "digest":       ("roam.commands.cmd_digest",       "digest"),
+}
+
+# Command categories for organized --help display
+_CATEGORIES = {
+    "Getting Started": ["index", "init", "understand", "describe"],
+    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "digest"],
+    "Codebase Health": ["health", "weather", "debt", "complexity", "alerts", "trend", "fitness", "snapshot"],
+    "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones"],
+    "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
+    "Reports & CI": ["report", "breaking", "coverage-gaps", "bus-factor", "owner", "risk"],
+    "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk"],
 }
 
 
@@ -60,12 +92,72 @@ class LazyGroup(click.Group):
         mod = importlib.import_module(module_path)
         return getattr(mod, attr_name)
 
+    def format_help(self, ctx, formatter):
+        """Categorized help display instead of flat alphabetical list."""
+        self.format_usage(ctx, formatter)
+        formatter.write("\n")
+        if self.help:
+            formatter.write(self.help + "\n\n")
+
+        # Show categorized commands (first 4 categories = ~20 commands)
+        shown = set()
+        priority_cats = ["Getting Started", "Daily Workflow", "Codebase Health", "Architecture"]
+        for cat_name in priority_cats:
+            cmds = _CATEGORIES.get(cat_name, [])
+            valid_cmds = [c for c in cmds if c in _COMMANDS and c not in shown]
+            if not valid_cmds:
+                continue
+            formatter.write(f"  {cat_name}:\n")
+            for cmd_name in valid_cmds:
+                cmd = self.get_command(ctx, cmd_name)
+                if cmd is None:
+                    continue
+                help_text = cmd.get_short_help_str(limit=60) if cmd else ""
+                formatter.write(f"    {cmd_name:20s} {help_text}\n")
+                shown.add(cmd_name)
+            formatter.write("\n")
+
+        remaining = sorted(c for c in _COMMANDS if c not in shown)
+        if remaining:
+            formatter.write(f"  More Commands ({len(remaining)}):\n")
+            formatter.write(f"    {', '.join(remaining)}\n\n")
+
+        formatter.write("  Run `roam <command> --help` for details on any command.\n")
+
+
+def _check_gate(gate_expr: str, data: dict) -> bool:
+    """Evaluate a gate expression like 'score>=70' against data.
+
+    Returns True if the gate passes, False if it fails.
+    Supports: key>=N, key<=N, key>N, key<N, key=N
+    """
+    import re
+    m = re.match(r'^(\w+)\s*(>=|<=|>|<|=)\s*(\d+(?:\.\d+)?)$', gate_expr.strip())
+    if not m:
+        return True  # can't parse, pass by default
+    key, op, val_str = m.groups()
+    val = float(val_str)
+
+    actual = data.get(key)
+    if actual is None:
+        return True  # key not found, pass
+
+    actual = float(actual)
+    if op == '>=': return actual >= val
+    if op == '<=': return actual <= val
+    if op == '>': return actual > val
+    if op == '<': return actual < val
+    if op == '=': return actual == val
+    return True
+
 
 @click.group(cls=LazyGroup)
 @click.version_option(package_name="roam-code")
 @click.option('--json', 'json_mode', is_flag=True, help='Output in JSON format')
+@click.option('--compact', is_flag=True, help='Compact output: TSV tables, minimal JSON envelope')
 @click.pass_context
-def cli(ctx, json_mode):
+def cli(ctx, json_mode, compact):
     """Roam: Codebase comprehension tool."""
     ctx.ensure_object(dict)
     ctx.obj['json'] = json_mode
+    ctx.obj['compact'] = compact

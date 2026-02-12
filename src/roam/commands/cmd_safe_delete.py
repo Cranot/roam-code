@@ -5,7 +5,7 @@ import os
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 
@@ -142,25 +142,30 @@ def safe_delete(ctx, name):
             test_note = "No tests reference this symbol"
 
         if json_mode:
-            click.echo(to_json({
-                "symbol": sym["qualified_name"] or sym["name"],
-                "kind": sym["kind"],
-                "location": loc(sym["file_path"], sym["line_start"]),
-                "verdict": verdict,
-                "reason": reason,
-                "direct_callers": len(non_test_callers),
-                "transitive_dependents": dependent_count,
-                "affected_files": len(affected_files),
-                "test_callers": len(test_callers),
-                "test_note": test_note,
-                "file_imported": file_imported,
-                "sibling_refs": sibling_refs,
-                "callers": [
+            click.echo(to_json(json_envelope("safe-delete",
+                summary={
+                    "verdict": verdict,
+                    "direct_callers": len(non_test_callers),
+                    "affected_files": len(affected_files),
+                },
+                symbol=sym["qualified_name"] or sym["name"],
+                kind=sym["kind"],
+                location=loc(sym["file_path"], sym["line_start"]),
+                verdict=verdict,
+                reason=reason,
+                direct_callers=len(non_test_callers),
+                transitive_dependents=dependent_count,
+                affected_files=len(affected_files),
+                test_callers=len(test_callers),
+                test_note=test_note,
+                file_imported=file_imported,
+                sibling_refs=sibling_refs,
+                callers=[
                     {"name": c["name"], "kind": c["kind"],
                      "file": c["file_path"], "edge_kind": c["edge_kind"]}
                     for c in non_test_callers[:10]
                 ],
-            }))
+            )))
             return
 
         # --- Text output ---
