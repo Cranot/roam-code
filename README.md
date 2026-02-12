@@ -4,7 +4,7 @@
 
 **Roam builds a semantic graph of your codebase and lets AI agents query it with one shell command.**
 
-*Start with 5 core commands · scales to 57 tools*
+*5 core commands · advanced tools when you need them*
 
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
@@ -17,9 +17,11 @@
 
 ## What is Roam?
 
-Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. Agents query it via CLI instead of repeatedly grepping and reading files.
+Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. Agents query it via CLI instead of repeatedly grepping files and guessing structure.
 
-Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact.
+Unlike LSPs (editor-bound and language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact.
+
+A semantic graph means Roam understands what functions call what, how modules depend on each other, which tests cover which code, and the overall architecture structure.
 
 ```
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
@@ -51,7 +53,7 @@ Files to read:
 ```bash
 $ roam understand              # full codebase briefing
 $ roam context <name>          # files-to-read with exact line ranges
-$ roam preflight <name>        # blast radius + tests + complexity + fitness
+$ roam preflight <name>        # blast radius + tests + complexity + architecture rules
 $ roam health                  # composite score (0-100)
 $ roam diff                    # blast radius of uncommitted changes
 ```
@@ -73,7 +75,7 @@ $ roam diff                    # blast radius of uncommitted changes
 
 ## Why use Roam
 
-**Speed.** One command replaces 5-10 tool calls. Under 0.5s for any query.
+**Speed.** One command replaces 5-10 tool calls (in typical workflows). Under 0.5s for any query.
 
 **Dependency-aware.** Computes structure, not string matches. Knows `Flask` has 47 dependents and 31 affected tests. `grep` knows it appears 847 times.
 
