@@ -1,5 +1,7 @@
 """Show detected clusters and directory mismatches."""
 
+from __future__ import annotations
+
 import os
 from collections import Counter
 

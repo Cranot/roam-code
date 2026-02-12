@@ -1,5 +1,7 @@
 """Explain why a symbol matters — role, reach, criticality, verdict."""
 
+from __future__ import annotations
+
 import re
 
 import click

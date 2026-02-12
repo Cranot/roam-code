@@ -5,6 +5,8 @@ Extracts metadata type definitions and references to Apex classes,
 custom objects, fields, and other metadata components.
 """
 
+from __future__ import annotations
+
 import re
 
 from .base import LanguageExtractor

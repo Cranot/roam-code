@@ -1,5 +1,7 @@
 """Analyze a file's internal structure and suggest decomposition."""
 
+from __future__ import annotations
+
 import re
 from collections import Counter
 
