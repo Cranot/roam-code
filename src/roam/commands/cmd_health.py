@@ -274,10 +274,21 @@ def health(ctx, no_framework):
             pass
         health_score = max(0, min(100, int(health_score)))
 
+        # --- Verdict ---
+        if health_score >= 80:
+            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical issues"
+        elif health_score >= 60:
+            verdict = f"Fair codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+        elif health_score >= 40:
+            verdict = f"Needs attention ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+        else:
+            verdict = f"Unhealthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+
         if json_mode:
             j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
             click.echo(to_json(json_envelope("health",
                 summary={
+                    "verdict": verdict,
                     "health_score": health_score,
                     "tangle_ratio": tangle_ratio,
                     "issue_count": j_issue_count,
@@ -334,6 +345,7 @@ def health(ctx, no_framework):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {verdict}\n")
         issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
         parts = []
         if cycles:

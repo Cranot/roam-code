@@ -71,11 +71,27 @@ def _build_file_skeleton(conn, frow):
     """Build the skeleton data for a single file row.
 
     Returns (frow, symbols, kind_counts, parent_ids).
+    Enriches frow with file_stats data (cognitive_load, health_score).
     """
     symbols = conn.execute(SYMBOLS_IN_FILE, (frow["id"],)).fetchall()
     kind_counts = Counter(abbrev_kind(s["kind"]) for s in symbols)
     parent_ids = {s["id"]: s["parent_id"] for s in symbols}
-    return symbols, kind_counts, parent_ids
+
+    # Enrich frow with file_stats
+    stats = conn.execute(
+        "SELECT cognitive_load, health_score FROM file_stats WHERE file_id = ?",
+        (frow["id"],),
+    ).fetchone()
+    # Build a mutable dict from the sqlite3.Row
+    enriched = dict(frow)
+    if stats:
+        enriched["cognitive_load"] = stats["cognitive_load"]
+        enriched["health_score"] = stats["health_score"]
+    else:
+        enriched["cognitive_load"] = None
+        enriched["health_score"] = None
+
+    return enriched, symbols, kind_counts, parent_ids
 
 
 def _skeleton_to_json(frow, symbols, kind_counts, parent_ids):
@@ -94,6 +110,8 @@ def _skeleton_to_json(frow, symbols, kind_counts, parent_ids):
         "line_count": frow["line_count"],
         "symbol_count": len(symbols),
         "kind_summary": dict(kind_counts.most_common()),
+        "cognitive_load": frow.get("cognitive_load"),
+        "health_score": frow.get("health_score"),
         "symbols": [
             {
                 "name": s["name"],
@@ -118,9 +136,14 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
     if header:
         lines.append(header)
     else:
-        lines.append(
-            f"{frow['path']}  ({frow['language'] or '?'}, {frow['line_count']} lines)"
-        )
+        meta = f"{frow['language'] or '?'}, {frow['line_count']} lines"
+        cl = frow.get("cognitive_load")
+        hs = frow.get("health_score")
+        if cl is not None:
+            meta += f", load={cl:.0f}/100"
+        if hs is not None:
+            meta += f", health={hs}/10"
+        lines.append(f"{frow['path']}  ({meta})")
     lines.append("")
 
     if not symbols:
@@ -222,7 +245,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 click.echo(f"File not found in index: {unique_paths[0]}")
                 raise SystemExit(1)
 
-            symbols, kind_counts, parent_ids = _build_file_skeleton(conn, frow)
+            frow, symbols, kind_counts, parent_ids = _build_file_skeleton(conn, frow)
 
             if json_mode:
                 obj = _skeleton_to_json(frow, symbols, kind_counts, parent_ids)
@@ -235,6 +258,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                     language=obj["language"],
                     line_count=obj["line_count"],
                     kind_summary=obj["kind_summary"],
+                    cognitive_load=obj.get("cognitive_load"),
+                    health_score=obj.get("health_score"),
                     symbols=obj["symbols"],
                 )))
                 return
@@ -251,7 +276,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             if frow is None:
                 missing.append(p)
                 continue
-            symbols, kind_counts, parent_ids = _build_file_skeleton(conn, frow)
+            frow, symbols, kind_counts, parent_ids = _build_file_skeleton(conn, frow)
             file_results.append((frow, symbols, kind_counts, parent_ids))
 
         if json_mode:

@@ -73,7 +73,8 @@ CREATE TABLE IF NOT EXISTS file_stats (
     distinct_authors INTEGER DEFAULT 0,
     complexity REAL DEFAULT 0,
     health_score REAL DEFAULT NULL,
-    cochange_entropy REAL DEFAULT NULL
+    cochange_entropy REAL DEFAULT NULL,
+    cognitive_load REAL DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS graph_metrics (

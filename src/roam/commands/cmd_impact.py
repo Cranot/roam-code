@@ -92,6 +92,16 @@ def impact(ctx, name):
                 for ct in conv_tests:
                     sf_test_files.add(ct["path"])
 
+        # Verdict
+        if len(dependents) >= 50:
+            verdict = f"Large blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
+        elif len(dependents) >= 10:
+            verdict = f"Moderate blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
+        elif len(dependents) > 0:
+            verdict = f"Small blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
+        else:
+            verdict = "No dependents — safe to change"
+
         if json_mode:
             json_deps = {}
             for edge_kind, items in by_kind.items():
@@ -101,6 +111,7 @@ def impact(ctx, name):
                 ]
             click.echo(to_json(json_envelope("impact",
                 summary={
+                    "verdict": verdict,
                     "affected_symbols": len(dependents),
                     "affected_files": len(affected_files),
                     "sf_convention_tests": len(sf_test_files),
@@ -114,6 +125,7 @@ def impact(ctx, name):
             )))
             return
 
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")
         click.echo()
 

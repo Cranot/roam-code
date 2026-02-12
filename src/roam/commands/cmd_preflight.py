@@ -569,10 +569,21 @@ def preflight(ctx, target, staged):
             fitns["severity"],
         )
 
+        # Verdict
+        if risk == "LOW":
+            verdict = f"Safe to proceed — {risk} risk for {label}"
+        elif risk == "MEDIUM":
+            verdict = f"Proceed with caution — {risk} risk for {label}"
+        elif risk == "HIGH":
+            verdict = f"Review carefully — {risk} risk, {blast['affected_symbols']} symbols affected"
+        else:
+            verdict = f"Significant risk — {risk}, {blast['affected_symbols']} symbols in blast radius"
+
         # JSON output
         if json_mode:
             click.echo(to_json(json_envelope("preflight",
                 summary={
+                    "verdict": verdict,
                     "target": label,
                     "risk_level": risk,
                     "symbols_checked": len(sym_ids),
@@ -621,6 +632,7 @@ def preflight(ctx, target, staged):
             return
 
         # Text output
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Pre-flight check for `{label}`:\n")
 
         # Blast radius

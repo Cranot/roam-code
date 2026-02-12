@@ -60,6 +60,7 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "symbols", "default_value", "TEXT")
     _safe_alter(conn, "file_stats", "health_score", "REAL")
     _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
+    _safe_alter(conn, "file_stats", "cognitive_load", "REAL")
     _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
     _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
     _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
