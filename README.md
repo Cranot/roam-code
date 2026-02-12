@@ -4,7 +4,7 @@
 
 **Roam builds a semantic graph of your codebase and lets AI agents query it with one shell command.**
 
-*Start with 5 core commands · scales to 57 tools · 17 languages supported*
+*Start with 5 core commands · scales to 57 tools*
 
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
@@ -17,9 +17,9 @@
 
 ## What is Roam?
 
-Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. AI agents query it via CLI instead of repeatedly grepping and reading files.
+Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. Agents query it via CLI instead of repeatedly grepping and reading files.
 
-Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries designed for AI agents -- offline, cross-language, and compact.
+Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact.
 
 ```
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
@@ -31,7 +31,7 @@ Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
 
 ### The problem
 
-AI coding agents explore codebases inefficiently: dozens of grep/read cycles, high token cost, no structural understanding. Roam replaces this with one graph query:
+Coding agents explore codebases inefficiently: dozens of grep/read cycles, high token cost, no structural understanding. Roam replaces this with one graph query:
 
 ```
 $ roam context Flask
@@ -56,19 +56,9 @@ $ roam health                  # composite score (0-100)
 $ roam diff                    # blast radius of uncommitted changes
 ```
 
-|  | Without Roam | With Roam |
-|--|-------------|-----------|
-| Tool calls | 8 | **1** |
-| Wall time | ~11s | **<0.5s** |
-| Tokens consumed | ~15,000 | **~3,000** |
-
-*Measured on a 200-file Python project (Flask). See [benchmarks](#performance) for more.*
-
-Runs fully local. No API keys, telemetry, or network calls.
-
 ## Best for
 
-- **AI coding workflows** -- agents get structured answers that reduce token usage vs raw file exploration
+- **Agent-assisted coding** -- structured answers that reduce token usage vs raw file exploration
 - **Large codebases (100+ files)** -- graph queries beat linear search at scale
 - **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
@@ -83,15 +73,23 @@ Runs fully local. No API keys, telemetry, or network calls.
 
 ## Why use Roam
 
-**Speed.** One command replaces 5-10 tool calls. `roam context Flask` returns definition + 47 callers + callees + files-to-read with line ranges -- in under 0.5s.
+**Speed.** One command replaces 5-10 tool calls. Under 0.5s for any query.
 
-**Dependency-aware analysis.** Roam computes dependency structure, not string matches. It knows `Flask` has 47 dependents, 89 transitive consumers, and 31 affected tests. `grep` knows the string appears 847 times.
+**Dependency-aware.** Computes structure, not string matches. Knows `Flask` has 47 dependents and 31 affected tests. `grep` knows it appears 847 times.
 
-**Output optimized for LLMs.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), token budgets, `--json` envelopes. Designed for agent consumption, not human decoration.
+**LLM-optimized output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), `--json` envelopes. Designed for agent consumption, not human decoration.
 
-**Privacy.** Works in air-gapped environments. No API keys, telemetry, or network calls.
+**Fully local.** No API keys, telemetry, or network calls. Works in air-gapped environments.
 
 **CI-ready.** `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
+
+|  | Without Roam | With Roam |
+|--|-------------|-----------|
+| Tool calls | 8 | **1** |
+| Wall time | ~11s | **<0.5s** |
+| Tokens consumed | ~15,000 | **~3,000** |
+
+*Measured on a typical agent workflow in a 200-file Python project (Flask). See [benchmarks](#performance) for more.*
 
 <details>
 <summary><strong>Table of Contents</strong></summary>
@@ -436,7 +434,7 @@ Ten commands. Complete picture: structure, dependencies, hotspots, health, conte
 
 ## Integration with AI Coding Tools
 
-Roam is designed to be called by AI coding agents via shell commands. Instead of repeatedly grepping and reading files, the agent runs one `roam` command and gets structured output.
+Roam is designed to be called by coding agents via shell commands. Instead of repeatedly grepping and reading files, the agent runs one `roam` command and gets structured output.
 
 **Decision order for agents:**
 
@@ -519,7 +517,7 @@ Run `roam --help` for all commands. Use `roam --json <cmd>` for structured outpu
 
 ## MCP Server
 
-Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with AI tools that support MCP.
+Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with tools that support MCP.
 
 ```bash
 pip install fastmcp
