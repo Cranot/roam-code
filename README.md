@@ -9,7 +9,7 @@
 
 **Roam builds a semantic graph of your codebase and lets AI agents query it with one shell command.**
 
-*5 core commands cover 80% of workflows · 57 total tools · 17 languages*
+*Start with 5 core commands · scales to 57 tools · 17 languages supported*
 
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
@@ -22,7 +22,9 @@
 
 ## What is Roam?
 
-Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. AI agents query it via CLI instead of running dozens of Grep/Read/Glob cycles.
+Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. AI agents query it via CLI instead of repeatedly grepping and reading files.
+
+Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries designed for AI agents -- offline, cross-language, and token-efficient.
 
 ```
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
@@ -32,10 +34,31 @@ Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
            git history    + metrics         5-10 tool calls
 ```
 
+### The problem
+
+AI coding agents explore codebases inefficiently: dozens of grep/read cycles, massive token waste, no structural understanding. An agent asking "what calls Flask?" runs 5-10 tool calls and still misses transitive dependents.
+
+Roam replaces this with one graph query:
+
+```
+$ roam context Flask
+Callers: 47  Callees: 3
+Affected tests: 31
+
+Files to read:
+  src/flask/app.py:76-963              # definition
+  src/flask/__init__.py:1-15           # re-export
+  src/flask/testing.py:22-45           # caller: FlaskClient.__init__
+  tests/test_basic.py:12-30            # caller: test_app_factory
+  ...12 more files
+```
+
+### Core commands
+
 ```bash
 $ roam understand              # full codebase briefing
-$ roam context Flask           # files-to-read with exact line ranges
-$ roam preflight Flask         # blast radius + tests + complexity + fitness
+$ roam context <name>          # files-to-read with exact line ranges
+$ roam preflight <name>        # blast radius + tests + complexity + fitness
 $ roam health                  # composite score (0-100)
 $ roam diff                    # blast radius of uncommitted changes
 ```
@@ -46,12 +69,12 @@ $ roam diff                    # blast radius of uncommitted changes
 | Wall time | ~11s | **<0.5s** |
 | Tokens consumed | ~15,000 | **~3,000** |
 
-Runs locally. No API keys. No telemetry. No network calls.
+Runs fully local. No API keys, telemetry, or network calls.
 
 ## Best for
 
 - **AI coding workflows** -- agents get structured, token-efficient answers instead of raw file exploration
-- **Large codebases (50+ files)** -- graph queries beat linear search at scale
+- **Large codebases (100+ files)** -- graph queries beat linear search at scale
 - **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
 - **Multi-repo projects** -- cross-repo API edge detection between frontend and backend
@@ -63,7 +86,7 @@ Runs locally. No API keys. No telemetry. No network calls.
 - **Small scripts (<10 files)** -- just read the files directly.
 - **Pure text search** -- ripgrep is faster for raw string matching.
 
-## Why Roam
+## Why use Roam
 
 **Speed.** One command replaces 5-10 tool calls. `roam context Flask` returns definition + 47 callers + callees + files-to-read with line ranges -- in under 0.5s.
 
@@ -71,14 +94,14 @@ Runs locally. No API keys. No telemetry. No network calls.
 
 **AI-native output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), token budgets, `--json` envelopes. Output is designed for LLM consumption, not human decoration.
 
-**Privacy.** Runs locally. No API keys, no telemetry, no network calls. Works in air-gapped environments.
+**Privacy.** Runs fully local. No API keys, telemetry, or network calls. Works in air-gapped environments.
 
 **CI-ready.** `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
 
 <details>
 <summary><strong>Table of Contents</strong></summary>
 
-**Getting Started:** [What is Roam?](#what-is-roam) · [Best for](#best-for) · [Why Roam](#why-roam) · [Install](#install) · [Quick Start](#quick-start)
+**Getting Started:** [What is Roam?](#what-is-roam) · [Best for](#best-for) · [Why use Roam](#why-use-roam) · [Install](#install) · [Quick Start](#quick-start)
 
 **Using Roam:** [Commands](#commands) · [Walkthrough](#walkthrough-investigating-a-codebase) · [AI Coding Tools](#integration-with-ai-coding-tools) · [MCP Server](#mcp-server)
 
@@ -157,17 +180,7 @@ roam health
 
 ## Commands
 
-Five core commands cover ~80% of agent workflows:
-
-```
-roam understand              # orient: tech stack, architecture, conventions
-roam context <name>          # gather: files-to-read with exact line ranges
-roam preflight <name>        # check: blast radius + tests + fitness before changing
-roam diff                    # review: blast radius of uncommitted changes
-roam health                  # score: composite architecture health (0-100)
-```
-
-57 total commands are organized into 8 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 57 total commands are organized into 8 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -428,7 +441,7 @@ Ten commands. Complete picture: structure, dependencies, hotspots, health, conte
 
 ## Integration with AI Coding Tools
 
-Roam is designed to be called by AI coding agents via shell commands. Instead of multiple Glob/Grep/Read cycles, the agent runs one `roam` command and gets structured output.
+Roam is designed to be called by AI coding agents via shell commands. Instead of repeatedly grepping and reading files, the agent runs one `roam` command and gets structured output.
 
 **Decision order for agents:**
 
