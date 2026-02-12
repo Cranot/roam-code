@@ -11,7 +11,7 @@
 
 *one shell command replaces 5-10 tool calls · saves 60-70% of context-gathering tokens*
 
-v7.2.0 · 50 commands · 16 languages · Salesforce Tier 1 · SARIF · MCP · GitHub Action
+v7.4.0 · 57 commands · 17 languages · Multi-repo workspaces · Salesforce Tier 1 · SARIF · MCP · GitHub Action
 
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
@@ -45,8 +45,8 @@ $ roam health --gate score>=70   # CI quality gate — exit 1 on failure
 
 - **One call replaces many.** `roam context Flask` returns definition + 47 callers + callees + files-to-read with line ranges. Without Roam, your agent runs 5-10 Grep/Read/Glob cycles for the same information.
 - **Graph intelligence, not text search.** Roam knows that `Flask` is a hub with 47 dependents, 89 transitive consumers, and 31 affected tests. grep knows that the string "Flask" appears 847 times.
-- **50 commands** covering navigation, health, architecture, CI gates, and reports.
-- **16 languages** with full symbol + call graph extraction (11 Tier 1 + 5 Tier 2).
+- **57 commands** covering navigation, health, architecture, multi-repo workspaces, CI gates, and reports.
+- **17 languages** with full symbol + call graph extraction (12 Tier 1 + 5 Tier 2).
 - **100% local** -- no API keys, no telemetry, no network calls. Works in air-gapped environments.
 - **AI-optimized output** -- plain ASCII, compact abbreviations, token budgets. Zero tokens wasted on decoration.
 - **CI-ready** -- `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
@@ -113,7 +113,7 @@ That's it. `roam init` creates a `.roam/fitness.yaml` config (6 architecture rul
 
 ### What's Next
 
-- **Set up your AI agent (recommended):** Copy the [integration instructions](#integration-with-ai-coding-tools) into your agent's config, or run `roam describe --agent-prompt >> CLAUDE.md`
+- **Set up your AI agent (recommended):** Copy the [integration instructions](#integration-with-ai-coding-tools) into your agent's config, or run `roam describe --agent-prompt >> Agent.md` (or `CLAUDE.md`)
 - **Explore your codebase:** `roam health` → `roam weather` → `roam map`
 - **Add to CI:** `roam init` already generated a GitHub Action, or see [GitHub Action](#github-action)
 
@@ -160,7 +160,7 @@ roam index
 
 ## Commands
 
-Roam organizes its 50 commands into 7 categories. The five commands below cover ~80% of agent workflows:
+Roam organizes its 57 commands into 8 categories. The five commands below cover ~80% of agent workflows:
 
 ```
 roam understand              # orient: tech stack, architecture, conventions
@@ -171,7 +171,7 @@ roam health                  # score: composite architecture health (0-100)
 ```
 
 <details>
-<summary><strong>Full command reference (50 commands, 7 categories)</strong></summary>
+<summary><strong>Full command reference (57 commands, 8 categories)</strong></summary>
 
 ### Getting Started
 
@@ -255,6 +255,18 @@ roam health                  # score: composite architecture health (0-100)
 |---------|-------------|
 | `roam report [--list] [--config FILE] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor`. `--config` loads custom presets from JSON |
 | `roam describe --write` | Generate CLAUDE.md with conventions, complexity hotspots, and architecture overview |
+
+### Multi-Repo Workspace
+
+| Command | Description |
+|---------|-------------|
+| `roam ws init <repo1> <repo2> [--name NAME]` | Initialize a workspace from sibling repos. Auto-detects frontend/backend roles |
+| `roam ws status` | Show workspace repos, index ages, cross-repo edge count |
+| `roam ws resolve` | Scan for REST API endpoints and match frontend calls to backend routes |
+| `roam ws understand` | Unified workspace overview: per-repo stats + cross-repo connections |
+| `roam ws health` | Workspace-wide health report with cross-repo coupling assessment |
+| `roam ws context <symbol>` | Cross-repo augmented context: find a symbol across repos + show API callers |
+| `roam ws trace <source> <target>` | Trace cross-repo paths via API edges |
 
 ### Global Options
 
@@ -447,7 +459,7 @@ Roam is designed to be called by AI coding agents via shell commands. Instead of
 **Fastest setup** -- writes agent instructions to your project automatically:
 
 ```bash
-roam describe --agent-prompt >> CLAUDE.md   # Claude Code
+roam describe --agent-prompt >> Agent.md        # Claude Code (or CLAUDE.md)
 roam describe --agent-prompt >> .cursor/rules/roam.mdc   # Cursor
 roam describe --agent-prompt >> CONVENTIONS.md   # Aider / any agent
 ```
@@ -527,7 +539,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-The MCP server exposes 16 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+The MCP server exposes 18 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
 | Tool | Description |
 |------|-------------|
@@ -547,6 +559,8 @@ The MCP server exposes 16 read-only tools and 2 resources. All tools query the i
 | `repo_map` | Project skeleton with key symbols |
 | `tour` | Auto-generated onboarding guide |
 | `diagnose` | Root cause analysis for debugging |
+| `ws_understand` | Unified multi-repo workspace overview |
+| `ws_context` | Cross-repo augmented symbol context |
 
 **Resources:** `roam://health` (current health score), `roam://summary` (project overview)
 
@@ -807,6 +821,7 @@ This eliminates the security review that blocks most tool adoptions.
 | C | `.c` `.h` | structs, functions, typedefs, enums | includes, calls | -- |
 | C++ | `.cpp` `.hpp` `.cc` `.hh` | classes, namespaces, templates + all C | includes, calls | extends |
 | PHP | `.php` | classes, interfaces, traits, enums, methods, properties, constants, constructor promotion | namespace use, calls, static calls, nullsafe calls (`?->`), `new` | extends, implements, use (traits) |
+| Visual FoxPro | `.prg` | functions, procedures, classes, methods, properties, constants, implicit file-functions | DO, SET PROCEDURE/CLASSLIB, CREATEOBJECT, NEWOBJECT, DECLARE, `=func()`, `obj.method()`, `#INCLUDE` | DEFINE CLASS ... AS |
 | Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 | Svelte | `.svelte` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 
@@ -832,7 +847,7 @@ Roam is one of the few static analysis tools with first-class Salesforce support
 | Swift | `.swift` |
 | Scala | `.scala` `.sc` |
 
-Tier 2 languages get symbol extraction (classes, functions, methods) and basic inheritance detection via a generic tree-sitter walker. Adding a new Tier 1 language requires one file inheriting from `LanguageExtractor`.
+Tier 2 languages get symbol extraction (classes, functions, methods) and basic inheritance detection via a generic tree-sitter walker. Adding a new Tier 1 language requires one file inheriting from `LanguageExtractor`. Visual FoxPro is the first **regex-only** Tier 1 language (no tree-sitter grammar exists), demonstrating that Roam's architecture supports languages without AST parsers.
 
 ## Performance
 
@@ -903,7 +918,7 @@ Source files
 [1] Discovery ---- git ls-files (respects .gitignore)
     |
     v
-[2] Parse -------- tree-sitter AST per file (16 languages)
+[2] Parse -------- tree-sitter AST per file (17 languages)
     |
     v
 [3] Extract ------ symbols (functions, classes, methods, etc.)
@@ -997,6 +1012,9 @@ No. Roam is read-only. It creates a `.roam/` directory with an index database an
 **How does Roam handle monorepos?**
 Roam indexes the entire repository from the root. All queries use batched SQL to handle large symbol counts. For 100k+ files, the initial index may take several minutes, but incremental updates remain fast (<1s).
 
+**How does Roam handle multi-repo projects (e.g., frontend + backend)?**
+Use `roam ws init <repo1> <repo2>` to create a workspace. Each repo keeps its own index; a workspace overlay DB stores cross-repo API edges. `roam ws resolve` scans for REST endpoints and matches frontend calls (axios, fetch) to backend routes (Laravel, Express, FastAPI). Then `roam ws context`, `roam ws trace`, etc. work across repos.
+
 **Can different teams have different quality gates?**
 Yes. Each repo has its own `.roam/fitness.yaml` with custom architecture rules and its own `--gate` threshold in CI.
 
@@ -1054,7 +1072,7 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (556 tests across 16 languages, Python 3.9-3.13)
+# Run tests (636 tests across 17 languages, Python 3.9-3.13)
 pytest tests/
 
 # Index roam itself
@@ -1116,6 +1134,12 @@ roam-code/
 │   │   ├── visualforce_lang.py        # Salesforce Visualforce extractor
 │   │   ├── sfxml_lang.py              # Salesforce Metadata XML extractor
 │   │   └── generic_lang.py            # Tier 2 fallback extractor
+│   ├── workspace/
+│   │   ├── __init__.py                # Multi-repo workspace support
+│   │   ├── config.py                  # Workspace config (.roam-workspace.json)
+│   │   ├── db.py                      # Workspace overlay DB (cross-repo edges)
+│   │   ├── api_scanner.py             # REST API endpoint detection + matching
+│   │   └── aggregator.py              # Cross-repo aggregation queries
 │   ├── graph/
 │   │   ├── builder.py                 # DB -> NetworkX graph
 │   │   ├── pagerank.py                # PageRank + centrality metrics
@@ -1142,7 +1166,8 @@ roam-code/
     ├── test_salesforce.py             # Salesforce extractor tests
     ├── test_new_features.py           # v5-v6 feature tests
     ├── test_v7_features.py            # v7 feature tests (56 tests)
-    └── test_v71_features.py           # v7.1 feature tests (67 tests)
+    ├── test_v71_features.py           # v7.1 feature tests (67 tests)
+    └── test_workspace.py              # Multi-repo workspace tests (46 tests)
 ```
 
 </details>
@@ -1162,6 +1187,7 @@ roam-code/
 - [x] Verdict-first output for key commands (v7.2)
 - [x] Agent-optimized MCP tool descriptions (v7.2)
 - [x] PyPI Trusted Publishing workflow (v7.2)
+- [x] Multi-repo workspace support with cross-repo API edge detection (v7.4)
 - [ ] PyPI publishing (pending: configure Trusted Publisher on PyPI)
 - [ ] Terminal demo GIF (VHS/asciinema)
 - [ ] MCP tool annotations (readOnlyHint, idempotentHint)
@@ -1179,12 +1205,12 @@ Contributions are welcome! Here's how to get started:
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 556 tests must pass before submitting
+pytest tests/   # All 636 tests must pass before submitting
 ```
 
 **Good first contributions:**
 
-- **Add a Tier 1 language** -- create one file in `src/roam/languages/` inheriting from `LanguageExtractor`. See `go_lang.py` or `php_lang.py` as clean templates. Ruby, C#, Kotlin, Swift, and Scala are all waiting.
+- **Add a Tier 1 language** -- create one file in `src/roam/languages/` inheriting from `LanguageExtractor`. See `go_lang.py` or `php_lang.py` as clean templates (or `foxpro_lang.py` for regex-only languages). Ruby, C#, Kotlin, Swift, and Scala are all waiting.
 - **Improve reference resolution** -- better import path matching for existing languages.
 - **Add a benchmark repo** -- add an entry to `roam-bench.py` and run `python roam-bench.py --repos yourrepo` to evaluate quality.
 - **SARIF integration** -- extend the SARIF converters with additional analysis types.

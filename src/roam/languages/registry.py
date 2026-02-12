@@ -6,7 +6,7 @@ import os
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
-from roam.index.parser import GRAMMAR_ALIASES
+from roam.index.parser import GRAMMAR_ALIASES, REGEX_ONLY_LANGUAGES
 
 if TYPE_CHECKING:
     from .base import LanguageExtractor
@@ -54,6 +54,8 @@ _EXTENSION_MAP: dict[str, str] = {
     ".evt": "aura",
     ".intf": "aura",
     ".design": "aura",
+    # Visual FoxPro (regex-only, no tree-sitter)
+    ".prg": "foxpro",
 }
 
 # Languages with dedicated extractors
@@ -70,6 +72,8 @@ _SUPPORTED_LANGUAGES = frozenset({
     "vue", "svelte",
     # Aliased languages (parsed via grammar aliases)
     "apex", "sfxml", "aura", "visualforce",
+    # Regex-only languages (no tree-sitter grammar)
+    "foxpro",
 })
 
 
@@ -101,6 +105,10 @@ def get_ts_language(language: str):
     """
     if language not in _SUPPORTED_LANGUAGES:
         raise ValueError(f"Unsupported language: {language}")
+
+    # Regex-only languages have no tree-sitter grammar
+    if language in REGEX_ONLY_LANGUAGES:
+        raise ValueError(f"Language {language} is regex-only (no tree-sitter grammar)")
 
     # Resolve grammar alias (e.g. apex → java)
     grammar = GRAMMAR_ALIASES.get(language, language)
@@ -152,6 +160,9 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "visualforce":
         from .visualforce_lang import VisualforceExtractor
         return VisualforceExtractor()
+    elif language == "foxpro":
+        from .foxpro_lang import FoxProExtractor
+        return FoxProExtractor()
     else:
         # For aliased languages, delegate to the alias target's extractor
         alias_target = GRAMMAR_ALIASES.get(language)

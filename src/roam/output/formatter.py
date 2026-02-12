@@ -200,6 +200,24 @@ def compact_json_envelope(command: str, **payload) -> dict:
     return out
 
 
+def ws_loc(repo: str, path: str, line: int | None = None) -> str:
+    """Repo-prefixed location string for workspace output."""
+    if line is not None:
+        return f"[{repo}] {path}:{line}"
+    return f"[{repo}] {path}"
+
+
+def ws_json_envelope(command: str, workspace: str,
+                     summary: dict | None = None, **payload) -> dict:
+    """Workspace-aware JSON envelope.
+
+    Extends :func:`json_envelope` with workspace metadata.
+    """
+    out = json_envelope(command, summary=summary, **payload)
+    out["workspace"] = workspace
+    return out
+
+
 def format_table_compact(headers: list[str], rows: list[list[str]],
                          budget: int = 0) -> str:
     """Tab-separated table output — 40-50% more token-efficient than padded tables."""

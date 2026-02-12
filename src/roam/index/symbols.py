@@ -13,7 +13,7 @@ def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict
         name, qualified_name, kind, signature, line_start, line_end,
         docstring, visibility, is_exported, parent_name
     """
-    if extractor is None or tree is None:
+    if extractor is None or (tree is None and source is None):
         return []
     try:
         symbols = extractor.extract_symbols(tree, source, file_path)
@@ -48,7 +48,7 @@ def extract_references(tree, source: bytes, file_path: str, extractor) -> list[d
     Each returned dict has:
         source_name, target_name, kind, line, import_path
     """
-    if extractor is None or tree is None:
+    if extractor is None or (tree is None and source is None):
         return []
     try:
         refs = extractor.extract_references(tree, source, file_path)

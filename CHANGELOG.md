@@ -1,5 +1,74 @@
 # Changelog
 
+## v7.4.0
+
+Multi-repo workspace support: group sibling repos, detect cross-repo REST API connections, and run unified analysis commands.
+
+### Multi-Repo Workspace
+
+- **`roam ws init`** -- Initialize a workspace from multiple repo directories. Auto-detects frontend/backend roles from package.json, composer.json, etc. Creates `.roam-workspace.json` config and `.roam-workspace/workspace.db` overlay DB.
+- **`roam ws status`** -- Show workspace repos with file/symbol counts, index ages, and cross-repo edge count.
+- **`roam ws resolve`** -- Scan frontend repos for API calls (axios, fetch, useFetch) and backend repos for route definitions (Laravel `Route::get`, Express `router.get`, FastAPI `@app.get`). Normalize URL patterns, match by path + HTTP method, store as cross-repo edges.
+- **`roam ws understand`** -- Unified workspace overview: per-repo stats (files, symbols, languages, key symbols by PageRank) + cross-repo connection summary.
+- **`roam ws health`** -- Workspace-wide health report: per-repo health scores, cross-repo coupling assessment (low/moderate/high).
+- **`roam ws context <symbol>`** -- Cross-repo augmented context: find a symbol across all repos, show callers/callees within each repo, plus cross-repo API edges.
+- **`roam ws trace <source> <target>`** -- Trace cross-repo paths: find symbols in their respective repos, show API bridge edges connecting them.
+
+### Architecture
+
+- **Federated DB** -- Each repo keeps its own `.roam/index.db`. Workspace overlay DB stores only cross-repo edges and metadata. Single-repo commands work unchanged.
+- **Post-hoc scanning** -- No changes to per-repo indexing pipeline. API edge detection runs separately via regex scanning of source files.
+- **Zero new dependencies** -- JSON config (stdlib `json`), no YAML or external packages.
+
+### MCP Server
+
+- **`ws_understand`** tool -- Unified multi-repo workspace overview via MCP.
+- **`ws_context`** tool -- Cross-repo augmented symbol context via MCP.
+
+### Testing
+
+- 46 new workspace tests: config parsing, DB operations, init/status commands, API call scanning (JS/TS), route scanning (Laravel/Express/FastAPI), URL normalization, endpoint matching, cross-repo edge storage, resolve integration, aggregation, understand/health/context/trace commands, formatter helpers.
+- **636 total tests passing**
+
+## v7.3.0
+
+Visual FoxPro language support and regex-only language infrastructure.
+
+### Visual FoxPro Support (Tier 1)
+
+- **Full VFP extractor** (`src/roam/languages/foxpro_lang.py`) — Pure regex-based extractor for `.prg` files. No tree-sitter grammar exists for VFP, so this is the first **regex-only** Tier 1 language.
+- **Symbols**: functions, procedures, classes, methods, properties, `#DEFINE` constants, implicit file-functions (`.prg` with no routines → file stem as function name).
+- **References**: `DO filename`, `DO proc IN lib`, `SET PROCEDURE TO`, `SET CLASSLIB TO`, `#INCLUDE`, `CREATEOBJECT()`, `NEWOBJECT()`, `DECLARE ... IN dll`, `=funcname()` expression calls, `THIS.method()` / `obj.method()` dot calls, `DEFINE CLASS X AS Y` inheritance.
+- **VFP preprocessing**: line continuation (`;`), comment stripping (`*`, `&&`, `*!*` blocks, `NOTE`), case-insensitive keyword matching.
+- **Built-in filtering**: 100+ VFP built-in functions excluded from call references to reduce noise.
+
+### Regex-Only Language Infrastructure
+
+- **`REGEX_ONLY_LANGUAGES`** in `parser.py` — Generic mechanism for languages without tree-sitter grammars. Returns `(None, source_bytes, language)` so extractors receive source without a tree.
+- **Pipeline bypass** — `indexer.py`, `symbols.py`, `complexity.py` all relaxed from `tree is None → skip` to `tree is None and source is None → skip`.
+- **GenericExtractor guard** — Supplement pass skipped for regex-only languages (requires tree-sitter AST nodes).
+- **Complexity fallback** — VFP files use indentation-based complexity estimation (no AST available).
+
+### Case-Insensitive Reference Resolution
+
+- **Fallback index** in `relations.py` — When exact-case symbol lookup fails, tries case-insensitive matching. Resolves `DO BACKUP` → `FUNCTION backup` across files. Non-breaking: only fires when exact match yields nothing, so case-sensitive languages are unaffected.
+
+### Smart Encoding Detection
+
+- **Multi-codepage heuristic** in `foxpro_lang.py` — Detects BOM (UTF-8, UTF-16), tries strict UTF-8, then scores 11 Windows codepages (CP1252 Western, CP1251 Cyrillic, CP1253 Greek, CP1250 Central European, CJK codepages, etc.) by printable character ratio. Zero external dependencies.
+
+### Testing
+
+- 34 new tests: 10 symbol extraction, 16 reference extraction, 5 encoding detection (UTF-8, Latin-1, CP1253 Greek, BOM, empty), 1 case-insensitive resolution, 2 integration.
+- **590 total tests passing**
+
+### Quality (tested on 468-file, 97K-line Greek accounting VFP codebase)
+
+- 2,718 symbols extracted, 500 edges (+19% from case-insensitive resolution), 232 file-level edges
+- All 50 roam commands produce meaningful output
+- 8 Louvain clusters, 4 clean layers, zero layer violations
+- Pattern detection: Factory (20), Strategy (3), Observer (1), Middleware (3)
+
 ## v7.2.0
 
 AI agent experience, new analysis commands, and deeper per-file metrics.

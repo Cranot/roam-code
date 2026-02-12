@@ -466,6 +466,51 @@ def get_summary_resource() -> str:
     return json.dumps(data, indent=2)
 
 
+# ===================================================================
+# Workspace tools -- multi-repo analysis
+# ===================================================================
+
+
+@mcp.tool()
+def ws_understand(root: str = ".") -> dict:
+    """Get a unified overview of a multi-repo workspace.
+
+    WHEN TO USE: Call this when working with a project that spans
+    multiple repositories (e.g., frontend + backend). Returns stats
+    for each repo, cross-repo API connections, and key symbols.
+    Requires a workspace to be initialized with `roam ws init`.
+
+    Parameters
+    ----------
+    root:
+        Working directory (must be within the workspace).
+
+    Returns: per-repo stats (files, symbols, languages, key symbols),
+    cross-repo edge count, and connection details.
+    """
+    return _run_roam(["ws", "understand"], root)
+
+
+@mcp.tool()
+def ws_context(symbol: str, root: str = ".") -> dict:
+    """Get cross-repo augmented context for a symbol.
+
+    WHEN TO USE: Call this when you need to understand a symbol that
+    participates in cross-repo API calls. For example, querying a
+    backend controller will also show frontend callers that hit its
+    endpoints. Requires `roam ws init` + `roam ws resolve`.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to search for across all workspace repos.
+
+    Returns: symbol definition(s) found across repos, callers/callees
+    within each repo, and cross-repo API edges.
+    """
+    return _run_roam(["ws", "context", symbol], root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------

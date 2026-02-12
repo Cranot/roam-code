@@ -201,6 +201,8 @@ def _find_function_node(tree, line_start: int, line_end: int):
     Walks the tree looking for function nodes whose line range matches
     (with 1-line tolerance for decorators).
     """
+    if tree is None:
+        return None
     root = tree.root_node
 
     def _search(node):
