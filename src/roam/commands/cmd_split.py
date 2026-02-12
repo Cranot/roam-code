@@ -7,7 +7,7 @@ import click
 import networkx as nx
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -95,8 +95,11 @@ def split(ctx, path, min_group):
 
         if len(symbols) < 3:
             if json_mode:
-                click.echo(to_json({"path": frow["path"], "groups": [],
-                                     "message": "Too few symbols to analyze"}))
+                click.echo(to_json(json_envelope("split",
+                    summary={"groups": 0, "total_symbols": len(symbols)},
+                    path=frow["path"], groups=[],
+                    message="Too few symbols to analyze",
+                )))
             else:
                 click.echo(f"File has only {len(symbols)} symbols — too few to analyze.")
             return
@@ -251,13 +254,18 @@ def split(ctx, path, min_group):
                 )
 
         if json_mode:
-            click.echo(to_json({
-                "path": frow["path"],
-                "total_symbols": len(symbols),
-                "total_intra_edges": len(intra_edges),
-                "total_external_edges": len(external_out) + len(external_in),
-                "cross_group_coupling_pct": round(cross_pct),
-                "groups": [
+            click.echo(to_json(json_envelope("split",
+                summary={
+                    "groups": len(group_data),
+                    "total_symbols": len(symbols),
+                    "extractable": len(extractable),
+                },
+                path=frow["path"],
+                total_symbols=len(symbols),
+                total_intra_edges=len(intra_edges),
+                total_external_edges=len(external_out) + len(external_in),
+                cross_group_coupling_pct=round(cross_pct),
+                groups=[
                     {
                         "label": g["label"],
                         "size": len(g["symbols"]),
@@ -275,9 +283,9 @@ def split(ctx, path, min_group):
                     }
                     for g in group_data
                 ],
-                "ungrouped_count": len(ungrouped),
-                "ungrouped_breakdown": {k: c for k, c in ungrouped_kinds.most_common()},
-                "cross_group_edges": [
+                ungrouped_count=len(ungrouped),
+                ungrouped_breakdown={k: c for k, c in ungrouped_kinds.most_common()},
+                cross_group_edges=[
                     {
                         "groups": [
                             next(g["label"] for g in group_data if g["id"] == a),
@@ -291,7 +299,7 @@ def split(ctx, path, min_group):
                     }
                     for (a, b), edges in sorted(cross_detail.items())
                 ],
-                "suggestions": [
+                suggestions=[
                     {
                         "group": g["label"],
                         "symbols": [s["name"] for s in g["symbols"][:10]],
@@ -299,7 +307,7 @@ def split(ctx, path, min_group):
                     }
                     for g in extractable
                 ],
-            }))
+            )))
             return
 
         # --- Text output ---

@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 
@@ -47,11 +47,12 @@ def impact(ctx, name):
 
         if not dependents:
             if json_mode:
-                click.echo(to_json({
-                    "symbol": sym["qualified_name"] or sym["name"],
-                    "affected_symbols": 0, "affected_files": 0,
-                    "direct_dependents": {}, "affected_file_list": [],
-                }))
+                click.echo(to_json(json_envelope("impact",
+                    summary={"affected_symbols": 0, "affected_files": 0},
+                    symbol=sym["qualified_name"] or sym["name"],
+                    affected_symbols=0, affected_files=0,
+                    direct_dependents={}, affected_file_list=[],
+                )))
             else:
                 click.echo("No dependents found.")
             return
@@ -81,13 +82,17 @@ def impact(ctx, name):
                     {"name": i[1], "kind": i[0], "file": i[2]}
                     for i in items
                 ]
-            click.echo(to_json({
-                "symbol": sym["qualified_name"] or sym["name"],
-                "affected_symbols": len(dependents),
-                "affected_files": len(affected_files),
-                "direct_dependents": json_deps,
-                "affected_file_list": sorted(affected_files),
-            }))
+            click.echo(to_json(json_envelope("impact",
+                summary={
+                    "affected_symbols": len(dependents),
+                    "affected_files": len(affected_files),
+                },
+                symbol=sym["qualified_name"] or sym["name"],
+                affected_symbols=len(dependents),
+                affected_files=len(affected_files),
+                direct_dependents=json_deps,
+                affected_file_list=sorted(affected_files),
+            )))
             return
 
         click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")

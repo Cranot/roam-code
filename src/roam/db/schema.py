@@ -71,7 +71,9 @@ CREATE TABLE IF NOT EXISTS file_stats (
     commit_count INTEGER DEFAULT 0,
     total_churn INTEGER DEFAULT 0,
     distinct_authors INTEGER DEFAULT 0,
-    complexity REAL DEFAULT 0
+    complexity REAL DEFAULT 0,
+    health_score REAL DEFAULT NULL,
+    cochange_entropy REAL DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS graph_metrics (
@@ -104,4 +106,60 @@ CREATE INDEX IF NOT EXISTS idx_graph_metrics_pagerank ON graph_metrics(pagerank 
 CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind_target ON edges(kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_file_stats_churn ON file_stats(total_churn DESC);
+
+-- Hypergraph: n-ary commit patterns (beyond pairwise co-change)
+CREATE TABLE IF NOT EXISTS git_hyperedges (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    commit_id INTEGER NOT NULL REFERENCES git_commits(id) ON DELETE CASCADE,
+    file_count INTEGER NOT NULL,
+    sig_hash TEXT NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS git_hyperedge_members (
+    hyperedge_id INTEGER NOT NULL REFERENCES git_hyperedges(id) ON DELETE CASCADE,
+    file_id INTEGER NOT NULL REFERENCES files(id) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_hyperedge_commit ON git_hyperedges(commit_id);
+CREATE INDEX IF NOT EXISTS idx_hyperedge_sig ON git_hyperedges(sig_hash);
+CREATE INDEX IF NOT EXISTS idx_hyperedge_members_edge ON git_hyperedge_members(hyperedge_id);
+CREATE INDEX IF NOT EXISTS idx_hyperedge_members_file ON git_hyperedge_members(file_id);
+
+-- Per-symbol complexity metrics (cognitive complexity, nesting, params)
+CREATE TABLE IF NOT EXISTS symbol_metrics (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    cognitive_complexity REAL DEFAULT 0,
+    nesting_depth INTEGER DEFAULT 0,
+    param_count INTEGER DEFAULT 0,
+    line_count INTEGER DEFAULT 0,
+    return_count INTEGER DEFAULT 0,
+    bool_op_count INTEGER DEFAULT 0,
+    callback_depth INTEGER DEFAULT 0
+);
+
+CREATE INDEX IF NOT EXISTS idx_symbol_metrics_complexity
+    ON symbol_metrics(cognitive_complexity DESC);
+
+-- Snapshots: health metrics over time
+CREATE TABLE IF NOT EXISTS snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp INTEGER NOT NULL,
+    tag TEXT,
+    source TEXT NOT NULL,
+    git_branch TEXT,
+    git_commit TEXT,
+    files INTEGER,
+    symbols INTEGER,
+    edges INTEGER,
+    cycles INTEGER,
+    god_components INTEGER,
+    bottlenecks INTEGER,
+    dead_exports INTEGER,
+    layer_violations INTEGER,
+    health_score INTEGER,
+    tangle_ratio REAL,
+    avg_complexity REAL,
+    brain_methods INTEGER
+);
 """

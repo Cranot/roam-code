@@ -63,6 +63,30 @@ EXTENSION_MAP = {
     ".sql": "sql",
     ".tf": "hcl",
     ".hcl": "hcl",
+    # Salesforce
+    ".cls": "apex",
+    ".trigger": "apex",
+    ".page": "visualforce",
+    ".component": "aura",
+    ".cmp": "aura",
+    ".app": "aura",
+    ".evt": "aura",
+    ".intf": "aura",
+    ".design": "aura",
+}
+
+# Grammar aliasing: languages that reuse existing tree-sitter grammars.
+# This allows languages with similar syntax to piggyback on available grammars
+# without requiring a dedicated tree-sitter parser.
+GRAMMAR_ALIASES = {
+    # Salesforce
+    "apex": "java",
+    "sfxml": "html",          # SF metadata XML → HTML parser (close enough for structure)
+    "aura": "html",
+    "visualforce": "html",
+    # Future candidates:
+    # "jsonc": "json",
+    # "mdx": "markdown",
 }
 
 # Track parse error stats
@@ -71,6 +95,9 @@ parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
 
 def detect_language(file_path: str) -> str | None:
     """Detect the tree-sitter language name from a file path."""
+    # Salesforce metadata files: *.cls-meta.xml, *.object-meta.xml, etc.
+    if file_path.endswith("-meta.xml"):
+        return "sfxml"
     _, ext = os.path.splitext(file_path)
     return EXTENSION_MAP.get(ext)
 
@@ -171,8 +198,11 @@ def parse_file(path: Path, language: str | None = None):
     if language in ("vue", "svelte"):
         source, language = _preprocess_vue(source)
 
+    # Resolve grammar alias (e.g. apex → java, sfxml → html)
+    grammar = GRAMMAR_ALIASES.get(language, language)
+
     try:
-        parser = get_parser(language)
+        parser = get_parser(grammar)
     except Exception:
         parse_errors["no_grammar"] += 1
         return None, None, None  # Grammar not available, expected skip

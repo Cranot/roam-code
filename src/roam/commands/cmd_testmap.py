@@ -5,7 +5,7 @@ import os
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json
+from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 
@@ -222,19 +222,23 @@ def _test_map_symbol_json(conn, sym):
         ).fetchall()
         test_importers = [r for r in importers if _is_test_file(r["path"])]
 
-    click.echo(to_json({
-        "name": sym["name"], "kind": sym["kind"],
-        "location": loc(sym["file_path"], sym["line_start"]),
-        "direct_tests": [
+    click.echo(to_json(json_envelope("test-map",
+        summary={
+            "direct_tests": len(direct_tests),
+            "test_importers": len(test_importers),
+        },
+        name=sym["name"], kind=sym["kind"],
+        location=loc(sym["file_path"], sym["line_start"]),
+        direct_tests=[
             {"name": t["name"], "kind": t["kind"], "file": t["file_path"],
              "edge_kind": t["edge_kind"]}
             for t in direct_tests
         ],
-        "test_importers": [
+        test_importers=[
             {"path": r["path"], "symbols_used": r["symbol_count"]}
             for r in test_importers
         ],
-    }))
+    )))
 
 
 def _test_map_file_json(conn, path):
@@ -245,7 +249,10 @@ def _test_map_file_json(conn, path):
             "SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)
         ).fetchone()
     if frow is None:
-        click.echo(to_json({"error": f"File not found: {path}"}))
+        click.echo(to_json(json_envelope("test-map",
+            summary={"error": True},
+            error=f"File not found: {path}",
+        )))
         return
 
     importers = conn.execute(
@@ -270,11 +277,15 @@ def _test_map_file_json(conn, path):
         ).fetchall()
         test_caller_files = [r["path"] for r in test_callers if _is_test_file(r["path"])]
 
-    click.echo(to_json({
-        "path": frow["path"],
-        "test_importers": [
+    click.echo(to_json(json_envelope("test-map",
+        summary={
+            "test_importers": len(test_importers),
+            "test_callers": len(test_caller_files),
+        },
+        path=frow["path"],
+        test_importers=[
             {"path": r["path"], "symbols_used": r["symbol_count"]}
             for r in test_importers
         ],
-        "test_callers": test_caller_files,
-    }))
+        test_callers=test_caller_files,
+    )))

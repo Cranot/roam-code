@@ -221,6 +221,176 @@ class TestQueryPerformance:
 
 
 # ============================================================================
+# NEW v5 COMMAND PERFORMANCE
+# ============================================================================
+
+class TestNewCommandPerformance:
+    """Benchmarks for commands added in v5 (understand, coverage-gaps, report, etc.)."""
+
+    @pytest.fixture(autouse=True)
+    def ensure_indexed(self, medium_project):
+        """Make sure the medium project is indexed before queries."""
+        roam("index", cwd=medium_project)
+        self.proj = medium_project
+
+    def test_understand_speed(self):
+        """roam understand should complete within 5s."""
+        out, rc, elapsed = timed_roam("understand", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000, f"understand took {elapsed:.0f}ms (limit 5000ms)"
+
+    def test_dead_summary_speed(self):
+        out, rc, elapsed = timed_roam("dead", "--summary", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"dead --summary took {elapsed:.0f}ms"
+
+    def test_dead_clusters_speed(self):
+        out, rc, elapsed = timed_roam("dead", "--clusters", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"dead --clusters took {elapsed:.0f}ms"
+
+    def test_dead_by_kind_speed(self):
+        out, rc, elapsed = timed_roam("dead", "--by-kind", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"dead --by-kind took {elapsed:.0f}ms"
+
+    def test_coverage_gaps_speed(self):
+        out, rc, elapsed = timed_roam(
+            "coverage-gaps", "--gate-pattern", "auth|permission",
+            cwd=self.proj,
+        )
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"coverage-gaps took {elapsed:.0f}ms"
+
+    def test_snapshot_speed(self):
+        out, rc, elapsed = timed_roam("snapshot", "--tag", "bench", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"snapshot took {elapsed:.0f}ms"
+
+    def test_trend_speed(self):
+        # Ensure at least one snapshot exists
+        roam("snapshot", cwd=self.proj)
+        out, rc, elapsed = timed_roam("trend", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"trend took {elapsed:.0f}ms"
+
+    def test_trend_assert_speed(self):
+        roam("snapshot", cwd=self.proj)
+        out, rc, elapsed = timed_roam("trend", "--assert", "cycles<=100", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"trend --assert took {elapsed:.0f}ms"
+
+    def test_report_list_speed(self):
+        out, rc, elapsed = timed_roam("report", "--list", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"report --list took {elapsed:.0f}ms"
+
+
+# ============================================================================
+# JSON OUTPUT PERFORMANCE
+# ============================================================================
+
+class TestJsonPerformance:
+    """Verify --json flag doesn't add significant overhead."""
+
+    @pytest.fixture(autouse=True)
+    def ensure_indexed(self, medium_project):
+        roam("index", cwd=medium_project)
+        self.proj = medium_project
+
+    def test_json_map_speed(self):
+        out, rc, elapsed = timed_roam("--json", "map", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"--json map took {elapsed:.0f}ms"
+        assert '"command"' in out
+
+    def test_json_health_speed(self):
+        out, rc, elapsed = timed_roam("--json", "health", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"--json health took {elapsed:.0f}ms"
+        assert '"command"' in out
+
+    def test_json_dead_speed(self):
+        out, rc, elapsed = timed_roam("--json", "dead", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < QUERY_TIME_MS, f"--json dead took {elapsed:.0f}ms"
+        assert '"command"' in out
+
+    def test_json_understand_speed(self):
+        out, rc, elapsed = timed_roam("--json", "understand", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000, f"--json understand took {elapsed:.0f}ms"
+        assert '"command"' in out
+
+    def test_json_envelope_structure(self):
+        """Verify JSON envelope has required fields."""
+        import json
+        out, rc, _ = timed_roam("--json", "health", cwd=self.proj)
+        assert rc == 0
+        data = json.loads(out)
+        assert "command" in data
+        assert "timestamp" in data
+        assert "summary" in data
+
+
+# ============================================================================
+# SELF-BENCHMARK (roam-code on itself)
+# ============================================================================
+
+class TestSelfBenchmark:
+    """Benchmark roam commands against the roam-code project itself.
+
+    These tests use the actual project as the benchmark fixture, providing
+    real-world performance data on a ~140-file Python codebase.
+    Skipped in CI (requires the real project to be indexed).
+    """
+
+    @pytest.fixture(autouse=True)
+    def project_root(self):
+        """Use the roam-code project root as test target."""
+        root = Path(__file__).parent.parent
+        db = root / ".roam" / "index.db"
+        if not db.exists():
+            pytest.skip("roam-code not indexed (run `roam index` first)")
+        self.proj = root
+
+    def test_self_understand(self):
+        out, rc, elapsed = timed_roam("understand", cwd=self.proj)
+        assert rc == 0
+        print(f"  understand: {elapsed:.0f}ms")
+
+    def test_self_health(self):
+        out, rc, elapsed = timed_roam("health", cwd=self.proj)
+        assert rc == 0
+        print(f"  health: {elapsed:.0f}ms")
+
+    def test_self_map(self):
+        out, rc, elapsed = timed_roam("map", cwd=self.proj)
+        assert rc == 0
+        print(f"  map: {elapsed:.0f}ms")
+
+    def test_self_dead(self):
+        out, rc, elapsed = timed_roam("dead", cwd=self.proj)
+        assert rc == 0
+        print(f"  dead: {elapsed:.0f}ms")
+
+    def test_self_coupling(self):
+        out, rc, elapsed = timed_roam("coupling", cwd=self.proj)
+        assert rc == 0
+        print(f"  coupling: {elapsed:.0f}ms")
+
+    def test_self_weather(self):
+        out, rc, elapsed = timed_roam("weather", cwd=self.proj)
+        assert rc == 0
+        print(f"  weather: {elapsed:.0f}ms")
+
+    def test_self_layers(self):
+        out, rc, elapsed = timed_roam("layers", cwd=self.proj)
+        assert rc == 0
+        print(f"  layers: {elapsed:.0f}ms")
+
+
+# ============================================================================
 # STRESS TESTS
 # ============================================================================
 
@@ -634,3 +804,140 @@ class TestOutputCorrectness:
         out, rc = roam("map", "--full", cwd=verified_project)
         assert rc == 0
         assert "Files:" in out
+
+
+# ============================================================================
+# v6.0 COMMAND BENCHMARKS
+# ============================================================================
+
+class TestV6CommandPerformance:
+    """Benchmarks for v6.0 intelligence commands."""
+
+    @pytest.fixture(autouse=True)
+    def ensure_indexed(self, medium_project):
+        roam("index", cwd=medium_project)
+        self.proj = medium_project
+
+    def test_complexity_speed(self):
+        """roam complexity should complete within 3s."""
+        out, rc, elapsed = timed_roam("complexity", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000, f"complexity took {elapsed:.0f}ms (limit 3000ms)"
+
+    def test_complexity_bumpy_road_speed(self):
+        """roam complexity --bumpy-road should complete within 3s."""
+        out, rc, elapsed = timed_roam("complexity", "--bumpy-road", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+
+    def test_conventions_speed(self):
+        """roam conventions should complete within 3s."""
+        out, rc, elapsed = timed_roam("conventions", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000, f"conventions took {elapsed:.0f}ms (limit 3000ms)"
+
+    def test_debt_speed(self):
+        """roam debt should complete within 3s."""
+        out, rc, elapsed = timed_roam("debt", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+
+    def test_entry_points_speed(self):
+        """roam entry-points should complete within 3s."""
+        out, rc, elapsed = timed_roam("entry-points", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+
+    def test_patterns_speed(self):
+        """roam patterns should complete within 5s."""
+        out, rc, elapsed = timed_roam("patterns", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000
+
+    def test_alerts_speed(self):
+        """roam alerts should complete within 3s."""
+        out, rc, elapsed = timed_roam("alerts", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+
+    def test_preflight_speed(self):
+        """roam preflight should complete within 5s."""
+        out, rc, elapsed = timed_roam("preflight", "method_0", cwd=self.proj)
+        assert rc == 0, f"preflight failed (rc={rc}): {out[:200]}"
+        assert elapsed < 5000, f"preflight took {elapsed:.0f}ms (limit 5000ms)"
+
+    def test_map_budget_speed(self):
+        """roam map --budget should complete within 2s."""
+        out, rc, elapsed = timed_roam("map", "--budget", "500", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 2000
+
+    def test_context_task_speed(self):
+        """roam context --task refactor should complete within 5s."""
+        out, rc, elapsed = timed_roam("context", "--task", "refactor", "Service0_0", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000
+
+    def test_understand_enhanced_speed(self):
+        """Enhanced understand should complete within 5s."""
+        out, rc, elapsed = timed_roam("understand", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000, f"understand took {elapsed:.0f}ms (limit 5000ms)"
+
+    def test_describe_enhanced_speed(self):
+        """Enhanced describe should complete within 5s."""
+        out, rc, elapsed = timed_roam("describe", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000
+
+
+class TestV6JsonPerformance:
+    """JSON output benchmarks for v6 commands."""
+
+    @pytest.fixture(autouse=True)
+    def ensure_indexed(self, medium_project):
+        roam("index", cwd=medium_project)
+        self.proj = medium_project
+
+    def test_json_complexity(self):
+        out, rc, elapsed = timed_roam("--json", "complexity", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+        import json
+        data = json.loads(out)
+        assert data["command"] == "complexity"
+
+    def test_json_debt(self):
+        out, rc, elapsed = timed_roam("--json", "debt", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+        import json
+        data = json.loads(out)
+        assert data["command"] == "debt"
+
+    def test_json_preflight(self):
+        # Use method name which exists in all Service classes
+        out, rc, elapsed = timed_roam("--json", "preflight", "method_0", cwd=self.proj)
+        assert rc == 0, f"preflight --json failed (rc={rc}): {out[-500:]}"
+        assert elapsed < 5000
+        import json
+        data = json.loads(out)
+        assert data["command"] == "preflight"
+        assert "risk_level" in data["summary"]
+
+    def test_json_conventions(self):
+        out, rc, elapsed = timed_roam("--json", "conventions", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 3000
+        import json
+        data = json.loads(out)
+        assert data["command"] == "conventions"
+
+    def test_json_understand_enhanced(self):
+        out, rc, elapsed = timed_roam("--json", "understand", cwd=self.proj)
+        assert rc == 0
+        assert elapsed < 5000
+        import json
+        data = json.loads(out)
+        assert "conventions" in data
+        assert "complexity" in data or "complexity" in str(data)

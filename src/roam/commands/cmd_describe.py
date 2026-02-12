@@ -6,7 +6,7 @@ from collections import Counter
 import click
 
 from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json
+from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -303,6 +303,120 @@ def _section_domain(conn):
     return lines
 
 
+def _section_conventions(conn):
+    """Document detected coding conventions for agents to follow."""
+    import re
+    lines = ["", "## Coding Conventions", ""]
+    lines.append("Follow these conventions when writing code in this project:")
+    lines.append("")
+
+    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
+    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
+    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
+
+    for kind, label in [("function", "Functions"), ("class", "Classes"), ("method", "Methods")]:
+        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
+        if not rows:
+            continue
+        names = [r["name"] for r in rows]
+        counts = {"snake_case": 0, "camelCase": 0, "PascalCase": 0}
+        for n in names:
+            if _PASCAL.match(n):
+                counts["PascalCase"] += 1
+            elif _SNAKE.match(n):
+                counts["snake_case"] += 1
+            elif _CAMEL.match(n):
+                counts["camelCase"] += 1
+        dominant = max(counts, key=counts.get)
+        total = len(names)
+        pct = round(counts[dominant] * 100 / total) if total else 0
+        if pct >= 80:
+            kind_plural = "classes" if kind == "class" else f"{kind}s"
+            lines.append(f"- **{label}:** Use `{dominant}` ({pct}% of {total} {kind_plural})")
+
+    # Import style
+    try:
+        total_edges = conn.execute("SELECT COUNT(*) FROM file_edges").fetchone()[0]
+        cross_dir = conn.execute(
+            "SELECT COUNT(*) FROM file_edges fe "
+            "JOIN files sf ON fe.source_file_id = sf.id "
+            "JOIN files tf ON fe.target_file_id = tf.id "
+            "WHERE sf.path NOT LIKE tf.path || '%'"
+        ).fetchone()[0]
+        if total_edges > 0:
+            pct = round(cross_dir * 100 / total_edges)
+            if pct > 60:
+                lines.append(f"- **Imports:** Prefer absolute imports ({pct}% are cross-directory)")
+            else:
+                lines.append(f"- **Imports:** Relative imports common ({100-pct}% same-directory)")
+    except Exception:
+        pass
+
+    # Test patterns
+    test_files = conn.execute(
+        "SELECT path FROM files WHERE path LIKE '%test%'"
+    ).fetchall()
+    if test_files:
+        patterns = set()
+        for r in test_files:
+            name = r["path"].replace("\\", "/").split("/")[-1]
+            if name.startswith("test_"):
+                patterns.add("test_*.py")
+            elif name.endswith("_test.py"):
+                patterns.add("*_test.py")
+            elif ".test." in name:
+                patterns.add("*.test.*")
+            elif ".spec." in name:
+                patterns.add("*.spec.*")
+        if patterns:
+            lines.append(f"- **Test files:** {', '.join(sorted(patterns))}")
+
+    return lines
+
+
+def _section_complexity_guide(conn):
+    """Document complexity hotspots to guide refactoring."""
+    lines = ["", "## Complexity Hotspots", ""]
+
+    try:
+        row = conn.execute(
+            "SELECT COUNT(*) as total, AVG(cognitive_complexity) as avg_cc "
+            "FROM symbol_metrics"
+        ).fetchone()
+        if not row or row["total"] == 0:
+            return lines
+
+        lines.append(
+            f"Average function complexity: {row['avg_cc']:.1f} "
+            f"({row['total']} functions analyzed)"
+        )
+        lines.append("")
+
+        critical = conn.execute(
+            "SELECT s.name, sm.cognitive_complexity, f.path, s.line_start "
+            "FROM symbol_metrics sm "
+            "JOIN symbols s ON sm.symbol_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE sm.cognitive_complexity >= 25 "
+            "ORDER BY sm.cognitive_complexity DESC LIMIT 10"
+        ).fetchall()
+
+        if critical:
+            lines.append("Functions with highest complexity (consider refactoring):")
+            lines.append("")
+            lines.append("| Function | Complexity | Location |")
+            lines.append("|----------|-----------|----------|")
+            for r in critical:
+                lines.append(
+                    f"| `{r['name']}` | {r['cognitive_complexity']:.0f} "
+                    f"| `{r['path']}:{r['line_start']}` |"
+                )
+    except Exception:
+        pass
+
+    return lines
+
+
 def _section_dependencies(conn):
     """Top imported files (most incoming file_edges)."""
     lines = ["", "## Core Modules", ""]
@@ -332,14 +446,228 @@ def _section_dependencies(conn):
     return lines
 
 
+def _agent_prompt_data(conn):
+    """Gather compact data for --agent-prompt output."""
+    import re
+
+    data = {}
+
+    # ── Project overview ─────────────────────────────────────────────
+    total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+    total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+
+    files = conn.execute("SELECT language FROM files").fetchall()
+    lang_counts = Counter(f["language"] for f in files if f["language"])
+    languages = ", ".join(lang for lang, _ in lang_counts.most_common(5))
+
+    # Infer project name from project root directory
+    try:
+        root = find_project_root()
+        project_name = root.name
+    except Exception:
+        project_name = "unknown"
+
+    data["project"] = project_name
+    data["files"] = total_files
+    data["symbols"] = total_symbols
+    data["languages"] = languages
+
+    # ── Stack / key dependencies (from most-imported files) ──────────
+    try:
+        top_imports = conn.execute("""
+            SELECT f.path, COUNT(*) as import_count
+            FROM file_edges fe
+            JOIN files f ON fe.target_file_id = f.id
+            GROUP BY fe.target_file_id
+            ORDER BY import_count DESC
+            LIMIT 10
+        """).fetchall()
+        stack_items = []
+        for r in top_imports:
+            p = r["path"].replace("\\", "/")
+            # Use top-level directory or filename as dependency hint
+            parts = p.split("/")
+            stack_items.append(parts[0] if len(parts) > 1 else p)
+        # Deduplicate preserving order
+        seen = set()
+        stack_deduped = []
+        for s in stack_items:
+            if s not in seen:
+                seen.add(s)
+                stack_deduped.append(s)
+        data["stack"] = ", ".join(stack_deduped[:8])
+    except Exception:
+        data["stack"] = ""
+
+    # ── Conventions ──────────────────────────────────────────────────
+    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
+    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
+    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
+
+    conventions = []
+    for kind, label in [("function", "functions"), ("class", "classes"), ("method", "methods")]:
+        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
+        if not rows:
+            continue
+        counts = {"snake_case": 0, "camelCase": 0, "PascalCase": 0}
+        for r in rows:
+            n = r["name"]
+            if _PASCAL.match(n):
+                counts["PascalCase"] += 1
+            elif _SNAKE.match(n):
+                counts["snake_case"] += 1
+            elif _CAMEL.match(n):
+                counts["camelCase"] += 1
+        dominant = max(counts, key=counts.get)
+        total = len(rows)
+        pct = round(counts[dominant] * 100 / total) if total else 0
+        if pct >= 70:
+            conventions.append(f"{label}={dominant}")
+    data["conventions"] = ", ".join(conventions) if conventions else "mixed"
+
+    # ── Directory structure ──────────────────────────────────────────
+    dir_rows = conn.execute("""
+        SELECT CASE WHEN INSTR(REPLACE(path, '\\', '/'), '/') > 0
+               THEN SUBSTR(REPLACE(path, '\\', '/'), 1, INSTR(REPLACE(path, '\\', '/'), '/') - 1)
+               ELSE '.' END as dir,
+               COUNT(*) as cnt
+        FROM files GROUP BY dir ORDER BY cnt DESC
+    """).fetchall()
+    dir_parts = [f"{r['dir']}/ ({r['cnt']})" for r in dir_rows[:8]]
+    data["structure"] = ", ".join(dir_parts)
+
+    # ── Key abstractions (top 5 by PageRank) ─────────────────────────
+    abstractions = []
+    try:
+        top = conn.execute("""
+            SELECT s.name, s.kind, f.path as file_path, gm.pagerank
+            FROM symbols s
+            JOIN files f ON s.file_id = f.id
+            JOIN graph_metrics gm ON s.id = gm.symbol_id
+            WHERE s.kind IN ('function', 'class', 'method', 'interface', 'struct', 'trait')
+            ORDER BY gm.pagerank DESC LIMIT 5
+        """).fetchall()
+        for s in top:
+            abstractions.append(f"{s['name']} ({s['kind']}, {s['file_path']})")
+    except Exception:
+        pass
+    data["key_abstractions"] = abstractions
+
+    # ── Hotspots (top 3 by churn * complexity) ───────────────────────
+    hotspots = []
+    try:
+        rows = conn.execute("""
+            SELECT s.name, f.path, sm.cognitive_complexity,
+                   COALESCE(gs.commit_count, 0) as churn
+            FROM symbol_metrics sm
+            JOIN symbols s ON sm.symbol_id = s.id
+            JOIN files f ON s.file_id = f.id
+            LEFT JOIN git_stats gs ON f.id = gs.file_id
+            WHERE sm.cognitive_complexity > 0
+            ORDER BY (sm.cognitive_complexity * COALESCE(gs.commit_count, 1)) DESC
+            LIMIT 3
+        """).fetchall()
+        for r in rows:
+            hotspots.append(
+                f"{r['name']} (complexity={r['cognitive_complexity']:.0f}, "
+                f"churn={r['churn']}, {r['path']})"
+            )
+    except Exception:
+        pass
+    data["hotspots"] = hotspots
+
+    # ── Health score + cycles ────────────────────────────────────────
+    data["health_score"] = "N/A"
+    data["cycles"] = "N/A"
+    try:
+        from roam.graph.builder import build_symbol_graph
+        from roam.graph.cycles import find_cycles
+        G = build_symbol_graph(conn)
+        total_syms = len(G)
+        if total_syms > 0:
+            cycles = find_cycles(G)
+            cycle_syms = sum(len(c) for c in cycles)
+            cycle_pct = (cycle_syms / total_syms * 100) if total_syms else 0
+            score = max(0, 100 - int(cycle_pct * 2))
+            data["health_score"] = score
+            data["cycles"] = len(cycles)
+    except Exception:
+        pass
+
+    # ── Test command guess ───────────────────────────────────────────
+    test_files = conn.execute(
+        "SELECT path FROM files WHERE path LIKE '%test%' LIMIT 1"
+    ).fetchall()
+    if test_files:
+        p = test_files[0]["path"].replace("\\", "/")
+        if "tests/" in p:
+            data["test_cmd"] = "pytest tests/"
+        elif "test/" in p:
+            data["test_cmd"] = "pytest test/"
+        elif ".spec." in p or ".test." in p:
+            data["test_cmd"] = "npm test"
+        else:
+            data["test_cmd"] = "pytest"
+    else:
+        data["test_cmd"] = ""
+
+    return data
+
+
+def _format_agent_prompt(data: dict) -> str:
+    """Format agent-prompt data as compact plain text."""
+    lines = []
+    lines.append(
+        f"Project: {data['project']} "
+        f"({data['files']} files, {data['symbols']} symbols, {data['languages']})"
+    )
+    if data.get("stack"):
+        lines.append(f"Stack: {data['stack']}")
+    lines.append(f"Conventions: {data['conventions']}")
+    lines.append(f"Structure: {data['structure']}")
+
+    if data.get("key_abstractions"):
+        lines.append("Key abstractions:")
+        for a in data["key_abstractions"]:
+            lines.append(f"  - {a}")
+
+    if data.get("hotspots"):
+        lines.append("Hotspots:")
+        for h in data["hotspots"]:
+            lines.append(f"  - {h}")
+
+    health = data.get("health_score", "N/A")
+    cycles = data.get("cycles", "N/A")
+    lines.append(f"Health: {health}/100, {cycles} cycles")
+
+    if data.get("test_cmd"):
+        lines.append(f"Test cmd: {data['test_cmd']}")
+
+    return "\n".join(lines)
+
+
 @click.command()
 @click.option('--write', is_flag=True, help='Write output to CLAUDE.md in project root')
 @click.option('--force', is_flag=True, help='Overwrite existing CLAUDE.md without confirmation')
+@click.option('--agent-prompt', is_flag=True, help='Compact agent-oriented prompt (under 500 tokens)')
 @click.pass_context
-def describe(ctx, write, force):
+def describe(ctx, write, force, agent_prompt):
     """Auto-generate a project description (suitable for CLAUDE.md)."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     ensure_index()
+
+    if agent_prompt:
+        with open_db(readonly=True) as conn:
+            data = _agent_prompt_data(conn)
+
+        if json_mode:
+            click.echo(to_json(json_envelope("describe",
+                summary={"mode": "agent-prompt"},
+                **data,
+            )))
+        else:
+            click.echo(_format_agent_prompt(data))
+        return
 
     with open_db(readonly=True) as conn:
         sections = []
@@ -350,13 +678,18 @@ def describe(ctx, write, force):
         sections.append(_section_key_abstractions(conn))
         sections.append(_section_architecture(conn))
         sections.append(_section_testing(conn))
+        sections.append(_section_conventions(conn))
+        sections.append(_section_complexity_guide(conn))
         sections.append(_section_domain(conn))
         sections.append(_section_dependencies(conn))
 
         output = "\n".join(line for sec in sections for line in sec)
 
     if json_mode:
-        click.echo(to_json({"markdown": output}))
+        click.echo(to_json(json_envelope("describe",
+            summary={"length": len(output)},
+            markdown=output,
+        )))
         return
 
     if write:

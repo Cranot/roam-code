@@ -1,8 +1,10 @@
+"""Show file import/imported-by relationships."""
+
 import click
 
 from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTS, FILE_IMPORTED_BY
-from roam.output.formatter import format_table, to_json
+from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -49,9 +51,13 @@ def deps(ctx, path, full):
         imported_by = conn.execute(FILE_IMPORTED_BY, (frow["id"],)).fetchall()
 
         if json_mode:
-            click.echo(to_json({
-                "path": frow["path"],
-                "imports": [
+            click.echo(to_json(json_envelope("deps",
+                summary={
+                    "imports": len(imports),
+                    "imported_by": len(imported_by),
+                },
+                path=frow["path"],
+                imports=[
                     {
                         "path": i["path"],
                         "symbol_count": i["symbol_count"],
@@ -59,11 +65,11 @@ def deps(ctx, path, full):
                     }
                     for i in imports
                 ],
-                "imported_by": [
+                imported_by=[
                     {"path": i["path"], "symbol_count": i["symbol_count"]}
                     for i in imported_by
                 ],
-            }))
+            )))
             return
 
         # --- Text output ---

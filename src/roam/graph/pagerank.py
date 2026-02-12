@@ -52,12 +52,13 @@ def store_metrics(conn: sqlite3.Connection, G: nx.DiGraph) -> int:
 
     rows = []
     for node in G.nodes:
+        c = centrality.get(node, {})
         rows.append((
             node,
             pr.get(node, 0.0),
-            centrality[node]["in_degree"],
-            centrality[node]["out_degree"],
-            centrality[node]["betweenness"],
+            c.get("in_degree", 0),
+            c.get("out_degree", 0),
+            c.get("betweenness", 0.0),
         ))
 
     conn.executemany(

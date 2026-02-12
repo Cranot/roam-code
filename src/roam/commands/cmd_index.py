@@ -1,9 +1,11 @@
+"""Build or rebuild the codebase index."""
+
 import time
 from collections import Counter
 
 import click
 
-from roam.output.formatter import to_json
+from roam.output.formatter import to_json, json_envelope
 
 
 @click.command()
@@ -50,17 +52,32 @@ def index(ctx, force, verbose):
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
             if json_mode:
-                click.echo(to_json({
-                    "elapsed_s": round(elapsed, 1),
-                    "files": file_count,
-                    "symbols": sym_count,
-                    "edges": edge_count,
-                    "languages": {r["language"]: r["cnt"] for r in lang_rows[:8]},
-                    "avg_symbols_per_file": round(avg_sym, 1),
-                    "parse_coverage_pct": round(coverage, 0),
-                }))
+                click.echo(to_json(json_envelope("index",
+                    summary={
+                        "files": file_count,
+                        "symbols": sym_count,
+                        "edges": edge_count,
+                    },
+                    elapsed_s=round(elapsed, 1),
+                    files=file_count,
+                    symbols=sym_count,
+                    edges=edge_count,
+                    languages={r["language"]: r["cnt"] for r in lang_rows[:8]},
+                    avg_symbols_per_file=round(avg_sym, 1),
+                    parse_coverage_pct=round(coverage, 0),
+                )))
             else:
                 lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
                 click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")
+
+            # Auto-snapshot after every index for trend tracking
+            try:
+                from roam.commands.metrics_history import append_snapshot
+                with open_db() as wconn:
+                    snap = append_snapshot(wconn, source="index")
+                if not json_mode:
+                    click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
+            except Exception:
+                pass  # Don't fail indexing if snapshot fails

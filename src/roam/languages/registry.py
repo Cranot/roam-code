@@ -6,6 +6,8 @@ import os
 from functools import lru_cache
 from typing import TYPE_CHECKING
 
+from roam.index.parser import GRAMMAR_ALIASES
+
 if TYPE_CHECKING:
     from .base import LanguageExtractor
 
@@ -42,6 +44,16 @@ _EXTENSION_MAP: dict[str, str] = {
     ".swift": "swift",
     ".scala": "scala",
     ".sc": "scala",
+    # Salesforce (aliased grammars — see parser.GRAMMAR_ALIASES)
+    ".cls": "apex",
+    ".trigger": "apex",
+    ".page": "visualforce",
+    ".component": "aura",
+    ".cmp": "aura",
+    ".app": "aura",
+    ".evt": "aura",
+    ".intf": "aura",
+    ".design": "aura",
 }
 
 # Languages with dedicated extractors
@@ -50,12 +62,14 @@ _DEDICATED_EXTRACTORS = frozenset({
     "go", "rust", "java", "c", "cpp", "php",
 })
 
-# All supported tree-sitter language names
+# All supported tree-sitter language names (includes aliased languages)
 _SUPPORTED_LANGUAGES = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp",
     "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
     "vue", "svelte",
+    # Aliased languages (parsed via grammar aliases)
+    "apex", "sfxml", "aura", "visualforce",
 })
 
 
@@ -64,6 +78,9 @@ def get_language_for_file(path: str) -> str | None:
 
     Returns the language name string, or None if unsupported.
     """
+    # Salesforce metadata files: *.cls-meta.xml, *.object-meta.xml, etc.
+    if path.endswith("-meta.xml"):
+        return "sfxml"
     _, ext = os.path.splitext(path)
     ext = ext.lower()
     return _EXTENSION_MAP.get(ext)
@@ -85,8 +102,11 @@ def get_ts_language(language: str):
     if language not in _SUPPORTED_LANGUAGES:
         raise ValueError(f"Unsupported language: {language}")
 
+    # Resolve grammar alias (e.g. apex → java)
+    grammar = GRAMMAR_ALIASES.get(language, language)
+
     from tree_sitter_language_pack import get_language
-    return get_language(language)
+    return get_language(grammar)
 
 
 @lru_cache(maxsize=None)
@@ -119,7 +139,24 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "php":
         from .php_lang import PhpExtractor
         return PhpExtractor()
+    # Salesforce extractors
+    elif language == "apex":
+        from .apex_lang import ApexExtractor
+        return ApexExtractor()
+    elif language == "sfxml":
+        from .sfxml_lang import SfxmlExtractor
+        return SfxmlExtractor()
+    elif language == "aura":
+        from .aura_lang import AuraExtractor
+        return AuraExtractor()
+    elif language == "visualforce":
+        from .visualforce_lang import VisualforceExtractor
+        return VisualforceExtractor()
     else:
+        # For aliased languages, delegate to the alias target's extractor
+        alias_target = GRAMMAR_ALIASES.get(language)
+        if alias_target and alias_target in _DEDICATED_EXTRACTORS:
+            return _create_extractor(alias_target)
         # Use generic extractor for tier-2 languages
         from .generic_lang import GenericExtractor
         return GenericExtractor(language=language)
