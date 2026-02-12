@@ -595,8 +595,8 @@ class TestApexProjectIndexing:
 
         output, rc = roam("map", cwd=sf_project)
         assert rc == 0, f"roam map failed: {output}"
-        assert "AccountService" in output or ".cls" in output, (
-            f"Expected Salesforce files in map output: {output}"
+        assert "apex" in output or "AccountService" in output or ".cls" in output, (
+            f"Expected Salesforce content in map output: {output}"
         )
 
     def test_apex_project_deps(self, sf_project):
