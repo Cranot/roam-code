@@ -60,6 +60,15 @@ def _try_import_graph():
         return None, None, None, None, None
 
 
+def _try_import_complexity():
+    """Try to import symbol complexity module."""
+    try:
+        from roam.index.complexity import compute_and_store
+        return compute_and_store
+    except ImportError:
+        return None
+
+
 def _try_import_git_stats():
     """Try to import git stats module."""
     try:
@@ -71,6 +80,178 @@ def _try_import_git_stats():
 
 def _log(msg: str):
     print(msg, file=sys.stderr)
+
+
+def _compute_file_health_scores(conn):
+    """Compute a 1-10 health score for every file, fusing all signals.
+
+    Factors (CodeScene-inspired composite):
+    1. Max cognitive complexity of any function in the file (brain method)
+    2. File-level indentation complexity
+    3. Cycle membership (any symbol in a cycle?)
+    4. God component membership (any symbol with degree > 20?)
+    5. Dead export ratio
+    6. Co-change entropy (high = shotgun surgery)
+    7. Churn-weighted amplification (high churn + low health = worse)
+
+    Score: 10 = healthy, 1 = critical. Stored in file_stats.health_score.
+    """
+    # Gather per-file data
+    files = conn.execute("SELECT id, path FROM files").fetchall()
+    if not files:
+        return
+
+    file_ids = [r["id"] for r in files]
+
+    # Max complexity per file
+    max_cc_by_file = {}
+    rows = conn.execute(
+        "SELECT s.file_id, MAX(sm.cognitive_complexity) as max_cc "
+        "FROM symbol_metrics sm JOIN symbols s ON s.id = sm.symbol_id "
+        "GROUP BY s.file_id"
+    ).fetchall()
+    for r in rows:
+        max_cc_by_file[r["file_id"]] = r["max_cc"] or 0
+
+    # Cycle membership: which files have symbols in cycles?
+    cycle_files = set()
+    try:
+        cycle_rows = conn.execute(
+            "SELECT DISTINCT s.file_id FROM symbols s "
+            "JOIN edges e1 ON e1.source_id = s.id "
+            "JOIN edges e2 ON e2.target_id = s.id "
+            "WHERE e1.target_id IN (SELECT source_id FROM edges WHERE target_id = s.id)"
+        ).fetchall()
+        cycle_files = {r["file_id"] for r in cycle_rows}
+    except Exception:
+        pass
+
+    # God components: files with symbols having degree > 20
+    god_files = set()
+    try:
+        god_rows = conn.execute(
+            "SELECT DISTINCT s.file_id FROM symbols s "
+            "JOIN graph_metrics gm ON gm.symbol_id = s.id "
+            "WHERE (gm.in_degree + gm.out_degree) > 20"
+        ).fetchall()
+        god_files = {r["file_id"] for r in god_rows}
+    except Exception:
+        pass
+
+    # Dead exports per file
+    dead_by_file = {}
+    try:
+        dead_rows = conn.execute(
+            "SELECT s.file_id, "
+            "COUNT(*) as total_exports, "
+            "SUM(CASE WHEN gm.in_degree = 0 THEN 1 ELSE 0 END) as dead "
+            "FROM symbols s "
+            "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
+            "WHERE s.is_exported = 1 "
+            "GROUP BY s.file_id"
+        ).fetchall()
+        for r in dead_rows:
+            total = r["total_exports"] or 1
+            dead = r["dead"] or 0
+            dead_by_file[r["file_id"]] = dead / total
+    except Exception:
+        pass
+
+    # File stats (churn, complexity, entropy)
+    stats = {}
+    stat_rows = conn.execute(
+        "SELECT file_id, total_churn, complexity, cochange_entropy "
+        "FROM file_stats"
+    ).fetchall()
+    for r in stat_rows:
+        stats[r["file_id"]] = {
+            "churn": r["total_churn"] or 0,
+            "complexity": r["complexity"] or 0,
+            "entropy": r["cochange_entropy"],
+        }
+
+    # Compute churn percentiles for amplification
+    churns = sorted(s["churn"] for s in stats.values() if s["churn"] > 0)
+    churn_p50 = churns[len(churns) // 2] if churns else 1
+    churn_p90 = churns[int(len(churns) * 0.9)] if churns else 1
+
+    # Compute health score per file
+    updates = []
+    for f in files:
+        fid = f["id"]
+        score = 10.0  # Start at perfect health
+
+        # Factor 1: Max cognitive complexity (0 to -4 points)
+        max_cc = max_cc_by_file.get(fid, 0)
+        if max_cc >= 40:
+            score -= 4.0
+        elif max_cc >= 25:
+            score -= 3.0
+        elif max_cc >= 15:
+            score -= 2.0
+        elif max_cc >= 8:
+            score -= 1.0
+
+        # Factor 2: File-level complexity (0 to -1.5 points)
+        file_cx = stats.get(fid, {}).get("complexity", 0) or 0
+        if file_cx > 20:
+            score -= 1.5
+        elif file_cx > 10:
+            score -= 1.0
+        elif file_cx > 5:
+            score -= 0.5
+
+        # Factor 3: Cycle membership (-1.5 points)
+        if fid in cycle_files:
+            score -= 1.5
+
+        # Factor 4: God component (-1.0 points)
+        if fid in god_files:
+            score -= 1.0
+
+        # Factor 5: Dead export ratio (0 to -1.0 points)
+        dead_ratio = dead_by_file.get(fid, 0)
+        if dead_ratio > 0.5:
+            score -= 1.0
+        elif dead_ratio > 0.2:
+            score -= 0.5
+
+        # Factor 6: Co-change entropy (0 to -1.0 points)
+        entropy = stats.get(fid, {}).get("entropy")
+        if entropy is not None and entropy > 0.85:
+            score -= 1.0
+        elif entropy is not None and entropy > 0.7:
+            score -= 0.5
+
+        # Clamp to [1, 10]
+        score = max(1.0, min(10.0, score))
+
+        # Factor 7: Churn amplification — low health + high churn = worse
+        churn = stats.get(fid, {}).get("churn", 0)
+        if churn > churn_p90 and score < 6:
+            score = max(1.0, score - 1.0)
+        elif churn > churn_p50 and score < 5:
+            score = max(1.0, score - 0.5)
+
+        score = round(max(1.0, min(10.0, score)), 1)
+        updates.append((score, fid))
+
+    with conn:
+        for health, fid in updates:
+            conn.execute(
+                "UPDATE file_stats SET health_score = ? WHERE file_id = ?",
+                (health, fid),
+            )
+            # If row doesn't exist, create it
+            if conn.execute(
+                "SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)
+            ).fetchone() is None:
+                conn.execute(
+                    "INSERT INTO file_stats (file_id, health_score) VALUES (?, ?)",
+                    (fid, health),
+                )
+
+    _log(f"  Health scores for {len(updates)} files")
 
 
 class Indexer:
@@ -157,6 +338,7 @@ class Indexer:
 
             # Get extractor factory
             get_extractor = _try_import_get_extractor()
+            compute_complexity = _try_import_complexity()
 
             # 3-6. Parse, extract, and store for each file
             files_to_process = added + modified
@@ -267,6 +449,14 @@ class Indexer:
                         "is_exported": bool(sym.get("is_exported")),
                         "line_start": sym["line_start"],
                     }
+
+                # Compute per-symbol complexity metrics
+                if compute_complexity is not None:
+                    try:
+                        compute_complexity(conn, file_id, tree, parsed_source)
+                    except Exception as e:
+                        if verbose:
+                            _log(f"  Warning: complexity analysis failed for {rel_path}: {e}")
 
                 # Extract references
                 refs = extract_references(tree, parsed_source, rel_path, extractor)
@@ -456,6 +646,13 @@ class Indexer:
                     _log(f"  Clustering failed: {e}")
             else:
                 _log("Skipping clustering (module not available)")
+
+            # 11. Compute per-file health scores
+            _log("Computing per-file health scores...")
+            try:
+                _compute_file_health_scores(conn)
+            except Exception as e:
+                _log(f"  Health score computation failed: {e}")
 
             # Log parse error summary
             from roam.index.parser import get_parse_error_summary

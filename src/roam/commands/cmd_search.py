@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.db.queries import SEARCH_SYMBOLS
-from roam.output.formatter import abbrev_kind, loc, format_signature, format_table, KIND_ABBREV, to_json
+from roam.output.formatter import abbrev_kind, loc, format_signature, format_table, KIND_ABBREV, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -30,7 +30,10 @@ def search(ctx, pattern, full, kind_filter):
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""
             if json_mode:
-                click.echo(to_json({"pattern": pattern, "results": []}))
+                click.echo(to_json(json_envelope("search",
+                    summary={"total": 0},
+                    pattern=pattern, results=[],
+                )))
             else:
                 click.echo(f"No symbols matching '{pattern}'{suffix}")
             return
@@ -49,10 +52,11 @@ def search(ctx, pattern, full, kind_filter):
                 ref_counts[rc["target_id"]] = rc["cnt"]
 
         if json_mode:
-            click.echo(to_json({
-                "pattern": pattern,
-                "total": len(rows),
-                "results": [
+            click.echo(to_json(json_envelope("search",
+                summary={"total": len(rows), "pattern": pattern},
+                pattern=pattern,
+                total=len(rows),
+                results=[
                     {
                         "name": r["name"],
                         "qualified_name": r["qualified_name"] or "",
@@ -64,7 +68,7 @@ def search(ctx, pattern, full, kind_filter):
                     }
                     for r in rows
                 ],
-            }))
+            )))
             return
 
         # --- Text output ---

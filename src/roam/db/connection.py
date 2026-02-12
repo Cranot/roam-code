@@ -36,7 +36,7 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
         db_path = get_db_path()
 
     if readonly:
-        uri = f"file:{db_path}?mode=ro"
+        uri = db_path.as_uri() + "?mode=ro"
         conn = sqlite3.connect(uri, uri=True, timeout=30)
     else:
         conn = sqlite3.connect(str(db_path), timeout=30)
@@ -55,8 +55,18 @@ def ensure_schema(conn: sqlite3.Connection):
     conn.executescript(SCHEMA_SQL)
 
     # Migrations for columns added after initial schema
+    _safe_alter(conn, "symbols", "default_value", "TEXT")
+    _safe_alter(conn, "file_stats", "health_score", "REAL")
+    _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
+    _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
+    _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
+    _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
+
+
+def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):
+    """Add a column to a table if it doesn't exist."""
     try:
-        conn.execute("ALTER TABLE symbols ADD COLUMN default_value TEXT")
+        conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {col_type}")
     except sqlite3.OperationalError:
         pass  # Column already exists
 

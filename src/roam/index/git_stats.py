@@ -2,9 +2,12 @@
 
 from __future__ import annotations
 
+import hashlib
 import logging
+import math
 import sqlite3
 import subprocess
+import time as _time
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -256,6 +259,118 @@ def compute_cochange(conn: sqlite3.Connection):
             )
 
     log.info("Computed co-change for %d file pairs", len(pair_counts))
+
+    # --- Co-change entropy per file ---
+    _compute_cochange_entropy(conn, pair_counts)
+
+    # --- Hypergraph: store full commit-level file sets ---
+    _populate_hyperedges(conn, commit_files)
+
+
+def _compute_cochange_entropy(
+    conn: sqlite3.Connection,
+    pair_counts: dict[tuple[int, int], int],
+):
+    """Compute Shannon entropy of co-change distribution per file.
+
+    High entropy = file changes with many different partners (shotgun surgery).
+    Low entropy = file changes with a consistent set of partners (focused).
+    Stored as normalized entropy [0, 1] in file_stats.cochange_entropy.
+    """
+    # Aggregate: for each file, sum co-change counts per partner
+    file_partners: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
+    for (a, b), count in pair_counts.items():
+        file_partners[a][b] += count
+        file_partners[b][a] += count
+
+    updates: list[tuple[float, int]] = []
+    for fid, partners in file_partners.items():
+        total = sum(partners.values())
+        if total == 0 or len(partners) <= 1:
+            updates.append((0.0, fid))
+            continue
+        entropy = 0.0
+        for count in partners.values():
+            p = count / total
+            if p > 0:
+                entropy -= p * math.log2(p)
+        max_entropy = math.log2(len(partners))
+        norm_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
+        updates.append((round(norm_entropy, 4), fid))
+
+    with conn:
+        for entropy_val, fid in updates:
+            conn.execute(
+                "UPDATE file_stats SET cochange_entropy = ? WHERE file_id = ?",
+                (entropy_val, fid),
+            )
+
+    log.info("Computed co-change entropy for %d files", len(updates))
+
+
+def _populate_hyperedges(
+    conn: sqlite3.Connection,
+    commit_files: dict[int, set[int]],
+):
+    """Store n-ary commit patterns as hyperedges.
+
+    Each qualifying commit (2-100 files) produces one ``git_hyperedges`` row
+    and N ``git_hyperedge_members`` rows.  A ``sig_hash`` (truncated SHA-256
+    of sorted file IDs) enables O(1) pattern matching later.
+    """
+    with conn:
+        conn.execute("DELETE FROM git_hyperedge_members")
+        conn.execute("DELETE FROM git_hyperedges")
+
+        edge_batch: list[tuple] = []
+        member_batch: list[tuple] = []
+        edge_id = 0
+
+        for commit_id, file_ids in commit_files.items():
+            n = len(file_ids)
+            if n < 2 or n > 100:
+                continue
+
+            sorted_ids = sorted(file_ids)
+            sig = hashlib.sha256(
+                "|".join(str(fid) for fid in sorted_ids).encode()
+            ).hexdigest()[:16]
+
+            edge_id += 1
+            pair_count = n * (n - 1) // 2
+            edge_batch.append((edge_id, commit_id, n, sig))
+
+            for ordinal, fid in enumerate(sorted_ids):
+                member_batch.append((edge_id, fid, ordinal))
+
+            if len(edge_batch) >= 500:
+                conn.executemany(
+                    "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) "
+                    "VALUES (?, ?, ?, ?)",
+                    edge_batch,
+                )
+                conn.executemany(
+                    "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) "
+                    "VALUES (?, ?, ?)",
+                    member_batch,
+                )
+                edge_batch.clear()
+                member_batch.clear()
+
+        if edge_batch:
+            conn.executemany(
+                "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) "
+                "VALUES (?, ?, ?, ?)",
+                edge_batch,
+            )
+        if member_batch:
+            conn.executemany(
+                "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) "
+                "VALUES (?, ?, ?)",
+                member_batch,
+            )
+
+    log.info("Stored %d hyperedges", edge_id)
 
 
 # ---------------------------------------------------------------------------

@@ -8,7 +8,7 @@ import click
 from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.clusters import compare_with_directories
-from roam.output.formatter import abbrev_kind, format_table, to_json
+from roam.output.formatter import abbrev_kind, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -47,8 +47,12 @@ def clusters(ctx, min_size):
                     j_total[cs] = j_total.get(cs, 0) + 1
                     j_total[ct] = j_total.get(ct, 0) + 1
 
-            click.echo(to_json({
-                "clusters": [
+            click.echo(to_json(json_envelope("clusters",
+                summary={
+                    "clusters": len(visible),
+                    "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
+                },
+                clusters=[
                     {
                         "id": r["cluster_id"],
                         "label": r["cluster_label"],
@@ -58,7 +62,7 @@ def clusters(ctx, min_size):
                     }
                     for r in visible
                 ],
-                "mismatches": [
+                mismatches=[
                     {
                         "cluster_id": m["cluster_id"],
                         "label": m["cluster_label"],
@@ -67,7 +71,7 @@ def clusters(ctx, min_size):
                     }
                     for m in mismatches if m["cluster_id"] in visible_ids
                 ],
-            }))
+            )))
             return
 
         click.echo("=== Clusters ===")

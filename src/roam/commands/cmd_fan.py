@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -66,36 +66,43 @@ def fan(ctx, mode, count, no_framework):
 
             if not rows:
                 if json_mode:
-                    click.echo(to_json({"mode": mode, "items": []}))
+                    click.echo(to_json(json_envelope("fan",
+                        summary={"mode": mode, "items": 0},
+                        mode=mode, items=[],
+                    )))
                 else:
                     click.echo("No graph metrics available. Run `roam index` first.")
                 return
 
             if json_mode:
-                click.echo(to_json({
-                    "mode": mode,
-                    "items": [
+                click.echo(to_json(json_envelope("fan",
+                    summary={"mode": mode, "items": len(rows)},
+                    mode=mode,
+                    items=[
                         {
                             "name": r["name"], "kind": r["kind"],
-                            "fan_in": r["in_degree"], "fan_out": r["out_degree"],
-                            "total": r["in_degree"] + r["out_degree"],
+                            "fan_in": r["in_degree"] or 0, "fan_out": r["out_degree"] or 0,
+                            "total": (r["in_degree"] or 0) + (r["out_degree"] or 0),
                             "betweenness": round(r["betweenness"] or 0, 1),
                             "pagerank": round(r["pagerank"] or 0, 4),
                             "location": loc(r["file_path"], r["line_start"]),
                         }
                         for r in rows
                     ],
-                }))
+                )))
                 return
 
             table_rows = []
             for r in rows:
+                in_deg = r["in_degree"] or 0
+                out_deg = r["out_degree"] or 0
+                total = in_deg + out_deg
                 flag = ""
-                if r["in_degree"] > 10 and r["out_degree"] > 10:
+                if in_deg > 10 and out_deg > 10:
                     flag = "HIGH-RISK"
-                elif r["in_degree"] > 10:
+                elif in_deg > 10:
                     flag = "hub"
-                elif r["out_degree"] > 10:
+                elif out_deg > 10:
                     flag = "spreader"
 
                 bw = r["betweenness"] or 0
@@ -106,9 +113,9 @@ def fan(ctx, mode, count, no_framework):
                 table_rows.append([
                     abbrev_kind(r["kind"]),
                     r["name"],
-                    str(r["in_degree"]),
-                    str(r["out_degree"]),
-                    str(r["total"]),
+                    str(in_deg),
+                    str(out_deg),
+                    str(total),
                     bw_str,
                     pr_str,
                     flag,
@@ -137,15 +144,19 @@ def fan(ctx, mode, count, no_framework):
 
             if not rows:
                 if json_mode:
-                    click.echo(to_json({"mode": mode, "items": []}))
+                    click.echo(to_json(json_envelope("fan",
+                        summary={"mode": mode, "items": 0},
+                        mode=mode, items=[],
+                    )))
                 else:
                     click.echo("No file edges available. Run `roam index` first.")
                 return
 
             if json_mode:
-                click.echo(to_json({
-                    "mode": mode,
-                    "items": [
+                click.echo(to_json(json_envelope("fan",
+                    summary={"mode": mode, "items": len(rows)},
+                    mode=mode,
+                    items=[
                         {
                             "path": r["path"],
                             "fan_in": r["fan_in"], "fan_out": r["fan_out"],
@@ -153,7 +164,7 @@ def fan(ctx, mode, count, no_framework):
                         }
                         for r in rows
                     ],
-                }))
+                )))
                 return
 
             table_rows = []

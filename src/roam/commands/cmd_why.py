@@ -7,7 +7,7 @@ import networkx as nx
 
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 
@@ -230,7 +230,13 @@ def why(ctx, names):
             })
 
         if json_mode:
-            click.echo(to_json({"symbols": results}))
+            click.echo(to_json(json_envelope("why",
+                summary={
+                    "symbols": len(results),
+                    "critical": sum(1 for r in results if r.get("critical")),
+                },
+                symbols=results,
+            )))
             return
 
         # --- Batch mode: compact table ---

@@ -1,7 +1,9 @@
+"""Show shortest dependency path between two symbols."""
+
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json
+from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -174,13 +176,14 @@ def trace(ctx, source, target, k_paths):
 
         if not unique_paths:
             if json_mode:
-                click.echo(to_json({
-                    "source": source,
-                    "target": target,
-                    "path": None,
-                    "paths": [],
-                    "coupling_summary": "none — no dependency path exists",
-                }))
+                click.echo(to_json(json_envelope("trace",
+                    summary={"hops": 0, "paths": 0},
+                    source=source,
+                    target=target,
+                    path=None,
+                    paths=[],
+                    coupling_summary="none — no dependency path exists",
+                )))
             else:
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
                 click.echo("These symbols are independent — changes to one cannot affect the other.")
@@ -233,13 +236,18 @@ def trace(ctx, source, target, k_paths):
         if json_mode:
             # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
             first = annotated_paths[0]
-            click.echo(to_json({
-                "source": source,
-                "target": target,
-                "hops": len(first["hops"]),
-                "path": first["hops"],
-                "coupling_summary": coupling_summary,
-                "paths": [
+            click.echo(to_json(json_envelope("trace",
+                summary={
+                    "hops": len(first["hops"]),
+                    "paths": len(annotated_paths),
+                    "coupling": coupling_summary,
+                },
+                source=source,
+                target=target,
+                hops=len(first["hops"]),
+                path=first["hops"],
+                coupling_summary=coupling_summary,
+                paths=[
                     {
                         "hops": len(ap["hops"]),
                         "coupling": ap["coupling"],
@@ -249,7 +257,7 @@ def trace(ctx, source, target, k_paths):
                     }
                     for ap in annotated_paths
                 ],
-            }))
+            )))
             return
 
         # --- Text output ---

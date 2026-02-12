@@ -6,7 +6,7 @@ import click
 
 from roam.db.connection import open_db, find_project_root
 from roam.index.git_stats import get_blame_for_file
-from roam.output.formatter import format_table, to_json
+from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -94,7 +94,13 @@ def owner(ctx, path):
                          "last_active": _format_date(info["last_active"].get(a, 0))}
                         for a, n in info["authors"]
                     ]
-                click.echo(to_json(data))
+                click.echo(to_json(json_envelope("owner",
+                    summary={
+                        "main_dev": data.get("main_dev", "?"),
+                        "fragmentation": data.get("fragmentation", 0),
+                    },
+                    **data,
+                )))
             else:
                 file_ids = [f["id"] for f in dir_files]
                 ph = ",".join("?" for _ in file_ids)
@@ -109,15 +115,19 @@ def owner(ctx, path):
                         GROUP BY gc.author ORDER BY churn DESC""",
                     file_ids,
                 ).fetchall()
-                click.echo(to_json({
-                    "path": path, "type": "directory", "file_count": len(dir_files),
-                    "authors": [
+                click.echo(to_json(json_envelope("owner",
+                    summary={
+                        "file_count": len(dir_files),
+                        "authors": len(rows),
+                    },
+                    path=path, type="directory", file_count=len(dir_files),
+                    authors=[
                         {"name": r["author"], "commits": r["commits"],
                          "churn": r["churn"] or 0, "files_touched": r["files_touched"],
                          "last_active": _format_date(r["last_active"])}
                         for r in rows
                     ],
-                }))
+                )))
             return
 
         if len(dir_files) == 1:

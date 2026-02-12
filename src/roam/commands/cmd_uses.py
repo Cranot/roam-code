@@ -3,7 +3,7 @@
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -53,7 +53,10 @@ def uses(ctx, name, full):
 
         if not rows:
             if json_mode:
-                click.echo(to_json({"symbol": name, "consumers": {}}))
+                click.echo(to_json(json_envelope("uses",
+                    summary={"total_consumers": 0, "total_files": 0},
+                    symbol=name, consumers={},
+                )))
             else:
                 click.echo(f"No consumers of '{name}' found.")
             return
@@ -89,11 +92,16 @@ def uses(ctx, name, full):
                     for r in deduped
                 ]
             files = set(r["path"] for r in rows)
-            click.echo(to_json({
-                "symbol": name,
-                "consumers": json_groups,
-                "total_files": len(files),
-            }))
+            total_consumers = sum(len(v) for v in json_groups.values())
+            click.echo(to_json(json_envelope("uses",
+                summary={
+                    "total_consumers": total_consumers,
+                    "total_files": len(files),
+                },
+                symbol=name,
+                consumers=json_groups,
+                total_files=len(files),
+            )))
             return
 
         total = 0

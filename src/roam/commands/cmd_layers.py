@@ -5,7 +5,7 @@ import click
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers, find_violations, format_layers
-from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json
+from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 import networkx as nx
@@ -23,7 +23,10 @@ def layers(ctx):
 
         if not layer_map:
             if json_mode:
-                click.echo(to_json({"layers": [], "violations": []}))
+                click.echo(to_json(json_envelope("layers",
+                    summary={"total_layers": 0, "violations": 0},
+                    layers=[], violations=[],
+                )))
             else:
                 click.echo("No layers detected (graph is empty).")
             return
@@ -65,9 +68,13 @@ def layers(ctx):
                         ).fetchall()
                         layer_dirs[l["layer"]] = [{"dir": r["dir"], "count": r["cnt"]} for r in dr]
 
-            click.echo(to_json({
-                "total_layers": max_layer + 1,
-                "layers": [
+            click.echo(to_json(json_envelope("layers",
+                summary={
+                    "total_layers": max_layer + 1,
+                    "violations": len(violations),
+                },
+                total_layers=max_layer + 1,
+                layers=[
                     {
                         "layer": l["layer"],
                         "symbol_count": len(l["symbols"]),
@@ -79,7 +86,7 @@ def layers(ctx):
                     }
                     for l in formatted
                 ],
-                "violations": [
+                violations=[
                     {
                         "source": v_lookup.get(v["source"], {}).get("name", "?"),
                         "source_layer": v["source_layer"],
@@ -88,7 +95,7 @@ def layers(ctx):
                     }
                     for v in violations
                 ],
-            }))
+            )))
             return
 
         total_symbols = sum(len(l["symbols"]) for l in formatted)

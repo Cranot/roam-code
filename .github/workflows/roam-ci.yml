@@ -1,0 +1,53 @@
+# CI pipeline for roam-code itself.
+# Runs the test suite across supported Python versions and, on PRs,
+# eats its own dog food by running roam analysis against the repo.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # -- Test suite across all supported Python versions -----------------------
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      - name: Install dependencies
+        run: |
+          pip install -e .
+          pip install pytest
+
+      - name: Run tests
+        run: pytest tests/ -x -q
+
+  # -- Self-analysis: roam analyses its own codebase on PRs ------------------
+  self-analysis:
+    runs-on: ubuntu-latest
+    if: github.event_name == 'pull_request'
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - run: pip install -e .
+      - run: roam index
+      - run: roam fitness
+      - run: roam health --json

@@ -1,3 +1,5 @@
+"""Show symbol definition, callers, and callees."""
+
 import click
 
 from roam.db.connection import open_db
@@ -6,7 +8,7 @@ from roam.db.queries import (
 )
 from roam.output.formatter import (
     abbrev_kind, loc, format_signature, format_edge_kind,
-    truncate_lines, section, to_json,
+    truncate_lines, section, to_json, json_envelope,
 )
 from roam.commands.resolve import ensure_index, find_symbol
 
@@ -67,7 +69,13 @@ def symbol(ctx, name, full):
                  "location": loc(c["file_path"], c["edge_line"])}
                 for c in deduped_callees
             ]
-            click.echo(to_json(data))
+            click.echo(to_json(json_envelope("symbol",
+                summary={
+                    "callers": len(deduped_callers),
+                    "callees": len(deduped_callees),
+                },
+                **data,
+            )))
             return
 
         # --- Text output ---
