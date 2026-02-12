@@ -497,9 +497,9 @@ class Indexer:
                     (file_id, complexity),
                 )
 
-                # Parse with tree-sitter
+                # Parse with tree-sitter (or regex-only: tree=None, source available)
                 tree, parsed_source, lang = parse_file(full_path, language)
-                if tree is None:
+                if tree is None and parsed_source is None:
                     continue
 
                 # Get language extractor
@@ -586,8 +586,8 @@ class Indexer:
                         all_references.extend(tpl_refs)
 
                 # Supplement: run generic extractor for inheritance refs
-                # that Tier 1 extractors may miss
-                if not isinstance(extractor, GenericExtractor) and language:
+                # that Tier 1 extractors may miss (requires tree-sitter AST)
+                if not isinstance(extractor, GenericExtractor) and language and tree is not None:
                     try:
                         generic = GenericExtractor(language=language)
                         generic_refs = generic.extract_references(tree, parsed_source, rel_path)
@@ -642,7 +642,7 @@ class Indexer:
                         full_path = self.root / rel_path
                         language = detect_language(rel_path)
                         tree, parsed_source, lang = parse_file(full_path, language)
-                        if tree is None:
+                        if tree is None and parsed_source is None:
                             continue
                         extractor = None
                         if get_extractor is not None and lang is not None:
@@ -678,8 +678,8 @@ class Indexer:
                                         tpl_content, tpl_start_line, known_names, rel_path,
                                     )
                                     all_references.extend(tpl_refs)
-                        # Generic supplement for unchanged files too
-                        if not isinstance(extractor, GenericExtractor) and language:
+                        # Generic supplement for unchanged files too (requires tree-sitter AST)
+                        if not isinstance(extractor, GenericExtractor) and language and tree is not None:
                             try:
                                 generic = GenericExtractor(language=language)
                                 generic_refs = generic.extract_references(tree, parsed_source, rel_path)

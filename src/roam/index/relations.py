@@ -30,6 +30,16 @@ def resolve_references(
             if qn:
                 symbols_by_qualified.setdefault(qn, []).append(sym)
 
+    # Case-insensitive fallback index for case-insensitive languages (VFP)
+    symbols_by_name_lower: dict[str, list[dict]] = {}
+    for name, sym_list in symbols_by_name.items():
+        lower = name.lower()
+        if lower != name:  # Only add if case differs to save memory
+            symbols_by_name_lower.setdefault(lower, []).extend(sym_list)
+        # Always add lowercase key so lookups work
+        if lower not in symbols_by_name_lower:
+            symbols_by_name_lower[lower] = sym_list
+
     # Build import map: (source_file, imported_name) -> import_path
     import_map: dict[tuple[str, str], str] = {}
     for ref in references:
@@ -132,6 +142,13 @@ def resolve_references(
                     ref_kind=kind, source_parent=source_parent, import_map=import_map,
                 )
 
+            # 3. Case-insensitive fallback (helps VFP and other case-insensitive langs)
+            if target_sym is None:
+                target_sym = _best_match(
+                    target_name.lower(), source_file, symbols_by_name_lower,
+                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
+                )
+
         if target_sym is None:
             continue
 
@@ -180,7 +197,7 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
         pass
 
     # Strip trailing extension from normalized path if present
-    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py"):
+    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg"):
         if normalized.endswith(ext):
             normalized = normalized[: -len(ext)]
             break
@@ -190,7 +207,7 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
         fp = cand.get("file_path", "").replace("\\", "/")
         # Strip file extension from candidate
         fp_no_ext = fp
-        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py"):
+        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg"):
             if fp_no_ext.endswith(ext):
                 fp_no_ext = fp_no_ext[: -len(ext)]
                 break

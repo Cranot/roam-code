@@ -66,11 +66,12 @@ _COMMANDS = {
     "digest":       ("roam.commands.cmd_digest",       "digest"),
     "tour":         ("roam.commands.cmd_tour",         "tour"),
     "diagnose":     ("roam.commands.cmd_diagnose",     "diagnose"),
+    "ws":           ("roam.commands.cmd_ws",           "ws"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
-    "Getting Started": ["index", "init", "understand", "tour", "describe"],
+    "Getting Started": ["index", "init", "understand", "tour", "describe", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones"],

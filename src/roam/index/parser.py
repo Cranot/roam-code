@@ -75,6 +75,8 @@ EXTENSION_MAP = {
     ".evt": "aura",
     ".intf": "aura",
     ".design": "aura",
+    # Visual FoxPro
+    ".prg": "foxpro",
 }
 
 # Grammar aliasing: languages that reuse existing tree-sitter grammars.
@@ -90,6 +92,9 @@ GRAMMAR_ALIASES = {
     # "jsonc": "json",
     # "mdx": "markdown",
 }
+
+# Languages that use regex-only extraction (no tree-sitter grammar)
+REGEX_ONLY_LANGUAGES = frozenset({"foxpro"})
 
 # Track parse error stats
 parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
@@ -195,6 +200,10 @@ def parse_file(path: Path, language: str | None = None):
         parse_errors["unreadable"] += 1
         log.warning("Unreadable file: %s", path)
         return None, None, None
+
+    # Regex-only languages: return source without tree-sitter parsing
+    if language in REGEX_ONLY_LANGUAGES:
+        return None, source, language
 
     # Vue/Svelte SFC: extract <script> blocks and route to TS/JS
     if language in ("vue", "svelte"):
