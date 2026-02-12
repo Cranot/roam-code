@@ -1,5 +1,7 @@
 """Show topological layer detection and violations."""
 
+from __future__ import annotations
+
 import click
 
 from roam.db.connection import open_db

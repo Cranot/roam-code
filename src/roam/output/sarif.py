@@ -12,6 +12,8 @@ Usage::
     write_sarif(sarif, "roam-dead.sarif")
 """
 
+from __future__ import annotations
+
 import json as _json
 from pathlib import Path
 

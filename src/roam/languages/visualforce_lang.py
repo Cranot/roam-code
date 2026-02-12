@@ -5,6 +5,8 @@ Extracts page structure and references to Apex controllers,
 extensions, includes, and merge field expressions.
 """
 
+from __future__ import annotations
+
 import re
 
 from .base import LanguageExtractor

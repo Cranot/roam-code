@@ -1,5 +1,7 @@
 """Import and call resolution into graph edges."""
 
+from __future__ import annotations
+
 import os
 import re
 

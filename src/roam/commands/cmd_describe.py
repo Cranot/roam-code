@@ -1,5 +1,7 @@
 """Auto-generate a CLAUDE.md project description from the index."""
 
+from __future__ import annotations
+
 import os
 from collections import Counter
 

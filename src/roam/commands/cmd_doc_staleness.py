@@ -1,5 +1,7 @@
 """Detect stale docstrings whose code body has drifted since the docs were written."""
 
+from __future__ import annotations
+
 import re
 import subprocess
 from collections import defaultdict
