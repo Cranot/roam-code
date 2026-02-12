@@ -9,7 +9,7 @@
 
 **codebase intelligence for AI agents**
 
-one shell command replaces 5-10 tool calls · saves 60-70% of context-gathering tokens
+*one shell command replaces 5-10 tool calls · saves 60-70% of context-gathering tokens*
 
 v7.1.0 · 48 commands · 16 languages · Salesforce Tier 1 · SARIF · MCP · GitHub Action
 
@@ -24,7 +24,7 @@ v7.1.0 · 48 commands · 16 languages · Salesforce Tier 1 · SARIF · MCP · Gi
 
 > Your AI agent shouldn't need 10 tool calls to understand a codebase.
 
-Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- into a local SQLite database. Any codebase question is one shell command away. Output is plain ASCII optimized for LLM token budgets. No API keys, no servers, no configuration.
+Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- into a local SQLite database. Any codebase question is one shell command away. Output is plain ASCII optimized for LLM token budgets.
 
 ```bash
 $ roam index                     # build once (~5s), then incremental
@@ -49,7 +49,7 @@ $ roam health --gate score>=70   # CI quality gate — exit 1 on failure
 
 **Reference:** [Language Support](#language-support) · [Performance](#performance) · [How It Works](#how-it-works) · [How Roam Compares](#how-roam-compares)
 
-**More:** [Limitations](#limitations) · [Troubleshooting](#troubleshooting) · [Development](#development) · [Contributing](#contributing)
+**More:** [Limitations](#limitations) · [Troubleshooting](#troubleshooting) · [Update / Uninstall](#update--uninstall) · [Development](#development) · [Contributing](#contributing)
 
 </details>
 
@@ -865,7 +865,7 @@ roam-code/
 ├── src/roam/
 │   ├── __init__.py                    # Version (7.1.0)
 │   ├── cli.py                         # Click CLI entry point (48 commands, 7 categories)
-│   ├── mcp_server.py                  # MCP server (12 tools, 2 resources)
+│   ├── mcp_server.py                  # MCP server (14 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite connection (WAL, pragmas, batched IN helpers)
 │   │   ├── schema.py                  # Tables, indexes, safe ALTER migrations
