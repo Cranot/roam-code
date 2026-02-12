@@ -1,5 +1,40 @@
 # Changelog
 
+## v7.1.0
+
+Large-repo safety, deeper Salesforce cross-language edges, and custom report presets. Fixes a latent crash on repos with >999 symbols in queries.
+
+### Batched SQL Infrastructure
+
+- **`batched_in()` / `batched_count()` helpers** — Centralized IN-clause batching in `connection.py`. SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999; Python's `sqlite3` module doesn't expose `sqlite3_limit()`, so a conservative batch size of 400 prevents crashes on large codebases. Handles single and double `{ph}` placeholders with automatic chunk sizing.
+- **41 unbatched IN-clause sites fixed** across 15 command modules and 2 graph modules: `clusters.py`, `cycles.py`, `cmd_dead.py`, `cmd_context.py`, `cmd_layers.py`, `cmd_module.py`, `cmd_debt.py`, `cmd_affected_tests.py`, `cmd_fn_coupling.py`, `cmd_health.py`, `cmd_coverage_gaps.py`, `cmd_risk.py`, `cmd_safe_zones.py`, `cmd_why.py`, `cmd_impact.py`.
+- **AND-based double-IN correctness** — Queries like `WHERE source_id IN (...) AND target_id IN (...)` cannot be batched by repeating the same subset to both placeholders (cross-batch edges would be missed). Fixed by fetching single-IN results and filtering in Python.
+- **OR-based double-IN** — Split into two separate single-IN queries with dict-based deduplication.
+- **GROUP BY / ORDER BY / LIMIT** — Queries with aggregation that can't work across batches use Python-side `Counter` and `sort` instead.
+
+### Salesforce Enhancements
+
+- **LWC anonymous class extraction** — Lightning Web Components use `export default class extends LightningElement {}` (anonymous). The JavaScript extractor now derives the class name from the filename (e.g., `myComponent.js` → `MyComponent`).
+- **`@salesforce/*` import resolution** — Cross-language edges for `@salesforce/apex/ClassName.method` (→ call), `@salesforce/schema/Object.Field` (→ schema_ref), `@salesforce/label/c.LabelName` (→ label), and `@salesforce/messageChannel/Channel` (→ import).
+- **Apex generic type references** — `List<Account>`, `Set<Contact__c>`, `Map<Id, Opportunity>` now produce `type_ref` edges to the parameterized types. Built-in types (`String`, `Integer`, `Id`, etc.) are filtered out.
+- **Flow actionCalls → Apex edges** — Salesforce Flow XML files with `<actionCalls>` blocks containing `<actionType>apex</actionType>` now produce `call` edges to the referenced Apex class. Block-scoped parsing prevents cross-block false positives.
+- **SF test naming conventions** — `roam test-map` and `roam impact` now discover Salesforce-style test classes (`{Name}Test.cls`, `{Name}_Test.cls`) via convention-based queries, in addition to path/filename pattern matching.
+
+### Custom Report Presets
+
+- **`roam report --config <path>`** — Load custom report presets from a JSON file. Custom presets are merged with built-in ones (`first-contact`, `security`, `pre-pr`, `refactor`). Each preset defines sections with title + command arrays.
+
+### Correctness Fixes
+
+- **Flow XML cross-block regex** — Fixed a bug where the `_extract_flow_refs` regex could span across `</actionCalls>` boundaries, pairing an `actionName` from one block with an `actionType` from another. Replaced with block-scoped parsing.
+- **AND-based double-IN batching** — Fixed `cmd_module.py` cohesion calculation and `cmd_dead.py` cluster detection that undercounted internal edges for large datasets (>200 symbols).
+- **Report `--config` error handling** — Malformed JSON now raises a clean `click.BadParameter` instead of an unhandled traceback.
+
+### Testing
+
+- 67 new tests covering: batched helpers, SF import resolution, Apex generic types, LWC anonymous class, Flow actionCalls, report --config, SF test detection, cross-block safety, cross-batch edge correctness.
+- **556 total tests passing**
+
 ## v7.0.0
 
 Major release: Composite health scoring, SARIF output, MCP server, guided onboarding, and deep enhancements across 8 existing commands. Shifts roam from single-metric health to multi-factor CodeScene-inspired analysis.

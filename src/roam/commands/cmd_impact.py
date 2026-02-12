@@ -77,6 +77,21 @@ def impact(ctx, name):
                     loc(node.get("file_path", "?"), None),
                 ])
 
+        # Convention-based Salesforce test discovery: NameTest.cls, Name_Test.cls
+        sf_test_files = set()
+        for dep_id in dependents | {sym_id}:
+            node = G.nodes.get(dep_id, {})
+            dep_name = node.get("name", "")
+            if dep_name:
+                conv_tests = conn.execute(
+                    "SELECT f.path FROM symbols s "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE (s.name = ? OR s.name = ?) AND s.kind = 'class'",
+                    (f"{dep_name}Test", f"{dep_name}_Test"),
+                ).fetchall()
+                for ct in conv_tests:
+                    sf_test_files.add(ct["path"])
+
         if json_mode:
             json_deps = {}
             for edge_kind, items in by_kind.items():
@@ -88,12 +103,14 @@ def impact(ctx, name):
                 summary={
                     "affected_symbols": len(dependents),
                     "affected_files": len(affected_files),
+                    "sf_convention_tests": len(sf_test_files),
                 },
                 symbol=sym["qualified_name"] or sym["name"],
                 affected_symbols=len(dependents),
                 affected_files=len(affected_files),
                 direct_dependents=json_deps,
                 affected_file_list=sorted(affected_files),
+                sf_convention_tests=sorted(sf_test_files),
             )))
             return
 
@@ -116,3 +133,9 @@ def impact(ctx, name):
                 click.echo(f"  {fp}")
             if len(affected_files) > 20:
                 click.echo(f"  (+{len(affected_files) - 20} more)")
+
+        # List Salesforce convention-based test files
+        if sf_test_files:
+            click.echo(f"\nSalesforce convention tests ({len(sf_test_files)}):")
+            for tf in sorted(sf_test_files):
+                click.echo(f"  {tf}")

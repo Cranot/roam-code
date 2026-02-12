@@ -8,7 +8,7 @@ import re
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
@@ -161,14 +161,14 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
     for depth in range(min(max_depth, len(_CALLEE_DECAY))):
         if not frontier:
             break
-        placeholders = ",".join("?" for _ in frontier)
-        callees = conn.execute(
-            f"SELECT e.target_id, s.name FROM edges e "
-            f"JOIN symbols s ON e.target_id = s.id "
-            f"WHERE e.source_id IN ({placeholders}) "
-            f"AND e.kind IN ('call', 'uses')",
+        callees = batched_in(
+            conn,
+            "SELECT e.target_id, s.name FROM edges e "
+            "JOIN symbols s ON e.target_id = s.id "
+            "WHERE e.source_id IN ({ph}) "
+            "AND e.kind IN ('call', 'uses')",
             frontier,
-        ).fetchall()
+        )
         next_frontier = []
         for callee_id, callee_name in callees:
             if callee_id in visited:

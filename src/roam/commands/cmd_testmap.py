@@ -9,7 +9,7 @@ from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json, j
 from roam.commands.resolve import ensure_index, find_symbol
 
 
-TEST_PATTERNS_NAME = ["test_", "_test.", ".test.", ".spec."]
+TEST_PATTERNS_NAME = ["test_", "_test.", ".test.", ".spec.", "Test.cls", "_Test.cls"]
 TEST_PATTERNS_DIR = ["tests/", "test/", "__tests__/", "spec/"]
 
 
@@ -71,8 +71,22 @@ def _test_map_symbol(conn, sym):
         else:
             click.echo(f"Test files importing {sym['file_path']}: (none)")
 
+    # Convention-based: look for NameTest or Name_Test classes (Salesforce convention)
+    base_name = sym["name"]
+    convention_tests = conn.execute(
+        "SELECT s.name, s.kind, f.path FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE (s.name = ? OR s.name = ?) AND s.kind = 'class'",
+        (f"{base_name}Test", f"{base_name}_Test"),
+    ).fetchall()
+    if convention_tests:
+        click.echo()
+        click.echo(f"Convention-based test classes ({len(convention_tests)}):")
+        for ct in convention_tests:
+            click.echo(f"  {ct['name']:<25s} {abbrev_kind(ct['kind'])}  {ct['path']}")
+
     # Suggest when no tests found
-    if not direct_tests and not test_importers:
+    if not direct_tests and not test_importers and not convention_tests:
         pr_row = conn.execute(
             "SELECT pagerank, in_degree FROM graph_metrics WHERE symbol_id = ?",
             (sym["id"],),
@@ -222,10 +236,20 @@ def _test_map_symbol_json(conn, sym):
         ).fetchall()
         test_importers = [r for r in importers if _is_test_file(r["path"])]
 
+    # Convention-based: look for NameTest or Name_Test classes (Salesforce convention)
+    base_name = sym["name"]
+    convention_tests = conn.execute(
+        "SELECT s.name, s.kind, f.path FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE (s.name = ? OR s.name = ?) AND s.kind = 'class'",
+        (f"{base_name}Test", f"{base_name}_Test"),
+    ).fetchall()
+
     click.echo(to_json(json_envelope("test-map",
         summary={
             "direct_tests": len(direct_tests),
             "test_importers": len(test_importers),
+            "convention_tests": len(convention_tests),
         },
         name=sym["name"], kind=sym["kind"],
         location=loc(sym["file_path"], sym["line_start"]),
@@ -237,6 +261,10 @@ def _test_map_symbol_json(conn, sym):
         test_importers=[
             {"path": r["path"], "symbols_used": r["symbol_count"]}
             for r in test_importers
+        ],
+        convention_tests=[
+            {"name": ct["name"], "kind": ct["kind"], "path": ct["path"]}
+            for ct in convention_tests
         ],
     )))
 

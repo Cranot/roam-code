@@ -1,5 +1,6 @@
 
 from __future__ import annotations
+import os
 from .base import LanguageExtractor
 
 
@@ -52,7 +53,7 @@ class JavaScriptExtractor(LanguageExtractor):
                 self._extract_function(child, source, symbols, parent_name, exported)
             elif child.type == "generator_function_declaration":
                 self._extract_function(child, source, symbols, parent_name, exported, generator=True)
-            elif child.type == "class_declaration":
+            elif child.type in ("class_declaration", "class"):
                 self._extract_class(child, source, file_path, symbols, parent_name, exported)
             elif child.type in ("lexical_declaration", "variable_declaration"):
                 self._extract_variable_decl(child, source, file_path, symbols, parent_name, exported)
@@ -92,8 +93,13 @@ class JavaScriptExtractor(LanguageExtractor):
     def _extract_class(self, node, source, file_path, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
         if name_node is None:
-            return
-        name = self.node_text(name_node, source)
+            # Anonymous class (e.g. export default class extends LightningElement {})
+            # Derive name from file path using LWC convention: myComponent.js -> MyComponent
+            basename = os.path.basename(file_path)
+            name = basename.rsplit(".", 1)[0]
+            name = name[0].upper() + name[1:] if name else "Anonymous"
+        else:
+            name = self.node_text(name_node, source)
         sig = f"class {name}"
         qualified = f"{parent_name}.{name}" if parent_name else name
 
@@ -526,12 +532,54 @@ class JavaScriptExtractor(LanguageExtractor):
                                 break
                 self._walk_refs(child, source, refs, new_scope)
 
+    def _resolve_salesforce_import(self, path: str) -> tuple[str, str] | None:
+        """Resolve @salesforce/* import paths to (target_name, edge_kind).
+
+        Handles:
+          @salesforce/apex/ClassName.methodName  -> (ClassName.methodName, call)
+          @salesforce/schema/Object.Field        -> (Object.Field, schema_ref)
+          @salesforce/label/c.LabelName          -> (Label.LabelName, label)
+          @salesforce/messageChannel/Channel__c  -> (Channel__c, import)
+        """
+        if not path.startswith("@salesforce/"):
+            return None
+        rest = path[len("@salesforce/"):]
+        if rest.startswith("apex/"):
+            target = rest[len("apex/"):]
+            return (target, "call")
+        if rest.startswith("schema/"):
+            target = rest[len("schema/"):]
+            return (target, "schema_ref")
+        if rest.startswith("label/"):
+            target = rest[len("label/"):]
+            # Normalise c.LabelName -> Label.LabelName
+            if target.startswith("c."):
+                target = "Label." + target[2:]
+            return (target, "label")
+        if rest.startswith("messageChannel/"):
+            target = rest[len("messageChannel/"):]
+            return (target, "import")
+        return None
+
     def _extract_esm_import(self, node, source, refs, scope_name):
         """Extract ESM import statements."""
         source_node = node.child_by_field_name("source")
         if source_node is None:
             return
         path = self.node_text(source_node, source).strip("'\"")
+
+        # Resolve @salesforce/* imports to semantic targets
+        sf_resolved = self._resolve_salesforce_import(path)
+        if sf_resolved is not None:
+            sf_target, sf_kind = sf_resolved
+            refs.append(self._make_reference(
+                target_name=sf_target,
+                kind=sf_kind,
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+                import_path=path,
+            ))
+            return
 
         # Collect imported names
         names = []

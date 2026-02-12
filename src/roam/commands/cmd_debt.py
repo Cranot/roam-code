@@ -9,7 +9,7 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.output.formatter import loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
@@ -87,11 +87,11 @@ def _compute_file_debt(conn):
             for scc in cycles:
                 all_cycle_ids.update(scc)
             if all_cycle_ids:
-                ph = ",".join("?" for _ in all_cycle_ids)
-                rows = conn.execute(
-                    f"SELECT DISTINCT s.file_id FROM symbols s WHERE s.id IN ({ph})",
+                rows = batched_in(
+                    conn,
+                    "SELECT DISTINCT s.file_id FROM symbols s WHERE s.id IN ({ph})",
                     list(all_cycle_ids),
-                ).fetchall()
+                )
                 cycle_files = {r["file_id"] for r in rows}
     except Exception:
         pass  # graph not available — skip cycle detection

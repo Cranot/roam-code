@@ -6,7 +6,7 @@ from collections import deque
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
@@ -178,14 +178,14 @@ def safe_zones(ctx, target, depth):
             click.echo("No reachable symbols found.")
             return
 
-        ph = ",".join("?" for _ in all_display_ids)
-        detail_rows = conn.execute(
-            f"SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, "
-            f"f.path as file_path "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph})",
+        detail_rows = batched_in(
+            conn,
+            "SELECT s.id, s.name, s.kind, s.qualified_name, s.line_start, "
+            "f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.id IN ({ph})",
             list(all_display_ids),
-        ).fetchall()
+        )
 
         detail_map: dict[int, dict] = {}
         for r in detail_rows:

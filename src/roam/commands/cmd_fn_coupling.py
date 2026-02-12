@@ -6,7 +6,7 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.output.formatter import format_table, to_json, json_envelope, loc
 from roam.commands.resolve import ensure_index
 
@@ -98,14 +98,15 @@ def _load_symbol_info(conn, sym_ids):
     if not sym_ids:
         return {}
 
-    ph = ",".join("?" for _ in sym_ids)
-    rows = conn.execute(f"""
-        SELECT s.id, s.name, s.kind, s.qualified_name,
-               s.line_start, f.path AS file_path
-        FROM symbols s
-        JOIN files f ON s.file_id = f.id
-        WHERE s.id IN ({ph})
-    """, list(sym_ids)).fetchall()
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, s.qualified_name, "
+        "s.line_start, f.path AS file_path "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
+        list(sym_ids),
+    )
 
     info = {}
     for r in rows:

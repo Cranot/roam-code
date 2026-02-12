@@ -8,6 +8,8 @@ from collections import Counter, defaultdict
 
 import networkx as nx
 
+from roam.db.connection import batched_in
+
 
 def detect_clusters(G: nx.DiGraph) -> dict[int, int]:
     """Detect communities using Louvain on the undirected projection of *G*.
@@ -63,15 +65,15 @@ def label_clusters(
 
     # Fetch file paths, kind, and pagerank for all symbols in one query
     all_ids = list(clusters.keys())
-    placeholders = ",".join("?" for _ in all_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pagerank "
-        f"FROM symbols s "
-        f"JOIN files f ON s.file_id = f.id "
-        f"LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
-        f"WHERE s.id IN ({placeholders})",
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pagerank "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+        "WHERE s.id IN ({ph})",
         all_ids,
-    ).fetchall()
+    )
     id_to_path: dict[int, str] = {}
     id_to_info: dict[int, dict] = {}
     for r in rows:

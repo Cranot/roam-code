@@ -7,6 +7,8 @@ from collections import Counter
 
 import networkx as nx
 
+from roam.db.connection import batched_in
+
 
 def find_cycles(G: nx.DiGraph, min_size: int = 2) -> list[list[int]]:
     """Return strongly connected components with at least *min_size* members.
@@ -50,13 +52,13 @@ def format_cycles(
     if not all_ids:
         return []
 
-    placeholders = ",".join("?" for _ in all_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path AS file_path "
-        f"FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({placeholders})",
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path AS file_path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
         list(all_ids),
-    ).fetchall()
+    )
     lookup: dict[int, dict] = {}
     for sid, name, kind, fpath in rows:
         lookup[sid] = {"id": sid, "name": name, "kind": kind, "file_path": fpath}

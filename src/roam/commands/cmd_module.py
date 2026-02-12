@@ -2,7 +2,7 @@
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.db.queries import (
     FILES_IN_DIR, SYMBOLS_IN_DIR, FILE_IMPORTS, FILE_IMPORTED_BY,
 )
@@ -88,16 +88,28 @@ def module(ctx, path):
         api_surface = exported_count * 100 / total_syms if total_syms else 0
 
         if all_sym_ids:
-            ph = ",".join("?" for _ in all_sym_ids)
             ids_list = list(all_sym_ids)
-            internal_edges = conn.execute(
-                f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) AND target_id IN ({ph})",
-                ids_list + ids_list,
-            ).fetchone()[0]
-            total_edges = conn.execute(
-                f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) OR target_id IN ({ph})",
-                ids_list + ids_list,
-            ).fetchone()[0]
+            id_set = all_sym_ids
+            # Fetch edges touching any module symbol, then classify in Python
+            src_rows = batched_in(
+                conn,
+                "SELECT DISTINCT source_id, target_id FROM edges WHERE source_id IN ({ph})",
+                ids_list,
+            )
+            tgt_rows = batched_in(
+                conn,
+                "SELECT DISTINCT source_id, target_id FROM edges WHERE target_id IN ({ph})",
+                ids_list,
+            )
+            all_edges = {
+                (r["source_id"], r["target_id"])
+                for r in src_rows + tgt_rows
+            }
+            total_edges = len(all_edges)
+            internal_edges = sum(
+                1 for s, t in all_edges
+                if s in id_set and t in id_set
+            )
             cohesion = internal_edges * 100 / total_edges if total_edges else 0
         else:
             cohesion = 0
