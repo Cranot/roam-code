@@ -1,5 +1,7 @@
 """SQLite connection management with WAL mode and performance pragmas."""
 
+from __future__ import annotations
+
 import sqlite3
 import os
 from pathlib import Path

@@ -1,5 +1,7 @@
 """File discovery using git ls-files with fallback to os.walk."""
 
+from __future__ import annotations
+
 import os
 import subprocess
 from pathlib import Path

@@ -1,5 +1,7 @@
 """Show function-level temporal coupling: symbols that change together across files."""
 
+from __future__ import annotations
+
 from collections import defaultdict
 
 import click

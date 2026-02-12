@@ -1,5 +1,7 @@
 """Token-efficient text formatting for AI consumption."""
 
+from __future__ import annotations
+
 import json as _json
 import os
 import time

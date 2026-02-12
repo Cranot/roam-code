@@ -1,5 +1,7 @@
 """Show blast radius: what breaks if a symbol changes."""
 
+from __future__ import annotations
+
 import click
 
 from roam.db.connection import open_db

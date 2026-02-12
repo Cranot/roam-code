@@ -1,5 +1,7 @@
 """Detect potential breaking changes between git refs."""
 
+from __future__ import annotations
+
 import subprocess
 from difflib import SequenceMatcher
 from pathlib import Path

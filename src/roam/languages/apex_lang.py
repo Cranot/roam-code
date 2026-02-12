@@ -10,6 +10,8 @@ Extends JavaExtractor with Apex-specific concepts:
 - System.Label references
 """
 
+from __future__ import annotations
+
 import re
 
 from .java_lang import JavaExtractor

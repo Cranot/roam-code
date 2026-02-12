@@ -5,6 +5,8 @@ Extracts component structure (attributes, handlers, events) and
 references to Apex controllers and other components.
 """
 
+from __future__ import annotations
+
 import re
 
 from .base import LanguageExtractor

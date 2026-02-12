@@ -1,5 +1,7 @@
 """Symbol and reference extraction from tree-sitter ASTs."""
 
+from __future__ import annotations
+
 
 def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict]:
     """Extract symbol definitions from a parsed AST.
