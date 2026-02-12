@@ -1,11 +1,6 @@
 <div align="center">
-<pre>
-██████   ██████   █████  ███    ███
-██   ██ ██    ██ ██   ██ ████  ████
-██████  ██    ██ ███████ ██ ████ ██
-██   ██ ██    ██ ██   ██ ██  ██  ██
-██   ██  ██████  ██   ██ ██      ██
-</pre>
+
+# roam
 
 **Roam builds a semantic graph of your codebase and lets AI agents query it with one shell command.**
 
@@ -24,7 +19,7 @@
 
 Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. AI agents query it via CLI instead of repeatedly grepping and reading files.
 
-Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries designed for AI agents -- offline, cross-language, and token-efficient.
+Unlike LSPs (editor-bound, single-language) or Sourcegraph (hosted search), Roam provides architecture-level graph queries designed for AI agents -- offline, cross-language, and compact.
 
 ```
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
@@ -36,9 +31,7 @@ Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
 
 ### The problem
 
-AI coding agents explore codebases inefficiently: dozens of grep/read cycles, massive token waste, no structural understanding. An agent asking "what calls Flask?" runs 5-10 tool calls and still misses transitive dependents.
-
-Roam replaces this with one graph query:
+AI coding agents explore codebases inefficiently: dozens of grep/read cycles, high token cost, no structural understanding. Roam replaces this with one graph query:
 
 ```
 $ roam context Flask
@@ -69,11 +62,13 @@ $ roam diff                    # blast radius of uncommitted changes
 | Wall time | ~11s | **<0.5s** |
 | Tokens consumed | ~15,000 | **~3,000** |
 
+*Measured on a 200-file Python project (Flask). See [benchmarks](#performance) for more.*
+
 Runs fully local. No API keys, telemetry, or network calls.
 
 ## Best for
 
-- **AI coding workflows** -- agents get structured, token-efficient answers instead of raw file exploration
+- **AI coding workflows** -- agents get structured answers that reduce token usage vs raw file exploration
 - **Large codebases (100+ files)** -- graph queries beat linear search at scale
 - **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
@@ -90,11 +85,11 @@ Runs fully local. No API keys, telemetry, or network calls.
 
 **Speed.** One command replaces 5-10 tool calls. `roam context Flask` returns definition + 47 callers + callees + files-to-read with line ranges -- in under 0.5s.
 
-**Graph intelligence.** Roam knows that `Flask` is a hub with 47 dependents, 89 transitive consumers, and 31 affected tests. `grep` knows the string appears 847 times.
+**Dependency-aware analysis.** Roam computes dependency structure, not string matches. It knows `Flask` has 47 dependents, 89 transitive consumers, and 31 affected tests. `grep` knows the string appears 847 times.
 
-**AI-native output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), token budgets, `--json` envelopes. Output is designed for LLM consumption, not human decoration.
+**Output optimized for LLMs.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), token budgets, `--json` envelopes. Designed for agent consumption, not human decoration.
 
-**Privacy.** Runs fully local. No API keys, telemetry, or network calls. Works in air-gapped environments.
+**Privacy.** Works in air-gapped environments. No API keys, telemetry, or network calls.
 
 **CI-ready.** `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
 
