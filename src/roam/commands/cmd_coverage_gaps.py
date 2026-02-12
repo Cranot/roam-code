@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
@@ -162,11 +162,11 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
             all_ids.add(g)
         # Batch fetch names
         if all_ids:
-            ph = ",".join("?" for _ in all_ids)
-            for r in conn.execute(
-                f"SELECT id, name FROM symbols WHERE id IN ({ph})",
+            for r in batched_in(
+                conn,
+                "SELECT id, name FROM symbols WHERE id IN ({ph})",
                 list(all_ids),
-            ).fetchall():
+            ):
                 id_to_name[r["id"]] = r["name"]
 
         covered = []

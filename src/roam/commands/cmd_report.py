@@ -55,6 +55,46 @@ PRESETS = {
 }
 
 
+def _load_custom_presets(config_path: str) -> dict:
+    """Load custom report presets from a JSON file.
+
+    Expected format:
+    {
+        "my-preset": {
+            "description": "My custom report",
+            "sections": [
+                {"title": "Health Check", "command": ["health"]},
+                {"title": "Risk Analysis", "command": ["risk", "-n", "20"]}
+            ]
+        }
+    }
+    """
+    with open(config_path) as f:
+        try:
+            data = json.load(f)
+        except json.JSONDecodeError as exc:
+            raise click.BadParameter(f"Invalid JSON in config file: {exc}")
+
+    if not isinstance(data, dict):
+        raise click.BadParameter(f"Config must be a JSON object, got {type(data).__name__}")
+
+    for name, preset in data.items():
+        if "sections" not in preset:
+            raise click.BadParameter(f"Preset '{name}' missing 'sections' key")
+        if not isinstance(preset["sections"], list):
+            raise click.BadParameter(f"Preset '{name}' sections must be a list")
+        for i, section in enumerate(preset["sections"]):
+            if "title" not in section or "command" not in section:
+                raise click.BadParameter(
+                    f"Preset '{name}' section {i} needs 'title' and 'command' keys"
+                )
+        # Add default description if missing
+        if "description" not in preset:
+            preset["description"] = f"Custom preset: {name}"
+
+    return data
+
+
 def _run_section(section, root):
     """Run a single report section as a subprocess.
 
@@ -118,23 +158,30 @@ def _format_markdown(preset_name, results):
 @click.option("--list", "list_presets", is_flag=True, help="List available presets")
 @click.option("--strict", is_flag=True, help="Exit non-zero if any section fails")
 @click.option("--md", "markdown", is_flag=True, help="Output GitHub-compatible markdown")
+@click.option("--config", "config_path", type=click.Path(exists=True),
+              help="Load custom presets from a JSON file")
 @click.pass_context
-def report(ctx, preset, list_presets, strict, markdown):
+def report(ctx, preset, list_presets, strict, markdown, config_path):
     """Run a compound report preset — multiple commands in one shot.
 
     Built-in presets: first-contact, security, pre-pr, refactor.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
 
+    all_presets = dict(PRESETS)  # copy built-in
+    if config_path:
+        custom = _load_custom_presets(config_path)
+        all_presets.update(custom)
+
     if list_presets:
         if json_mode:
             click.echo(to_json(json_envelope("report",
-                summary={"presets": len(PRESETS)},
-                presets={name: p["description"] for name, p in PRESETS.items()},
+                summary={"presets": len(all_presets)},
+                presets={name: p["description"] for name, p in all_presets.items()},
             )))
         else:
             click.echo("=== Available Report Presets ===\n")
-            for name, p in PRESETS.items():
+            for name, p in all_presets.items():
                 sections = ", ".join(s["title"] for s in p["sections"])
                 click.echo(f"  {name:<16s}  {p['description']}")
                 click.echo(f"    sections: {sections}")
@@ -142,18 +189,18 @@ def report(ctx, preset, list_presets, strict, markdown):
 
     if not preset:
         click.echo("Usage: roam report <preset>")
-        click.echo("Available presets: " + ", ".join(PRESETS.keys()))
+        click.echo("Available presets: " + ", ".join(all_presets.keys()))
         click.echo("Use --list for details.")
         raise SystemExit(1)
 
-    if preset not in PRESETS:
+    if preset not in all_presets:
         click.echo(f"Unknown preset: {preset}")
-        click.echo("Available: " + ", ".join(PRESETS.keys()))
+        click.echo("Available: " + ", ".join(all_presets.keys()))
         raise SystemExit(1)
 
     ensure_index()
     root = find_project_root()
-    preset_data = PRESETS[preset]
+    preset_data = all_presets[preset]
     t0 = time.monotonic()
 
     results = []

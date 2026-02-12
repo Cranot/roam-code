@@ -41,6 +41,15 @@ _DML_RE = re.compile(
 # System.Label references
 _LABEL_RE = re.compile(r'System\.Label\.(\w+)')
 
+# Generic type references: List<Account>, Map<Id, Contact>, Set<String>, etc.
+_GENERIC_TYPE_RE = re.compile(r'(?:List|Set|Map|Iterable)\s*<\s*([A-Z]\w+(?:__c|__r)?)')
+# Second type parameter in Map<K, V> — captures the value type after the comma
+_MAP_VALUE_TYPE_RE = re.compile(r'Map\s*<\s*[A-Z]\w*\s*,\s*([A-Z]\w+(?:__c|__r)?)')
+_APEX_BUILTINS = frozenset({
+    "String", "Integer", "Long", "Double", "Decimal", "Boolean", "Date",
+    "DateTime", "Time", "Id", "Blob", "Object", "SObject", "Type",
+})
+
 # Trigger declaration pattern
 _TRIGGER_RE = re.compile(
     r'trigger\s+(\w+)\s+on\s+(\w+)',
@@ -94,6 +103,27 @@ class ApexExtractor(JavaExtractor):
                 kind="label",
                 line=line,
             ))
+
+        # Extract type references from generic types (List<Account>, Map<Id, Contact>, etc.)
+        for m in _GENERIC_TYPE_RE.finditer(text):
+            type_name = m.group(1)
+            if type_name not in _APEX_BUILTINS:
+                line = text[:m.start()].count("\n") + 1
+                refs.append(self._make_reference(
+                    target_name=type_name,
+                    kind="type_ref",
+                    line=line,
+                ))
+        # Also capture the value type in Map<K, V>
+        for m in _MAP_VALUE_TYPE_RE.finditer(text):
+            type_name = m.group(1)
+            if type_name not in _APEX_BUILTINS:
+                line = text[:m.start()].count("\n") + 1
+                refs.append(self._make_reference(
+                    target_name=type_name,
+                    kind="type_ref",
+                    line=line,
+                ))
 
         return refs
 

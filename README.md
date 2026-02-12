@@ -9,18 +9,22 @@
 
 **codebase intelligence for AI agents**
 
-v7.0.0 · 48 commands · 16 languages · SARIF · MCP · GitHub Action
+one shell command replaces 5-10 tool calls · saves 60-70% of context-gathering tokens
+
+v7.1.0 · 48 commands · 16 languages · Salesforce Tier 1 · SARIF · MCP · GitHub Action
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
-[![489 tests](https://img.shields.io/badge/tests-489_passing-brightgreen.svg)]()
+[![556 tests](https://img.shields.io/badge/tests-556_passing-brightgreen.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
 
 </div>
 
 ---
 
-Your AI agent shouldn't need 10 tool calls to understand a codebase. Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- so any question is one shell command away.
+> Your AI agent shouldn't need 10 tool calls to understand a codebase.
+
+Roam pre-indexes everything -- symbols, call graphs, dependencies, architecture, git history -- into a local SQLite database. Any codebase question is one shell command away. Output is plain ASCII optimized for LLM token budgets. No API keys, no servers, no configuration.
 
 ```bash
 $ roam index                     # build once (~5s), then incremental
@@ -36,26 +40,18 @@ $ roam --json health             # structured JSON for CI pipelines
 $ roam health --gate score>=70   # CI quality gate — exit 1 on failure
 ```
 
-## Table of Contents
+<details>
+<summary><strong>Table of Contents</strong></summary>
 
-- [Install](#install)
-- [Quick Start](#quick-start)
-- [Commands](#commands)
-- [Walkthrough: Investigating a Codebase](#walkthrough-investigating-a-codebase)
-- [Integration with AI Coding Tools](#integration-with-ai-coding-tools)
-- [MCP Server](#mcp-server)
-- [GitHub Action](#github-action)
-- [SARIF Output](#sarif-output)
-- [Language Support](#language-support)
-- [Performance](#performance)
-- [How It Works](#how-it-works)
-- [How Roam Compares](#how-roam-compares)
-- [Limitations](#limitations)
-- [Troubleshooting](#troubleshooting)
-- [Update / Uninstall](#update--uninstall)
-- [Development](#development)
-- [Contributing](#contributing)
-- [License](#license)
+**Getting Started:** [Install](#install) · [Quick Start](#quick-start) · [Commands](#commands) · [Walkthrough](#walkthrough-investigating-a-codebase)
+
+**Integration:** [AI Coding Tools](#integration-with-ai-coding-tools) · [MCP Server](#mcp-server) · [GitHub Action](#github-action) · [SARIF Output](#sarif-output)
+
+**Reference:** [Language Support](#language-support) · [Performance](#performance) · [How It Works](#how-it-works) · [How Roam Compares](#how-roam-compares)
+
+**More:** [Limitations](#limitations) · [Troubleshooting](#troubleshooting) · [Development](#development) · [Contributing](#contributing)
+
+</details>
 
 ## Install
 
@@ -70,8 +66,6 @@ uv tool install git+https://github.com/Cranot/roam-code.git
 pip install git+https://github.com/Cranot/roam-code.git
 ```
 
-> **Note:** Roam is not yet published to PyPI. Install from source as shown above, or clone and `pip install -e .` for development.
-
 Verify the install:
 
 ```bash
@@ -80,36 +74,25 @@ roam --version
 
 > **Windows:** If `roam` is not found after installing with `uv`, run `uv tool update-shell` and restart your terminal so the tool directory is on PATH.
 
-Requires Python 3.9+. Works on Linux, macOS, and Windows. Best with `git` installed (for file discovery and history analysis; falls back to directory walking without it). No external services, no API keys, no configuration.
+Requires Python 3.9+. Works on Linux, macOS, and Windows. Best with `git` installed (for file discovery and history analysis; falls back to directory walking without it).
+
+> **Privacy:** Roam is 100% local. No external services, no API keys, no telemetry, no network calls. Your code never leaves your machine.
 
 ## Quick Start
 
 ```bash
 cd your-project
-
-# Guided onboarding — creates config, CI workflow, runs first index
-roam init
-
-# Or do it manually:
-echo ".roam/" >> .gitignore
-roam index
-
-# Get a full codebase briefing
-roam understand
-
-# Explore architecture
-roam health
-roam map
-
-# Start working
-roam symbol MyClass
-roam context MyClass
-roam preflight MyClass
+roam init                  # creates .roam/fitness.yaml, CI workflow, indexes codebase
+roam understand            # full codebase briefing in one call
 ```
 
-> **First index:** Expect ~5s for a 200-file project, ~15s for 1,000 files. Subsequent runs are incremental and near-instant. Use `roam index --verbose` to see detailed progress.
+That's it. `roam init` creates a `.roam/fitness.yaml` config (6 architecture rules), a `.github/workflows/roam.yml` CI workflow, and the `.roam/index.db` index. First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are incremental and near-instant.
 
-The index is stored at `.roam/index.db` in your project root. Run `roam --help` to see all 48 commands organized by category.
+### What's Next
+
+- **Set up your AI agent (recommended):** Copy the [integration instructions](#integration-with-ai-coding-tools) into your agent's config, or run `roam describe --agent-prompt >> CLAUDE.md`
+- **Explore your codebase:** `roam health` → `roam weather` → `roam map`
+- **Add to CI:** `roam init` already generated a GitHub Action, or see [GitHub Action](#github-action)
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>
@@ -125,9 +108,30 @@ roam health
 
 </details>
 
+<details>
+<summary><strong>Manual setup (without roam init)</strong></summary>
+
+```bash
+echo ".roam/" >> .gitignore
+roam index
+```
+
+</details>
+
 ## Commands
 
-Roam organizes its 48 commands into 7 categories. Run `roam --help` for the full categorized list.
+Roam organizes its 48 commands into 7 categories. The five commands below cover ~80% of agent workflows:
+
+```
+roam understand              # orient: tech stack, architecture, conventions
+roam context <name>          # gather: files-to-read with exact line ranges
+roam preflight <name>        # check: blast radius + tests + fitness before changing
+roam diff                    # review: blast radius of uncommitted changes
+roam health                  # score: composite architecture health (0-100)
+```
+
+<details>
+<summary><strong>Full command reference (48 commands, 7 categories)</strong></summary>
 
 ### Getting Started
 
@@ -207,7 +211,7 @@ Roam organizes its 48 commands into 7 categories. Run `roam --help` for the full
 
 | Command | Description |
 |---------|-------------|
-| `roam report [--list] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor` |
+| `roam report [--list] [--config FILE] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor`. `--config` loads custom presets from JSON |
 | `roam describe --write` | Generate CLAUDE.md with conventions, complexity hotspots, and architecture overview |
 
 ### Global Options
@@ -227,6 +231,8 @@ roam --compact --json health     # minimal envelope, no version/timestamp
 roam health --gate score>=70     # CI gate — fails if score < 70
 roam --json diff HEAD~3..HEAD    # structured blast radius
 ```
+
+</details>
 
 ## Walkthrough: Investigating a Codebase
 
@@ -378,6 +384,18 @@ Ten commands, and you have a complete picture of the project: structure, key sym
 
 Roam is designed to be called by AI coding agents via shell commands. Instead of multiple Glob/Grep/Read cycles, the agent runs one `roam` command and gets structured, token-efficient output.
 
+**Decision order for agents** -- when in doubt, follow this priority:
+
+| Situation | Command |
+|-----------|---------|
+| First time in a repo | `roam understand` then `roam map` |
+| Need to modify a symbol | `roam preflight <name>` (blast radius + tests + fitness) |
+| Need files to read around a symbol | `roam context <name>` (files + line ranges) |
+| Need to find a symbol | `roam search <pattern>` |
+| Need file structure | `roam file <path>` |
+| Pre-PR check | `roam pr-risk HEAD~3..HEAD` |
+| What breaks if I change X? | `roam impact <symbol>` (read-only blast radius) |
+
 Add the following instructions to your AI tool's configuration file:
 
 ```markdown
@@ -456,13 +474,6 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | "Generate project docs for AI" | `roam describe --write` | Write manually |
 | "Codebase health score for CI" | `roam health --gate score>=70` | No equivalent |
 
-### When to rebuild the index
-
-- **After `git pull` / branch switch:** `roam index` (incremental, fast)
-- **After major refactor or first clone:** `roam index --force` (full rebuild)
-- **Index seems stale or corrupt:** `roam index --force`
-- **No rebuild needed:** Roam auto-detects changed files on every `roam index` run
-
 ## MCP Server
 
 Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with AI tools that support MCP (Claude Desktop, Claude Code, etc.).
@@ -475,7 +486,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-The MCP server exposes 12 tools and 2 resources:
+The MCP server exposes 14 tools and 2 resources:
 
 **Tools:** `understand`, `health`, `preflight`, `search_symbol`, `context`, `trace`, `impact`, `file_info`, `pr_risk`, `breaking_changes`, `affected_tests`, `dead_code`, `complexity_report`, `repo_map`
 
@@ -584,12 +595,15 @@ Then upload in CI:
 
 ### Tier 1 -- Salesforce ecosystem
 
+Roam is one of the few static analysis tools with first-class Salesforce support. Cross-language edges mean `roam impact AccountService` shows blast radius across Apex, LWC, Aura, and Visualforce -- not just within one language.
+
 | Language | Extensions | Symbols | References |
 |----------|-----------|---------|------------|
-| Apex | `.cls` `.trigger` | classes, triggers, SOQL, sharing modifiers, annotations | imports, calls, System.Label, `@salesforce/` |
+| Apex | `.cls` `.trigger` | classes, triggers, SOQL, sharing modifiers, annotations | imports, calls, System.Label, generic type refs (`List<Account>`, `Map<Id, Contact>`) |
 | Aura | `.cmp` `.app` `.evt` `.intf` `.design` | components, attributes, methods, events | controller refs, component refs |
+| LWC (JavaScript) | `.js` (in LWC dirs) | anonymous class → derived from filename | `@salesforce/apex/`, `@salesforce/schema/`, `@salesforce/label/` cross-language edges |
 | Visualforce | `.page` `.component` | pages, components | controller/extensions, merge fields, includes |
-| SF Metadata XML | `*-meta.xml` | objects, fields, rules, layouts | Apex class refs, formula field refs |
+| SF Metadata XML | `*-meta.xml` | objects, fields, rules, layouts | Apex class refs, formula field refs, Flow actionCalls → Apex |
 
 ### Tier 2 -- Generic extraction
 
@@ -623,6 +637,10 @@ Incremental index (no changes): **<1s**. Only re-parses files with changed mtime
 
 All query commands complete in **<0.5s** (~0.25s Python startup + instant SQLite lookup). For comparison, an AI agent answering "what calls this function?" typically needs 5-10 tool calls at ~3-5s each. Roam answers the same question in one call.
 
+### Large Repo Safety
+
+All queries are batched to handle codebases with 100k+ symbols without hitting SQLite parameter limits. No configuration needed -- batching is automatic and transparent.
+
 ### Quality Benchmark
 
 Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real-world open-source repos, measures extraction quality, and runs all commands against each repo:
@@ -647,7 +665,34 @@ The benchmark suite supports additional repos (FastAPI, Gin, Ripgrep, Tokio, urf
 
 ### Token Efficiency
 
-A 1,600-line source file summarized in ~5,000 characters (~70:1 compression). Full project map in ~4,000 characters. Output is plain ASCII with compact abbreviations (`fn`, `cls`, `meth`) -- no tokens wasted on colors, box-drawing, or decorative formatting. Use `--compact` for an additional 40-50% token reduction.
+| Metric | Value |
+|--------|-------|
+| 1,600-line file → `roam file` | ~5,000 chars (~70:1 compression) |
+| Full project map | ~4,000 chars |
+| `--compact` mode | additional 40-50% token reduction |
+| `roam preflight` replaces | 5-7 separate agent tool calls |
+| `roam context` replaces | 3-5 Glob/Grep/Read cycles |
+
+Output is plain ASCII with compact abbreviations (`fn`, `cls`, `meth`). No colors, no box-drawing, no emoji -- zero tokens wasted on decoration.
+
+**Without Roam** (typical agent workflow to understand a symbol):
+
+```
+1. Grep for symbol name          → 1 tool call, ~2s
+2. Read definition file           → 1 tool call, ~1s
+3. Grep for imports of that file  → 1 tool call, ~2s
+4. Read 3 caller files            → 3 tool calls, ~3s
+5. Grep for test files            → 1 tool call, ~2s
+6. Read test file                 → 1 tool call, ~1s
+Total: 8 calls, ~11s, ~15,000 tokens consumed
+```
+
+**With Roam:**
+
+```
+$ roam context MySymbol
+Total: 1 call, <0.5s, ~3,000 tokens consumed
+```
 
 ## How It Works
 
@@ -719,18 +764,6 @@ Per-file health (1-10) combines: max cognitive complexity, indentation complexit
 
 Everything lives in `.roam/index.db`, a single SQLite file using WAL mode for fast reads. The schema includes tables for files, symbols, edges, file edges, symbol metrics, file stats, clusters, git stats, co-change data, hypergraph edges, and metric snapshots. No external database required.
 
-### Output Design
-
-Roam's output is optimized for AI token consumption:
-
-- **Plain ASCII** -- no colors, no box-drawing, no emoji
-- **Compact abbreviations** -- `fn`, `cls`, `meth`, `var`, `iface`, `const`, `struct`
-- **File:line format** -- `src/main.py:42` for every location
-- **Budget-aware** -- sections truncate with `(+N more)` when exceeding line budgets
-- **Table formatting** -- aligned columns for scannable output
-- **`--compact` mode** -- TSV tables (40-50% fewer tokens), minimal JSON envelope
-- **`--json` mode** -- consistent envelope with `command`, `version`, `timestamp`, `summary`
-
 ## How Roam Compares
 
 Roam is **not** an LSP, linter, or editor plugin. It's a static index optimized for AI agents that explore codebases via shell commands.
@@ -755,7 +788,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 
 - **No runtime analysis** -- can't trace dynamic dispatch, reflection, or eval'd code
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve correctly
-- **No cross-language edges** -- a Python file calling a C extension won't show as a dependency
+- **Limited cross-language edges** -- Salesforce `@salesforce/apex/` and Flow→Apex edges are supported, but a Python file calling a C extension won't show as a dependency
 - **Tier 2 languages** (Ruby, C#, Kotlin, Swift, Scala) get basic symbol extraction only (no import resolution or call tracking)
 - **Large monorepos** (100k+ files) may have slow initial indexing -- incremental updates remain fast
 - **Cognitive complexity** follows SonarSource spec -- other complexity models (Halstead, cyclomatic) are not included
@@ -774,6 +807,7 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 | Slow first index | Expected for large projects. Use `roam index --verbose`. Subsequent runs are incremental |
 | Health score seems wrong | Check `roam health --json` for factor breakdown. Utility paths get relaxed thresholds |
 | `--gate` not failing | Ensure the metric name matches (e.g., `score`, `tangle_pct`). Check `roam health --json` for available fields |
+| Index seems stale after `git pull` | Run `roam index` (incremental, fast). After major refactors: `roam index --force` |
 
 ## Update / Uninstall
 
@@ -799,7 +833,7 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (489 tests across 16 languages, Python 3.9-3.13)
+# Run tests (556 tests across 16 languages, Python 3.9-3.13)
 pytest tests/
 
 # Index roam itself
@@ -829,11 +863,11 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── CHANGELOG.md
 ├── src/roam/
-│   ├── __init__.py                    # Version (7.0.0)
+│   ├── __init__.py                    # Version (7.1.0)
 │   ├── cli.py                         # Click CLI entry point (48 commands, 7 categories)
 │   ├── mcp_server.py                  # MCP server (12 tools, 2 resources)
 │   ├── db/
-│   │   ├── connection.py              # SQLite connection (WAL, pragmas, migrations)
+│   │   ├── connection.py              # SQLite connection (WAL, pragmas, batched IN helpers)
 │   │   ├── schema.py                  # Tables, indexes, safe ALTER migrations
 │   │   └── queries.py                 # Named SQL constants
 │   ├── index/
@@ -886,7 +920,8 @@ roam-code/
     ├── test_resolve.py                # Symbol resolution tests
     ├── test_salesforce.py             # Salesforce extractor tests
     ├── test_new_features.py           # v5-v6 feature tests
-    └── test_v7_features.py            # v7 feature tests (56 tests)
+    ├── test_v7_features.py            # v7 feature tests (56 tests)
+    └── test_v71_features.py           # v7.1 feature tests (67 tests)
 ```
 
 </details>
@@ -899,7 +934,7 @@ Contributions are welcome! Here's how to get started:
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 489 tests must pass before submitting
+pytest tests/   # All 556 tests must pass before submitting
 ```
 
 **Good first contributions:**

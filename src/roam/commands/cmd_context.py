@@ -4,7 +4,7 @@ from collections import defaultdict, deque
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in, batched_count
 from roam.db.queries import FILE_BY_PATH
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
@@ -143,13 +143,13 @@ def _get_affected_tests_bfs(conn, sym_id, max_hops=8):
     if not caller_ids:
         return []
 
-    ph = ",".join("?" for _ in caller_ids)
-    rows = conn.execute(
-        f"SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
-        f"FROM symbols s JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({ph})",
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
         caller_ids,
-    ).fetchall()
+    )
 
     tests = []
     seen = set()
@@ -194,13 +194,13 @@ def _get_blast_radius(conn, sym_id):
         return {"dependent_symbols": 0, "dependent_files": 0}
 
     dep_ids = [sid for sid in visited if sid != sym_id]
-    ph = ",".join("?" for _ in dep_ids)
-    file_rows = conn.execute(
-        f"SELECT DISTINCT f.path FROM symbols s "
-        f"JOIN files f ON s.file_id = f.id "
-        f"WHERE s.id IN ({ph})",
+    file_rows = batched_in(
+        conn,
+        "SELECT DISTINCT f.path FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.id IN ({ph})",
         dep_ids,
-    ).fetchall()
+    )
 
     return {
         "dependent_symbols": len(dep_ids),
@@ -439,12 +439,12 @@ def _gather_symbol_context(conn, sym):
     # Rank callers by PageRank for high-fan symbols
     if len(non_test_callers) > 10:
         caller_ids = [c["id"] for c in non_test_callers]
-        ph = ",".join("?" for _ in caller_ids)
-        pr_rows = conn.execute(
-            f"SELECT symbol_id, pagerank FROM graph_metrics "
-            f"WHERE symbol_id IN ({ph})",
+        pr_rows = batched_in(
+            conn,
+            "SELECT symbol_id, pagerank FROM graph_metrics "
+            "WHERE symbol_id IN ({ph})",
             caller_ids,
-        ).fetchall()
+        )
         pr_map = {r["symbol_id"]: r["pagerank"] or 0 for r in pr_rows}
         non_test_callers = sorted(
             non_test_callers,
@@ -575,14 +575,14 @@ def _batch_context(conn, contexts):
     def _resolve_ids(ids):
         if not ids:
             return []
-        ph = ",".join("?" for _ in ids)
-        return conn.execute(
-            f"SELECT s.name, s.kind, f.path as file_path, s.line_start "
-            f"FROM symbols s JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph}) "
-            f"ORDER BY f.path, s.line_start",
+        return batched_in(
+            conn,
+            "SELECT s.name, s.kind, f.path as file_path, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE s.id IN ({ph}) "
+            "ORDER BY f.path, s.line_start",
             list(ids),
-        ).fetchall()
+        )
 
     shared_callers = _resolve_ids(shared_caller_ids)
     shared_callees = _resolve_ids(shared_callee_ids)
@@ -1058,20 +1058,20 @@ def _gather_file_level_context(conn, frow):
             "complexity": None,
         }
 
-    ph = ",".join("?" for _ in sym_ids)
-
     # --- Callers: symbols in OTHER files that reference symbols in this file ---
-    caller_rows = conn.execute(
-        f"SELECT e.target_id, s.name as caller_name, s.kind as caller_kind, "
-        f"f.path as caller_file, s.line_start as caller_line, "
-        f"ts.name as target_name "
-        f"FROM edges e "
-        f"JOIN symbols s ON e.source_id = s.id "
-        f"JOIN files f ON s.file_id = f.id "
-        f"JOIN symbols ts ON e.target_id = ts.id "
-        f"WHERE e.target_id IN ({ph}) AND s.file_id != ?",
-        sym_ids + [file_id],
-    ).fetchall()
+    caller_rows = batched_in(
+        conn,
+        "SELECT e.target_id, s.name as caller_name, s.kind as caller_kind, "
+        "f.path as caller_file, s.line_start as caller_line, "
+        "ts.name as target_name "
+        "FROM edges e "
+        "JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN symbols ts ON e.target_id = ts.id "
+        "WHERE e.target_id IN ({ph}) AND s.file_id != ?",
+        sym_ids,
+        post=[file_id],
+    )
 
     # Group callers by source file
     callers_by_file = defaultdict(list)
@@ -1089,15 +1089,17 @@ def _gather_file_level_context(conn, frow):
         })
 
     # --- Callees: symbols in OTHER files that this file's symbols reference ---
-    callee_rows = conn.execute(
-        f"SELECT e.source_id, s.name as callee_name, s.kind as callee_kind, "
-        f"f.path as callee_file, s.line_start as callee_line "
-        f"FROM edges e "
-        f"JOIN symbols s ON e.target_id = s.id "
-        f"JOIN files f ON s.file_id = f.id "
-        f"WHERE e.source_id IN ({ph}) AND s.file_id != ?",
-        sym_ids + [file_id],
-    ).fetchall()
+    callee_rows = batched_in(
+        conn,
+        "SELECT e.source_id, s.name as callee_name, s.kind as callee_kind, "
+        "f.path as callee_file, s.line_start as callee_line "
+        "FROM edges e "
+        "JOIN symbols s ON e.target_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE e.source_id IN ({ph}) AND s.file_id != ?",
+        sym_ids,
+        post=[file_id],
+    )
 
     # Group callees by target file
     callees_by_file = defaultdict(list)
@@ -1114,14 +1116,16 @@ def _gather_file_level_context(conn, frow):
         })
 
     # --- Tests: test files that reference any symbol in this file ---
-    test_caller_rows = conn.execute(
-        f"SELECT DISTINCT f.path "
-        f"FROM edges e "
-        f"JOIN symbols s ON e.source_id = s.id "
-        f"JOIN files f ON s.file_id = f.id "
-        f"WHERE e.target_id IN ({ph}) AND s.file_id != ?",
-        sym_ids + [file_id],
-    ).fetchall()
+    test_caller_rows = batched_in(
+        conn,
+        "SELECT DISTINCT f.path "
+        "FROM edges e "
+        "JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE e.target_id IN ({ph}) AND s.file_id != ?",
+        sym_ids,
+        post=[file_id],
+    )
 
     direct_tests = sorted(set(
         r["path"] for r in test_caller_rows if is_test_file(r["path"])
@@ -1153,11 +1157,12 @@ def _gather_file_level_context(conn, frow):
     coupling = _get_coupling(conn, file_path, limit=10)
 
     # --- Complexity summary ---
-    metrics_rows = conn.execute(
-        f"SELECT sm.* FROM symbol_metrics sm "
-        f"WHERE sm.symbol_id IN ({ph})",
+    metrics_rows = batched_in(
+        conn,
+        "SELECT sm.* FROM symbol_metrics sm "
+        "WHERE sm.symbol_id IN ({ph})",
         sym_ids,
-    ).fetchall()
+    )
 
     complexity = None
     if metrics_rows:

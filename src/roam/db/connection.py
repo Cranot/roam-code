@@ -73,6 +73,66 @@ def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str
         pass  # Column already exists
 
 
+# ---------------------------------------------------------------------------
+# Batched IN-clause helpers — avoid SQLITE_MAX_VARIABLE_NUMBER (default 999)
+# ---------------------------------------------------------------------------
+
+_BATCH_SIZE = 400  # conservative — leaves room for extra params
+
+
+def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
+    """Execute *sql* with ``{ph}`` placeholder(s) in batches.
+
+    Handles single and double IN-clauses automatically::
+
+        # Single IN
+        batched_in(conn, "SELECT * FROM t WHERE id IN ({ph})", ids)
+
+        # Double IN (same set)
+        batched_in(conn, "... WHERE src IN ({ph}) AND tgt IN ({ph})", ids)
+
+        # Extra params before / after
+        batched_in(conn, "... WHERE kind=? AND id IN ({ph})", ids, pre=[kind])
+
+    Returns a flat list of all rows across batches.
+    """
+    if not ids:
+        return []
+    ids = list(ids)
+    n_ph = sql.count("{ph}")
+    chunk = max(1, batch_size // max(n_ph, 1))
+
+    rows = []
+    for i in range(0, len(ids), chunk):
+        batch = ids[i:i + chunk]
+        ph = ",".join("?" for _ in batch)
+        q = sql.replace("{ph}", ph)
+        params = list(pre) + batch * n_ph + list(post)
+        rows.extend(conn.execute(q, params).fetchall())
+    return rows
+
+
+def batched_count(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
+    """Like :func:`batched_in` but **sums** scalar results (for COUNT queries).
+
+    Returns an integer total.
+    """
+    if not ids:
+        return 0
+    ids = list(ids)
+    n_ph = sql.count("{ph}")
+    chunk = max(1, batch_size // max(n_ph, 1))
+
+    total = 0
+    for i in range(0, len(ids), chunk):
+        batch = ids[i:i + chunk]
+        ph = ",".join("?" for _ in batch)
+        q = sql.replace("{ph}", ph)
+        params = list(pre) + batch * n_ph + list(post)
+        total += conn.execute(q, params).fetchone()[0]
+    return total
+
+
 def db_exists(project_root: Path | None = None) -> bool:
     """Check if an index database exists."""
     path = get_db_path(project_root)

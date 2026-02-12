@@ -5,7 +5,7 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in, batched_count
 from roam.db.queries import UNREFERENCED_EXPORTS
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
@@ -79,14 +79,14 @@ def _find_dead_clusters(conn, dead_ids):
         return []
 
     dead_set = set(dead_ids)
-    ph = ",".join("?" for _ in dead_set)
 
-    # Edges where both source and target are dead
-    edges = conn.execute(
-        f"""SELECT source_id, target_id FROM edges
-            WHERE source_id IN ({ph}) AND target_id IN ({ph})""",
-        list(dead_set) + list(dead_set),
-    ).fetchall()
+    # Edges where both source and target are dead — fetch by source, filter by target
+    all_edges = batched_in(
+        conn,
+        "SELECT source_id, target_id FROM edges WHERE source_id IN ({ph})",
+        list(dead_set),
+    )
+    edges = [e for e in all_edges if e["target_id"] in dead_set]
 
     # Build adjacency (undirected for component finding)
     adj = defaultdict(set)
@@ -163,12 +163,12 @@ def _predict_extinction(conn, target_name):
             if caller_id in removed:
                 continue
             # Check remaining out-degree after removing all removed targets
-            remaining = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE source_id = ? AND target_id NOT IN ({})".format(
-                    ",".join("?" for _ in removed)
-                ),
-                [caller_id] + list(removed),
-            ).fetchone()[0]
+            remaining = batched_count(
+                conn,
+                "SELECT COUNT(*) FROM edges WHERE source_id = ? AND target_id NOT IN ({ph})",
+                list(removed),
+                pre=[caller_id],
+            )
             if remaining == 0:
                 # This caller has no remaining callees → orphaned
                 removed.add(caller_id)
@@ -253,15 +253,13 @@ def _analyze_dead(conn):
                 break
         if not downstream:
             continue
-        ph = ",".join("?" for _ in downstream)
-        alive = conn.execute(
-            f"""SELECT 1 FROM edges e
-                JOIN symbols s ON e.target_id = s.id
-                WHERE s.name = ?
-                AND s.file_id IN ({ph})
-                LIMIT 1""",
-            [r["name"]] + list(downstream),
-        ).fetchone()
+        alive = batched_in(
+            conn,
+            "SELECT 1 FROM edges e JOIN symbols s ON e.target_id = s.id "
+            "WHERE s.name = ? AND s.file_id IN ({ph}) LIMIT 1",
+            list(downstream),
+            pre=[r["name"]],
+        )
         if alive:
             transitively_alive.add(r["id"])
 
@@ -359,13 +357,13 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
                 all_cluster_ids = set()
                 for c in raw_clusters:
                     all_cluster_ids.update(c)
-                ph = ",".join("?" for _ in all_cluster_ids)
-                for r in conn.execute(
-                    f"SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
-                    f"FROM symbols s JOIN files f ON s.file_id = f.id "
-                    f"WHERE s.id IN ({ph})",
+                for r in batched_in(
+                    conn,
+                    "SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
+                    "FROM symbols s JOIN files f ON s.file_id = f.id "
+                    "WHERE s.id IN ({ph})",
                     list(all_cluster_ids),
-                ).fetchall():
+                ):
                     id_to_info[r["id"]] = r
 
             for cluster_set in raw_clusters:
@@ -478,13 +476,13 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
         # Build imported-by lookup for high-confidence results
         if high:
             high_file_ids = {r["file_id"] for r in high}
-            ph = ",".join("?" for _ in high_file_ids)
-            importer_rows = conn.execute(
-                f"SELECT fe.target_file_id, f.path "
-                f"FROM file_edges fe JOIN files f ON fe.source_file_id = f.id "
-                f"WHERE fe.target_file_id IN ({ph})",
+            importer_rows = batched_in(
+                conn,
+                "SELECT fe.target_file_id, f.path "
+                "FROM file_edges fe JOIN files f ON fe.source_file_id = f.id "
+                "WHERE fe.target_file_id IN ({ph})",
                 list(high_file_ids),
-            ).fetchall()
+            )
             importers_by_file = {}
             for ir in importer_rows:
                 importers_by_file.setdefault(ir["target_file_id"], []).append(ir["path"])

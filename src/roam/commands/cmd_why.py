@@ -7,7 +7,7 @@ import re
 import click
 import networkx as nx
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
@@ -192,13 +192,25 @@ def why(ctx, names):
                     coh = None
                     if cluster_size <= 500:
                         comm_set = set(comm)
-                        ph = ",".join("?" for _ in comm_set)
                         id_list = list(comm_set)
-                        edges = conn.execute(
-                            f"SELECT source_id, target_id FROM edges "
-                            f"WHERE source_id IN ({ph}) OR target_id IN ({ph})",
-                            id_list + id_list,
-                        ).fetchall()
+                        # OR-based double IN: split into two single-IN
+                        # queries and merge to avoid exceeding param limits
+                        src_rows = batched_in(
+                            conn,
+                            "SELECT source_id, target_id FROM edges "
+                            "WHERE source_id IN ({ph})",
+                            id_list,
+                        )
+                        tgt_rows = batched_in(
+                            conn,
+                            "SELECT source_id, target_id FROM edges "
+                            "WHERE target_id IN ({ph})",
+                            id_list,
+                        )
+                        edges = list({
+                            (r["source_id"], r["target_id"]): r
+                            for r in src_rows + tgt_rows
+                        }.values())
                         internal = sum(
                             1 for e in edges
                             if e["source_id"] in comm_set

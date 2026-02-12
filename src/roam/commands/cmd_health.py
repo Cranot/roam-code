@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
+from roam.db.connection import open_db, batched_in
 from roam.db.queries import TOP_BY_DEGREE, TOP_BY_BETWEENNESS
 from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import find_cycles, find_weakest_edge, format_cycles
@@ -162,12 +162,12 @@ def health(ctx, no_framework):
         v_lookup = {}
         if violations:
             all_ids = {v["source"] for v in violations} | {v["target"] for v in violations}
-            ph = ",".join("?" for _ in all_ids)
-            for r in conn.execute(
-                f"SELECT s.id, s.name, f.path as file_path "
-                f"FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+            for r in batched_in(
+                conn,
+                "SELECT s.id, s.name, f.path as file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
                 list(all_ids),
-            ).fetchall():
+            ):
                 v_lookup[r["id"]] = r
 
         # ---- Classify issue severity (location-aware) ----

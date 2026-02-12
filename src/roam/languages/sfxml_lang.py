@@ -115,6 +115,9 @@ class SfxmlExtractor(LanguageExtractor):
         # Scan formula fields for identifiers
         self._scan_formulas(text, refs)
 
+        # Extract Flow actionCalls → Apex class references
+        self._extract_flow_refs(text, refs)
+
         return refs
 
     def _walk_xml_symbols(self, node, source, symbols, parent_name, _depth=0):
@@ -176,6 +179,31 @@ class SfxmlExtractor(LanguageExtractor):
                         kind="formula_ref",
                         line=line,
                     ))
+
+    def _extract_flow_refs(self, text: str, refs: list):
+        """Extract Flow action call references to Apex classes."""
+        # Split into individual <actionCalls> blocks to prevent cross-block matching
+        block_re = re.compile(
+            r'<actionCalls>(.*?)</actionCalls>',
+            re.DOTALL | re.IGNORECASE,
+        )
+        type_re = re.compile(r'<actionType>\s*(apex)\s*</actionType>', re.IGNORECASE)
+        name_re = re.compile(r'<actionName>\s*(\w+)\s*</actionName>', re.IGNORECASE)
+
+        for block_m in block_re.finditer(text):
+            block_content = block_m.group(1)
+            if not type_re.search(block_content):
+                continue  # not an Apex action
+            name_m = name_re.search(block_content)
+            if not name_m:
+                continue
+            action_name = name_m.group(1)
+            line = text[:block_m.start()].count("\n") + 1
+            refs.append(self._make_reference(
+                target_name=action_name,
+                kind="call",
+                line=line,
+            ))
 
     def _get_tag_name(self, element_node, source) -> str | None:
         """Get the tag name from an HTML element node."""

@@ -5,7 +5,7 @@ from collections import deque
 
 import click
 
-from roam.db.connection import open_db, find_project_root
+from roam.db.connection import open_db, find_project_root, batched_in
 from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.changed_files import (
@@ -117,14 +117,14 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths):
     if reachable:
         caller_ids = [sid for sid in reachable if sid not in target_sym_ids]
         if caller_ids:
-            ph = ",".join("?" for _ in caller_ids)
-            rows = conn.execute(
-                f"SELECT s.id, s.name, s.kind, f.path as file_path "
-                f"FROM symbols s "
-                f"JOIN files f ON s.file_id = f.id "
-                f"WHERE s.id IN ({ph})",
+            rows = batched_in(
+                conn,
+                "SELECT s.id, s.name, s.kind, f.path as file_path "
+                "FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE s.id IN ({ph})",
                 caller_ids,
-            ).fetchall()
+            )
 
             for r in rows:
                 if not is_test_file(r["file_path"]):
