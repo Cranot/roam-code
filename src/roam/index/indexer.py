@@ -256,6 +256,113 @@ def _compute_file_health_scores(conn):
     _log(f"  Health scores for {len(updates)} files")
 
 
+def _compute_cognitive_load(conn):
+    """Compute a 0-100 cognitive load index per file.
+
+    Combines five signals into a single 'how hard is this file to
+    understand' metric.  Higher = harder to grok.
+
+    Factors:
+      1. Max cognitive complexity (brain method)  — 30%
+      2. Avg nesting depth across symbols         — 15%
+      3. Dependency surface (fan-in + fan-out)     — 20%
+      4. Co-change entropy                         — 15%
+      5. Dead export ratio                         — 10%
+      6. File size (line count)                    — 10%
+    """
+    files = conn.execute("SELECT id, line_count FROM files").fetchall()
+    if not files:
+        return
+
+    # 1. Max CC per file
+    max_cc = {}
+    for r in conn.execute(
+        "SELECT s.file_id, MAX(sm.cognitive_complexity) as m "
+        "FROM symbol_metrics sm JOIN symbols s ON s.id = sm.symbol_id "
+        "GROUP BY s.file_id"
+    ).fetchall():
+        max_cc[r["file_id"]] = r["m"] or 0
+
+    # 2. Avg nesting depth per file
+    avg_nest = {}
+    for r in conn.execute(
+        "SELECT s.file_id, AVG(sm.nesting_depth) as a "
+        "FROM symbol_metrics sm JOIN symbols s ON s.id = sm.symbol_id "
+        "GROUP BY s.file_id"
+    ).fetchall():
+        avg_nest[r["file_id"]] = r["a"] or 0
+
+    # 3. Dependency surface per file (sum of in_degree + out_degree for symbols)
+    dep_surface = {}
+    for r in conn.execute(
+        "SELECT s.file_id, SUM(gm.in_degree + gm.out_degree) as total "
+        "FROM graph_metrics gm JOIN symbols s ON s.id = gm.symbol_id "
+        "GROUP BY s.file_id"
+    ).fetchall():
+        dep_surface[r["file_id"]] = r["total"] or 0
+
+    # 4. Co-change entropy (already in file_stats)
+    entropy = {}
+    for r in conn.execute(
+        "SELECT file_id, cochange_entropy FROM file_stats "
+        "WHERE cochange_entropy IS NOT NULL"
+    ).fetchall():
+        entropy[r["file_id"]] = r["cochange_entropy"] or 0
+
+    # 5. Dead export ratio per file
+    dead_ratio = {}
+    for r in conn.execute(
+        "SELECT s.file_id, "
+        "COUNT(*) as total, "
+        "SUM(CASE WHEN gm.in_degree = 0 THEN 1 ELSE 0 END) as dead "
+        "FROM symbols s "
+        "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
+        "WHERE s.is_exported = 1 "
+        "GROUP BY s.file_id"
+    ).fetchall():
+        total = r["total"] or 1
+        dead_ratio[r["file_id"]] = (r["dead"] or 0) / total
+
+    updates = []
+    for f in files:
+        fid = f["id"]
+        lc = f["line_count"] or 0
+
+        cc_norm = min((max_cc.get(fid, 0)) / 50, 1.0)           # 50+ = max
+        nest_norm = min((avg_nest.get(fid, 0)) / 6, 1.0)        # 6+ = max
+        dep_norm = min((dep_surface.get(fid, 0)) / 40, 1.0)     # 40+ = max
+        ent_norm = min(entropy.get(fid, 0), 1.0)                 # already 0-1
+        dead_norm = min(dead_ratio.get(fid, 0), 1.0)             # already 0-1
+        size_norm = min(lc / 500, 1.0)                           # 500+ = max
+
+        score = (
+            cc_norm * 0.30
+            + nest_norm * 0.15
+            + dep_norm * 0.20
+            + ent_norm * 0.15
+            + dead_norm * 0.10
+            + size_norm * 0.10
+        )
+        load = round(score * 100, 1)
+        updates.append((load, fid))
+
+    with conn:
+        for load, fid in updates:
+            conn.execute(
+                "UPDATE file_stats SET cognitive_load = ? WHERE file_id = ?",
+                (load, fid),
+            )
+            if conn.execute(
+                "SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)
+            ).fetchone() is None:
+                conn.execute(
+                    "INSERT INTO file_stats (file_id, cognitive_load) VALUES (?, ?)",
+                    (fid, load),
+                )
+
+    _log(f"  Cognitive load for {len(updates)} files")
+
+
 class Indexer:
     """Orchestrates the full indexing pipeline."""
 
@@ -655,6 +762,13 @@ class Indexer:
                 _compute_file_health_scores(conn)
             except Exception as e:
                 _log(f"  Health score computation failed: {e}")
+
+            # 12. Compute cognitive load index
+            _log("Computing cognitive load index...")
+            try:
+                _compute_cognitive_load(conn)
+            except Exception as e:
+                _log(f"  Cognitive load computation failed: {e}")
 
             # Log parse error summary
             from roam.index.parser import get_parse_error_summary

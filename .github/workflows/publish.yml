@@ -1,0 +1,54 @@
+# Publish roam-code to PyPI using Trusted Publishing (OIDC).
+# Triggers on GitHub Release creation.
+#
+# Setup: configure a "trusted publisher" on PyPI for this repo
+# (https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
+# before the first publish.  No API tokens needed.
+
+name: Publish to PyPI
+
+on:
+  release:
+    types: [published]
+
+permissions:
+  id-token: write   # OIDC token for Trusted Publishing
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install build tools
+        run: pip install build
+
+      - name: Build sdist and wheel
+        run: python -m build
+
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi          # optional: use a GitHub environment for approval
+    permissions:
+      id-token: write
+    steps:
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

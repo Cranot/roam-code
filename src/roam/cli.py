@@ -64,12 +64,14 @@ _COMMANDS = {
     "preflight":    ("roam.commands.cmd_preflight",    "preflight"),
     "init":         ("roam.commands.cmd_init",         "init"),
     "digest":       ("roam.commands.cmd_digest",       "digest"),
+    "tour":         ("roam.commands.cmd_tour",         "tour"),
+    "diagnose":     ("roam.commands.cmd_diagnose",     "diagnose"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
-    "Getting Started": ["index", "init", "understand", "describe"],
-    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "digest"],
+    "Getting Started": ["index", "init", "understand", "tour", "describe"],
+    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],

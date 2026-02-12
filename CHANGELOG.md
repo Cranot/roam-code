@@ -1,5 +1,38 @@
 # Changelog
 
+## v7.2.0
+
+AI agent experience, new analysis commands, and deeper per-file metrics.
+
+### New Commands
+
+- **`roam tour [--write PATH]`** — Auto-generated onboarding guide: top symbols by PageRank with role labels (Hub/Core utility/Orchestrator/Leaf), suggested file reading order based on topological layers, entry points, language breakdown, and codebase statistics. `--write` saves to Markdown.
+- **`roam diagnose <symbol> [--depth N]`** — Root cause analysis for debugging. Given a failing symbol, walks upstream callers and downstream callees up to N hops, ranks suspects by a composite risk score combining git churn (30%), cognitive complexity (30%), file health (25%), and co-change entropy (15%). Shows co-change partners and recent git history.
+
+### Cognitive Load Index
+
+- **Per-file cognitive load (0-100)** — New metric stored in `file_stats.cognitive_load`. Combines max cognitive complexity (30%), avg nesting depth (15%), dependency surface area (20%), co-change entropy (15%), dead export ratio (10%), and file size (10%). Surfaced in `roam file` output (both text and JSON).
+
+### Trend-Based Fitness Rules
+
+- **`type: trend` fitness rules** — New rule type in `.roam/fitness.yaml` that compares snapshot metrics over a configurable window. Guards against regressions: `max_decrease: 5` fails if health_score dropped more than 5 from the window average, `max_increase: 3` fails if cycles grew by more than 3. Supports all snapshot metrics (health_score, tangle_ratio, avg_complexity, cycles, etc.).
+
+### Agent Experience
+
+- **Verdict-first output** — Key commands (`health`, `preflight`, `pr-risk`, `impact`, `diagnose`) now emit a one-line VERDICT as the first line of text output and include a `verdict` field in the JSON summary. Agents can stop reading after the first line for quick decisions.
+- **Engineered MCP tool descriptions** — All 16 MCP tool descriptions rewritten with "WHEN TO USE" guidance, "Do NOT call X if Y covers your need" hints, and expected output descriptions. Based on Anthropic's research that tool descriptions are prompts.
+- **MCP tools for tour + diagnose** — 2 new MCP tools (`tour`, `diagnose`). Total: 16 tools, 2 resources.
+
+### PR Risk Enhancement
+
+- **Structural profile** — `roam pr-risk` now includes cluster spread (how many Louvain communities the change touches) and layer spread (how many architectural layers crossed), surfaced in both text and JSON output.
+
+### Distribution
+
+- **PyPI Trusted Publishing workflow** — `.github/workflows/publish.yml` uses GitHub OIDC tokens, no API secrets needed.
+- **`glama.json`** — MCP server discovery file for Glama.ai registry.
+- **`llms-install.md`** — Machine-readable installation guide for AI agent auto-install.
+
 ## v7.1.0
 
 Large-repo safety, deeper Salesforce cross-language edges, and custom report presets. Fixes a latent crash on repos with >999 symbols in queries.

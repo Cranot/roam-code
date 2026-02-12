@@ -188,7 +188,33 @@ def pr_risk(ctx, commit_range, staged):
         change_fids = list(file_map.values())
         novelty, closest_pattern, closest_sim = _compute_surprise(conn, change_fids)
 
-        # --- 7. Dead code check ---
+        # --- 7. Structural spread (cluster + layer) ---
+        cluster_ids = set()
+        for fid in file_map.values():
+            for r in conn.execute(
+                "SELECT DISTINCT c.cluster_id FROM clusters c "
+                "JOIN symbols s ON c.symbol_id = s.id "
+                "WHERE s.file_id = ?", (fid,),
+            ).fetchall():
+                cluster_ids.add(r["cluster_id"])
+
+        total_clusters = conn.execute(
+            "SELECT COUNT(DISTINCT cluster_id) FROM clusters"
+        ).fetchone()[0] or 1
+        cluster_spread = len(cluster_ids) / total_clusters if total_clusters > 1 else 0
+
+        # Layer spread
+        from roam.graph.layers import detect_layers
+        layer_map = detect_layers(G)
+        touched_layers = set()
+        if layer_map:
+            for sym_id in changed_sym_ids:
+                if sym_id in layer_map:
+                    touched_layers.add(layer_map[sym_id])
+        total_layers = (max(layer_map.values()) + 1) if layer_map else 1
+        layer_spread = len(touched_layers) / total_layers if total_layers > 1 else 0
+
+        # --- 8. Dead code check ---
         new_dead = []
         for path, fid in file_map.items():
             if is_test_file(path):
@@ -259,9 +285,20 @@ def pr_risk(ctx, commit_range, staged):
 
         label = commit_range or ("staged" if staged else "unstaged")
 
+        # Verdict
+        if level == "LOW":
+            verdict = f"Low risk ({risk}/100) — safe to merge"
+        elif level == "MODERATE":
+            verdict = f"Moderate risk ({risk}/100) — review recommended"
+        elif level == "HIGH":
+            verdict = f"High risk ({risk}/100) — careful review needed"
+        else:
+            verdict = f"Critical risk ({risk}/100) — significant blast radius, thorough review required"
+
         if json_mode:
             click.echo(to_json(json_envelope("pr-risk",
                 summary={
+                    "verdict": verdict,
                     "risk_score": risk,
                     "risk_level": level,
                     "changed_files": len(file_map),
@@ -278,6 +315,12 @@ def pr_risk(ctx, commit_range, staged):
                 novelty_score=novelty,
                 closest_similarity=closest_sim,
                 closest_historical_pattern=closest_pattern,
+                cluster_spread=round(cluster_spread, 2),
+                clusters_touched=len(cluster_ids),
+                total_clusters=total_clusters,
+                layer_spread=round(layer_spread, 2),
+                layers_touched=len(touched_layers),
+                total_layers=total_layers,
                 dead_exports=len(new_dead),
                 per_file=per_file,
                 suggested_reviewers=[
@@ -288,6 +331,7 @@ def pr_risk(ctx, commit_range, staged):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"=== PR Risk ({label}) ===\n")
         click.echo(f"Risk Score: {risk}/100 ({level})")
         click.echo()
@@ -301,6 +345,10 @@ def pr_risk(ctx, commit_range, staged):
         click.echo(f"  Coupling:      {coupling_score * 100:5.1f}%")
         click.echo(f"  Novelty:       {novelty * 100:5.1f}%"
                     f"{'  (unfamiliar change combination!)' if novelty > 0.7 else ''}")
+        if total_clusters > 1:
+            click.echo(f"  Cluster spread: {len(cluster_ids)}/{total_clusters} clusters touched")
+        if total_layers > 1:
+            click.echo(f"  Layer spread:   {len(touched_layers)}/{total_layers} layers touched")
         click.echo()
 
         # Per-file table

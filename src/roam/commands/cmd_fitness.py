@@ -2,7 +2,8 @@
 
 Reads rules from .roam/fitness.yaml and checks them against the index.
 Supports dependency constraints, layer enforcement, metric thresholds,
-and naming conventions. Returns exit code 1 on violations for CI use.
+naming conventions, and trend-based regression guards.
+Returns exit code 1 on violations for CI use.
 
 Example .roam/fitness.yaml:
   rules:
@@ -38,6 +39,18 @@ Example .roam/fitness.yaml:
       kind: function
       pattern: "^[a-z_][a-z0-9_]*$"
       exclude: "test_*"
+
+    - name: "Health must not regress"
+      type: trend
+      metric: health_score
+      max_decrease: 5
+      window: 3
+
+    - name: "Complexity must not creep"
+      type: trend
+      metric: avg_complexity
+      max_increase: 2.0
+      window: 3
 """
 
 from __future__ import annotations
@@ -336,10 +349,100 @@ def _check_naming_rule(rule, conn) -> list[dict]:
     return violations
 
 
+def _check_trend_rule(rule, conn) -> list[dict]:
+    """Check a trend-based regression guard.
+
+    Compares the latest snapshot metric value against recent history
+    to detect gradual degradation that absolute thresholds miss.
+
+    Supported fields:
+      metric:        snapshot column name (health_score, tangle_ratio, etc.)
+      window:        number of recent snapshots to consider (default 3)
+      max_decrease:  max allowed drop from the window average (for metrics where higher=better)
+      max_increase:  max allowed rise from the window average (for metrics where lower=better)
+      direction:     optional override: "higher_is_better" or "lower_is_better"
+    """
+    metric = rule.get("metric", "")
+    window = rule.get("window", 3)
+    max_decrease = rule.get("max_decrease")
+    max_increase = rule.get("max_increase")
+
+    # Validate the metric is a real snapshot column
+    _SNAPSHOT_METRICS = {
+        "health_score", "tangle_ratio", "avg_complexity", "brain_methods",
+        "cycles", "god_components", "bottlenecks", "dead_exports",
+        "layer_violations", "files", "symbols", "edges",
+    }
+    if metric not in _SNAPSHOT_METRICS:
+        return [{
+            "rule": rule.get("name", "unnamed"),
+            "type": "trend",
+            "message": f"Unknown snapshot metric '{metric}'. "
+                       f"Valid: {', '.join(sorted(_SNAPSHOT_METRICS))}",
+        }]
+
+    # Fetch recent snapshots (need at least 2 to compute a trend)
+    rows = conn.execute(
+        f"SELECT {metric} FROM snapshots ORDER BY timestamp DESC LIMIT ?",
+        (window + 1,),
+    ).fetchall()
+
+    if len(rows) < 2:
+        return []  # Not enough history to judge
+
+    latest = rows[0][0]
+    if latest is None:
+        return []
+
+    # Compute average of previous snapshots (excluding latest)
+    previous_vals = [r[0] for r in rows[1:] if r[0] is not None]
+    if not previous_vals:
+        return []
+
+    prev_avg = sum(previous_vals) / len(previous_vals)
+    delta = latest - prev_avg
+    violations = []
+
+    if max_decrease is not None and delta < -max_decrease:
+        violations.append({
+            "rule": rule.get("name", "unnamed"),
+            "type": "trend",
+            "message": (
+                f"{metric} dropped by {abs(delta):.1f} "
+                f"(from avg {prev_avg:.1f} to {latest:.1f}, "
+                f"max allowed decrease: {max_decrease})"
+            ),
+            "metric": metric,
+            "latest": latest,
+            "previous_avg": round(prev_avg, 2),
+            "delta": round(delta, 2),
+            "threshold": max_decrease,
+        })
+
+    if max_increase is not None and delta > max_increase:
+        violations.append({
+            "rule": rule.get("name", "unnamed"),
+            "type": "trend",
+            "message": (
+                f"{metric} increased by {delta:.1f} "
+                f"(from avg {prev_avg:.1f} to {latest:.1f}, "
+                f"max allowed increase: {max_increase})"
+            ),
+            "metric": metric,
+            "latest": latest,
+            "previous_avg": round(prev_avg, 2),
+            "delta": round(delta, 2),
+            "threshold": max_increase,
+        })
+
+    return violations
+
+
 _CHECKERS = {
     "dependency": _check_dependency_rule,
     "metric": _check_metric_rule,
     "naming": _check_naming_rule,
+    "trend": _check_trend_rule,
 }
 
 
@@ -520,6 +623,37 @@ rules:
   #   kind: function
   #   pattern: "^[a-z_][a-z0-9_]*$"
   #   exclude: "test_.*"
+
+  # Trend-based regression guards (requires snapshots)
+  # These catch gradual degradation that absolute thresholds miss.
+  # Run `roam snapshot` periodically to build history.
+  - name: "Health must not regress"
+    type: trend
+    metric: health_score
+    max_decrease: 5
+    window: 3
+    reason: "Health score dropped significantly vs recent snapshots"
+
+  - name: "Complexity must not creep"
+    type: trend
+    metric: avg_complexity
+    max_increase: 2.0
+    window: 3
+    reason: "Average complexity is trending upward"
+
+  # - name: "No new brain methods"
+  #   type: trend
+  #   metric: brain_methods
+  #   max_increase: 0
+  #   window: 1
+  #   reason: "New brain methods should be refactored, not added"
+
+  # - name: "Tangle ratio stable"
+  #   type: trend
+  #   metric: tangle_ratio
+  #   max_increase: 0.05
+  #   window: 3
+  #   reason: "Dependency tangle is increasing"
 """,
         encoding="utf-8",
     )
