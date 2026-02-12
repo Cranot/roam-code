@@ -7,13 +7,14 @@
 ██   ██  ██████  ██   ██ ██      ██
 </pre>
 
-**codebase intelligence for AI**
+**codebase intelligence for AI agents**
 
-v4.3.1 · 29 commands · one pre-built index · instant answers
+v7.0.0 · 48 commands · 16 languages · SARIF · MCP · GitHub Action
 
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](https://opensource.org/licenses/MIT)
-[![CI](https://github.com/Cranot/roam-code/actions/workflows/ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/ci.yml)
+[![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
+[![489 tests](https://img.shields.io/badge/tests-489_passing-brightgreen.svg)]()
 
 </div>
 
@@ -23,16 +24,16 @@ Your AI agent shouldn't need 10 tool calls to understand a codebase. Roam pre-in
 
 ```bash
 $ roam index                     # build once (~5s), then incremental
+$ roam understand                # full codebase briefing in one call
 $ roam symbol Flask              # definition + 47 callers + 3 callees + PageRank
 $ roam context Flask             # AI-ready: files-to-read with exact line ranges
-$ roam deps src/flask/app.py     # imports + imported-by with symbol breakdown
 $ roam impact create_app         # 34 symbols break if this changes
-$ roam split src/flask/app.py    # internal groups with isolation % + extraction suggestions
-$ roam why Flask                 # role, reach, criticality, one-line verdict
-$ roam risk                      # domain-weighted risk ranking of all symbols
-$ roam health                    # cycles, god components, bottlenecks + summary
+$ roam health                    # composite score (0-100) + cycles + bottlenecks
+$ roam preflight Flask           # blast radius + tests + complexity + fitness in one call
 $ roam pr-risk HEAD~3..HEAD      # 0-100 risk score + dead exports + reviewers
 $ roam diff                      # blast radius of your uncommitted changes
+$ roam --json health             # structured JSON for CI pipelines
+$ roam health --gate score>=70   # CI quality gate — exit 1 on failure
 ```
 
 ## Table of Contents
@@ -42,6 +43,9 @@ $ roam diff                      # blast radius of your uncommitted changes
 - [Commands](#commands)
 - [Walkthrough: Investigating a Codebase](#walkthrough-investigating-a-codebase)
 - [Integration with AI Coding Tools](#integration-with-ai-coding-tools)
+- [MCP Server](#mcp-server)
+- [GitHub Action](#github-action)
+- [SARIF Output](#sarif-output)
 - [Language Support](#language-support)
 - [Performance](#performance)
 - [How It Works](#how-it-works)
@@ -83,31 +87,29 @@ Requires Python 3.9+. Works on Linux, macOS, and Windows. Best with `git` instal
 ```bash
 cd your-project
 
-# Add the index directory to .gitignore
-echo ".roam/" >> .gitignore
+# Guided onboarding — creates config, CI workflow, runs first index
+roam init
 
-# Build the index (runs once, then incremental)
+# Or do it manually:
+echo ".roam/" >> .gitignore
 roam index
 
-# Get a project overview
+# Get a full codebase briefing
+roam understand
+
+# Explore architecture
+roam health
 roam map
 
-# Explore a file's structure
-roam file src/main.py
-
-# Find a symbol and its connections
+# Start working
 roam symbol MyClass
-
-# See what depends on a file
-roam deps src/utils.py
-
-# Find architecture problems
-roam health
+roam context MyClass
+roam preflight MyClass
 ```
 
 > **First index:** Expect ~5s for a 200-file project, ~15s for 1,000 files. Subsequent runs are incremental and near-instant. Use `roam index --verbose` to see detailed progress.
 
-The index is stored at `.roam/index.db` in your project root. Run `roam --help` to see all available commands.
+The index is stored at `.roam/index.db` in your project root. Run `roam --help` to see all 48 commands organized by category.
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>
@@ -116,9 +118,8 @@ The index is stored at `.roam/index.db` in your project root. Run `roam --help` 
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-roam index --force
-roam map
-roam symbol Indexer
+roam init
+roam understand
 roam health
 ```
 
@@ -126,100 +127,128 @@ roam health
 
 ## Commands
 
-### Navigation
+Roam organizes its 48 commands into 7 categories. Run `roam --help` for the full categorized list.
+
+### Getting Started
 
 | Command | Description |
 |---------|-------------|
 | `roam index [--force] [--verbose]` | Build or rebuild the codebase index |
-| `roam map [-n N] [--full]` | Project skeleton: files, languages, entry points, top symbols by PageRank |
-| `roam module <path>` | Directory contents: exports, signatures, dependencies, cohesion rating |
-| `roam file <path> [--full]` | File skeleton: all definitions with signatures, no bodies |
-| `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics. Supports `file:symbol` syntax for disambiguation (e.g., `roam symbol app:Flask`) |
-| `roam context <symbol>` | AI-optimized context: definition + callers + callees + files-to-read with line ranges (PageRank-capped) |
-| `roam trace <source> <target> [-k N]` | Dependency paths between two symbols with coupling strength and quality scoring. Shows up to k paths (default 3) with edge-kind labels, coupling classification (strong/moderate/weak), hub detection (high-degree intermediates flagged), and path quality ranking. Paths sorted by quality, not just length |
-| `roam deps <path> [--full]` | What a file imports and what imports it |
-| `roam search <pattern> [--kind KIND] [--full]` | Find symbols by name pattern — PageRank-ranked with signatures |
+| `roam init` | Guided onboarding: creates `.roam/fitness.yaml`, CI workflow, runs index, shows health |
+| `roam understand` | Full codebase briefing: tech stack, architecture, key abstractions, health, conventions, complexity overview, entry points |
+| `roam describe [--write] [--force] [--agent-prompt]` | Auto-generate project description (CLAUDE.md). `--agent-prompt` returns a compact (<500 token) LLM system prompt |
+| `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
+
+### Daily Workflow
+
+| Command | Description |
+|---------|-------------|
+| `roam file <path> [--full] [--changed] [--deps-of PATH]` | File skeleton: all definitions with signatures. Multi-file mode with `--changed` (uncommitted files) or `--deps-of` (file + imports) |
+| `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics. Supports `file:symbol` disambiguation |
+| `roam context <symbol> [--task MODE] [--for-file PATH]` | AI-optimized context: definition + callers + callees + files-to-read with line ranges. `--task` tailors output for refactor/debug/extend/review. `--for-file` gives file-level context |
+| `roam search <pattern> [--kind KIND]` | Find symbols by name pattern, PageRank-ranked |
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
+| `roam deps <path> [--full]` | What a file imports and what imports it |
+| `roam trace <source> <target> [-k N]` | Dependency paths with coupling strength, hub detection, quality scoring |
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
-| `roam split <file>` | Analyze a file's internal structure: symbol groups, isolation %, cross-group coupling, extraction suggestions |
-| `roam risk [-n N] [--domain KW]` | Domain-weighted risk ranking using three-source matching: symbol name keywords, callee-chain analysis (up to 3 hops with decay), and file path-zone matching. UI files auto-dampened (except zone-matched symbols — zone overrides UI dampening). Tuned keyword weights to reduce false positives from ambiguous terms. Configurable via `.roam/domain-weights.json` and `.roam/path-zones.json` |
-| `roam why <name> [name2 ...]` | Explain why a symbol matters: role classification (Core utility/Hub/Bridge/Leaf/Internal), transitive reach, critical path, cluster, one-line verdict. Batch mode for triage |
-| `roam safe-delete <symbol>` | Check if a symbol can be safely deleted — SAFE/REVIEW/UNSAFE verdict with reasoning |
-| `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range (e.g., `HEAD~3..HEAD`) |
+| `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range. `--full` adds tests + coupling + fitness |
 | `roam pr-risk [REV_RANGE]` | PR risk score (0-100) + new dead exports + suggested reviewers |
-| `roam describe [--write] [--force]` | Auto-generate project description (CLAUDE.md) from the index — domain-aware keyword extraction |
+| `roam preflight <symbol\|file>` | Compound pre-change check: blast radius + tests + complexity + coupling + conventions + fitness. Reduces agent round-trips by 60-70% |
+| `roam safe-delete <symbol>` | Safe deletion check: SAFE/REVIEW/UNSAFE verdict with reasoning |
 | `roam test-map <name>` | Map a symbol or file to its test coverage |
-| `roam sketch <dir> [--full]` | Compact structural skeleton of a directory (API surface) |
+
+### Codebase Health
+
+| Command | Description |
+|---------|-------------|
+| `roam health [--no-framework]` | Composite health score (0-100): tangle ratio, god components, bottlenecks, layer violations, per-file health. Utility paths get relaxed thresholds |
+| `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible). `--bumpy-road` flags files with many moderate-complexity functions |
+| `roam weather [-n N]` | Hotspots ranked by churn x complexity |
+| `roam debt` | Hotspot-weighted tech debt prioritization. Code in hotspots costs 15x more |
+| `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml`. `--explain` shows reason + link per rule |
+| `roam alerts` | Health degradation trend detection from snapshot history |
+| `roam snapshot [--tag TAG]` | Persist health metrics snapshot for trend tracking |
+| `roam trend` | Health score history with sparkline visualization |
+| `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot — deltas with directional arrows |
 
 ### Architecture
 
 | Command | Description |
 |---------|-------------|
-| `roam health [--no-framework]` | Cycles, god components, bottlenecks, layer violations — location-aware severity. Utility paths (composables/, utils/, services/) get relaxed thresholds (3x) for both god components and bottlenecks. Both categorized as "actionable" vs "utility". Cycle severity is directory-aware (single-dir cycles capped at INFO). `--no-framework` filters framework primitives |
-| `roam clusters [--min-size N]` | Community detection vs directory structure — cohesion %, coupling matrices, split suggestions for mega-clusters |
-| `roam layers` | Topological dependency layers + directory breakdown per layer + upward violations |
-| `roam dead [--all]` | Unreferenced exported symbols with SAFE/REVIEW/INTENTIONAL verdicts and reason column. Lifecycle hooks (onMounted, componentDidMount, etc.) auto-classified as INTENTIONAL |
-| `roam fan [symbol\|file] [-n N] [--no-framework]` | Fan-in/fan-out: most connected symbols or files (`--no-framework` filters Vue/React primitives) |
+| `roam clusters [--min-size N]` | Community detection vs directory structure — cohesion %, coupling matrices, split suggestions |
+| `roam layers` | Topological dependency layers + directory breakdown + upward violations |
+| `roam dead [--all] [--summary] [--clusters]` | Unreferenced exported symbols with SAFE/REVIEW/INTENTIONAL verdicts |
+| `roam fan [symbol\|file] [-n N] [--no-framework]` | Fan-in/fan-out: most connected symbols or files |
+| `roam risk [-n N] [--domain KW] [--explain]` | Domain-weighted risk ranking (3-source matching: name + callee-chain + path-zone) |
+| `roam why <name> [name2 ...]` | Role classification (Hub/Bridge/Core utility/Leaf/Internal), reach, criticality, verdict. Batch mode |
+| `roam split <file>` | Internal symbol groups with isolation % and extraction suggestions |
+| `roam entry-points` | Entry point catalog with protocol classification (HTTP, CLI, Event, Scheduled, Main) |
+| `roam patterns` | Architectural pattern recognition: Strategy, Factory, Observer, Repository, Middleware, Decorator |
+| `roam safe-zones` | Graph-based containment boundaries: ISOLATED/CONTAINED/EXPOSED zones |
+| `roam coverage-gaps` | Unprotected entry points with no path to gate symbols (auth, permission checks) |
 
-### Git Signals
+### Exploration
 
 | Command | Description |
 |---------|-------------|
-| `roam weather [-n N]` | Hotspots ranked by churn x complexity |
+| `roam module <path>` | Directory contents: exports, signatures, dependencies, cohesion |
+| `roam sketch <dir> [--full]` | Compact structural skeleton of a directory (API surface) |
+| `roam uses <name>` | All consumers: callers, importers, inheritors |
 | `roam owner <path>` | Code ownership: who owns a file or directory |
-| `roam coupling [-n N]` | Temporal coupling: file pairs that change together |
+| `roam coupling [-n N] [--set]` | Temporal coupling: file pairs that change together. `--set` for hypergraph analysis |
+| `roam fn-coupling` | Function-level temporal coupling across files — hidden dependencies |
+| `roam bus-factor [--brain-methods]` | Knowledge loss risk per module. `--brain-methods` flags functions with cc >= 25 AND 50+ lines |
+| `roam doc-staleness` | Detect stale docstrings where code changed after docs were last updated |
+| `roam conventions` | Auto-detect naming styles, import preferences, export patterns. Flags outliers |
+| `roam breaking [REV_RANGE]` | Breaking change detection: removed exports, signature changes, renamed symbols |
+| `roam affected-tests <symbol\|file>` | Trace through reverse call graph to test files. Outputs runnable `pytest` command |
 
-### Inheritance
+### Reports & CI
 
 | Command | Description |
 |---------|-------------|
-| `roam uses <name>` | Find all classes that extend, implement, or use a symbol |
+| `roam report [--list] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor` |
+| `roam describe --write` | Generate CLAUDE.md with conventions, complexity hotspots, and architecture overview |
 
 ### Global Options
 
 | Option | Description |
 |--------|-------------|
-| `roam --json <command>` | Output structured JSON instead of human-readable tables. Works on all 29 commands. |
+| `roam --json <command>` | Structured JSON output with consistent envelope. Works on all 48 commands |
+| `roam --compact <command>` | Token-efficient output: TSV tables (40-50% fewer tokens), minimal JSON envelope |
+| `roam <command> --gate EXPR` | CI quality gate (e.g., `--gate score>=70`). Exit code 1 on failure |
 | `roam --version` | Show version |
+| `roam --help` | Categorized command list (7 groups) |
 
 ```bash
 # Examples
-roam --json health          # {"cycles": [...], "god_components": [...], "actionable_count": 5, ...}
-roam --json symbol Flask    # {"name": "Flask", "callers": [...], "callees": [...]}
-roam --json why Flask         # {"symbols": [{"name": "Flask", "role": "Hub", "reach": 89, ...}]}
-roam --json diff HEAD~3..HEAD  # {"changed_files": 11, "affected_symbols": 405, ...}
+roam --json health               # {"command":"health","score":78,"tangle_pct":5.2,...}
+roam --compact --json health     # minimal envelope, no version/timestamp
+roam health --gate score>=70     # CI gate — fails if score < 70
+roam --json diff HEAD~3..HEAD    # structured blast radius
 ```
 
 ## Walkthrough: Investigating a Codebase
 
 Here's how you'd use Roam to understand a project you've never seen before. Using Flask as an example:
 
-**Step 1: Index and get the lay of the land**
+**Step 1: Onboard and get the full picture**
 
 ```
-$ roam index
+$ roam init
+Created .roam/fitness.yaml (6 starter rules)
+Created .github/workflows/roam.yml
 Done. 226 files, 1132 symbols, 233 edges.
+Health: 78/100
 
-$ roam map
-Files: 226  Symbols: 1132  Edges: 233
-Languages: python=83, javascript=2, css=1
-
-Directories:
-dir           files
-------------  -----
-src/flask     42
-tests         31
-docs          18
-
-Entry points:
-  src/flask/__init__.py
-
-Top symbols (PageRank):
-kind  name               signature                           location                      PR
-----  -----------------  ----------------------------------  ----------------------------  ------
-cls   Flask              class Flask(App)                    src/flask/app.py:76           0.0312
-fn    url_for            def url_for(endpoint, ...)          src/flask/helpers.py:108      0.0201
-cls   Blueprint          class Blueprint(...)                src/flask/blueprints.py:24    0.0188
+$ roam understand
+Tech stack: Python (flask, jinja2, werkzeug)
+Architecture: Monolithic — 3 layers, 5 clusters
+Key abstractions: Flask, Blueprint, Request, Response
+Health: 78/100 — 1 god component (Flask)
+Entry points: src/flask/__init__.py, src/flask/cli.py
+Conventions: snake_case functions, PascalCase classes, relative imports
+Complexity: avg 4.2, 3 high (>15), 0 critical (>25)
 ```
 
 **Step 2: Drill into a key file**
@@ -260,23 +289,20 @@ Score  Churn  Complexity  Path                    Lang
 12180  348    35.0        src/flask/blueprints.py python
 ```
 
-**Step 5: Check for architecture problems**
+**Step 5: Check architecture health**
 
 ```
 $ roam health
-Health: 1 issue — 1 WARNING
-  (1 god component (1 actionable, 0 expected utilities))
-
-=== Cycles ===
-  (none)
+Health: 78/100
+  Tangle: 0.0% (0/1132 symbols in cycles)
+  1 god component (Flask, degree 47, actionable)
+  0 bottlenecks, 0 layer violations
 
 === God Components (degree > 20) ===
 Sev      Name   Kind  Degree  Cat  File
 -------  -----  ----  ------  ---  ------------------
 WARNING  Flask  cls   47      act  src/flask/app.py
 ```
-
-God components and bottlenecks in utility paths (`composables/`, `utils/`, `services/`, etc.) get relaxed thresholds (3x) and are categorized separately, so infrastructure symbols don't drown out genuinely problematic code.
 
 **Step 6: Get AI-ready context for a symbol**
 
@@ -292,9 +318,22 @@ Files to read:
 Callers: 47  Callees: 3
 ```
 
-`roam context` gives an AI agent exactly the files and line ranges it needs to safely modify a symbol — no more, no less. Output is capped by PageRank to avoid flooding context with low-value files.
+`roam context` gives an AI agent exactly the files and line ranges it needs to safely modify a symbol -- no more, no less. Output is capped by PageRank to avoid flooding context with low-value files.
 
-**Step 7: Decompose a large file**
+**Step 7: Pre-change safety check**
+
+```
+$ roam preflight Flask
+=== Preflight: Flask ===
+Blast radius: 47 callers, 89 transitive
+Affected tests: 31 (DIRECT: 12, TRANSITIVE: 19)
+Complexity: cc=40 (critical), nesting=6
+Coupling: 3 hidden co-change partners
+Fitness: 1 violation (max-complexity exceeded)
+Verdict: HIGH RISK — consider splitting before modifying
+```
+
+**Step 8: Decompose a large file**
 
 ```
 $ roam split src/flask/app.py
@@ -302,15 +341,9 @@ $ roam split src/flask/app.py
   87 symbols, 42 internal edges, 95 external edges
   Cross-group coupling: 18%
 
-  Group 1 (routing) — 12 symbols, 15 internal / 3 cross / 8 external edges (isolation: 83%) [extractable]
+  Group 1 (routing) — 12 symbols, isolation: 83% [extractable]
     meth  route              L411  PR=0.0088
     meth  add_url_rule       L450  PR=0.0045
-    meth  endpoint           L510  PR=0.0022
-    ...
-
-  Group 2 (request) — 8 symbols, 10 internal / 2 cross / 12 external edges (isolation: 80%) [extractable]
-    meth  make_response      L742  PR=0.0067
-    meth  process_response   L780  PR=0.0034
     ...
 
 === Extraction Suggestions ===
@@ -318,9 +351,7 @@ $ roam split src/flask/app.py
     83% isolated, only 3 edges to other groups
 ```
 
-`roam split` analyzes the internal symbol graph of a file and identifies groups with high isolation — natural seams for extraction into separate modules or composables.
-
-**Step 8: Understand why a symbol matters**
+**Step 9: Understand why a symbol matters**
 
 ```
 $ roam why Flask url_for Blueprint
@@ -331,18 +362,17 @@ url_for    Core utility  fan-in:31   reach:45  HIGH      Widely used utility (31
 Blueprint  Bridge        fan-in:18   reach:34  moderate  Coupling point between clusters.
 ```
 
-`roam why` gives a quick assessment of a symbol's architectural role — is it a core utility, a hub, a bridge, or a leaf? Batch mode lets you triage multiple symbols in one call, ideal for deciding modification order or reviewing dead code lists.
-
-**Step 9: Generate a CLAUDE.md for your team**
+**Step 10: Generate docs and set up CI**
 
 ```
 $ roam describe --write
 Wrote CLAUDE.md (98 lines)
+
+$ roam health --gate score>=70
+Health: 78/100 — PASS
 ```
 
-`roam describe` reads the index and writes a project overview that any AI tool can consume — entry points, directory structure, key conventions, test commands. Think of it as a machine-readable onboarding doc generated in one command.
-
-Nine commands, and you have a complete picture of the project: structure, key symbols, dependencies, hotspots, architecture problems, AI-ready context, file decomposition guidance, and a shareable project description. An AI agent doing this manually would need 20+ tool calls.
+Ten commands, and you have a complete picture of the project: structure, key symbols, dependencies, hotspots, architecture health, AI-ready context, pre-change safety checks, file decomposition, and CI quality gates.
 
 ## Integration with AI Coding Tools
 
@@ -354,38 +384,36 @@ Add the following instructions to your AI tool's configuration file:
 ## Codebase navigation
 
 Use `roam` CLI for codebase comprehension (pre-installed).
-Run `roam index` once, then use these commands instead of Glob/Grep/Read exploration:
+Run `roam init` once, then use these commands instead of Glob/Grep/Read exploration:
 
+- `roam understand` -- full codebase briefing (tech stack, architecture, health, conventions)
 - `roam map` -- project overview, entry points, key symbols
-- `roam file <path>` -- file skeleton with all definitions
+- `roam file <path>` -- file skeleton with all definitions (multi-file: `--changed`, `--deps-of`)
 - `roam symbol <name>` -- definition + callers + callees
-- `roam context <name>` -- AI context: definition + callers + callees + files-to-read with line ranges
+- `roam context <name>` -- AI context: definition + callers + callees + files-to-read
+- `roam context --task refactor|debug|extend|review <name>` -- task-aware context
+- `roam context --for-file <path>` -- file-level context with tests + coupling
+- `roam preflight <name>` -- compound pre-change check (blast radius + tests + fitness)
 - `roam deps <path>` -- file import/imported-by graph
-- `roam trace <source> <target>` -- dependency paths with coupling strength, hub detection, quality ranking
-- `roam search <pattern>` -- find symbols by name (PageRank-ranked with signatures)
+- `roam trace <source> <target>` -- dependency paths with coupling + hub detection
+- `roam search <pattern>` -- find symbols by name (PageRank-ranked)
 - `roam grep <pattern>` -- text search with symbol context
-- `roam health` -- architecture problems with location-aware severity (utility paths get relaxed thresholds for god components and bottlenecks, `--no-framework` filters primitives)
+- `roam health` -- composite score (0-100) + architecture issues
+- `roam health --gate score>=70` -- CI quality gate
 - `roam weather` -- hotspots (churn x complexity)
 - `roam impact <symbol>` -- blast radius (what breaks if changed)
-- `roam split <file>` -- internal symbol groups with isolation % and extraction suggestions
-- `roam risk` -- domain-weighted risk ranking (3-source matching: name + callee-chain + path-zone, UI auto-dampened except zone matches)
+- `roam split <file>` -- internal symbol groups with extraction suggestions
+- `roam risk` -- domain-weighted risk ranking
 - `roam why <name>` -- role, reach, criticality, verdict (batch: `roam why A B C`)
-- `roam safe-delete <symbol>` -- check if safe to delete (SAFE/REVIEW/UNSAFE verdict)
+- `roam safe-delete <symbol>` -- check if safe to delete
 - `roam diff` -- blast radius of uncommitted changes
-- `roam diff HEAD~3..HEAD` -- blast radius of a commit range
-- `roam pr-risk HEAD~3..HEAD` -- PR risk score (0-100) + dead exports + reviewers
-- `roam owner <path>` -- code ownership (who should review)
-- `roam coupling` -- temporal coupling (hidden dependencies)
-- `roam fan [symbol|file]` -- fan-in/fan-out (`--no-framework` to filter primitives)
-- `roam dead` -- unreferenced exports with SAFE/REVIEW/INTENTIONAL verdicts
-- `roam uses <name>` -- all consumers: callers, importers, inheritors
-- `roam clusters` -- code communities with cohesion %, coupling matrices, split suggestions
-- `roam layers` -- dependency layers with directory breakdown
-- `roam describe` -- auto-generate CLAUDE.md from the index
-- `roam test-map <name>` -- map symbols/files to test coverage
-- `roam sketch <dir>` -- structural skeleton of a directory
+- `roam pr-risk HEAD~3..HEAD` -- PR risk score + dead exports + reviewers
+- `roam affected-tests <name>` -- trace to test files, outputs runnable command
+- `roam owner <path>` -- code ownership
+- `roam dead` -- unreferenced exports with verdicts
+- `roam describe --agent-prompt` -- compact project summary (<500 tokens)
 
-Use `roam --json <command>` for structured JSON output (all 29 commands).
+Use `roam --json <cmd>` for structured JSON. Use `roam --compact --json <cmd>` for token-efficient output.
 ```
 
 <details>
@@ -411,20 +439,22 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 
 | Task | Use Roam | Use native tools |
 |------|----------|-----------------|
-| "What calls this function?" | `roam symbol <name>` | LSP / Grep (if Roam not indexed) |
-| "What files do I need to read?" | `roam context <name>` | Manual symbol tracing (5+ tool calls) |
+| "What calls this function?" | `roam symbol <name>` | LSP / Grep (if not indexed) |
+| "What files do I need to read?" | `roam context <name>` | Manual symbol tracing (5+ calls) |
+| "Is it safe to change X?" | `roam preflight <name>` | Multiple manual checks (slow) |
 | "Show me this file's structure" | `roam file <path>` | Read the file directly |
-| "Find a specific string in code" | `roam grep <pattern>` | `grep` / `rg` (same speed, less context) |
-| "Understand project architecture" | `roam map` + `roam health` | Manual exploration (many tool calls) |
+| "Find a specific string in code" | `roam grep <pattern>` | `grep` / `rg` (less context) |
+| "Understand project architecture" | `roam understand` | Manual exploration (many calls) |
 | "What breaks if I change X?" | `roam impact <symbol>` | No direct equivalent |
-| "How should I split this large file?" | `roam split <file>` | Manual reading + guessing (error-prone, slow) |
-| "What's the riskiest code?" | `roam risk` | Manual review (no domain weighting, no callee-chain analysis) |
-| "Why does this symbol exist?" | `roam why <name>` | `roam context` + `roam impact` + `roam fan` (3 commands) |
-| "Can I safely delete this?" | `roam safe-delete <symbol>` | `roam dead` + manual grep (slow, error-prone) |
-| "Review blast radius of a PR" | `roam pr-risk HEAD~3..HEAD` | Manual `git diff` + tracing (slow, incomplete) |
-| "Who should review this file?" | `roam owner <path>` | `git log --follow` (raw data, no aggregation) |
+| "How should I split this large file?" | `roam split <file>` | Manual reading + guessing |
+| "What's the riskiest code?" | `roam risk` | Manual review |
+| "Why does this symbol exist?" | `roam why <name>` | 3+ separate commands |
+| "Can I safely delete this?" | `roam safe-delete <symbol>` | `roam dead` + manual grep |
+| "Review blast radius of a PR" | `roam pr-risk HEAD~3..HEAD` | Manual git diff + tracing |
+| "What tests to run?" | `roam affected-tests <name>` | Grep for imports (misses indirect) |
+| "Who should review this file?" | `roam owner <path>` | `git log --follow` (raw data) |
 | "Generate project docs for AI" | `roam describe --write` | Write manually |
-| "Which tests cover this symbol?" | `roam test-map <name>` | Grep for imports (misses indirect coverage) |
+| "Codebase health score for CI" | `roam health --gate score>=70` | No equivalent |
 
 ### When to rebuild the index
 
@@ -433,6 +463,107 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 - **Index seems stale or corrupt:** `roam index --force`
 - **No rebuild needed:** Roam auto-detects changed files on every `roam index` run
 
+## MCP Server
+
+Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with AI tools that support MCP (Claude Desktop, Claude Code, etc.).
+
+```bash
+# Install the optional dependency
+pip install fastmcp
+
+# Run the server
+fastmcp run roam.mcp_server:mcp
+```
+
+The MCP server exposes 12 tools and 2 resources:
+
+**Tools:** `understand`, `health`, `preflight`, `search_symbol`, `context`, `trace`, `impact`, `file_info`, `pr_risk`, `breaking_changes`, `affected_tests`, `dead_code`, `complexity_report`, `repo_map`
+
+**Resources:** `roam://health` (current health score), `roam://summary` (project overview)
+
+<details>
+<summary><strong>Claude Desktop configuration</strong></summary>
+
+Add to your `claude_desktop_config.json`:
+
+```json
+{
+  "mcpServers": {
+    "roam": {
+      "command": "fastmcp",
+      "args": ["run", "roam.mcp_server:mcp"],
+      "cwd": "/path/to/your/project"
+    }
+  }
+}
+```
+
+</details>
+
+## GitHub Action
+
+Roam ships a reusable GitHub Action for CI integration. Add architecture checks to any PR:
+
+```yaml
+# .github/workflows/roam.yml
+name: Roam Analysis
+on: [pull_request]
+
+jobs:
+  roam:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: Cranot/roam-code@main
+        with:
+          command: health --gate score>=70
+          comment: true          # post results as PR comment
+          fail-on-violation: true
+```
+
+**Inputs:**
+
+| Input | Default | Description |
+|-------|---------|-------------|
+| `command` | `health` | Roam command to run |
+| `python-version` | `3.12` | Python version for the runner |
+| `comment` | `false` | Post results as PR comment |
+| `fail-on-violation` | `false` | Fail the job on violations |
+| `roam-version` | (latest) | Pin to a specific roam version |
+
+Use `roam init` to auto-generate this workflow for your project.
+
+## SARIF Output
+
+Roam can export analysis results in [SARIF 2.1.0](https://sarifweb.azurewebsites.net/) format for GitHub Code Scanning integration. Upload results to get inline PR annotations.
+
+```python
+from roam.output.sarif import (
+    dead_to_sarif,
+    complexity_to_sarif,
+    health_to_sarif,
+    fitness_to_sarif,
+    breaking_to_sarif,
+    conventions_to_sarif,
+    write_sarif,
+)
+
+# Generate SARIF from health analysis
+sarif = health_to_sarif(health_data)
+write_sarif(sarif, "roam-health.sarif")
+```
+
+Then upload in CI:
+
+```yaml
+- uses: github/codeql-action/upload-sarif@v3
+  with:
+    sarif_file: roam-health.sarif
+```
+
 ## Language Support
 
 ### Tier 1 -- Full extraction (dedicated parsers)
@@ -440,7 +571,7 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | Language | Extensions | Symbols | References | Inheritance |
 |----------|-----------|---------|------------|-------------|
 | Python | `.py` `.pyi` | classes, functions, methods, decorators, variables | imports, calls, inheritance | extends, `__all__` exports |
-| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports (`exports.X`, `module.exports={}`, prototype methods) | imports, require(), calls | extends |
+| JavaScript | `.js` `.jsx` `.mjs` `.cjs` | classes, functions, arrow functions, CJS exports | imports, require(), calls | extends |
 | TypeScript | `.ts` `.tsx` `.mts` `.cts` | interfaces, type aliases, enums + all JS | imports, calls, type refs | extends, implements |
 | Java | `.java` | classes, interfaces, enums, constructors, fields | imports, calls | extends, implements |
 | Go | `.go` | structs, interfaces, functions, methods, fields | imports, calls | embedded structs |
@@ -450,6 +581,15 @@ The pattern is the same for any tool that can execute shell commands: tell the a
 | PHP | `.php` | classes, interfaces, traits, enums, methods, properties, constants, constructor promotion | namespace use, calls, static calls, nullsafe calls (`?->`), `new` | extends, implements, use (traits) |
 | Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 | Svelte | `.svelte` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
+
+### Tier 1 -- Salesforce ecosystem
+
+| Language | Extensions | Symbols | References |
+|----------|-----------|---------|------------|
+| Apex | `.cls` `.trigger` | classes, triggers, SOQL, sharing modifiers, annotations | imports, calls, System.Label, `@salesforce/` |
+| Aura | `.cmp` `.app` `.evt` `.intf` `.design` | components, attributes, methods, events | controller refs, component refs |
+| Visualforce | `.page` `.component` | pages, components | controller/extensions, merge fields, includes |
+| SF Metadata XML | `*-meta.xml` | objects, fields, rules, layouts | Apex class refs, formula field refs |
 
 ### Tier 2 -- Generic extraction
 
@@ -485,7 +625,7 @@ All query commands complete in **<0.5s** (~0.25s Python startup + instant SQLite
 
 ### Quality Benchmark
 
-Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real-world open-source repos, measures extraction quality, and runs all 29 commands against each repo:
+Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real-world open-source repos, measures extraction quality, and runs all commands against each repo:
 
 | Repo | Language | Score | Coverage | Ambiguity | Edge Density | Qualified Names | Commands |
 |------|----------|-------|----------|-----------|--------------|-----------------|----------|
@@ -495,27 +635,19 @@ Roam ships with an automated benchmark suite (`roam-bench.py`) that indexes real
 | Axios | JS | **8.98** | 85.9% | 38.4% | 0.82 | 40.6% | 29/29 |
 | Express | JS | **8.46** | 96.0% | 37.1% | 1.29 | 15.1% | 29/29 |
 
-**Per-language average:**
-
-| Language | Avg Score | Repos |
-|----------|-----------|-------|
-| PHP | 9.55 | Laravel |
-| TypeScript | 9.15 | Vue, Svelte |
-| JavaScript | 8.72 | Express, Axios |
-
 **What the metrics mean:**
 
 - **Coverage** -- % of code files that produced at least one symbol (higher = fewer blind spots)
-- **Ambiguity** -- % of symbols whose name collides with another symbol in a different scope. Low ambiguity means the extractor captures enough context (parent class, module, namespace) to distinguish identically-named symbols
-- **Edge Density** -- edges per symbol. Values near 1.0 mean most symbols have at least one cross-reference. Below 0.5 means the graph is sparse and many relationships are missing
-- **Qualified Names** -- % of symbols with a parent-qualified name (e.g., `Router.get` instead of `get`). High values reduce ambiguity and enable more precise resolution
-- **Composite score** -- weighted combination of coverage (×2), misresolution rate (×2.5), ambiguity, density (×1.5), graph richness, and command pass rate (×1.5)
+- **Ambiguity** -- % of symbols whose name collides with another in a different scope. Low = better qualified names
+- **Edge Density** -- edges per symbol. Near 1.0 = most symbols have cross-references. Below 0.5 = sparse graph
+- **Qualified Names** -- % with parent-qualified name (e.g., `Router.get` not `get`). High = more precise resolution
+- **Composite score** -- weighted combination of coverage, misresolution, ambiguity, density, richness, and command pass rate
 
 The benchmark suite supports additional repos (FastAPI, Gin, Ripgrep, Tokio, urfave/cli) across Python, Go, and Rust. Run `python roam-bench.py --help` for options.
 
 ### Token Efficiency
 
-A 1,600-line source file summarized in ~5,000 characters (~70:1 compression). Full project map in ~4,000 characters. Output is plain ASCII with compact abbreviations (`fn`, `cls`, `meth`) -- no tokens wasted on colors, box-drawing, or decorative formatting.
+A 1,600-line source file summarized in ~5,000 characters (~70:1 compression). Full project map in ~4,000 characters. Output is plain ASCII with compact abbreviations (`fn`, `cls`, `meth`) -- no tokens wasted on colors, box-drawing, or decorative formatting. Use `--compact` for an additional 40-50% token reduction.
 
 ## How It Works
 
@@ -528,7 +660,7 @@ Source files
 [1] Discovery ---- git ls-files (respects .gitignore)
     |
     v
-[2] Parse -------- tree-sitter AST per file
+[2] Parse -------- tree-sitter AST per file (16 languages)
     |
     v
 [3] Extract ------ symbols (functions, classes, methods, etc.)
@@ -540,16 +672,19 @@ Source files
 [5] File edges --- aggregate symbol edges to file-level dependencies
     |
     v
-[6] Metrics ------ PageRank, degree centrality, betweenness
+[6] Metrics ------ PageRank, degree centrality, betweenness, cognitive complexity
     |
     v
-[7] Git analysis - churn, co-change matrix, authorship
+[7] Git analysis - churn, co-change matrix, authorship, co-change entropy
     |
     v
 [8] Clusters ----- Louvain community detection
     |
     v
-[9] Store -------- .roam/index.db (SQLite, WAL mode)
+[9] Health ------- per-file health scores (7-factor composite)
+    |
+    v
+[10] Store ------- .roam/index.db (SQLite, WAL mode)
 ```
 
 ### Incremental Indexing
@@ -558,16 +693,31 @@ After the first full index, `roam index` only re-processes changed files (by mti
 
 ### Graph Algorithms
 
-- **PageRank** -- identifies the most important symbols in the codebase (used by `map`, `symbol`)
-- **Betweenness centrality** -- finds bottleneck symbols that sit on many shortest paths (`health`)
-- **Tarjan's SCC** -- detects dependency cycles (`health`)
-- **Louvain community detection** -- groups related symbols into clusters, compared against directory structure to find hidden coupling (`clusters`)
+- **PageRank** -- identifies the most important symbols in the codebase (used by `map`, `symbol`, `search`)
+- **Betweenness centrality** -- finds bottleneck symbols on many shortest paths (`health`)
+- **Tarjan's SCC** -- detects dependency cycles with tangle ratio (`health`)
+- **Louvain community detection** -- groups related symbols into clusters vs directory structure (`clusters`)
 - **Topological sort** -- computes dependency layers and finds upward violations (`layers`)
-- **k-shortest simple paths** -- traces up to k dependency paths between any two symbols with coupling strength classification, hub detection, and quality-based ranking (`trace`)
+- **k-shortest simple paths** -- traces dependency paths with coupling strength, hub detection, and quality ranking (`trace`)
+- **Shannon entropy** -- measures co-change distribution (shotgun surgery) and knowledge concentration (bus factor)
+
+### Health Scoring
+
+Roam computes a composite health score (0-100) using five factors:
+
+| Factor | Weight | What it measures |
+|--------|--------|-----------------|
+| Tangle ratio | up to -30 | % of symbols in dependency cycles |
+| God components | up to -20 | Symbols with extreme fan-in/fan-out |
+| Bottlenecks | up to -15 | High-betweenness chokepoints |
+| Layer violations | up to -15 | Upward dependency violations |
+| Per-file health | up to -20 | Average of 7-factor file health scores |
+
+Per-file health (1-10) combines: max cognitive complexity, indentation complexity, cycle membership, god component membership, dead export ratio, co-change entropy, and churn amplification.
 
 ### Storage
 
-Everything lives in `.roam/index.db`, a single SQLite file using WAL mode for fast reads. The schema includes 10 tables with 20+ indexes. No external database required.
+Everything lives in `.roam/index.db`, a single SQLite file using WAL mode for fast reads. The schema includes tables for files, symbols, edges, file edges, symbol metrics, file stats, clusters, git stats, co-change data, hypergraph edges, and metric snapshots. No external database required.
 
 ### Output Design
 
@@ -578,6 +728,8 @@ Roam's output is optimized for AI token consumption:
 - **File:line format** -- `src/main.py:42` for every location
 - **Budget-aware** -- sections truncate with `(+N more)` when exceeding line budgets
 - **Table formatting** -- aligned columns for scannable output
+- **`--compact` mode** -- TSV tables (40-50% fewer tokens), minimal JSON envelope
+- **`--json` mode** -- consistent envelope with `command`, `version`, `timestamp`, `summary`
 
 ## How Roam Compares
 
@@ -586,11 +738,14 @@ Roam is **not** an LSP, linter, or editor plugin. It's a static index optimized 
 | Tool | What it does | Difference from Roam |
 |------|-------------|---------------------|
 | **ctags / cscope** | Symbol index for editors | No graph metrics, no git signals, no architecture analysis, editor-focused output |
-| **LSP (pyright, gopls, etc.)** | Real-time type checking + navigation | Requires running server, language-specific. Now integrated into AI agents (Claude Code, etc.) but API requires file:line:col -- not designed for exploratory queries |
-| **Sourcegraph / Cody** | Code search + AI assistant | Proprietary since 2024. Cody adds structural indexing but requires hosted or self-hosted enterprise deployment |
-| **Aider repo map** | Tree-sitter + PageRank map for AI | Context selection for chat, not a standalone query tool. No git signals, no architecture commands |
+| **LSP (pyright, gopls)** | Real-time type checking + navigation | Requires running server, language-specific. API requires file:line:col -- not designed for exploratory queries |
+| **Sourcegraph / Cody** | Code search + AI assistant | Proprietary since 2024. Requires hosted or self-hosted enterprise deployment |
+| **Aider repo map** | Tree-sitter + PageRank map | Context selection for chat, not a standalone query tool. No git signals, no architecture commands |
+| **CodeScene** | Behavioral code analysis | Commercial SaaS. Roam's health scoring is inspired by CodeScene's per-file metrics |
+| **Structure101** | Dependency structure analysis | Commercial desktop app. Roam's tangle ratio concept comes from Structure101 |
+| **SonarQube** | Code quality + security | Heavy server-based tool. Roam's cognitive complexity follows SonarSource spec |
 | **tree-sitter CLI** | AST parsing | Raw AST only -- no symbol resolution, no cross-file edges, no metrics |
-| **grep / ripgrep** | Text search | No semantic understanding -- can't distinguish definitions from usage, no graph |
+| **grep / ripgrep** | Text search | No semantic understanding -- can't distinguish definitions from usage |
 
 Roam fills a specific gap: giving AI agents the same structural understanding a senior developer has, in a format they can consume in one turn.
 
@@ -603,20 +758,22 @@ Roam is a static analysis tool. These are fundamental trade-offs, not bugs:
 - **No cross-language edges** -- a Python file calling a C extension won't show as a dependency
 - **Tier 2 languages** (Ruby, C#, Kotlin, Swift, Scala) get basic symbol extraction only (no import resolution or call tracking)
 - **Large monorepos** (100k+ files) may have slow initial indexing -- incremental updates remain fast
+- **Cognitive complexity** follows SonarSource spec -- other complexity models (Halstead, cyclomatic) are not included
 
 ## Troubleshooting
 
 | Problem | Solution |
 |---------|----------|
-| `roam: command not found` | Ensure install location is on PATH. For `uv`: run `uv tool update-shell`. For `pip`: check `pip show roam-code` for install path. |
-| `Another indexing process is running` | A previous `roam index` crashed and left a stale lock. Delete `.roam/index.lock` and retry. |
-| `database is locked` or corrupt index | Run `roam index --force` to rebuild from scratch. |
-| Unicode errors on Windows | Roam handles UTF-8 and Latin-1 files. If you see `charmap` errors, ensure your terminal uses UTF-8 (`chcp 65001`). |
-| `.vue` / `.svelte` files not indexed | Both are Tier 1 (script block extraction). Ensure files have a `<script>` tag. Other SFC frameworks -- file an issue. |
-| Too many false positives in `roam dead` | Check the "N files had no symbols extracted" note. Files without parsers don't produce symbols, so their exports appear unreferenced. |
-| Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` to disambiguate. |
-| Vue template functions show fan-in:0 | Rebuild the index with `roam index --force` (v4.3.1 fixed multi-line attribute detection + callback references + shorthand properties). |
-| Slow first index | Expected for large projects. Use `roam index --verbose` to monitor progress. Subsequent runs are incremental. |
+| `roam: command not found` | Ensure install location is on PATH. For `uv`: run `uv tool update-shell`. For `pip`: check `pip show roam-code` for install path |
+| `Another indexing process is running` | Previous `roam index` crashed. Delete `.roam/index.lock` and retry |
+| `database is locked` or corrupt index | Run `roam index --force` to rebuild from scratch |
+| Unicode errors on Windows | Ensure your terminal uses UTF-8 (`chcp 65001`) |
+| `.vue` / `.svelte` files not indexed | Both are Tier 1. Ensure files have a `<script>` tag |
+| Too many false positives in `roam dead` | Check the "N files had no symbols extracted" note. Files without parsers don't produce symbols |
+| Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |
+| Slow first index | Expected for large projects. Use `roam index --verbose`. Subsequent runs are incremental |
+| Health score seems wrong | Check `roam health --json` for factor breakdown. Utility paths get relaxed thresholds |
+| `--gate` not failing | Ensure the metric name matches (e.g., `score`, `tangle_pct`). Check `roam health --json` for available fields |
 
 ## Update / Uninstall
 
@@ -642,12 +799,12 @@ git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
 
-# Run tests (~276 tests across 16 languages, 3 OS, Python 3.10-3.13)
+# Run tests (489 tests across 16 languages, Python 3.9-3.13)
 pytest tests/
 
 # Index roam itself
-roam index --force
-roam map
+roam init
+roam health
 ```
 
 ### Dependencies
@@ -659,6 +816,8 @@ roam map
 | [tree-sitter-language-pack](https://github.com/nicolo-ribaudo/tree-sitter-language-pack) >= 0.6 | 165+ grammars, no compilation |
 | [networkx](https://networkx.org/) >= 3.0 | Graph algorithms |
 
+Optional: [fastmcp](https://github.com/jlowin/fastmcp) (for MCP server)
+
 ### Project Structure
 
 <details>
@@ -667,52 +826,67 @@ roam map
 ```
 roam-code/
 ├── pyproject.toml
+├── action.yml                         # Reusable GitHub Action
+├── CHANGELOG.md
 ├── src/roam/
-│   ├── cli.py                      # Click CLI entry point (29 commands)
+│   ├── __init__.py                    # Version (7.0.0)
+│   ├── cli.py                         # Click CLI entry point (48 commands, 7 categories)
+│   ├── mcp_server.py                  # MCP server (12 tools, 2 resources)
 │   ├── db/
-│   │   ├── connection.py           # SQLite connection (WAL, pragmas)
-│   │   ├── schema.py               # 10 tables, 20+ indexes
-│   │   └── queries.py              # Named SQL constants
+│   │   ├── connection.py              # SQLite connection (WAL, pragmas, migrations)
+│   │   ├── schema.py                  # Tables, indexes, safe ALTER migrations
+│   │   └── queries.py                 # Named SQL constants
 │   ├── index/
-│   │   ├── indexer.py              # Orchestrates full pipeline
-│   │   ├── discovery.py            # git ls-files, .gitignore
-│   │   ├── parser.py               # Tree-sitter parsing
-│   │   ├── symbols.py              # Symbol + reference extraction
-│   │   ├── relations.py            # Reference resolution -> edges
-│   │   ├── git_stats.py            # Churn, co-change, blame
-│   │   └── incremental.py          # mtime + hash change detection
+│   │   ├── indexer.py                 # Orchestrates full pipeline
+│   │   ├── discovery.py               # git ls-files, .gitignore
+│   │   ├── parser.py                  # Tree-sitter parsing
+│   │   ├── symbols.py                 # Symbol + reference extraction
+│   │   ├── relations.py               # Reference resolution -> edges
+│   │   ├── complexity.py              # Cognitive complexity (SonarSource-compatible)
+│   │   ├── git_stats.py               # Churn, co-change, blame, entropy
+│   │   └── incremental.py             # mtime + hash change detection
 │   ├── languages/
-│   │   ├── base.py                 # Abstract LanguageExtractor
-│   │   ├── registry.py             # Language detection + factory
-│   │   ├── python_lang.py          # Python extractor
-│   │   ├── javascript_lang.py      # JavaScript extractor
-│   │   ├── typescript_lang.py      # TypeScript/Vue/Svelte extractor
-│   │   ├── java_lang.py            # Java extractor
-│   │   ├── go_lang.py              # Go extractor
-│   │   ├── rust_lang.py            # Rust extractor
-│   │   ├── c_lang.py               # C/C++ extractor
-│   │   ├── php_lang.py             # PHP extractor
-│   │   └── generic_lang.py         # Tier 2 fallback extractor
+│   │   ├── base.py                    # Abstract LanguageExtractor
+│   │   ├── registry.py                # Language detection + grammar aliasing
+│   │   ├── python_lang.py             # Python extractor
+│   │   ├── javascript_lang.py         # JavaScript extractor
+│   │   ├── typescript_lang.py         # TypeScript extractor
+│   │   ├── java_lang.py               # Java extractor
+│   │   ├── go_lang.py                 # Go extractor
+│   │   ├── rust_lang.py               # Rust extractor
+│   │   ├── c_lang.py                  # C/C++ extractor
+│   │   ├── php_lang.py                # PHP extractor
+│   │   ├── apex_lang.py               # Salesforce Apex extractor
+│   │   ├── aura_lang.py               # Salesforce Aura extractor
+│   │   ├── visualforce_lang.py        # Salesforce Visualforce extractor
+│   │   ├── sfxml_lang.py              # Salesforce Metadata XML extractor
+│   │   └── generic_lang.py            # Tier 2 fallback extractor
 │   ├── graph/
-│   │   ├── builder.py              # DB -> NetworkX graph
-│   │   ├── pagerank.py             # PageRank + centrality metrics
-│   │   ├── cycles.py               # Tarjan SCC detection
-│   │   ├── clusters.py             # Louvain community detection
-│   │   ├── layers.py               # Topological layer detection
-│   │   ├── pathfinding.py          # Shortest path for trace
-│   │   └── split.py                # Intra-file decomposition analysis
-│   │   └── why.py                  # Symbol role classification + verdict
+│   │   ├── builder.py                 # DB -> NetworkX graph
+│   │   ├── pagerank.py                # PageRank + centrality metrics
+│   │   ├── cycles.py                  # Tarjan SCC + tangle ratio
+│   │   ├── clusters.py                # Louvain community detection
+│   │   ├── layers.py                  # Topological layer detection
+│   │   ├── pathfinding.py             # k-shortest paths for trace
+│   │   ├── split.py                   # Intra-file decomposition
+│   │   └── why.py                     # Symbol role classification
 │   ├── commands/
-│   │   ├── resolve.py              # Shared symbol resolution + ensure_index
-│   │   └── cmd_*.py                # One module per CLI command (29 total)
+│   │   ├── resolve.py                 # Shared symbol resolution + ensure_index
+│   │   ├── changed_files.py           # Shared git changeset detection
+│   │   ├── metrics_history.py         # Snapshot persistence
+│   │   └── cmd_*.py                   # One module per CLI command (48 total)
 │   └── output/
-│       └── formatter.py            # Token-efficient text formatting
+│       ├── formatter.py               # Token-efficient text formatting + compact mode
+│       └── sarif.py                   # SARIF 2.1.0 output for GitHub Code Scanning
 └── tests/
-    ├── test_basic.py               # Core functionality tests
-    ├── test_fixes.py               # Regression tests
-    ├── test_comprehensive.py       # Language and command tests
-    ├── test_performance.py         # Performance, stress, and resilience tests
-    └── test_resolve.py             # Symbol resolution + line_start attribution tests
+    ├── test_basic.py                  # Core functionality tests
+    ├── test_fixes.py                  # Regression tests
+    ├── test_comprehensive.py          # Language and command tests
+    ├── test_performance.py            # Performance, stress, and resilience tests
+    ├── test_resolve.py                # Symbol resolution tests
+    ├── test_salesforce.py             # Salesforce extractor tests
+    ├── test_new_features.py           # v5-v6 feature tests
+    └── test_v7_features.py            # v7 feature tests (56 tests)
 ```
 
 </details>
@@ -725,7 +899,7 @@ Contributions are welcome! Here's how to get started:
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All tests must pass before submitting
+pytest tests/   # All 489 tests must pass before submitting
 ```
 
 **Good first contributions:**
@@ -733,6 +907,8 @@ pytest tests/   # All tests must pass before submitting
 - **Add a Tier 1 language** -- create one file in `src/roam/languages/` inheriting from `LanguageExtractor`. See `go_lang.py` or `php_lang.py` as clean templates. Ruby, C#, Kotlin, Swift, and Scala are all waiting.
 - **Improve reference resolution** -- better import path matching for existing languages.
 - **Add a benchmark repo** -- add an entry to `roam-bench.py` and run `python roam-bench.py --repos yourrepo` to evaluate quality.
+- **SARIF integration** -- extend the SARIF converters with additional analysis types.
+- **MCP tools** -- add new tools to the MCP server for specialized queries.
 
 Please open an issue first to discuss larger changes.
 
