@@ -139,7 +139,7 @@ First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are i
 
 **Next steps:**
 
-- **Set up your AI agent:** `roam describe --agent-prompt >> CLAUDE.md` (or see [integration instructions](#integration-with-ai-coding-tools))
+- **Set up your AI agent:** `roam describe --write` (auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc. — see [integration instructions](#integration-with-ai-coding-tools))
 - **Explore:** `roam health` → `roam weather` → `roam map`
 - **Add to CI:** `roam init` already generated a GitHub Action
 
@@ -189,7 +189,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam init` | Guided onboarding: creates `.roam/fitness.yaml`, CI workflow, runs index, shows health |
 | `roam understand` | Full codebase briefing: tech stack, architecture, key abstractions, health, conventions, complexity overview, entry points |
 | `roam tour [--write PATH]` | Auto-generated onboarding guide: top symbols, reading order, entry points, language breakdown. `--write` saves to Markdown |
-| `roam describe [--write] [--force] [--agent-prompt]` | Auto-generate project description (CLAUDE.md). `--agent-prompt` returns a compact (<500 token) LLM system prompt |
+| `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
 
 ### Daily Workflow
@@ -263,7 +263,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | Command | Description |
 |---------|-------------|
 | `roam report [--list] [--config FILE] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor` |
-| `roam describe --write` | Generate CLAUDE.md with conventions, hotspots, architecture |
+| `roam describe --write` | Generate agent config (auto-detects: CLAUDE.md, AGENTS.md, .cursor/rules, etc.) |
 
 ### Multi-Repo Workspace
 
@@ -426,7 +426,7 @@ Blueprint  Bridge        fan-in:18   reach:34  moderate  Coupling point between 
 
 ```
 $ roam describe --write
-Wrote CLAUDE.md (98 lines)
+Wrote CLAUDE.md (98 lines)  # auto-detects: CLAUDE.md, AGENTS.md, .cursor/rules, etc.
 
 $ roam health --gate score>=70
 Health: 78/100 — PASS
@@ -456,9 +456,9 @@ Roam is designed to be called by coding agents via shell commands. Instead of re
 **Fastest setup:**
 
 ```bash
-roam describe --agent-prompt >> CLAUDE.md              # Claude Code
-roam describe --agent-prompt >> .cursor/rules/roam.mdc # Cursor
-roam describe --agent-prompt >> CONVENTIONS.md          # Aider / any agent
+roam describe --write               # auto-detects your agent's config file
+roam describe --write -o AGENTS.md  # or specify an explicit path
+roam describe --agent-prompt        # compact ~500-token prompt (append to any config)
 ```
 
 <details>
@@ -560,7 +560,7 @@ fastmcp run roam.mcp_server:mcp
 </details>
 
 <details>
-<summary><strong>Claude Code</strong> (recommended)</summary>
+<summary><strong>Claude Code</strong></summary>
 
 ```bash
 claude mcp add roam -- fastmcp run roam.mcp_server:mcp
