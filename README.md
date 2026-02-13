@@ -175,7 +175,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 57 total commands are organized into 8 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 58 total commands are organized into 8 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -237,6 +237,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam split <file>` | Internal symbol groups with isolation % and extraction suggestions |
 | `roam entry-points` | Entry point catalog with protocol classification |
 | `roam patterns` | Architectural pattern recognition: Strategy, Factory, Observer, etc. |
+| `roam visualize [--format mermaid\|dot] [--focus NAME] [--limit N]` | Generate Mermaid or DOT architecture diagrams. Smart filtering via PageRank, cluster grouping, cycle highlighting |
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
 
@@ -526,7 +527,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-18 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+19 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
 <details>
 <summary><strong>MCP tool list</strong></summary>
@@ -549,6 +550,7 @@ fastmcp run roam.mcp_server:mcp
 | `repo_map` | Project skeleton with key symbols |
 | `tour` | Auto-generated onboarding guide |
 | `diagnose` | Root cause analysis for debugging |
+| `visualize` | Generate Mermaid or DOT architecture diagrams |
 | `ws_understand` | Unified multi-repo workspace overview |
 | `ws_context` | Cross-repo augmented symbol context |
 
@@ -973,7 +975,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # 636 tests, Python 3.9-3.13
+pytest tests/   # 649 tests, Python 3.9-3.13
 ```
 
 <details>
@@ -986,8 +988,8 @@ roam-code/
 ├── CHANGELOG.md
 ├── src/roam/
 │   ├── __init__.py                    # Version (7.4.0)
-│   ├── cli.py                         # Click CLI (57 commands, 8 categories)
-│   ├── mcp_server.py                  # MCP server (18 tools, 2 resources)
+│   ├── cli.py                         # Click CLI (58 commands, 8 categories)
+│   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1022,7 +1024,7 @@ roam-code/
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 636 tests across 10 test files
+└── tests/                             # 649 tests across 11 test files
 ```
 
 </details>
@@ -1061,7 +1063,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 636 tests must pass
+pytest tests/   # All 649 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
