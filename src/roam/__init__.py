@@ -1,3 +1,8 @@
 """Roam: Codebase comprehension tool for AI coding assistants."""
 
-__version__ = "7.4.0"
+from importlib.metadata import version, PackageNotFoundError
+
+try:
+    __version__ = version("roam-code")
+except PackageNotFoundError:
+    __version__ = "dev"
