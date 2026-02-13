@@ -66,11 +66,17 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
         conn = sqlite3.connect(str(db_path), timeout=30)
 
     conn.row_factory = sqlite3.Row
-    # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM auxiliary
-    # files during sync, causing writes to stall indefinitely.  Fall back
-    # to DELETE journal mode for cloud-synced paths.
-    if _is_cloud_synced(db_path):
+    cloud = _is_cloud_synced(db_path)
+    if cloud:
+        # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM
+        # auxiliary files and even the main DB during sync, causing
+        # writes to stall.  Mitigations:
+        #   1. DELETE journal — avoids WAL/SHM auxiliary files entirely
+        #   2. EXCLUSIVE locking — holds the file lock for the session,
+        #      preventing the sync agent from grabbing it mid-write
         conn.execute("PRAGMA journal_mode=DELETE")
+        if not readonly:
+            conn.execute("PRAGMA locking_mode=EXCLUSIVE")
     else:
         conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
