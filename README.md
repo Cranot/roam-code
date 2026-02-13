@@ -28,7 +28,7 @@ A semantic graph means Roam understands what functions call what, how modules de
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
               │              │                │
            tree-sitter    symbols           one call
-           17 languages   + edges           replaces
+           22 languages   + edges           replaces
            git history    + metrics         5-10 tool calls
 ```
 
@@ -176,7 +176,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 58 total commands are organized into 8 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 61 total commands are organized into 9 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -849,7 +849,7 @@ Codebase
     |
 [1] Discovery ──── git ls-files (respects .gitignore)
     |
-[2] Parse ──────── tree-sitter AST per file (17 languages)
+[2] Parse ──────── tree-sitter AST per file (22 languages)
     |
 [3] Extract ────── symbols + references (calls, imports, inheritance)
     |
@@ -1001,7 +1001,7 @@ roam-code/
 ├── CHANGELOG.md
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (58 commands, 8 categories)
+│   ├── cli.py                         # Click CLI (61 commands, 9 categories)
 │   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1013,8 +1013,8 @@ roam-code/
 │   │   ├── parser.py                  # Tree-sitter parsing
 │   │   ├── symbols.py                 # Symbol + reference extraction
 │   │   ├── relations.py               # Reference resolution -> edges
-│   │   ├── complexity.py              # Cognitive complexity (SonarSource)
-│   │   ├── git_stats.py               # Churn, co-change, blame, entropy
+│   │   ├── complexity.py              # Cognitive complexity (SonarSource) + Halstead metrics
+│   │   ├── git_stats.py               # Churn, co-change, blame, Renyi entropy
 │   │   └── incremental.py             # mtime + hash change detection
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
@@ -1028,7 +1028,7 @@ roam-code/
 │   │   └── aggregator.py              # Cross-repo aggregation
 │   ├── graph/
 │   │   ├── builder.py, pagerank.py    # DB -> NetworkX, PageRank
-│   │   ├── cycles.py, clusters.py     # Tarjan SCC, Louvain
+│   │   ├── cycles.py, clusters.py     # Tarjan SCC, propagation cost, Louvain, modularity Q
 │   │   ├── layers.py, pathfinding.py  # Topo layers, k-shortest paths
 │   │   ├── split.py, why.py           # Decomposition, role classification
 │   ├── commands/
@@ -1037,7 +1037,7 @@ roam-code/
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 669 tests across 11 test files
+└── tests/                             # 669 tests across 12 test files
 ```
 
 </details>
