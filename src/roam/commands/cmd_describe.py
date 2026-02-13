@@ -1,4 +1,4 @@
-"""Auto-generate a CLAUDE.md project description from the index."""
+"""Auto-generate a project description for AI coding agents."""
 
 from __future__ import annotations
 
@@ -648,13 +648,48 @@ def _format_agent_prompt(data: dict) -> str:
     return "\n".join(lines)
 
 
+# Agent config file detection order — first existing file wins.
+# If none exist, fall back to CLAUDE.md (most common).
+_AGENT_CONFIG_FILES = [
+    "CLAUDE.md",                          # Claude Code
+    "AGENTS.md",                          # OpenAI Codex CLI
+    "GEMINI.md",                          # Gemini CLI
+    ".cursor/rules/roam.mdc",            # Cursor
+    ".windsurf/rules/roam.md",           # Windsurf
+    ".github/copilot-instructions.md",   # GitHub Copilot
+    "CONVENTIONS.md",                     # Aider / generic
+    ".clinerules/roam.md",               # Cline
+]
+
+
+def _detect_agent_config(root: "Path") -> "Path":
+    """Auto-detect the right agent config file in the project.
+
+    Checks for existing AI tool config files in priority order.
+    If one already exists, returns it (so ``--write`` updates the right file).
+    Otherwise defaults to ``CLAUDE.md``.
+    """
+    for rel in _AGENT_CONFIG_FILES:
+        candidate = root / rel
+        if candidate.exists():
+            return candidate
+    return root / "CLAUDE.md"
+
+
 @click.command()
-@click.option('--write', is_flag=True, help='Write output to CLAUDE.md in project root')
-@click.option('--force', is_flag=True, help='Overwrite existing CLAUDE.md without confirmation')
+@click.option('--write', is_flag=True, help='Write output to the detected agent config file')
+@click.option('--force', is_flag=True, help='Overwrite existing file without confirmation')
 @click.option('--agent-prompt', is_flag=True, help='Compact agent-oriented prompt (under 500 tokens)')
+@click.option('-o', '--output', 'out_file', default=None,
+              help='Explicit output path (overrides auto-detection)')
 @click.pass_context
-def describe(ctx, write, force, agent_prompt):
-    """Auto-generate a project description (suitable for CLAUDE.md)."""
+def describe(ctx, write, force, agent_prompt, out_file):
+    """Auto-generate a project description for AI coding agents.
+
+    By default prints to stdout.  Use ``--write`` to save to your agent's
+    config file (auto-detected: CLAUDE.md, AGENTS.md, .cursor/rules, etc.)
+    or ``-o PATH`` to specify an explicit output path.
+    """
     json_mode = ctx.obj.get('json') if ctx.obj else False
     ensure_index()
 
@@ -694,11 +729,16 @@ def describe(ctx, write, force, agent_prompt):
         )))
         return
 
-    if write:
+    if write or out_file:
+        from pathlib import Path
         root = find_project_root()
-        out_path = root / "CLAUDE.md"
+        if out_file:
+            out_path = Path(out_file)
+            out_path.parent.mkdir(parents=True, exist_ok=True)
+        else:
+            out_path = _detect_agent_config(root)
         if out_path.exists() and not force:
-            click.echo(f"CLAUDE.md already exists at {out_path}")
+            click.echo(f"{out_path.name} already exists at {out_path}")
             click.echo("Use --force to overwrite, or omit --write to print to stdout.")
             return
         out_path.write_text(output, encoding="utf-8")
