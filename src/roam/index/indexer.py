@@ -81,7 +81,7 @@ def _try_import_git_stats():
 
 
 def _log(msg: str):
-    print(msg, file=sys.stderr)
+    print(msg, file=sys.stderr, flush=True)
 
 
 def _compute_file_health_scores(conn):
@@ -463,6 +463,9 @@ class Indexer:
 
                 if (i % 100 == 0) or (i == len(files_to_process)):
                     _log(f"  Processing {i}/{len(files_to_process)} files...")
+                    # Intermediate commit: prevents journal from growing unbounded
+                    # (critical on cloud-synced dirs where large journals stall)
+                    conn.commit()
 
                 # Read source for metadata
                 try:
@@ -562,7 +565,10 @@ class Indexer:
                     }
 
                 # Compute per-symbol complexity metrics
-                if compute_complexity is not None:
+                # Skip for regex-only extractors (tree is None) — the fallback
+                # splits source into lines for every symbol, which is O(n*m) for
+                # binary formats like SCX with thousands of synthetic-line symbols.
+                if compute_complexity is not None and tree is not None:
                     try:
                         compute_complexity(conn, file_id, tree, parsed_source)
                     except Exception as e:
