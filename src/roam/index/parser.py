@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 import os
 import re
+import struct
 from pathlib import Path
 
 log = logging.getLogger(__name__)
@@ -77,6 +78,7 @@ EXTENSION_MAP = {
     ".design": "aura",
     # Visual FoxPro
     ".prg": "foxpro",
+    ".scx": "foxpro",
 }
 
 # Grammar aliasing: languages that reuse existing tree-sitter grammars.
@@ -98,6 +100,44 @@ REGEX_ONLY_LANGUAGES = frozenset({"foxpro"})
 
 # Track parse error stats
 parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
+
+
+def _find_sct_path(scx_path: Path) -> Path | None:
+    """Find the companion .sct memo file for an .scx form file (case-insensitive)."""
+    base = scx_path.with_suffix("")
+    # Try common case variations first
+    for ext in (".sct", ".SCT", ".Sct"):
+        candidate = base.with_suffix(ext)
+        if candidate.exists():
+            return candidate
+    # Case-insensitive directory scan as fallback
+    parent = scx_path.parent
+    stem_lower = base.name.lower()
+    try:
+        for f in parent.iterdir():
+            if f.stem.lower() == stem_lower and f.suffix.lower() == ".sct":
+                return f
+    except OSError:
+        pass
+    return None
+
+
+def _pack_scx_sct(scx_path: Path, scx_bytes: bytes) -> bytes:
+    """Pack .scx and .sct bytes into a single length-prefixed blob.
+
+    Format: 4-byte big-endian scx length + scx_bytes + sct_bytes.
+    The extractor unpacks this to get both files' data.
+    If the .sct is missing, returns just the header + scx_bytes (sct portion empty).
+    """
+    sct_path = _find_sct_path(scx_path)
+    sct_bytes = b""
+    if sct_path is not None:
+        try:
+            with open(sct_path, "rb") as f:
+                sct_bytes = f.read()
+        except OSError:
+            pass
+    return struct.pack(">I", len(scx_bytes)) + scx_bytes + sct_bytes
 
 
 def detect_language(file_path: str) -> str | None:
@@ -203,6 +243,8 @@ def parse_file(path: Path, language: str | None = None):
 
     # Regex-only languages: return source without tree-sitter parsing
     if language in REGEX_ONLY_LANGUAGES:
+        if str(path).lower().endswith(".scx"):
+            source = _pack_scx_sct(path, source)
         return None, source, language
 
     # Vue/Svelte SFC: extract <script> blocks and route to TS/JS

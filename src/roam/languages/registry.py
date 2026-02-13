@@ -56,6 +56,7 @@ _EXTENSION_MAP: dict[str, str] = {
     ".design": "aura",
     # Visual FoxPro (regex-only, no tree-sitter)
     ".prg": "foxpro",
+    ".scx": "foxpro",
 }
 
 # Languages with dedicated extractors
