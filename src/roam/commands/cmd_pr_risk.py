@@ -230,15 +230,24 @@ def pr_risk(ctx, commit_range, staged):
                 new_dead.append({"name": e["name"], "kind": e["kind"], "file": path})
 
         # --- Composite risk score (0-100) ---
-        risk = int(
-            min(blast_pct, 25) +                      # 0-25: blast radius
-            hotspot_score * 20 +                       # 0-20: hotspot
-            (1 - test_coverage) * 20 +                 # 0-20: untested
-            bus_factor_risk * 12 +                     # 0-12: bus factor
-            coupling_score * 15 +                      # 0-15: coupling
-            novelty * 8                                # 0-8: change set novelty
-        )
-        risk = min(risk, 100)
+        # Multiplicative model: each factor amplifies the base risk.
+        # This captures interaction effects — high blast + untested is
+        # exponentially worse than either alone, not just linearly worse.
+        # log-space combination: risk = 100 * (1 - product(1 - factor_i))
+        import math
+        _factors = [
+            min(blast_pct / 100, 0.40),          # blast radius (up to 40%)
+            hotspot_score * 0.30,                  # hotspot (up to 30%)
+            (1 - test_coverage) * 0.30,            # untested (up to 30%)
+            bus_factor_risk * 0.20,                # bus factor (up to 20%)
+            coupling_score * 0.20,                 # coupling (up to 20%)
+            novelty * 0.15,                        # novelty (up to 15%)
+        ]
+        # Product of (1 - factor): probability of "no risk" from each
+        no_risk = 1.0
+        for f in _factors:
+            no_risk *= (1 - max(0, min(f, 0.99)))
+        risk = int(min(100, (1 - no_risk) * 100))
 
         if risk <= 25:
             level = "LOW"

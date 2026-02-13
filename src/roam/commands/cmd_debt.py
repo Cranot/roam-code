@@ -149,7 +149,23 @@ def _compute_file_debt(conn):
         n_exported = total_exported.get(fid, 0)
         dead_ratio = (n_dead / n_exported) if n_exported > 0 else 0.0
 
-        # --- Debt formula ---
+        # --- SQALE-inspired remediation cost (minutes) ---
+        # Each issue type has an estimated fix time, transforming
+        # heterogeneous violations into a common currency (dev-minutes).
+        # Reference: Letouzey (2012), "The SQALE Method."
+        _COST_COMPLEXITY_PER_UNIT = 30   # minutes to refactor per unit of normalized complexity
+        _COST_CYCLE_BREAK = 120          # minutes to break a cycle dependency
+        _COST_GOD_SPLIT = 240            # minutes to split a god component
+        _COST_DEAD_REMOVE = 10           # minutes to safely remove a dead export
+
+        remediation_minutes = (
+            complexity_norm * _COST_COMPLEXITY_PER_UNIT
+            + cycle_penalty * _COST_CYCLE_BREAK
+            + god_penalty * _COST_GOD_SPLIT
+            + n_dead * _COST_DEAD_REMOVE
+        )
+
+        # Health penalty: normalized 0-1 for scoring (backwards compat)
         health_penalty = (
             complexity_norm * 0.4
             + cycle_penalty * 0.3
@@ -168,6 +184,7 @@ def _compute_file_debt(conn):
             "debt_score": round(debt_score, 3),
             "health_penalty": round(health_penalty, 3),
             "hotspot_factor": round(hotspot_factor, 2),
+            "remediation_minutes": round(remediation_minutes, 0),
             "complexity_norm": round(complexity_norm, 3),
             "complexity_raw": round(complexity_raw, 1),
             "churn_pctile": round(churn_pctile, 3),
@@ -215,6 +232,8 @@ def _summary_stats(items):
     worst_q = items[:q_cutoff]  # already sorted desc
     worst_q_debt = sum(r["debt_score"] for r in worst_q)
 
+    total_remediation = sum(r.get("remediation_minutes", 0) for r in items)
+
     return {
         "total_files": n,
         "total_debt": round(total_debt, 1),
@@ -222,6 +241,8 @@ def _summary_stats(items):
         "median_debt": round(median_debt, 3),
         "worst_quartile_debt": round(worst_q_debt, 1),
         "worst_quartile_files": len(worst_q),
+        "total_remediation_minutes": round(total_remediation, 0),
+        "total_remediation_hours": round(total_remediation / 60, 1),
         "files_with_cycles": sum(1 for r in items if r["cycle_penalty"] > 0),
         "files_with_god_components": sum(1 for r in items if r["god_penalty"] > 0),
         "hotspot_files": sum(1 for r in items if r["hotspot_factor"] > 1.0),

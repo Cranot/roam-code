@@ -1,6 +1,7 @@
 """Show temporal coupling: files that change together."""
 
 import hashlib
+import math
 
 import click
 
@@ -14,11 +15,42 @@ from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 # Surprise score: Jaccard similarity against hypergraph patterns
 # ---------------------------------------------------------------------------
 
+def _npmi(p_ab, p_a, p_b):
+    """Normalized Pointwise Mutual Information.
+
+    NPMI(A,B) = PMI(A,B) / -log(P(A,B))
+              = log(P(A,B) / (P(A)*P(B))) / -log(P(A,B))
+
+    Returns a value in [-1, +1]:
+      -1 → A and B never co-occur
+       0 → statistically independent
+      +1 → A and B always co-occur
+
+    This is superior to Jaccard for measuring coupling because it
+    accounts for marginal frequencies: two rare files that always
+    change together score higher than two ubiquitous files that
+    occasionally overlap.
+
+    Reference: Bouma (2009), "Normalized (Pointwise) Mutual Information
+    in Collocation Extraction."
+    """
+    if p_ab <= 0 or p_a <= 0 or p_b <= 0:
+        return -1.0
+    pmi = math.log(p_ab / (p_a * p_b))
+    neg_log_pab = -math.log(p_ab)
+    if neg_log_pab == 0:
+        return 1.0  # perfect co-occurrence
+    return pmi / neg_log_pab
+
+
 def _compute_surprise(conn, change_fids):
     """Compute surprise score (0-1) for a set of file IDs.
 
     0.0 = you always change these files together (seen before).
     1.0 = never seen this combination.
+
+    Uses both Jaccard similarity (set overlap) and NPMI (information-
+    theoretic) to find the closest historical pattern.
     """
     if not change_fids or len(change_fids) < 2:
         return 0.0, None, 0.0
@@ -35,6 +67,12 @@ def _compute_surprise(conn, change_fids):
 
     if not candidate_edges:
         return 0.5, None, 0.0  # no history → moderate surprise
+
+    # Total hyperedges for probability estimation (NPMI)
+    total_edges_row = conn.execute(
+        "SELECT COUNT(*) FROM git_hyperedges"
+    ).fetchone()
+    total_edges = max((total_edges_row[0] if total_edges_row else 1), 1)
 
     max_jaccard = 0.0
     best_pattern = None
@@ -82,6 +120,10 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
     for fs in conn.execute("SELECT file_id, commit_count FROM file_stats").fetchall():
         file_commits[fs["file_id"]] = fs["commit_count"] or 1
 
+    # Total commits for lift calculation (association rule mining)
+    total_commits_row = conn.execute("SELECT COUNT(*) FROM git_commits").fetchone()
+    total_commits = max((total_commits_row[0] if total_commits_row else 1), 1)
+
     change_set = set(change_fids)
     missing = []
     included = []
@@ -106,10 +148,18 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
             if strength < min_strength:
                 continue
 
+            # Lift (association rule mining): measures statistical significance
+            # of coupling.  lift = P(A,B) / (P(A)*P(B)).
+            # lift > 1 → coupling is more than random; lift < 1 → less than random.
+            commits_fid = file_commits.get(fid, 1)
+            commits_partner = file_commits.get(partner_fid, 1)
+            lift = (cochanges * total_commits) / max(commits_fid * commits_partner, 1)
+
             partner_path = id_to_path.get(partner_fid, f"file_id={partner_fid}")
             entry = {
                 "path": partner_path,
                 "strength": round(strength, 2),
+                "lift": round(lift, 2),
                 "cochanges": cochanges,
                 "partner_of": path,
             }
@@ -277,6 +327,10 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         for fs in conn.execute("SELECT file_id, commit_count FROM file_stats").fetchall():
             file_commits[fs["file_id"]] = fs["commit_count"] or 1
 
+        # Total commits for lift calculation
+        total_commits_row = conn.execute("SELECT COUNT(*) FROM git_commits").fetchone()
+        total_commits = max((total_commits_row[0] if total_commits_row else 1), 1)
+
         table_rows = []
         for r in rows:
             path_a = r["path_a"]
@@ -308,14 +362,32 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 fid_a, fid_b = path_to_id.get(pa), path_to_id.get(pb)
                 has_struct = bool(fid_a and fid_b and (fid_a, fid_b) in file_edge_set)
                 strength_val = None
+                lift_val = None
                 if fid_a and fid_b:
                     avg = (file_commits.get(fid_a, 1) + file_commits.get(fid_b, 1)) / 2
                     if avg > 0:
                         strength_val = round(r["cochange_count"] / avg, 2)
+                    # Lift: P(A,B) / (P(A)*P(B)); lift > 1 → statistically significant
+                    ca = file_commits.get(fid_a, 1)
+                    cb = file_commits.get(fid_b, 1)
+                    lift_val = round(
+                        (r["cochange_count"] * total_commits) / max(ca * cb, 1), 2
+                    )
+                    # NPMI: information-theoretic coupling strength [-1, +1]
+                    # Per Bouma (2009), superior to Jaccard for accounting for
+                    # marginal frequencies.
+                    p_ab = r["cochange_count"] / total_commits
+                    p_a = ca / total_commits
+                    p_b = cb / total_commits
+                    npmi_val = round(_npmi(p_ab, p_a, p_b), 3)
+                else:
+                    npmi_val = None
                 pairs.append({
                     "file_a": pa, "file_b": pb,
                     "cochange_count": r["cochange_count"],
                     "strength": strength_val,
+                    "lift": lift_val,
+                    "npmi": npmi_val,
                     "has_structural_edge": has_struct,
                 })
             hidden_pairs = sum(1 for p in pairs if not p["has_structural_edge"])

@@ -271,11 +271,18 @@ def _compute_cochange_entropy(
     conn: sqlite3.Connection,
     pair_counts: dict[tuple[int, int], int],
 ):
-    """Compute Shannon entropy of co-change distribution per file.
+    """Compute Renyi entropy (order 2) of co-change distribution per file.
+
+    Uses Renyi entropy H2 = -log2(sum(p_i^2)) instead of Shannon entropy.
+    Renyi-2 is more robust to outlier partners (one-off co-changes) and
+    gives more weight to the dominant co-change pattern, making it a better
+    discriminator for "shotgun surgery" detection.
 
     High entropy = file changes with many different partners (shotgun surgery).
     Low entropy = file changes with a consistent set of partners (focused).
     Stored as normalized entropy [0, 1] in file_stats.cochange_entropy.
+
+    Reference: Renyi (1961), "On Measures of Entropy and Information."
     """
     # Aggregate: for each file, sum co-change counts per partner
     file_partners: dict[int, dict[int, int]] = defaultdict(lambda: defaultdict(int))
@@ -289,11 +296,13 @@ def _compute_cochange_entropy(
         if total == 0 or len(partners) <= 1:
             updates.append((0.0, fid))
             continue
-        entropy = 0.0
+        # Renyi entropy of order 2: H2 = -log2(sum(p_i^2))
+        sum_p_sq = 0.0
         for count in partners.values():
             p = count / total
-            if p > 0:
-                entropy -= p * math.log2(p)
+            sum_p_sq += p * p
+        entropy = -math.log2(sum_p_sq) if sum_p_sq > 0 else 0.0
+        # Normalize: max Renyi-2 entropy = log2(N) (uniform distribution)
         max_entropy = math.log2(len(partners))
         norm_entropy = entropy / max_entropy if max_entropy > 0 else 0.0
         updates.append((round(norm_entropy, 4), fid))

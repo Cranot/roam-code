@@ -136,7 +136,12 @@ CREATE TABLE IF NOT EXISTS symbol_metrics (
     line_count INTEGER DEFAULT 0,
     return_count INTEGER DEFAULT 0,
     bool_op_count INTEGER DEFAULT 0,
-    callback_depth INTEGER DEFAULT 0
+    callback_depth INTEGER DEFAULT 0,
+    cyclomatic_density REAL DEFAULT 0,
+    halstead_volume REAL DEFAULT 0,
+    halstead_difficulty REAL DEFAULT 0,
+    halstead_effort REAL DEFAULT 0,
+    halstead_bugs REAL DEFAULT 0
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbol_metrics_complexity

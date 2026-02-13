@@ -117,9 +117,12 @@ def _walk_complexity(node, source: bytes, depth: int = 0) -> dict:
 
     ntype = node.type
 
-    # Control flow: +1 base, +depth for nesting, children at depth+1
+    # Control flow: +1 base, +triangular nesting penalty.
+    # Triangular number depth*(depth+1)/2 models the superlinear cognitive
+    # load of deeply nested code (Sweller's Cognitive Load Theory, 1988).
+    # depth 0→+1, 1→+2, 2→+4, 3→+7, 4→+11 (vs linear: 1,2,3,4,5).
     if ntype in _CONTROL_FLOW:
-        result["cognitive"] += 1 + depth
+        result["cognitive"] += 1 + depth * (depth + 1) // 2
         result["nesting"] = max(result["nesting"], depth + 1)
         for child in node.children:
             child_r = _walk_complexity(child, source, depth + 1)
@@ -195,6 +198,97 @@ def _merge(target: dict, source_r: dict):
     )
 
 
+# ── Halstead metrics ────────────────────────────────────────────────
+
+# Operator node types (control flow, assignments, calls, etc.)
+_OPERATOR_TYPES = {
+    "if_statement", "for_statement", "while_statement", "do_statement",
+    "switch_statement", "try_statement", "catch_clause", "return_statement",
+    "throw_statement", "raise_statement", "break_statement", "continue_statement",
+    "for_in_statement", "match_statement", "match_expression", "with_statement",
+    "conditional_expression", "ternary_expression", "assignment_expression",
+    "augmented_assignment", "call_expression", "new_expression",
+    "yield_statement", "yield",
+}
+
+# Operand node types (identifiers, literals)
+_OPERAND_TYPES = {
+    "identifier", "property_identifier", "shorthand_property_identifier",
+    "number", "integer", "float", "string", "template_string",
+    "true", "false", "none", "null", "undefined",
+}
+
+
+def _compute_halstead(func_node, source: bytes) -> dict:
+    """Compute Halstead complexity metrics from AST.
+
+    Counts distinct and total operators (control flow, assignments, calls)
+    and operands (identifiers, literals) to compute:
+      Volume   = N * log2(n)     — information content in bits
+      Difficulty = (n1/2) * (N2/n2)
+      Effort   = D * V           — mental effort to understand
+      Bugs     = V / 3000        — estimated delivered bugs
+
+    Reference: Halstead (1977), "Elements of Software Science."
+    """
+    import math as _math
+
+    operators = set()
+    operands = set()
+    total_operators = 0
+    total_operands = 0
+
+    def _walk(node):
+        nonlocal total_operators, total_operands
+        ntype = node.type
+
+        if ntype in _OPERATOR_TYPES:
+            operators.add(ntype)
+            total_operators += 1
+        elif ntype in _OPERAND_TYPES:
+            text = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            operands.add(text)
+            total_operands += 1
+
+        # Also count non-named operator tokens (+, -, =, ==, etc.)
+        if not node.is_named and node.parent and node.parent.type in (
+            "binary_expression", "unary_expression", "assignment_expression",
+            "augmented_assignment", "comparison_operator", "boolean_operator",
+        ):
+            op_text = source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+            if op_text.strip():
+                operators.add(op_text)
+                total_operators += 1
+
+        for child in node.children:
+            _walk(child)
+
+    _walk(func_node)
+
+    n1 = len(operators)   # distinct operators
+    n2 = len(operands)    # distinct operands
+    N1 = total_operators  # total operators
+    N2 = total_operands   # total operands
+
+    n = n1 + n2           # vocabulary
+    N = N1 + N2           # length
+
+    if n <= 0 or n2 <= 0:
+        return {"volume": 0.0, "difficulty": 0.0, "effort": 0.0, "bugs": 0.0}
+
+    volume = round(N * _math.log2(n), 1) if n > 1 else 0.0
+    difficulty = round((n1 / 2.0) * (N2 / n2), 1) if n2 > 0 else 0.0
+    effort = round(difficulty * volume, 0)
+    bugs = round(volume / 3000.0, 3)
+
+    return {
+        "volume": volume,
+        "difficulty": difficulty,
+        "effort": effort,
+        "bugs": bugs,
+    }
+
+
 def _find_function_node(tree, line_start: int, line_end: int):
     """Find the tree-sitter node for a function at the given line range.
 
@@ -257,6 +351,12 @@ def compute_symbol_complexity(
     # Walk AST for cognitive complexity
     metrics = _walk_complexity(func_node, source, depth=0)
 
+    # Halstead metrics: count operators and operands from AST
+    halstead = _compute_halstead(func_node, source)
+
+    # Cyclomatic density: complexity / lines (Gill & Kemerer, IEEE TSE)
+    cc_density = round(metrics["cognitive"] / body_lines, 3) if body_lines > 0 else 0.0
+
     return {
         "cognitive_complexity": round(metrics["cognitive"], 2),
         "nesting_depth": metrics["nesting"],
@@ -265,6 +365,11 @@ def compute_symbol_complexity(
         "return_count": metrics["returns"],
         "bool_op_count": metrics["bool_ops"],
         "callback_depth": metrics["callback_depth"],
+        "cyclomatic_density": cc_density,
+        "halstead_volume": halstead["volume"],
+        "halstead_difficulty": halstead["difficulty"],
+        "halstead_effort": halstead["effort"],
+        "halstead_bugs": halstead["bugs"],
     }
 
 
@@ -302,6 +407,8 @@ def _complexity_from_source(
     # Rough cognitive complexity estimate
     cognitive = max_indent * 2 + bool_ops + max(returns - 1, 0)
 
+    cc_density = round(cognitive / line_count, 3) if line_count > 0 else 0.0
+
     return {
         "cognitive_complexity": round(cognitive, 2),
         "nesting_depth": max_indent,
@@ -310,6 +417,11 @@ def _complexity_from_source(
         "return_count": returns,
         "bool_op_count": bool_ops,
         "callback_depth": 0,
+        "cyclomatic_density": cc_density,
+        "halstead_volume": 0.0,
+        "halstead_difficulty": 0.0,
+        "halstead_effort": 0.0,
+        "halstead_bugs": 0.0,
     }
 
 
@@ -360,13 +472,20 @@ def compute_and_store(
             metrics["return_count"],
             metrics["bool_op_count"],
             metrics["callback_depth"],
+            metrics.get("cyclomatic_density", 0.0),
+            metrics.get("halstead_volume", 0.0),
+            metrics.get("halstead_difficulty", 0.0),
+            metrics.get("halstead_effort", 0.0),
+            metrics.get("halstead_bugs", 0.0),
         ))
 
     if metrics_batch:
         conn.executemany(
             """INSERT OR REPLACE INTO symbol_metrics
                (symbol_id, cognitive_complexity, nesting_depth, param_count,
-                line_count, return_count, bool_op_count, callback_depth)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                line_count, return_count, bool_op_count, callback_depth,
+                cyclomatic_density, halstead_volume, halstead_difficulty,
+                halstead_effort, halstead_bugs)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             metrics_batch,
         )

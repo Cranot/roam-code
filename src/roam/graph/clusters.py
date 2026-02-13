@@ -149,6 +149,74 @@ def label_clusters(
     return labels
 
 
+def cluster_quality(
+    G: nx.DiGraph, clusters: dict[int, int]
+) -> dict:
+    """Compute quality metrics for the detected community structure.
+
+    Returns a dict with:
+    - ``modularity``: Newman's modularity Q-score [-0.5, 1.0].
+      Q > 0.3 indicates meaningful community structure.
+      Reference: Newman (2004).
+    - ``per_cluster``: dict mapping cluster_id to its conductance.
+      Conductance phi(S) = cut(S, S_bar) / min(vol(S), vol(S_bar)).
+      Lower = tighter cluster.  Reference: Yang & Leskovec.
+    - ``mean_conductance``: average conductance across all clusters.
+    """
+    if not clusters or len(G) == 0:
+        return {"modularity": 0.0, "per_cluster": {}, "mean_conductance": 0.0}
+
+    undirected = G.to_undirected()
+
+    # Build community list-of-sets for NetworkX
+    groups: dict[int, set] = defaultdict(set)
+    for node_id, cid in clusters.items():
+        groups[cid].add(node_id)
+    communities = list(groups.values())
+
+    # Modularity Q-score (Newman 2004)
+    try:
+        q = nx.community.modularity(undirected, communities)
+    except Exception:
+        q = 0.0
+
+    # Per-cluster conductance: phi(S) = cut(S, S_bar) / min(vol(S), vol(S_bar))
+    per_cluster: dict[int, float] = {}
+    for cid, members in groups.items():
+        if len(members) < 2:
+            per_cluster[cid] = 0.0
+            continue
+        cut = 0
+        vol_s = 0
+        vol_sbar = 0
+        for u, v in undirected.edges():
+            u_in = u in members
+            v_in = v in members
+            if u_in and not v_in:
+                cut += 1
+            elif not u_in and v_in:
+                cut += 1
+            if u_in:
+                vol_s += 1
+            else:
+                vol_sbar += 1
+            if v_in:
+                vol_s += 1
+            else:
+                vol_sbar += 1
+        min_vol = min(vol_s, vol_sbar)
+        per_cluster[cid] = round(cut / min_vol, 4) if min_vol > 0 else 0.0
+
+    conductances = list(per_cluster.values())
+    mean_cond = round(sum(conductances) / len(conductances), 4) if conductances else 0.0
+
+    return {
+        "modularity": round(q, 4),
+        "per_cluster": per_cluster,
+        "mean_conductance": mean_cond,
+    }
+
+
 def store_clusters(
     conn: sqlite3.Connection,
     clusters: dict[int, int],
