@@ -18,6 +18,8 @@ SKIP_EXTENSIONS = frozenset({
     ".pdf", ".doc", ".docx", ".xls", ".xlsx",
     ".mp3", ".mp4", ".wav", ".avi", ".mov",
     ".bin", ".dat", ".pak", ".wasm",
+    # Visual FoxPro companion files (read as part of .scx processing)
+    ".sct",
 })
 
 # Filenames to always skip

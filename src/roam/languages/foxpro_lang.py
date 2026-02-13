@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import logging
 import os
 import re
+import struct
 from .base import LanguageExtractor
+
+log = logging.getLogger(__name__)
 
 
 # ── Encoding detection ────────────────────────────────────────────────
@@ -216,6 +220,12 @@ _RE_EXPR_CALL = re.compile(
     re.IGNORECASE,
 )
 
+# DO FORM formname — opens a form (links .prg → .scx)
+_RE_DO_FORM = re.compile(
+    r"^\s*DO\s+FORM\s+(\S+)",
+    re.IGNORECASE,
+)
+
 # obj.method(args) — method call on an object (mid-line search)
 # Matches THIS.method(), THISFORM.method(), var.method()
 _RE_METHOD_CALL = re.compile(
@@ -307,11 +317,223 @@ _VFP_BUILTINS = frozenset({
 })
 
 # Keywords that look like DO but aren't file calls
-_DO_KEYWORDS = frozenset({"CASE", "WHILE", "FORM"})
+# Note: FORM is NOT here — DO FORM is handled separately by _RE_DO_FORM
+_DO_KEYWORDS = frozenset({"CASE", "WHILE"})
+
+
+# ── SCX/SCT binary parsing ───────────────────────────────────────────
+# .SCX = DBF (dBASE) format with field descriptors for form elements
+# .SCT = FPT (memo) format storing actual text/binary content
+# Packed together by parse_file as: 4-byte-big-endian-scx-length + scx + sct
+
+def _unpack_scx_sct(source: bytes) -> tuple[bytes, bytes]:
+    """Split packed bytes back into (scx_bytes, sct_bytes)."""
+    if len(source) < 4:
+        return source, b""
+    scx_len = struct.unpack(">I", source[:4])[0]
+    scx_bytes = source[4:4 + scx_len]
+    sct_bytes = source[4 + scx_len:]
+    return scx_bytes, sct_bytes
+
+
+def _get_fpt_block_size(sct_bytes: bytes) -> int:
+    """Read FPT header block size (bytes 6-7, big-endian). Default 64."""
+    if len(sct_bytes) < 8:
+        return 64
+    bs = struct.unpack(">H", sct_bytes[6:8])[0]
+    return bs if bs > 0 else 64
+
+
+def _read_fpt_memo(sct_bytes: bytes, block_num: int, block_size: int) -> bytes | None:
+    """Read raw memo data from an FPT block reference."""
+    if block_num == 0:
+        return None
+    offset = block_num * block_size
+    if offset + 8 > len(sct_bytes):
+        return None
+    header = sct_bytes[offset:offset + 8]
+    data_len = struct.unpack(">I", header[4:8])[0]
+    if data_len == 0 or data_len > 10_000_000:
+        return None
+    end = offset + 8 + data_len
+    if end > len(sct_bytes):
+        return None
+    return sct_bytes[offset + 8:end]
+
+
+def _read_fpt_memo_text(sct_bytes: bytes, block_num: int, block_size: int) -> str:
+    """Read memo as decoded text using _decode_source."""
+    data = _read_fpt_memo(sct_bytes, block_num, block_size)
+    if data is None:
+        return ""
+    return _decode_source(data)
+
+
+_MAX_SCX_RECORDS = 50_000  # Safety cap for corrupted headers
+
+
+def _parse_scx_records(scx_bytes: bytes, sct_bytes: bytes) -> list[dict]:
+    """Parse DBF structure from .scx bytes, resolve memo fields from .sct.
+
+    Returns list of record dicts with keys:
+        record_num, deleted, platform, objname, parent, class_name,
+        classloc, baseclass, methods
+    """
+    if len(scx_bytes) < 32:
+        return []
+
+    # DBF header
+    version = scx_bytes[0]
+    valid_versions = {0x02, 0x03, 0x04, 0x05, 0x30, 0x31, 0x32,
+                      0x43, 0x63, 0x83, 0x8B, 0xCB, 0xF5, 0xFB}
+    if version not in valid_versions:
+        return []
+
+    try:
+        num_records = struct.unpack("<I", scx_bytes[4:8])[0]
+        header_size = struct.unpack("<H", scx_bytes[8:10])[0]
+        record_size = struct.unpack("<H", scx_bytes[10:12])[0]
+    except struct.error:
+        return []
+
+    if record_size == 0 or num_records == 0:
+        return []
+    if header_size < 32:
+        return []
+    if num_records > _MAX_SCX_RECORDS:
+        log.warning("SCX claims %d records (capped at %d)", num_records, _MAX_SCX_RECORDS)
+        num_records = _MAX_SCX_RECORDS
+
+    # Parse field descriptors (starting at byte 32)
+    fields: dict[str, dict] = {}
+    pos = 32
+    while pos + 32 <= min(len(scx_bytes), header_size):
+        if scx_bytes[pos] == 0x0D:
+            break
+        try:
+            name = scx_bytes[pos:pos + 11].split(b"\x00")[0].decode("ascii", errors="replace")
+            ftype = chr(scx_bytes[pos + 11])
+            displacement = struct.unpack("<I", scx_bytes[pos + 12:pos + 16])[0]
+            size = scx_bytes[pos + 16]
+        except (struct.error, IndexError):
+            break
+        if displacement < record_size:
+            fields[name] = {"type": ftype, "offset": displacement, "size": size}
+        pos += 32
+
+    block_size = _get_fpt_block_size(sct_bytes) if sct_bytes else 64
+    has_sct = len(sct_bytes) >= 512
+
+    records = []
+    for rec_num in range(num_records):
+        rec_offset = header_size + rec_num * record_size
+        if rec_offset + record_size > len(scx_bytes):
+            break
+        rec_data = scx_bytes[rec_offset:rec_offset + record_size]
+
+        deleted = rec_data[0] == ord("*")
+
+        def get_char(name: str) -> str:
+            if name in fields:
+                fi = fields[name]
+                start = fi["offset"]
+                end = start + fi["size"]
+                if end <= len(rec_data):
+                    return rec_data[start:end].decode("ascii", errors="replace").strip()
+            return ""
+
+        def get_memo_ref(name: str) -> int:
+            if name in fields and fields[name]["type"] == "M":
+                fi = fields[name]
+                start = fi["offset"]
+                if start + 4 <= len(rec_data):
+                    try:
+                        return struct.unpack("<I", rec_data[start:start + 4])[0]
+                    except struct.error:
+                        return 0
+            return 0
+
+        def get_memo_text(name: str) -> str:
+            if not has_sct:
+                return ""
+            ref = get_memo_ref(name)
+            return _read_fpt_memo_text(sct_bytes, ref, block_size)
+
+        platform = get_char("PLATFORM")
+
+        try:
+            rec = {
+                "record_num": rec_num,
+                "deleted": deleted,
+                "platform": platform,
+                "objname": get_memo_text("OBJNAME"),
+                "parent": get_memo_text("PARENT"),
+                "class_name": get_memo_text("CLASS"),
+                "classloc": get_memo_text("CLASSLOC"),
+                "baseclass": get_memo_text("BASECLASS"),
+                "methods": get_memo_text("METHODS"),
+            }
+            records.append(rec)
+        except Exception as exc:
+            log.debug("Skipping SCX record %d: %s", rec_num, exc)
+            continue
+
+    return records
+
+
+def _extract_procedures(methods_text: str) -> list[dict]:
+    """Split PROCEDURE/FUNCTION blocks from a Methods field.
+
+    Returns list of dicts with keys: type, name, code.
+    """
+    if not methods_text:
+        return []
+    procedures = []
+    current_name = None
+    current_type = None
+    current_lines: list[str] = []
+
+    for line in methods_text.split("\n"):
+        stripped = line.strip()
+        upper = stripped.upper()
+        if upper.startswith("PROCEDURE ") or upper.startswith("FUNCTION "):
+            if current_name is not None:
+                procedures.append({
+                    "type": current_type,
+                    "name": current_name,
+                    "code": "\n".join(current_lines),
+                })
+            parts = stripped.split(None, 1)
+            current_type = parts[0].upper()
+            current_name = parts[1] if len(parts) > 1 else ""
+            current_lines = [line]
+        elif upper.startswith("ENDPROC") or upper.startswith("ENDFUNC"):
+            if current_name is not None:
+                current_lines.append(line)
+                procedures.append({
+                    "type": current_type,
+                    "name": current_name,
+                    "code": "\n".join(current_lines),
+                })
+                current_name = None
+                current_type = None
+                current_lines = []
+        else:
+            if current_name is not None:
+                current_lines.append(line)
+
+    # Handle last procedure (may lack ENDPROC)
+    if current_name is not None:
+        procedures.append({
+            "type": current_type,
+            "name": current_name,
+            "code": "\n".join(current_lines),
+        })
+    return procedures
 
 
 class FoxProExtractor(LanguageExtractor):
-    """Regex-only extractor for Visual FoxPro .prg files."""
+    """Regex-only extractor for Visual FoxPro .prg and .scx form files."""
 
     @property
     def language_name(self) -> str:
@@ -319,9 +541,11 @@ class FoxProExtractor(LanguageExtractor):
 
     @property
     def file_extensions(self) -> list[str]:
-        return [".prg"]
+        return [".prg", ".scx"]
 
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
+        if file_path.lower().endswith(".scx"):
+            return self._extract_scx_symbols(source, file_path)
         lines, line_map = _preprocess(source)
         symbols: list[dict] = []
         state = "TOP_LEVEL"
@@ -490,6 +714,8 @@ class FoxProExtractor(LanguageExtractor):
         return symbols
 
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
+        if file_path.lower().endswith(".scx"):
+            return self._extract_scx_references(source, file_path)
         lines, line_map = _preprocess(source)
         refs: list[dict] = []
 
@@ -562,7 +788,20 @@ class FoxProExtractor(LanguageExtractor):
                 ))
                 continue
 
-            # DO filename (not DO CASE / DO WHILE / DO FORM)
+            # DO FORM formname — links to .scx form file
+            m = _RE_DO_FORM.match(stripped)
+            if m:
+                target = m.group(1).strip("'\"")
+                target = os.path.splitext(target)[0]  # strip .scx if present
+                refs.append(self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=orig,
+                    source_name=scope,
+                ))
+                continue
+
+            # DO filename (not DO CASE / DO WHILE)
             m = _RE_DO_FILE.match(stripped)
             if m:
                 target = m.group(1)
@@ -681,5 +920,204 @@ class FoxProExtractor(LanguageExtractor):
                         line=orig,
                         source_name=scope,
                     ))
+
+        return refs
+
+    # ── SCX form support ──────────────────────────────────────────────
+
+    def _extract_scx_symbols(self, source: bytes, file_path: str) -> list[dict]:
+        """Extract symbols from a packed .scx/.sct binary.
+
+        Creates:
+        - A form-level class symbol (name = filename stem)
+        - Method symbols for each PROCEDURE/FUNCTION in each control's Methods
+        Qualified names: FormName.ControlName.MethodName
+        Synthetic line numbers: record_num * 1000 + proc_idx (stable, ordered)
+        """
+        try:
+            scx_bytes, sct_bytes = _unpack_scx_sct(source)
+            records = _parse_scx_records(scx_bytes, sct_bytes)
+        except Exception as exc:
+            log.debug("SCX parse error for %s: %s", file_path, exc)
+            return []
+
+        form_name = os.path.splitext(os.path.basename(file_path))[0]
+        symbols: list[dict] = []
+
+        # Form-level class symbol
+        symbols.append(self._make_symbol(
+            name=form_name,
+            kind="class",
+            line_start=1,
+            line_end=max(len(records) * 1000, 1),
+            signature=f"FORM {form_name}",
+            visibility="public",
+            is_exported=True,
+        ))
+
+        for rec in records:
+            if rec["deleted"] or rec["platform"].strip() == "COMMENT":
+                continue
+            methods_text = rec["methods"]
+            if not methods_text:
+                continue
+
+            objname = rec["objname"]
+            parent = rec["parent"]
+            record_num = rec["record_num"]
+
+            # Build control path for qualified names
+            if parent:
+                control_path = f"{parent}.{objname}"
+            else:
+                control_path = objname
+
+            procs = _extract_procedures(methods_text)
+            for proc_idx, proc in enumerate(procs):
+                proc_name = proc["name"]
+                if not proc_name:
+                    continue
+                syn_line = record_num * 1000 + proc_idx
+                qn = f"{form_name}.{control_path}.{proc_name}" if control_path else f"{form_name}.{proc_name}"
+                parent_name = f"{form_name}.{control_path}" if control_path else form_name
+
+                symbols.append(self._make_symbol(
+                    name=proc_name,
+                    kind="method",
+                    line_start=syn_line,
+                    line_end=syn_line + len(proc["code"].split("\n")),
+                    qualified_name=qn,
+                    signature=f"{proc['type']} {proc_name}",
+                    visibility="public",
+                    is_exported=True,
+                    parent_name=parent_name,
+                ))
+
+        return symbols
+
+    def _extract_scx_references(self, source: bytes, file_path: str) -> list[dict]:
+        """Extract references from VFP code inside .scx form controls."""
+        try:
+            scx_bytes, sct_bytes = _unpack_scx_sct(source)
+            records = _parse_scx_records(scx_bytes, sct_bytes)
+        except Exception as exc:
+            log.debug("SCX parse error for %s: %s", file_path, exc)
+            return []
+
+        form_name = os.path.splitext(os.path.basename(file_path))[0]
+        refs: list[dict] = []
+
+        for rec in records:
+            if rec["deleted"] or rec["platform"].strip() == "COMMENT":
+                continue
+
+            objname = rec["objname"]
+            parent = rec["parent"]
+            record_num = rec["record_num"]
+
+            # Build control path
+            if parent:
+                control_path = f"{parent}.{objname}"
+            else:
+                control_path = objname
+
+            # Extract classloc references (class library imports) for all controls
+            classloc = rec["classloc"]
+            if classloc:
+                lib_name = os.path.splitext(os.path.basename(classloc))[0]
+                refs.append(self._make_reference(
+                    target_name=lib_name, kind="import",
+                    line=record_num * 1000, source_name=form_name,
+                    import_path=classloc,
+                ))
+
+            # Extract references from procedures in this control's methods
+            methods_text = rec["methods"]
+            if not methods_text:
+                continue
+
+            procs = _extract_procedures(methods_text)
+            for proc_idx, proc in enumerate(procs):
+                proc_name = proc["name"]
+                if not proc_name:
+                    continue
+                scope = f"{form_name}.{control_path}.{proc_name}" if control_path else f"{form_name}.{proc_name}"
+                syn_line = record_num * 1000 + proc_idx
+
+                # Process each line of the procedure code
+                for line_offset, code_line in enumerate(proc["code"].split("\n")):
+                    stripped = code_line.strip()
+                    if not stripped:
+                        continue
+                    line_num = syn_line + line_offset
+
+                    # DO FORM
+                    m = _RE_DO_FORM.match(stripped)
+                    if m:
+                        target = m.group(1).strip("'\"")
+                        target = os.path.splitext(target)[0]
+                        refs.append(self._make_reference(
+                            target_name=target, kind="call",
+                            line=line_num, source_name=scope,
+                        ))
+                        continue
+
+                    # DO proc IN file
+                    m = _RE_DO_IN.match(stripped)
+                    if m:
+                        refs.append(self._make_reference(
+                            target_name=m.group(1), kind="call",
+                            line=line_num, source_name=scope,
+                            import_path=m.group(2).strip("'\""),
+                        ))
+                        continue
+
+                    # DO filename
+                    m = _RE_DO_FILE.match(stripped)
+                    if m:
+                        target = m.group(1)
+                        if target.upper() not in _DO_KEYWORDS:
+                            refs.append(self._make_reference(
+                                target_name=target, kind="call",
+                                line=line_num, source_name=scope,
+                            ))
+                            continue
+
+                    # SET PROCEDURE TO
+                    m = _RE_SET_PROC.match(stripped)
+                    if m:
+                        path = m.group(1).strip("'\"")
+                        refs.append(self._make_reference(
+                            target_name=os.path.splitext(os.path.basename(path))[0],
+                            kind="import", line=line_num, source_name=scope,
+                            import_path=path,
+                        ))
+                        continue
+
+                    # CREATEOBJECT
+                    for cm in _RE_CREATEOBJ.finditer(stripped):
+                        refs.append(self._make_reference(
+                            target_name=cm.group(1), kind="call",
+                            line=line_num, source_name=scope,
+                        ))
+
+                    # =funcname()
+                    m = _RE_EXPR_CALL.match(stripped)
+                    if m:
+                        fname = m.group(1)
+                        if fname.upper() not in _VFP_BUILTINS:
+                            refs.append(self._make_reference(
+                                target_name=fname, kind="call",
+                                line=line_num, source_name=scope,
+                            ))
+
+                    # obj.method()
+                    for mc in _RE_METHOD_CALL.finditer(stripped):
+                        method_name = mc.group(2)
+                        if method_name.upper() not in _VFP_BUILTINS:
+                            refs.append(self._make_reference(
+                                target_name=method_name, kind="call",
+                                line=line_num, source_name=scope,
+                            ))
 
         return refs

@@ -197,7 +197,7 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
         pass
 
     # Strip trailing extension from normalized path if present
-    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg"):
+    for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx"):
         if normalized.endswith(ext):
             normalized = normalized[: -len(ext)]
             break
@@ -207,7 +207,7 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
         fp = cand.get("file_path", "").replace("\\", "/")
         # Strip file extension from candidate
         fp_no_ext = fp
-        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg"):
+        for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx"):
             if fp_no_ext.endswith(ext):
                 fp_no_ext = fp_no_ext[: -len(ext)]
                 break

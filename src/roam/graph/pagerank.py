@@ -12,10 +12,18 @@ def compute_pagerank(G: nx.DiGraph, alpha: float = 0.85) -> dict[int, float]:
 
     Returns ``{symbol_id: pagerank_score}``.  Returns an empty dict when the
     graph has no nodes.
+
+    Falls back to degree-based ranking when numpy is not available
+    (networkx < 3.2 requires numpy for pagerank).
     """
     if len(G) == 0:
         return {}
-    return nx.pagerank(G, alpha=alpha)
+    try:
+        return nx.pagerank(G, alpha=alpha)
+    except ImportError:
+        # numpy not installed — fall back to degree-based ranking
+        max_deg = max((G.degree(n) for n in G), default=1) or 1
+        return {n: G.degree(n) / max_deg for n in G}
 
 
 def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:

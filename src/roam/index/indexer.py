@@ -390,7 +390,9 @@ class Indexer:
                     os.kill(pid, 0)
                     _log(f"Another indexing process (PID {pid}) is running. Exiting.")
                     return
-                except OSError:
+                except (OSError, SystemError):
+                    # OSError: process not found (Unix/Windows)
+                    # SystemError: Windows os.kill edge case
                     _log(f"Removing stale lock file (PID {pid} is not running).")
                     lock_path.unlink()
             except (ValueError, OSError):
