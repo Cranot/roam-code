@@ -122,7 +122,7 @@ def json_envelope(command: str, summary: dict | None = None, **payload) -> dict:
 
         {
             "command":     "health",
-            "version":     "5.0.0",
+            "version":     "<current>",
             "timestamp":   "2026-02-12T14:30:00Z",
             "index_age_s": 42,
             "project":     "roam-code",
@@ -154,11 +154,8 @@ def json_envelope(command: str, summary: dict | None = None, **payload) -> dict:
 
 def _get_version() -> str:
     """Return roam-code version string."""
-    try:
-        from importlib.metadata import version
-        return version("roam-code")
-    except Exception:
-        return "dev"
+    from roam import __version__
+    return __version__
 
 
 def _index_age_seconds() -> int | None:

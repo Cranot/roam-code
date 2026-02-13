@@ -28,11 +28,8 @@ _HELP_BASE = "https://github.com/AbanteAI/roam-code#"
 
 def _get_version() -> str:
     """Return roam-code version string."""
-    try:
-        from importlib.metadata import version
-        return version("roam-code")
-    except Exception:
-        return "dev"
+    from roam import __version__
+    return __version__
 
 
 # ── Severity mapping ─────────────────────────────────────────────────

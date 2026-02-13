@@ -6,7 +6,7 @@
 
 *5 core commands · advanced tools when you need them*
 
-[![Version](https://img.shields.io/badge/version-7.4.0-blue?style=flat-square)](https://pypi.org/project/roam-code/)
+[![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -988,7 +988,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── CHANGELOG.md
 ├── src/roam/
-│   ├── __init__.py                    # Version (7.4.0)
+│   ├── __init__.py                    # Version (from pyproject.toml)
 │   ├── cli.py                         # Click CLI (58 commands, 8 categories)
 │   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
 │   ├── db/
