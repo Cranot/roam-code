@@ -1,4 +1,4 @@
-"""SQLite connection management with WAL mode and performance pragmas."""
+"""SQLite connection management with adaptive journal mode and performance pragmas."""
 
 from __future__ import annotations
 
@@ -24,12 +24,34 @@ def find_project_root(start: str = ".") -> Path:
 
 
 def get_db_path(project_root: Path | None = None) -> Path:
-    """Get the path to the index database."""
+    """Get the path to the index database.
+
+    Respects ``ROAM_DB_DIR`` env-var to redirect the database to a local
+    (non-cloud-synced) directory — essential when the project lives on
+    OneDrive/Dropbox where SQLite journal files get locked by the sync agent.
+    """
+    override = os.environ.get("ROAM_DB_DIR")
+    if override:
+        db_dir = Path(override)
+        db_dir.mkdir(parents=True, exist_ok=True)
+        return db_dir / DEFAULT_DB_NAME
     if project_root is None:
         project_root = find_project_root()
     db_dir = project_root / DEFAULT_DB_DIR
     db_dir.mkdir(exist_ok=True)
     return db_dir / DEFAULT_DB_NAME
+
+
+def _is_cloud_synced(path: Path) -> bool:
+    """Detect if *path* lives under a cloud-sync folder (OneDrive, Dropbox, etc.).
+
+    WAL mode creates auxiliary ``-wal`` and ``-shm`` files that cloud sync
+    services aggressively lock, causing SQLite writes to stall.  When we
+    detect a cloud-synced path we fall back to DELETE journal mode.
+    """
+    markers = ("onedrive", "dropbox", "google drive", "icloud")
+    resolved = str(path.resolve()).lower()
+    return any(m in resolved for m in markers)
 
 
 def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlite3.Connection:
@@ -44,7 +66,13 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
         conn = sqlite3.connect(str(db_path), timeout=30)
 
     conn.row_factory = sqlite3.Row
-    conn.execute("PRAGMA journal_mode=WAL")
+    # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM auxiliary
+    # files during sync, causing writes to stall indefinitely.  Fall back
+    # to DELETE journal mode for cloud-synced paths.
+    if _is_cloud_synced(db_path):
+        conn.execute("PRAGMA journal_mode=DELETE")
+    else:
+        conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
     conn.execute("PRAGMA foreign_keys=ON")
