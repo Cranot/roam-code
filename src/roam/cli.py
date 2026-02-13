@@ -67,6 +67,7 @@ _COMMANDS = {
     "tour":         ("roam.commands.cmd_tour",         "tour"),
     "diagnose":     ("roam.commands.cmd_diagnose",     "diagnose"),
     "ws":           ("roam.commands.cmd_ws",           "ws"),
+    "visualize":    ("roam.commands.cmd_visualize",    "visualize"),
 }
 
 # Command categories for organized --help display
@@ -74,7 +75,7 @@ _CATEGORIES = {
     "Getting Started": ["index", "init", "understand", "tour", "describe", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "alerts", "trend", "fitness", "snapshot"],
-    "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones"],
+    "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones", "visualize"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
     "Reports & CI": ["report", "breaking", "coverage-gaps", "bus-factor", "owner", "risk"],
     "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk"],

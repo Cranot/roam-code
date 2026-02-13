@@ -415,6 +415,56 @@ def tour(root: str = ".") -> dict:
 
 
 @mcp.tool()
+def visualize(
+    focus: str = "",
+    format: str = "mermaid",
+    depth: int = 1,
+    limit: int = 30,
+    direction: str = "TD",
+    no_clusters: bool = False,
+    file_level: bool = False,
+    root: str = ".",
+) -> dict:
+    """Generate a Mermaid or DOT architecture diagram from the codebase graph.
+
+    WHEN TO USE: Call this to get a visual dependency diagram of the
+    codebase architecture. Uses smart filtering (PageRank, clusters,
+    cycle highlighting) to produce readable diagrams. Paste Mermaid
+    output into markdown or use DOT with Graphviz.
+
+    Parameters
+    ----------
+    focus:
+        Focus on a specific symbol (BFS neighborhood). If empty,
+        shows the top-N most important symbols by PageRank.
+    format:
+        Output format: "mermaid" or "dot".
+    depth:
+        BFS depth for focus mode (default 1).
+    limit:
+        Max nodes in overview mode (default 30).
+    direction:
+        Mermaid direction: "TD" (top-down) or "LR" (left-right).
+    no_clusters:
+        Disable Louvain cluster grouping.
+    file_level:
+        Use file-level graph instead of symbol graph.
+
+    Returns: diagram text (Mermaid or DOT), node/edge counts, and
+    format metadata.
+    """
+    args = ["visualize", "--format", format, "--depth", str(depth),
+            "--limit", str(limit), "--direction", direction]
+    if focus:
+        args.extend(["--focus", focus])
+    if no_clusters:
+        args.append("--no-clusters")
+    if file_level:
+        args.append("--file-level")
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     """Root cause analysis for a failing symbol.
 
