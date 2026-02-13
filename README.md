@@ -203,10 +203,10 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
 | `roam deps <path> [--full]` | What a file imports and what imports it |
 | `roam trace <source> <target> [-k N]` | Dependency paths with coupling strength and hub detection |
-| `roam impact <symbol>` | Blast radius: what breaks if a symbol changes |
+| `roam impact <symbol>` | Blast radius: what breaks if a symbol changes (Personalized PageRank weighted) |
 | `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range |
-| `roam pr-risk [REV_RANGE]` | PR risk score (0-100) + structural spread + suggested reviewers |
-| `roam diagnose <symbol> [--depth N]` | Root cause analysis: ranks suspects by composite risk |
+| `roam pr-risk [REV_RANGE]` | PR risk score (0-100, multiplicative model) + structural spread + suggested reviewers |
+| `roam diagnose <symbol> [--depth N]` | Root cause analysis: ranks suspects by z-score normalized risk |
 | `roam preflight <symbol\|file>` | Compound pre-change check: blast radius + tests + complexity + coupling + fitness |
 | `roam safe-delete <symbol>` | Safe deletion check: SAFE/REVIEW/UNSAFE verdict |
 | `roam test-map <name>` | Map a symbol or file to its test coverage |
@@ -215,12 +215,12 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 
 | Command | Description |
 |---------|-------------|
-| `roam health [--no-framework]` | Composite health score (0-100): tangle ratio, god components, bottlenecks, layer violations |
-| `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible) |
-| `roam weather [-n N]` | Hotspots ranked by churn x complexity |
-| `roam debt` | Hotspot-weighted tech debt prioritization |
+| `roam health [--no-framework]` | Composite health score (0-100): weighted geometric mean of tangle ratio, god components, bottlenecks, layer violations. Includes propagation cost and algebraic connectivity |
+| `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
+| `roam weather [-n N]` | Hotspots ranked by geometric mean of churn x complexity (percentile-normalized) |
+| `roam debt` | Hotspot-weighted tech debt prioritization with SQALE remediation cost estimates |
 | `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
-| `roam alerts` | Health degradation trend detection |
+| `roam alerts` | Health degradation trend detection (Mann-Kendall + Sen's slope) |
 | `roam snapshot [--tag TAG]` | Persist health metrics snapshot for trend tracking |
 | `roam trend` | Health score history with sparkline visualization |
 | `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot |
@@ -229,9 +229,9 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 
 | Command | Description |
 |---------|-------------|
-| `roam clusters [--min-size N]` | Community detection vs directory structure |
-| `roam layers` | Topological dependency layers + upward violations |
-| `roam dead [--all] [--summary] [--clusters]` | Unreferenced exported symbols with safety verdicts |
+| `roam clusters [--min-size N]` | Community detection vs directory structure. Modularity Q-score (Newman 2004) + per-cluster conductance |
+| `roam layers` | Topological dependency layers + upward violations + Gini balance |
+| `roam dead [--all] [--summary] [--clusters]` | Unreferenced exported symbols with safety verdicts + confidence scoring (60-95%) |
 | `roam fan [symbol\|file] [-n N] [--no-framework]` | Fan-in/fan-out: most connected symbols or files |
 | `roam risk [-n N] [--domain KW] [--explain]` | Domain-weighted risk ranking |
 | `roam why <name> [name2 ...]` | Role classification (Hub/Bridge/Core/Leaf), reach, criticality |
@@ -250,7 +250,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam sketch <dir> [--full]` | Compact structural skeleton of a directory |
 | `roam uses <name>` | All consumers: callers, importers, inheritors |
 | `roam owner <path>` | Code ownership: who owns a file or directory |
-| `roam coupling [-n N] [--set]` | Temporal coupling: file pairs that change together |
+| `roam coupling [-n N] [--set]` | Temporal coupling: file pairs that change together (NPMI + lift) |
 | `roam fn-coupling` | Function-level temporal coupling across files |
 | `roam bus-factor [--brain-methods]` | Knowledge loss risk per module |
 | `roam doc-staleness` | Detect stale docstrings |
@@ -855,9 +855,9 @@ Codebase
     |
 [4] Resolve ────── match references to definitions → edges
     |
-[5] Metrics ────── PageRank, betweenness, cognitive complexity
+[5] Metrics ────── adaptive PageRank, betweenness, cognitive complexity, Halstead
     |
-[6] Git ────────── churn, co-change matrix, authorship, entropy
+[6] Git ────────── churn, co-change matrix, authorship, Renyi entropy
     |
 [7] Clusters ───── Louvain community detection
     |
@@ -871,30 +871,42 @@ After the first full index, `roam index` only re-processes changed files (mtime 
 <details>
 <summary><strong>Graph algorithms</strong></summary>
 
-- **PageRank** -- identifies the most important symbols (used by `map`, `search`, `context`)
-- **Betweenness centrality** -- finds bottleneck symbols on many shortest paths
+- **Adaptive PageRank** -- damping factor auto-tunes based on cycle density (0.82-0.92); identifies the most important symbols (used by `map`, `search`, `context`)
+- **Personalized PageRank** -- distance-weighted blast radius for `impact` (Gleich, 2015)
+- **Adaptive betweenness centrality** -- exact for small graphs, sqrt-scaled sampling for large (Brandes & Pich, 2007); finds bottleneck symbols
+- **Edge betweenness centrality** -- identifies critical cycle-breaking edges in SCCs (Brandes, 2001)
 - **Tarjan's SCC** -- detects dependency cycles with tangle ratio
+- **Propagation Cost** -- fraction of system affected by any change, via transitive closure (MacCormack, Rusnak & Baldwin, 2006)
+- **Algebraic connectivity (Fiedler value)** -- second-smallest Laplacian eigenvalue; measures architectural robustness (Fiedler, 1973)
 - **Louvain community detection** -- groups related symbols into clusters
-- **Topological sort** -- computes dependency layers and finds violations
+- **Modularity Q-score** -- measures if cluster boundaries match natural community structure (Newman, 2004)
+- **Conductance** -- per-cluster boundary tightness: cut(S, S_bar) / min(vol(S), vol(S_bar)) (Yang & Leskovec)
+- **Topological sort** -- computes dependency layers, Gini coefficient for layer balance (Gini, 1912), weighted violation severity
 - **k-shortest simple paths** -- traces dependency paths with coupling strength
-- **Shannon entropy** -- measures co-change distribution and knowledge concentration
+- **Renyi entropy (order 2)** -- measures co-change distribution; more robust to outliers than Shannon (Renyi, 1961)
+- **Mann-Kendall trend test** -- non-parametric degradation detection, robust to noise (Mann, 1945; Kendall, 1975)
+- **Sen's slope estimator** -- robust trend magnitude, resistant to outliers (Sen, 1968)
+- **NPMI** -- Normalized Pointwise Mutual Information for coupling strength (Bouma, 2009)
+- **Lift** -- association rule mining metric for co-change statistical significance (Agrawal & Srikant, 1994)
+- **Halstead metrics** -- volume, difficulty, effort, and predicted bugs from operator/operand counts (Halstead, 1977)
+- **SQALE remediation cost** -- time-to-fix estimates per issue type for tech debt prioritization (Letouzey, 2012)
 
 </details>
 
 <details>
 <summary><strong>Health scoring</strong></summary>
 
-Composite health score (0-100) using five factors:
+Composite health score (0-100) using a **weighted geometric mean** of sigmoid health factors. Non-compensatory: a zero in any dimension cannot be masked by high scores in others.
 
 | Factor | Weight | What it measures |
 |--------|--------|-----------------|
-| Tangle ratio | up to -30 | % of symbols in dependency cycles |
-| God components | up to -20 | Symbols with extreme fan-in/fan-out |
-| Bottlenecks | up to -15 | High-betweenness chokepoints |
-| Layer violations | up to -15 | Upward dependency violations |
-| Per-file health | up to -20 | Average of 7-factor file health scores |
+| Tangle ratio | 30% | % of symbols in dependency cycles |
+| God components | 20% | Symbols with extreme fan-in/fan-out |
+| Bottlenecks | 15% | High-betweenness chokepoints |
+| Layer violations | 15% | Upward dependency violations (severity-weighted by layer distance) |
+| Per-file health | 20% | Average of 7-factor file health scores |
 
-Per-file health (1-10) combines: cognitive complexity, indentation complexity, cycle membership, god component membership, dead export ratio, co-change entropy, and churn amplification.
+Each factor uses sigmoid health: `h = e^(-signal/scale)` (1 = pristine, approaches 0 = worst). Score = `100 * product(h_i ^ w_i)`. Also reports **propagation cost** (MacCormack 2006) and **algebraic connectivity** (Fiedler 1973). Per-file health (1-10) combines: cognitive complexity (triangular nesting penalty per Sweller's Cognitive Load Theory), indentation complexity, cycle membership, god component membership, dead export ratio, co-change entropy, and churn amplification.
 
 </details>
 
@@ -908,7 +920,7 @@ Roam is **not** a replacement for your linter, LSP, or SonarQube. It fills a dif
 | **LSP (pyright, gopls)** | Real-time type checking | LSP requires a running server and file:line:col queries. Roam is offline, exploratory, and cross-language |
 | **Sourcegraph** | Code search + AI | Requires hosted deployment. Roam is local-only, MIT-licensed |
 | **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 50+ architecture commands, CI gates |
-| **CodeScene** | Behavioral code analysis | Commercial SaaS. Roam is free, local, inspired by CodeScene's metrics |
+| **CodeScene** | Behavioral code analysis | Commercial SaaS. Roam is free, local, uses peer-reviewed algorithms (Mann-Kendall, NPMI, Personalized PageRank) |
 | **SonarQube** | Code quality + security | Heavy server. Roam's cognitive complexity follows SonarSource spec |
 | **grep / ripgrep** | Text search | No semantic understanding. Can't distinguish definitions from usage |
 
@@ -976,7 +988,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # 649 tests, Python 3.9-3.13
+pytest tests/   # 669 tests, Python 3.9-3.13
 ```
 
 <details>
@@ -1025,7 +1037,7 @@ roam-code/
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 649 tests across 11 test files
+└── tests/                             # 669 tests across 11 test files
 ```
 
 </details>
@@ -1044,13 +1056,15 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 ## Roadmap
 
 - [x] Composite health scoring (v7.0)
-- [x] MCP server -- 18 tools, 2 resources (v7.0-v7.4)
+- [x] MCP server -- 19 tools, 2 resources (v7.0-v7.4)
 - [x] SARIF 2.1.0 output (v7.0)
 - [x] GitHub Action (v7.0)
 - [x] Large-repo batched SQL (v7.1)
 - [x] Salesforce cross-language edges (v7.1)
 - [x] Cognitive load index, tour, diagnose (v7.2)
 - [x] Multi-repo workspace support (v7.4)
+- [x] Research-backed algorithms: adaptive PageRank, Personalized PageRank, Mann-Kendall, NPMI, Sen's slope, sigmoid-bounded health, Gini layer balance (v7.4)
+- [x] Advanced math: Halstead metrics, Renyi entropy, propagation cost, algebraic connectivity, modularity Q-score, conductance, edge betweenness, SQALE remediation cost, multiplicative PR risk, weighted geometric mean health, dead code confidence scoring, cyclomatic density (v7.5)
 - [ ] Terminal demo GIF
 - [ ] Ruby Tier 1 support
 - [ ] C# Tier 1 support
@@ -1064,7 +1078,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 649 tests must pass
+pytest tests/   # All 669 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

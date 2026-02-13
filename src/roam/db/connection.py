@@ -67,18 +67,18 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
 
     conn.row_factory = sqlite3.Row
     cloud = _is_cloud_synced(db_path)
-    if cloud:
-        # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM
-        # auxiliary files and even the main DB during sync, causing
-        # writes to stall.  Mitigations:
-        #   1. DELETE journal — avoids WAL/SHM auxiliary files entirely
-        #   2. EXCLUSIVE locking — holds the file lock for the session,
-        #      preventing the sync agent from grabbing it mid-write
-        conn.execute("PRAGMA journal_mode=DELETE")
-        if not readonly:
+    if not readonly:
+        if cloud:
+            # Cloud-sync services (OneDrive, Dropbox, etc.) lock WAL/SHM
+            # auxiliary files and even the main DB during sync, causing
+            # writes to stall.  Mitigations:
+            #   1. DELETE journal — avoids WAL/SHM auxiliary files entirely
+            #   2. EXCLUSIVE locking — holds the file lock for the session,
+            #      preventing the sync agent from grabbing it mid-write
+            conn.execute("PRAGMA journal_mode=DELETE")
             conn.execute("PRAGMA locking_mode=EXCLUSIVE")
-    else:
-        conn.execute("PRAGMA journal_mode=WAL")
+        else:
+            conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA synchronous=NORMAL")
     conn.execute("PRAGMA cache_size=-64000")  # 64MB cache
     conn.execute("PRAGMA foreign_keys=ON")
@@ -98,6 +98,12 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
     _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
     _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
+    # v7.4: Halstead metrics + cyclomatic density
+    _safe_alter(conn, "symbol_metrics", "cyclomatic_density", "REAL")
+    _safe_alter(conn, "symbol_metrics", "halstead_volume", "REAL")
+    _safe_alter(conn, "symbol_metrics", "halstead_difficulty", "REAL")
+    _safe_alter(conn, "symbol_metrics", "halstead_effort", "REAL")
+    _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):

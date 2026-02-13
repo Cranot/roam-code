@@ -10,6 +10,35 @@ import networkx as nx
 from roam.db.connection import batched_in
 
 
+def algebraic_connectivity(G: nx.DiGraph) -> float:
+    """Compute the algebraic connectivity (Fiedler value) of the graph.
+
+    The Fiedler value is the second-smallest eigenvalue of the graph
+    Laplacian.  It measures how well-connected the graph is:
+      0     → graph is disconnected
+      low   → fragile architecture with bridge dependencies
+      high  → robust, well-connected structure
+
+    Uses the undirected projection of the dependency graph.
+    Returns 0.0 if scipy is unavailable or the graph is too small.
+
+    Reference: Fiedler (1973), "Algebraic connectivity of graphs."
+    """
+    if len(G) < 3:
+        return 0.0
+    try:
+        undirected = G.to_undirected()
+        # Only compute on the largest connected component
+        if not nx.is_connected(undirected):
+            largest_cc = max(nx.connected_components(undirected), key=len)
+            undirected = undirected.subgraph(largest_cc).copy()
+        if len(undirected) < 3:
+            return 0.0
+        return round(nx.algebraic_connectivity(undirected), 6)
+    except Exception:
+        return 0.0
+
+
 def find_cycles(G: nx.DiGraph, min_size: int = 2) -> list[list[int]]:
     """Return strongly connected components with at least *min_size* members.
 
@@ -123,18 +152,40 @@ def condense_cycles(
     return C, mapping
 
 
+def propagation_cost(G: nx.DiGraph) -> float:
+    """Compute the Propagation Cost metric (MacCormack et al. 2006).
+
+    PC = fraction of the system potentially affected by a change to any
+    single component.  Computed as ``sum(V) / n²`` where V is the
+    transitive closure (visibility) matrix.
+
+    Returns a value in [0, 1]:
+      0 → no transitive dependencies at all (fully decoupled)
+      1 → every component can reach every other (fully coupled)
+
+    Reference: MacCormack, Rusnak & Baldwin (2006),
+    "Exploring the Structure of Complex Software Designs."
+    """
+    n = len(G)
+    if n <= 1:
+        return 0.0
+    # Transitive closure: V[i][j] = 1 iff j is reachable from i
+    TC = nx.transitive_closure(G, reflexive=False)
+    return round(TC.number_of_edges() / (n * (n - 1)), 4) if n > 1 else 0.0
+
+
 def find_weakest_edge(
     G: nx.DiGraph, scc_members: list[int]
 ) -> tuple[int, int, str] | None:
     """Find the single edge in an SCC whose removal most likely breaks the cycle.
 
-    Heuristic: prefer edges whose *source* has the highest out-degree within
-    the SCC.  Removing an edge from a high-out-degree node is least disruptive
-    because that node has many alternative outgoing paths — so the remaining
-    graph is more likely to stay connected minus that one link.
+    Uses edge betweenness centrality on the SCC subgraph: the edge with
+    the highest betweenness carries the most shortest paths and is thus
+    the most "critical" bridge in the cycle.  Removing it is most likely
+    to break the cycle into acyclic components.
 
-    Among ties, prefer edges where the target has the highest in-degree
-    (making the edge more redundant from the target's perspective).
+    Falls back to degree-based heuristic for very large SCCs (>500 nodes)
+    where edge betweenness is too expensive (O(VE)).
 
     Returns ``(source_id, target_id, reason_string)`` or ``None`` if the SCC
     has fewer than 2 members or no internal edges.
@@ -151,16 +202,26 @@ def find_weakest_edge(
     if not internal_edges:
         return None
 
-    # Compute out-degree and in-degree within the SCC
+    # Build SCC subgraph
+    sub = G.subgraph(member_set)
+
+    # For small-to-moderate SCCs, use edge betweenness centrality (Brandes)
+    if len(member_set) <= 500:
+        ebc = nx.edge_betweenness_centrality(sub)
+        if ebc:
+            best_edge = max(ebc, key=ebc.get)
+            u, v = best_edge
+            bw = ebc[best_edge]
+            reason = f"highest edge betweenness in cycle ({bw:.3f})"
+            return (u, v, reason)
+
+    # Fallback for large SCCs: degree-based heuristic
     out_deg: dict[int, int] = Counter()
     in_deg: dict[int, int] = Counter()
     for u, v in internal_edges:
         out_deg[u] += 1
         in_deg[v] += 1
 
-    # Score each edge: higher is "weaker" (better candidate for removal)
-    # Primary: source out-degree (high = more alternatives remain)
-    # Secondary: target in-degree (high = target still reachable via others)
     best_edge = None
     best_score = (-1, -1)
     for u, v in internal_edges:

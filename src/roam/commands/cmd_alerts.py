@@ -65,29 +65,87 @@ def _make_alert(level, metric, message, current_value,
     return alert
 
 
-def _is_monotonic_worsening(values, metric):
-    """Check if a sequence of values is monotonically worsening.
+def _mann_kendall_s(values):
+    """Compute the Mann-Kendall S statistic and its significance.
 
-    For metrics that are worse when higher, values should be non-decreasing
-    with at least one strict increase.  For metrics worse when lower, values
-    should be non-increasing with at least one strict decrease.
+    The Mann-Kendall test is a non-parametric trend test robust to outliers
+    and noise.  S > 0 indicates an upward trend; S < 0 indicates downward.
+
+    For n >= 3, we also compute a two-sided p-value using the normal
+    approximation of the variance:  Var(S) = n(n-1)(2n+5)/18.
+
+    Returns (S, p_value).  p_value is None for n < 3.
+    Reference: Mann (1945), Kendall (1975).
     """
+    import math
+    n = len(values)
+    s = 0
+    for i in range(n):
+        for j in range(i + 1, n):
+            diff = values[j] - values[i]
+            if diff > 0:
+                s += 1
+            elif diff < 0:
+                s -= 1
+    if n < 3:
+        return s, None
+    var_s = n * (n - 1) * (2 * n + 5) / 18.0
+    if var_s == 0:
+        return s, 1.0
+    std_s = math.sqrt(var_s)
+    # Continuity-corrected z
+    if s > 0:
+        z = (s - 1) / std_s
+    elif s < 0:
+        z = (s + 1) / std_s
+    else:
+        z = 0
+    # Two-sided p-value via complementary error function
+    p = math.erfc(abs(z) / math.sqrt(2))
+    return s, p
+
+
+def _sens_slope(values):
+    """Compute Sen's slope estimator: robust trend magnitude.
+
+    slope = median of (xj - xk) / (j - k) for all k < j.
+
+    Unlike linear regression, Sen's slope is resistant to outliers
+    and gives a robust estimate of the rate of change per time unit.
+    Reference: Sen (1968), "Estimates of the Regression Coefficient
+    Based on Kendall's Tau."
+    """
+    slopes = []
+    n = len(values)
+    for i in range(n):
+        for j in range(i + 1, n):
+            slopes.append((values[j] - values[i]) / (j - i))
+    if not slopes:
+        return 0.0
+    slopes.sort()
+    mid = len(slopes) // 2
+    if len(slopes) % 2 == 0:
+        return (slopes[mid - 1] + slopes[mid]) / 2
+    return slopes[mid]
+
+
+def _is_monotonic_worsening(values, metric):
+    """Detect statistically significant worsening trends.
+
+    Uses the Mann-Kendall trend test instead of strict monotonicity,
+    making detection robust to noise (e.g., [5, 5, 5, 6] is not flagged
+    but [5, 7, 8, 12] is).  Requires p < 0.10 for significance.
+    """
+    if len(values) < 3:
+        return False
+    s, p = _mann_kendall_s(values)
+    if p is None or p >= 0.10:
+        return False
+    # S > 0 → upward trend; S < 0 → downward trend
     if metric in _WORSE_WHEN_HIGHER:
-        has_increase = False
-        for i in range(1, len(values)):
-            if values[i] < values[i - 1]:
-                return False
-            if values[i] > values[i - 1]:
-                has_increase = True
-        return has_increase
+        return s > 0
     elif metric in _WORSE_WHEN_LOWER:
-        has_decrease = False
-        for i in range(1, len(values)):
-            if values[i] > values[i - 1]:
-                return False
-            if values[i] < values[i - 1]:
-                has_decrease = True
-        return has_decrease
+        return s < 0
     return False
 
 
@@ -141,9 +199,12 @@ def _check_trends(snapshots_chrono):
                 current = tail[-1]
                 arrow = " -> ".join(str(v) for v in tail)
                 label = _TREND_LABELS.get(metric, f"{metric} worsening")
+                # Sen's slope: robust rate of change per snapshot
+                slope = _sens_slope(tail)
+                slope_str = f", rate={slope:+.1f}/snapshot" if abs(slope) >= 0.1 else ""
                 alerts.append(_make_alert(
                     WARNING, metric,
-                    f"{label}: {arrow} over {window} snapshots",
+                    f"{label}: {arrow} over {window} snapshots{slope_str}",
                     current,
                     trend_direction="up" if metric in _WORSE_WHEN_HIGHER else "down",
                 ))

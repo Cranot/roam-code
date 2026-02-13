@@ -9,7 +9,8 @@ import click
 
 from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
-from roam.graph.clusters import compare_with_directories
+from roam.graph.clusters import compare_with_directories, cluster_quality
+from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import abbrev_kind, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
@@ -23,6 +24,14 @@ def clusters(ctx, min_size):
     ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(ALL_CLUSTERS).fetchall()
+
+        # Compute modularity Q-score and per-cluster conductance
+        G = build_symbol_graph(conn)
+        cluster_map_rows = conn.execute(
+            "SELECT symbol_id, cluster_id FROM clusters"
+        ).fetchall()
+        cluster_map = {r["symbol_id"]: r["cluster_id"] for r in cluster_map_rows}
+        quality = cluster_quality(G, cluster_map)
 
         if json_mode:
             visible = [r for r in rows if r["size"] >= min_size]
@@ -53,6 +62,8 @@ def clusters(ctx, min_size):
                 summary={
                     "clusters": len(visible),
                     "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
+                    "modularity_q": quality["modularity"],
+                    "mean_conductance": quality["mean_conductance"],
                 },
                 clusters=[
                     {
@@ -60,6 +71,7 @@ def clusters(ctx, min_size):
                         "label": r["cluster_label"],
                         "size": r["size"],
                         "cohesion_pct": round(j_intra.get(r["cluster_id"], 0) * 100 / j_total[r["cluster_id"]]) if j_total.get(r["cluster_id"]) else 0,
+                        "conductance": quality["per_cluster"].get(r["cluster_id"], 0.0),
                         "members": r["members"] or "",
                     }
                     for r in visible
@@ -261,6 +273,8 @@ def clusters(ctx, min_size):
             total_all = total_intra + total_inter
             cohesion_pct = total_intra * 100 / total_all if total_all else 0
             click.echo(f"\n  Cluster cohesion: {cohesion_pct:.0f}% edges are intra-cluster ({total_intra} internal, {total_inter} cross-cluster)")
+            q_label = "strong" if quality["modularity"] > 0.3 else "weak"
+            click.echo(f"  Modularity Q: {quality['modularity']:.3f} ({q_label}), mean conductance: {quality['mean_conductance']:.3f}")
 
             # Top inter-cluster coupling pairs
             if inter_pairs:

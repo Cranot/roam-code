@@ -144,6 +144,11 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                         "return_count": r["return_count"],
                         "bool_op_count": r["bool_op_count"],
                         "callback_depth": r["callback_depth"],
+                        "cyclomatic_density": r["cyclomatic_density"] or 0,
+                        "halstead_volume": r["halstead_volume"] or 0,
+                        "halstead_difficulty": r["halstead_difficulty"] or 0,
+                        "halstead_effort": r["halstead_effort"] or 0,
+                        "halstead_bugs": r["halstead_bugs"] or 0,
                         "severity": _severity(r["cognitive_complexity"]),
                     }
                     for r in rows
@@ -176,6 +181,12 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                 factors.append(f"params={r['param_count']}")
             if r["return_count"] >= 4:
                 factors.append(f"ret={r['return_count']}")
+            cd = r["cyclomatic_density"]
+            if cd and cd > 0.15:
+                factors.append(f"density={cd:.2f}")
+            hv = r["halstead_volume"]
+            if hv and hv > 500:
+                factors.append(f"H.vol={hv:.0f}")
 
             factor_str = f" ({', '.join(factors)})" if factors else ""
 

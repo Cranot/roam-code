@@ -36,33 +36,61 @@ _API_PREFIXES = ("get", "use", "create", "validate", "fetch", "update",
 
 
 def _dead_action(r, file_imported):
-    """Compute actionable verdict for a dead symbol."""
+    """Compute actionable verdict and confidence % for a dead symbol.
+
+    Uses tiered confidence scoring (inspired by Vulture and Meta's dead
+    code system, 2023):
+      100% — unreachable code, unused imports, no dynamic usage possible
+       90% — unused functions/classes with no string-based references
+       80% — unused but in imported file (could be consumed externally)
+       70% — API-prefix naming (get*, create*, etc.) or barrel files
+       60% — entry-point/lifecycle hooks (frameworks may invoke implicitly)
+
+    Returns (action_string, confidence_pct).
+    """
     name = r["name"]
     name_lower = name.lower()
     base = os.path.basename(r["file_path"]).lower()
     name_no_ext = os.path.splitext(base)[0]
+    try:
+        kind = r["kind"]
+    except (KeyError, IndexError):
+        kind = ""
 
     # Entry point / lifecycle hooks (check original case for camelCase hooks)
     if name in _ENTRY_NAMES or name_lower in _ENTRY_NAMES:
-        return "INTENTIONAL"
+        return "INTENTIONAL", 60
 
     # Python dunders — always intentional
     if name.startswith("__") and name.endswith("__"):
-        return "INTENTIONAL"
+        return "INTENTIONAL", 60
 
     # File is an entry point and not imported — symbols here are likely intentional
     if not file_imported and name_no_ext in _ENTRY_FILE_BASES:
-        return "INTENTIONAL"
+        return "INTENTIONAL", 60
 
     # API naming → review before deleting
     if any(name_lower.startswith(p) for p in _API_PREFIXES):
-        return "REVIEW"
+        return "REVIEW", 70
 
     # Barrel/index file → likely re-exported for public API
     if base.startswith("index.") or base == "__init__.py":
-        return "REVIEW"
+        return "REVIEW", 70
 
-    return "SAFE"
+    # Imported file but symbol unused — could be externally consumed
+    if file_imported:
+        return "SAFE", 80
+
+    # Private naming conventions (_, single underscore prefix) = higher confidence
+    if name.startswith("_") and not name.startswith("__"):
+        return "SAFE", 95
+
+    # Functions/methods without callers — high confidence
+    if kind in ("function", "method", "constructor"):
+        return "SAFE", 90
+
+    # Default: classes, variables, etc.
+    return "SAFE", 90
 
 
 # ---------------------------------------------------------------------------
@@ -342,10 +370,10 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
             return
 
         # Compute action verdicts
-        all_dead = [(r, _dead_action(r, r["file_id"] in imported_files)) for r in all_items]
-        n_safe = sum(1 for _, a in all_dead if a == "SAFE")
-        n_review = sum(1 for _, a in all_dead if a == "REVIEW")
-        n_intent = sum(1 for _, a in all_dead if a == "INTENTIONAL")
+        all_dead = [(r, *_dead_action(r, r["file_id"] in imported_files)) for r in all_items]
+        n_safe = sum(1 for _, a, _c in all_dead if a == "SAFE")
+        n_review = sum(1 for _, a, _c in all_dead if a == "REVIEW")
+        n_intent = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL")
 
         # --- Cluster detection ---
         clusters_data = []
@@ -389,7 +417,7 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
         if group_by:
             grouped = _group_dead(all_items, group_by)
             for key, items in grouped:
-                verdicts = [_dead_action(r, r["file_id"] in imported_files) for r in items]
+                verdicts = [_dead_action(r, r["file_id"] in imported_files)[0] for r in items]
                 groups_data.append({
                     "key": key,
                     "count": len(items),
@@ -405,13 +433,15 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
                 high_confidence=[
                     {"name": r["name"], "kind": r["kind"],
                      "location": loc(r["file_path"], r["line_start"]),
-                     "action": _dead_action(r, True)}
+                     "action": _dead_action(r, True)[0],
+                     "confidence": _dead_action(r, True)[1]}
                     for r in high
                 ],
                 low_confidence=[
                     {"name": r["name"], "kind": r["kind"],
                      "location": loc(r["file_path"], r["line_start"]),
-                     "action": _dead_action(r, False)}
+                     "action": _dead_action(r, False)[0],
+                     "confidence": _dead_action(r, False)[1]}
                     for r in low
                 ],
             )
@@ -509,9 +539,9 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
                     reason = f"{n_importers} importers use {n_siblings} siblings, skip this"
                 else:
                     reason = f"{n_importers} importers, none use any export"
-                action = _dead_action(r, True)
+                action, confidence = _dead_action(r, True)
                 table_rows.append([
-                    action,
+                    f"{action} {confidence}%",
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
@@ -528,9 +558,9 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
             click.echo("(file has no importers — may be entry point or used by unparsed files)")
             table_rows = []
             for r in low:
-                action = _dead_action(r, False)
+                action, confidence = _dead_action(r, False)
                 table_rows.append([
-                    action,
+                    f"{action} {confidence}%",
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),

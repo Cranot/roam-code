@@ -57,16 +57,69 @@ def _get_symbol_metrics(conn, sym_id):
     }
 
 
-def _risk_score(metrics):
+def _build_distribution_stats(conn):
+    """Compute mean/stddev of key metrics across the codebase for z-scoring.
+
+    Returns dict with {metric: (mean, stddev)} for adaptive normalization.
+    """
+    import math
+
+    commit_rows = conn.execute(
+        "SELECT commit_count FROM file_stats WHERE commit_count IS NOT NULL"
+    ).fetchall()
+    cc_rows = conn.execute(
+        "SELECT cognitive_complexity FROM symbol_metrics WHERE cognitive_complexity IS NOT NULL"
+    ).fetchall()
+    health_rows = conn.execute(
+        "SELECT health_score FROM file_stats WHERE health_score IS NOT NULL"
+    ).fetchall()
+    entropy_rows = conn.execute(
+        "SELECT cochange_entropy FROM file_stats WHERE cochange_entropy IS NOT NULL"
+    ).fetchall()
+
+    def _stats(values):
+        if not values:
+            return (1.0, 1.0)
+        n = len(values)
+        mean = sum(values) / n
+        var = sum((v - mean) ** 2 for v in values) / max(n, 1)
+        return (mean, max(math.sqrt(var), 0.01))
+
+    return {
+        "commits": _stats([r[0] for r in commit_rows]),
+        "complexity": _stats([r[0] for r in cc_rows]),
+        "health": _stats([r[0] for r in health_rows]),
+        "entropy": _stats([r[0] for r in entropy_rows]),
+    }
+
+
+def _risk_score(metrics, dist_stats=None):
     """Compute a composite risk score for root-cause ranking.
 
     Higher = more likely to be a root cause.  Combines churn,
-    complexity, low health, and entropy.
+    complexity, low health, and co-change entropy.
+
+    When *dist_stats* is provided (from ``_build_distribution_stats``),
+    uses z-score normalization — each factor is measured in standard
+    deviations from the codebase mean, making thresholds adaptive to
+    any project.  Falls back to fixed normalization otherwise.
     """
-    churn_norm = min(metrics["commits"] / 50, 1.0)  # 50+ commits = max
-    cc_norm = min(metrics["complexity"] / 30, 1.0)   # 30+ cc = max
-    health_risk = max(0, (7 - metrics["health"]) / 7) if metrics["health"] else 0.5
-    entropy_risk = metrics["entropy"]
+    if dist_stats:
+        def _z(value, key):
+            mean, std = dist_stats[key]
+            return max(0, (value - mean) / std)
+        # Clip z-scores at 3σ then normalize to [0, 1]
+        churn_norm = min(_z(metrics["commits"], "commits") / 3, 1.0)
+        cc_norm = min(_z(metrics["complexity"], "complexity") / 3, 1.0)
+        # Health is inverted: low health = high risk
+        h_mean, h_std = dist_stats["health"]
+        health_risk = max(0, min((h_mean - metrics["health"]) / max(h_std, 0.01) / 3, 1.0))
+        entropy_risk = min(_z(metrics["entropy"], "entropy") / 3, 1.0)
+    else:
+        churn_norm = min(metrics["commits"] / 50, 1.0)
+        cc_norm = min(metrics["complexity"] / 30, 1.0)
+        health_risk = max(0, (7 - metrics["health"]) / 7) if metrics["health"] else 0.5
+        entropy_risk = metrics["entropy"]
 
     return round(
         churn_norm * 0.30
@@ -149,6 +202,7 @@ def diagnose(ctx, name, depth):
             raise SystemExit(1)
 
         target_metrics = _get_symbol_metrics(conn, sym_id)
+        dist_stats = _build_distribution_stats(conn)
 
         # Upstream callers (predecessors in call graph) up to depth hops
         upstream_ids = set()
@@ -188,7 +242,7 @@ def diagnose(ctx, name, depth):
                 if not row:
                     continue
                 metrics = _get_symbol_metrics(conn, sid)
-                risk = _risk_score(metrics)
+                risk = _risk_score(metrics, dist_stats)
                 ranked.append({
                     "name": row["qualified_name"] or row["name"],
                     "kind": abbrev_kind(row["kind"]),

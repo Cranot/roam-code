@@ -47,6 +47,19 @@ def impact(ctx, name):
         RG = G.reverse()
         dependents = nx.descendants(RG, sym_id)
 
+        # Personalized PageRank: distance-weighted importance of each dependent
+        # relative to the changed symbol.  Per Gleich (2015), PPR with
+        # personalization set to the changed node computes "what fraction of
+        # random walks from this node reach each other node", giving a
+        # principled distance-decay measure for blast radius.
+        ppr = {}
+        if dependents:
+            try:
+                ppr = nx.pagerank(RG, alpha=0.85,
+                                  personalization={sym_id: 1.0})
+            except Exception:
+                ppr = {}
+
         if not dependents:
             if json_mode:
                 click.echo(to_json(json_envelope("impact",
@@ -92,11 +105,17 @@ def impact(ctx, name):
                 for ct in conv_tests:
                     sf_test_files.add(ct["path"])
 
-        # Verdict
-        if len(dependents) >= 50:
-            verdict = f"Large blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
-        elif len(dependents) >= 10:
-            verdict = f"Moderate blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
+        # Weighted impact: sum of PPR scores for all dependents.
+        # This gives a single number reflecting both count and proximity.
+        weighted_impact = sum(ppr.get(d, 0) for d in dependents)
+
+        # Verdict — uses percentage of graph reached for adaptive thresholds
+        total_syms = len(G)
+        reach_pct = (len(dependents) / total_syms * 100) if total_syms > 0 else 0
+        if reach_pct >= 10 or len(dependents) >= 50:
+            verdict = f"Large blast radius — {len(dependents)} symbols ({reach_pct:.0f}%) in {len(affected_files)} files affected"
+        elif reach_pct >= 2 or len(dependents) >= 10:
+            verdict = f"Moderate blast radius — {len(dependents)} symbols ({reach_pct:.0f}%) in {len(affected_files)} files affected"
         elif len(dependents) > 0:
             verdict = f"Small blast radius — {len(dependents)} symbols in {len(affected_files)} files affected"
         else:
@@ -114,11 +133,15 @@ def impact(ctx, name):
                     "verdict": verdict,
                     "affected_symbols": len(dependents),
                     "affected_files": len(affected_files),
+                    "weighted_impact": round(weighted_impact, 4),
+                    "reach_pct": round(reach_pct, 1),
                     "sf_convention_tests": len(sf_test_files),
                 },
                 symbol=sym["qualified_name"] or sym["name"],
                 affected_symbols=len(dependents),
                 affected_files=len(affected_files),
+                weighted_impact=round(weighted_impact, 4),
+                reach_pct=round(reach_pct, 1),
                 direct_dependents=json_deps,
                 affected_file_list=sorted(affected_files),
                 sf_convention_tests=sorted(sf_test_files),

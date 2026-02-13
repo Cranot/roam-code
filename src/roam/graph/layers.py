@@ -42,6 +42,34 @@ def detect_layers(G: nx.DiGraph) -> dict[int, int]:
     return layers
 
 
+def layer_balance(layers: dict[int, int]) -> float:
+    """Compute Gini coefficient of layer sizes as a balance metric.
+
+    Returns a value in [0, 1] where 0 = perfectly balanced (all layers
+    have the same number of nodes) and 1 = maximally imbalanced (all
+    nodes in one layer).
+
+    The Gini coefficient is a standard inequality measure from economics
+    (Gini, 1912) applied here to architectural layer distribution.
+    """
+    if not layers:
+        return 0.0
+    from collections import Counter
+    sizes = sorted(Counter(layers.values()).values())
+    n = len(sizes)
+    if n <= 1:
+        return 0.0
+    total = sum(sizes)
+    if total == 0:
+        return 0.0
+    cumulative = 0.0
+    weighted_sum = 0.0
+    for i, size in enumerate(sizes):
+        cumulative += size
+        weighted_sum += (2 * (i + 1) - n - 1) * size
+    return round(weighted_sum / (n * total), 4)
+
+
 def find_violations(
     G: nx.DiGraph, layers: dict[int, int]
 ) -> list[dict]:
@@ -52,24 +80,33 @@ def find_violations(
     layer L_src to a node at layer L_tgt where L_tgt < L_src is a
     potential violation (a lower layer depending on a higher one).
 
+    Each violation includes a ``severity`` weight proportional to the
+    layer distance jumped.  Crossing many layers (e.g., L7 → L1) is
+    architecturally worse than a single-layer skip (L2 → L1).
+
     Returns a list of dicts::
 
-        [{"source": id, "target": id, "source_layer": int, "target_layer": int}]
+        [{"source": id, "target": id, "source_layer": int, "target_layer": int,
+          "layer_distance": int, "severity": float}]
     """
     violations: list[dict] = []
+    max_layer = max(layers.values(), default=0) or 1
     for src, tgt in G.edges:
         src_layer = layers.get(src)
         tgt_layer = layers.get(tgt)
         if src_layer is None or tgt_layer is None:
             continue
-        # A violation: an edge from a higher layer going down to a lower layer
-        # (i.e., a higher-level module depends on something it provides to)
         if src_layer > tgt_layer:
+            distance = src_layer - tgt_layer
+            # Severity normalized by max possible distance, so it's in [0, 1]
+            severity = round(distance / max_layer, 3)
             violations.append({
                 "source": src,
                 "target": tgt,
                 "source_layer": src_layer,
                 "target_layer": tgt_layer,
+                "layer_distance": distance,
+                "severity": severity,
             })
     return violations
 

@@ -1,5 +1,7 @@
 """Show code hotspots: churn x complexity ranking."""
 
+import math
+
 import click
 
 from roam.db.connection import open_db
@@ -27,20 +29,38 @@ def weather(ctx, count):
                 click.echo("No churn data available. Is this a git repository?")
             return
 
-        scored = []
+        # Collect raw values for percentile-based normalization
+        raw = []
         for r in rows:
             churn = r["total_churn"] or 0
             complexity = r["complexity"] or 1
-            score = churn * complexity
             commits = r["commit_count"] or 0
             authors = r["distinct_authors"] or 0
-            if churn > 100 and complexity > 5:
+            raw.append((churn, complexity, commits, authors, r["path"]))
+
+        all_churns = sorted(v[0] for v in raw)
+        all_complexities = sorted(v[1] for v in raw)
+        churn_p75 = all_churns[int(len(all_churns) * 0.75)] if all_churns else 1
+        cmplx_p75 = all_complexities[int(len(all_complexities) * 0.75)] if all_complexities else 1
+        churn_p75 = max(churn_p75, 1)
+        cmplx_p75 = max(cmplx_p75, 1)
+
+        scored = []
+        for churn, complexity, commits, authors, path in raw:
+            # Geometric mean of normalized values avoids explosive growth
+            # and balances both signals equally (CodeScene-inspired, Tornhill 2018).
+            churn_norm = churn / churn_p75
+            cmplx_norm = complexity / cmplx_p75
+            score = math.sqrt(max(churn_norm, 0) * max(cmplx_norm, 0))
+
+            # Percentile-adaptive classification instead of magic thresholds
+            if churn_norm > 1.0 and cmplx_norm > 1.0:
                 reason = "BOTH"
-            elif churn > complexity * 20:
+            elif churn_norm > cmplx_norm * 2:
                 reason = "HIGH-CHURN"
             else:
                 reason = "HIGH-COMPLEXITY"
-            scored.append((score, churn, complexity, commits, authors, reason, r["path"]))
+            scored.append((score, churn, complexity, commits, authors, reason, path))
         scored.sort(reverse=True)
 
         if json_mode:
