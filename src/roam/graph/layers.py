@@ -42,34 +42,6 @@ def detect_layers(G: nx.DiGraph) -> dict[int, int]:
     return layers
 
 
-def layer_balance(layers: dict[int, int]) -> float:
-    """Compute Gini coefficient of layer sizes as a balance metric.
-
-    Returns a value in [0, 1] where 0 = perfectly balanced (all layers
-    have the same number of nodes) and 1 = maximally imbalanced (all
-    nodes in one layer).
-
-    The Gini coefficient is a standard inequality measure from economics
-    (Gini, 1912) applied here to architectural layer distribution.
-    """
-    if not layers:
-        return 0.0
-    from collections import Counter
-    sizes = sorted(Counter(layers.values()).values())
-    n = len(sizes)
-    if n <= 1:
-        return 0.0
-    total = sum(sizes)
-    if total == 0:
-        return 0.0
-    cumulative = 0.0
-    weighted_sum = 0.0
-    for i, size in enumerate(sizes):
-        cumulative += size
-        weighted_sum += (2 * (i + 1) - n - 1) * size
-    return round(weighted_sum / (n * total), 4)
-
-
 def find_violations(
     G: nx.DiGraph, layers: dict[int, int]
 ) -> list[dict]:

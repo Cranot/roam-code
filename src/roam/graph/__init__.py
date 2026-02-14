@@ -8,14 +8,13 @@ from roam.graph.clusters import (
     store_clusters,
 )
 from roam.graph.cycles import (
-    condense_cycles,
     find_cycles,
     find_weakest_edge,
     format_cycles,
 )
 from roam.graph.layers import detect_layers, find_violations, format_layers
 from roam.graph.pagerank import compute_centrality, compute_pagerank, store_metrics
-from roam.graph.pathfinding import find_path, find_symbol_id, format_path
+from roam.graph.pathfinding import find_symbol_id, format_path
 
 __all__ = [
     "build_symbol_graph",
@@ -23,7 +22,6 @@ __all__ = [
     "compute_pagerank",
     "compute_centrality",
     "store_metrics",
-    "condense_cycles",
     "find_cycles",
     "find_weakest_edge",
     "format_cycles",
@@ -34,7 +32,6 @@ __all__ = [
     "detect_layers",
     "find_violations",
     "format_layers",
-    "find_path",
     "find_symbol_id",
     "format_path",
 ]

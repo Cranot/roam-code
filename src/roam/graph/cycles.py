@@ -100,58 +100,6 @@ def format_cycles(
     return result
 
 
-def condense_cycles(
-    G: nx.DiGraph, cycles: list[list[int]]
-) -> tuple[nx.DiGraph, dict[int, list[int]]]:
-    """Build a condensation DAG from the graph and its SCC cycles.
-
-    Uses ``nx.condensation(G)`` to collapse each SCC into a single node.
-    Each condensation node gets attributes:
-
-    - **members**: sorted list of original symbol IDs in that SCC
-    - **member_count**: number of symbols in the SCC
-    - **label**: cluster label derived from the most common name prefix
-
-    Returns ``(condensation_graph, mapping)`` where *mapping* maps each
-    condensation node ID to the list of original symbol IDs.
-    """
-    if len(G) == 0 or not cycles:
-        empty = nx.DiGraph()
-        return empty, {}
-
-    C = nx.condensation(G)
-
-    mapping: dict[int, list[int]] = {}
-    for node in C.nodes():
-        members = sorted(C.nodes[node]["members"])
-        C.nodes[node]["members"] = members
-        C.nodes[node]["member_count"] = len(members)
-
-        # Derive a cluster label from the most common name prefix
-        prefixes: list[str] = []
-        for sid in members:
-            if sid in G.nodes:
-                name = G.nodes[sid].get("name", "")
-                # Use the part before the last underscore/dot as prefix,
-                # or the full name if no separator exists
-                for sep in (".", "_"):
-                    idx = name.rfind(sep)
-                    if idx > 0:
-                        prefixes.append(name[:idx])
-                        break
-                else:
-                    prefixes.append(name)
-        if prefixes:
-            label = Counter(prefixes).most_common(1)[0][0]
-        else:
-            label = f"scc_{node}"
-        C.nodes[node]["label"] = label
-
-        mapping[node] = members
-
-    return C, mapping
-
-
 def propagation_cost(G: nx.DiGraph) -> float:
     """Compute the Propagation Cost metric (MacCormack et al. 2006).
 

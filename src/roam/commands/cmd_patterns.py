@@ -1,5 +1,8 @@
 """Detect common architectural patterns in the codebase symbol graph."""
 
+from __future__ import annotations
+
+import os
 import re
 from collections import defaultdict
 
@@ -8,6 +11,20 @@ import click
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+
+
+def _is_test_or_detector_path(file_path):
+    """Return True if file is test code or a pattern detector itself."""
+    p = file_path.replace("\\", "/").lower()
+    base = os.path.basename(p)
+    if base.startswith("test_") or base.endswith("_test.py"):
+        return True
+    if "tests/" in p or "test/" in p or "__tests__/" in p or "spec/" in p:
+        return True
+    # Exclude the patterns detector itself to avoid self-referential matches
+    if base == "cmd_patterns.py":
+        return True
+    return False
 
 
 # ---------------------------------------------------------------------------
@@ -96,6 +113,8 @@ def _detect_factory(conn):
 
     results = []
     for r in rows:
+        if _is_test_or_detector_path(r["file_path"]):
+            continue
         # Check for outgoing edges to constructors or class instantiations
         targets = conn.execute(
             "SELECT DISTINCT t.name, t.kind FROM edges e "
@@ -287,10 +306,8 @@ def _detect_middleware(conn):
         "FROM symbols s JOIN files f ON s.file_id = f.id "
         "WHERE ("
         "  s.name LIKE '%Middleware' OR s.name LIKE '%middleware' "
-        "  OR s.name LIKE '%Handler' "
         "  OR s.name LIKE '%Interceptor' OR s.name LIKE '%interceptor' "
-        "  OR s.name LIKE '%Filter' "
-        "  OR s.name LIKE '%Pipe' OR s.name LIKE '%Pipeline' "
+        "  OR s.name LIKE '%Pipe' OR s.name LIKE '%Pipeline' OR s.name LIKE '%pipeline' "
         ") "
         "AND s.kind IN ('class', 'function', 'method')"
     ).fetchall()
@@ -303,6 +320,8 @@ def _detect_middleware(conn):
 
     for r in rows:
         if r["id"] in seen:
+            continue
+        if _is_test_or_detector_path(r["file_path"]):
             continue
         seen.add(r["id"])
 
@@ -438,6 +457,8 @@ def _detect_decorator(conn):
     for r in rows:
         if r["name"] in seen:
             continue
+        if _is_test_or_detector_path(r["file_path"]):
+            continue
         seen.add(r["name"])
 
         # Count how many symbols this decorator is applied to
@@ -473,6 +494,8 @@ def _detect_decorator(conn):
 
     for r in wrapper_rows:
         if r["name"] in seen:
+            continue
+        if _is_test_or_detector_path(r["file_path"]):
             continue
         seen.add(r["name"])
 

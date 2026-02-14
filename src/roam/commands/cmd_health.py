@@ -59,11 +59,20 @@ _UTILITY_FILE_PATTERNS = (
     "resolve.py", "helpers.py", "common.py", "base.py",
 )
 
+# Paths that are NOT production code — treat as expected utilities
+_NON_PRODUCTION_PATH_PATTERNS = (
+    "tests/", "test/", "__tests__/", "spec/",
+    "dev/", "scripts/", "bin/", "benchmark/",
+    "conftest.py",
+)
+
 
 def _is_utility_path(file_path):
     """Check if a file is in a utility/infrastructure directory or is a known utility file."""
     p = file_path.replace("\\", "/").lower()
     if any(pat in p for pat in _UTILITY_PATH_PATTERNS):
+        return True
+    if any(pat in p for pat in _NON_PRODUCTION_PATH_PATTERNS):
         return True
     basename = p.rsplit("/", 1)[-1] if "/" in p else p
     return basename in _UTILITY_FILE_PATTERNS

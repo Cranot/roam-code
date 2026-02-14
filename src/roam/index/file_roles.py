@@ -76,9 +76,10 @@ _PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)samples/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)sample/"), ROLE_EXAMPLES),
 
-    # Scripts / bin
+    # Scripts / bin / dev tools
     (re.compile(r"(^|/)scripts/"), ROLE_SCRIPTS),
     (re.compile(r"(^|/)bin/"), ROLE_SCRIPTS),
+    (re.compile(r"(^|/)dev/"), ROLE_SCRIPTS),
 
     # Build / dist output
     (re.compile(r"(^|/)build/"), ROLE_BUILD),
