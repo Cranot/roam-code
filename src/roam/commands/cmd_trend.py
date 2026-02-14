@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import re
-import time
 from datetime import datetime, timezone
 
 import click

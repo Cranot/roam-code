@@ -36,7 +36,7 @@ COMMANDS_WITH_JSON = [
     "entry-points", "breaking", "safe-zones", "doc-staleness",
     "fn-coupling", "alerts", "fitness", "patterns", "preflight",
     "snapshot", "describe", "trace", "owner", "sketch",
-    "affected-tests", "diagnose",
+    "affected-tests", "diagnose", "test-map", "module",
 ]
 
 # Commands that require extra arguments to run.
@@ -49,7 +49,6 @@ COMMAND_ARGS = {
     "trace": ["User", "create_user"],
     "deps": ["User"],
     "uses": ["User"],
-    "fan": ["User"],
     "impact": ["User"],
     "context": ["User"],
     "safe-delete": ["unused_helper"],
@@ -61,6 +60,9 @@ COMMAND_ARGS = {
     "affected-tests": ["--staged"],
     "sketch": ["src"],
     "safe-zones": ["src/models.py"],
+    "test-map": ["src/models.py"],
+    "module": ["src"],
+    "fan": ["symbol"],
 }
 
 # Commands that are known to be fragile in the minimal test environment
@@ -93,6 +95,8 @@ FRAGILE_COMMANDS = {
     "test-map",         # needs test files
     "fitness",          # may need specific project conditions
     "safe-zones",       # needs a valid file/module target
+    "test-map",         # needs test file mapping
+    "module",           # needs module-level analysis
 }
 
 
