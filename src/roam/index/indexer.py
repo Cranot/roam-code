@@ -14,6 +14,7 @@ from roam.index.symbols import extract_symbols, extract_references
 from roam.index.relations import resolve_references, build_file_edges
 from roam.index.incremental import get_changed_files, file_hash
 from roam.languages.generic_lang import GenericExtractor
+from roam.index.file_roles import classify_file
 
 
 def _compute_complexity(source: bytes) -> float:
@@ -484,10 +485,14 @@ class Indexer:
                     mtime = None
                 fhash = file_hash(full_path)
 
+                # Classify file role (Tier 1+2 from path, Tier 3 from content head)
+                content_head = source[:2048].decode("utf-8", errors="replace") if source else None
+                file_role = classify_file(rel_path, content_head)
+
                 # Insert file record
                 conn.execute(
-                    "INSERT INTO files (path, language, hash, mtime, line_count) VALUES (?, ?, ?, ?, ?)",
-                    (rel_path, language, fhash, mtime, line_count),
+                    "INSERT INTO files (path, language, file_role, hash, mtime, line_count) VALUES (?, ?, ?, ?, ?, ?)",
+                    (rel_path, language, file_role, fhash, mtime, line_count),
                 )
                 row = conn.execute("SELECT last_insert_rowid()").fetchone()
                 if not row:

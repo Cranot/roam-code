@@ -104,6 +104,8 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "symbol_metrics", "halstead_difficulty", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_effort", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
+    # v7.6: file role classification
+    _safe_alter(conn, "files", "file_role", "TEXT DEFAULT 'source'")
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):

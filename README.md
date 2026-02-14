@@ -176,7 +176,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 61 total commands are organized into 9 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 55 total commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -988,7 +988,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # 669 tests, Python 3.9-3.13
+pytest tests/   # 1656 tests, Python 3.9-3.13
 ```
 
 <details>
@@ -1001,7 +1001,7 @@ roam-code/
 ├── CHANGELOG.md
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (61 commands, 9 categories)
+│   ├── cli.py                         # Click CLI (55 commands, 7 categories)
 │   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1037,7 +1037,7 @@ roam-code/
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 669 tests across 12 test files
+└── tests/                             # 1656 tests across 28 test files
 ```
 
 </details>
@@ -1078,7 +1078,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 669 tests must pass
+pytest tests/   # All 1656 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
