@@ -52,13 +52,21 @@ _FRAMEWORK_NAMES = frozenset({
 _UTILITY_PATH_PATTERNS = (
     "composables/", "utils/", "services/", "lib/", "helpers/",
     "shared/", "config/", "core/", "hooks/", "stores/",
+    "output/", "db/", "common/", "internal/", "infra/",
+)
+
+_UTILITY_FILE_PATTERNS = (
+    "resolve.py", "helpers.py", "common.py", "base.py",
 )
 
 
 def _is_utility_path(file_path):
-    """Check if a file is in a utility/infrastructure directory."""
+    """Check if a file is in a utility/infrastructure directory or is a known utility file."""
     p = file_path.replace("\\", "/").lower()
-    return any(pat in p for pat in _UTILITY_PATH_PATTERNS)
+    if any(pat in p for pat in _UTILITY_PATH_PATTERNS):
+        return True
+    basename = p.rsplit("/", 1)[-1] if "/" in p else p
+    return basename in _UTILITY_FILE_PATTERNS
 
 
 def _percentile(sorted_values, pct):
