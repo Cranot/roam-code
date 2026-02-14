@@ -1,5 +1,22 @@
 # Changelog
 
+## v8.0.1
+
+Project organization and code quality improvements.
+
+### Refactoring
+
+- **Extracted `graph_helpers.py`** -- Deduplicated BFS/adjacency code from 4 command files (`cmd_coverage_gaps`, `cmd_entry_points`, `cmd_safe_zones`, `cmd_context`) into shared `build_forward_adj`, `build_reverse_adj`, `bfs_reachable`, `bfs_nx` helpers.
+- **Split `cmd_context.py`** -- Extracted 13 data-gathering functions into `context_helpers.py`, reducing cmd_context.py from 1,622 to 1,022 lines.
+- **Renamed `test_new_features.py`** to `test_v6_features.py` for naming consistency.
+
+### Infrastructure
+
+- Added Python 3.9 to CI matrix (matches `requires-python = ">=3.9"`).
+- Added `[tool.pytest.ini_options]`, `[tool.ruff]`, and `[project.optional-dependencies]` dev extras to pyproject.toml.
+- Added `Makefile` with install, dev, test, lint, format, build, publish, clean targets.
+- Moved `roam-bench.py` to `dev/` directory.
+
 ## v8.0.0
 
 Major release: anomaly detection, file role classification, dead code aging, cross-language bridges, gate presets, test convention adapters, and massive test suite expansion.
