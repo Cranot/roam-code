@@ -1,5 +1,32 @@
 # Changelog
 
+## v8.0.0
+
+Major release: anomaly detection, file role classification, dead code aging, cross-language bridges, gate presets, test convention adapters, and massive test suite expansion.
+
+### New Capabilities
+
+- **Anomaly detection** (`src/roam/graph/anomaly.py`) -- Statistical anomaly detection using Modified Z-Score, Theil-Sen regression, Mann-Kendall trend test, and CUSUM change-point detection. Surfaces outlier symbols and files across multiple metrics.
+- **File role classifier** (`src/roam/index/file_roles.py`) -- Smart classifier that assigns roles (source, test, config, docs, build, generated, etc.) to files based on path patterns, naming conventions, and content heuristics.
+- **Dead code aging** -- Dead exports now include git blame age data, showing how long dead code has been accumulating. Helps prioritize cleanup by staleness.
+- **Cross-language bridges** (`src/roam/bridges/`) -- Abstract `LanguageBridge` infrastructure for resolving symbols across language boundaries. Includes Salesforce bridge (Apex to Aura/LWC/Visualforce) and Protobuf bridge (.proto to Go/Java/Python stubs).
+- **Gate presets** (`src/roam/commands/gate_presets.py`) -- Framework-specific gate rules for `coverage-gaps`. Built-in presets for Python, JavaScript, Go, Java, and Rust. Custom rules via `.roam-gates.yml`.
+- **Test convention adapters** (`src/roam/index/test_conventions.py`) -- Pluggable test naming adapters for Python, Go, JavaScript, Java, Ruby, and Apex. Improves test discovery in `test-map` and `impact` commands.
+
+### New Commands
+
+- **`roam anomalies`** -- Surface statistical anomalies across codebase metrics (complexity, churn, coupling, etc.).
+
+### Testing
+
+- **1656 total tests passing** (up from 669 in v7.5.0)
+- New test files: `test_anomaly.py`, `test_file_roles.py`, `test_pr_risk_author.py`, `test_dead_aging.py`, `test_bridges.py`, `test_test_conventions.py`, `test_gate_presets.py`
+
+### Infrastructure
+
+- 12 research-backed math improvements across core analysis modules (v7.5.0)
+- Enhanced PR risk scoring with author experience factor
+
 ## v7.4.0
 
 Multi-repo workspace support: group sibling repos, detect cross-repo REST API connections, and run unified analysis commands.

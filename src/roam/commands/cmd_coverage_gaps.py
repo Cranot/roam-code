@@ -4,8 +4,6 @@ from __future__ import annotations
 import fnmatch
 import os
 import re
-from collections import defaultdict
-
 import click
 
 from roam.db.connection import open_db, batched_in
@@ -14,6 +12,7 @@ from roam.commands.resolve import ensure_index
 from roam.commands.gate_presets import (
     ALL_PRESETS, GatePreset, GateRule, get_preset, detect_preset, load_gates_config,
 )
+from roam.commands.graph_helpers import build_forward_adj
 
 
 def _find_gates(conn, gate_names, gate_pattern):
@@ -72,14 +71,6 @@ def _find_entries(conn, scope, entry_pattern):
         rows = [r for r in rows if regex.search(r["name"])]
 
     return rows
-
-
-def _build_adj(conn):
-    """Build adjacency list from edges table (source → [targets])."""
-    adj = defaultdict(set)
-    for e in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
-        adj[e["source_id"]].add(e["target_id"])
-    return adj
 
 
 def _bfs_to_gate(adj, start_id, gates, max_depth):
@@ -321,7 +312,7 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                 click.echo("No entry points found in scope.")
             return
 
-        adj = _build_adj(conn)
+        adj = build_forward_adj(conn)
 
         # Resolve symbol names for chain display
         id_to_name = {}

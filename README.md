@@ -987,8 +987,13 @@ Delete `.roam/` from your project root to clean up local data.
 ```bash
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
-pip install -e .
-pytest tests/   # 1656 tests, Python 3.9-3.13
+pip install -e ".[dev]"   # includes pytest, ruff
+pytest tests/              # 1656 tests, Python 3.9-3.13
+
+# Or use Make targets:
+make dev      # install with dev extras
+make test     # run tests
+make lint     # ruff check
 ```
 
 <details>
@@ -1033,6 +1038,8 @@ roam-code/
 │   │   ├── split.py, why.py           # Decomposition, role classification
 │   ├── commands/
 │   │   ├── resolve.py                 # Shared symbol resolution
+│   │   ├── graph_helpers.py           # Shared graph utilities (adj builders, BFS)
+│   │   ├── context_helpers.py         # Data-gathering helpers for context command
 │   │   └── cmd_*.py                   # One module per command
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
