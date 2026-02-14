@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "8.1.0"
+version = "8.1.1"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
