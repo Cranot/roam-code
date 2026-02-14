@@ -10,6 +10,7 @@ import click
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.commands.graph_helpers import build_forward_adj, bfs_reachable
 
 
 # ---------------------------------------------------------------------------
@@ -117,27 +118,6 @@ def _classify_protocol(name, signature):
 # Reachability: BFS from an entry point through the call graph
 # ---------------------------------------------------------------------------
 
-def _build_adj(conn):
-    """Build forward adjacency list (source -> set of targets)."""
-    adj = defaultdict(set)
-    for row in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
-        adj[row["source_id"]].add(row["target_id"])
-    return adj
-
-
-def _reachable_set(adj, start_id):
-    """BFS from *start_id*; return the set of all reachable symbol IDs."""
-    visited = {start_id}
-    queue = [start_id]
-    while queue:
-        current = queue.pop(0)
-        for neighbor in adj.get(current, ()):
-            if neighbor not in visited:
-                visited.add(neighbor)
-                queue.append(neighbor)
-    return visited
-
-
 # ---------------------------------------------------------------------------
 # Core query: find entry-point symbols
 # ---------------------------------------------------------------------------
@@ -240,7 +220,7 @@ def _compute_coverage(conn, entries, adj):
         return
 
     for e in entries:
-        reachable = _reachable_set(adj, e["id"])
+        reachable = bfs_reachable(adj, {e["id"]})
         e["coverage_pct"] = round(len(reachable) * 100 / total_symbols, 1)
 
 
@@ -284,7 +264,7 @@ def entry_points(ctx, protocol_filter, limit):
             return
 
         # Build adjacency once, compute coverage for every entry
-        adj = _build_adj(conn)
+        adj = build_forward_adj(conn)
         _compute_coverage(conn, entries, adj)
 
         # Group by protocol for display

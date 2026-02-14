@@ -2,57 +2,12 @@
 
 from __future__ import annotations
 
-from collections import deque
-
 import click
 
 from roam.db.connection import open_db, batched_in
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
-
-
-def _bfs(graph, start_ids, max_depth, direction="forward"):
-    """BFS traversal returning visited node IDs with their depths.
-
-    Parameters
-    ----------
-    graph : nx.DiGraph
-        The symbol graph.
-    start_ids : set[int]
-        Seed node IDs.
-    max_depth : int
-        Maximum BFS depth.
-    direction : str
-        ``"forward"`` follows outgoing edges (callees),
-        ``"backward"`` follows incoming edges (callers via reverse).
-
-    Returns
-    -------
-    dict[int, int]
-        Mapping of visited node ID to its BFS depth.
-    """
-    visited: dict[int, int] = {}
-    queue: deque[tuple[int, int]] = deque()
-
-    for sid in start_ids:
-        if sid in graph:
-            visited[sid] = 0
-            queue.append((sid, 0))
-
-    while queue:
-        node, depth = queue.popleft()
-        if depth >= max_depth:
-            continue
-        if direction == "forward":
-            neighbors = graph.successors(node)
-        else:
-            neighbors = graph.predecessors(node)
-        for nb in neighbors:
-            if nb not in visited:
-                visited[nb] = depth + 1
-                queue.append((nb, depth + 1))
-
-    return visited
+from roam.commands.graph_helpers import bfs_nx
 
 
 def _resolve_file_symbols(conn, target):
@@ -139,8 +94,8 @@ def safe_zones(ctx, target, depth):
             return
 
         # --- BFS forward (callees / downstream) and backward (callers / upstream) ---
-        forward = _bfs(G, seed_ids, depth, direction="forward")
-        backward = _bfs(G, seed_ids, depth, direction="backward")
+        forward = bfs_nx(G, seed_ids, depth, direction="forward")
+        backward = bfs_nx(G, seed_ids, depth, direction="backward")
 
         # Internal zone = union of forward and backward, including seeds
         internal_ids = set(forward.keys()) | set(backward.keys())
