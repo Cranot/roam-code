@@ -5,11 +5,22 @@ functions/methods by cognitive complexity to identify the hardest-to-
 understand code in the project.
 """
 
+from __future__ import annotations
+
 import click
 
 from roam.db.connection import open_db
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import loc, abbrev_kind, to_json, json_envelope
+
+
+def _safe_metric(row, key, default=0.0):
+    """Safely access a metric column that may not exist in older DBs."""
+    try:
+        v = row[key]
+        return v if v is not None else default
+    except (KeyError, IndexError):
+        return default
 
 
 def _severity(score: float) -> str:
@@ -144,11 +155,11 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                         "return_count": r["return_count"],
                         "bool_op_count": r["bool_op_count"],
                         "callback_depth": r["callback_depth"],
-                        "cyclomatic_density": r["cyclomatic_density"] or 0,
-                        "halstead_volume": r["halstead_volume"] or 0,
-                        "halstead_difficulty": r["halstead_difficulty"] or 0,
-                        "halstead_effort": r["halstead_effort"] or 0,
-                        "halstead_bugs": r["halstead_bugs"] or 0,
+                        "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
+                        "halstead_volume": _safe_metric(r, "halstead_volume"),
+                        "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
+                        "halstead_effort": _safe_metric(r, "halstead_effort"),
+                        "halstead_bugs": _safe_metric(r, "halstead_bugs"),
                         "severity": _severity(r["cognitive_complexity"]),
                     }
                     for r in rows
@@ -181,11 +192,11 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                 factors.append(f"params={r['param_count']}")
             if r["return_count"] >= 4:
                 factors.append(f"ret={r['return_count']}")
-            cd = r["cyclomatic_density"]
-            if cd and cd > 0.15:
+            cd = _safe_metric(r, "cyclomatic_density")
+            if cd > 0.15:
                 factors.append(f"density={cd:.2f}")
-            hv = r["halstead_volume"]
-            if hv and hv > 500:
+            hv = _safe_metric(r, "halstead_volume")
+            if hv > 500:
                 factors.append(f"H.vol={hv:.0f}")
 
             factor_str = f" ({', '.join(factors)})" if factors else ""

@@ -333,6 +333,9 @@ class PythonExtractor(LanguageExtractor):
                 self._extract_from_import(child, source, refs, scope_name)
             elif child.type == "call":
                 self._extract_call(child, source, refs, scope_name)
+            elif child.type == "decorated_definition":
+                self._extract_decorator_refs(child, source, refs, scope_name)
+                self._walk_refs(child, source, file_path, refs, scope_name)
             else:
                 # Recurse, updating scope for classes/functions
                 new_scope = scope_name
@@ -341,7 +344,76 @@ class PythonExtractor(LanguageExtractor):
                     if n:
                         fname = self.node_text(n, source)
                         new_scope = f"{scope_name}.{fname}" if scope_name else fname
+                    # Extract type annotation refs from function parameters and return
+                    if child.type == "function_definition":
+                        self._extract_type_refs(child, source, refs, new_scope)
                 self._walk_refs(child, source, file_path, refs, new_scope)
+
+    def _extract_decorator_refs(self, decorated_node, source, refs, scope_name):
+        """Extract references from decorators (e.g., @cache, @app.route)."""
+        for child in decorated_node.children:
+            if child.type == "decorator":
+                # The decorator content is after the '@'
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        name = self.node_text(sub, source)
+                        refs.append(self._make_reference(
+                            target_name=name,
+                            kind="call",
+                            line=sub.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                    elif sub.type == "attribute":
+                        name = self.node_text(sub, source)
+                        refs.append(self._make_reference(
+                            target_name=name,
+                            kind="call",
+                            line=sub.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                    elif sub.type == "call":
+                        self._extract_call(sub, source, refs, scope_name)
+
+    def _extract_type_refs(self, func_node, source, refs, scope_name):
+        """Extract references from type annotations in function signatures."""
+        # Parameter type annotations
+        params = func_node.child_by_field_name("parameters")
+        if params:
+            for param in params.children:
+                type_node = param.child_by_field_name("type")
+                if type_node:
+                    self._walk_type_node(type_node, source, refs, scope_name)
+
+        # Return type annotation
+        ret = func_node.child_by_field_name("return_type")
+        if ret:
+            self._walk_type_node(ret, source, refs, scope_name)
+
+    def _walk_type_node(self, node, source, refs, scope_name):
+        """Walk a type annotation node and extract type references."""
+        if node.type == "identifier":
+            name = self.node_text(node, source)
+            # Skip builtins that don't create real references
+            if name not in ("int", "str", "float", "bool", "bytes", "None",
+                            "list", "dict", "set", "tuple", "type", "object"):
+                refs.append(self._make_reference(
+                    target_name=name,
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+        elif node.type == "attribute":
+            name = self.node_text(node, source)
+            refs.append(self._make_reference(
+                target_name=name,
+                kind="type_ref",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            ))
+        else:
+            # Recurse into generic types like List[Item], Optional[str], etc.
+            for child in node.children:
+                self._walk_type_node(child, source, refs, scope_name)
 
     def _extract_import(self, node, source, refs, scope_name):
         # import x, import x.y, import x as y

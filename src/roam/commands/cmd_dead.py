@@ -40,6 +40,20 @@ _API_PREFIXES = ("get", "use", "create", "validate", "fetch", "update",
                  "delete", "find", "check", "make", "build", "parse")
 
 
+_ABC_METHOD_NAMES = frozenset({
+    "language_name", "file_extensions", "extract_symbols", "extract_references",
+    "get_docstring", "get_signature", "node_text",
+    "detect", "supported_bridges",
+    "resolve_cross_language", "get_bridge_edges",
+})
+
+
+def _is_test_path(file_path):
+    """Check if a file is a test file (discovered by pytest, not imported)."""
+    base = os.path.basename(file_path).lower()
+    return base.startswith("test_") or base.endswith("_test.py")
+
+
 def _dead_action(r, file_imported):
     """Compute actionable verdict and confidence % for a dead symbol.
 
@@ -61,6 +75,18 @@ def _dead_action(r, file_imported):
         kind = r["kind"]
     except (KeyError, IndexError):
         kind = ""
+
+    # Test file symbols — discovered by pytest, never imported directly
+    if _is_test_path(r["file_path"]):
+        return "INTENTIONAL", 10
+
+    # CLI command functions — loaded dynamically via LazyGroup/importlib
+    if base.startswith("cmd_") and kind == "function":
+        return "INTENTIONAL", 20
+
+    # ABC method overrides — called polymorphically, not by direct import
+    if kind == "method" and name in _ABC_METHOD_NAMES:
+        return "INTENTIONAL", 10
 
     # Entry point / lifecycle hooks (check original case for camelCase hooks)
     if name in _ENTRY_NAMES or name_lower in _ENTRY_NAMES:
@@ -251,6 +277,8 @@ def _analyze_dead(conn):
     Returns (high, low, imported_files) where high/low are lists of Row objects.
     """
     rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
+    # Exclude test files — their symbols are discovered by pytest, not imported
+    rows = [r for r in rows if not _is_test_path(r["file_path"])]
     if not rows:
         return [], [], set()
 

@@ -1,5 +1,21 @@
 # Changelog
 
+## v8.1.0
+
+Self-analysis driven improvements: ran roam on itself and fixed every issue it surfaced.
+
+### Bug Fixes
+
+- **Fixed `complexity` command crash** -- `roam complexity` crashed with `IndexError` on databases missing v7.4 columns (`cyclomatic_density`, `halstead_*`). Now uses defensive `_safe_metric()` accessor with graceful fallback.
+- **Fixed CHANGELOG v8.0.0** -- Incorrectly listed `roam anomalies` as a standalone command. The anomaly detection shipped as `roam trend --analyze` (with `--anomalies`, `--forecast`, `--fail-on-anomaly`, `--sensitivity`).
+
+### Improved Analysis
+
+- **Smarter health scoring** -- Expanded utility path detection to recognize `output/`, `db/`, `common/`, `internal/`, `infra/` directories and utility files (`resolve.py`, `helpers.py`, `base.py`). Shared infrastructure symbols are now properly categorized as expected utilities instead of false god-component alerts.
+- **95% fewer dead code false positives** -- Test files (`test_*.py`) now excluded from dead export analysis. ABC method overrides, CLI command functions, and dynamically-loaded symbols correctly marked as intentional. Total false reports dropped from 668 to ~131.
+- **Python extractor: decorator references** -- `@decorator` and `@module.decorator(args)` now create reference edges, enabling accurate decorator dependency tracking.
+- **Python extractor: type annotation references** -- Function parameter types (`x: SomeClass`), return types (`-> Result`), and generic type arguments (`List[Item]`) now create `type_ref` edges. Builtin types (`int`, `str`, etc.) are excluded.
+
 ## v8.0.1
 
 Project organization and code quality improvements.
@@ -30,9 +46,9 @@ Major release: anomaly detection, file role classification, dead code aging, cro
 - **Gate presets** (`src/roam/commands/gate_presets.py`) -- Framework-specific gate rules for `coverage-gaps`. Built-in presets for Python, JavaScript, Go, Java, and Rust. Custom rules via `.roam-gates.yml`.
 - **Test convention adapters** (`src/roam/index/test_conventions.py`) -- Pluggable test naming adapters for Python, Go, JavaScript, Java, Ruby, and Apex. Improves test discovery in `test-map` and `impact` commands.
 
-### New Commands
+### Enhanced Commands
 
-- **`roam anomalies`** -- Surface statistical anomalies across codebase metrics (complexity, churn, coupling, etc.).
+- **`roam trend --analyze`** -- Full anomaly analysis: Modified Z-Score outlier detection, Theil-Sen trend estimation, Mann-Kendall significance testing, CUSUM change-point detection, and linear forecasting. Also available as `--anomalies`, `--forecast`, `--fail-on-anomaly`, `--sensitivity=[low|medium|high]`.
 
 ### Testing
 

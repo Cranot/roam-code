@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "8.0.1"
+version = "8.1.0"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -55,6 +55,9 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --tb=short"
+markers = [
+    "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+]
 
 [tool.ruff]
 target-version = "py39"
