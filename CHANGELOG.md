@@ -19,7 +19,7 @@ Major release: anomaly detection, file role classification, dead code aging, cro
 
 ### Testing
 
-- **1656 total tests passing** (up from 669 in v7.5.0)
+- **1664 total tests passing** (up from 669 in v7.5.0)
 - New test files: `test_anomaly.py`, `test_file_roles.py`, `test_pr_risk_author.py`, `test_dead_aging.py`, `test_bridges.py`, `test_test_conventions.py`, `test_gate_presets.py`
 
 ### Infrastructure
