@@ -2,6 +2,12 @@
 from __future__ import annotations
 from .base import LanguageExtractor
 
+# Builtin type names that don't create real reference edges
+_BUILTIN_TYPES = frozenset({
+    "int", "str", "float", "bool", "bytes", "None",
+    "list", "dict", "set", "tuple", "type", "object",
+})
+
 
 class PythonExtractor(LanguageExtractor):
     """Full Python symbol and reference extractor."""
@@ -170,6 +176,15 @@ class PythonExtractor(LanguageExtractor):
             parent_name=parent_name,
         ))
 
+        # Extract instance attributes from __init__ body (self.x = ...)
+        if name == "__init__" and parent_name:
+            body = node.child_by_field_name("body")
+            if body:
+                self_name = self._detect_self_name(node)
+                self._extract_init_attributes(
+                    body, source, symbols, parent_name, dunder_all, self_name,
+                )
+
     def _extract_class(self, node, source, file_path, symbols, parent_name, dunder_all, decorator_node=None):
         name_node = node.child_by_field_name("name")
         if name_node is None:
@@ -320,6 +335,88 @@ class PythonExtractor(LanguageExtractor):
                 return text
         return None
 
+    def _detect_self_name(self, func_node) -> bytes:
+        """Detect the self/cls parameter name from a method's first argument (Pyan-inspired)."""
+        params = func_node.child_by_field_name("parameters")
+        if params:
+            for child in params.children:
+                if child.type == "identifier":
+                    return child.text
+                # typed_parameter: (self: Self) or typed_default_parameter
+                if child.type in ("typed_parameter", "typed_default_parameter"):
+                    name_node = child.child_by_field_name("name")
+                    if name_node and name_node.type == "identifier":
+                        return name_node.text
+        return b"self"
+
+    def _extract_init_attributes(self, body_node, source, symbols, parent_name,
+                                 dunder_all, self_name):
+        """Extract instance attributes from __init__ body (self.x = value)."""
+        seen = set()
+        # Collect existing class-level property names to avoid duplicates
+        for sym in symbols:
+            if sym.get("parent_name") == parent_name and sym.get("kind") == "property":
+                seen.add(sym["name"])
+
+        self._collect_self_assignments(body_node, source, symbols, parent_name,
+                                       dunder_all, self_name, seen)
+
+    def _collect_self_assignments(self, node, source, symbols, parent_name,
+                                  dunder_all, self_name, seen):
+        """Walk __init__ body collecting self.x = ... assignments."""
+        for child in node.children:
+            if child.type == "expression_statement":
+                for sub in child.children:
+                    if sub.type == "assignment":
+                        self._try_extract_self_attr(
+                            sub, source, symbols, parent_name, dunder_all,
+                            self_name, seen,
+                        )
+            elif child.type == "assignment":
+                self._try_extract_self_attr(
+                    child, source, symbols, parent_name, dunder_all,
+                    self_name, seen,
+                )
+            # Recurse into conditional/try/with blocks (common in __init__)
+            elif child.type in ("if_statement", "try_statement", "with_statement",
+                                "for_statement", "block"):
+                self._collect_self_assignments(
+                    child, source, symbols, parent_name, dunder_all,
+                    self_name, seen,
+                )
+
+    def _try_extract_self_attr(self, assign_node, source, symbols, parent_name,
+                                dunder_all, self_name, seen):
+        """If assign_node is `self.x = value`, extract x as a property symbol."""
+        left = assign_node.child_by_field_name("left")
+        if left is None or left.type != "attribute":
+            return
+        obj = left.child_by_field_name("object")
+        if obj is None or obj.type != "identifier" or obj.text != self_name:
+            return
+        attr_node = left.child_by_field_name("attribute")
+        if attr_node is None:
+            return
+        attr_name = self.node_text(attr_node, source)
+        if attr_name in seen:
+            return
+        seen.add(attr_name)
+
+        right = assign_node.child_by_field_name("right")
+        default_value = self._extract_literal_value(right, source) if right else None
+
+        qualified = f"{parent_name}.{attr_name}"
+        symbols.append(self._make_symbol(
+            name=attr_name,
+            kind="property",
+            line_start=assign_node.start_point[0] + 1,
+            line_end=assign_node.end_point[0] + 1,
+            qualified_name=qualified,
+            visibility=self._visibility(attr_name),
+            parent_name=parent_name,
+            default_value=default_value,
+        ))
+
     def _is_exported(self, name: str, dunder_all: set[str] | None) -> bool:
         if dunder_all is not None:
             return name in dunder_all
@@ -335,6 +432,12 @@ class PythonExtractor(LanguageExtractor):
                 self._extract_call(child, source, refs, scope_name)
             elif child.type == "decorated_definition":
                 self._extract_decorator_refs(child, source, refs, scope_name)
+                self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type in ("assignment", "expression_statement"):
+                # Walk type annotations on assignments: x: Path = ..., self.x: int = ...
+                # Note: type aliases (PathList = List[Path]) are NOT handled here —
+                # the RHS is a subscript expression, not a type annotation field.
+                self._extract_assignment_type_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
             else:
                 # Recurse, updating scope for classes/functions
@@ -389,13 +492,23 @@ class PythonExtractor(LanguageExtractor):
         if ret:
             self._walk_type_node(ret, source, refs, scope_name)
 
+    def _extract_assignment_type_refs(self, node, source, refs, scope_name):
+        """Extract type_ref edges from annotated assignments (class fields, module vars)."""
+        targets = [node] if node.type == "assignment" else []
+        if node.type == "expression_statement":
+            for sub in node.children:
+                if sub.type == "assignment":
+                    targets.append(sub)
+        for assign in targets:
+            type_node = assign.child_by_field_name("type")
+            if type_node:
+                self._walk_type_node(type_node, source, refs, scope_name)
+
     def _walk_type_node(self, node, source, refs, scope_name):
         """Walk a type annotation node and extract type references."""
         if node.type == "identifier":
             name = self.node_text(node, source)
-            # Skip builtins that don't create real references
-            if name not in ("int", "str", "float", "bool", "bytes", "None",
-                            "list", "dict", "set", "tuple", "type", "object"):
+            if name not in _BUILTIN_TYPES:
                 refs.append(self._make_reference(
                     target_name=name,
                     kind="type_ref",
@@ -410,6 +523,29 @@ class PythonExtractor(LanguageExtractor):
                 line=node.start_point[0] + 1,
                 source_name=scope_name,
             ))
+        elif node.type == "string":
+            # Forward reference: Optional["Config"] -> extract "Config"
+            for child in node.children:
+                if child.type == "string_content":
+                    name = self.node_text(child, source).strip()
+                    # Simple identifier forward ref: "Config"
+                    if name.isidentifier() and name not in _BUILTIN_TYPES:
+                        refs.append(self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                    # Dotted forward ref: "module.ClassName"
+                    elif "." in name and all(
+                        p.isidentifier() for p in name.split(".")
+                    ):
+                        refs.append(self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
         else:
             # Recurse into generic types like List[Item], Optional[str], etc.
             for child in node.children:

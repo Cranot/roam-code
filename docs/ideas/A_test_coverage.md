@@ -4,7 +4,7 @@
 chuckjewell fork -- 11 subprocess-based test files (+1,046 lines) that we lack entirely.
 
 ## Why
-We have 28 test files / 1664 tests. The fork identified 11 untested feature areas:
+We have 29 test files / 1691 tests. The fork identified 11 untested feature areas:
 context batch, coupling --against, coverage-gaps, dead grouping, diff parity,
 grep --source-only, JSON contracts, report config, report presets, risk --explain,
 snapshot/trend. ALL features exist in our code but have ZERO dedicated tests.

@@ -988,7 +988,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # 1664 tests, Python 3.9-3.13
+pytest tests/              # 1691 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1044,7 +1044,7 @@ roam-code/
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 1664 tests across 28 test files
+└── tests/                             # 1691 tests across 29 test files
 ```
 
 </details>
@@ -1085,7 +1085,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 1664 tests must pass
+pytest tests/   # All 1691 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
