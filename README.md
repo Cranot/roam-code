@@ -2,7 +2,7 @@
 
 # roam
 
-**Roam builds a semantic graph of your codebase and lets AI agents query it with one shell command.**
+**Roam pre-indexes your codebase into a semantic graph so AI agents can query structure instead of grepping files.**
 
 *5 core commands · advanced tools when you need them*
 
