@@ -1,11 +1,16 @@
 """Show unreferenced exported symbols (dead code)."""
 
+from __future__ import annotations
+
+import math
 import os
+import time as _time
 from collections import defaultdict
+from statistics import median
 
 import click
 
-from roam.db.connection import open_db, batched_in, batched_count
+from roam.db.connection import open_db, find_project_root, batched_in, batched_count
 from roam.db.queries import UNREFERENCED_EXPORTS
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
@@ -298,6 +303,346 @@ def _analyze_dead(conn):
     return high, low, imported_files
 
 
+# ---------------------------------------------------------------------------
+# Dead code aging, decay, and effort estimation
+# ---------------------------------------------------------------------------
+
+def _get_blame_ages(conn, dead_symbols):
+    """Get age data for dead symbols by batching git blame per file.
+
+    Returns dict mapping symbol_id to {age_days, last_modified_days, author,
+    author_active, dead_loc}.
+
+    Uses existing git_stats.get_blame_for_file() when available, falls back
+    to the git_commits + git_file_changes tables for file-level timestamps.
+    """
+    now = int(_time.time())
+    ninety_days_ago = now - (90 * 86400)
+    result = {}
+
+    if not dead_symbols:
+        return result
+
+    # Build set of active authors (commits in last 90 days)
+    active_authors = set()
+    for r in conn.execute(
+        "SELECT DISTINCT author FROM git_commits WHERE timestamp >= ?",
+        (ninety_days_ago,),
+    ).fetchall():
+        active_authors.add(r["author"])
+
+    # Group dead symbols by file_path for batched blame
+    by_file = defaultdict(list)
+    for sym in dead_symbols:
+        by_file[sym["file_path"]].append(sym)
+
+    project_root = find_project_root()
+
+    for file_path, syms in by_file.items():
+        # Try git blame for line-level accuracy
+        blame_entries = []
+        try:
+            from roam.index.git_stats import get_blame_for_file
+            blame_entries = get_blame_for_file(project_root, file_path)
+        except Exception:
+            pass
+
+        if blame_entries:
+            # We have line-level blame data
+            for sym in syms:
+                line_start = sym["line_start"] or 1
+                line_end = sym["line_end"] or line_start
+                dead_loc = max(1, line_end - line_start + 1)
+
+                # Extract blame for symbol's line range (1-indexed)
+                relevant = blame_entries[line_start - 1: line_end]
+                if not relevant:
+                    relevant = blame_entries[:1] if blame_entries else []
+
+                if relevant:
+                    timestamps = [e["timestamp"] for e in relevant if e["timestamp"] > 0]
+                    authors = [e["author"] for e in relevant]
+                    # Primary author = most lines
+                    author_counts = defaultdict(int)
+                    for a in authors:
+                        author_counts[a] += 1
+                    primary_author = max(author_counts, key=author_counts.get) if author_counts else ""
+
+                    oldest_ts = min(timestamps) if timestamps else now
+                    newest_ts = max(timestamps) if timestamps else now
+                    age_days = max(0, (now - oldest_ts) // 86400)
+                    last_modified_days = max(0, (now - newest_ts) // 86400)
+                else:
+                    age_days = 0
+                    last_modified_days = 0
+                    primary_author = ""
+                    dead_loc = max(1, line_end - line_start + 1)
+
+                result[sym["id"]] = {
+                    "age_days": age_days,
+                    "last_modified_days": last_modified_days,
+                    "author": primary_author,
+                    "author_active": primary_author in active_authors,
+                    "dead_loc": dead_loc,
+                }
+        else:
+            # Fallback: use git_file_changes table for file-level timestamps
+            file_id = syms[0]["file_id"] if syms else None
+            oldest_ts = now
+            newest_ts = now
+            primary_author = ""
+
+            if file_id is not None:
+                ts_row = conn.execute(
+                    "SELECT MIN(gc.timestamp) as oldest, MAX(gc.timestamp) as newest "
+                    "FROM git_file_changes gfc "
+                    "JOIN git_commits gc ON gfc.commit_id = gc.id "
+                    "WHERE gfc.file_id = ?",
+                    (file_id,),
+                ).fetchone()
+                if ts_row and ts_row["oldest"]:
+                    oldest_ts = ts_row["oldest"]
+                    newest_ts = ts_row["newest"]
+
+                author_row = conn.execute(
+                    "SELECT gc.author, COUNT(*) as cnt "
+                    "FROM git_file_changes gfc "
+                    "JOIN git_commits gc ON gfc.commit_id = gc.id "
+                    "WHERE gfc.file_id = ? "
+                    "GROUP BY gc.author ORDER BY cnt DESC LIMIT 1",
+                    (file_id,),
+                ).fetchone()
+                if author_row:
+                    primary_author = author_row["author"]
+
+            age_days = max(0, (now - oldest_ts) // 86400)
+            last_modified_days = max(0, (now - newest_ts) // 86400)
+
+            for sym in syms:
+                line_start = sym["line_start"] or 1
+                line_end = sym["line_end"] or line_start
+                dead_loc = max(1, line_end - line_start + 1)
+                result[sym["id"]] = {
+                    "age_days": age_days,
+                    "last_modified_days": last_modified_days,
+                    "author": primary_author,
+                    "author_active": primary_author in active_authors,
+                    "dead_loc": dead_loc,
+                }
+
+    # Fill in any symbols we missed (no git data at all)
+    for sym in dead_symbols:
+        if sym["id"] not in result:
+            line_start = sym["line_start"] or 1
+            line_end = sym["line_end"] or line_start
+            result[sym["id"]] = {
+                "age_days": 0,
+                "last_modified_days": 0,
+                "author": "",
+                "author_active": False,
+                "dead_loc": max(1, line_end - line_start + 1),
+            }
+
+    return result
+
+
+def _decay_score(age_days, cognitive_complexity, cluster_size, importing_files,
+                 author_active, dead_loc):
+    """0-100 decay score. Higher = more decayed, harder to remove.
+
+    Scoring breakdown (max 100):
+      age_points      (max 35): 7 * log2(1 + age_days / 90)
+      cc_points       (max 25): cognitive_complexity * 1.5
+      coupling_points (max 20): importing_files * 2 + cluster_size * 3
+      size_points     (max 10): dead_loc / 20
+      author_points   (max 10): 0 if author_active else 10
+    """
+    age_points = min(35, 7 * math.log2(1 + age_days / 90))
+    cc_points = min(25, cognitive_complexity * 1.5)
+    coupling_points = min(20, importing_files * 2 + cluster_size * 3)
+    size_points = min(10, dead_loc / 20)
+    author_points = 0 if author_active else 10
+    return min(100, int(round(
+        age_points + cc_points + coupling_points + size_points + author_points
+    )))
+
+
+def _estimate_removal_minutes(dead_loc, cognitive_complexity, importing_files,
+                              cluster_size, age_years, author_active):
+    """Estimate minutes to remove a dead symbol.
+
+    Factors:
+      base             = dead_loc * 1.0
+      complexity_factor = 1.0 + (cognitive_complexity / 20.0)
+      coupling_factor   = 1.0 + (0.05 * importing_files) + (0.1 * max(0, cluster_size - 1))
+      age_factor        = 1.0 + (0.1 * min(age_years, 10))
+      author_factor     = 0.8 if author_active else 1.0
+    """
+    base = dead_loc * 1.0
+    complexity_factor = 1.0 + (cognitive_complexity / 20.0)
+    coupling_factor = 1.0 + (0.05 * importing_files) + (0.1 * max(0, cluster_size - 1))
+    age_factor = 1.0 + (0.1 * min(age_years, 10))
+    author_factor = 0.8 if author_active else 1.0
+    return round(base * complexity_factor * coupling_factor * age_factor * author_factor, 1)
+
+
+def _decay_tier(score):
+    """Classify decay score into human-readable tier.
+
+    Fresh (0-25), Stale (26-50), Decayed (51-75), Fossilized (76-100).
+    """
+    if score <= 25:
+        return "Fresh"
+    elif score <= 50:
+        return "Stale"
+    elif score <= 75:
+        return "Decayed"
+    else:
+        return "Fossilized"
+
+
+def _get_symbol_complexities(conn, symbol_ids):
+    """Fetch cognitive_complexity from symbol_metrics for a set of symbol IDs.
+
+    Returns dict mapping symbol_id to cognitive_complexity (float).
+    """
+    if not symbol_ids:
+        return {}
+    rows = batched_in(
+        conn,
+        "SELECT symbol_id, cognitive_complexity FROM symbol_metrics "
+        "WHERE symbol_id IN ({ph})",
+        list(symbol_ids),
+    )
+    return {r["symbol_id"]: r["cognitive_complexity"] or 0 for r in rows}
+
+
+def _get_importing_file_counts(conn, file_ids):
+    """Count how many files import each given file_id.
+
+    Returns dict mapping file_id to count of importing files.
+    """
+    if not file_ids:
+        return {}
+    rows = batched_in(
+        conn,
+        "SELECT target_file_id, COUNT(*) as cnt FROM file_edges "
+        "WHERE target_file_id IN ({ph}) GROUP BY target_file_id",
+        list(file_ids),
+    )
+    return {r["target_file_id"]: r["cnt"] for r in rows}
+
+
+def _build_cluster_membership(clusters):
+    """Build a dict mapping symbol_id to cluster_size from cluster list.
+
+    Each cluster is a set of symbol IDs. Returns {symbol_id: cluster_size}.
+    """
+    membership = {}
+    for cluster_set in clusters:
+        size = len(cluster_set)
+        for sid in cluster_set:
+            membership[sid] = size
+    return membership
+
+
+def _compute_extended_data(conn, all_items, clusters_for_aging):
+    """Compute aging, decay, and effort data for dead symbols.
+
+    Returns dict mapping symbol_id to {aging: {...}, effort: {...}, decay_score: int}.
+    """
+    if not all_items:
+        return {}
+
+    symbol_ids = {r["id"] for r in all_items}
+    file_ids = {r["file_id"] for r in all_items}
+
+    # Gather all needed data
+    blame_ages = _get_blame_ages(conn, all_items)
+    complexities = _get_symbol_complexities(conn, symbol_ids)
+    importer_counts = _get_importing_file_counts(conn, file_ids)
+    cluster_membership = _build_cluster_membership(clusters_for_aging)
+
+    result = {}
+    for r in all_items:
+        sid = r["id"]
+        aging = blame_ages.get(sid, {
+            "age_days": 0, "last_modified_days": 0,
+            "author": "", "author_active": False, "dead_loc": 1,
+        })
+        cc = complexities.get(sid, 0)
+        importing_files = importer_counts.get(r["file_id"], 0)
+        cluster_size = cluster_membership.get(sid, 1)
+        age_days = aging["age_days"]
+        dead_loc = aging["dead_loc"]
+        author_active = aging["author_active"]
+
+        dscore = _decay_score(
+            age_days, cc, cluster_size, importing_files,
+            author_active, dead_loc,
+        )
+        age_years = age_days / 365.25
+        removal_min = _estimate_removal_minutes(
+            dead_loc, cc, importing_files, cluster_size,
+            age_years, author_active,
+        )
+        complexity_factor = round(1.0 + (cc / 20.0), 2)
+        coupling_factor = round(
+            1.0 + (0.05 * importing_files) + (0.1 * max(0, cluster_size - 1)), 2
+        )
+
+        result[sid] = {
+            "aging": {
+                "age_days": age_days,
+                "last_modified_days": aging["last_modified_days"],
+                "author": aging["author"],
+                "author_active": author_active,
+                "dead_loc": dead_loc,
+            },
+            "effort": {
+                "removal_minutes": removal_min,
+                "complexity_factor": complexity_factor,
+                "coupling_factor": coupling_factor,
+            },
+            "decay_score": dscore,
+        }
+    return result
+
+
+def _extended_summary(extended_data):
+    """Compute aggregate summary stats from extended data.
+
+    Returns dict with total_dead_loc, total_effort_hours, median_age_days,
+    and decay_distribution.
+    """
+    if not extended_data:
+        return {
+            "total_dead_loc": 0,
+            "total_effort_hours": 0.0,
+            "median_age_days": 0,
+            "decay_distribution": {
+                "fresh": 0, "stale": 0, "decayed": 0, "fossilized": 0,
+            },
+        }
+
+    total_loc = sum(d["aging"]["dead_loc"] for d in extended_data.values())
+    total_minutes = sum(d["effort"]["removal_minutes"] for d in extended_data.values())
+    ages = [d["aging"]["age_days"] for d in extended_data.values()]
+    scores = [d["decay_score"] for d in extended_data.values()]
+
+    dist = {"fresh": 0, "stale": 0, "decayed": 0, "fossilized": 0}
+    for s in scores:
+        tier = _decay_tier(s).lower()
+        dist[tier] = dist.get(tier, 0) + 1
+
+    return {
+        "total_dead_loc": total_loc,
+        "total_effort_hours": round(total_minutes / 60.0, 1),
+        "median_age_days": int(median(ages)) if ages else 0,
+        "decay_distribution": dist,
+    }
+
+
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
 @click.option("--by-directory", "by_directory", is_flag=True,
@@ -310,11 +655,28 @@ def _analyze_dead(conn):
               help="Detect dead subgraphs (groups of dead symbols referencing only each other)")
 @click.option("--extinction", "extinction_target", default=None,
               help="Predict what else becomes dead if you delete this symbol")
+@click.option("--aging", "show_aging", is_flag=True,
+              help="Add age/staleness columns to output")
+@click.option("--effort", "show_effort", is_flag=True,
+              help="Add effort estimation columns to output")
+@click.option("--decay", "show_decay", is_flag=True,
+              help="Show decay score and distribution")
+@click.option("--sort-by-age", "sort_by_age", is_flag=True,
+              help="Sort dead code oldest-first")
+@click.option("--sort-by-effort", "sort_by_effort", is_flag=True,
+              help="Sort by removal effort (highest first)")
+@click.option("--sort-by-decay", "sort_by_decay", is_flag=True,
+              help="Sort by decay score (most fossilized first)")
 @click.pass_context
-def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, extinction_target):
+def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
+         extinction_target, show_aging, show_effort, show_decay,
+         sort_by_age, sort_by_effort, sort_by_decay):
     """Show unreferenced exported symbols (dead code)."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     ensure_index()
+
+    # Any extended flag implies we need extended data
+    need_extended = show_aging or show_effort or show_decay or sort_by_age or sort_by_effort or sort_by_decay
 
     with open_db(readonly=True) as conn:
         # --- Extinction mode (separate flow) ---
@@ -375,36 +737,71 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
         n_review = sum(1 for _, a, _c in all_dead if a == "REVIEW")
         n_intent = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL")
 
-        # --- Cluster detection ---
+        # --- Cluster detection (also needed for extended data) ---
         clusters_data = []
-        if show_clusters:
+        raw_clusters = []
+        if show_clusters or need_extended:
             dead_ids = {r["id"] for r in all_items}
             raw_clusters = _find_dead_clusters(conn, dead_ids)
-            id_to_info = {}
-            if raw_clusters:
-                all_cluster_ids = set()
-                for c in raw_clusters:
-                    all_cluster_ids.update(c)
-                for r in batched_in(
-                    conn,
-                    "SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id "
-                    "WHERE s.id IN ({ph})",
-                    list(all_cluster_ids),
-                ):
-                    id_to_info[r["id"]] = r
+            if show_clusters:
+                id_to_info = {}
+                if raw_clusters:
+                    all_cluster_ids = set()
+                    for c in raw_clusters:
+                        all_cluster_ids.update(c)
+                    for r in batched_in(
+                        conn,
+                        "SELECT s.id, s.name, s.kind, f.path as file_path, s.line_start "
+                        "FROM symbols s JOIN files f ON s.file_id = f.id "
+                        "WHERE s.id IN ({ph})",
+                        list(all_cluster_ids),
+                    ):
+                        id_to_info[r["id"]] = r
 
-            for cluster_set in raw_clusters:
-                syms = []
-                for sid in sorted(cluster_set):
-                    info = id_to_info.get(sid)
-                    if info:
-                        syms.append({
-                            "name": info["name"],
-                            "kind": info["kind"],
-                            "location": loc(info["file_path"], info["line_start"]),
-                        })
-                clusters_data.append({"size": len(cluster_set), "symbols": syms})
+                for cluster_set in raw_clusters:
+                    syms = []
+                    for sid in sorted(cluster_set):
+                        info = id_to_info.get(sid)
+                        if info:
+                            syms.append({
+                                "name": info["name"],
+                                "kind": info["kind"],
+                                "location": loc(info["file_path"], info["line_start"]),
+                            })
+                    clusters_data.append({"size": len(cluster_set), "symbols": syms})
+
+        # --- Extended data (aging / effort / decay) ---
+        extended_data = {}
+        ext_summary = {}
+        if need_extended:
+            extended_data = _compute_extended_data(conn, all_items, raw_clusters)
+            ext_summary = _extended_summary(extended_data)
+
+        # --- Sorting by extended fields ---
+        if sort_by_age and extended_data:
+            all_items = sorted(
+                all_items,
+                key=lambda r: extended_data.get(r["id"], {}).get("aging", {}).get("age_days", 0),
+                reverse=True,
+            )
+            high = [r for r in all_items if r["file_id"] in imported_files]
+            low = [r for r in all_items if r["file_id"] not in imported_files]
+        elif sort_by_effort and extended_data:
+            all_items = sorted(
+                all_items,
+                key=lambda r: extended_data.get(r["id"], {}).get("effort", {}).get("removal_minutes", 0),
+                reverse=True,
+            )
+            high = [r for r in all_items if r["file_id"] in imported_files]
+            low = [r for r in all_items if r["file_id"] not in imported_files]
+        elif sort_by_decay and extended_data:
+            all_items = sorted(
+                all_items,
+                key=lambda r: extended_data.get(r["id"], {}).get("decay_score", 0),
+                reverse=True,
+            )
+            high = [r for r in all_items if r["file_id"] in imported_files]
+            low = [r for r in all_items if r["file_id"] not in imported_files]
 
         # --- Grouping ---
         group_by = None
@@ -428,22 +825,28 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
 
         # --- JSON output ---
         if json_mode:
+            def _build_sym_dict(r, file_imported):
+                d = {
+                    "name": r["name"], "kind": r["kind"],
+                    "location": loc(r["file_path"], r["line_start"]),
+                    "action": _dead_action(r, file_imported)[0],
+                    "confidence": _dead_action(r, file_imported)[1],
+                }
+                if need_extended and r["id"] in extended_data:
+                    ext = extended_data[r["id"]]
+                    d["aging"] = ext["aging"]
+                    d["effort"] = ext["effort"]
+                    d["decay_score"] = ext["decay_score"]
+                return d
+
+            summary = {"safe": n_safe, "review": n_review, "intentional": n_intent}
+            if need_extended:
+                summary.update(ext_summary)
+
             envelope = json_envelope("dead",
-                summary={"safe": n_safe, "review": n_review, "intentional": n_intent},
-                high_confidence=[
-                    {"name": r["name"], "kind": r["kind"],
-                     "location": loc(r["file_path"], r["line_start"]),
-                     "action": _dead_action(r, True)[0],
-                     "confidence": _dead_action(r, True)[1]}
-                    for r in high
-                ],
-                low_confidence=[
-                    {"name": r["name"], "kind": r["kind"],
-                     "location": loc(r["file_path"], r["line_start"]),
-                     "action": _dead_action(r, False)[0],
-                     "confidence": _dead_action(r, False)[1]}
-                    for r in low
-                ],
+                summary=summary,
+                high_confidence=[_build_sym_dict(r, True) for r in high],
+                low_confidence=[_build_sym_dict(r, False) for r in low],
             )
             if group_by:
                 envelope["grouping"] = group_by
@@ -457,6 +860,13 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
         if summary_only:
             click.echo(f"Dead exports: {len(all_items)} "
                         f"({n_safe} safe, {n_review} review, {n_intent} intentional)")
+            if need_extended and ext_summary:
+                click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}")
+                click.echo(f"  Median age: {ext_summary['median_age_days']} days")
+                click.echo(f"  Total removal effort: {ext_summary['total_effort_hours']} hours")
+                dist = ext_summary["decay_distribution"]
+                click.echo(f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
+                            f"{dist['decayed']} decayed, {dist['fossilized']} fossilized")
             if group_by and groups_data:
                 click.echo(f"\nBy {group_by}:")
                 for g in groups_data[:20]:
@@ -501,6 +911,16 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
         click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===")
         click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, "
                     f"{n_intent} likely intentional")
+
+        # Show extended summary if any extended flag is set
+        if need_extended and ext_summary:
+            click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}  "
+                        f"Median age: {ext_summary['median_age_days']}d  "
+                        f"Removal effort: {ext_summary['total_effort_hours']}h")
+            if show_decay:
+                dist = ext_summary["decay_distribution"]
+                click.echo(f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
+                            f"{dist['decayed']} decayed, {dist['fossilized']} fossilized")
         click.echo()
 
         # Build imported-by lookup for high-confidence results
@@ -530,6 +950,16 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
 
             click.echo(f"-- High confidence ({len(high)}) --")
             click.echo("(file is imported but symbol has no references)")
+
+            # Build table headers and rows based on active flags
+            headers = ["Action", "Name", "Kind", "Location", "Reason"]
+            if show_aging:
+                headers.extend(["Age(d)", "LastMod(d)", "Author"])
+            if show_effort:
+                headers.extend(["LOC", "Effort(m)"])
+            if show_decay:
+                headers.extend(["Decay", "Tier"])
+
             table_rows = []
             for r in high:
                 imp_list = importers_by_file.get(r["file_id"], [])
@@ -540,36 +970,81 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters, exti
                 else:
                     reason = f"{n_importers} importers, none use any export"
                 action, confidence = _dead_action(r, True)
-                table_rows.append([
+                row = [
                     f"{action} {confidence}%",
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
                     reason,
-                ])
-            click.echo(format_table(
-                ["Action", "Name", "Kind", "Location", "Reason"],
-                table_rows,
-                budget=50,
-            ))
+                ]
+                if need_extended:
+                    ext = extended_data.get(r["id"], {})
+                    aging = ext.get("aging", {})
+                    effort = ext.get("effort", {})
+                    dscore = ext.get("decay_score", 0)
+                    if show_aging:
+                        row.extend([
+                            str(aging.get("age_days", 0)),
+                            str(aging.get("last_modified_days", 0)),
+                            aging.get("author", "")[:20],
+                        ])
+                    if show_effort:
+                        row.extend([
+                            str(aging.get("dead_loc", 0)),
+                            str(effort.get("removal_minutes", 0)),
+                        ])
+                    if show_decay:
+                        row.extend([
+                            str(dscore),
+                            _decay_tier(dscore),
+                        ])
+                table_rows.append(row)
+            click.echo(format_table(headers, table_rows, budget=50))
 
         if show_all and low:
             click.echo(f"\n-- Low confidence ({len(low)}) --")
             click.echo("(file has no importers — may be entry point or used by unparsed files)")
+
+            headers = ["Action", "Name", "Kind", "Location"]
+            if show_aging:
+                headers.extend(["Age(d)", "LastMod(d)", "Author"])
+            if show_effort:
+                headers.extend(["LOC", "Effort(m)"])
+            if show_decay:
+                headers.extend(["Decay", "Tier"])
+
             table_rows = []
             for r in low:
                 action, confidence = _dead_action(r, False)
-                table_rows.append([
+                row = [
                     f"{action} {confidence}%",
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
-                ])
-            click.echo(format_table(
-                ["Action", "Name", "Kind", "Location"],
-                table_rows,
-                budget=50,
-            ))
+                ]
+                if need_extended:
+                    ext = extended_data.get(r["id"], {})
+                    aging = ext.get("aging", {})
+                    effort = ext.get("effort", {})
+                    dscore = ext.get("decay_score", 0)
+                    if show_aging:
+                        row.extend([
+                            str(aging.get("age_days", 0)),
+                            str(aging.get("last_modified_days", 0)),
+                            aging.get("author", "")[:20],
+                        ])
+                    if show_effort:
+                        row.extend([
+                            str(aging.get("dead_loc", 0)),
+                            str(effort.get("removal_minutes", 0)),
+                        ])
+                    if show_decay:
+                        row.extend([
+                            str(dscore),
+                            _decay_tier(dscore),
+                        ])
+                table_rows.append(row)
+            click.echo(format_table(headers, table_rows, budget=50))
         elif low:
             click.echo(f"\n({len(low)} low-confidence results hidden — use --all to show)")
 

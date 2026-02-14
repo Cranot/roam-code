@@ -1,5 +1,7 @@
 """Context-enriched grep: text search annotated with enclosing symbols."""
 
+from __future__ import annotations
+
 import os
 import re
 import subprocess
@@ -10,6 +12,7 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import is_test_file
+from roam.index.file_roles import classify_file, ROLE_SOURCE, ROLE_TEST
 
 
 # ---------------------------------------------------------------------------
@@ -167,6 +170,11 @@ def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_p
 
     if excludes:
         matches = [m for m in matches if not _matches_any_exclude(m["path"], excludes)]
+
+    # Use file_roles classifier for smarter source-only / test-only filtering
+    if source_only:
+        matches = [m for m in matches
+                   if classify_file(m["path"]) in (ROLE_SOURCE, ROLE_TEST)]
 
     if test_only:
         matches = [m for m in matches if is_test_file(m["path"])]
