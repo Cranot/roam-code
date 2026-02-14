@@ -4,10 +4,12 @@ Provides:
 - Subprocess helper: roam() for smoke/E2E tests
 - Git helpers: git_init(), git_commit()
 - CliRunner fixtures: cli_runner, invoke_cli()
-- Composable project fixtures: git_repo → python_project → indexed_project
+- Composable project fixtures: git_repo -> python_project -> indexed_project
 - Factory fixture: project_factory for custom file combinations
 - JSON validation helpers: parse_json_output(), assert_json_envelope()
 """
+
+from __future__ import annotations
 
 import json
 import os
