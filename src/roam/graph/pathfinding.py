@@ -26,34 +26,6 @@ def _ensure_weights(G: nx.DiGraph) -> None:
             data["weight"] = _EDGE_WEIGHTS.get(data.get("kind", ""), 2)
 
 
-def find_path(
-    G: nx.DiGraph, source_id: int, target_id: int
-) -> list[int] | None:
-    """Find the shortest path from *source_id* to *target_id*.
-
-    Prefers call edges over import edges via edge-kind weighting.
-    Tries the directed graph first; if no directed path exists, falls back to
-    the undirected projection.  Returns ``None`` when no path exists at all.
-    """
-    if source_id not in G or target_id not in G:
-        return None
-
-    _ensure_weights(G)
-
-    # Directed attempt (weighted)
-    try:
-        return list(nx.shortest_path(G, source_id, target_id, weight="weight"))
-    except nx.NetworkXNoPath:
-        pass
-
-    # Undirected fallback (weighted)
-    try:
-        undirected = G.to_undirected()
-        return list(nx.shortest_path(undirected, source_id, target_id, weight="weight"))
-    except (nx.NetworkXNoPath, nx.NodeNotFound):
-        return None
-
-
 def find_k_paths(
     G: nx.DiGraph, source_id: int, target_id: int, k: int = 3
 ) -> list[list[int]]:

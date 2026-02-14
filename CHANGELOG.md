@@ -1,5 +1,33 @@
 # Changelog
 
+## v8.2.0
+
+Self-analysis driven improvements: ran roam on itself, fixed every discrepancy and false positive it surfaced.
+
+### Bug Fixes
+
+- **Fixed dead export count discrepancy** -- `roam understand` reported 1967 dead exports vs `roam dead --summary` reporting 190. Root cause: `collect_metrics()` in metrics_history.py used raw UNREFERENCED_EXPORTS query without test-file filtering. Now consistent.
+- **Fixed alerts health score mismatch** -- `roam alerts` showed health_score=26 while `roam health` showed 38. Replaced simple penalty-based formula in `collect_metrics()` with weighted geometric mean matching `cmd_health.py`.
+- **Fixed patterns command self-detection** -- `roam patterns` was detecting its own detector functions (`_detect_factory`, `_detect_middleware`, `_detect_decorator`) as pattern instances. Added `_is_test_or_detector_path()` filter that excludes test files and `cmd_patterns.py` itself.
+- **Fixed middleware false positives** -- Removed `%Handler` and `%Filter` from middleware SQL patterns, keeping only genuine middleware indicators (`%Middleware`, `%Interceptor`, `%Pipe`, `%Pipeline`).
+
+### Improved Analysis
+
+- **Smarter health scoring** -- Added `_NON_PRODUCTION_PATH_PATTERNS` in `cmd_health.py` to classify `dev/`, `tests/`, `scripts/`, `benchmark/`, `conftest.py` as expected utilities rather than actionable god-components or bottlenecks.
+- **File role: dev/ as scripts** -- Added `dev/` directory pattern to `file_roles.py` classifier, correctly assigning `ROLE_SCRIPTS` to development tools.
+- **Python extractor: with-statement references** -- Context managers (`with open_db() as conn:`) now produce call edges to the context manager function.
+- **Python extractor: raise references** -- `raise ValueError(...)` and `raise StopIteration` now produce call edges to the exception type.
+- **Python extractor: except clause references** -- `except CustomError as e:` now produces type_ref edges. Handles single types, tuples, as-patterns, and dotted attributes.
+
+### Dead Code Removal
+
+- Removed 5 unused functions: `condense_cycles`, `layer_balance`, `find_path`, `build_reverse_adj`, `get_symbol_blame` (total: ~200 lines).
+
+### Testing
+
+- 1729 tests across 30 test files (up from 1691 across 29)
+- New test file: `test_v82_features.py` (38 tests covering with/except/raise extraction, metrics consistency, pattern filtering, health scoring, file roles, dead code removal)
+
 ## v8.1.1
 
 Deep Python extractor improvements based on Pyan, PyCG, and Scalpel research.

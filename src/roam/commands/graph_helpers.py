@@ -16,14 +16,6 @@ def build_forward_adj(conn):
     return adj
 
 
-def build_reverse_adj(conn):
-    """Build reverse adjacency list from edges table (target -> set of sources)."""
-    adj = defaultdict(set)
-    for row in conn.execute("SELECT source_id, target_id FROM edges").fetchall():
-        adj[row["target_id"]].add(row["source_id"])
-    return adj
-
-
 def bfs_reachable(adj, start_ids, max_depth=None):
     """BFS from *start_ids* through an adjacency dict.
 

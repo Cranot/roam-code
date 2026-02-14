@@ -1,10 +1,19 @@
 """Collect and persist health metrics for snapshot/trend tracking."""
 
+from __future__ import annotations
+
+import os
 import subprocess
 import time
 
 from roam.db.connection import find_project_root
 from roam.db.queries import UNREFERENCED_EXPORTS
+
+
+def _is_test_path(file_path):
+    """Check if a file is a test file (discovered by pytest, not imported)."""
+    base = os.path.basename(file_path).lower()
+    return base.startswith("test_") or base.endswith("_test.py")
 
 
 def collect_metrics(conn):
@@ -41,8 +50,10 @@ def collect_metrics(conn):
     ).fetchall()
     bottlenecks = len(bn_rows)
 
-    # Dead exports
+    # Dead exports (filter test files — they're discovered by pytest, not imported)
     dead_rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
+    dead_rows = [r for r in dead_rows
+                 if not _is_test_path(r["file_path"])]
     dead_exports = len(dead_rows)
 
     # Layer violations
@@ -56,18 +67,43 @@ def collect_metrics(conn):
         except Exception:
             pass
 
-    # Health score: 100 minus penalties, clamped to 0-100
-    # Penalties scale with codebase size
-    penalty = 0
-    if symbols > 0:
-        penalty += min(20, cycles * 3)                          # cycles: up to 20
-        penalty += min(15, god_components * 2)                  # god: up to 15
-        penalty += min(15, bottlenecks * 2)                     # bottlenecks: up to 15
-        penalty += min(25, dead_exports * 100 / symbols)        # dead %: up to 25
-        penalty += min(15, layer_violations * 3)                # layers: up to 15
-        penalty += min(10, max(0, (cycles + god_components + bottlenecks + layer_violations) - 5))
+    # Health score: weighted geometric mean matching cmd_health.py formula.
+    # Each factor h_i = e^(-signal/scale) is a health fraction in (0,1].
+    import math
 
-    health_score = max(0, min(100, 100 - int(penalty)))
+    def _hf(value, scale):
+        return math.exp(-value / scale) if scale > 0 else 1.0
+
+    tangle_r = 0.0
+    if G is not None and symbols > 0:
+        try:
+            cyc_ids = set()
+            for scc in find_cycles(G):
+                cyc_ids.update(scc)
+            tangle_r = len(cyc_ids) / symbols * 100
+        except Exception:
+            pass
+
+    god_signal = god_components * 0.5
+    bn_signal = bottlenecks * 0.3
+
+    factors = [
+        (_hf(tangle_r, 10), 0.30),
+        (_hf(god_signal, 5), 0.20),
+        (_hf(bn_signal, 4), 0.15),
+        (_hf(layer_violations, 5), 0.15),
+    ]
+    # File health (if available)
+    try:
+        avg_fh = conn.execute(
+            "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
+        ).fetchone()[0]
+        factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
+    except Exception:
+        factors.append((1.0, 0.20))
+
+    log_score = sum(w * math.log(max(h, 1e-9)) for h, w in factors)
+    health_score = max(0, min(100, int(100 * math.exp(log_score))))
 
     # Tangle ratio: percentage of symbols in cycles
     tangle_ratio = 0.0

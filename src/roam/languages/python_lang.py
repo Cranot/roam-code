@@ -439,6 +439,17 @@ class PythonExtractor(LanguageExtractor):
                 # the RHS is a subscript expression, not a type annotation field.
                 self._extract_assignment_type_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type == "with_statement":
+                # Extract calls from with-statement context managers:
+                # `with open_db() as conn:` → call to open_db
+                self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type == "raise_statement":
+                # `raise ValueError(...)` → call edge to ValueError
+                self._extract_raise_refs(child, source, refs, scope_name)
+            elif child.type == "except_clause":
+                # `except ValueError as e:` → type_ref to ValueError
+                self._extract_except_refs(child, source, refs, scope_name)
+                self._walk_refs(child, source, file_path, refs, scope_name)
             else:
                 # Recurse, updating scope for classes/functions
                 new_scope = scope_name
@@ -476,6 +487,82 @@ class PythonExtractor(LanguageExtractor):
                         ))
                     elif sub.type == "call":
                         self._extract_call(sub, source, refs, scope_name)
+
+    def _extract_raise_refs(self, raise_node, source, refs, scope_name):
+        """Extract references from raise statements: raise ValueError(...)."""
+        for child in raise_node.children:
+            if child.type == "call":
+                self._extract_call(child, source, refs, scope_name)
+            elif child.type == "identifier":
+                # `raise SomeError` (no parens) — treat as call
+                name = self.node_text(child, source)
+                refs.append(self._make_reference(
+                    target_name=name, kind="call",
+                    line=child.start_point[0] + 1, source_name=scope_name,
+                ))
+
+    def _extract_except_refs(self, except_node, source, refs, scope_name):
+        """Extract type references from except clauses: except ValueError as e."""
+        for child in except_node.children:
+            if child.type == "identifier":
+                name = self.node_text(child, source)
+                if name not in _BUILTIN_TYPES and name not in ("except", "as"):
+                    refs.append(self._make_reference(
+                        target_name=name, kind="type_ref",
+                        line=child.start_point[0] + 1, source_name=scope_name,
+                    ))
+                    return
+            elif child.type == "as_pattern":
+                # except ValueError as e: → as_pattern > identifier("ValueError")
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        name = self.node_text(sub, source)
+                        if name not in _BUILTIN_TYPES:
+                            refs.append(self._make_reference(
+                                target_name=name, kind="type_ref",
+                                line=sub.start_point[0] + 1,
+                                source_name=scope_name,
+                            ))
+                        return  # First identifier in as_pattern is the type
+                    elif sub.type == "tuple":
+                        for t in sub.children:
+                            if t.type == "identifier":
+                                name = self.node_text(t, source)
+                                if name not in _BUILTIN_TYPES:
+                                    refs.append(self._make_reference(
+                                        target_name=name, kind="type_ref",
+                                        line=t.start_point[0] + 1,
+                                        source_name=scope_name,
+                                    ))
+                        return
+                    elif sub.type == "attribute":
+                        name = self.node_text(sub, source)
+                        refs.append(self._make_reference(
+                            target_name=name, kind="type_ref",
+                            line=sub.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                        return
+            elif child.type == "tuple":
+                # except (TypeError, ValueError):  (no 'as')
+                for sub in child.children:
+                    if sub.type == "identifier":
+                        name = self.node_text(sub, source)
+                        if name not in _BUILTIN_TYPES:
+                            refs.append(self._make_reference(
+                                target_name=name, kind="type_ref",
+                                line=sub.start_point[0] + 1,
+                                source_name=scope_name,
+                            ))
+                return
+            elif child.type == "attribute":
+                # except module.SomeError:
+                name = self.node_text(child, source)
+                refs.append(self._make_reference(
+                    target_name=name, kind="type_ref",
+                    line=child.start_point[0] + 1, source_name=scope_name,
+                ))
+                return
 
     def _extract_type_refs(self, func_node, source, refs, scope_name):
         """Extract references from type annotations in function signatures."""
