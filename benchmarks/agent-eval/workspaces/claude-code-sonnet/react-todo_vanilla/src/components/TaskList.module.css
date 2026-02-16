@@ -1,0 +1,25 @@
+.taskList {
+  display: flex;
+  flex-direction: column;
+}
+
+.emptyState {
+  background: white;
+  border-radius: 8px;
+  padding: 3rem 1rem;
+  text-align: center;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+}
+
+.emptyText {
+  font-size: 1.25rem;
+  font-weight: 600;
+  color: #4a5568;
+  margin: 0 0 0.5rem 0;
+}
+
+.emptySubtext {
+  font-size: 0.875rem;
+  color: #a0aec0;
+  margin: 0;
+}

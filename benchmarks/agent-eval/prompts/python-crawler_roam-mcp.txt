@@ -1,0 +1,34 @@
+Build a web crawler in Python as a proper package.
+
+Requirements:
+- CLI that accepts: starting URL, max depth (default 2), max pages (default 50), output format
+- Respect robots.txt rules
+- Configurable crawl delay (default 1 second between requests)
+- Extract from each page: title, meta description, all headings (h1-h6), internal/external links, images with alt text
+- Detect and report broken links (4xx, 5xx responses)
+- Stay within the same domain by default (flag to allow external)
+- Handle edge cases: redirects, timeouts, circular links, malformed URLs
+- Use async I/O (aiohttp + asyncio) for concurrent crawling with configurable concurrency limit
+- Output formats: JSON (structured report), CSV (flat table), HTML (visual report with summary stats)
+- Summary statistics: total pages crawled, broken links found, average response time, most linked pages
+
+Technical requirements:
+- Proper Python package with pyproject.toml
+- CLI using click or argparse
+- Clean module separation: crawler engine, parser, reporter, CLI
+- Comprehensive unit tests using pytest (mock HTTP responses)
+- Type hints throughout
+- Include a README with setup and usage instructions
+
+
+--- CONTINUOUS CODE QUALITY ---
+You have access to roam-code tools (MCP) for continuous code quality validation.
+Use them throughout development, not just at the end:
+
+- After creating file structure: check with roam health
+- After implementing core logic: check complexity and coupling
+- After adding all features: check for dead code and cycles
+- Before finalizing: run full health check, aim for score above 80
+
+Use roam tools proactively as you build. Fix issues as they arise rather than
+accumulating technical debt. Do not finalize until health score is above 80.

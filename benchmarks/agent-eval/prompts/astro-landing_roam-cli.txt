@@ -1,0 +1,35 @@
+Build a complete SaaS landing page for a fictional project management tool called "FlowBoard" using Astro.
+
+Requirements:
+- Hero section: headline, subheadline, email signup CTA, hero illustration/graphic
+- Features section: 6 features with icons and descriptions in a grid
+- How It Works section: 3-step process with numbered steps
+- Pricing section: 3 tiers (Free, Pro $12/mo, Enterprise $49/mo) with feature comparison
+- Testimonials section: 3 customer testimonials with names and roles
+- FAQ section: 6 questions with accordion expand/collapse
+- Contact form: name, email, message fields with client-side validation
+- Navigation: sticky header with smooth scroll to sections, mobile hamburger menu
+- Footer: links, social icons, copyright
+
+Technical requirements:
+- Astro framework with static site generation
+- Responsive design (mobile-first)
+- CSS written from scratch — no Tailwind or UI libraries
+- Semantic HTML with accessibility (ARIA labels, keyboard navigation)
+- Optimized images and lazy loading
+- Include tests where applicable
+- Include a README with setup instructions
+
+
+--- CODE QUALITY VALIDATION ---
+After completing the project, validate and improve your code quality using roam-code:
+
+1. Run `roam init` to index the codebase
+2. Run `roam health` — aim for a score above 80
+3. Run `roam dead` — remove any dead/unused code found
+4. Run `roam complexity` — refactor any functions with cognitive complexity > 15
+5. Run `roam cycles` — eliminate any circular dependencies
+6. Run `roam gate` — ensure all quality gates pass
+7. Run `roam coupling` — reduce high coupling where possible
+
+Iterate until roam reports clean results. Do not stop until health score is above 80.

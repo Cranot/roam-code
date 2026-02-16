@@ -1,0 +1,34 @@
+Create a complete TODO application using React, JavaScript, and Vite.
+
+Requirements:
+- Add, edit, delete, and mark tasks as complete
+- Task categories: work, personal, shopping, health
+- Priority levels: high, medium, low with visual indicators
+- Due dates with overdue highlighting
+- Filter by category, priority, completion status
+- Sort by due date, priority, or creation date
+- Persist all data to localStorage
+- Responsive design that works on mobile and desktop
+- Keyboard shortcuts: Enter to add, Escape to cancel edit
+- Task count summary showing total, completed, and pending
+
+Technical requirements:
+- Use Vite as the build tool
+- No external UI component libraries — write your own components
+- CSS modules or styled-components for styling
+- Clean component hierarchy with proper state management
+- Include unit tests using Vitest
+- Include a README with setup instructions
+
+
+--- CONTINUOUS CODE QUALITY ---
+You have access to roam-code tools (MCP) for continuous code quality validation.
+Use them throughout development, not just at the end:
+
+- After creating file structure: check with roam health
+- After implementing core logic: check complexity and coupling
+- After adding all features: check for dead code and cycles
+- Before finalizing: run full health check, aim for score above 80
+
+Use roam tools proactively as you build. Fix issues as they arise rather than
+accumulating technical debt. Do not finalize until health score is above 80.

@@ -1,0 +1,196 @@
+.taskItem {
+  background: white;
+  padding: 1rem;
+  border-radius: 6px;
+  border: 2px solid #e0e0e0;
+  margin-bottom: 0.75rem;
+  display: flex;
+  align-items: flex-start;
+  gap: 1rem;
+  transition: all 0.2s;
+}
+
+.taskItem:hover {
+  border-color: #4a90e2;
+  box-shadow: 0 2px 8px rgba(74, 144, 226, 0.1);
+}
+
+.taskItem.completed {
+  opacity: 0.6;
+}
+
+.taskItem.completed .title {
+  text-decoration: line-through;
+  color: #888;
+}
+
+.taskItem.overdue {
+  border-color: #ef4444;
+  background: #fef2f2;
+}
+
+.checkbox {
+  width: 20px;
+  height: 20px;
+  cursor: pointer;
+  margin-top: 2px;
+}
+
+.content {
+  flex: 1;
+  min-width: 0;
+}
+
+.title {
+  font-size: 1rem;
+  margin-bottom: 0.5rem;
+  word-wrap: break-word;
+}
+
+.meta {
+  display: flex;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  font-size: 0.85rem;
+}
+
+.category {
+  background: #e0e0e0;
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  text-transform: capitalize;
+}
+
+.priority {
+  padding: 0.25rem 0.5rem;
+  border-radius: 3px;
+  font-weight: 500;
+  text-transform: capitalize;
+}
+
+.priority.high {
+  background: #fee;
+  color: #ef4444;
+}
+
+.priority.medium {
+  background: #fef3e0;
+  color: #f59e0b;
+}
+
+.priority.low {
+  background: #e0fef0;
+  color: #10b981;
+}
+
+.dueDate {
+  color: #666;
+}
+
+.actions {
+  display: flex;
+  gap: 0.5rem;
+}
+
+.editButton,
+.deleteButton,
+.saveButton,
+.cancelButton {
+  padding: 0.4rem 0.8rem;
+  border: none;
+  border-radius: 4px;
+  cursor: pointer;
+  font-size: 0.85rem;
+  transition: background 0.2s;
+}
+
+.editButton {
+  background: #f0f0f0;
+  color: #333;
+}
+
+.editButton:hover {
+  background: #e0e0e0;
+}
+
+.deleteButton {
+  background: #fee;
+  color: #ef4444;
+}
+
+.deleteButton:hover {
+  background: #fdd;
+}
+
+.saveButton {
+  background: #10b981;
+  color: white;
+}
+
+.saveButton:hover {
+  background: #059669;
+}
+
+.cancelButton {
+  background: #e0e0e0;
+  color: #333;
+}
+
+.cancelButton:hover {
+  background: #d0d0d0;
+}
+
+.editForm {
+  width: 100%;
+}
+
+.editInput {
+  width: 100%;
+  padding: 0.5rem;
+  font-size: 1rem;
+  border: 2px solid #4a90e2;
+  border-radius: 4px;
+  margin-bottom: 0.75rem;
+}
+
+.editInput:focus {
+  outline: none;
+  border-color: #357abd;
+}
+
+.editControls {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.editSelect,
+.editDate {
+  padding: 0.4rem;
+  border: 2px solid #e0e0e0;
+  border-radius: 4px;
+  font-size: 0.85rem;
+}
+
+@media (max-width: 640px) {
+  .taskItem {
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .actions {
+    width: 100%;
+    justify-content: flex-end;
+  }
+
+  .editControls {
+    flex-direction: column;
+  }
+
+  .editSelect,
+  .editDate,
+  .saveButton,
+  .cancelButton {
+    width: 100%;
+  }
+}

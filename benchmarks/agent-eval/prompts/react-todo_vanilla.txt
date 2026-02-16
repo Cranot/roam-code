@@ -1,0 +1,21 @@
+Create a complete TODO application using React, JavaScript, and Vite.
+
+Requirements:
+- Add, edit, delete, and mark tasks as complete
+- Task categories: work, personal, shopping, health
+- Priority levels: high, medium, low with visual indicators
+- Due dates with overdue highlighting
+- Filter by category, priority, completion status
+- Sort by due date, priority, or creation date
+- Persist all data to localStorage
+- Responsive design that works on mobile and desktop
+- Keyboard shortcuts: Enter to add, Escape to cancel edit
+- Task count summary showing total, completed, and pending
+
+Technical requirements:
+- Use Vite as the build tool
+- No external UI component libraries — write your own components
+- CSS modules or styled-components for styling
+- Clean component hierarchy with proper state management
+- Include unit tests using Vitest
+- Include a README with setup instructions

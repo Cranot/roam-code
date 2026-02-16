@@ -1,0 +1,39 @@
+Build a concurrent log file analyzer CLI tool in Go.
+
+Requirements:
+- Accept log files or directories as input (recursive directory scanning)
+- Parse common formats: Apache Combined, Nginx, JSON Lines (auto-detect format)
+- Concurrent processing: use goroutines + worker pool to analyze multiple files in parallel
+- Statistics per file and aggregate:
+  - Total requests, unique IPs, unique endpoints
+  - Status code distribution (2xx, 3xx, 4xx, 5xx counts and percentages)
+  - Top 10 IPs by request count
+  - Top 10 endpoints by request count
+  - Top 10 slowest requests (if response time available)
+  - Requests per hour histogram
+  - Error rate over time (detect spikes)
+- Filters: date range, status code range, endpoint regex, IP whitelist/blacklist
+- Output formats: text table (default), JSON, CSV
+- Progress bar for large file processing
+- Graceful handling of malformed lines (count and report skipped lines)
+
+Technical requirements:
+- Go modules (go.mod)
+- Use standard library where possible, minimal external dependencies
+- Clean package structure: cmd/, internal/parser/, internal/analyzer/, internal/output/
+- Unit tests with table-driven test patterns
+- Benchmarks for the parser
+- Include a README with build and usage instructions
+
+
+--- CONTINUOUS CODE QUALITY ---
+You have access to roam-code tools (MCP) for continuous code quality validation.
+Use them throughout development, not just at the end:
+
+- After creating file structure: check with roam health
+- After implementing core logic: check complexity and coupling
+- After adding all features: check for dead code and cycles
+- Before finalizing: run full health check, aim for score above 80
+
+Use roam tools proactively as you build. Fix issues as they arise rather than
+accumulating technical debt. Do not finalize until health score is above 80.

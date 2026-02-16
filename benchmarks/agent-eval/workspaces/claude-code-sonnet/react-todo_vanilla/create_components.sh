@@ -1,0 +1,109 @@
+#!/bin/bash
+
+# Create all component files and their CSS modules
+
+# TaskStats component
+cat > src/components/TaskStats.jsx << 'EOF'
+import React from 'react';
+import styles from './TaskStats.module.css';
+
+const TaskStats = ({ stats }) => {
+  return (
+    <div className={styles.statsContainer}>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.total}</span>
+        <span className={styles.statLabel}>Total</span>
+      </div>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.completed}</span>
+        <span className={styles.statLabel}>Completed</span>
+      </div>
+      <div className={styles.statItem}>
+        <span className={styles.statValue}>{stats.pending}</span>
+        <span className={styles.statLabel}>Pending</span>
+      </div>
+      {stats.overdue > 0 && (
+        <div className={`${styles.statItem} ${styles.overdue}`}>
+          <span className={styles.statValue}>{stats.overdue}</span>
+          <span className={styles.statLabel}>Overdue</span>
+        </div>
+      )}
+    </div>
+  );
+};
+
+export default TaskStats;
+EOF
+
+cat > src/components/TaskStats.module.css << 'EOF'
+.statsContainer {
+  display: flex;
+  gap: 1rem;
+  padding: 1rem;
+  background: #f8f9fa;
+  border-radius: 8px;
+  margin-bottom: 1.5rem;
+  flex-wrap: wrap;
+}
+
+.statItem {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.75rem 1.5rem;
+  background: white;
+  border-radius: 6px;
+  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+  min-width: 80px;
+}
+
+.statValue {
+  font-size: 1.75rem;
+  font-weight: 700;
+  color: #2c3e50;
+  line-height: 1;
+}
+
+.statLabel {
+  font-size: 0.75rem;
+  color: #7f8c8d;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-top: 0.25rem;
+}
+
+.statItem.overdue {
+  background: #fff5f5;
+  border: 1px solid #feb2b2;
+}
+
+.statItem.overdue .statValue {
+  color: #c53030;
+}
+
+.statItem.overdue .statLabel {
+  color: #c53030;
+}
+
+@media (max-width: 640px) {
+  .statsContainer {
+    gap: 0.5rem;
+  }
+
+  .statItem {
+    flex: 1;
+    min-width: 70px;
+    padding: 0.5rem 1rem;
+  }
+
+  .statValue {
+    font-size: 1.5rem;
+  }
+
+  .statLabel {
+    font-size: 0.65rem;
+  }
+}
+EOF
+
+echo "TaskStats created"
