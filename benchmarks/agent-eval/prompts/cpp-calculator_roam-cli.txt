@@ -1,0 +1,37 @@
+Build a mathematical expression parser and interactive calculator in C++.
+
+Requirements:
+- Parse and evaluate expressions from string input
+- Operators: +, -, *, /, % (modulo), ^ (power) with correct precedence
+- Parentheses for grouping, nested to arbitrary depth
+- Unary minus: -5, -(3+2)
+- Built-in functions: sin, cos, tan, sqrt, log, log10, abs, ceil, floor, min, max
+- Variable assignment: x = 3.14, then use x in later expressions
+- Built-in constants: pi, e
+- Expression history: recall previous results with $1, $2, etc.
+- Interactive REPL mode with prompt and help command
+- File evaluation mode: read expressions from a file, output results
+- Clear error messages: "Unexpected token '*' at position 5", "Unknown function 'foo'"
+- Support both integer and floating-point arithmetic
+
+Technical requirements:
+- CMake build system (minimum CMake 3.16)
+- Recursive descent parser or Pratt parser — no parser generators
+- Clean separation: lexer (tokenizer), parser (AST), evaluator, REPL
+- Header/source file separation
+- Unit tests (using Catch2, GoogleTest, or doctest)
+- Include a README with build and usage instructions
+
+
+--- CODE QUALITY VALIDATION ---
+After completing the project, validate and improve your code quality using roam-code:
+
+1. Run `roam init` to index the codebase
+2. Run `roam health` — aim for a score above 80
+3. Run `roam dead` — remove any dead/unused code found
+4. Run `roam complexity` — refactor any functions with cognitive complexity > 15
+5. Run `roam cycles` — eliminate any circular dependencies
+6. Run `roam gate` — ensure all quality gates pass
+7. Run `roam coupling` — reduce high coupling where possible
+
+Iterate until roam reports clean results. Do not stop until health score is above 80.

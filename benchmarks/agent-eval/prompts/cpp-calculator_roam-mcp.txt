@@ -1,0 +1,36 @@
+Build a mathematical expression parser and interactive calculator in C++.
+
+Requirements:
+- Parse and evaluate expressions from string input
+- Operators: +, -, *, /, % (modulo), ^ (power) with correct precedence
+- Parentheses for grouping, nested to arbitrary depth
+- Unary minus: -5, -(3+2)
+- Built-in functions: sin, cos, tan, sqrt, log, log10, abs, ceil, floor, min, max
+- Variable assignment: x = 3.14, then use x in later expressions
+- Built-in constants: pi, e
+- Expression history: recall previous results with $1, $2, etc.
+- Interactive REPL mode with prompt and help command
+- File evaluation mode: read expressions from a file, output results
+- Clear error messages: "Unexpected token '*' at position 5", "Unknown function 'foo'"
+- Support both integer and floating-point arithmetic
+
+Technical requirements:
+- CMake build system (minimum CMake 3.16)
+- Recursive descent parser or Pratt parser — no parser generators
+- Clean separation: lexer (tokenizer), parser (AST), evaluator, REPL
+- Header/source file separation
+- Unit tests (using Catch2, GoogleTest, or doctest)
+- Include a README with build and usage instructions
+
+
+--- CONTINUOUS CODE QUALITY ---
+You have access to roam-code tools (MCP) for continuous code quality validation.
+Use them throughout development, not just at the end:
+
+- After creating file structure: check with roam health
+- After implementing core logic: check complexity and coupling
+- After adding all features: check for dead code and cycles
+- Before finalizing: run full health check, aim for score above 80
+
+Use roam tools proactively as you build. Fix issues as they arise rather than
+accumulating technical debt. Do not finalize until health score is above 80.
