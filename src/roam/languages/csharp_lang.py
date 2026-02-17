@@ -900,16 +900,24 @@ class CSharpExtractor(LanguageExtractor):
         is_static = False
         alias_name = None
         import_path = None
+        has_equals = any(c.type == "=" for c in node.children)
 
         for child in node.children:
             if child.type == "static":
                 is_static = True
             elif child.type == "name_equals":
+                # some grammar versions wrap alias in name_equals
                 for gc in child.children:
                     if gc.type == "identifier":
                         alias_name = self.node_text(gc, source)
                         break
-            elif child.type in ("qualified_name", "identifier", "generic_name"):
+            elif child.type == "identifier":
+                if has_equals and import_path is None and alias_name is None:
+                    # bare identifier before = is the alias name
+                    alias_name = self.node_text(child, source)
+                else:
+                    import_path = self.node_text(child, source)
+            elif child.type in ("qualified_name", "generic_name"):
                 import_path = self.node_text(child, source)
 
         if not import_path:
