@@ -2407,3 +2407,96 @@ class TestCSharpCLI:
         assert "IEntity" in names
         assert "User" in names
         assert "GetDisplayName" in names
+
+
+# ===========================================================================
+# C# ADDITIONAL REFERENCE EXTRACTION
+# ===========================================================================
+
+class TestCSharpReferenceExtraction:
+    """Tests for additional C# reference extraction (catch, typeof, is/as, attributes)."""
+
+    def test_csharp_attributes_are_type_refs(self):
+        """Attributes should produce type_ref references, not calls."""
+        source = (
+            "using System;\n"
+            "\n"
+            "[Serializable]\n"
+            "public class MyClass\n"
+            "{\n"
+            "    [Obsolete]\n"
+            "    public void OldMethod() { }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Attrs.cs")
+        type_refs = [r for r in refs if r["kind"] == "type_ref"]
+        type_ref_names = {r["target_name"] for r in type_refs}
+        assert "Serializable" in type_ref_names
+        assert "Obsolete" in type_ref_names
+
+    def test_csharp_catch_type_ref(self):
+        """catch(ExceptionType) should create a type_ref."""
+        source = (
+            "public class Handler\n"
+            "{\n"
+            "    public void Run()\n"
+            "    {\n"
+            "        try { }\n"
+            "        catch (InvalidOperationException ex) { }\n"
+            "        catch (ArgumentNullException) { }\n"
+            "    }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Handler.cs")
+        type_refs = [r for r in refs if r["kind"] == "type_ref"]
+        type_ref_names = {r["target_name"] for r in type_refs}
+        assert "InvalidOperationException" in type_ref_names
+        assert "ArgumentNullException" in type_ref_names
+
+    def test_csharp_typeof_ref(self):
+        """typeof(SomeType) should create a type_ref."""
+        source = (
+            "public class Reflector\n"
+            "{\n"
+            "    public Type GetType()\n"
+            "    {\n"
+            "        return typeof(MyService);\n"
+            "    }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Reflector.cs")
+        type_refs = [r for r in refs if r["kind"] == "type_ref"]
+        type_ref_names = {r["target_name"] for r in type_refs}
+        assert "MyService" in type_ref_names
+
+    def test_csharp_is_expression_ref(self):
+        """is pattern should create a type_ref."""
+        source = (
+            "public class Checker\n"
+            "{\n"
+            "    public bool Check(object obj)\n"
+            "    {\n"
+            "        return obj is MyModel;\n"
+            "    }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Checker.cs")
+        type_refs = [r for r in refs if r["kind"] == "type_ref"]
+        type_ref_names = {r["target_name"] for r in type_refs}
+        assert "MyModel" in type_ref_names
+
+    def test_csharp_as_expression_ref(self):
+        """as cast should create a type_ref."""
+        source = (
+            "public class Caster\n"
+            "{\n"
+            "    public MyType Cast(object obj)\n"
+            "    {\n"
+            "        return obj as MyType;\n"
+            "    }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Caster.cs")
+        type_refs = [r for r in refs if r["kind"] == "type_ref"]
+        type_ref_names = {r["target_name"] for r in type_refs}
+        assert "MyType" in type_ref_names

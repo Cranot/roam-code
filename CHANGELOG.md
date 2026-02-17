@@ -30,13 +30,24 @@ C# Tier 1 language support with dedicated parser.
 - Method/function calls via `invocation_expression`
 - Constructor calls via `object_creation_expression`
 - Inheritance classification: positional heuristic on `base_list` (first non-I-prefixed entry = `inherits`, rest = `implements`)
-- Attribute extraction from `attribute_list` (`[HttpGet]`, `[Authorize]`, etc.)
+- Attribute references as `type_ref` from `attribute_list` (`[HttpGet]`, `[Authorize]`, etc.)
 - Nullable type unwrapping: `IService?`, `List<IHandler>?` produce `type_ref` edges (builtins like `string?` skipped)
+- `catch` clause exception type references (`catch (InvalidOperationException)`)
+- `typeof()` expression type references
+- `is` pattern and `as` cast type references
+- Cast expression type references
 
 ### Registration
 
 - Added `"c_sharp"` to `_DEDICATED_EXTRACTORS` in `registry.py`
 - Removed `c_sharp` fallback configs from `generic_lang.py` (`_EXTENDS_CONFIG`, `_TRAIT_CONFIG`, `_PROPERTY_CONFIG`)
+
+### Polish (post-PR)
+
+- Fixed `CSharpConvention.languages` to include `"c_sharp"` (the actual DB language key) so convention-based test discovery works with `affected-tests`
+- Changed attribute references from `call` to `type_ref` (attributes are type annotations, not invocations)
+- Optimized `_detect_frameworks` in `cmd_understand.py` to scan only a sample of files (LIMIT 200) instead of all files
+- Moved `re` and `fnmatch` imports to module level in `cmd_understand.py`
 
 ### Real-World Validation
 
