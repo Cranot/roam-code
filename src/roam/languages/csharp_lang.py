@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -874,6 +874,16 @@ class CSharpExtractor(LanguageExtractor):
                 self._extract_attributes(child, source, refs, current_scope)
             elif child.type == "nullable_type":
                 self._extract_nullable_type_ref(child, source, refs, current_scope)
+            elif child.type == "catch_declaration":
+                self._extract_catch_type_ref(child, source, refs, current_scope)
+            elif child.type == "typeof_expression":
+                self._extract_typeof_ref(child, source, refs, current_scope)
+            elif child.type == "is_pattern_expression":
+                self._extract_is_pattern_ref(child, source, refs, current_scope)
+            elif child.type in ("as_expression", "cast_expression"):
+                self._extract_cast_type_ref(child, source, refs, current_scope)
+            elif child.type == "throw_expression":
+                self._walk_refs(child, source, refs, current_scope)
             else:
                 new_scope = current_scope
                 if child.type == "namespace_declaration":
@@ -1019,7 +1029,7 @@ class CSharpExtractor(LanguageExtractor):
                 if name:
                     refs.append(self._make_reference(
                         target_name=name,
-                        kind="call",
+                        kind="type_ref",
                         line=child.start_point[0] + 1,
                         source_name=scope_name,
                     ))
@@ -1055,3 +1065,94 @@ class CSharpExtractor(LanguageExtractor):
                     source_name=scope_name,
                 ))
                 return
+
+    # ---- Additional type reference extraction ----
+
+    _BUILTIN_TYPES = frozenset({
+        "int", "string", "bool", "byte", "sbyte", "short", "ushort",
+        "uint", "long", "ulong", "float", "double", "decimal", "char",
+        "object", "void", "dynamic", "var", "nint", "nuint",
+    })
+
+    def _type_name_from_node(self, node, source) -> str | None:
+        """extract a non-builtin type name from a type node."""
+        if node is None:
+            return None
+        if node.type == "predefined_type":
+            return None
+        if node.type == "identifier":
+            name = self.node_text(node, source)
+            return None if name in self._BUILTIN_TYPES else name
+        if node.type == "generic_name":
+            for gc in node.children:
+                if gc.type == "identifier":
+                    name = self.node_text(gc, source)
+                    return None if name in self._BUILTIN_TYPES else name
+        if node.type == "qualified_name":
+            return self.node_text(node, source)
+        return None
+
+    def _extract_catch_type_ref(self, node, source, refs, scope_name):
+        """extract type reference from catch(ExceptionType e)."""
+        type_node = node.child_by_field_name("type")
+        name = self._type_name_from_node(type_node, source)
+        if name:
+            refs.append(self._make_reference(
+                target_name=name,
+                kind="type_ref",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            ))
+
+    def _extract_typeof_ref(self, node, source, refs, scope_name):
+        """extract type reference from typeof(SomeType)."""
+        for child in node.children:
+            name = self._type_name_from_node(child, source)
+            if name:
+                refs.append(self._make_reference(
+                    target_name=name,
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+                return
+
+    def _extract_is_pattern_ref(self, node, source, refs, scope_name):
+        """extract type reference from 'obj is MyType' pattern expressions."""
+        # is_pattern_expression -> constant_pattern/declaration_pattern -> identifier
+        for child in node.children:
+            if child.type in ("constant_pattern", "declaration_pattern"):
+                for gc in child.children:
+                    name = self._type_name_from_node(gc, source)
+                    if name:
+                        refs.append(self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=node.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                        return
+        # recurse for nested expressions
+        self._walk_refs(node, source, refs, scope_name)
+
+    def _extract_cast_type_ref(self, node, source, refs, scope_name):
+        """extract type reference from as/cast expressions."""
+        # as_expression: obj as MyType — type is the last type-like child
+        # cast_expression: (MyType)obj — type is before the expression
+        type_node = node.child_by_field_name("type")
+        if type_node is None:
+            # for as_expression: type is the last identifier/generic_name child
+            last_type = None
+            for child in node.children:
+                if child.type in ("identifier", "generic_name", "qualified_name",
+                                  "nullable_type"):
+                    last_type = child
+            type_node = last_type
+        name = self._type_name_from_node(type_node, source)
+        if name:
+            refs.append(self._make_reference(
+                target_name=name,
+                kind="type_ref",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            ))

@@ -290,6 +290,7 @@ class TestCSharpConvention:
         assert self.conv.name == "csharp"
 
     def test_languages_property(self):
+        assert "c_sharp" in self.conv.languages
         assert "csharp" in self.conv.languages
         assert "c#" in self.conv.languages
 

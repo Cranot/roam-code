@@ -1,5 +1,8 @@
 """Single-call codebase comprehension — everything an AI agent needs in one shot."""
 
+import fnmatch
+import re
+
 import click
 
 from roam.db.connection import open_db, find_project_root
@@ -63,7 +66,7 @@ _BUILD_PATTERNS = {
 
 def _detect_frameworks(conn):
     """Detect frameworks by scanning edge targets, file names, and source content."""
-    # collect all unique edge target names (imports/references)
+    # collect unique edge target names from resolved references
     import_targets = set()
     for r in conn.execute(
         "SELECT DISTINCT s.name FROM symbols s "
@@ -71,39 +74,33 @@ def _detect_frameworks(conn):
     ).fetchall():
         import_targets.add(r["name"].lower())
 
-    # scan file content for import/using statements to catch unresolved imports
-    # (particularly important for c#, where microsoft.aspnetcore.* imports won't resolve)
+    # scan a sample of source files for import/using statements that reference
+    # external packages (these won't appear in resolved edges since the
+    # framework symbols aren't in the local codebase)
+    _IMPORT_RE = re.compile(
+        r'\busing\s+([\w.]+)'       # C#: using Microsoft.AspNetCore.Mvc;
+        r'|\bfrom\s+[\'"]([^"\']+)[\'"]'  # JS/TS: from 'next/router'
+        r'|\bimport\s+([\w.]+)'     # Python/Go: import x
+        r'|\bfrom\s+([\w.]+)\s+import'    # Python: from x import y
+    )
     root = find_project_root()
-    for r in conn.execute("SELECT path FROM files").fetchall():
+    for r in conn.execute(
+        "SELECT path FROM files WHERE language IS NOT NULL LIMIT 200"
+    ).fetchall():
         file_path = root / r["path"]
-        if file_path.exists():
-            try:
-                content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
-                # scan for common import patterns:
-                # - python: "import x", "from x import"
-                # - js/ts: "from 'x'", "import x from", "require('x')"
-                # - c#: "using x;", "using x.y.z;"
-                # - go: "import \"x\""
-                import re
-                # extract package/namespace names from import statements
-                # c# using directives: using Microsoft.AspNetCore.Mvc;
-                for match in re.finditer(r'\busing\s+([\w.]+)', content):
-                    import_targets.add(match.group(1))
-                # js/ts imports: from 'next/router', import { x } from 'react'
-                for match in re.finditer(r'\bfrom\s+[\'"]([^"\']+)[\'"]', content):
-                    import_targets.add(match.group(1))
-                # python imports: import x, from x import
-                for match in re.finditer(r'\bimport\s+([\w.]+)', content):
-                    import_targets.add(match.group(1))
-                for match in re.finditer(r'\bfrom\s+([\w.]+)\s+import', content):
-                    import_targets.add(match.group(1))
-                # go imports: import "github.com/x/y"
-                for match in re.finditer(r'\bimport\s+"([^"]+)"', content):
-                    import_targets.add(match.group(1))
-            except Exception:
-                pass
+        if not file_path.exists():
+            continue
+        try:
+            content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+            for match in _IMPORT_RE.finditer(content):
+                # groups are mutually exclusive; pick the one that matched
+                val = match.group(1) or match.group(2) or match.group(3) or match.group(4)
+                if val:
+                    import_targets.add(val)
+        except Exception:
+            pass
 
-    # also collect file paths for pattern matching
+    # collect file paths for pattern matching
     file_paths = set()
     for r in conn.execute("SELECT path FROM files").fetchall():
         file_paths.add(r["path"].replace("\\", "/").lower())
@@ -117,7 +114,6 @@ def _detect_frameworks(conn):
                 break
         if not found:
             for pat in file_pats:
-                import fnmatch
                 if any(fnmatch.fnmatch(fp.split("/")[-1], pat.lower()) for fp in file_paths):
                     found = True
                     break
@@ -157,7 +153,6 @@ def _detect_build(conn):
 
     for tool, patterns in _BUILD_PATTERNS.items():
         for pat in patterns:
-            import fnmatch
             if any(fnmatch.fnmatch(fn, pat.lower()) for fn in file_names):
                 return tool
     return None
@@ -322,7 +317,6 @@ def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
 
 def _detect_conventions(conn):
     """Detect dominant naming conventions per symbol kind."""
-    import re
     _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
     _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
     _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')

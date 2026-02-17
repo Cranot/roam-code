@@ -285,7 +285,7 @@ class CSharpConvention(TestConvention):
     def name(self): return "csharp"
 
     @property
-    def languages(self): return frozenset({"csharp", "c#"})
+    def languages(self): return frozenset({"c_sharp", "csharp", "c#"})
 
     def source_to_test_paths(self, source_path):
         """Map C# source files to potential test file paths.
