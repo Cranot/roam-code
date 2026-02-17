@@ -13,6 +13,7 @@ from roam.commands.changed_files import (
     resolve_changed_to_db,
     is_test_file,
 )
+from roam.index.test_conventions import find_test_candidates
 
 
 _MAX_HOPS = 10
@@ -74,9 +75,11 @@ def _bfs_reverse_callers(conn, start_ids):
 def _find_colocated_tests(conn, file_paths):
     """Find test files colocated with the given source files.
 
-    Looks for ``test_*.py`` / ``*_test.py`` files in the same directory
-    as each source file.
+    Uses two mechanisms:
+    1. Colocated tests in the same directory (e.g., test_*.py / *_test.py)
+    2. Convention-based test discovery (e.g., separate test projects for C#)
     """
+    # mechanism 1: colocated tests in same directory
     dirs = set()
     for fp in file_paths:
         d = os.path.dirname(fp.replace("\\", "/"))
@@ -94,7 +97,31 @@ def _find_colocated_tests(conn, file_paths):
             if is_test_file(p) and p not in file_paths:
                 colocated.append(p)
 
-    return sorted(set(colocated))
+    # mechanism 2: convention-based test discovery
+    convention_tests = []
+    for fp in file_paths:
+        # get the language for this file
+        row = conn.execute(
+            "SELECT language FROM files WHERE path = ?", (fp,)
+        ).fetchone()
+
+        if row and row["language"]:
+            language = row["language"]
+            # get test candidates from conventions
+            candidates = find_test_candidates(fp, language=language)
+
+            # check which candidates exist in the database
+            for candidate in candidates:
+                existing = conn.execute(
+                    "SELECT path FROM files WHERE path = ?", (candidate,)
+                ).fetchone()
+
+                if existing:
+                    test_path = existing["path"]
+                    if is_test_file(test_path) and test_path not in file_paths:
+                        convention_tests.append(test_path)
+
+    return sorted(set(colocated + convention_tests))
 
 
 # ---------------------------------------------------------------------------
