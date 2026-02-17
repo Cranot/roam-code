@@ -154,6 +154,16 @@ class GenericExtractor(LanguageExtractor):
 
     # ---- Symbol extraction ----
 
+    def _find_class_body(self, node):
+        """Find the body node of a class-like declaration."""
+        body = node.child_by_field_name("body")
+        if body:
+            return body
+        for sub in node.children:
+            if sub.type in _CLASS_BODY_TYPES:
+                return sub
+        return None
+
     def _walk_symbols(self, node, source, symbols, parent_name, _depth=0):
         if _depth > 50:
             return
@@ -165,38 +175,18 @@ class GenericExtractor(LanguageExtractor):
                     qualified = f"{parent_name}.{name}" if parent_name else name
                     sig = self.get_signature(child, source)
                     symbols.append(self._make_symbol(
-                        name=name,
-                        kind=kind,
+                        name=name, kind=kind,
                         line_start=child.start_point[0] + 1,
                         line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
+                        qualified_name=qualified, signature=sig,
                         docstring=self.get_docstring(child, source),
                         parent_name=parent_name,
                     ))
-
-                    # For class-like types, recurse into body and extract properties
                     if kind in ("class", "interface", "module", "struct", "enum"):
-                        body = child.child_by_field_name("body")
-                        if body:
-                            self._extract_properties(body, source, symbols, qualified)
-                            self._walk_symbols(body, source, symbols, qualified, _depth + 1)
-                        else:
-                            # Try walking all children for grammars that don't use 'body' field
-                            # Find the class body node among children
-                            body_found = False
-                            for sub in child.children:
-                                if sub.type in _CLASS_BODY_TYPES:
-                                    self._extract_properties(sub, source, symbols, qualified)
-                                    self._walk_symbols(sub, source, symbols, qualified, _depth + 1)
-                                    body_found = True
-                                    break
-                            if not body_found:
-                                self._extract_properties(child, source, symbols, qualified)
-                                self._walk_symbols(child, source, symbols, qualified, _depth + 1)
+                        body = self._find_class_body(child) or child
+                        self._extract_properties(body, source, symbols, qualified)
+                        self._walk_symbols(body, source, symbols, qualified, _depth + 1)
                     continue
-
-            # Recurse into unrecognized nodes
             self._walk_symbols(child, source, symbols, parent_name, _depth + 1)
 
     def _classify_node(self, node) -> str | None:
@@ -269,52 +259,56 @@ class GenericExtractor(LanguageExtractor):
                 default_value=value,
             ))
 
+    def _find_name_by_field(self, node, source, name_field) -> str | None:
+        """Search for property name via field name (2-level deep search)."""
+        name_node = node.child_by_field_name(name_field)
+        if name_node is None:
+            for child in node.children:
+                if child.type == name_field:
+                    name_node = child
+                    break
+                for sub in child.children:
+                    if sub.type == name_field:
+                        name_node = sub
+                        break
+                if name_node is not None:
+                    break
+        if name_node:
+            text = self.node_text(name_node, source)
+            if text.startswith("$"):
+                text = text[1:]
+            return text if text else None
+        return None
+
+    def _find_name_by_child_type(self, node, source, name_child_type) -> str | None:
+        """Search for property name via child node type."""
+        for child in node.children:
+            if child.type == name_child_type:
+                inner_name = child.child_by_field_name("name")
+                if inner_name:
+                    return self.node_text(inner_name, source)
+                for sub in child.children:
+                    if sub.type in ("identifier", "field_identifier",
+                                    "property_identifier", "variable_name"):
+                        text = self.node_text(sub, source)
+                        if text.startswith("$"):
+                            text = text[1:]
+                        return text if text else None
+                text = self.node_text(child, source)
+                return text if text else None
+        return None
+
     def _get_property_name(self, node, source, config) -> str | None:
         """Extract property name using config-driven strategy."""
-        # Try field name first (e.g. child_by_field_name("variable_name"))
         name_field = config.get("name_field")
         if name_field:
-            name_node = node.child_by_field_name(name_field)
-            if name_node is None:
-                # Some grammars nest the field; try searching children (2 levels)
-                for child in node.children:
-                    if child.type == name_field:
-                        name_node = child
-                        break
-                    for sub in child.children:
-                        if sub.type == name_field:
-                            name_node = sub
-                            break
-                    if name_node is not None:
-                        break
-            if name_node:
-                # The name node itself may contain an identifier
-                text = self.node_text(name_node, source)
-                # Strip leading $ for PHP variables
-                if text.startswith("$"):
-                    text = text[1:]
-                return text if text else None
+            result = self._find_name_by_field(node, source, name_field)
+            if result is not None:
+                return result
 
-        # Try name_child: search for a child of the given type
         name_child_type = config.get("name_child")
         if name_child_type:
-            for child in node.children:
-                if child.type == name_child_type:
-                    # For variable_declarator, get its name child
-                    inner_name = child.child_by_field_name("name")
-                    if inner_name:
-                        return self.node_text(inner_name, source)
-                    # Fall back to first identifier in the declarator
-                    for sub in child.children:
-                        if sub.type in ("identifier", "field_identifier",
-                                        "property_identifier", "variable_name"):
-                            text = self.node_text(sub, source)
-                            if text.startswith("$"):
-                                text = text[1:]
-                            return text if text else None
-                    # Last resort: use the node text itself
-                    text = self.node_text(child, source)
-                    return text if text else None
+            return self._find_name_by_child_type(node, source, name_child_type)
 
         return None
 
@@ -490,61 +484,60 @@ class GenericExtractor(LanguageExtractor):
                             source_name=class_name,
                         ))
 
+    def _trait_refs_from_body(self, class_node, source, refs, class_name, cfg):
+        """Pattern A: Extract uses_trait refs from node_type inside class body."""
+        node_type = cfg["node_type"]
+        body = class_node.child_by_field_name("body")
+        body_nodes = [body] if body else []
+        if not body_nodes:
+            for child in class_node.children:
+                if child.type in _CLASS_BODY_TYPES:
+                    body_nodes.append(child)
+        name_child_type = cfg.get("name_child")
+        for body_node in body_nodes:
+            for child in body_node.children:
+                if child.type == node_type:
+                    target = self._find_child_text(child, source, name_child_type)
+                    if target:
+                        refs.append(self._make_reference(
+                            target_name=target, kind="uses_trait",
+                            line=child.start_point[0] + 1, source_name=class_name,
+                        ))
+
+    def _trait_refs_from_parent(self, class_node, source, refs, class_name, cfg):
+        """Pattern B: Extract implements refs from parent_type child of class."""
+        parent_type = cfg["parent_type"]
+        for child in class_node.children:
+            if child.type == parent_type:
+                name_children_types = cfg.get("name_children")
+                if name_children_types:
+                    for sub in self._iter_all_descendants(child):
+                        if sub.type in name_children_types:
+                            target = self.node_text(sub, source)
+                            if target:
+                                refs.append(self._make_reference(
+                                    target_name=target, kind="implements",
+                                    line=class_node.start_point[0] + 1,
+                                    source_name=class_name,
+                                ))
+                else:
+                    name_child_type = cfg.get("name_child")
+                    target = self._find_child_text(child, source, name_child_type)
+                    if target:
+                        refs.append(self._make_reference(
+                            target_name=target, kind="implements",
+                            line=class_node.start_point[0] + 1,
+                            source_name=class_name,
+                        ))
+
     def _extract_trait_refs(self, class_node, source, refs, class_name, cfg):
         """Extract 'implements' or 'uses_trait' references."""
-        # Two patterns:
-        # A. node_type inside class body (e.g. PHP use_declaration)
         node_type = cfg.get("node_type")
         if node_type and cfg.get("context") == "class_body":
-            # Search inside the class body
-            body = class_node.child_by_field_name("body")
-            body_nodes = [body] if body else []
-            if not body_nodes:
-                # Try class body children
-                for child in class_node.children:
-                    if child.type in _CLASS_BODY_TYPES:
-                        body_nodes.append(child)
-            for body_node in body_nodes:
-                for child in body_node.children:
-                    if child.type == node_type:
-                        name_child_type = cfg.get("name_child")
-                        target = self._find_child_text(child, source, name_child_type)
-                        if target:
-                            refs.append(self._make_reference(
-                                target_name=target,
-                                kind="uses_trait",
-                                line=child.start_point[0] + 1,
-                                source_name=class_name,
-                            ))
+            self._trait_refs_from_body(class_node, source, refs, class_name, cfg)
             return
-
-        # B. parent_type as direct child of class declaration (e.g. Java super_interfaces)
-        parent_type = cfg.get("parent_type")
-        if parent_type:
-            for child in class_node.children:
-                if child.type == parent_type:
-                    name_children_types = cfg.get("name_children")
-                    if name_children_types:
-                        for sub in self._iter_all_descendants(child):
-                            if sub.type in name_children_types:
-                                target = self.node_text(sub, source)
-                                if target:
-                                    refs.append(self._make_reference(
-                                        target_name=target,
-                                        kind="implements",
-                                        line=class_node.start_point[0] + 1,
-                                        source_name=class_name,
-                                    ))
-                    else:
-                        name_child_type = cfg.get("name_child")
-                        target = self._find_child_text(child, source, name_child_type)
-                        if target:
-                            refs.append(self._make_reference(
-                                target_name=target,
-                                kind="implements",
-                                line=class_node.start_point[0] + 1,
-                                source_name=class_name,
-                            ))
+        if cfg.get("parent_type"):
+            self._trait_refs_from_parent(class_node, source, refs, class_name, cfg)
 
     def _extract_go_embedded_refs(self, class_node, source, refs, class_name):
         """Extract Go embedded struct references (anonymous fields)."""

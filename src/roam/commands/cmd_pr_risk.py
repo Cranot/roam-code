@@ -52,6 +52,69 @@ def _detect_author():
     return None
 
 
+def _percentile(sorted_values, pct):
+    """Linear-interpolated percentile from a sorted numeric list."""
+    if not sorted_values:
+        return 0.0
+    if len(sorted_values) == 1:
+        return float(sorted_values[0])
+    k = (len(sorted_values) - 1) * (pct / 100.0)
+    lo = int(math.floor(k))
+    hi = int(math.ceil(k))
+    if lo == hi:
+        return float(sorted_values[lo])
+    frac = k - lo
+    return float(sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac)
+
+
+def _clamp01(value: float) -> float:
+    return max(0.0, min(1.0, value))
+
+
+def _smoothstep01(x: float) -> float:
+    """Smooth interpolation in [0,1] with flatter tails."""
+    x = _clamp01(x)
+    return x * x * (3.0 - 2.0 * x)
+
+
+def _calibrated_hotspot_score(avg_changed_churn: float, repo_churn_sorted: list[float]) -> float:
+    """Map changed-file churn to [0,1] using repo-relative percentiles.
+
+    - 0.0 at roughly repo median churn
+    - 1.0 around repo p90 churn
+    - Smooth interpolation between
+    """
+    if avg_changed_churn <= 0 or not repo_churn_sorted:
+        return 0.0
+
+    p50 = _percentile(repo_churn_sorted, 50)
+    p90 = _percentile(repo_churn_sorted, 90)
+
+    if p90 <= p50:
+        # Degenerate distribution fallback.
+        denom = max(1.0, p50 * 3.0)
+        return _clamp01(avg_changed_churn / denom)
+
+    if avg_changed_churn <= p50:
+        raw = 0.5 * (avg_changed_churn / max(p50, 1.0))
+    else:
+        raw = 0.5 + 0.5 * ((avg_changed_churn - p50) / (p90 - p50))
+    return _smoothstep01(raw)
+
+
+def _author_count_risk(author_counts: list[int]) -> float:
+    """Continuous bus-factor risk from distinct-author counts per file.
+
+    Per-file risk is 1/N authors, then averaged across changed files.
+    This preserves intuitive anchors:
+      N=1 -> 1.0, N=2 -> 0.5, N=4 -> 0.25.
+    """
+    if not author_counts:
+        return 0.0
+    inv_counts = [1.0 / max(c, 1) for c in author_counts]
+    return _clamp01(sum(inv_counts) / len(inv_counts))
+
+
 def _author_familiarity(conn, author, changed_files):
     """Calculate how familiar the author is with each changed file.
 
@@ -275,20 +338,27 @@ def pr_risk(ctx, commit_range, staged, author):
                 }
 
         if churn_data:
-            # Compare against repo median churn — exclude docs/config files
+            # Repo-relative calibration: compare changed churn against
+            # code-file churn percentiles (median..p90), not fixed cutoffs.
             code_churn = {p: d for p, d in churn_data.items() if not is_low_risk_file(p)}
-            all_churn = conn.execute(
-                "SELECT total_churn FROM file_stats ORDER BY total_churn"
+            repo_churn_rows = conn.execute(
+                "SELECT f.path, fs.total_churn FROM file_stats fs "
+                "JOIN files f ON fs.file_id = f.id "
+                "WHERE fs.total_churn IS NOT NULL"
             ).fetchall()
-            if all_churn and code_churn:
-                median_churn = all_churn[len(all_churn) // 2]["total_churn"]
-                if median_churn > 0:
-                    avg_changed = sum(d["churn"] for d in code_churn.values()) / len(code_churn)
-                    hotspot_score = min(1.0, avg_changed / (median_churn * 3))
+            repo_code_churn = sorted(
+                float(r["total_churn"] or 0)
+                for r in repo_churn_rows
+                if (r["total_churn"] or 0) > 0 and not is_low_risk_file(r["path"])
+            )
+            if repo_code_churn and code_churn:
+                avg_changed = sum(d["churn"] for d in code_churn.values()) / len(code_churn)
+                hotspot_score = _calibrated_hotspot_score(avg_changed, repo_code_churn)
 
         # --- 3. Bus factor ---
         bus_factor_risk = 0.0
-        bus_factors = []
+        min_bf = None
+        author_counts = []
         for path, fid in file_map.items():
             if is_test_file(path) or is_low_risk_file(path):
                 continue
@@ -298,16 +368,11 @@ def pr_risk(ctx, commit_range, staged, author):
                 "WHERE gfc.file_id = ?", (fid,)
             ).fetchall()
             if authors:
-                bus_factors.append(len(authors))
+                author_counts.append(len(authors))
 
-        if bus_factors:
-            min_bf = min(bus_factors)
-            if min_bf == 1:
-                bus_factor_risk = 1.0
-            elif min_bf == 2:
-                bus_factor_risk = 0.5
-            else:
-                bus_factor_risk = 0.0
+        if author_counts:
+            min_bf = min(author_counts)
+            bus_factor_risk = _author_count_risk(author_counts)
 
         # --- 4. Test coverage ---
         test_coverage = 0.0
@@ -317,12 +382,6 @@ def pr_risk(ctx, commit_range, staged, author):
         for path in source_files:
             fid = file_map[path]
             # Check if any test file imports this file
-            test_importer = conn.execute(
-                "SELECT 1 FROM file_edges fe "
-                "JOIN files f ON fe.source_file_id = f.id "
-                "WHERE fe.target_file_id = ?",
-                (fid,),
-            ).fetchall()
             has_test = any(is_test_file(r["path"]) for r in conn.execute(
                 "SELECT f.path FROM file_edges fe "
                 "JOIN files f ON fe.source_file_id = f.id "
@@ -534,7 +593,7 @@ def pr_risk(ctx, commit_range, staged, author):
         click.echo(f"  Hotspot score: {hotspot_score * 100:5.1f}%  {'(hot files!)' if hotspot_score > 0.5 else ''}")
         click.echo(f"  Test coverage: {test_coverage * 100:5.1f}%  ({covered_files}/{len(source_files)} source files covered)")
         click.echo(f"  Bus factor:    {'RISK' if bus_factor_risk >= 0.5 else 'ok':>5s}  "
-                    f"{'(single-author file!)' if bus_factor_risk >= 1.0 else ''}")
+                    f"{'(single-author file!)' if min_bf == 1 else ''}")
         click.echo(f"  Coupling:      {coupling_score * 100:5.1f}%")
         click.echo(f"  Novelty:       {novelty * 100:5.1f}%"
                     f"{'  (unfamiliar change combination!)' if novelty > 0.7 else ''}")

@@ -7,7 +7,7 @@ from pathlib import Path
 
 import pytest
 
-from tests.conftest import roam, git_init
+from tests.conftest import roam, git_init, index_in_process
 from roam.index.relations import _closest_symbol, _match_import_path
 from roam.index.parser import extract_vue_template, scan_template_references
 
@@ -49,7 +49,7 @@ def resolve_project(tmp_path_factory):
     git_init(root)
 
     # Index the project
-    out, rc = roam("index", cwd=root)
+    out, rc = index_in_process(root)
     assert rc == 0, f"Index failed: {out}"
 
     return root
@@ -204,7 +204,7 @@ class TestIndexerLineStart:
             "    first_func()\n"
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         # Verify via roam symbol that line numbers are correct
@@ -232,7 +232,7 @@ class TestIndexerLineStart:
             '</script>\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         # handleClick should have at least 1 caller (template edge)
@@ -346,7 +346,7 @@ class TestExtractVueTemplate:
             '</script>\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "handleSubmit", cwd=root)
@@ -445,7 +445,7 @@ class TestImportAwareResolution:
         )
 
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         # The edge from process→formatValue should point to composables/helpers.py
@@ -472,7 +472,7 @@ class TestImportAwareResolution:
         )
 
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         # Verify run() resolves — should not crash or pick wrong file
@@ -560,7 +560,7 @@ class TestMultilineTemplateAttributes:
             '</script>\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "isActive", cwd=root)
@@ -587,7 +587,7 @@ class TestIdentifierInArguments:
             '}\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "handler", cwd=root)
@@ -609,7 +609,7 @@ class TestIdentifierInArguments:
             '}\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "doWork", cwd=root)
@@ -637,7 +637,7 @@ class TestShorthandPropertyIdentifier:
             '</script>\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         # fn1 and fn2 should have references from defineExpose
@@ -660,7 +660,7 @@ class TestShorthandPropertyIdentifier:
             '}\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "fn1", cwd=root)
@@ -764,7 +764,7 @@ class TestCallbackArgumentEdge:
             '</script>\n'
         )
         git_init(root)
-        out, rc = roam("index", cwd=root)
+        out, rc = index_in_process(root)
         assert rc == 0, f"Index failed: {out}"
 
         out, rc = roam("symbol", "handleKeyboard", cwd=root)

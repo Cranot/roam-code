@@ -55,6 +55,32 @@ def git_commit(path, msg="update"):
 
 
 # ===========================================================================
+# In-process index helper (faster than subprocess)
+# ===========================================================================
+
+def index_in_process(project_path, *extra_args):
+    """Run `roam index` in-process via CliRunner (faster than subprocess).
+
+    Args:
+        project_path: Path to the project directory.
+        *extra_args: Additional args (e.g. "--force", "--verbose").
+
+    Returns (output, exit_code) like the subprocess roam() helper.
+    """
+    from roam.cli import cli
+
+    runner = CliRunner()
+    old_cwd = os.getcwd()
+    try:
+        os.chdir(str(project_path))
+        result = runner.invoke(cli, ["index"] + list(extra_args),
+                               catch_exceptions=False)
+    finally:
+        os.chdir(old_cwd)
+    return result.output, result.exit_code
+
+
+# ===========================================================================
 # CliRunner helpers
 # ===========================================================================
 
@@ -244,7 +270,7 @@ def indexed_project(python_project, monkeypatch):
     Returns the path to the indexed project directory.
     """
     monkeypatch.chdir(python_project)
-    out, rc = roam("index", cwd=python_project)
+    out, rc = index_in_process(python_project)
     assert rc == 0, f"roam index failed:\n{out}"
     return python_project
 
@@ -284,7 +310,7 @@ def project_factory(tmp_path_factory):
                 git_commit(proj, msg)
 
         if index:
-            out, rc = roam("index", cwd=proj)
+            out, rc = index_in_process(proj)
             assert rc == 0, f"roam index failed:\n{out}"
 
         return proj
@@ -314,7 +340,7 @@ def project_with_snapshots(indexed_project, monkeypatch):
             f'    return {i}\n'
         )
         git_commit(indexed_project, f"add extra_{i}")
-        out, rc = roam("index", cwd=indexed_project)
+        out, rc = index_in_process(indexed_project)
         assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"
         out, rc = roam("snapshot", "--tag", f"v{i}", cwd=indexed_project)
         # snapshot may or may not exist as command; don't assert

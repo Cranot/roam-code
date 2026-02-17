@@ -19,7 +19,7 @@ import pytest
 # Import helpers from conftest (pytest auto-loads conftest.py,
 # but we need explicit import for non-fixture helpers)
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 
 # ============================================================================
@@ -799,7 +799,7 @@ def polyglot(tmp_path_factory):
     )
 
     git_init(proj)
-    out, rc = roam("index", "--force", cwd=proj)
+    out, rc = index_in_process(proj, "--force")
     assert rc == 0, f"Index failed: {out}"
     return proj
 
@@ -1257,7 +1257,7 @@ class TestCommands:
     """Test every CLI command produces valid output on the polyglot project."""
 
     def test_index(self, polyglot):
-        out, rc = roam("index", cwd=polyglot)
+        out, rc = index_in_process(polyglot)
         assert rc == 0
         assert "up to date" in out or "Done" in out
 
@@ -1385,12 +1385,12 @@ class TestIncremental:
             '    return 42\n'
         )
         git_init(proj)
-        roam("index", "--force", cwd=proj)
+        index_in_process(proj, "--force")
         return proj
 
     def test_no_change_is_noop(self, incr_project):
         """Running index with no changes should be a no-op."""
-        out, rc = roam("index", cwd=incr_project)
+        out, rc = index_in_process(incr_project)
         assert rc == 0
         assert "up to date" in out
 
@@ -1401,7 +1401,7 @@ class TestIncremental:
             '    return "new"\n'
         )
         git_commit(incr_project, "add file")
-        out, rc = roam("index", cwd=incr_project)
+        out, rc = index_in_process(incr_project)
         assert rc == 0
         assert "1 added" in out
 
@@ -1423,7 +1423,7 @@ class TestIncremental:
             '        return "bye"\n'
         )
         git_commit(incr_project, "modify base")
-        out, rc = roam("index", cwd=incr_project)
+        out, rc = index_in_process(incr_project)
         assert rc == 0
         assert "Re-extracting" in out
 
@@ -1448,7 +1448,7 @@ class TestIncremental:
             '}\n'
         )
         git_init(proj)
-        roam("index", "--force", cwd=proj)
+        index_in_process(proj, "--force")
 
         # Verify initial edge
         out, _ = roam("uses", "Base", cwd=proj)
@@ -1464,7 +1464,7 @@ class TestIncremental:
         git_commit(proj, "modify base")
 
         # Incremental re-index
-        out, _ = roam("index", cwd=proj)
+        out, _ = index_in_process(proj)
         assert "Re-extracting" in out
 
         # Edge should survive
@@ -1476,7 +1476,7 @@ class TestIncremental:
         import os
         os.remove(incr_project / "standalone.py")
         git_commit(incr_project, "remove file")
-        out, rc = roam("index", cwd=incr_project)
+        out, rc = index_in_process(incr_project)
         assert rc == 0
         assert "1 removed" in out
 
@@ -1495,7 +1495,7 @@ class TestErrorHandling:
         proj.mkdir()
         (proj / "valid.py").write_text('def valid(): pass\n')
         git_init(proj)
-        roam("index", "--force", cwd=proj)
+        index_in_process(proj, "--force")
         return proj
 
     def test_nonexistent_file(self, err_project):
@@ -1515,7 +1515,10 @@ class TestErrorHandling:
         assert "No symbols" in out or "zzzzzzzzzzz" not in out
 
     def test_help_all_commands(self):
-        """Every command should have --help."""
+        """Every command should have --help (in-process for speed)."""
+        from click.testing import CliRunner
+        from roam.cli import cli
+
         commands = [
             "index", "map", "module", "file", "symbol", "trace",
             "deps", "health", "clusters", "layers", "weather",
@@ -1524,9 +1527,10 @@ class TestErrorHandling:
             "sketch", "context", "safe-delete", "pr-risk", "split",
             "risk", "why",
         ]
+        runner = CliRunner()
         for cmd in commands:
-            out, rc = roam(cmd, "--help")
-            assert rc == 0, f"{cmd} --help failed: {out}"
+            result = runner.invoke(cli, [cmd, "--help"])
+            assert result.exit_code == 0, f"{cmd} --help failed: {result.output}"
 
 
 # ============================================================================
@@ -1545,7 +1549,7 @@ class TestEdgeCases:
         (edge_project / "empty.py").write_text("")
         (edge_project / "also_empty.js").write_text("")
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
 
     def test_syntax_error_file(self, edge_project):
@@ -1559,7 +1563,7 @@ class TestEdgeCases:
             '    return 42\n'
         )
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
         # good.py should still be indexed
         out, _ = roam("search", "good", cwd=edge_project)
@@ -1577,7 +1581,7 @@ class TestEdgeCases:
             '}\n'
         )
         git_init(edge_project)
-        roam("index", "--force", cwd=edge_project)
+        index_in_process(edge_project, "--force")
         out, _ = roam("search", "Inner", cwd=edge_project)
         assert "Inner" in out
 
@@ -1591,7 +1595,7 @@ class TestEdgeCases:
             '    return greeting\n'
         , encoding="utf-8")
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
         out, _ = roam("search", "process", cwd=edge_project)
         assert "process" in out
@@ -1601,7 +1605,7 @@ class TestEdgeCases:
         lines = ['def func_{i}():\n    return {i}\n'.format(i=i) for i in range(200)]
         (edge_project / "big.py").write_text('\n'.join(lines))
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
         out, _ = roam("file", "big.py", cwd=edge_project)
         assert "func_0" in out
@@ -1614,7 +1618,7 @@ class TestEdgeCases:
         (roam_dir / "index.db").write_bytes(b"fake")
         (roam_dir / "hidden.py").write_text('def hidden(): pass\n')
         git_init(edge_project)
-        roam("index", "--force", cwd=edge_project)
+        index_in_process(edge_project, "--force")
         out, _ = roam("search", "hidden", cwd=edge_project)
         assert "hidden" not in out or "No symbols" in out
 
@@ -1624,7 +1628,7 @@ class TestEdgeCases:
             b'def crlf_func():\r\n    return True\r\n'
         )
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
         out, _ = roam("search", "crlf_func", cwd=edge_project)
         assert "crlf_func" in out
@@ -1635,7 +1639,7 @@ class TestEdgeCases:
         proj.mkdir()
         (proj / "main.py").write_text('def main(): pass\n')
         # No git init!
-        out, rc = roam("index", "--force", cwd=proj)
+        out, rc = index_in_process(proj, "--force")
         assert rc == 0
         out, _ = roam("search", "main", cwd=proj)
         assert "main" in out
@@ -1646,7 +1650,7 @@ class TestEdgeCases:
         (edge_project / "image.png").write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
         (edge_project / "data.bin").write_bytes(b'\x00' * 1000)
         git_init(edge_project)
-        out, rc = roam("index", "--force", cwd=edge_project)
+        out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
 
 
@@ -1983,7 +1987,7 @@ class TestPrRisk:
             'def validate(y):\n    return y > 0\n'
         )
         git_init(proj)
-        roam("index", "--force", cwd=proj)
+        index_in_process(proj, "--force")
         # Create unstaged changes
         (proj / "helper.py").write_text(
             'def process(x):\n    return x * 2\n\n'

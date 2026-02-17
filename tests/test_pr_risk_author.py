@@ -299,6 +299,37 @@ class TestAuthorFamiliarityUnit:
 
 
 # ===========================================================================
+# PR-risk math helpers
+# ===========================================================================
+
+
+class TestPrRiskMathHelpers:
+    """Unit tests for calibrated PR-risk helper math."""
+
+    def test_calibrated_hotspot_score_monotonic(self):
+        from roam.commands.cmd_pr_risk import _calibrated_hotspot_score
+
+        repo = [5, 10, 20, 40, 80, 120, 200]
+        low = _calibrated_hotspot_score(5, repo)
+        mid = _calibrated_hotspot_score(40, repo)
+        high = _calibrated_hotspot_score(200, repo)
+
+        assert 0.0 <= low <= 1.0
+        assert 0.0 <= mid <= 1.0
+        assert 0.0 <= high <= 1.0
+        assert low <= mid <= high
+
+    def test_author_count_risk_continuous(self):
+        from roam.commands.cmd_pr_risk import _author_count_risk
+
+        assert _author_count_risk([]) == 0.0
+        assert _author_count_risk([1]) == pytest.approx(1.0)
+        assert _author_count_risk([2]) == pytest.approx(0.5)
+        assert _author_count_risk([4]) == pytest.approx(0.25)
+        assert _author_count_risk([1, 4]) == pytest.approx(0.625)
+
+
+# ===========================================================================
 # Minor contributor detection
 # ===========================================================================
 

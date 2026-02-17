@@ -493,31 +493,33 @@ class PhpExtractor(LanguageExtractor):
                         new_scope = f"{scope_name}\\{fname}" if scope_name else fname
                 self._walk_refs(child, source, refs, new_scope)
 
+    def _use_clause_target(self, clause_node, source):
+        """Extract (target_name, import_path) from a namespace_use_clause."""
+        name_node = _find_child_type(clause_node, "qualified_name") or _find_child_type(clause_node, "name")
+        if name_node is None:
+            return None, None
+        path = self.node_text(name_node, source)
+        target = path.rsplit("\\", 1)[-1] if "\\" in path else path
+        alias_node = _find_child_type(clause_node, "namespace_aliasing_clause")
+        if alias_node:
+            for sub in alias_node.children:
+                if sub.type == "name":
+                    target = self.node_text(sub, source)
+                    break
+        return target, path
+
     def _extract_use_import(self, node, source, refs, scope_name):
         """Extract `use App\\Models\\User;` and `use App\\Models\\{User, Post};`."""
+        line = node.start_point[0] + 1
         for child in node.children:
             if child.type == "namespace_use_clause":
-                name_node = _find_child_type(child, "qualified_name") or _find_child_type(child, "name")
-                if name_node is None:
-                    continue
-                path = self.node_text(name_node, source)
-                target = path.rsplit("\\", 1)[-1] if "\\" in path else path
-                # Check for alias
-                alias_node = _find_child_type(child, "namespace_aliasing_clause")
-                if alias_node:
-                    for sub in alias_node.children:
-                        if sub.type == "name":
-                            target = self.node_text(sub, source)
-                            break
-                refs.append(self._make_reference(
-                    target_name=target,
-                    kind="import",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                    import_path=path,
-                ))
+                target, path = self._use_clause_target(child, source)
+                if target:
+                    refs.append(self._make_reference(
+                        target_name=target, kind="import", line=line,
+                        source_name=scope_name, import_path=path,
+                    ))
             elif child.type == "namespace_use_group":
-                # Group use: use App\Models\{User, Post};
                 prefix = ""
                 for sub in node.children:
                     if sub.type in ("qualified_name", "name"):
@@ -525,36 +527,19 @@ class PhpExtractor(LanguageExtractor):
                         break
                 for sub in child.children:
                     if sub.type == "namespace_use_clause":
-                        name_node = _find_child_type(sub, "qualified_name") or _find_child_type(sub, "name")
-                        if name_node is None:
-                            continue
-                        short = self.node_text(name_node, source)
-                        full_path = f"{prefix}\\{short}" if prefix else short
-                        target = short.rsplit("\\", 1)[-1] if "\\" in short else short
-                        # Check alias
-                        alias_node = _find_child_type(sub, "namespace_aliasing_clause")
-                        if alias_node:
-                            for asub in alias_node.children:
-                                if asub.type == "name":
-                                    target = self.node_text(asub, source)
-                                    break
-                        refs.append(self._make_reference(
-                            target_name=target,
-                            kind="import",
-                            line=node.start_point[0] + 1,
-                            source_name=scope_name,
-                            import_path=full_path,
-                        ))
+                        target, short_path = self._use_clause_target(sub, source)
+                        if target:
+                            full_path = f"{prefix}\\{short_path}" if prefix else (short_path or "")
+                            refs.append(self._make_reference(
+                                target_name=target, kind="import", line=line,
+                                source_name=scope_name, import_path=full_path,
+                            ))
             elif child.type in ("qualified_name", "name"):
-                # Simple: use App\Models\User;
                 path = self.node_text(child, source)
                 target = path.rsplit("\\", 1)[-1] if "\\" in path else path
                 refs.append(self._make_reference(
-                    target_name=target,
-                    kind="import",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                    import_path=path,
+                    target_name=target, kind="import", line=line,
+                    source_name=scope_name, import_path=path,
                 ))
 
     def _extract_trait_use(self, node, source, refs, scope_name):

@@ -13,6 +13,58 @@ from roam.output.formatter import (
 from roam.commands.resolve import ensure_index
 
 
+def _module_deps(conn, file_ids):
+    """Compute external import/imported-by maps for a set of file IDs."""
+    file_id_set = set(file_ids)
+    imports_external = {}
+    imported_by_external = {}
+    for fid in file_ids:
+        for row in conn.execute(FILE_IMPORTS, (fid,)).fetchall():
+            if row["id"] not in file_id_set:
+                imports_external[row["path"]] = (
+                    imports_external.get(row["path"], 0) + row["symbol_count"]
+                )
+        for row in conn.execute(FILE_IMPORTED_BY, (fid,)).fetchall():
+            if row["id"] not in file_id_set:
+                imported_by_external[row["path"]] = (
+                    imported_by_external.get(row["path"], 0) + row["symbol_count"]
+                )
+    return imports_external, imported_by_external
+
+
+def _collect_sym_ids(conn, files):
+    """Collect all symbol IDs for a list of files."""
+    all_sym_ids = set()
+    for f in files:
+        for sr in conn.execute(
+            "SELECT id FROM symbols WHERE file_id = ?", (f["id"],)
+        ).fetchall():
+            all_sym_ids.add(sr["id"])
+    return all_sym_ids
+
+
+def _module_cohesion(conn, all_sym_ids):
+    """Compute cohesion metrics for a set of symbol IDs."""
+    if not all_sym_ids:
+        return 0, 0, 0
+    ids_list = list(all_sym_ids)
+    src_rows = batched_in(
+        conn,
+        "SELECT DISTINCT source_id, target_id FROM edges WHERE source_id IN ({ph})",
+        ids_list,
+    )
+    tgt_rows = batched_in(
+        conn,
+        "SELECT DISTINCT source_id, target_id FROM edges WHERE target_id IN ({ph})",
+        ids_list,
+    )
+    all_edges = {(r["source_id"], r["target_id"]) for r in src_rows + tgt_rows}
+    total_edges = len(all_edges)
+    internal_edges = sum(1 for s, t in all_edges if s in all_sym_ids and t in all_sym_ids)
+    cohesion = internal_edges * 100 / total_edges if total_edges else 0
+    return cohesion, internal_edges, total_edges
+
+
 @click.command()
 @click.argument('path')
 @click.pass_context
@@ -55,67 +107,13 @@ def module(ctx, path):
             if not symbols:
                 symbols = conn.execute(SYMBOLS_IN_DIR, (f"%{path}/%",)).fetchall()
 
-        # --- Module-level dependencies ---
         file_ids = [f["id"] for f in files]
-        file_id_set = set(file_ids)
-
-        imports_external = {}
-        imported_by_external = {}
-
-        for fid in file_ids:
-            for row in conn.execute(FILE_IMPORTS, (fid,)).fetchall():
-                if row["id"] not in file_id_set:
-                    imports_external[row["path"]] = (
-                        imports_external.get(row["path"], 0) + row["symbol_count"]
-                    )
-            for row in conn.execute(FILE_IMPORTED_BY, (fid,)).fetchall():
-                if row["id"] not in file_id_set:
-                    imported_by_external[row["path"]] = (
-                        imported_by_external.get(row["path"], 0) + row["symbol_count"]
-                    )
-
-        # --- Module metrics ---
-        all_sym_ids = set()
-        for f in files:
-            sym_rows = conn.execute(
-                "SELECT id FROM symbols WHERE file_id = ?", (f["id"],)
-            ).fetchall()
-            for sr in sym_rows:
-                all_sym_ids.add(sr["id"])
-
+        imports_external, imported_by_external = _module_deps(conn, file_ids)
+        all_sym_ids = _collect_sym_ids(conn, files)
         total_syms = len(all_sym_ids)
         exported_count = len(symbols) if symbols else 0
         api_surface = exported_count * 100 / total_syms if total_syms else 0
-
-        if all_sym_ids:
-            ids_list = list(all_sym_ids)
-            id_set = all_sym_ids
-            # Fetch edges touching any module symbol, then classify in Python
-            src_rows = batched_in(
-                conn,
-                "SELECT DISTINCT source_id, target_id FROM edges WHERE source_id IN ({ph})",
-                ids_list,
-            )
-            tgt_rows = batched_in(
-                conn,
-                "SELECT DISTINCT source_id, target_id FROM edges WHERE target_id IN ({ph})",
-                ids_list,
-            )
-            all_edges = {
-                (r["source_id"], r["target_id"])
-                for r in src_rows + tgt_rows
-            }
-            total_edges = len(all_edges)
-            internal_edges = sum(
-                1 for s, t in all_edges
-                if s in id_set and t in id_set
-            )
-            cohesion = internal_edges * 100 / total_edges if total_edges else 0
-        else:
-            cohesion = 0
-            internal_edges = 0
-            total_edges = 0
-
+        cohesion, internal_edges, total_edges = _module_cohesion(conn, all_sym_ids)
         ext_importers = len(imported_by_external)
 
         if json_mode:

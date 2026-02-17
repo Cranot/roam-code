@@ -591,6 +591,32 @@ class TestSnapshot:
         summary = data.get("summary", {})
         assert "health_score" in summary, f"Missing health_score in summary: {summary}"
 
+    def test_snapshot_health_score_matches_health_command(self, cli_runner, indexed_project, monkeypatch):
+        """snapshot and health should use the same composite health score math."""
+        monkeypatch.chdir(indexed_project)
+
+        health_result = invoke_cli(
+            cli_runner,
+            ["health"],
+            cwd=indexed_project,
+            json_mode=True,
+        )
+        health_data = parse_json_output(health_result, "health")
+        health_score = health_data.get("summary", {}).get("health_score")
+
+        snapshot_result = invoke_cli(
+            cli_runner,
+            ["snapshot", "--tag", "score-parity"],
+            cwd=indexed_project,
+            json_mode=True,
+        )
+        snapshot_data = parse_json_output(snapshot_result, "snapshot")
+        snapshot_score = snapshot_data.get("summary", {}).get("health_score")
+
+        assert isinstance(health_score, int)
+        assert isinstance(snapshot_score, int)
+        assert snapshot_score == health_score
+
     def test_snapshot_text_shows_metrics(self, cli_runner, indexed_project, monkeypatch):
         """roam snapshot text output should report file/symbol counts."""
         monkeypatch.chdir(indexed_project)

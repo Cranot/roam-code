@@ -124,41 +124,6 @@ def get_cross_edges(conn: sqlite3.Connection) -> list[sqlite3.Row]:
     ).fetchall()
 
 
-def get_cross_edges_for_symbol(conn: sqlite3.Connection, repo_name: str,
-                                symbol_id: int) -> list[sqlite3.Row]:
-    """Return cross-repo edges involving a specific symbol."""
-    return conn.execute(
-        "SELECT e.*, "
-        "  sr.name AS source_repo_name, tr.name AS target_repo_name "
-        "FROM ws_cross_edges e "
-        "JOIN ws_repos sr ON sr.id = e.source_repo_id "
-        "JOIN ws_repos tr ON tr.id = e.target_repo_id "
-        "WHERE (sr.name=? AND e.source_symbol_id=?) "
-        "   OR (tr.name=? AND e.target_symbol_id=?) "
-        "ORDER BY e.kind",
-        (repo_name, symbol_id, repo_name, symbol_id),
-    ).fetchall()
-
-
-def get_route_symbols(conn: sqlite3.Connection,
-                      repo_id: int | None = None) -> list[sqlite3.Row]:
-    """Return route symbols, optionally filtered by repo."""
-    if repo_id is not None:
-        return conn.execute(
-            "SELECT rs.*, r.name AS repo_name "
-            "FROM ws_route_symbols rs "
-            "JOIN ws_repos r ON r.id = rs.repo_id "
-            "WHERE rs.repo_id=? ORDER BY rs.url_pattern",
-            (repo_id,),
-        ).fetchall()
-    return conn.execute(
-        "SELECT rs.*, r.name AS repo_name "
-        "FROM ws_route_symbols rs "
-        "JOIN ws_repos r ON r.id = rs.repo_id "
-        "ORDER BY rs.url_pattern"
-    ).fetchall()
-
-
 def clear_cross_edges(conn: sqlite3.Connection) -> None:
     """Remove all cross-repo edges and route symbols (before re-resolve)."""
     conn.execute("DELETE FROM ws_cross_edges")

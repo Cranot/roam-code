@@ -339,6 +339,34 @@ def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> d
 
 
 @mcp.tool()
+def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
+    """Detect suboptimal algorithms and suggest better approaches.
+
+    WHEN TO USE: Call this to find code that uses naive algorithms when
+    better alternatives exist (e.g., manual sort instead of built-in,
+    linear scan instead of binary search, nested-loop lookup instead of
+    hash join). Returns specific suggestions with complexity analysis.
+
+    Parameters
+    ----------
+    task:
+        Filter by task ID (e.g., "sorting", "membership", "nested-lookup").
+        Empty means all tasks.
+    confidence:
+        Filter by confidence level: "high", "medium", or "low".
+
+    Returns: findings grouped by algorithm category, each with current
+    vs. better approach, complexity comparison, and improvement tips.
+    """
+    args = ["math"]
+    if task:
+        args.extend(["--task", task])
+    if confidence:
+        args.extend(["--confidence", confidence])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 

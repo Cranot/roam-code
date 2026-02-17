@@ -16,7 +16,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 
 # ---------------------------------------------------------------------------
@@ -578,7 +578,7 @@ class TestApexProjectIndexing:
 
     def test_apex_project_indexing(self, sf_project):
         """Run roam index on a Salesforce project, verify symbols and edges exist."""
-        output, rc = roam("index", cwd=sf_project)
+        output, rc = index_in_process(sf_project)
         assert rc == 0, f"roam index failed (rc={rc}): {output}"
 
         # Verify symbols are indexed by searching for them
@@ -591,7 +591,7 @@ class TestApexProjectIndexing:
     def test_apex_project_map(self, sf_project):
         """Verify roam map shows the indexed Salesforce files."""
         # Ensure index exists first
-        roam("index", cwd=sf_project)
+        index_in_process(sf_project)
 
         output, rc = roam("map", cwd=sf_project)
         assert rc == 0, f"roam map failed: {output}"
@@ -601,7 +601,7 @@ class TestApexProjectIndexing:
 
     def test_apex_project_deps(self, sf_project):
         """Verify roam deps works on Salesforce class files."""
-        roam("index", cwd=sf_project)
+        index_in_process(sf_project)
 
         output, rc = roam(
             "deps",

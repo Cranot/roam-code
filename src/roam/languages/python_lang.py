@@ -435,9 +435,15 @@ class PythonExtractor(LanguageExtractor):
                 self._walk_refs(child, source, file_path, refs, scope_name)
             elif child.type in ("assignment", "expression_statement"):
                 # Walk type annotations on assignments: x: Path = ..., self.x: int = ...
-                # Note: type aliases (PathList = List[Path]) are NOT handled here —
-                # the RHS is a subscript expression, not a type annotation field.
                 self._extract_assignment_type_refs(child, source, refs, scope_name)
+                # Type aliases:
+                #   X: TypeAlias = list[Item]
+                #   type X = list[Item]
+                self._extract_type_alias_refs(child, source, refs, scope_name)
+                self._walk_refs(child, source, file_path, refs, scope_name)
+            elif child.type == "type_alias_statement":
+                # PEP 695 type aliases: `type Alias = Expr`
+                self._extract_type_alias_refs(child, source, refs, scope_name)
                 self._walk_refs(child, source, file_path, refs, scope_name)
             elif child.type == "with_statement":
                 # Extract calls from with-statement context managers:
@@ -501,6 +507,31 @@ class PythonExtractor(LanguageExtractor):
                     line=child.start_point[0] + 1, source_name=scope_name,
                 ))
 
+    def _except_types_from_node(self, node, source, refs, scope_name):
+        """Extract exception type references from a single AST node."""
+        if node.type == "identifier":
+            name = self.node_text(node, source)
+            if name not in _BUILTIN_TYPES:
+                refs.append(self._make_reference(
+                    target_name=name, kind="type_ref",
+                    line=node.start_point[0] + 1, source_name=scope_name,
+                ))
+        elif node.type == "tuple":
+            for sub in node.children:
+                if sub.type == "identifier":
+                    name = self.node_text(sub, source)
+                    if name not in _BUILTIN_TYPES:
+                        refs.append(self._make_reference(
+                            target_name=name, kind="type_ref",
+                            line=sub.start_point[0] + 1, source_name=scope_name,
+                        ))
+        elif node.type == "attribute":
+            name = self.node_text(node, source)
+            refs.append(self._make_reference(
+                target_name=name, kind="type_ref",
+                line=node.start_point[0] + 1, source_name=scope_name,
+            ))
+
     def _extract_except_refs(self, except_node, source, refs, scope_name):
         """Extract type references from except clauses: except ValueError as e."""
         for child in except_node.children:
@@ -513,55 +544,12 @@ class PythonExtractor(LanguageExtractor):
                     ))
                     return
             elif child.type == "as_pattern":
-                # except ValueError as e: → as_pattern > identifier("ValueError")
                 for sub in child.children:
-                    if sub.type == "identifier":
-                        name = self.node_text(sub, source)
-                        if name not in _BUILTIN_TYPES:
-                            refs.append(self._make_reference(
-                                target_name=name, kind="type_ref",
-                                line=sub.start_point[0] + 1,
-                                source_name=scope_name,
-                            ))
-                        return  # First identifier in as_pattern is the type
-                    elif sub.type == "tuple":
-                        for t in sub.children:
-                            if t.type == "identifier":
-                                name = self.node_text(t, source)
-                                if name not in _BUILTIN_TYPES:
-                                    refs.append(self._make_reference(
-                                        target_name=name, kind="type_ref",
-                                        line=t.start_point[0] + 1,
-                                        source_name=scope_name,
-                                    ))
+                    if sub.type in ("identifier", "tuple", "attribute"):
+                        self._except_types_from_node(sub, source, refs, scope_name)
                         return
-                    elif sub.type == "attribute":
-                        name = self.node_text(sub, source)
-                        refs.append(self._make_reference(
-                            target_name=name, kind="type_ref",
-                            line=sub.start_point[0] + 1,
-                            source_name=scope_name,
-                        ))
-                        return
-            elif child.type == "tuple":
-                # except (TypeError, ValueError):  (no 'as')
-                for sub in child.children:
-                    if sub.type == "identifier":
-                        name = self.node_text(sub, source)
-                        if name not in _BUILTIN_TYPES:
-                            refs.append(self._make_reference(
-                                target_name=name, kind="type_ref",
-                                line=sub.start_point[0] + 1,
-                                source_name=scope_name,
-                            ))
-                return
-            elif child.type == "attribute":
-                # except module.SomeError:
-                name = self.node_text(child, source)
-                refs.append(self._make_reference(
-                    target_name=name, kind="type_ref",
-                    line=child.start_point[0] + 1, source_name=scope_name,
-                ))
+            elif child.type in ("tuple", "attribute"):
+                self._except_types_from_node(child, source, refs, scope_name)
                 return
 
     def _extract_type_refs(self, func_node, source, refs, scope_name):
@@ -590,6 +578,39 @@ class PythonExtractor(LanguageExtractor):
             type_node = assign.child_by_field_name("type")
             if type_node:
                 self._walk_type_node(type_node, source, refs, scope_name)
+
+    def _extract_type_alias_refs(self, node, source, refs, scope_name):
+        """Extract type_ref edges from type alias declarations."""
+        if node.type == "expression_statement":
+            for sub in node.children:
+                if sub.type in ("assignment", "type_alias_statement"):
+                    self._extract_type_alias_refs(sub, source, refs, scope_name)
+            return
+
+        if node.type == "type_alias_statement":
+            rhs = node.child_by_field_name("right")
+            if rhs is None:
+                # Fallback for parser variants without field names
+                type_children = [c for c in node.children if c.type == "type"]
+                rhs = type_children[-1] if len(type_children) >= 2 else None
+            if rhs is not None:
+                self._walk_type_node(rhs, source, refs, scope_name)
+            return
+
+        if node.type != "assignment":
+            return
+
+        type_node = node.child_by_field_name("type")
+        if type_node is None or not self._is_type_alias_annotation(type_node, source):
+            return
+
+        rhs = node.child_by_field_name("right")
+        if rhs is not None:
+            self._walk_type_node(rhs, source, refs, scope_name)
+
+    def _is_type_alias_annotation(self, node, source) -> bool:
+        text = self.node_text(node, source).strip()
+        return text == "TypeAlias" or text.endswith(".TypeAlias")
 
     def _walk_type_node(self, node, source, refs, scope_name):
         """Walk a type annotation node and extract type references."""
