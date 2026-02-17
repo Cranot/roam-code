@@ -109,45 +109,11 @@ def resolve_references(
 
         # Standard resolution (skip if Salesforce already resolved)
         if target_sym is None:
-            # 1. Try qualified name exact match
-            qn_matches = symbols_by_qualified.get(target_name, [])
-            target_sym = qn_matches[0] if len(qn_matches) == 1 else None
-            if len(qn_matches) > 1:
-                # Multiple symbols share this qualified name — disambiguate
-                target_sym = _best_match(
-                    target_name, source_file, symbols_by_name,
-                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
-                )
-            # If the qualified match is in a different file, prefer a local
-            # symbol (same-file, then same-directory for Go packages).
-            if target_sym is not None and target_sym.get("file_path") != source_file:
-                candidates = symbols_by_name.get(target_name, [])
-                # Prefer same-file
-                for cand in candidates:
-                    if cand.get("file_path") == source_file:
-                        target_sym = cand
-                        break
-                else:
-                    # Prefer same-directory (Go packages, co-located modules)
-                    source_dir = os.path.dirname(source_file) if source_file else ""
-                    if source_dir and os.path.dirname(target_sym.get("file_path", "")) != source_dir:
-                        for cand in candidates:
-                            if os.path.dirname(cand.get("file_path", "")) == source_dir:
-                                target_sym = cand
-                                break
-            # 2. Try by simple name with disambiguation
-            if target_sym is None:
-                target_sym = _best_match(
-                    target_name, source_file, symbols_by_name,
-                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
-                )
-
-            # 3. Case-insensitive fallback (helps VFP and other case-insensitive langs)
-            if target_sym is None:
-                target_sym = _best_match(
-                    target_name.lower(), source_file, symbols_by_name_lower,
-                    ref_kind=kind, source_parent=source_parent, import_map=import_map,
-                )
+            target_sym = _resolve_standard(
+                target_name, source_file, source_parent, kind,
+                symbols_by_name, symbols_by_qualified, symbols_by_name_lower,
+                import_map,
+            )
 
         if target_sym is None:
             continue
@@ -171,6 +137,53 @@ def resolve_references(
         })
 
     return edges
+
+
+def _prefer_local(target_sym, target_name, source_file, symbols_by_name):
+    """If target is in a different file, prefer same-file or same-dir candidate."""
+    if target_sym is None or target_sym.get("file_path") == source_file:
+        return target_sym
+    candidates = symbols_by_name.get(target_name, [])
+    for cand in candidates:
+        if cand.get("file_path") == source_file:
+            return cand
+    source_dir = os.path.dirname(source_file) if source_file else ""
+    if source_dir and os.path.dirname(target_sym.get("file_path", "")) != source_dir:
+        for cand in candidates:
+            if os.path.dirname(cand.get("file_path", "")) == source_dir:
+                return cand
+    return target_sym
+
+
+def _resolve_standard(target_name, source_file, source_parent, kind,
+                      symbols_by_name, symbols_by_qualified, symbols_by_name_lower,
+                      import_map):
+    """Standard multi-strategy resolution: qualified -> simple -> case-insensitive."""
+    # 1. Qualified name exact match
+    qn_matches = symbols_by_qualified.get(target_name, [])
+    target_sym = qn_matches[0] if len(qn_matches) == 1 else None
+    if len(qn_matches) > 1:
+        target_sym = _best_match(
+            target_name, source_file, symbols_by_name,
+            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+        )
+    target_sym = _prefer_local(target_sym, target_name, source_file, symbols_by_name)
+
+    # 2. Simple name with disambiguation
+    if target_sym is None:
+        target_sym = _best_match(
+            target_name, source_file, symbols_by_name,
+            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+        )
+
+    # 3. Case-insensitive fallback (VFP and other case-insensitive langs)
+    if target_sym is None:
+        target_sym = _best_match(
+            target_name.lower(), source_file, symbols_by_name_lower,
+            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+        )
+
+    return target_sym
 
 
 def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:

@@ -18,6 +18,70 @@ import time
 from pathlib import Path
 
 
+# Agent CLI version + model signatures
+AGENT_SIGNATURES = {
+    "claude-code": {
+        "cli_cmd": "claude",
+        "version_cmd": ["claude", "--version"],
+        "model": "claude-opus-4-6",
+        "invoke": "claude --model opus --dangerously-skip-permissions -p",
+    },
+    "claude-code-sonnet": {
+        "cli_cmd": "claude",
+        "version_cmd": ["claude", "--version"],
+        "model": "claude-sonnet-4-5-20250929",
+        "invoke": "claude --model sonnet --dangerously-skip-permissions -p",
+    },
+    "codex": {
+        "cli_cmd": "codex",
+        "version_cmd": ["codex", "--version"],
+        "model": "gpt-5.3-codex",
+        "invoke": "codex exec --dangerously-bypass-approvals-and-sandbox",
+    },
+    "gemini-cli": {
+        "cli_cmd": "gemini",
+        "version_cmd": ["gemini", "--version"],
+        "model": "gemini-3-pro-preview",
+        "invoke": "gemini --yolo",
+    },
+}
+
+
+def get_agent_signature(agent: str) -> dict:
+    """Detect CLI version and return full agent signature."""
+    sig = AGENT_SIGNATURES.get(agent, {})
+    if not sig:
+        return {"agent": agent, "cli_version": "unknown", "model": "unknown"}
+
+    cli_version = "unknown"
+    version_cmd = sig.get("version_cmd")
+    if version_cmd:
+        try:
+            result = subprocess.run(
+                version_cmd, capture_output=True, text=True, timeout=10,
+            )
+            cli_version = result.stdout.strip().split("\n")[0]
+        except Exception:
+            pass
+
+    roam_version = "unknown"
+    try:
+        result = subprocess.run(
+            ["roam", "--version"], capture_output=True, text=True, timeout=10,
+        )
+        roam_version = result.stdout.strip().split("\n")[0]
+    except Exception:
+        pass
+
+    return {
+        "agent": agent,
+        "cli_version": cli_version,
+        "model": sig.get("model", "unknown"),
+        "invoke_command": sig.get("invoke", "unknown"),
+        "roam_version": roam_version,
+    }
+
+
 def run_roam(workspace: Path, command: str, timeout: int = 120) -> dict | None:
     """Run a roam command with --json and return parsed output."""
     try:
@@ -193,7 +257,7 @@ def evaluate_workspace(workspace: Path) -> dict:
         return results
 
     # --- Roam analysis commands ---
-    commands = ["health", "dead", "complexity", "cycles", "coupling", "gate"]
+    commands = ["health", "dead", "complexity", "coupling"]
     for cmd in commands:
         print(f"  Running roam {cmd}...")
         results["roam"][cmd] = run_roam(workspace, cmd)
@@ -213,47 +277,40 @@ def extract_scores(roam_results: dict) -> dict:
     """Extract numeric scores from roam JSON output."""
     scores = {}
 
-    # Health score (0-100)
+    # Health score (0-100) — also includes tangle_ratio
     health = roam_results.get("health")
     if health and isinstance(health, dict):
-        summary = health.get("summary", {})
-        scores["health"] = summary.get("score", summary.get("health_score", None))
-        scores["health_verdict"] = summary.get("verdict", None)
+        scores["health"] = health.get("health_score", health.get("summary", {}).get("health_score"))
+        scores["health_verdict"] = health.get("summary", {}).get("verdict")
+        scores["tangle_ratio"] = health.get("tangle_ratio", health.get("summary", {}).get("tangle_ratio"))
+        scores["propagation_cost"] = health.get("propagation_cost")
+        scores["issue_count"] = health.get("issue_count")
+        severity = health.get("severity", health.get("summary", {}).get("severity", {}))
+        scores["critical_issues"] = severity.get("CRITICAL", 0)
+        scores["warning_issues"] = severity.get("WARNING", 0)
 
     # Dead code count
     dead = roam_results.get("dead")
     if dead and isinstance(dead, dict):
         summary = dead.get("summary", {})
-        scores["dead_symbols"] = summary.get("dead_count", summary.get("total", None))
+        # sum safe + review counts (intentional are OK)
+        scores["dead_symbols"] = summary.get("safe", 0) + summary.get("review", 0)
 
     # Complexity
     complexity = roam_results.get("complexity")
     if complexity and isinstance(complexity, dict):
         summary = complexity.get("summary", {})
-        scores["avg_complexity"] = summary.get("average", summary.get("avg_complexity", None))
-        scores["max_complexity"] = summary.get("max", summary.get("max_complexity", None))
-        scores["high_complexity_count"] = summary.get("high_count",
-            summary.get("above_threshold", None))
-
-    # Cycles
-    cycles = roam_results.get("cycles")
-    if cycles and isinstance(cycles, dict):
-        summary = cycles.get("summary", {})
-        scores["cycle_count"] = summary.get("scc_count", summary.get("cycle_count", None))
-        scores["tangle_ratio"] = summary.get("tangle_ratio", None)
+        scores["avg_complexity"] = summary.get("average_complexity")
+        scores["p90_complexity"] = summary.get("p90_complexity")
+        scores["high_complexity_count"] = summary.get("high_count", 0)
+        scores["critical_complexity_count"] = summary.get("critical_count", 0)
 
     # Coupling
     coupling = roam_results.get("coupling")
     if coupling and isinstance(coupling, dict):
         summary = coupling.get("summary", {})
-        scores["high_coupling_count"] = summary.get("high_coupling_count",
-            summary.get("above_threshold", None))
-
-    # Gate
-    gate = roam_results.get("gate")
-    if gate and isinstance(gate, dict):
-        summary = gate.get("summary", {})
-        scores["gate_passed"] = summary.get("passed", summary.get("verdict", None))
+        scores["coupling_pairs"] = summary.get("pairs", 0)
+        scores["hidden_coupling"] = summary.get("hidden_coupling", 0)
 
     return scores
 
@@ -263,12 +320,15 @@ def _empty_scores() -> dict:
         "health": None,
         "dead_symbols": None,
         "avg_complexity": None,
-        "max_complexity": None,
+        "p90_complexity": None,
         "high_complexity_count": None,
-        "cycle_count": None,
+        "critical_complexity_count": None,
         "tangle_ratio": None,
-        "high_coupling_count": None,
-        "gate_passed": None,
+        "propagation_cost": None,
+        "coupling_pairs": None,
+        "hidden_coupling": None,
+        "critical_issues": None,
+        "warning_issues": None,
     }
 
 
@@ -292,6 +352,7 @@ def main():
     # Add metadata
     if args.agent:
         results["agent"] = args.agent
+        results["signature"] = get_agent_signature(args.agent)
     if args.mode:
         results["mode"] = args.mode
     if args.task:
@@ -313,11 +374,14 @@ def main():
     print(f"  Health:           {scores.get('health', 'N/A')}")
     print(f"  Dead symbols:     {scores.get('dead_symbols', 'N/A')}")
     print(f"  Avg complexity:   {scores.get('avg_complexity', 'N/A')}")
-    print(f"  Max complexity:   {scores.get('max_complexity', 'N/A')}")
-    print(f"  Cycles:           {scores.get('cycle_count', 'N/A')}")
+    print(f"  P90 complexity:   {scores.get('p90_complexity', 'N/A')}")
+    print(f"  High complexity:  {scores.get('high_complexity_count', 'N/A')}")
     print(f"  Tangle ratio:     {scores.get('tangle_ratio', 'N/A')}")
-    print(f"  High coupling:    {scores.get('high_coupling_count', 'N/A')}")
-    print(f"  Gate passed:      {scores.get('gate_passed', 'N/A')}")
+    print(f"  Propagation cost: {scores.get('propagation_cost', 'N/A')}")
+    print(f"  Coupling pairs:   {scores.get('coupling_pairs', 'N/A')}")
+    print(f"  Hidden coupling:  {scores.get('hidden_coupling', 'N/A')}")
+    print(f"  Critical issues:  {scores.get('critical_issues', 'N/A')}")
+    print(f"  Warning issues:   {scores.get('warning_issues', 'N/A')}")
     print(f"  Files:            {results['file_stats'].get('total_files', 'N/A')}")
     print(f"  Lines:            {results['file_stats'].get('total_lines', 'N/A')}")
     print(f"  Tests found:      {results['structure']['tests'].get('test_file_count', 0)}")

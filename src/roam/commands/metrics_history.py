@@ -7,13 +7,61 @@ import subprocess
 import time
 
 from roam.db.connection import find_project_root
-from roam.db.queries import UNREFERENCED_EXPORTS
+from roam.db.queries import UNREFERENCED_EXPORTS, TOP_BY_DEGREE, TOP_BY_BETWEENNESS
 
 
 def _is_test_path(file_path):
     """Check if a file is a test file (discovered by pytest, not imported)."""
     base = os.path.basename(file_path).lower()
     return base.startswith("test_") or base.endswith("_test.py")
+
+
+def _compute_health_score(conn, G, symbols, god_items, bn_items, bn_p90,
+                          layer_violations, find_cycles_fn, is_utility_path_fn):
+    """Compute the weighted geometric mean health score (0-100)."""
+    import math
+
+    def _hf(value, scale):
+        return math.exp(-value / scale) if scale > 0 else 1.0
+
+    tangle_r = 0.0
+    if G is not None and symbols > 0:
+        try:
+            cyc_ids = set()
+            for scc in find_cycles_fn(G):
+                cyc_ids.update(scc)
+            tangle_r = len(cyc_ids) / symbols * 100
+        except Exception:
+            pass
+
+    god_critical = sum(
+        1 for g in god_items
+        if (g["degree"] > 150 if is_utility_path_fn(g["file"]) else g["degree"] > 50)
+    )
+    bn_critical = sum(
+        1 for b in bn_items
+        if b["betweenness"] > bn_p90 * (1.5 if is_utility_path_fn(b["file"]) else 1.0)
+    )
+
+    god_signal = god_critical * 3 + len(god_items) * 0.5
+    bn_signal = bn_critical * 2 + len(bn_items) * 0.3
+
+    factors = [
+        (_hf(tangle_r, 10), 0.30),
+        (_hf(god_signal, 5), 0.20),
+        (_hf(bn_signal, 4), 0.15),
+        (_hf(layer_violations, 5), 0.15),
+    ]
+    try:
+        avg_fh = conn.execute(
+            "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
+        ).fetchone()[0]
+        factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
+    except Exception:
+        factors.append((1.0, 0.20))
+
+    log_score = sum(w * math.log(max(h, 1e-9)) for h, w in factors)
+    return max(0, min(100, int(100 * math.exp(log_score))))
 
 
 def collect_metrics(conn):
@@ -26,6 +74,8 @@ def collect_metrics(conn):
     files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
     edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+    # Keep health math aligned with `roam health`.
+    from roam.commands.cmd_health import _is_utility_path, _percentile
 
     # Cycles
     try:
@@ -37,18 +87,37 @@ def collect_metrics(conn):
         cycles = 0
         G = None
 
-    # God components (degree > 20)
-    degree_rows = conn.execute(
-        "SELECT (gm.in_degree + gm.out_degree) as total "
-        "FROM graph_metrics gm WHERE (gm.in_degree + gm.out_degree) > 20"
-    ).fetchall()
-    god_components = len(degree_rows)
+    # God components (same query + thresholds as cmd_health.py)
+    degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
+    god_items = []
+    for r in degree_rows:
+        total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
+        if total > 20:
+            god_items.append({
+                "degree": total,
+                "file": r["file_path"],
+            })
+    god_components = len(god_items)
 
-    # Bottlenecks (betweenness > 0.5)
-    bn_rows = conn.execute(
-        "SELECT 1 FROM graph_metrics WHERE betweenness > 0.5"
-    ).fetchall()
-    bottlenecks = len(bn_rows)
+    # Bottlenecks (same query + thresholds as cmd_health.py)
+    all_bw = sorted(
+        r[0] for r in conn.execute(
+            "SELECT betweenness FROM graph_metrics WHERE betweenness > 0"
+        ).fetchall()
+    )
+    bn_p70 = _percentile(all_bw, 70)
+    bn_p90 = _percentile(all_bw, 90)
+
+    bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
+    bn_items = []
+    for r in bw_rows:
+        bw = r["betweenness"] or 0
+        if bw > 0.5:
+            bn_items.append({
+                "betweenness": round(bw, 1),
+                "file": r["file_path"],
+            })
+    bottlenecks = len(bn_items)
 
     # Dead exports (filter test files — they're discovered by pytest, not imported)
     dead_rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
@@ -67,43 +136,10 @@ def collect_metrics(conn):
         except Exception:
             pass
 
-    # Health score: weighted geometric mean matching cmd_health.py formula.
-    # Each factor h_i = e^(-signal/scale) is a health fraction in (0,1].
-    import math
-
-    def _hf(value, scale):
-        return math.exp(-value / scale) if scale > 0 else 1.0
-
-    tangle_r = 0.0
-    if G is not None and symbols > 0:
-        try:
-            cyc_ids = set()
-            for scc in find_cycles(G):
-                cyc_ids.update(scc)
-            tangle_r = len(cyc_ids) / symbols * 100
-        except Exception:
-            pass
-
-    god_signal = god_components * 0.5
-    bn_signal = bottlenecks * 0.3
-
-    factors = [
-        (_hf(tangle_r, 10), 0.30),
-        (_hf(god_signal, 5), 0.20),
-        (_hf(bn_signal, 4), 0.15),
-        (_hf(layer_violations, 5), 0.15),
-    ]
-    # File health (if available)
-    try:
-        avg_fh = conn.execute(
-            "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
-        ).fetchone()[0]
-        factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
-    except Exception:
-        factors.append((1.0, 0.20))
-
-    log_score = sum(w * math.log(max(h, 1e-9)) for h, w in factors)
-    health_score = max(0, min(100, int(100 * math.exp(log_score))))
+    health_score = _compute_health_score(
+        conn, G, symbols, god_items, bn_items, bn_p90,
+        layer_violations, find_cycles, _is_utility_path,
+    )
 
     # Tangle ratio: percentage of symbols in cycles
     tangle_ratio = 0.0

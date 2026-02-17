@@ -106,6 +106,12 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
     # v7.6: file role classification
     _safe_alter(conn, "files", "file_role", "TEXT DEFAULT 'source'")
+    # v8.3: math_signals table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
+    # v8.4: extended math signals
+    _safe_alter(conn, "math_signals", "self_call_count", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
+    _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):

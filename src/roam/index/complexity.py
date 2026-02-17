@@ -53,11 +53,10 @@ _FLOW_BREAK = {
 
 # Boolean operators
 _BOOL_OPS = {
-    # Python
-    "boolean_operator",
-    # JS/TS/Java/C#/Go
-    "binary_expression",  # need to check operator
+    # JS/TS/Java/C#/Go — needs child token check for actual boolean ops
+    "binary_expression",
 }
+# Python "boolean_operator" is handled separately (line ~165) since it's always boolean
 
 _BOOL_OP_TOKENS = {"&&", "||", "and", "or", "??"}
 
@@ -425,6 +424,331 @@ def _complexity_from_source(
     }
 
 
+# ── Math signal extraction (piggybacks on per-symbol AST walk) ──────
+
+# Loop node types (cross-language)
+_LOOP_NODES = {
+    "for_statement", "while_statement", "do_statement",
+    "for_in_statement", "enhanced_for_statement", "foreach_statement",
+    "for_expression",
+}
+
+# Subscript / index access nodes
+_SUBSCRIPT_NODES = {
+    "subscript", "subscript_expression", "index_expression",
+    "element_access_expression", "bracket_access",
+}
+
+# Comparison operator tokens
+_COMPARE_OPS = {"<", ">", "<=", ">=", "==", "!=", "<>"}
+
+# Augmented assignment node types and tokens
+_AUGMENTED_ASSIGN_NODES = {"augmented_assignment"}
+_AUGMENTED_ASSIGN_OPS = {"+=", "-=", "*=", "/=", "%=", "**=", "//=",
+                         "&=", "|=", "^=", "<<=", ">>="}
+
+
+def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
+    """Walk a function AST node once and extract algorithmic signals.
+
+    Returns a dict suitable for storing in the ``math_signals`` table.
+    """
+    max_loop_depth = 0
+    has_nested = False
+    calls_in_loops: list[str] = []
+    subscript_in_loops = False
+    has_self_call = False
+    self_call_count = 0
+    loop_with_compare = False
+    loop_with_accumulator = False
+    str_concat_in_loop = False
+    loop_invariant_calls: list[str] = []
+    loop_bound_small = False
+
+    symbol_lower = symbol_name.lower() if symbol_name else ""
+
+    # --- Pre-scan: find variables initialized to string literals ---
+    # This enables detection of quadratic string building (str += in loop)
+    string_vars: set[str] = set()
+    _scan_string_inits(func_node, source, string_vars)
+
+    def _walk(node, loop_depth: int, loop_vars: set[str]):
+        nonlocal max_loop_depth, has_nested, subscript_in_loops
+        nonlocal has_self_call, self_call_count
+        nonlocal loop_with_compare, loop_with_accumulator
+        nonlocal str_concat_in_loop, loop_bound_small
+
+        ntype = node.type
+
+        # --- Loop entry ---
+        if ntype in _LOOP_NODES:
+            new_depth = loop_depth + 1
+            if new_depth > max_loop_depth:
+                max_loop_depth = new_depth
+            if new_depth >= 2:
+                has_nested = True
+            # Extract loop variable names and check for bounded iteration
+            lv = _extract_loop_vars(node, source)
+            new_loop_vars = loop_vars | lv
+            if _is_bounded_loop(node, source):
+                loop_bound_small = True
+            for child in node.children:
+                _walk(child, new_depth, new_loop_vars)
+            return
+
+        # --- Inside a loop: check for signals ---
+        if loop_depth > 0:
+            # Call expressions inside loops
+            if ntype in ("call_expression", "call"):
+                name = _call_target_name(node, source)
+                if name:
+                    calls_in_loops.append(name)
+                    if symbol_lower and name.lower() == symbol_lower:
+                        has_self_call = True
+                        self_call_count += 1
+                    # Check if call is loop-invariant (args don't use loop vars)
+                    if loop_vars and not _call_uses_loop_vars(node, source, loop_vars):
+                        loop_invariant_calls.append(name)
+
+            # Subscript access inside loops
+            if ntype in _SUBSCRIPT_NODES:
+                subscript_in_loops = True
+
+            # Comparison inside loops
+            if ntype in ("binary_expression", "comparison_operator"):
+                for child in node.children:
+                    if not child.is_named:
+                        op = source[child.start_byte:child.end_byte].decode(
+                            "utf-8", errors="replace")
+                        if op in _COMPARE_OPS:
+                            loop_with_compare = True
+                            break
+
+            # Augmented assignment inside loops
+            if ntype in _AUGMENTED_ASSIGN_NODES:
+                loop_with_accumulator = True
+                # Check for string concatenation: str_var += ...
+                target = _augmented_assign_target(node, source)
+                if target and target in string_vars:
+                    str_concat_in_loop = True
+            elif ntype in ("binary_expression", "assignment_expression",
+                           "expression_statement"):
+                for child in node.children:
+                    if not child.is_named:
+                        op = source[child.start_byte:child.end_byte].decode(
+                            "utf-8", errors="replace")
+                        if op in _AUGMENTED_ASSIGN_OPS:
+                            loop_with_accumulator = True
+                            break
+
+        # --- Self-call detection outside loops too ---
+        if loop_depth == 0 and ntype in ("call_expression", "call"):
+            name = _call_target_name(node, source)
+            if name and symbol_lower and name.lower() == symbol_lower:
+                has_self_call = True
+                self_call_count += 1
+
+        # Recurse children
+        for child in node.children:
+            _walk(child, loop_depth, loop_vars)
+
+    _walk(func_node, 0, set())
+
+    # Deduplicate calls list while preserving order
+    seen: set[str] = set()
+    unique_calls: list[str] = []
+    for c in calls_in_loops:
+        if c not in seen:
+            seen.add(c)
+            unique_calls.append(c)
+
+    # Deduplicate loop-invariant calls
+    seen_inv: set[str] = set()
+    unique_inv: list[str] = []
+    for c in loop_invariant_calls:
+        if c not in seen_inv:
+            seen_inv.add(c)
+            unique_inv.append(c)
+
+    return {
+        "loop_depth": max_loop_depth,
+        "has_nested_loops": int(has_nested),
+        "calls_in_loops": unique_calls,
+        "subscript_in_loops": int(subscript_in_loops),
+        "has_self_call": int(has_self_call),
+        "self_call_count": self_call_count,
+        "loop_with_compare": int(loop_with_compare),
+        "loop_with_accumulator": int(loop_with_accumulator),
+        "str_concat_in_loop": int(str_concat_in_loop),
+        "loop_invariant_calls": unique_inv,
+        "loop_bound_small": int(loop_bound_small),
+    }
+
+
+def _call_target_name(node, src: bytes) -> str:
+    """Best-effort extraction of the call target identifier."""
+    for child in node.children:
+        if child.type == "identifier":
+            return src[child.start_byte:child.end_byte].decode(
+                "utf-8", errors="replace")
+        if child.type in ("member_expression", "attribute",
+                          "field_expression"):
+            # Take the last identifier (e.g. obj.method -> method)
+            for sub in reversed(child.children):
+                if sub.type in ("identifier", "property_identifier",
+                                "field_identifier"):
+                    return src[sub.start_byte:sub.end_byte].decode(
+                        "utf-8", errors="replace")
+    return ""
+
+
+def _scan_string_inits(func_node, source: bytes, string_vars: set[str]):
+    """Scan top-level assignments in a function for string initializations.
+
+    Detects patterns like: x = "", x = '', x = str(), x = f"", x = ""\"\"\"\"\"\"
+    Populates string_vars with the variable names.
+    """
+    body = None
+    for child in func_node.children:
+        if child.type in ("block", "statement_block", "compound_statement"):
+            body = child
+            break
+    if body is None:
+        return
+
+    for stmt in body.children:
+        # Python: expression_statement > assignment
+        # JS/TS: variable_declaration, expression_statement > assignment_expression
+        if stmt.type == "expression_statement":
+            for child in stmt.children:
+                if child.type == "assignment":
+                    _check_string_assign(child, source, string_vars)
+                elif child.type == "assignment_expression":
+                    _check_string_assign(child, source, string_vars)
+        elif stmt.type in ("assignment", "assignment_expression"):
+            _check_string_assign(stmt, source, string_vars)
+        # Stop scanning once we hit a loop — we only want pre-loop inits
+        if stmt.type in _LOOP_NODES:
+            break
+
+
+def _check_string_assign(assign_node, source: bytes, string_vars: set[str]):
+    """Check if an assignment initializes a variable to a string value."""
+    children = assign_node.children
+    if len(children) < 3:
+        return
+    lhs = children[0]
+    rhs = children[-1]
+
+    if lhs.type != "identifier":
+        return
+
+    var_name = source[lhs.start_byte:lhs.end_byte].decode("utf-8", errors="replace")
+
+    # Check RHS for string patterns
+    if rhs.type in ("string", "concatenated_string", "template_string"):
+        string_vars.add(var_name)
+    elif rhs.type in ("call_expression", "call"):
+        # str() constructor
+        fn_name = _call_target_name(rhs, source)
+        if fn_name in ("str", "String", "StringBuilder", "StringBuffer"):
+            string_vars.add(var_name)
+
+
+def _augmented_assign_target(node, source: bytes) -> str:
+    """Extract the target variable name from an augmented assignment node."""
+    for child in node.children:
+        if child.type == "identifier":
+            return source[child.start_byte:child.end_byte].decode(
+                "utf-8", errors="replace")
+    return ""
+
+
+def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
+    """Extract loop variable names from a for/foreach loop node."""
+    result: set[str] = set()
+    for child in loop_node.children:
+        # Python: for x in ..., Go: for i, v := range ...
+        if child.type in ("identifier",):
+            result.add(source[child.start_byte:child.end_byte].decode(
+                "utf-8", errors="replace"))
+        # Python pattern_list / tuple: for x, y in ...
+        elif child.type in ("pattern_list", "tuple_pattern", "pair"):
+            for sub in child.children:
+                if sub.type == "identifier":
+                    result.add(source[sub.start_byte:sub.end_byte].decode(
+                        "utf-8", errors="replace"))
+        # JS: for (const x of ...) / for (let x in ...)
+        elif child.type in ("variable_declaration", "lexical_declaration"):
+            for sub in child.children:
+                if sub.type == "variable_declarator":
+                    for ssub in sub.children:
+                        if ssub.type == "identifier":
+                            result.add(source[ssub.start_byte:ssub.end_byte].decode(
+                                "utf-8", errors="replace"))
+        # Stop at the body — we only want the loop header vars
+        if child.type in ("block", "statement_block", "compound_statement"):
+            break
+    return result
+
+
+def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
+    """Check if any argument of a call expression references a loop variable."""
+    # Find argument list node
+    args_node = None
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments", "template_string"):
+            args_node = child
+            break
+    if args_node is None:
+        return False
+
+    # Walk all identifiers in the arguments
+    def _has_loop_var(node) -> bool:
+        if node.type == "identifier":
+            name = source[node.start_byte:node.end_byte].decode(
+                "utf-8", errors="replace")
+            if name in loop_vars:
+                return True
+        for child in node.children:
+            if _has_loop_var(child):
+                return True
+        return False
+
+    return _has_loop_var(args_node)
+
+
+def _is_bounded_loop(loop_node, source: bytes) -> bool:
+    """Check if a loop iterates over a known-small bounded range.
+
+    Detects: range(N) where N < 100, iteration over tuple/list literals.
+    """
+    for child in loop_node.children:
+        # range(N) with small literal
+        if child.type in ("call_expression", "call"):
+            fn_name = _call_target_name(child, source)
+            if fn_name == "range":
+                # Check for a single integer argument < 100
+                for sub in child.children:
+                    if sub.type in ("argument_list", "arguments"):
+                        for arg in sub.children:
+                            if arg.type in ("integer", "number"):
+                                try:
+                                    val = int(source[arg.start_byte:arg.end_byte].decode(
+                                        "utf-8", errors="replace"))
+                                    if val < 100:
+                                        return True
+                                except (ValueError, OverflowError):
+                                    pass
+        # Iteration over a small literal collection
+        if child.type in ("list", "tuple", "set"):
+            # Count elements
+            elem_count = sum(1 for c in child.children if c.is_named)
+            if elem_count < 20:
+                return True
+    return False
+
+
 # ── Batch computation + storage ──────────────────────────────────────
 
 def compute_and_store(
@@ -445,11 +769,12 @@ def compute_and_store(
     )
 
     rows = conn.execute(
-        "SELECT id, kind, line_start, line_end FROM symbols WHERE file_id = ?",
+        "SELECT id, name, kind, line_start, line_end FROM symbols WHERE file_id = ?",
         (file_id,),
     ).fetchall()
 
     metrics_batch = []
+    math_batch = []
     for row in rows:
         kind = row["kind"] or ""
         if kind not in CALLABLE_KINDS:
@@ -479,6 +804,26 @@ def compute_and_store(
             metrics.get("halstead_bugs", 0.0),
         ))
 
+        # Extract math signals from same AST node
+        func_node = _find_function_node(tree, ls, le)
+        if func_node is not None:
+            import json as _json_mod
+            msig = _extract_math_signals(func_node, source, row["name"])
+            math_batch.append((
+                row["id"],
+                msig["loop_depth"],
+                msig["has_nested_loops"],
+                _json_mod.dumps(msig["calls_in_loops"]),
+                msig["subscript_in_loops"],
+                msig["has_self_call"],
+                msig["loop_with_compare"],
+                msig["loop_with_accumulator"],
+                msig["self_call_count"],
+                msig["str_concat_in_loop"],
+                _json_mod.dumps(msig["loop_invariant_calls"]),
+                msig["loop_bound_small"],
+            ))
+
     if metrics_batch:
         conn.executemany(
             """INSERT OR REPLACE INTO symbol_metrics
@@ -488,4 +833,15 @@ def compute_and_store(
                 halstead_effort, halstead_bugs)
                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             metrics_batch,
+        )
+
+    if math_batch:
+        conn.executemany(
+            """INSERT OR REPLACE INTO math_signals
+               (symbol_id, loop_depth, has_nested_loops, calls_in_loops,
+                subscript_in_loops, has_self_call, loop_with_compare,
+                loop_with_accumulator, self_call_count, str_concat_in_loop,
+                loop_invariant_calls, loop_bound_small)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+            math_batch,
         )

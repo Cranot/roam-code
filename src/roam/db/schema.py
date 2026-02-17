@@ -148,6 +148,22 @@ CREATE TABLE IF NOT EXISTS symbol_metrics (
 CREATE INDEX IF NOT EXISTS idx_symbol_metrics_complexity
     ON symbol_metrics(cognitive_complexity DESC);
 
+-- Math signals: AST-derived signals for algorithm detection
+CREATE TABLE IF NOT EXISTS math_signals (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    loop_depth INTEGER DEFAULT 0,
+    has_nested_loops INTEGER DEFAULT 0,
+    calls_in_loops TEXT,
+    subscript_in_loops INTEGER DEFAULT 0,
+    has_self_call INTEGER DEFAULT 0,
+    loop_with_compare INTEGER DEFAULT 0,
+    loop_with_accumulator INTEGER DEFAULT 0,
+    self_call_count INTEGER DEFAULT 0,
+    str_concat_in_loop INTEGER DEFAULT 0,
+    loop_invariant_calls TEXT,
+    loop_bound_small INTEGER DEFAULT 0
+);
+
 -- Snapshots: health metrics over time
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 
 @pytest.fixture
@@ -154,7 +154,7 @@ def python_project(tmp_path):
 class TestJavaSignatures:
     def test_no_doubled_extends(self, java_project):
         """Java class signatures should not have 'extends extends'."""
-        out, rc = roam("index", "--force", cwd=java_project)
+        out, rc = index_in_process(java_project, "--force")
         assert rc == 0
 
         out, rc = roam("symbol", "Dog", cwd=java_project)
@@ -163,20 +163,20 @@ class TestJavaSignatures:
 
     def test_no_doubled_implements(self, java_project):
         """Java class signatures should not have 'implements implements'."""
-        out, _ = roam("index", "--force", cwd=java_project)
+        out, _ = index_in_process(java_project, "--force")
         out, _ = roam("symbol", "Dog", cwd=java_project)
         assert "implements implements" not in out, f"Doubled 'implements' in: {out}"
         assert "implements Pet" in out, f"Missing 'implements Pet' in: {out}"
 
     def test_no_double_parens(self, java_project):
         """Java method signatures should not have double parentheses."""
-        roam("index", "--force", cwd=java_project)
+        index_in_process(java_project, "--force")
         out, _ = roam("file", "Dog.java", cwd=java_project)
         assert "((" not in out, f"Double parens in: {out}"
 
     def test_constructor_no_double_parens(self, java_project):
         """Java constructor signatures should not have double parentheses."""
-        roam("index", "--force", cwd=java_project)
+        index_in_process(java_project, "--force")
         out, _ = roam("file", "GuideDog.java", cwd=java_project)
         assert "((" not in out, f"Double parens in constructor: {out}"
 
@@ -186,40 +186,40 @@ class TestJavaSignatures:
 class TestInheritanceEdges:
     def test_java_extends_edges(self, java_project):
         """Java extends should create inherits edges."""
-        roam("index", "--force", cwd=java_project)
+        index_in_process(java_project, "--force")
         out, _ = roam("uses", "Animal", cwd=java_project)
         # Dog and Cat extend Animal
         assert "Dog" in out or "Cat" in out, f"Missing inheritance in: {out}"
 
     def test_java_implements_edges(self, java_project):
         """Java implements should create implements edges."""
-        roam("index", "--force", cwd=java_project)
+        index_in_process(java_project, "--force")
         out, _ = roam("uses", "Pet", cwd=java_project)
         # Dog and Cat implement Pet
         assert "Dog" in out or "Cat" in out, f"Missing implements in: {out}"
 
     def test_ts_extends_edges(self, ts_project):
         """TypeScript extends should create inherits edges."""
-        roam("index", "--force", cwd=ts_project)
+        index_in_process(ts_project, "--force")
         out, _ = roam("uses", "BaseEntity", cwd=ts_project)
         assert "User" in out, f"Missing TS extends in: {out}"
 
     def test_ts_implements_edges(self, ts_project):
         """TypeScript implements should create implements edges."""
-        roam("index", "--force", cwd=ts_project)
+        index_in_process(ts_project, "--force")
         out, _ = roam("uses", "Serializable", cwd=ts_project)
         assert "User" in out, f"Missing TS implements in: {out}"
 
     def test_go_embedded_edges(self, go_project):
         """Go embedded structs should create inherits edges."""
-        roam("index", "--force", cwd=go_project)
+        index_in_process(go_project, "--force")
         out, _ = roam("uses", "Config", cwd=go_project)
         assert "MemoryStore" in out or "RedisStore" in out, \
             f"Missing Go embed in: {out}"
 
     def test_edge_count_nonzero(self, java_project):
         """Indexing should produce edges."""
-        out, _ = roam("index", "--force", cwd=java_project)
+        out, _ = index_in_process(java_project, "--force")
         # Parse edge count from "Done. X files, Y symbols, Z edges."
         assert "0 edges" not in out, f"Zero edges: {out}"
 
@@ -230,7 +230,7 @@ class TestIncrementalEdges:
     def test_edges_survive_modification(self, python_project):
         """Cross-file edges should survive when target file is modified."""
         # Initial index
-        out, _ = roam("index", "--force", cwd=python_project)
+        out, _ = index_in_process(python_project, "--force")
         assert "edges" in out
 
         # Verify initial edge exists
@@ -248,7 +248,7 @@ class TestIncrementalEdges:
         git_commit(python_project, "update base")
 
         # Incremental re-index
-        out, _ = roam("index", cwd=python_project)
+        out, _ = index_in_process(python_project)
         assert "Re-extracting references" in out, \
             f"Should re-extract refs from unchanged files: {out}"
 
@@ -268,7 +268,7 @@ class TestRoamExclusion:
         (roam_dir / "test.py").write_text('x = 1\n')
         git_commit(python_project, "add roam dir")
 
-        roam("index", "--force", cwd=python_project)
+        index_in_process(python_project, "--force")
         out, _ = roam("file", ".roam/test.py", cwd=python_project)
         # Should NOT find the file
         assert "not found" in out.lower() or "No file" in out, \

@@ -19,14 +19,15 @@ MODES = ["vanilla", "roam-cli", "roam-mcp"]
 TASKS = ["react-todo", "astro-landing", "python-crawler", "cpp-calculator", "go-loganalyzer"]
 
 SCORE_COLUMNS = [
-    ("health", "Health", "{}", True),           # higher is better
-    ("dead_symbols", "Dead", "{}", False),       # lower is better
-    ("avg_complexity", "AvgCx", "{:.1f}", False),  # lower is better
-    ("max_complexity", "MaxCx", "{}", False),    # lower is better
-    ("cycle_count", "Cycles", "{}", False),      # lower is better
-    ("tangle_ratio", "Tangle", "{:.2f}", False), # lower is better
-    ("high_coupling_count", "HiCoup", "{}", False),  # lower is better
-    ("gate_passed", "Gate", "{}", True),         # True is better
+    ("health", "Health", "{}", True),              # higher is better
+    ("dead_symbols", "Dead", "{}", False),          # lower is better
+    ("avg_complexity", "AvgCx", "{:.1f}", False),   # lower is better
+    ("p90_complexity", "P90Cx", "{:.1f}", False),   # lower is better
+    ("high_complexity_count", "HiCx", "{}", False), # lower is better
+    ("tangle_ratio", "Tangle", "{:.2f}", False),    # lower is better
+    ("hidden_coupling", "HidCoup", "{}", False),    # lower is better
+    ("critical_issues", "Crit", "{}", False),       # lower is better
+    ("warning_issues", "Warn", "{}", False),        # lower is better
 ]
 
 
@@ -49,6 +50,17 @@ def build_lookup(results: list[dict]) -> dict:
         key = (r.get("agent", "?"), r.get("mode", "?"), r.get("task", "?"))
         lookup[key] = r.get("scores", {})
     return lookup
+
+
+def build_signature_lookup(results: list[dict]) -> dict:
+    """Build a {agent: signature} lookup from results."""
+    sigs = {}
+    for r in results:
+        agent = r.get("agent")
+        sig = r.get("signature")
+        if agent and sig:
+            sigs[agent] = sig
+    return sigs
 
 
 def print_task_table(task: str, lookup: dict):
@@ -284,6 +296,23 @@ def main():
 
     print(f"Loaded {len(results)} result files.\n")
     lookup = build_lookup(results)
+    signatures = build_signature_lookup(results)
+
+    # Print agent signatures
+    if signatures:
+        print(f"{'=' * 80}")
+        print("  AGENT SIGNATURES")
+        print(f"{'=' * 80}")
+        print(f"{'Agent':<20} {'CLI Version':<25} {'Model':<30}")
+        print("-" * 80)
+        for agent in AGENTS:
+            sig = signatures.get(agent)
+            if sig:
+                print(f"{agent:<20} {sig.get('cli_version', 'N/A'):<25} {sig.get('model', 'N/A'):<30}")
+        roam_ver = next((s.get("roam_version") for s in signatures.values() if s.get("roam_version")), None)
+        if roam_ver:
+            print(f"\nEvaluator: roam-code {roam_ver}")
+        print()
 
     # Print per-task tables
     for task in TASKS:

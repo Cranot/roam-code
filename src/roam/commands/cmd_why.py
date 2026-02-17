@@ -85,6 +85,114 @@ def _verdict(role, reach, in_deg, out_deg, critical, affected_files):
     return f"Internal helper. {in_deg} callers, {reach} transitive reach."
 
 
+def _cluster_cohesion(conn, comm_set):
+    """Compute cohesion % for a cluster community set."""
+    id_list = list(comm_set)
+    src_rows = batched_in(
+        conn,
+        "SELECT source_id, target_id FROM edges WHERE source_id IN ({ph})",
+        id_list,
+    )
+    tgt_rows = batched_in(
+        conn,
+        "SELECT source_id, target_id FROM edges WHERE target_id IN ({ph})",
+        id_list,
+    )
+    edges = list({
+        (r["source_id"], r["target_id"]): r
+        for r in src_rows + tgt_rows
+    }.values())
+    internal = sum(
+        1 for e in edges
+        if e["source_id"] in comm_set and e["target_id"] in comm_set
+    )
+    return round(internal * 100 / len(edges)) if edges else 0
+
+
+def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster,
+                    cluster_label_cache, cluster_cohesion_cache):
+    """Analyze a single symbol and return its result dict."""
+    sym = find_symbol(conn, name)
+    if sym is None:
+        return {"name": name, "error": f"Symbol not found: {name}"}
+
+    sym_id = sym["id"]
+
+    gm = conn.execute(
+        "SELECT in_degree, out_degree, betweenness, pagerank "
+        "FROM graph_metrics WHERE symbol_id = ?",
+        (sym_id,),
+    ).fetchone()
+
+    in_deg = gm["in_degree"] if gm else 0
+    out_deg = gm["out_degree"] if gm else 0
+    betweenness = (gm["betweenness"] or 0) if gm else 0
+    pagerank = (gm["pagerank"] or 0) if gm else 0
+
+    dependents: set = set()
+    affected_files: set = set()
+    if sym_id in RG:
+        dependents = nx.descendants(RG, sym_id)
+        for d in dependents:
+            fp = G.nodes.get(d, {}).get("file_path")
+            if fp:
+                affected_files.add(fp)
+
+    # Bridge detection
+    is_bridge = False
+    sym_cluster_id = sym_to_cluster.get(sym_id)
+    if sym_cluster_id is not None and sym_id in G:
+        other_clusters = {
+            sym_to_cluster.get(n)
+            for n in list(G.predecessors(sym_id)) + list(G.successors(sym_id))
+        }
+        other_clusters.discard(None)
+        other_clusters.discard(sym_cluster_id)
+        is_bridge = len(other_clusters) >= 1
+
+    role = _classify_role(in_deg, out_deg, is_bridge)
+    critical = betweenness > 0.5
+    reach = len(dependents)
+
+    cluster_label = None
+    cluster_size = 0
+    cluster_cohesion = None
+    if sym_cluster_id is not None:
+        comm = communities[sym_cluster_id]
+        cluster_size = len(comm)
+
+        if sym_cluster_id not in cluster_label_cache:
+            cluster_label_cache[sym_cluster_id] = _label_cluster(conn, comm)
+        cluster_label = cluster_label_cache[sym_cluster_id]
+
+        if sym_cluster_id not in cluster_cohesion_cache:
+            coh = None
+            if cluster_size <= 500:
+                coh = _cluster_cohesion(conn, set(comm))
+            cluster_cohesion_cache[sym_cluster_id] = coh
+        cluster_cohesion = cluster_cohesion_cache[sym_cluster_id]
+
+    verdict_text = _verdict(role, reach, in_deg, out_deg, critical, len(affected_files))
+
+    return {
+        "name": sym["qualified_name"] or sym["name"],
+        "kind": sym["kind"],
+        "location": loc(sym["file_path"], sym["line_start"]),
+        "role": role,
+        "fan_in": in_deg,
+        "fan_out": out_deg,
+        "reach": reach,
+        "affected_files": len(affected_files),
+        "critical": critical,
+        "betweenness": round(betweenness, 2),
+        "pagerank": round(pagerank, 4),
+        "cluster": cluster_label,
+        "cluster_size": cluster_size,
+        "cluster_cohesion": cluster_cohesion,
+        "verdict": verdict_text,
+    }
+
+
 @click.command()
 @click.argument('names', nargs=-1, required=True)
 @click.pass_context
@@ -129,119 +237,11 @@ def why(ctx, names):
 
         results = []
         for name in names:
-            sym = find_symbol(conn, name)
-            if sym is None:
-                results.append({"name": name, "error": f"Symbol not found: {name}"})
-                continue
-
-            sym_id = sym["id"]
-
-            # Graph metrics
-            gm = conn.execute(
-                "SELECT in_degree, out_degree, betweenness, pagerank "
-                "FROM graph_metrics WHERE symbol_id = ?",
-                (sym_id,),
-            ).fetchone()
-
-            in_deg = gm["in_degree"] if gm else 0
-            out_deg = gm["out_degree"] if gm else 0
-            betweenness = (gm["betweenness"] or 0) if gm else 0
-            pagerank = (gm["pagerank"] or 0) if gm else 0
-
-            # Transitive reach
-            dependents: set = set()
-            affected_files: set = set()
-            if sym_id in RG:
-                dependents = nx.descendants(RG, sym_id)
-                for d in dependents:
-                    node = G.nodes.get(d, {})
-                    fp = node.get("file_path")
-                    if fp:
-                        affected_files.add(fp)
-
-            # Bridge detection: symbol connects 1+ other clusters
-            is_bridge = False
-            sym_cluster_id = sym_to_cluster.get(sym_id)
-            if sym_cluster_id is not None and sym_id in G:
-                other_clusters: set = set()
-                for n in list(G.predecessors(sym_id)) + list(G.successors(sym_id)):
-                    nc = sym_to_cluster.get(n)
-                    if nc is not None and nc != sym_cluster_id:
-                        other_clusters.add(nc)
-                is_bridge = len(other_clusters) >= 1
-
-            role = _classify_role(in_deg, out_deg, is_bridge)
-            critical = betweenness > 0.5
-            reach = len(dependents)
-
-            # Cluster label + cohesion (cached)
-            cluster_label = None
-            cluster_size = 0
-            cluster_cohesion = None
-            if sym_cluster_id is not None:
-                comm = communities[sym_cluster_id]
-                cluster_size = len(comm)
-
-                if sym_cluster_id not in cluster_label_cache:
-                    cluster_label_cache[sym_cluster_id] = _label_cluster(
-                        conn, comm
-                    )
-                cluster_label = cluster_label_cache[sym_cluster_id]
-
-                if sym_cluster_id not in cluster_cohesion_cache:
-                    coh = None
-                    if cluster_size <= 500:
-                        comm_set = set(comm)
-                        id_list = list(comm_set)
-                        # OR-based double IN: split into two single-IN
-                        # queries and merge to avoid exceeding param limits
-                        src_rows = batched_in(
-                            conn,
-                            "SELECT source_id, target_id FROM edges "
-                            "WHERE source_id IN ({ph})",
-                            id_list,
-                        )
-                        tgt_rows = batched_in(
-                            conn,
-                            "SELECT source_id, target_id FROM edges "
-                            "WHERE target_id IN ({ph})",
-                            id_list,
-                        )
-                        edges = list({
-                            (r["source_id"], r["target_id"]): r
-                            for r in src_rows + tgt_rows
-                        }.values())
-                        internal = sum(
-                            1 for e in edges
-                            if e["source_id"] in comm_set
-                            and e["target_id"] in comm_set
-                        )
-                        total = len(edges)
-                        coh = round(internal * 100 / total) if total else 0
-                    cluster_cohesion_cache[sym_cluster_id] = coh
-                cluster_cohesion = cluster_cohesion_cache[sym_cluster_id]
-
-            verdict_text = _verdict(
-                role, reach, in_deg, out_deg, critical, len(affected_files)
+            result = _analyze_symbol(
+                conn, G, RG, name, communities, sym_to_cluster,
+                cluster_label_cache, cluster_cohesion_cache,
             )
-
-            results.append({
-                "name": sym["qualified_name"] or sym["name"],
-                "kind": sym["kind"],
-                "location": loc(sym["file_path"], sym["line_start"]),
-                "role": role,
-                "fan_in": in_deg,
-                "fan_out": out_deg,
-                "reach": reach,
-                "affected_files": len(affected_files),
-                "critical": critical,
-                "betweenness": round(betweenness, 2),
-                "pagerank": round(pagerank, 4),
-                "cluster": cluster_label,
-                "cluster_size": cluster_size,
-                "cluster_cohesion": cluster_cohesion,
-                "verdict": verdict_text,
-            })
+            results.append(result)
 
         if json_mode:
             click.echo(to_json(json_envelope("why",

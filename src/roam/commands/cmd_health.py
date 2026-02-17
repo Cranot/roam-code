@@ -79,11 +79,19 @@ def _is_utility_path(file_path):
 
 
 def _percentile(sorted_values, pct):
-    """Return the value at the given percentile (0-100) from a sorted list."""
+    """Linear-interpolated percentile from a sorted numeric list."""
     if not sorted_values:
         return 0
-    idx = int(pct / 100 * len(sorted_values))
-    return sorted_values[min(idx, len(sorted_values) - 1)]
+    n = len(sorted_values)
+    if n == 1:
+        return sorted_values[0]
+    k = (n - 1) * (pct / 100.0)
+    lo = int(k)
+    hi = min(lo + 1, n - 1)
+    if lo == hi:
+        return sorted_values[lo]
+    frac = k - lo
+    return sorted_values[lo] + (sorted_values[hi] - sorted_values[lo]) * frac
 
 
 def _unique_dirs(file_paths):

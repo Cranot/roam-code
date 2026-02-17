@@ -417,6 +417,28 @@ class CSharpExtractor(LanguageExtractor):
         if body:
             self._find_local_functions(body, source, symbols, qualified)
 
+    def _iter_variable_declarators(self, node, source):
+        """yield (name, type_text) for each variable_declarator in a variable_declaration.
+
+        Handles the c# nesting: field/event_field -> variable_declaration -> variable_declarator.
+        """
+        for child in node.children:
+            if child.type != "variable_declaration":
+                continue
+            type_node = child.child_by_field_name("type")
+            type_text = self.node_text(type_node, source) if type_node else ""
+            for var_child in child.children:
+                if var_child.type != "variable_declarator":
+                    continue
+                name_node = var_child.child_by_field_name("name")
+                if name_node is None:
+                    name_node = next(
+                        (vc for vc in var_child.children if vc.type == "identifier"),
+                        None,
+                    )
+                if name_node is not None:
+                    yield self.node_text(name_node, source), type_text
+
     def _extract_field(self, node, source, symbols, parent_name):
         """extract field declarations with c# variable_declaration nesting."""
         parent_kind = self._symbol_kinds.get(parent_name) if parent_name else None
@@ -425,44 +447,30 @@ class CSharpExtractor(LanguageExtractor):
         is_readonly = self._has_modifier(node, source, "readonly")
         is_const = self._has_modifier(node, source, "const")
 
-        # c# fields: field_declaration -> variable_declaration -> variable_declarator
-        for child in node.children:
-            if child.type == "variable_declaration":
-                type_node = child.child_by_field_name("type")
-                type_text = self.node_text(type_node, source) if type_node else ""
-                for var_child in child.children:
-                    if var_child.type == "variable_declarator":
-                        name_node = var_child.child_by_field_name("name")
-                        if name_node is None:
-                            for vc in var_child.children:
-                                if vc.type == "identifier":
-                                    name_node = vc
-                                    break
-                        if name_node is None:
-                            continue
-                        name = self.node_text(name_node, source)
-                        kind = "constant" if is_const or (is_static and is_readonly) else "field"
-                        sig = ""
-                        if is_static:
-                            sig += "static "
-                        if is_readonly:
-                            sig += "readonly "
-                        if is_const:
-                            sig += "const "
-                        sig += f"{type_text} {name}"
+        for name, type_text in self._iter_variable_declarators(node, source):
+            kind = "constant" if is_const or (is_static and is_readonly) else "field"
+            sig_parts = []
+            if is_static:
+                sig_parts.append("static")
+            if is_readonly:
+                sig_parts.append("readonly")
+            if is_const:
+                sig_parts.append("const")
+            sig_parts.append(f"{type_text} {name}")
+            sig = " ".join(sig_parts)
 
-                        qualified = f"{parent_name}.{name}" if parent_name else name
-                        symbols.append(self._make_symbol(
-                            name=name,
-                            kind=kind,
-                            line_start=node.start_point[0] + 1,
-                            line_end=node.end_point[0] + 1,
-                            qualified_name=qualified,
-                            signature=sig,
-                            visibility=vis,
-                            is_exported=vis == "public",
-                            parent_name=parent_name,
-                        ))
+            qualified = f"{parent_name}.{name}" if parent_name else name
+            symbols.append(self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            ))
 
     def _extract_property(self, node, source, symbols, parent_name):
         """extract property declaration with accessor info."""
@@ -583,39 +591,23 @@ class CSharpExtractor(LanguageExtractor):
         vis = self._get_visibility(node, source, parent_kind)
         is_static = self._has_modifier(node, source, "static")
 
-        for child in node.children:
-            if child.type == "variable_declaration":
-                type_node = child.child_by_field_name("type")
-                type_text = self.node_text(type_node, source) if type_node else ""
-                for var_child in child.children:
-                    if var_child.type == "variable_declarator":
-                        name_node = var_child.child_by_field_name("name")
-                        if name_node is None:
-                            for vc in var_child.children:
-                                if vc.type == "identifier":
-                                    name_node = vc
-                                    break
-                        if name_node is None:
-                            continue
-                        name = self.node_text(name_node, source)
-                        sig = ""
-                        if is_static:
-                            sig += "static "
-                        sig += f"event {type_text} {name}"
+        for name, type_text in self._iter_variable_declarators(node, source):
+            sig = "static " if is_static else ""
+            sig += f"event {type_text} {name}"
 
-                        qualified = f"{parent_name}.{name}" if parent_name else name
-                        symbols.append(self._make_symbol(
-                            name=name,
-                            kind="event",
-                            line_start=node.start_point[0] + 1,
-                            line_end=node.end_point[0] + 1,
-                            qualified_name=qualified,
-                            signature=sig,
-                            docstring=self.get_docstring(node, source),
-                            visibility=vis,
-                            is_exported=vis == "public",
-                            parent_name=parent_name,
-                        ))
+            qualified = f"{parent_name}.{name}" if parent_name else name
+            symbols.append(self._make_symbol(
+                name=name,
+                kind="event",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            ))
 
     def _extract_indexer(self, node, source, symbols, parent_name):
         """extract indexer declaration as property with name='this'."""
@@ -790,40 +782,37 @@ class CSharpExtractor(LanguageExtractor):
             elif child.is_named:
                 self._find_local_functions(child, source, symbols, parent_name)
 
+    _ACCESSOR_KEYWORDS = frozenset({"get", "set", "init", "add", "remove"})
+
+    def _parse_accessor_decl(self, acc, source) -> str | None:
+        """parse a single accessor_declaration into 'get', 'private set', etc."""
+        mod = ""
+        kw = ""
+        for ac in acc.children:
+            if ac.type == "modifier":
+                mod = self.node_text(ac, source) + " "
+            elif ac.type in self._ACCESSOR_KEYWORDS:
+                kw = ac.type
+        return f"{mod}{kw}".strip() if kw else None
+
     def _get_accessors(self, node, source) -> str:
         """extract accessor summary (get; set; init;) from property/indexer."""
-        accessor_keywords = {"get", "set", "init", "add", "remove"}
         parts = []
         for child in node.children:
             if child.type == "accessor_list":
                 for acc in child.children:
                     if acc.type == "accessor_declaration":
-                        mod = ""
-                        kw = ""
-                        for ac in acc.children:
-                            if ac.type == "modifier":
-                                mod = self.node_text(ac, source) + " "
-                            elif ac.type in accessor_keywords:
-                                kw = ac.type
-                        if kw:
-                            parts.append(f"{mod}{kw}".strip())
+                        parsed = self._parse_accessor_decl(acc, source)
+                        if parsed:
+                            parts.append(parsed)
                 break
-            # handle direct accessor_declaration children (some grammar versions)
             if child.type == "accessor_declaration":
-                mod = ""
-                kw = ""
-                for ac in child.children:
-                    if ac.type == "modifier":
-                        mod = self.node_text(ac, source) + " "
-                    elif ac.type in accessor_keywords:
-                        kw = ac.type
-                if kw:
-                    parts.append(f"{mod}{kw}".strip())
+                parsed = self._parse_accessor_decl(child, source)
+                if parsed:
+                    parts.append(parsed)
         if not parts:
-            for child in node.children:
-                if child.type == "arrow_expression_clause":
-                    parts.append("get")
-                    break
+            if any(c.type == "arrow_expression_clause" for c in node.children):
+                parts.append("get")
         return "; ".join(parts) + ";" if parts else ""
 
     def _collect_base_list_refs(self, base_list, source, line, source_name):
@@ -832,18 +821,8 @@ class CSharpExtractor(LanguageExtractor):
         for child in base_list.children:
             if not child.is_named:
                 continue
-            if child.type == "identifier":
-                name = self.node_text(child, source)
-            elif child.type == "generic_name":
-                id_node = None
-                for gc in child.children:
-                    if gc.type == "identifier":
-                        id_node = gc
-                        break
-                name = self.node_text(id_node, source) if id_node else self.node_text(child, source)
-            elif child.type == "qualified_name":
-                name = self.node_text(child, source)
-            else:
+            name = self._identifier_from_node(child, source)
+            if name is None:
                 continue
             self._pending_inherits.append({
                 "_source": source_name,
@@ -946,32 +925,30 @@ class CSharpExtractor(LanguageExtractor):
             import_path=import_path,
         ))
 
+    def _identifier_from_node(self, node, source) -> str | None:
+        """extract the simple identifier name from a node (unwraps generic_name)."""
+        if node.type == "identifier":
+            return self.node_text(node, source)
+        if node.type == "generic_name":
+            for gc in node.children:
+                if gc.type == "identifier":
+                    return self.node_text(gc, source)
+        if node.type == "qualified_name":
+            return self.node_text(node, source)
+        return None
+
     def _extract_call(self, node, source, refs, scope_name):
         """extract method/function call reference."""
         target = None
 
         for child in node.children:
-            if target is None and child.is_named and child.type != "argument_list":
-                if child.type == "member_access_expression":
-                    # extract just the method name, not the full chain
-                    name_node = child.child_by_field_name("name")
-                    if name_node:
-                        if name_node.type == "generic_name":
-                            for gc in name_node.children:
-                                if gc.type == "identifier":
-                                    target = self.node_text(gc, source)
-                                    break
-                        else:
-                            target = self.node_text(name_node, source)
-                    else:
-                        target = self.node_text(child, source)
-                elif child.type == "identifier":
-                    target = self.node_text(child, source)
-                elif child.type == "generic_name":
-                    for gc in child.children:
-                        if gc.type == "identifier":
-                            target = self.node_text(gc, source)
-                            break
+            if target is not None or not child.is_named or child.type == "argument_list":
+                continue
+            if child.type == "member_access_expression":
+                name_node = child.child_by_field_name("name")
+                target = self._identifier_from_node(name_node, source) if name_node else self.node_text(child, source)
+            else:
+                target = self._identifier_from_node(child, source)
 
         if target:
             refs.append(self._make_reference(
@@ -993,15 +970,8 @@ class CSharpExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "argument_list":
                 arg_list = child
-            elif child.type == "identifier":
-                target = self.node_text(child, source)
-            elif child.type == "generic_name":
-                for gc in child.children:
-                    if gc.type == "identifier":
-                        target = self.node_text(gc, source)
-                        break
-            elif child.type == "qualified_name":
-                target = self.node_text(child, source)
+            elif target is None:
+                target = self._identifier_from_node(child, source)
 
         if target:
             refs.append(self._make_reference(
@@ -1018,14 +988,12 @@ class CSharpExtractor(LanguageExtractor):
         """extract attribute references from attribute_list ([Attr1] [Attr2(args)])."""
         for child in node.children:
             if child.type == "attribute":
-                name = None
-                for ac in child.children:
-                    if ac.type == "identifier":
-                        name = self.node_text(ac, source)
-                        break
-                    elif ac.type == "qualified_name":
-                        name = self.node_text(ac, source)
-                        break
+                name = next(
+                    (self._identifier_from_node(ac, source)
+                     for ac in child.children
+                     if ac.type in ("identifier", "qualified_name", "generic_name")),
+                    None,
+                )
                 if name:
                     refs.append(self._make_reference(
                         target_name=name,
