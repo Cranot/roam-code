@@ -870,6 +870,10 @@ class CSharpExtractor(LanguageExtractor):
                 self._extract_call(child, source, refs, current_scope)
             elif child.type == "object_creation_expression":
                 self._extract_new(child, source, refs, current_scope)
+            elif child.type == "attribute_list":
+                self._extract_attributes(child, source, refs, current_scope)
+            elif child.type == "nullable_type":
+                self._extract_nullable_type_ref(child, source, refs, current_scope)
             else:
                 new_scope = current_scope
                 if child.type == "namespace_declaration":
@@ -982,3 +986,55 @@ class CSharpExtractor(LanguageExtractor):
 
         if arg_list:
             self._walk_refs(arg_list, source, refs, scope_name)
+
+    def _extract_attributes(self, node, source, refs, scope_name):
+        """extract attribute references from attribute_list ([Attr1] [Attr2(args)])."""
+        for child in node.children:
+            if child.type == "attribute":
+                name = None
+                for ac in child.children:
+                    if ac.type == "identifier":
+                        name = self.node_text(ac, source)
+                        break
+                    elif ac.type == "qualified_name":
+                        name = self.node_text(ac, source)
+                        break
+                if name:
+                    refs.append(self._make_reference(
+                        target_name=name,
+                        kind="call",
+                        line=child.start_point[0] + 1,
+                        source_name=scope_name,
+                    ))
+
+    def _extract_nullable_type_ref(self, node, source, refs, scope_name):
+        """unwrap nullable_type (string?, List<int>?) and extract type reference."""
+        for child in node.children:
+            if child.type == "predefined_type":
+                return  # skip builtins (int?, string?, bool?, etc.)
+            if child.type == "identifier":
+                refs.append(self._make_reference(
+                    target_name=self.node_text(child, source),
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+                return
+            if child.type == "generic_name":
+                for gc in child.children:
+                    if gc.type == "identifier":
+                        refs.append(self._make_reference(
+                            target_name=self.node_text(gc, source),
+                            kind="type_ref",
+                            line=node.start_point[0] + 1,
+                            source_name=scope_name,
+                        ))
+                        return
+            if child.type == "qualified_name":
+                refs.append(self._make_reference(
+                    target_name=self.node_text(child, source),
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                ))
+                return
