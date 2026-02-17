@@ -939,14 +939,22 @@ class CSharpExtractor(LanguageExtractor):
     def _extract_call(self, node, source, refs, scope_name):
         """extract method/function call reference."""
         target = None
-        arg_list = None
 
         for child in node.children:
-            if child.type == "argument_list":
-                arg_list = child
-            elif target is None and child.is_named:
+            if target is None and child.is_named and child.type != "argument_list":
                 if child.type == "member_access_expression":
-                    target = self.node_text(child, source)
+                    # extract just the method name, not the full chain
+                    name_node = child.child_by_field_name("name")
+                    if name_node:
+                        if name_node.type == "generic_name":
+                            for gc in name_node.children:
+                                if gc.type == "identifier":
+                                    target = self.node_text(gc, source)
+                                    break
+                        else:
+                            target = self.node_text(name_node, source)
+                    else:
+                        target = self.node_text(child, source)
                 elif child.type == "identifier":
                     target = self.node_text(child, source)
                 elif child.type == "generic_name":
@@ -963,8 +971,9 @@ class CSharpExtractor(LanguageExtractor):
                 source_name=scope_name,
             ))
 
-        if arg_list:
-            self._walk_refs(arg_list, source, refs, scope_name)
+        # recurse into all children to catch chained calls and nested expressions
+        for child in node.children:
+            self._walk_refs(child, source, refs, scope_name)
 
     def _extract_new(self, node, source, refs, scope_name):
         """extract constructor call (new) reference."""

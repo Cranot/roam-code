@@ -7,6 +7,7 @@ Covers:
 - JavaMavenConvention: src/main/ -> src/test/ mapping
 - RubyConvention: lib/ -> spec/ mapping
 - ApexConvention: Test / _Test suffix handling
+- CSharpConvention: separate test projects (*.Tests, *.UnitTests, etc.)
 - get_convention_for_language()
 - find_test_candidates() and find_source_candidates()
 """
@@ -21,6 +22,7 @@ from roam.index.test_conventions import (
     JavaMavenConvention,
     RubyConvention,
     ApexConvention,
+    CSharpConvention,
     TestConvention,
     get_convention_for_language,
     get_conventions,
@@ -221,6 +223,78 @@ class TestApexConvention:
 
 
 # ---------------------------------------------------------------------------
+# CSharpConvention
+# ---------------------------------------------------------------------------
+
+class TestCSharpConvention:
+    def setup_method(self):
+        self.conv = CSharpConvention()
+
+    def test_source_to_test_with_src_prefix(self):
+        """src/ProjectName/Services/UserService.cs -> tests/ProjectName.Tests/Services/UserServiceTests.cs"""
+        paths = self.conv.source_to_test_paths("src/MyProject/Services/UserService.cs")
+        assert "tests/MyProject.Tests/Services/UserServiceTests.cs" in paths
+        assert "tests/MyProject.Tests/Services/UserServiceTest.cs" in paths
+
+    def test_source_to_test_without_src_prefix(self):
+        """MyProject/UserService.cs -> MyProject.Tests/UserServiceTests.cs"""
+        paths = self.conv.source_to_test_paths("MyProject/UserService.cs")
+        assert "MyProject.Tests/UserServiceTests.cs" in paths
+        assert "MyProject.Tests/UserServiceTest.cs" in paths
+
+    def test_source_to_test_includes_unit_tests_suffix(self):
+        """should also generate .UnitTests project variants"""
+        paths = self.conv.source_to_test_paths("src/MyProject/UserService.cs")
+        assert any(".UnitTests/" in p for p in paths)
+
+    def test_source_to_test_includes_integration_tests_suffix(self):
+        """should also generate .IntegrationTests project variants"""
+        paths = self.conv.source_to_test_paths("src/MyProject/UserService.cs")
+        assert any(".IntegrationTests/" in p for p in paths)
+
+    def test_test_to_source_from_tests_dir(self):
+        """tests/MyProject.Tests/Services/UserServiceTests.cs -> src/MyProject/Services/UserService.cs"""
+        paths = self.conv.test_to_source_paths("tests/MyProject.Tests/Services/UserServiceTests.cs")
+        assert "src/MyProject/Services/UserService.cs" in paths
+
+    def test_test_to_source_from_sibling_project(self):
+        """MyProject.Tests/UserServiceTests.cs -> src/MyProject/UserService.cs"""
+        paths = self.conv.test_to_source_paths("MyProject.Tests/UserServiceTests.cs")
+        assert "src/MyProject/UserService.cs" in paths or "MyProject/UserService.cs" in paths
+
+    def test_test_to_source_test_suffix(self):
+        """handles both Test and Tests suffixes"""
+        paths_tests = self.conv.test_to_source_paths("tests/MyProject.Tests/UserServiceTests.cs")
+        paths_test = self.conv.test_to_source_paths("tests/MyProject.Tests/UserServiceTest.cs")
+        # both should map to UserService.cs
+        assert any("UserService.cs" in p for p in paths_tests)
+        assert any("UserService.cs" in p for p in paths_test)
+
+    def test_is_test_file_true_in_tests_dir(self):
+        assert self.conv.is_test_file("tests/MyProject.Tests/UserServiceTests.cs") is True
+
+    def test_is_test_file_true_in_test_project(self):
+        assert self.conv.is_test_file("MyProject.Tests/UserServiceTests.cs") is True
+
+    def test_is_test_file_false_no_test_suffix(self):
+        assert self.conv.is_test_file("tests/MyProject.Tests/UserService.cs") is False
+
+    def test_is_test_file_false_not_in_test_dir(self):
+        assert self.conv.is_test_file("src/MyProject/UserServiceTests.cs") is False
+
+    def test_source_to_test_skips_test_files(self):
+        """source_to_test_paths returns [] if input is already a test file"""
+        assert self.conv.source_to_test_paths("tests/MyProject.Tests/UserServiceTests.cs") == []
+
+    def test_name_property(self):
+        assert self.conv.name == "csharp"
+
+    def test_languages_property(self):
+        assert "csharp" in self.conv.languages
+        assert "c#" in self.conv.languages
+
+
+# ---------------------------------------------------------------------------
 # Registry helpers
 # ---------------------------------------------------------------------------
 
@@ -240,7 +314,7 @@ class TestConventionRegistry:
 
     def test_get_conventions_returns_all(self):
         convs = get_conventions()
-        assert len(convs) >= 6
+        assert len(convs) >= 7
 
     def test_find_test_candidates_with_language(self):
         candidates = find_test_candidates("src/models.py", language="python")
