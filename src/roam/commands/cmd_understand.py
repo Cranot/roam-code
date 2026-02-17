@@ -36,6 +36,13 @@ _FRAMEWORK_PATTERNS = {
     # Rust
     "actix": (["actix-web"], []),
     "axum": (["axum"], []),
+    # .NET / C#
+    "asp.net": (["microsoft.aspnetcore"], []),
+    "entity-framework": (["microsoft.entityframeworkcore"], []),
+    "blazor": (["microsoft.aspnetcore.components"], []),
+    "wpf": (["system.windows"], []),
+    "winforms": (["system.windows.forms"], []),
+    "xamarin": (["xamarin.forms", "xamarin.essentials"], []),
 }
 
 _BUILD_PATTERNS = {
@@ -50,12 +57,13 @@ _BUILD_PATTERNS = {
     "gradle": ["build.gradle*"],
     "pip": ["pyproject.toml", "setup.py", "setup.cfg"],
     "composer": ["composer.json"],
+    "dotnet": ["*.csproj", "*.sln", "*.fsproj", "*.vbproj"],
 }
 
 
 def _detect_frameworks(conn):
-    """Detect frameworks by scanning edge targets and file names."""
-    # Collect all unique edge target names (imports/references)
+    """Detect frameworks by scanning edge targets, file names, and source content."""
+    # collect all unique edge target names (imports/references)
     import_targets = set()
     for r in conn.execute(
         "SELECT DISTINCT s.name FROM symbols s "
@@ -63,7 +71,39 @@ def _detect_frameworks(conn):
     ).fetchall():
         import_targets.add(r["name"].lower())
 
-    # Also collect file paths for pattern matching
+    # scan file content for import/using statements to catch unresolved imports
+    # (particularly important for c#, where microsoft.aspnetcore.* imports won't resolve)
+    root = find_project_root()
+    for r in conn.execute("SELECT path FROM files").fetchall():
+        file_path = root / r["path"]
+        if file_path.exists():
+            try:
+                content = file_path.read_text(encoding="utf-8", errors="ignore").lower()
+                # scan for common import patterns:
+                # - python: "import x", "from x import"
+                # - js/ts: "from 'x'", "import x from", "require('x')"
+                # - c#: "using x;", "using x.y.z;"
+                # - go: "import \"x\""
+                import re
+                # extract package/namespace names from import statements
+                # c# using directives: using Microsoft.AspNetCore.Mvc;
+                for match in re.finditer(r'\busing\s+([\w.]+)', content):
+                    import_targets.add(match.group(1))
+                # js/ts imports: from 'next/router', import { x } from 'react'
+                for match in re.finditer(r'\bfrom\s+[\'"]([^"\']+)[\'"]', content):
+                    import_targets.add(match.group(1))
+                # python imports: import x, from x import
+                for match in re.finditer(r'\bimport\s+([\w.]+)', content):
+                    import_targets.add(match.group(1))
+                for match in re.finditer(r'\bfrom\s+([\w.]+)\s+import', content):
+                    import_targets.add(match.group(1))
+                # go imports: import "github.com/x/y"
+                for match in re.finditer(r'\bimport\s+"([^"]+)"', content):
+                    import_targets.add(match.group(1))
+            except Exception:
+                pass
+
+    # also collect file paths for pattern matching
     file_paths = set()
     for r in conn.execute("SELECT path FROM files").fetchall():
         file_paths.add(r["path"].replace("\\", "/").lower())
@@ -72,7 +112,7 @@ def _detect_frameworks(conn):
     for name, (import_pats, file_pats) in _FRAMEWORK_PATTERNS.items():
         found = False
         for pat in import_pats:
-            if any(pat.lower() in t for t in import_targets):
+            if _matches_import_pattern(pat.lower(), import_targets):
                 found = True
                 break
         if not found:
@@ -85,6 +125,27 @@ def _detect_frameworks(conn):
             detected.append(name)
 
     return detected
+
+
+def _matches_import_pattern(pattern: str, targets: set) -> bool:
+    """check if pattern matches any target as a prefix or path segment.
+
+    examples:
+      - pattern "next" matches "next" or "next/router" but NOT "getnextpage"
+      - pattern "react" matches "react" or "react-dom" but NOT "somereactiveext"
+      - pattern "microsoft.aspnetcore" matches "microsoft.aspnetcore.mvc"
+    """
+    for target in targets:
+        # exact match
+        if target == pattern:
+            return True
+        # prefix match with delimiter (/, ., -, @)
+        # handles: "next/router", "react-dom", "@angular/core", "microsoft.aspnetcore.mvc"
+        if target.startswith(pattern) and len(target) > len(pattern):
+            next_char = target[len(pattern)]
+            if next_char in (".", "/", "-", "@"):
+                return True
+    return False
 
 
 def _detect_build(conn):

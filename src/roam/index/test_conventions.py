@@ -11,6 +11,7 @@ Supported conventions:
   - Rust: inline #[test] mod + tests/ directory
   - Ruby: spec/*_spec.rb mirrors lib/
   - Salesforce Apex: *Test.cls, *_Test.cls
+  - C#: separate test projects (*.Tests, *.UnitTests, etc.)
 """
 from __future__ import annotations
 
@@ -279,6 +280,159 @@ class ApexConvention(TestConvention):
         return base.endswith("Test") or base.endswith("_Test")
 
 
+class CSharpConvention(TestConvention):
+    @property
+    def name(self): return "csharp"
+
+    @property
+    def languages(self): return frozenset({"csharp", "c#"})
+
+    def source_to_test_paths(self, source_path):
+        """Map C# source files to potential test file paths.
+
+        Common patterns:
+        - src/MyProject/Services/UserService.cs -> tests/MyProject.Tests/Services/UserServiceTests.cs
+        - src/MyProject/UserService.cs -> tests/MyProject.Tests/UserServiceTest.cs
+        - MyProject/UserService.cs -> MyProject.Tests/UserServiceTests.cs
+        """
+        p = source_path.replace("\\", "/")
+        base = os.path.basename(p)
+        name = os.path.splitext(base)[0]
+
+        # skip if already a test file
+        if name.endswith("Test") or name.endswith("Tests"):
+            return []
+
+        candidates = []
+        dir_part = os.path.dirname(p)
+
+        # extract the relative path within the project
+        # handle patterns like: src/ProjectName/Subdir/File.cs
+        parts = dir_part.split("/") if dir_part else []
+
+        # try to find project name (usually after src/ or first directory)
+        project_name = None
+        relative_subdir = ""
+
+        if "src" in parts:
+            src_idx = parts.index("src")
+            if src_idx + 1 < len(parts):
+                project_name = parts[src_idx + 1]
+                if src_idx + 2 < len(parts):
+                    relative_subdir = "/".join(parts[src_idx + 2:])
+        elif len(parts) > 0:
+            # no src/ dir, first part might be project name
+            project_name = parts[0]
+            if len(parts) > 1:
+                relative_subdir = "/".join(parts[1:])
+
+        # generate test file candidates
+        for test_suffix in ["Tests", "Test"]:
+            test_name = f"{name}{test_suffix}.cs"
+
+            if project_name:
+                # pattern: tests/ProjectName.Tests/Subdir/FileTests.cs
+                for test_project_suffix in [".Tests", ".UnitTests", ".IntegrationTests"]:
+                    test_project = f"{project_name}{test_project_suffix}"
+                    if relative_subdir:
+                        candidates.append(f"tests/{test_project}/{relative_subdir}/{test_name}")
+                        candidates.append(f"test/{test_project}/{relative_subdir}/{test_name}")
+                    else:
+                        candidates.append(f"tests/{test_project}/{test_name}")
+                        candidates.append(f"test/{test_project}/{test_name}")
+
+                # pattern: ProjectName.Tests/Subdir/FileTests.cs (sibling test project)
+                for test_project_suffix in [".Tests", ".UnitTests", ".IntegrationTests"]:
+                    test_project = f"{project_name}{test_project_suffix}"
+                    if relative_subdir:
+                        candidates.append(f"{test_project}/{relative_subdir}/{test_name}")
+                    else:
+                        candidates.append(f"{test_project}/{test_name}")
+            else:
+                # fallback: just try tests/ directory with same structure
+                if dir_part:
+                    candidates.append(f"tests/{dir_part}/{test_name}")
+                    candidates.append(f"test/{dir_part}/{test_name}")
+                else:
+                    candidates.append(f"tests/{test_name}")
+                    candidates.append(f"test/{test_name}")
+
+        return candidates
+
+    def test_to_source_paths(self, test_path):
+        """Map C# test files to potential source file paths."""
+        p = test_path.replace("\\", "/")
+        base = os.path.basename(p)
+        name = os.path.splitext(base)[0]
+
+        # strip test suffix
+        src_name = None
+        if name.endswith("Tests"):
+            src_name = name[:-5]
+        elif name.endswith("Test"):
+            src_name = name[:-4]
+        else:
+            return []
+
+        candidates = []
+        dir_part = os.path.dirname(p)
+        parts = dir_part.split("/") if dir_part else []
+
+        # find the test project directory and extract relative subdir
+        project_name = None
+        relative_subdir = ""
+
+        # look for test project patterns: tests/ProjectName.Tests/Subdir or ProjectName.Tests/Subdir
+        for i, part in enumerate(parts):
+            if part.endswith(".Tests") or part.endswith(".UnitTests") or part.endswith(".IntegrationTests"):
+                # found test project
+                if part.endswith(".Tests"):
+                    project_name = part[:-6]
+                elif part.endswith(".UnitTests"):
+                    project_name = part[:-10]
+                elif part.endswith(".IntegrationTests"):
+                    project_name = part[:-17]
+
+                # everything after the test project is the relative subdir
+                if i + 1 < len(parts):
+                    relative_subdir = "/".join(parts[i + 1:])
+                break
+
+        src_file = f"{src_name}.cs"
+
+        if project_name:
+            # pattern: tests/ProjectName.Tests/Subdir -> src/ProjectName/Subdir
+            if relative_subdir:
+                candidates.append(f"src/{project_name}/{relative_subdir}/{src_file}")
+                candidates.append(f"{project_name}/{relative_subdir}/{src_file}")
+            else:
+                candidates.append(f"src/{project_name}/{src_file}")
+                candidates.append(f"{project_name}/{src_file}")
+        else:
+            # fallback: remove tests/ prefix if present
+            if parts and parts[0] in ("tests", "test"):
+                if len(parts) > 1:
+                    src_dir = "/".join(parts[1:])
+                    candidates.append(f"src/{src_dir}/{src_file}")
+                    candidates.append(f"{src_dir}/{src_file}")
+                else:
+                    candidates.append(f"src/{src_file}")
+            elif dir_part:
+                candidates.append(f"{dir_part}/{src_file}")
+
+        return candidates
+
+    def is_test_file(self, path):
+        base = os.path.basename(path)
+        name = os.path.splitext(base)[0]
+        # check both filename pattern and directory pattern
+        has_test_suffix = name.endswith("Test") or name.endswith("Tests")
+        p = path.replace("\\", "/")
+        in_test_dir = "/tests/" in p or "/test/" in p or p.startswith("tests/") or p.startswith("test/")
+        in_test_project = ".Tests/" in p or ".UnitTests/" in p or ".IntegrationTests/" in p
+        return has_test_suffix and (in_test_dir or in_test_project)
+
+
 # ---------------------------------------------------------------------------
 # Registry
 # ---------------------------------------------------------------------------
@@ -290,6 +444,7 @@ _ALL_CONVENTIONS: list[TestConvention] = [
     JavaMavenConvention(),
     RubyConvention(),
     ApexConvention(),
+    CSharpConvention(),
 ]
 
 

@@ -22,6 +22,12 @@ htmlcov/
 # Roam index
 .roam/
 
+# Conductor
+.context/
+
+# Entire
+.entire/
+
 # OS
 .DS_Store
 Thumbs.db

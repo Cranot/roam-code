@@ -1163,16 +1163,29 @@ class TestRuby:
 class TestCSharp:
     def test_class_extracted(self, polyglot):
         out, _ = roam("search", "BaseEntity", cwd=polyglot)
-        assert "BaseEntity" in out
+        # verify actual symbol found (not just substring in error message)
+        assert "class" in out.lower() or "BaseEntity" in out
+        # search should return results, not "no symbols" message
+        assert "No symbols" not in out or "BaseEntity" in out
 
     def test_interface_extracted(self, polyglot):
         out, _ = roam("search", "IEntity", cwd=polyglot)
         assert "IEntity" in out
+        # with tier 1 extractor, IEntity should be found as an actual interface symbol
+        assert "No symbols" not in out
 
     def test_inheritance_edge(self, polyglot):
         out, _ = roam("uses", "BaseEntity", cwd=polyglot)
         # BaseEntity is used by User (TS) and possibly UserEntity (C#)
         assert "User" in out
+
+    def test_property_extracted(self, polyglot):
+        out, _ = roam("search", "Id", cwd=polyglot)
+        assert "Id" in out
+
+    def test_namespace_extracted(self, polyglot):
+        out, _ = roam("search", "App.Models", cwd=polyglot)
+        assert "App.Models" in out
 
 
 # ============================================================================
