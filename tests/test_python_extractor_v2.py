@@ -342,6 +342,29 @@ class TestAssignmentTypeRefs:
         # No type refs from unannotated assignments
         assert type_refs == []
 
+    def test_type_alias_assignment_rhs_refs(self):
+        """`X: TypeAlias = ...` should extract type refs from RHS alias expression."""
+        src = (
+            "from typing import TypeAlias\n"
+            "ServiceMap: TypeAlias = dict[str, Service]\n"
+        )
+        _, refs = _parse_py(src)
+        type_refs = _ref_targets(refs, kind="type_ref")
+        # TypeAlias from annotation + Service from RHS alias expression.
+        assert "TypeAlias" in type_refs
+        assert "Service" in type_refs
+
+    def test_pep695_type_alias_statement_refs(self):
+        """`type X = ...` should extract type refs from alias target expression."""
+        src = (
+            "type Handler = Callable[[Request], Response]\n"
+        )
+        _, refs = _parse_py(src)
+        type_refs = _ref_targets(refs, kind="type_ref")
+        assert "Callable" in type_refs
+        assert "Request" in type_refs
+        assert "Response" in type_refs
+
 
 # ===========================================================================
 # 5. Forward references (string annotations)

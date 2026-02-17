@@ -12,7 +12,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 
 # ============================================================================
@@ -118,7 +118,7 @@ def indexed_project(tmp_path_factory):
     )
     git_commit(proj, "refactor service")
 
-    out, rc = roam("index", "--force", cwd=proj)
+    out, rc = index_in_process(proj, "--force")
     assert rc == 0, f"Index failed: {out}"
     return proj
 

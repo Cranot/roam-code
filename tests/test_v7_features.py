@@ -27,7 +27,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 
 # ============================================================================
@@ -136,7 +136,7 @@ def v7_project(tmp_path_factory):
     )
     git_commit(proj, "refactor service")
 
-    out, rc = roam("index", "--force", cwd=proj)
+    out, rc = index_in_process(proj, "--force")
     assert rc == 0, f"Index failed: {out}"
     return proj
 
@@ -619,7 +619,7 @@ class TestElifComplexityFix:
             '        return "tiny"\n'
         )
         git_init(proj)
-        out, rc = roam("index", "--force", cwd=proj)
+        out, rc = index_in_process(proj, "--force")
         assert rc == 0
 
         out, rc = roam("--json", "complexity", "--threshold", "0", cwd=proj)
@@ -655,7 +655,7 @@ class TestElifComplexityFix:
             '        return "negative"\n'
         )
         git_init(proj)
-        roam("index", "--force", cwd=proj)
+        index_in_process(proj, "--force")
         out, rc = roam("--json", "complexity", "--threshold", "0", cwd=proj)
         assert rc == 0
         data = json.loads(out)

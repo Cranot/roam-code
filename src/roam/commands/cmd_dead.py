@@ -335,31 +335,89 @@ def _analyze_dead(conn):
 # Dead code aging, decay, and effort estimation
 # ---------------------------------------------------------------------------
 
+def _sym_loc(sym):
+    """Return LOC for a symbol's line range."""
+    line_start = sym["line_start"] or 1
+    line_end = sym["line_end"] or line_start
+    return max(1, line_end - line_start + 1)
+
+
+def _blame_age_for_sym(sym, blame_entries, now):
+    """Extract age data for a symbol from blame entries."""
+    line_start = sym["line_start"] or 1
+    line_end = sym["line_end"] or line_start
+
+    relevant = blame_entries[line_start - 1: line_end]
+    if not relevant:
+        relevant = blame_entries[:1] if blame_entries else []
+
+    if not relevant:
+        return 0, 0, ""
+
+    timestamps = [e["timestamp"] for e in relevant if e["timestamp"] > 0]
+    author_counts = defaultdict(int)
+    for e in relevant:
+        author_counts[e["author"]] += 1
+    primary_author = max(author_counts, key=author_counts.get) if author_counts else ""
+
+    oldest_ts = min(timestamps) if timestamps else now
+    newest_ts = max(timestamps) if timestamps else now
+    age_days = max(0, (now - oldest_ts) // 86400)
+    last_modified_days = max(0, (now - newest_ts) // 86400)
+    return age_days, last_modified_days, primary_author
+
+
+def _file_level_age(conn, file_id, now):
+    """Get file-level age data from git_file_changes as fallback."""
+    oldest_ts, newest_ts, primary_author = now, now, ""
+    if file_id is None:
+        return 0, 0, ""
+
+    ts_row = conn.execute(
+        "SELECT MIN(gc.timestamp) as oldest, MAX(gc.timestamp) as newest "
+        "FROM git_file_changes gfc "
+        "JOIN git_commits gc ON gfc.commit_id = gc.id "
+        "WHERE gfc.file_id = ?",
+        (file_id,),
+    ).fetchone()
+    if ts_row and ts_row["oldest"]:
+        oldest_ts = ts_row["oldest"]
+        newest_ts = ts_row["newest"]
+
+    author_row = conn.execute(
+        "SELECT gc.author, COUNT(*) as cnt "
+        "FROM git_file_changes gfc "
+        "JOIN git_commits gc ON gfc.commit_id = gc.id "
+        "WHERE gfc.file_id = ? "
+        "GROUP BY gc.author ORDER BY cnt DESC LIMIT 1",
+        (file_id,),
+    ).fetchone()
+    if author_row:
+        primary_author = author_row["author"]
+
+    age_days = max(0, (now - oldest_ts) // 86400)
+    last_modified_days = max(0, (now - newest_ts) // 86400)
+    return age_days, last_modified_days, primary_author
+
+
 def _get_blame_ages(conn, dead_symbols):
     """Get age data for dead symbols by batching git blame per file.
 
     Returns dict mapping symbol_id to {age_days, last_modified_days, author,
     author_active, dead_loc}.
-
-    Uses existing git_stats.get_blame_for_file() when available, falls back
-    to the git_commits + git_file_changes tables for file-level timestamps.
     """
     now = int(_time.time())
-    ninety_days_ago = now - (90 * 86400)
     result = {}
-
     if not dead_symbols:
         return result
 
-    # Build set of active authors (commits in last 90 days)
-    active_authors = set()
-    for r in conn.execute(
-        "SELECT DISTINCT author FROM git_commits WHERE timestamp >= ?",
-        (ninety_days_ago,),
-    ).fetchall():
-        active_authors.add(r["author"])
+    active_authors = {
+        r["author"] for r in conn.execute(
+            "SELECT DISTINCT author FROM git_commits WHERE timestamp >= ?",
+            (now - 90 * 86400,),
+        ).fetchall()
+    }
 
-    # Group dead symbols by file_path for batched blame
     by_file = defaultdict(list)
     for sym in dead_symbols:
         by_file[sym["file_path"]].append(sym)
@@ -367,7 +425,6 @@ def _get_blame_ages(conn, dead_symbols):
     project_root = find_project_root()
 
     for file_path, syms in by_file.items():
-        # Try git blame for line-level accuracy
         blame_entries = []
         try:
             from roam.index.git_stats import get_blame_for_file
@@ -376,99 +433,35 @@ def _get_blame_ages(conn, dead_symbols):
             pass
 
         if blame_entries:
-            # We have line-level blame data
             for sym in syms:
-                line_start = sym["line_start"] or 1
-                line_end = sym["line_end"] or line_start
-                dead_loc = max(1, line_end - line_start + 1)
-
-                # Extract blame for symbol's line range (1-indexed)
-                relevant = blame_entries[line_start - 1: line_end]
-                if not relevant:
-                    relevant = blame_entries[:1] if blame_entries else []
-
-                if relevant:
-                    timestamps = [e["timestamp"] for e in relevant if e["timestamp"] > 0]
-                    authors = [e["author"] for e in relevant]
-                    # Primary author = most lines
-                    author_counts = defaultdict(int)
-                    for a in authors:
-                        author_counts[a] += 1
-                    primary_author = max(author_counts, key=author_counts.get) if author_counts else ""
-
-                    oldest_ts = min(timestamps) if timestamps else now
-                    newest_ts = max(timestamps) if timestamps else now
-                    age_days = max(0, (now - oldest_ts) // 86400)
-                    last_modified_days = max(0, (now - newest_ts) // 86400)
-                else:
-                    age_days = 0
-                    last_modified_days = 0
-                    primary_author = ""
-                    dead_loc = max(1, line_end - line_start + 1)
-
+                age_days, last_modified_days, author = _blame_age_for_sym(sym, blame_entries, now)
                 result[sym["id"]] = {
                     "age_days": age_days,
                     "last_modified_days": last_modified_days,
-                    "author": primary_author,
-                    "author_active": primary_author in active_authors,
-                    "dead_loc": dead_loc,
+                    "author": author,
+                    "author_active": author in active_authors,
+                    "dead_loc": _sym_loc(sym),
                 }
         else:
-            # Fallback: use git_file_changes table for file-level timestamps
             file_id = syms[0]["file_id"] if syms else None
-            oldest_ts = now
-            newest_ts = now
-            primary_author = ""
-
-            if file_id is not None:
-                ts_row = conn.execute(
-                    "SELECT MIN(gc.timestamp) as oldest, MAX(gc.timestamp) as newest "
-                    "FROM git_file_changes gfc "
-                    "JOIN git_commits gc ON gfc.commit_id = gc.id "
-                    "WHERE gfc.file_id = ?",
-                    (file_id,),
-                ).fetchone()
-                if ts_row and ts_row["oldest"]:
-                    oldest_ts = ts_row["oldest"]
-                    newest_ts = ts_row["newest"]
-
-                author_row = conn.execute(
-                    "SELECT gc.author, COUNT(*) as cnt "
-                    "FROM git_file_changes gfc "
-                    "JOIN git_commits gc ON gfc.commit_id = gc.id "
-                    "WHERE gfc.file_id = ? "
-                    "GROUP BY gc.author ORDER BY cnt DESC LIMIT 1",
-                    (file_id,),
-                ).fetchone()
-                if author_row:
-                    primary_author = author_row["author"]
-
-            age_days = max(0, (now - oldest_ts) // 86400)
-            last_modified_days = max(0, (now - newest_ts) // 86400)
-
+            age_days, last_modified_days, author = _file_level_age(conn, file_id, now)
             for sym in syms:
-                line_start = sym["line_start"] or 1
-                line_end = sym["line_end"] or line_start
-                dead_loc = max(1, line_end - line_start + 1)
                 result[sym["id"]] = {
                     "age_days": age_days,
                     "last_modified_days": last_modified_days,
-                    "author": primary_author,
-                    "author_active": primary_author in active_authors,
-                    "dead_loc": dead_loc,
+                    "author": author,
+                    "author_active": author in active_authors,
+                    "dead_loc": _sym_loc(sym),
                 }
 
-    # Fill in any symbols we missed (no git data at all)
     for sym in dead_symbols:
         if sym["id"] not in result:
-            line_start = sym["line_start"] or 1
-            line_end = sym["line_end"] or line_start
             result[sym["id"]] = {
                 "age_days": 0,
                 "last_modified_days": 0,
                 "author": "",
                 "author_active": False,
-                "dead_loc": max(1, line_end - line_start + 1),
+                "dead_loc": _sym_loc(sym),
             }
 
     return result

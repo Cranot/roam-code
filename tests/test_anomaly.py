@@ -19,7 +19,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
+from conftest import roam, git_init, git_commit, index_in_process
 
 from roam.graph.anomaly import (
     modified_z_score,
@@ -448,7 +448,7 @@ class TestTrendCommandAnomalies:
         git_init(proj)
 
         # Index and create initial snapshot
-        out, rc = roam("index", cwd=proj)
+        out, rc = index_in_process(proj)
         assert rc == 0, f"roam index failed:\n{out}"
 
         # Create additional snapshots with file growth
@@ -463,7 +463,7 @@ class TestTrendCommandAnomalies:
                 f'    return func_{i}() + 1\n'
             )
             git_commit(proj, f"add module_{i}")
-            out, rc = roam("index", cwd=proj)
+            out, rc = index_in_process(proj)
             assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"
             # Also try to create an explicit snapshot
             roam("snapshot", "--tag", f"v{i}", cwd=proj)

@@ -49,30 +49,30 @@ def compute_aqs(result: dict) -> dict:
     if avg_cx is not None and avg_cx > 5:
         quality_score -= min((avg_cx - 5) * 1, 8)
 
-    # Max complexity penalty: -1 per point above 15, max -5
-    max_cx = scores.get("max_complexity")
-    if max_cx is not None and max_cx > 15:
-        quality_score -= min((max_cx - 15) * 1, 5)
+    # P90 complexity penalty: -1 per point above 15, max -5
+    p90_cx = scores.get("p90_complexity")
+    if p90_cx is not None and p90_cx > 15:
+        quality_score -= min((p90_cx - 15) * 1, 5)
 
-    # High coupling penalty: -2 per highly coupled module, max -7
-    hi_coup = scores.get("high_coupling_count")
-    if hi_coup is not None and hi_coup > 0:
-        quality_score -= min(hi_coup * 2, 7)
+    # High complexity count penalty: -2 per function with high complexity, max -7
+    hi_cx = scores.get("high_complexity_count")
+    if hi_cx is not None and hi_cx > 0:
+        quality_score -= min(hi_cx * 2, 7)
 
     breakdown["quality"] = max(0, round(quality_score))
 
     # --- 3. Architecture (15 pts) ---
     arch_score = 15.0
 
-    # Cycle penalty: -5 per cycle
-    cycles = scores.get("cycle_count")
-    if cycles is not None and cycles > 0:
-        arch_score -= min(cycles * 5, 10)
-
     # Tangle ratio penalty: scales with ratio (0.0 = perfect, 1.0 = terrible)
     tangle = scores.get("tangle_ratio")
     if tangle is not None and tangle > 0:
         arch_score -= min(tangle * 10, 5)
+
+    # Critical issues penalty: -3 per critical issue
+    crit = scores.get("critical_issues")
+    if crit is not None and crit > 0:
+        arch_score -= min(crit * 3, 10)
 
     # File structure bonus: well-organized projects get full points
     # Check if there are subdirectories (components/, utils/, hooks/, etc.)

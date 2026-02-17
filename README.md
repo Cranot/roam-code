@@ -176,7 +176,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 55 total commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 56 total commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -217,6 +217,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 |---------|-------------|
 | `roam health [--no-framework]` | Composite health score (0-100): weighted geometric mean of tangle ratio, god components, bottlenecks, layer violations. Includes propagation cost and algebraic connectivity |
 | `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
+| `roam math [--task T] [--confidence C]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count and bounded-loop analysis |
 | `roam weather [-n N]` | Hotspots ranked by geometric mean of churn x complexity (percentile-normalized) |
 | `roam debt` | Hotspot-weighted tech debt prioritization with SQALE remediation cost estimates |
 | `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
@@ -952,7 +953,7 @@ Static analysis trade-offs:
 - **No runtime analysis** -- can't trace dynamic dispatch, reflection, or eval'd code
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve
 - **Limited cross-language edges** -- Salesforce and multi-repo API edges are supported, but not arbitrary FFI
-- **Tier 2 languages** (Ruby, C#, Kotlin, Swift, Scala) get basic symbol extraction only
+- **Tier 2 languages** (Ruby, Kotlin, Swift, Scala) get basic symbol extraction only
 - **Large monorepos** (100k+ files) may have slow initial indexing
 
 ## Troubleshooting
@@ -989,7 +990,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # 1729 tests, Python 3.9-3.13
+pytest tests/              # 1847 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1004,10 +1005,9 @@ make lint     # ruff check
 roam-code/
 ├── pyproject.toml
 ├── action.yml                         # Reusable GitHub Action
-├── CHANGELOG.md
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (55 commands, 7 categories)
+│   ├── cli.py                         # Click CLI (57 commands, 7 categories)
 │   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1021,12 +1021,21 @@ roam-code/
 │   │   ├── relations.py               # Reference resolution -> edges
 │   │   ├── complexity.py              # Cognitive complexity (SonarSource) + Halstead metrics
 │   │   ├── git_stats.py               # Churn, co-change, blame, Renyi entropy
-│   │   └── incremental.py             # mtime + hash change detection
+│   │   ├── incremental.py             # mtime + hash change detection
+│   │   ├── file_roles.py              # Smart file role classifier
+│   │   └── test_conventions.py        # Pluggable test naming adapters
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
 │   │   ├── registry.py                # Language detection + aliasing
-│   │   ├── *_lang.py                  # One file per language (13 Tier 1)
+│   │   ├── *_lang.py                  # One file per language (14 Tier 1)
 │   │   └── generic_lang.py            # Tier 2 fallback
+│   ├── bridges/
+│   │   ├── base.py, registry.py       # Cross-language bridge framework
+│   │   ├── bridge_salesforce.py       # Apex <-> Aura/LWC/Visualforce
+│   │   └── bridge_protobuf.py         # .proto -> Go/Java/Python stubs
+│   ├── catalog/
+│   │   ├── tasks.py                  # Universal algorithm catalog (23 patterns)
+│   │   └── detectors.py              # Anti-pattern detectors with confidence calibration
 │   ├── workspace/
 │   │   ├── config.py                  # .roam-workspace.json
 │   │   ├── db.py                      # Workspace overlay DB
@@ -1037,15 +1046,17 @@ roam-code/
 │   │   ├── cycles.py, clusters.py     # Tarjan SCC, propagation cost, Louvain, modularity Q
 │   │   ├── layers.py, pathfinding.py  # Topo layers, k-shortest paths
 │   │   ├── split.py, why.py           # Decomposition, role classification
+│   │   └── anomaly.py                 # Statistical anomaly detection
 │   ├── commands/
 │   │   ├── resolve.py                 # Shared symbol resolution
 │   │   ├── graph_helpers.py           # Shared graph utilities (adj builders, BFS)
 │   │   ├── context_helpers.py         # Data-gathering helpers for context command
+│   │   ├── gate_presets.py            # Framework-specific gate rules
 │   │   └── cmd_*.py                   # One module per command
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
 │       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # 1729 tests across 30 test files
+└── tests/                             # Test suite across 30+ test files
 ```
 
 </details>
@@ -1073,8 +1084,13 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 - [x] Multi-repo workspace support (v7.4)
 - [x] Research-backed algorithms: adaptive PageRank, Personalized PageRank, Mann-Kendall, NPMI, Sen's slope, sigmoid-bounded health, Gini layer balance (v7.4)
 - [x] Advanced math: Halstead metrics, Renyi entropy, propagation cost, algebraic connectivity, modularity Q-score, conductance, edge betweenness, SQALE remediation cost, multiplicative PR risk, weighted geometric mean health, dead code confidence scoring, cyclomatic density (v7.5)
+- [x] C# Tier 1 support (v8.0)
+- [x] Deep Python extractor: instance attrs, assignment type refs, forward refs (v8.1)
+- [x] Internal complexity reduction: 50+ functions refactored below CC=25 (v9.0)
+- [x] Scoring math audit: fixed boolean-op double-counting, unified percentile implementations (v9.0)
+- [x] Test speed optimization: in-process indexing for fixtures (v9.0)
+- [x] Algorithm anti-pattern detection: 23-pattern catalog, AST signal extraction, confidence calibration (v9.0)
 - [ ] Terminal demo GIF
-- [x] C# Tier 1 support
 - [ ] Ruby Tier 1 support
 - [ ] `--sarif` CLI flag for direct SARIF export
 - [ ] Docker image for CI
@@ -1086,7 +1102,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 1729 tests must pass
+pytest tests/   # All 1847 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

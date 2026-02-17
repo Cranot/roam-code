@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init
+from conftest import roam, git_init, index_in_process
 
 
 # ============================================================================
@@ -62,7 +62,7 @@ def indexed_project(tmp_path_factory):
     )
 
     git_init(proj)
-    out, rc = roam("index", cwd=proj)
+    out, rc = index_in_process(proj)
     assert rc == 0, f"index failed: {out}"
     return proj
 
@@ -187,7 +187,7 @@ class TestVisualizeEmpty:
         # Create an empty project with just a non-code file
         (tmp_path / "README.txt").write_text("hello")
         git_init(tmp_path)
-        out, rc = roam("index", cwd=tmp_path)
+        out, rc = index_in_process(tmp_path)
         # visualize should handle the empty graph gracefully
         out, rc = roam("visualize", cwd=tmp_path)
         assert rc == 0
@@ -197,7 +197,7 @@ class TestVisualizeEmpty:
         """Empty project in JSON mode returns EMPTY verdict."""
         (tmp_path / "README.txt").write_text("hello")
         git_init(tmp_path)
-        roam("index", cwd=tmp_path)
+        index_in_process(tmp_path)
         out, rc = roam("--json", "visualize", cwd=tmp_path)
         assert rc == 0
         data = json.loads(out)

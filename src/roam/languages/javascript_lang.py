@@ -277,6 +277,53 @@ class JavaScriptExtractor(LanguageExtractor):
                         parent_name=parent_name,
                     ))
 
+    def _extract_member_assignment(self, child, left, right, source, symbols, node):
+        """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
+        obj_node = left.child_by_field_name("object")
+        prop_node = left.child_by_field_name("property")
+        if obj_node is None or prop_node is None:
+            return
+        obj_text = self.node_text(obj_node, source)
+        prop_name = self.node_text(prop_node, source)
+
+        if obj_node.type == "member_expression":
+            inner_obj = obj_node.child_by_field_name("object")
+            inner_prop = obj_node.child_by_field_name("property")
+            if inner_prop and self.node_text(inner_prop, source) == "prototype" and inner_obj:
+                obj_text = self.node_text(inner_obj, source)
+
+        is_exports = obj_text in ("exports", "module.exports")
+
+        if right.type == "identifier" and is_exports:
+            rname = self.node_text(right, source)
+            for sym in symbols:
+                if sym["name"] == rname:
+                    sym["is_exported"] = True
+            return
+
+        if right.type in ("function_expression", "arrow_function", "generator_function"):
+            params = right.child_by_field_name("parameters")
+            p_text = self._params_text(params, source)
+            symbols.append(self._make_symbol(
+                name=prop_name, kind="function",
+                line_start=child.start_point[0] + 1,
+                line_end=child.end_point[0] + 1,
+                qualified_name=f"{obj_text}.{prop_name}",
+                signature=f"{obj_text}.{prop_name} = function({p_text})",
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exports, parent_name=obj_text,
+            ))
+        else:
+            val_text = self.node_text(right, source)[:80]
+            symbols.append(self._make_symbol(
+                name=prop_name, kind="constant",
+                line_start=child.start_point[0] + 1,
+                line_end=child.end_point[0] + 1,
+                qualified_name=f"{obj_text}.{prop_name}",
+                signature=f"{obj_text}.{prop_name} = {val_text}",
+                is_exported=is_exports, parent_name=obj_text,
+            ))
+
     def _extract_module_exports(self, node, source, symbols, parent_name):
         """Detect module.exports/exports assignments and obj.method assignments."""
         for child in node.children:
@@ -289,78 +336,18 @@ class JavaScriptExtractor(LanguageExtractor):
 
             left_text = self.node_text(left, source)
 
-            # --- Pattern: module.exports = X or exports = X ---
             if left_text in ("module.exports", "exports"):
                 if right.type == "identifier":
                     name = self.node_text(right, source)
-                    # Mark existing symbol as exported (don't duplicate)
                     for sym in symbols:
                         if sym["name"] == name:
                             sym["is_exported"] = True
                 elif right.type == "object":
-                    # module.exports = { handle(req) {}, query: function() {} }
                     self._extract_object_export_members(right, source, symbols)
                 continue
 
-            # --- Pattern: member assignment like exports.X = ..., app.X = ... ---
             if left.type == "member_expression":
-                obj_node = left.child_by_field_name("object")
-                prop_node = left.child_by_field_name("property")
-                if obj_node is None or prop_node is None:
-                    continue
-                obj_text = self.node_text(obj_node, source)
-                prop_name = self.node_text(prop_node, source)
-
-                # Check for View.prototype.method pattern
-                if obj_node.type == "member_expression":
-                    inner_obj = obj_node.child_by_field_name("object")
-                    inner_prop = obj_node.child_by_field_name("property")
-                    if inner_prop and self.node_text(inner_prop, source) == "prototype" and inner_obj:
-                        obj_text = self.node_text(inner_obj, source)
-                        # View.prototype.lookup = function(...) -> parent=View, name=lookup
-
-                is_exports = obj_text in ("exports", "module.exports")
-
-                # Guard: if right is an identifier matching an existing symbol, just mark exported
-                if right.type == "identifier" and is_exports:
-                    rname = self.node_text(right, source)
-                    for sym in symbols:
-                        if sym["name"] == rname:
-                            sym["is_exported"] = True
-                    continue
-
-                # Extract function or value
-                if right.type in ("function_expression", "arrow_function", "generator_function"):
-                    params = right.child_by_field_name("parameters")
-                    p_text = self._params_text(params, source)
-                    sig = f"{obj_text}.{prop_name} = function({p_text})"
-                    qualified = f"{obj_text}.{prop_name}"
-                    symbols.append(self._make_symbol(
-                        name=prop_name,
-                        kind="function",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        docstring=self.get_docstring(node, source),
-                        is_exported=is_exports,
-                        parent_name=obj_text,
-                    ))
-                else:
-                    # Non-function value: exports.version = "1.0"
-                    val_text = self.node_text(right, source)[:80]
-                    qualified = f"{obj_text}.{prop_name}"
-                    sig = f"{obj_text}.{prop_name} = {val_text}"
-                    symbols.append(self._make_symbol(
-                        name=prop_name,
-                        kind="constant",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        is_exported=is_exports,
-                        parent_name=obj_text,
-                    ))
+                self._extract_member_assignment(child, left, right, source, symbols, node)
 
     def _extract_object_export_members(self, obj_node, source, symbols):
         """Extract members from module.exports = { ... } object literal."""
@@ -561,27 +548,8 @@ class JavaScriptExtractor(LanguageExtractor):
             return (target, "import")
         return None
 
-    def _extract_esm_import(self, node, source, refs, scope_name):
-        """Extract ESM import statements."""
-        source_node = node.child_by_field_name("source")
-        if source_node is None:
-            return
-        path = self.node_text(source_node, source).strip("'\"")
-
-        # Resolve @salesforce/* imports to semantic targets
-        sf_resolved = self._resolve_salesforce_import(path)
-        if sf_resolved is not None:
-            sf_target, sf_kind = sf_resolved
-            refs.append(self._make_reference(
-                target_name=sf_target,
-                kind=sf_kind,
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-                import_path=path,
-            ))
-            return
-
-        # Collect imported names
+    def _collect_import_names(self, node, source):
+        """Collect imported symbol names from an import_clause."""
         names = []
         for child in node.children:
             if child.type == "import_clause":
@@ -598,23 +566,38 @@ class JavaScriptExtractor(LanguageExtractor):
                         for ns_child in sub.children:
                             if ns_child.type == "identifier":
                                 names.append(self.node_text(ns_child, source))
+        return names
 
+    def _extract_esm_import(self, node, source, refs, scope_name):
+        """Extract ESM import statements."""
+        source_node = node.child_by_field_name("source")
+        if source_node is None:
+            return
+        path = self.node_text(source_node, source).strip("'\"")
+
+        # Resolve @salesforce/* imports to semantic targets
+        sf_resolved = self._resolve_salesforce_import(path)
+        if sf_resolved is not None:
+            sf_target, sf_kind = sf_resolved
+            refs.append(self._make_reference(
+                target_name=sf_target, kind=sf_kind,
+                line=node.start_point[0] + 1, source_name=scope_name,
+                import_path=path,
+            ))
+            return
+
+        names = self._collect_import_names(node, source)
         if names:
             for name in names:
                 refs.append(self._make_reference(
-                    target_name=name,
-                    kind="import",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
+                    target_name=name, kind="import",
+                    line=node.start_point[0] + 1, source_name=scope_name,
                     import_path=path,
                 ))
         else:
-            # Side-effect import: import 'module'
             refs.append(self._make_reference(
-                target_name=path,
-                kind="import",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
+                target_name=path, kind="import",
+                line=node.start_point[0] + 1, source_name=scope_name,
                 import_path=path,
             ))
 
