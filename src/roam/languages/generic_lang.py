@@ -49,7 +49,6 @@ _EXTENDS_CONFIG = {
     "javascript": {"parent_type": "class_heritage", "name_child": "identifier"},
     "go": None,       # handled specially via embedded structs
     "rust": None,     # handled via impl blocks
-    "c_sharp": {"parent_type": "base_list", "name_child": "identifier"},
     "kotlin": {"parent_type": "delegation_specifier", "name_child": "user_type"},
     "ruby": {"parent_type": "superclass", "name_child": "constant"},
 }
@@ -66,7 +65,6 @@ _TRAIT_CONFIG = {
     "typescript": {"parent_type": "implements_clause", "name_children": ["type_identifier"]},
     "tsx": {"parent_type": "implements_clause", "name_children": ["type_identifier"]},
     "rust": {"node_type": "impl_item", "trait_field": "trait"},
-    "c_sharp": {"parent_type": "base_list", "name_child": "identifier"},
 }
 
 # ---- Class property / field config ----
@@ -82,7 +80,6 @@ _PROPERTY_CONFIG = {
     "tsx": {"node_type": "public_field_definition", "name_child": "property_identifier"},
     "javascript": {"node_type": "field_definition", "name_child": "property_identifier"},
     "go": {"node_type": "field_declaration", "name_child": "field_identifier"},
-    "c_sharp": {"node_type": "field_declaration", "name_child": "variable_declarator"},
     "kotlin": {"node_type": "property_declaration", "name_field": "variable_declaration"},
 }
 
