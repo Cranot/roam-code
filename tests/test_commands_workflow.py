@@ -443,6 +443,41 @@ class TestAffectedTests:
         # Either "pytest ..." or "# No affected tests found."
         assert output.startswith("pytest") or output.startswith("#")
 
+    def test_affected_tests_csharp_convention(self, project_factory, cli_runner, monkeypatch):
+        """c# test discovery finds tests in separate test projects."""
+        # create a c# project with source and test files
+        csharp_project = project_factory({
+            "src/MyProject/Services/UserService.cs": (
+                "namespace MyProject.Services;\n"
+                "public class UserService {\n"
+                "    public void CreateUser() { }\n"
+                "}\n"
+            ),
+            "tests/MyProject.Tests/Services/UserServiceTests.cs": (
+                "namespace MyProject.Tests.Services;\n"
+                "using MyProject.Services;\n"
+                "public class UserServiceTests {\n"
+                "    public void TestCreateUser() {\n"
+                "        var service = new UserService();\n"
+                "        service.CreateUser();\n"
+                "    }\n"
+                "}\n"
+            ),
+        })
+        monkeypatch.chdir(csharp_project)
+
+        # run affected-tests on the source file
+        result = invoke_cli(
+            cli_runner,
+            ["affected-tests", "src/MyProject/Services/UserService.cs"],
+        )
+        assert result.exit_code == 0
+
+        # verify the test file was discovered
+        output = result.output
+        # the output should mention the test file or show it as a colocated test
+        assert "UserServiceTests.cs" in output or "COLOCATED" in output or "MyProject.Tests" in output
+
 
 # ============================================================================
 # Diagnose command

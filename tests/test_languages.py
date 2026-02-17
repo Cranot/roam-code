@@ -5,7 +5,7 @@ integration testing (via project_factory + invoke_cli) to verify that
 each supported language correctly extracts symbols, references, and
 structural information.
 
-Languages covered: Python, JavaScript, TypeScript, Java, Go, Rust, C, PHP.
+Languages covered: Python, JavaScript, TypeScript, Java, Go, Rust, C, PHP, C#.
 """
 
 from __future__ import annotations
@@ -1860,3 +1860,550 @@ class TestMultiLanguageProject:
             assert data["language"] == lang, (
                 f"Expected {path} to be {lang}, got {data['language']}"
             )
+
+
+# ===========================================================================
+# C# TESTS
+# ===========================================================================
+
+class TestCSharpExtraction:
+    """Tests for C# symbol and reference extraction."""
+
+    def test_csharp_class(self):
+        """Class with methods and fields should be extracted."""
+        source = (
+            "namespace MyApp;\n"
+            "\n"
+            "public class Person\n"
+            "{\n"
+            "    private string _name;\n"
+            "    private int _age;\n"
+            "\n"
+            "    public Person(string name, int age)\n"
+            "    {\n"
+            "        _name = name;\n"
+            "        _age = age;\n"
+            "    }\n"
+            "\n"
+            "    public string GetName()\n"
+            "    {\n"
+            "        return _name;\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Person.cs")
+        names = [s["name"] for s in symbols]
+        assert "Person" in names
+        cls = next(s for s in symbols if s["name"] == "Person" and s["kind"] == "class")
+        assert cls["kind"] == "class"
+        assert cls["visibility"] == "public"
+        assert cls["qualified_name"] == "MyApp.Person"
+        assert "GetName" in names
+        assert "_name" in names or "_age" in names
+
+    def test_csharp_interface(self):
+        """Interface should be extracted as 'interface' kind."""
+        source = (
+            "namespace Services;\n"
+            "\n"
+            "public interface IRepository\n"
+            "{\n"
+            "    void Add(object item);\n"
+            "    object FindById(int id);\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "IRepository.cs")
+        names = [s["name"] for s in symbols]
+        assert "IRepository" in names
+        iface = next(s for s in symbols if s["name"] == "IRepository")
+        assert iface["kind"] == "interface"
+        assert iface["qualified_name"] == "Services.IRepository"
+        # interface members default to public
+        add_method = next(s for s in symbols if s["name"] == "Add")
+        assert add_method["visibility"] == "public"
+
+    def test_csharp_struct(self):
+        """Struct should be extracted as 'struct' kind."""
+        source = (
+            "public struct Point\n"
+            "{\n"
+            "    public int X;\n"
+            "    public int Y;\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Point.cs")
+        names = [s["name"] for s in symbols]
+        assert "Point" in names
+        point = next(s for s in symbols if s["name"] == "Point")
+        assert point["kind"] == "struct"
+
+    def test_csharp_enum(self):
+        """Enum with members should be extracted."""
+        source = (
+            "public enum Color\n"
+            "{\n"
+            "    Red,\n"
+            "    Green,\n"
+            "    Blue\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Color.cs")
+        names = [s["name"] for s in symbols]
+        assert "Color" in names
+        enum_sym = next(s for s in symbols if s["name"] == "Color")
+        assert enum_sym["kind"] == "enum"
+        # enum members should be constants
+        constants = [s for s in symbols if s["kind"] == "constant"]
+        constant_names = {s["name"] for s in constants}
+        assert "Red" in constant_names
+        assert "Green" in constant_names
+        assert "Blue" in constant_names
+
+    def test_csharp_method_and_constructor(self):
+        """Methods and constructors should be extracted with signatures."""
+        source = (
+            "public class Calculator\n"
+            "{\n"
+            "    public Calculator() { }\n"
+            "\n"
+            "    public async Task<int> AddAsync(int a, int b)\n"
+            "    {\n"
+            "        return a + b;\n"
+            "    }\n"
+            "\n"
+            "    public static double Multiply(double x, double y)\n"
+            "    {\n"
+            "        return x * y;\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Calculator.cs")
+        names = [s["name"] for s in symbols]
+        assert "Calculator" in names
+        assert "AddAsync" in names
+        assert "Multiply" in names
+        # constructor
+        ctors = [s for s in symbols if s["kind"] == "constructor"]
+        assert len(ctors) >= 1
+        # async in signature
+        add_m = next(s for s in symbols if s["name"] == "AddAsync")
+        assert "async" in add_m["signature"]
+        # static in signature
+        mul_m = next(s for s in symbols if s["name"] == "Multiply")
+        assert "static" in mul_m["signature"]
+
+    def test_csharp_property_with_accessors(self):
+        """Property with get/set/init and required modifier should be extracted."""
+        source = (
+            "public class Config\n"
+            "{\n"
+            "    public string Name { get; set; }\n"
+            "    public int Value { get; private set; }\n"
+            "    public required string Key { get; init; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Config.cs")
+        props = [s for s in symbols if s["kind"] == "property"]
+        prop_names = {s["name"] for s in props}
+        assert "Name" in prop_names
+        assert "Value" in prop_names
+        assert "Key" in prop_names
+        key_prop = next(s for s in props if s["name"] == "Key")
+        assert "required" in key_prop["signature"]
+        assert "init" in key_prop["signature"]
+
+    def test_csharp_delegate(self):
+        """Delegate declaration should be extracted."""
+        source = (
+            "namespace Events;\n"
+            "\n"
+            "public delegate void EventHandler(object sender, EventArgs e);\n"
+            "public delegate Task<T> AsyncOperation<T>(CancellationToken ct);\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Delegates.cs")
+        delegates = [s for s in symbols if s["kind"] == "delegate"]
+        delegate_names = {s["name"] for s in delegates}
+        assert "EventHandler" in delegate_names
+        assert "AsyncOperation" in delegate_names
+        handler = next(s for s in delegates if s["name"] == "EventHandler")
+        assert "delegate" in handler["signature"]
+
+    def test_csharp_using_directives(self):
+        """Using directives (standard, static, alias) should create import references."""
+        source = (
+            "using System;\n"
+            "using System.Collections.Generic;\n"
+            "using static System.Math;\n"
+            "using Req = WireMock.RequestBuilders.Request;\n"
+            "\n"
+            "public class Foo { }\n"
+        )
+        _, refs = _parse_and_extract(source, "Foo.cs")
+        imports = [r for r in refs if r["kind"] == "import"]
+        import_targets = {r["target_name"] for r in imports}
+        assert "System" in import_targets
+        assert "Generic" in import_targets
+        assert "Math" in import_targets
+        # alias using: target is the alias name, import_path has full qualified path
+        assert "Req" in import_targets
+        alias_ref = next(r for r in imports if r["target_name"] == "Req")
+        assert "WireMock" in alias_ref["import_path"]
+
+    def test_csharp_method_calls(self):
+        """Method invocations should create call references."""
+        source = (
+            "namespace App;\n"
+            "\n"
+            "public class Service\n"
+            "{\n"
+            "    public void Run()\n"
+            "    {\n"
+            "        Console.WriteLine(\"hello\");\n"
+            "        DoWork();\n"
+            "    }\n"
+            "\n"
+            "    private void DoWork() { }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Service.cs")
+        calls = [r for r in refs if r["kind"] == "call"]
+        call_targets = {r["target_name"] for r in calls}
+        assert any("WriteLine" in t for t in call_targets)
+        assert "DoWork" in call_targets
+
+    def test_csharp_inheritance(self):
+        """Base class and interface inheritance should create references."""
+        source = (
+            "public interface IEntity\n"
+            "{\n"
+            "    int Id { get; }\n"
+            "}\n"
+            "\n"
+            "public class BaseEntity\n"
+            "{\n"
+            "    public int Id { get; set; }\n"
+            "}\n"
+            "\n"
+            "public class User : BaseEntity, IEntity\n"
+            "{\n"
+            "    public string Name { get; set; }\n"
+            "}\n"
+        )
+        symbols, refs = _parse_and_extract(source, "Models.cs")
+        names = [s["name"] for s in symbols]
+        assert "User" in names
+        assert "BaseEntity" in names
+        assert "IEntity" in names
+        # first entry without I-prefix -> inherits
+        inherits = [r for r in refs if r["kind"] == "inherits"]
+        assert any(r["target_name"] == "BaseEntity" for r in inherits)
+        # second entry with I-prefix -> implements
+        implements = [r for r in refs if r["kind"] == "implements"]
+        assert any(r["target_name"] == "IEntity" for r in implements)
+
+    def test_csharp_constructor_calls(self):
+        """new expressions should create call references."""
+        source = (
+            "public class Factory\n"
+            "{\n"
+            "    public object Create()\n"
+            "    {\n"
+            "        var list = new List<string>();\n"
+            "        return new User(\"test\");\n"
+            "    }\n"
+            "}\n"
+        )
+        _, refs = _parse_and_extract(source, "Factory.cs")
+        calls = [r for r in refs if r["kind"] == "call"]
+        call_targets = {r["target_name"] for r in calls}
+        assert "List" in call_targets
+        assert "User" in call_targets
+
+    def test_csharp_file_scoped_namespace(self):
+        """File-scoped namespace (C# 10) should qualify types correctly."""
+        source = (
+            "namespace MyApp.Models;\n"
+            "\n"
+            "public class Order\n"
+            "{\n"
+            "    public int Id { get; set; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Order.cs")
+        ns = next(s for s in symbols if s["kind"] == "module")
+        assert ns["name"] == "MyApp.Models"
+        order = next(s for s in symbols if s["name"] == "Order")
+        assert order["qualified_name"] == "MyApp.Models.Order"
+
+    def test_csharp_nested_type_visibility(self):
+        """Nested types should default to private visibility."""
+        source = (
+            "public class Outer\n"
+            "{\n"
+            "    class Inner\n"
+            "    {\n"
+            "        void Method() { }\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Nested.cs")
+        inner = next(s for s in symbols if s["name"] == "Inner")
+        assert inner["visibility"] == "private"
+        assert inner["qualified_name"] == "Outer.Inner"
+        method = next(s for s in symbols if s["name"] == "Method")
+        assert method["visibility"] == "private"
+
+    def test_csharp_interface_member_visibility(self):
+        """Interface members should default to public visibility."""
+        source = (
+            "public interface IService\n"
+            "{\n"
+            "    void Execute();\n"
+            "    string Name { get; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "IService.cs")
+        method = next(s for s in symbols if s["name"] == "Execute")
+        assert method["visibility"] == "public"
+        prop = next(s for s in symbols if s["name"] == "Name")
+        assert prop["visibility"] == "public"
+
+    def test_csharp_generic_class_with_constraints(self):
+        """Generic class with type parameters and constraints should appear in signature."""
+        source = (
+            "public class Repository<T> where T : IEntity, new()\n"
+            "{\n"
+            "    public T FindById(int id) { return default; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Repository.cs")
+        repo = next(s for s in symbols if s["name"] == "Repository")
+        assert "<T>" in repo["signature"]
+        assert "where" in repo["signature"]
+        # name should NOT include generic params
+        assert repo["name"] == "Repository"
+
+
+class TestCSharpExtractionExtra:
+    """Synthetic tests for C#-specific features not found in typical codebases."""
+
+    def test_csharp_record_implementing_interface(self):
+        """Record implementing interface should be extracted as class with implements ref."""
+        source = (
+            "public interface IBar { }\n"
+            "\n"
+            "public record Foo(string Name) : IBar;\n"
+        )
+        symbols, refs = _parse_and_extract(source, "RecordImpl.cs")
+        foo = next(s for s in symbols if s["name"] == "Foo")
+        assert foo["kind"] == "class"
+        assert "record" in foo["signature"]
+        implements = [r for r in refs if r["kind"] == "implements"]
+        assert any(r["target_name"] == "IBar" for r in implements)
+
+    def test_csharp_record_struct(self):
+        """Record struct should be extracted as struct kind."""
+        source = (
+            "public record struct Point(int X, int Y);\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Point.cs")
+        point = next(s for s in symbols if s["name"] == "Point")
+        assert point["kind"] == "struct"
+        assert "record struct" in point["signature"]
+        # primary constructor should be extracted
+        ctors = [s for s in symbols if s["kind"] == "constructor" and s["name"] == "Point"]
+        assert len(ctors) >= 1
+
+    def test_csharp_compound_modifiers(self):
+        """protected internal should be detected as compound modifier."""
+        source = (
+            "public class Base\n"
+            "{\n"
+            "    protected internal void SharedMethod() { }\n"
+            "    private protected string Secret { get; set; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Base.cs")
+        shared = next(s for s in symbols if s["name"] == "SharedMethod")
+        assert shared["visibility"] == "protected internal"
+        secret = next(s for s in symbols if s["name"] == "Secret")
+        assert secret["visibility"] == "private protected"
+
+    def test_csharp_nested_namespaces(self):
+        """Nested block-scoped namespaces should accumulate qualified names."""
+        source = (
+            "namespace Outer\n"
+            "{\n"
+            "    namespace Inner\n"
+            "    {\n"
+            "        public class Deep { }\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Nested.cs")
+        modules = [s for s in symbols if s["kind"] == "module"]
+        module_names = {s["qualified_name"] for s in modules}
+        assert "Outer" in module_names
+        assert "Outer.Inner" in module_names
+        deep = next(s for s in symbols if s["name"] == "Deep")
+        assert deep["qualified_name"] == "Outer.Inner.Deep"
+
+    def test_csharp_xml_doc_comments(self):
+        """/// XML doc comments should be captured as docstrings."""
+        source = (
+            "/// <summary>\n"
+            "/// gets the user name\n"
+            "/// </summary>\n"
+            "public class Documented\n"
+            "{\n"
+            "    /// <summary>returns a greeting</summary>\n"
+            "    public string Greet() { return \"hi\"; }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Documented.cs")
+        cls = next(s for s in symbols if s["name"] == "Documented")
+        assert cls["docstring"] is not None
+        assert "user name" in cls["docstring"]
+        method = next(s for s in symbols if s["name"] == "Greet")
+        assert method["docstring"] is not None
+        assert "greeting" in method["docstring"]
+
+    def test_csharp_local_functions(self):
+        """Local functions should be extracted as methods with is_exported=False."""
+        source = (
+            "public class Processor\n"
+            "{\n"
+            "    public int Process(int x)\n"
+            "    {\n"
+            "        int Double(int n) => n * 2;\n"
+            "        return Double(x);\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Processor.cs")
+        local = next(s for s in symbols if s["name"] == "Double")
+        assert local["kind"] == "method"
+        assert local["is_exported"] is False
+        assert local["visibility"] == "private"
+        assert "Processor.Process.Double" in local["qualified_name"]
+
+    def test_csharp_primary_constructor_with_base(self):
+        """Primary constructor (C# 12) with base class + interface should extract all."""
+        source = (
+            "public interface IFoo { }\n"
+            "public class Base { }\n"
+            "\n"
+            "public class Derived(int x) : Base, IFoo\n"
+            "{\n"
+            "    public int Value => x;\n"
+            "}\n"
+        )
+        symbols, refs = _parse_and_extract(source, "Derived.cs")
+        derived = next(s for s in symbols if s["name"] == "Derived" and s["kind"] == "class")
+        assert derived is not None
+        # primary constructor
+        ctors = [s for s in symbols if s["kind"] == "constructor" and s["name"] == "Derived"]
+        assert len(ctors) >= 1
+        ctor = ctors[0]
+        assert "int x" in ctor["signature"]
+        # inheritance
+        inherits = [r for r in refs if r["kind"] == "inherits"]
+        assert any(r["target_name"] == "Base" for r in inherits)
+        implements = [r for r in refs if r["kind"] == "implements"]
+        assert any(r["target_name"] == "IFoo" for r in implements)
+
+
+# ===========================================================================
+# C# LINE NUMBERS AND SIGNATURES
+# ===========================================================================
+
+class TestCSharpLineNumbers:
+    """Verify C# symbols have correct line numbers."""
+
+    def test_csharp_line_numbers(self):
+        """C# symbols should have correct line_start."""
+        source = (
+            "public class Example\n"         # line 1
+            "{\n"                             # line 2
+            "    public void Foo()\n"         # line 3
+            "    {\n"                         # line 4
+            "    }\n"                         # line 5
+            "\n"                              # line 6
+            "    public void Bar()\n"         # line 7
+            "    {\n"                         # line 8
+            "    }\n"                         # line 9
+            "}\n"                             # line 10
+        )
+        symbols, _ = _parse_and_extract(source, "Example.cs")
+        foo = next(s for s in symbols if s["name"] == "Foo")
+        bar = next(s for s in symbols if s["name"] == "Bar")
+        assert foo["line_start"] == 3
+        assert bar["line_start"] == 7
+
+
+class TestCSharpSignatures:
+    """Verify C# symbol signatures."""
+
+    def test_csharp_method_signature(self):
+        """C# method signature should include return type and params."""
+        source = (
+            "public class Calc\n"
+            "{\n"
+            "    public int Add(int a, int b)\n"
+            "    {\n"
+            "        return a + b;\n"
+            "    }\n"
+            "}\n"
+        )
+        symbols, _ = _parse_and_extract(source, "Calc.cs")
+        method = next(s for s in symbols if s["name"] == "Add")
+        assert method["signature"] is not None
+        assert "int" in method["signature"]
+        assert "Add" in method["signature"]
+
+
+# ===========================================================================
+# C# CLI INTEGRATION TESTS
+# ===========================================================================
+
+class TestCSharpCLI:
+    """CLI integration tests for C# extraction."""
+
+    def test_csharp_file_skeleton(self, project_factory, cli_runner, monkeypatch):
+        """roam --json file should return correct C# skeleton."""
+        proj = project_factory({
+            "Models.cs": (
+                "namespace App.Models;\n"
+                "\n"
+                "public interface IEntity\n"
+                "{\n"
+                "    int Id { get; }\n"
+                "}\n"
+                "\n"
+                "public class User : IEntity\n"
+                "{\n"
+                "    public int Id { get; set; }\n"
+                "    public string Name { get; set; }\n"
+                "\n"
+                "    public User(int id, string name)\n"
+                "    {\n"
+                "        Id = id;\n"
+                "        Name = name;\n"
+                "    }\n"
+                "\n"
+                "    public string GetDisplayName()\n"
+                "    {\n"
+                "        return Name;\n"
+                "    }\n"
+                "}\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["--json", "file", "Models.cs"])
+        data = json.loads(result.output)
+        assert data["language"] == "c_sharp"
+        symbols = data["symbols"]
+        names = [s["name"] for s in symbols]
+        assert "IEntity" in names
+        assert "User" in names
+        assert "GetDisplayName" in names

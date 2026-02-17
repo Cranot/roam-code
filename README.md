@@ -773,6 +773,7 @@ Zero infrastructure, zero vendor lock-in, zero data leaving your network.
 | Go | `.go` | structs, interfaces, functions, methods, fields | imports, calls | embedded structs |
 | Rust | `.rs` | structs, traits, impls, enums, functions | use, calls | impl Trait for Struct |
 | C / C++ | `.c` `.h` `.cpp` `.hpp` `.cc` | structs, classes, functions, namespaces, templates | includes, calls | extends |
+| C# | `.cs` | classes, interfaces, structs, enums, records, methods, constructors, properties, delegates, events, fields | using directives, calls, `new`, attributes | extends, implements |
 | PHP | `.php` | classes, interfaces, traits, enums, methods, properties | namespace use, calls, static calls, `new` | extends, implements, use (traits) |
 | Visual FoxPro | `.prg` | functions, procedures, classes, methods, properties, constants | DO, SET PROCEDURE/CLASSLIB, CREATEOBJECT, `=func()`, `obj.method()` | DEFINE CLASS ... AS |
 | Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
@@ -795,7 +796,7 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 
 ### Tier 2 -- Generic extraction
 
-Ruby (`.rb`), C# (`.cs`), Kotlin (`.kt` `.kts`), Swift (`.swift`), Scala (`.scala` `.sc`)
+Ruby (`.rb`), Kotlin (`.kt` `.kts`), Swift (`.swift`), Scala (`.scala` `.sc`)
 
 Tier 2 languages get symbol extraction and basic inheritance via a generic tree-sitter walker.
 
@@ -1073,8 +1074,8 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 - [x] Research-backed algorithms: adaptive PageRank, Personalized PageRank, Mann-Kendall, NPMI, Sen's slope, sigmoid-bounded health, Gini layer balance (v7.4)
 - [x] Advanced math: Halstead metrics, Renyi entropy, propagation cost, algebraic connectivity, modularity Q-score, conductance, edge betweenness, SQALE remediation cost, multiplicative PR risk, weighted geometric mean health, dead code confidence scoring, cyclomatic density (v7.5)
 - [ ] Terminal demo GIF
+- [x] C# Tier 1 support
 - [ ] Ruby Tier 1 support
-- [ ] C# Tier 1 support
 - [ ] `--sarif` CLI flag for direct SARIF export
 - [ ] Docker image for CI
 - [ ] VS Code extension

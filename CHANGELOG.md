@@ -1,5 +1,49 @@
 # Changelog
 
+## v8.3.0
+
+C# Tier 1 language support with dedicated parser.
+
+### C# Tier 1 Extractor
+
+- **New `CSharpExtractor`** (`src/roam/languages/csharp_lang.py`) -- dedicated Tier 1 parser for C# (`.cs` files), replacing the generic Tier 2 walker. ~1,000 lines.
+- **Fixed C# grammar alias** -- added `"c_sharp": "csharp"` to `GRAMMAR_ALIASES` in `parser.py`. Without this, ALL `.cs` files silently failed to parse (tree-sitter-language-pack expects `"csharp"`, not `"c_sharp"`). C# parsing now works for the first time.
+
+### Symbols
+
+- Classes, interfaces, structs, enums, records (including record structs)
+- Methods, constructors (including primary constructors, C# 12), destructors
+- Fields (with const/static/readonly detection), properties (with get/set/init accessors and `required` modifier)
+- Delegates, events (both declaration and field-like), indexers
+- Local functions, operator overloads, conversion operators
+- Namespace-qualified names for both block-scoped and file-scoped namespaces
+- Generic signatures with type parameter constraints (truncated at 200 chars)
+- Class modifiers in signatures (static, sealed, abstract, partial, readonly, unsafe, file)
+- Async method detection in signatures
+- XML doc comment extraction (`///` chains)
+- Context-dependent visibility defaults (top-level=internal, nested=private, interface/enum members=public)
+- Compound modifier handling (`protected internal`, `private protected`)
+
+### References
+
+- Using directives: standard, static, alias, and global variants
+- Method/function calls via `invocation_expression`
+- Constructor calls via `object_creation_expression`
+- Inheritance classification: positional heuristic on `base_list` (first non-I-prefixed entry = `inherits`, rest = `implements`)
+- Attribute extraction from `attribute_list` (`[HttpGet]`, `[Authorize]`, etc.)
+- Nullable type unwrapping: `IService?`, `List<IHandler>?` produce `type_ref` edges (builtins like `string?` skipped)
+
+### Registration
+
+- Added `"c_sharp"` to `_DEDICATED_EXTRACTORS` in `registry.py`
+- Removed `c_sharp` fallback configs from `generic_lang.py` (`_EXTENDS_CONFIG`, `_TRAIT_CONFIG`, `_PROPERTY_CONFIG`)
+
+### Real-World Validation
+
+- Tested on demand-ordering-api (~1,550 C# files): 20,061 symbols, 6,890 edges in 15s
+- Symbol breakdown: method=6,270, class=4,801, constructor=3,920, field=1,939, module=1,397, property=765, constant=683, delegate=135, interface=111, enum=40
+- Tier 2 baseline was 0 symbols (grammar alias bug). Tier 1 = 20,061 symbols.
+
 ## v8.2.0
 
 Self-analysis driven improvements: ran roam on itself, fixed every discrepancy and false positive it surfaced.

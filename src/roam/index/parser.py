@@ -85,6 +85,8 @@ EXTENSION_MAP = {
 # This allows languages with similar syntax to piggyback on available grammars
 # without requiring a dedicated tree-sitter parser.
 GRAMMAR_ALIASES = {
+    # C# (tree-sitter-language-pack uses "csharp", not "c_sharp")
+    "c_sharp": "csharp",
     # Salesforce
     "apex": "java",
     "sfxml": "html",          # SF metadata XML → HTML parser (close enough for structure)
