@@ -193,6 +193,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam understand` | Full codebase briefing: tech stack, architecture, key abstractions, health, conventions, complexity overview, entry points |
 | `roam tour [--write PATH]` | Auto-generated onboarding guide: top symbols, reading order, entry points, language breakdown. `--write` saves to Markdown |
 | `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
+| `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for CLAUDE.md injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
 
 ### Daily Workflow
@@ -300,6 +301,64 @@ roam --json math                     # machine-readable output
 ```
 
 **Confidence calibration:** `high` = strong structural signal (unbounded loop + high caller count + pattern confirmed); `medium` = pattern matched but loop may be bounded; `low` = heuristic signal only.
+
+</details>
+
+<details>
+<summary><strong>roam minimap — annotated codebase snapshot for CLAUDE.md</strong></summary>
+
+`roam minimap` generates a compact block (stack, annotated directory tree, key symbols, hotspots, conventions) wrapped in sentinel comments for in-place CLAUDE.md updates:
+
+```
+$ roam minimap
+<!-- roam:minimap generated=2026-02-18 -->
+**Stack:** Python · JavaScript · YAML
+
+```
+.github/  (4 files)
+benchmarks/  (75 files)
+src/
+  roam/
+    bridges/
+      base.py                 # LanguageBridge
+      registry.py             # register_bridge, detect_bridges
+    commands/  (63 files)  # is_test_file, get_changed_files
+    db/
+      connection.py           # find_project_root, batched_in
+      schema.py
+    graph/
+      builder.py              # build_symbol_graph, build_file_graph
+      pagerank.py             # compute_pagerank, compute_centrality
+    languages/  (18 files)  # ApexExtractor
+    output/
+      formatter.py            # to_json, json_envelope
+    cli.py                    # cli, LazyGroup
+    mcp_server.py
+tests/  (30 files)
+` ` `
+
+**Key symbols** (PageRank): `open_db` · `ensure_index` · `json_envelope` · `to_json` · `LanguageExtractor`
+
+**Touch carefully** (fan-in >= 15): `to_json` (116 callers) · `json_envelope` (116 callers) · `open_db` (105 callers) · `ensure_index` (100 callers)
+
+**Hotspots** (churn x complexity): `cmd_context.py` · `csharp_lang.py` · `cmd_dead.py`
+
+**Conventions:** snake_case fns, PascalCase classes
+<!-- /roam:minimap -->
+```
+
+**Workflow:**
+
+```bash
+roam minimap                    # print to stdout
+roam minimap --update           # replace sentinel block in CLAUDE.md in-place
+roam minimap -o docs/AGENTS.md  # target a different file
+roam minimap --init-notes       # scaffold .roam/minimap-notes.md for project gotchas
+```
+
+The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced on each run — surrounding content is left intact. Add project-specific gotchas to `.roam/minimap-notes.md` and they appear in every subsequent output.
+
+**Tree annotations** come from the top exported symbols by fan-in per file. Non-source root directories (`.github/`, `benchmarks/`, `docs/`) are collapsed immediately. Large subdirectories (e.g. `commands/`, `languages/`) are collapsed at depth 2+ with a file count.
 
 </details>
 
@@ -537,6 +596,7 @@ Roam is designed to be called by coding agents via shell commands. Instead of re
 roam describe --write               # auto-detects your agent's config file
 roam describe --write -o AGENTS.md  # or specify an explicit path
 roam describe --agent-prompt        # compact ~500-token prompt (append to any config)
+roam minimap --update               # inject/refresh annotated codebase minimap in CLAUDE.md
 ```
 
 <details>
