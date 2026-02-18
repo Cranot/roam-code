@@ -98,7 +98,7 @@ GRAMMAR_ALIASES = {
 }
 
 # Languages that use regex-only extraction (no tree-sitter grammar)
-REGEX_ONLY_LANGUAGES = frozenset({"foxpro"})
+REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
 # Track parse error stats
 parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}

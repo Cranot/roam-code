@@ -57,6 +57,13 @@ _EXTENSION_MAP: dict[str, str] = {
     # Visual FoxPro (regex-only, no tree-sitter)
     ".prg": "foxpro",
     ".scx": "foxpro",
+    # YAML / CI pipelines (regex-only)
+    ".yml": "yaml",
+    ".yaml": "yaml",
+    # HCL / Terraform (regex-only)
+    ".tf": "hcl",
+    ".tfvars": "hcl",
+    ".hcl": "hcl",
 }
 
 # Languages with dedicated extractors
@@ -76,6 +83,8 @@ _SUPPORTED_LANGUAGES = frozenset({
     "apex", "sfxml", "aura", "visualforce",
     # Regex-only languages (no tree-sitter grammar)
     "foxpro",
+    "yaml",
+    "hcl",
 })
 
 
@@ -168,6 +177,12 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "foxpro":
         from .foxpro_lang import FoxProExtractor
         return FoxProExtractor()
+    elif language == "yaml":
+        from .yaml_lang import YamlExtractor
+        return YamlExtractor()
+    elif language == "hcl":
+        from .hcl_lang import HclExtractor
+        return HclExtractor()
     else:
         # For aliased languages, delegate to the alias target's extractor
         alias_target = GRAMMAR_ALIASES.get(language)

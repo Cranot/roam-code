@@ -651,6 +651,28 @@ def _format_agent_prompt(data: dict) -> str:
     return "\n".join(lines)
 
 
+# Roam usage instructions prepended to written agent config files.
+# Mirrors the "Copy-paste agent instructions" block in the README.
+_ROAM_USAGE_INSTRUCTIONS = """\
+## Codebase navigation with roam
+
+This project uses `roam` for codebase comprehension. Always prefer roam \
+over Glob/Grep/Read exploration.
+
+Before modifying any code:
+1. First time in the repo: `roam understand` then `roam tour`
+2. Find a symbol: `roam search <pattern>`
+3. Before changing a symbol: `roam preflight <name>` (blast radius + tests + fitness)
+4. Need files to read: `roam context <name>` (files + line ranges, prioritized)
+5. Debugging a failure: `roam diagnose <name>` (root cause ranking)
+6. After making changes: `roam diff` (blast radius of uncommitted changes)
+
+Additional commands: `roam health` (0-100 score), `roam impact <name>` (what breaks),
+`roam pr-risk` (PR risk score), `roam file <path>` (file skeleton).
+
+Run `roam --help` for all commands. Use `roam --json <cmd>` for structured output.
+"""
+
 # Agent config file detection order — first existing file wins.
 # If none exist, fall back to CLAUDE.md (most common).
 _AGENT_CONFIG_FILES = [
@@ -744,7 +766,9 @@ def describe(ctx, write, force, agent_prompt, out_file):
             click.echo(f"{out_path.name} already exists at {out_path}")
             click.echo("Use --force to overwrite, or omit --write to print to stdout.")
             return
-        out_path.write_text(output, encoding="utf-8")
+        # Prepend roam usage instructions so AI agents know how to use roam
+        write_output = _ROAM_USAGE_INSTRUCTIONS + "\n" + output
+        out_path.write_text(write_output, encoding="utf-8")
         click.echo(f"Wrote {out_path}")
     else:
         click.echo(output)
