@@ -71,11 +71,12 @@ _COMMANDS = {
     "visualize":    ("roam.commands.cmd_visualize",    "visualize"),
     "x-lang":       ("roam.commands.cmd_xlang",        "xlang"),
     "math":         ("roam.commands.cmd_math",         "math_cmd"),
+    "minimap":      ("roam.commands.cmd_minimap",      "minimap"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
-    "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "ws"],
+    "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "math", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
