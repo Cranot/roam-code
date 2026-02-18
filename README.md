@@ -2,9 +2,9 @@
 
 # roam
 
-**Roam pre-indexes your codebase into a semantic graph so AI agents can query structure instead of grepping files.**
+**Instant codebase comprehension for AI coding agents. Semantic graph, algorithm anti-pattern detection, architecture health -- one CLI, zero API keys.**
 
-*5 core commands · advanced tools when you need them*
+*56 commands · 22 languages · algorithm catalog · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -22,7 +22,7 @@ Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, c
 
 Unlike LSPs (editor-bound and language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact.
 
-A semantic graph means Roam understands what functions call what, how modules depend on each other, which tests cover which code, and the overall architecture structure.
+A semantic graph means Roam understands what functions call what, how modules depend on each other, which tests cover which code, the overall architecture structure, and where algorithms can be improved. The built-in algorithm catalog detects 23 anti-patterns (O(n^2) loops, N+1 queries, quadratic string building, branching recursion) and suggests better approaches with Big-O improvements.
 
 ```
 Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
@@ -65,6 +65,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **Large codebases (100+ files)** -- graph queries beat linear search at scale
 - **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
+- **Algorithm optimization** -- detect O(n^2) loops, N+1 queries, and 21 other anti-patterns with suggested fixes
 - **Multi-repo projects** -- cross-repo API edge detection between frontend and backend
 
 ### When NOT to use Roam
@@ -83,6 +84,8 @@ $ roam diff                    # blast radius of uncommitted changes
 **LLM-optimized output.** Plain ASCII, compact abbreviations (`fn`, `cls`, `meth`), `--json` envelopes. Designed for agent consumption, not human decoration.
 
 **Fully local.** No API keys, telemetry, or network calls. Works in air-gapped environments.
+
+**Algorithm-aware.** Built-in catalog of 23 anti-patterns. Detects suboptimal algorithms (quadratic loops, N+1 queries, unbounded recursion) and suggests fixes with Big-O improvements and confidence scores.
 
 **CI-ready.** `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
 
@@ -176,7 +179,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 56 total commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 56 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -529,7 +532,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-19 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+20 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
 <details>
 <summary><strong>MCP tool list</strong></summary>
@@ -553,6 +556,7 @@ fastmcp run roam.mcp_server:mcp
 | `tour` | Auto-generated onboarding guide |
 | `diagnose` | Root cause analysis for debugging |
 | `visualize` | Generate Mermaid or DOT architecture diagrams |
+| `math` | Algorithm anti-pattern detection with confidence calibration |
 | `ws_understand` | Unified multi-repo workspace overview |
 | `ws_context` | Cross-repo augmented symbol context |
 
@@ -859,13 +863,15 @@ Codebase
     |
 [5] Metrics ────── adaptive PageRank, betweenness, cognitive complexity, Halstead
     |
-[6] Git ────────── churn, co-change matrix, authorship, Renyi entropy
+[6] Algorithms ── 23-pattern anti-pattern catalog (O(n^2) loops, N+1, recursion)
     |
-[7] Clusters ───── Louvain community detection
+[7] Git ────────── churn, co-change matrix, authorship, Renyi entropy
     |
-[8] Health ─────── per-file scores (7-factor) + composite score (0-100)
+[8] Clusters ───── Louvain community detection
     |
-[9] Store ──────── .roam/index.db (SQLite, WAL mode)
+[9] Health ─────── per-file scores (7-factor) + composite score (0-100)
+    |
+[10] Store ─────── .roam/index.db (SQLite, WAL mode)
 ```
 
 After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). Incremental updates are near-instant.
@@ -892,6 +898,7 @@ After the first full index, `roam index` only re-processes changed files (mtime 
 - **Lift** -- association rule mining metric for co-change statistical significance (Agrawal & Srikant, 1994)
 - **Halstead metrics** -- volume, difficulty, effort, and predicted bugs from operator/operand counts (Halstead, 1977)
 - **SQALE remediation cost** -- time-to-fix estimates per issue type for tech debt prioritization (Letouzey, 2012)
+- **Algorithm anti-pattern catalog** -- 23 patterns detecting suboptimal algorithms (quadratic loops, N+1 queries, quadratic string building, branching recursion, manual top-k, loop-invariant calls) with confidence calibration via caller-count and bounded-loop analysis
 
 </details>
 
@@ -1007,8 +1014,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (57 commands, 7 categories)
-│   ├── mcp_server.py                  # MCP server (19 tools, 2 resources)
+│   ├── cli.py                         # Click CLI (56 commands, 7 categories)
+│   ├── mcp_server.py                  # MCP server (20 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
