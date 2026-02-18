@@ -229,6 +229,80 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam trend` | Health score history with sparkline visualization |
 | `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot |
 
+<details>
+<summary><strong>roam math — algorithm anti-pattern catalog (23 patterns)</strong></summary>
+
+`roam math` scans every indexed function against a 23-pattern catalog, ranks findings by confidence, and shows the exact Big-O improvement available:
+
+```
+$ roam math
+VERDICT: 8 algorithmic improvements found (3 high, 4 medium, 1 low)
+
+Nested loop lookup (2):
+  fn   resolve_permissions          src/auth/rbac.py:112     [high]
+        Current: Nested iteration -- O(n*m)
+        Better:  Hash-map join -- O(n+m)
+        Tip: Build a dict/set from one collection, iterate the other
+
+  fn   find_matching_rule           src/rules/engine.py:67   [high]
+        Current: Nested iteration -- O(n*m)
+        Better:  Hash-map join -- O(n+m)
+        Tip: Build a dict/set from one collection, iterate the other
+
+String building (1):
+  meth build_query                  src/db/query.py:88       [high]
+        Current: Loop concatenation -- O(n^2)
+        Better:  Join / StringBuilder -- O(n)
+        Tip: Collect parts in a list, join once at the end
+
+Branching recursion without memoization (1):
+  fn   compute_cost                 src/pricing/calc.py:34   [medium]
+        Current: Naive branching recursion -- O(2^n)
+        Better:  Memoized / iterative DP -- O(n)
+        Tip: Add @cache / @lru_cache, or convert to iterative with a table
+```
+
+**Full catalog — 23 patterns:**
+
+| Pattern | Anti-pattern detected | Better approach | Improvement |
+|---------|----------------------|-----------------|-------------|
+| Nested loop lookup | `for x in a: for y in b: if x==y` | Hash-map join | O(n·m) → O(n+m) |
+| Membership test | `if x in list` in a loop | Set lookup | O(n) → O(1) per check |
+| Sorting | Bubble / selection sort | Built-in sort | O(n²) → O(n log n) |
+| Search in sorted data | Linear scan on sorted sequence | Binary search | O(n) → O(log n) |
+| String building | `s += chunk` in loop | `join()` / StringBuilder | O(n²) → O(n) |
+| Deduplication | Nested loop dedup | `set()` / `dict.fromkeys` | O(n²) → O(n) |
+| Max / min | Manual tracking loop | `max()` / `min()` | idiom |
+| Accumulation | Manual accumulator | `sum()` / `reduce()` | idiom |
+| Group by key | Manual key-existence check | `defaultdict` / `groupingBy` | idiom |
+| Fibonacci | Naive recursion | Iterative / `@lru_cache` | O(2ⁿ) → O(n) |
+| Exponentiation | Loop multiplication | `pow(b, e, mod)` | O(n) → O(log n) |
+| GCD | Manual loop | `math.gcd()` | O(n) → O(log n) |
+| Matrix multiply | Naive triple loop | NumPy / BLAS | same asymptotic, ~1000× faster via SIMD |
+| Busy wait | `while True: sleep()` poll | Event / condition variable | O(k) → O(1) wake-up |
+| Regex in loop | `re.match()` compiled per iteration | Pre-compiled pattern | O(n·(p+m)) → O(p + n·m) |
+| N+1 query | Per-item DB / API call in loop | Batch `WHERE IN (...)` | n round-trips → 1 |
+| List front operations | `list.insert(0, x)` in loop | `collections.deque` | O(n) → O(1) per op |
+| Sort to select | `sorted(x)[0]` or `sorted(x)[:k]` | `min()` / `heapq.nsmallest` | O(n log n) → O(n) or O(n log k) |
+| Repeated lookup | `.index()` / `.contains()` inside loop | Pre-built set / dict | O(m) → O(1) per lookup |
+| Branching recursion | Naive `f(n-1) + f(n-2)` without cache | `@cache` / iterative DP | O(2ⁿ) → O(n) |
+| Quadratic string building | `result += chunk` across multiple scopes | `parts.append` + `join` at end | O(n²) → O(n) |
+| Loop-invariant call | `len(col)` or `get_config()` inside loop body | Hoist before loop | per-iter cost → O(1) |
+| String reversal | Manual char-by-char loop | `s[::-1]` / `.reverse()` | idiom |
+
+**Filtering:**
+
+```bash
+roam math --task nested-lookup       # one pattern type only
+roam math --confidence high          # high-confidence findings only
+roam math --task io-in-loop -n 5    # top 5 N+1 query sites
+roam --json math                     # machine-readable output
+```
+
+**Confidence calibration:** `high` = strong structural signal (unbounded loop + high caller count + pattern confirmed); `medium` = pattern matched but loop may be bounded; `low` = heuristic signal only.
+
+</details>
+
 ### Architecture
 
 | Command | Description |
@@ -781,6 +855,8 @@ Zero infrastructure, zero vendor lock-in, zero data leaving your network.
 | C# | `.cs` | classes, interfaces, structs, enums, records, methods, constructors, properties, delegates, events, fields | using directives, calls, `new`, attributes | extends, implements |
 | PHP | `.php` | classes, interfaces, traits, enums, methods, properties | namespace use, calls, static calls, `new` | extends, implements, use (traits) |
 | Visual FoxPro | `.prg` | functions, procedures, classes, methods, properties, constants | DO, SET PROCEDURE/CLASSLIB, CREATEOBJECT, `=func()`, `obj.method()` | DEFINE CLASS ... AS |
+| YAML (CI/CD) | `.yml` `.yaml` | GitLab CI: jobs, template anchors, stages. GitHub Actions: workflow name, jobs, reusable workflows. Generic: top-level keys | `extends:`, `needs:`, `!reference`, `uses:` | — |
+| HCL / Terraform | `.tf` `.tfvars` `.hcl` | `resource`, `data`, `variable`, `output`, `module`, `provider`, `locals` entries | `var.*`, `module.*`, `data.*`, `local.*`, resource cross-refs | — |
 | Vue | `.vue` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 | Svelte | `.svelte` | via `<script>` block extraction (TS/JS) | imports, calls, type refs | extends, implements |
 
