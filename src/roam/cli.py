@@ -63,6 +63,7 @@ _COMMANDS = {
     "patterns":     ("roam.commands.cmd_patterns",     "patterns"),
     "preflight":    ("roam.commands.cmd_preflight",    "preflight"),
     "init":         ("roam.commands.cmd_init",         "init"),
+    "config":       ("roam.commands.cmd_config",       "config"),
     "digest":       ("roam.commands.cmd_digest",       "digest"),
     "tour":         ("roam.commands.cmd_tour",         "tour"),
     "diagnose":     ("roam.commands.cmd_diagnose",     "diagnose"),
@@ -74,7 +75,7 @@ _COMMANDS = {
 
 # Command categories for organized --help display
 _CATEGORIES = {
-    "Getting Started": ["index", "init", "understand", "tour", "describe", "ws"],
+    "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "math", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
