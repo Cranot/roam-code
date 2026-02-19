@@ -30,9 +30,9 @@ def _snake_to_camel(name: str) -> str:
     """Convert snake_case to camelCase.
 
     Examples:
-        usage_period_id → usagePeriodId
-        a_logariasmos   → aLogariasmos
-        energo          → energo
+        created_at → createdAt
+        first_name → firstName
+        status     → status
     """
     parts = name.split("_")
     if not parts:
@@ -44,12 +44,12 @@ def _camel_to_snake(name: str) -> str:
     """Convert camelCase/PascalCase to snake_case.
 
     Examples:
-        usagePeriodId → usage_period_id
-        myDataUid     → my_data_uid
+        firstName     → first_name
+        userAPIToken  → user_api_token
     """
     # Insert underscore before uppercase letters that follow lowercase or digits
     s = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name)
-    # Handle sequences like "myDATA" → "my_DATA" → "my_data"
+    # Handle sequences like "userAPI" → "user_API" → "user_api"
     s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', s)
     return s.lower()
 
@@ -117,7 +117,7 @@ def _parse_php_model(source: str) -> dict | None:
 def _infer_model_name(file_path: str) -> str:
     """Get the model class name from a PHP file path.
 
-    E.g. 'app/Models/Kinisi.php' → 'Kinisi'
+    E.g. 'app/Models/Order.php' → 'Order'
     """
     return Path(file_path).stem
 
@@ -173,8 +173,8 @@ def _parse_ts_interfaces(source: str) -> dict[str, list[str]]:
 def _infer_ts_model_name(file_path: str) -> str:
     """Get a normalized base name from a TypeScript file path.
 
-    E.g. 'src/types/models/kinisi.ts' → 'Kinisi'
-         'src/types/api/KinisiResponse.ts' → 'KinisiResponse'
+    E.g. 'src/types/models/order.ts' → 'Order'
+         'src/types/api/OrderResponse.ts' → 'OrderResponse'
     """
     stem = Path(file_path).stem
     # PascalCase it if it starts lowercase (common for model type files)
@@ -201,7 +201,7 @@ def _name_similarity(a: str, b: str) -> float:
     if a_lower == b_lower:
         return 1.0
 
-    # Strip common suffixes for matching (KinisiResponse → Kinisi)
+    # Strip common suffixes for matching (OrderResponse → Order)
     _SUFFIXES = ("response", "data", "dto", "model", "entity", "resource",
                  "request", "payload", "form", "item", "record")
 
@@ -425,7 +425,7 @@ def _is_ts_type_path(path: str) -> bool:
 @click.option(
     "--model",
     default=None,
-    help="Filter to a specific model name (e.g. Kinisi)",
+    help="Filter to a specific model name (e.g. Order)",
 )
 @click.pass_context
 def api_drift_cmd(ctx, limit, confidence, model):
@@ -440,7 +440,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
     [low]    Possible naming mismatch (fuzzy name match)
 
     The backend auto-converts snake_case to camelCase in API responses, so
-    usage_period_id becomes usagePeriodId before comparison.
+    created_at becomes createdAt before comparison.
 
     Hidden fields ($hidden) are excluded from backend comparison since they
     are intentionally omitted from API responses.

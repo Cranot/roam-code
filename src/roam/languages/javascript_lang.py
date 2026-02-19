@@ -491,7 +491,7 @@ class JavaScriptExtractor(LanguageExtractor):
                     ))
             elif child.type == "shorthand_property_identifier":
                 # Bug 3: Shorthand properties are always variable references
-                # e.g. defineExpose({ resetForm, populateFromKinisi })
+                # e.g. defineExpose({ resetForm, loadUserData })
                 name = self.node_text(child, source)
                 if name:
                     refs.append(self._make_reference(
