@@ -23,6 +23,7 @@ from roam.commands.context_helpers import (
     gather_task_extras as _gather_task_extras,
     gather_symbol_context as _gather_symbol_context,
     batch_context as _batch_context,
+    gather_annotations as _gather_annotations,
 )
 
 
@@ -169,6 +170,17 @@ def _render_file_context_text(file_context):
     click.echo()
 
 
+def _render_annotations_text(annotations):
+    if not annotations:
+        return
+    click.echo(f"Annotations ({len(annotations)}):")
+    for a in annotations:
+        tag_str = f"[{a['tag']}] " if a.get("tag") else ""
+        author_str = f" (by {a['author']})" if a.get("author") else ""
+        click.echo(f"  {tag_str}{a['content']}{author_str}")
+    click.echo()
+
+
 # ---------------------------------------------------------------------------
 # Task-mode output: text
 # ---------------------------------------------------------------------------
@@ -199,6 +211,9 @@ def _output_task_single_text(c, task, extras):
         f"{loc(sym['file_path'], line_start)}"
     )
     click.echo()
+
+    # Annotations (shown for all task modes)
+    _render_annotations_text(extras.get("annotations"))
 
     # understand: show docstring first
     if task == "understand" and extras.get("docstring"):
@@ -376,6 +391,11 @@ def _output_task_single_json(c, task, extras):
             {"name": s["name"], "kind": s["kind"]}
             for s in siblings[:10]
         ]
+
+    # Annotations
+    anns = extras.get("annotations")
+    if anns:
+        payload["annotations"] = anns
 
     # Task-specific extras
     for key in ("docstring", "complexity", "graph_centrality", "git_churn",
@@ -881,6 +901,9 @@ def context(ctx, names, task, for_file):
             return
 
         # --- Default single symbol mode (original behavior) ---
+        # Inject annotations if any
+        default_annotations = _gather_annotations(conn, sym=sym)
+
         line_start = c["line_start"]
         line_end = c["line_end"]
         non_test_callers = c["non_test_callers"]
@@ -931,6 +954,7 @@ def context(ctx, names, task, for_file):
                     {"name": s["name"], "kind": s["kind"]}
                     for s in siblings[:10]
                 ],
+                annotations=default_annotations if default_annotations else [],
                 files_to_read=[
                     {"path": f["path"], "start": f["start"],
                      "end": f["end"], "reason": f["reason"]}
@@ -949,6 +973,8 @@ def context(ctx, names, task, for_file):
             f"{loc(sym['file_path'], line_start)}"
         )
         click.echo()
+
+        _render_annotations_text(default_annotations)
 
         if non_test_callers:
             click.echo(f"Callers ({len(non_test_callers)}):")

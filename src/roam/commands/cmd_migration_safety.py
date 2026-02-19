@@ -111,6 +111,12 @@ _RE_PG_INDEXES = re.compile(r"""pg_indexes""", re.IGNORECASE)
 # Also accept indexExists( or hasIndex( as valid guards
 _RE_INDEX_EXISTS = re.compile(r"""(?:indexExists|hasIndex|getIndexes)\s*\(""", re.IGNORECASE)
 
+# Raw SQL information_schema queries used as idempotency guards
+_RE_INFO_SCHEMA_GUARD = re.compile(
+    r"information_schema\s*\.\s*(?:columns|statistics|table_constraints|key_column_usage)",
+    re.IGNORECASE,
+)
+
 # Matches a down() method definition
 _RE_DOWN_METHOD = re.compile(r"""function\s+down\s*\(""", re.IGNORECASE)
 
@@ -277,6 +283,8 @@ def _check_drop_column(lines: list[str], up_start: int, up_end: int) -> list[dic
 
         if _RE_HAS_COLUMN.search(context_snippet):
             continue
+        if _RE_INFO_SCHEMA_GUARD.search(context_snippet):
+            continue
 
         col_name = _extract_arg(line)
 
@@ -333,6 +341,8 @@ def _check_add_column(lines: list[str], up_start: int, up_end: int) -> list[dict
         # Check if hasColumn guard appears near this column definition
         if _RE_HAS_COLUMN.search(pre_context):
             continue  # Guarded — OK
+        if _RE_INFO_SCHEMA_GUARD.search(pre_context):
+            continue  # information_schema guard — OK
 
         col_name = _extract_arg(line)
 
@@ -367,7 +377,9 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
             # Check if the surrounding context has a pg_indexes existence check
             context_start = max(0, rel_i - 40)
             context_snippet = "".join(up_lines[context_start:rel_i + 1])
-            if not _RE_PG_INDEXES.search(context_snippet) and not _RE_INDEX_EXISTS.search(context_snippet):
+            if (not _RE_PG_INDEXES.search(context_snippet)
+                    and not _RE_INDEX_EXISTS.search(context_snippet)
+                    and not _RE_INFO_SCHEMA_GUARD.search(context_snippet)):
                 findings.append({
                     "line": abs_line,
                     "confidence": "high",
@@ -395,7 +407,8 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
         if not _RE_SCHEMA_TABLE.search(pre_context):
             continue  # Not an alter-table context — skip
 
-        if (_RE_PG_INDEXES.search(pre_context) or _RE_INDEX_EXISTS.search(pre_context)):
+        if (_RE_PG_INDEXES.search(pre_context) or _RE_INDEX_EXISTS.search(pre_context)
+                or _RE_INFO_SCHEMA_GUARD.search(pre_context)):
             continue  # Has an existence check — OK
 
         findings.append({

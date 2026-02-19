@@ -14,6 +14,55 @@ from roam.commands.graph_helpers import build_forward_adj
 
 
 # ---------------------------------------------------------------------------
+# Annotations
+# ---------------------------------------------------------------------------
+
+def gather_annotations(conn, sym=None, file_path=None):
+    """Fetch active annotations for a symbol or file.
+
+    Returns a list of annotation dicts (empty if none found).
+    """
+    conditions = ["(expires_at IS NULL OR expires_at > datetime('now'))"]
+    params = []
+
+    if sym is not None:
+        sym_id = sym["id"]
+        # sqlite3.Row lacks .get() — use try/except
+        try:
+            qname = sym["qualified_name"] or sym["name"]
+        except (KeyError, IndexError):
+            qname = sym["name"]
+        conditions.append("(symbol_id = ? OR qualified_name = ?)")
+        params.extend([sym_id, qname])
+    elif file_path is not None:
+        conditions.append("file_path = ?")
+        params.append(file_path)
+    else:
+        return []
+
+    where = " AND ".join(conditions)
+    try:
+        rows = conn.execute(
+            f"SELECT * FROM annotations WHERE {where} "
+            "ORDER BY created_at DESC",
+            params,
+        ).fetchall()
+    except Exception:
+        # Table may not exist in older DBs
+        return []
+
+    return [
+        {
+            "tag": r["tag"],
+            "content": r["content"],
+            "author": r["author"],
+            "created_at": r["created_at"],
+        }
+        for r in rows
+    ]
+
+
+# ---------------------------------------------------------------------------
 # Per-symbol metric fetchers
 # ---------------------------------------------------------------------------
 
@@ -344,6 +393,11 @@ def gather_task_extras(conn, sym, ctx_data, task):
     sym_id = sym["id"]
     file_path = sym["file_path"]
     extras = {}
+
+    # Annotations are included for all task modes
+    anns = gather_annotations(conn, sym=sym)
+    if anns:
+        extras["annotations"] = anns
 
     if task == "refactor":
         extras["complexity"] = get_symbol_metrics(conn, sym_id)

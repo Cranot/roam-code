@@ -518,6 +518,81 @@ def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
 
 
 # ===================================================================
+# Tier 3 tools -- agentic memory
+# ===================================================================
+
+
+@mcp.tool()
+def annotate_symbol(
+    target: str, content: str,
+    tag: str = "", author: str = "", expires: str = "",
+    root: str = ".",
+) -> dict:
+    """Add a persistent annotation to a symbol or file.
+
+    WHEN TO USE: Call this to leave a note for future agent sessions.
+    Annotations survive reindexing and are auto-injected into ``context``
+    output, giving every subsequent session institutional knowledge about
+    the codebase.
+
+    Parameters
+    ----------
+    target:
+        Symbol name or file path to annotate.
+    content:
+        The annotation text (e.g., "O(n^2) loop, see PR #42").
+    tag:
+        Category tag: security, performance, gotcha, review, wip.
+    author:
+        Who is annotating (agent name or user).
+    expires:
+        Optional expiry datetime (ISO 8601, e.g. "2025-12-31").
+
+    Returns: confirmation with the resolved target and tag.
+    """
+    args = ["annotate", target, content]
+    if tag:
+        args.extend(["--tag", tag])
+    if author:
+        args.extend(["--author", author])
+    if expires:
+        args.extend(["--expires", expires])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def get_annotations(
+    target: str = "", tag: str = "", since: str = "",
+    root: str = ".",
+) -> dict:
+    """Read annotations for a symbol, file, or the whole project.
+
+    WHEN TO USE: Call this to retrieve institutional knowledge left by
+    previous agent sessions or human reviewers. If you called ``context``
+    with a task mode, annotations are already included in the output.
+
+    Parameters
+    ----------
+    target:
+        Symbol name or file path. If empty, returns all annotations.
+    tag:
+        Filter by tag (e.g., "security", "performance").
+    since:
+        Only annotations created after this datetime (ISO 8601).
+
+    Returns: list of annotations with content, tag, author, and timestamps.
+    """
+    args = ["annotations"]
+    if target:
+        args.append(target)
+    if tag:
+        args.extend(["--tag", tag])
+    if since:
+        args.extend(["--since", since])
+    return _run_roam(args, root)
+
+
+# ===================================================================
 # MCP Resources -- static/cached summaries available at fixed URIs
 # ===================================================================
 
