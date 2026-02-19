@@ -83,6 +83,13 @@ _RE_UNIQUE_SINGLE = re.compile(
     r"\$table\s*->\s*unique\s*\(\s*['\"]([^'\"]+)['\"]\s*[,)]",
 )
 
+# Match raw SQL CREATE INDEX ... ON table(col1, col2)
+_RE_CREATE_INDEX_RAW = re.compile(
+    r"CREATE\s+(?:UNIQUE\s+)?INDEX\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+    r"\w+\s+ON\s+(?:[\w.${}]+\.)?(\w+)\s*\(([^)]+)\)",
+    re.IGNORECASE,
+)
+
 # Match ->where('column', ...) — captures column name
 _RE_WHERE = re.compile(
     r"->\s*where\s*\(\s*['\"]([a-zA-Z_][a-zA-Z0-9_.]*)['\"]",
@@ -211,7 +218,8 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         # For each schema block, extract the table name and then collect
         # index declarations within the closure that follows it.
         for i, sm in enumerate(schema_matches):
-            table_name = sm.group(1)
+            raw_table = sm.group(1)
+            table_name = raw_table.rsplit(".", 1)[-1].strip('{}"\' ')
 
             # The closure starts after the match and ends at the next
             # Schema:: call or end of file.
@@ -258,6 +266,21 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
             for m in _RE_INLINE_INDEX.finditer(block):
                 col = m.group(1)
                 table_indexes[table_name].add((col,))
+
+        # 7. Raw SQL CREATE INDEX outside Schema blocks
+        for m in _RE_CREATE_INDEX_RAW.finditer(content):
+            raw_tbl = m.group(1)
+            tbl = raw_tbl.rsplit(".", 1)[-1].strip('{}"\' ')
+            cols = tuple(_extract_string_list(m.group(2)))
+            if not cols:
+                # Fallback: split on comma for unquoted column names
+                cols = tuple(
+                    c.strip() for c in m.group(2).split(",") if c.strip()
+                )
+            if cols:
+                table_indexes[tbl].add(cols)
+                for c in cols:
+                    table_indexes[tbl].add((c,))
 
     return dict(table_indexes)
 

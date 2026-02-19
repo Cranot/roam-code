@@ -164,6 +164,23 @@ CREATE TABLE IF NOT EXISTS math_signals (
     loop_bound_small INTEGER DEFAULT 0
 );
 
+-- Agentic memory: persistent annotations on symbols and files
+CREATE TABLE IF NOT EXISTS annotations (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
+    qualified_name TEXT,
+    file_path TEXT,
+    tag TEXT,
+    content TEXT NOT NULL,
+    author TEXT,
+    created_at TEXT DEFAULT (datetime('now')),
+    expires_at TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_annotations_symbol ON annotations(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_annotations_qname ON annotations(qualified_name);
+CREATE INDEX IF NOT EXISTS idx_annotations_file ON annotations(file_path);
+CREATE INDEX IF NOT EXISTS idx_annotations_tag ON annotations(tag);
+
 -- Snapshots: health metrics over time
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,

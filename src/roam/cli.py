@@ -79,12 +79,14 @@ _COMMANDS = {
     "missing-index":     ("roam.commands.cmd_missing_index",    "missing_index_cmd"),
     "orphan-routes":     ("roam.commands.cmd_orphan_routes",    "orphan_routes_cmd"),
     "api-drift":         ("roam.commands.cmd_api_drift",        "api_drift_cmd"),
+    "annotate":          ("roam.commands.cmd_annotate",         "annotate"),
+    "annotations":       ("roam.commands.cmd_annotate",         "annotations"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
-    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
+    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
