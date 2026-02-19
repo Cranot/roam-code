@@ -4,7 +4,7 @@
 
 **Instant codebase comprehension for AI coding agents. Semantic graph, algorithm anti-pattern detection, architecture health -- one CLI, zero API keys.**
 
-*56 commands · 22 languages · algorithm catalog · 100% local*
+*63 commands · 22 languages · algorithm catalog · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -66,6 +66,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
 - **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
 - **Algorithm optimization** -- detect O(n^2) loops, N+1 queries, and 21 other anti-patterns with suggested fixes
+- **Backend quality** -- auth gaps, missing indexes, over-fetching models, non-idempotent migrations, orphan routes, API drift
 - **Multi-repo projects** -- cross-repo API edge detection between frontend and backend
 
 ### When NOT to use Roam
@@ -179,7 +180,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 56 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 63 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -222,6 +223,9 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam health [--no-framework]` | Composite health score (0-100): weighted geometric mean of tangle ratio, god components, bottlenecks, layer violations. Includes propagation cost and algebraic connectivity |
 | `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
 | `roam math [--task T] [--confidence C]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count and bounded-loop analysis |
+| `roam n1 [--confidence C] [--verbose]` | Implicit N+1 I/O detection: finds ORM model computed properties (`$appends`/accessors) that trigger lazy-loaded DB queries in collection contexts. Cross-references with eager loading config. Supports Laravel, Django, Rails, SQLAlchemy, JPA |
+| `roam over-fetch [--threshold N] [--confidence C]` | Detect models serializing too many fields: large `$fillable` without `$hidden`/`$visible`, direct controller returns bypassing API Resources, poor exposed-to-hidden ratio |
+| `roam missing-index [--table T] [--confidence C]` | Find queries on non-indexed columns: cross-references `WHERE`/`ORDER BY` clauses, foreign keys, and paginated queries against migration-defined indexes |
 | `roam weather [-n N]` | Hotspots ranked by geometric mean of churn x complexity (percentile-normalized) |
 | `roam debt` | Hotspot-weighted tech debt prioritization with SQALE remediation cost estimates |
 | `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
@@ -401,6 +405,10 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 |---------|-------------|
 | `roam report [--list] [--config FILE] [PRESET]` | Compound presets: `first-contact`, `security`, `pre-pr`, `refactor` |
 | `roam describe --write` | Generate agent config (auto-detects: CLAUDE.md, AGENTS.md, .cursor/rules, etc.) |
+| `roam auth-gaps [--routes-only] [--controllers-only] [--min-confidence C]` | Find endpoints missing authentication or authorization: routes outside auth middleware groups, CRUD methods without `$this->authorize()` / `Gate::allows()` checks. String-aware PHP brace parsing |
+| `roam orphan-routes [-n N] [--confidence C]` | Detect backend routes with no frontend consumer: parses route definitions, searches frontend for API call references, reports controller methods with no route mapping |
+| `roam migration-safety [-n N] [--include-archive]` | Detect non-idempotent migrations: missing `hasTable`/`hasColumn` guards, raw SQL without `IF NOT EXISTS`, index operations without existence checks |
+| `roam api-drift [--model M] [--confidence C]` | Detect mismatches between PHP model `$fillable`/`$appends` fields and TypeScript interface properties. Auto-converts snake_case/camelCase for comparison. Single-repo; cross-repo planned for `roam ws api-drift` |
 
 ### Multi-Repo Workspace
 
@@ -589,6 +597,9 @@ Roam is designed to be called by coding agents via shell commands. Instead of re
 | Need file structure | `roam file <path>` |
 | Pre-PR check | `roam pr-risk HEAD~3..HEAD` |
 | What breaks if I change X? | `roam impact <symbol>` |
+| Check for N+1 queries | `roam n1` (implicit lazy-load detection) |
+| Check auth coverage | `roam auth-gaps` (routes + controllers) |
+| Check migration safety | `roam migration-safety` (idempotency guards) |
 
 **Fastest setup:**
 
@@ -989,7 +1000,7 @@ Tier 2 languages get symbol extraction and basic inheritance via a generic tree-
 ```
 Codebase
     |
-[1] Discovery ──── git ls-files (respects .gitignore)
+[1] Discovery ──── git ls-files (respects .gitignore + .roamignore)
     |
 [2] Parse ──────── tree-sitter AST per file (22 languages)
     |
@@ -1150,7 +1161,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (56 commands, 7 categories)
+│   ├── cli.py                         # Click CLI (63 commands, 7 categories)
 │   ├── mcp_server.py                  # MCP server (20 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1233,6 +1244,9 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 - [x] Scoring math audit: fixed boolean-op double-counting, unified percentile implementations (v9.0)
 - [x] Test speed optimization: in-process indexing for fixtures (v9.0)
 - [x] Algorithm anti-pattern detection: 23-pattern catalog, AST signal extraction, confidence calibration (v9.0)
+- [x] `.roamignore` support for excluding files from indexing (v9.1)
+- [x] Implicit N+1 I/O detection: ORM model `$appends`/accessor lazy-load analysis (v9.1)
+- [x] 7 new backend analysis commands: `n1`, `auth-gaps`, `over-fetch`, `missing-index`, `orphan-routes`, `migration-safety`, `api-drift` (v9.1)
 - [ ] Terminal demo GIF
 - [ ] Ruby Tier 1 support
 - [ ] `--sarif` CLI flag for direct SARIF export
