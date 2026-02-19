@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import os
 import subprocess
 from pathlib import Path
@@ -41,6 +42,36 @@ SKIP_DIRS = frozenset({
 })
 
 MAX_FILE_SIZE = 1_000_000  # 1MB
+
+
+def _load_roamignore(root: Path) -> list[str]:
+    """Load ignore patterns from .roamignore file (gitignore-style globs)."""
+    ignore_file = root / ".roamignore"
+    if not ignore_file.is_file():
+        return []
+    patterns = []
+    for line in ignore_file.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        patterns.append(line)
+    return patterns
+
+
+def _matches_roamignore(rel_path: str, patterns: list[str]) -> bool:
+    """Check if a relative path matches any .roamignore pattern."""
+    for pattern in patterns:
+        # Match against full relative path
+        if fnmatch.fnmatch(rel_path, pattern):
+            return True
+        # Also match against just the filename
+        if fnmatch.fnmatch(os.path.basename(rel_path), pattern):
+            return True
+        # Directory prefix match: pattern "public/js/" matches "public/js/app.js"
+        prefix = pattern.rstrip("/")
+        if rel_path.startswith(prefix + "/"):
+            return True
+    return False
 
 
 def _is_skippable(rel_path: str) -> bool:
@@ -96,11 +127,13 @@ def _walk_files(root: Path) -> list[str]:
     return result
 
 
-def _filter_files(paths: list[str], root: Path) -> list[str]:
-    """Filter out binary, oversized, and non-code files."""
+def _filter_files(paths: list[str], root: Path, ignore_patterns: list[str] | None = None) -> list[str]:
+    """Filter out binary, oversized, non-code, and .roamignore'd files."""
     kept = []
     for rel_path in paths:
         if _is_skippable(rel_path):
+            continue
+        if ignore_patterns and _matches_roamignore(rel_path, ignore_patterns):
             continue
         full_path = root / rel_path
         try:
@@ -127,6 +160,7 @@ def discover_files(root: Path) -> list[str]:
     # Normalise path separators
     raw = [p.replace("\\", "/") for p in raw]
 
-    filtered = _filter_files(raw, root)
+    ignore_patterns = _load_roamignore(root)
+    filtered = _filter_files(raw, root, ignore_patterns)
     filtered.sort()
     return filtered
