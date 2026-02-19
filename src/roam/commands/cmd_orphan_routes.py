@@ -66,10 +66,10 @@ _SINGLE_ROUTE_RE = re.compile(
     r"\s*['\"]([^'\"]+)['\"]"
     r"(?:\s*,\s*"
     r"(?:"
-    r"\[\s*([A-Za-z_\\]+)::class\s*,\s*['\"]([A-Za-z_]+)['\"]"
+    r"\[\s*([A-Za-z_\\]+)::class\s*,\s*['\"]([A-Za-z_]+)['\"]\s*\]"
     r"|['\"]([A-Za-z_\\]+)@([A-Za-z_]+)['\"]"
     r"))?"
-    r"\)",
+    r"\s*\)",
     re.IGNORECASE,
 )
 
@@ -244,7 +244,7 @@ def _should_skip_route(route: dict) -> bool:
 def _path_segments(route_path: str) -> list[str]:
     """Extract meaningful segments from a route path for searching.
 
-    '/api/kiniseis/{id}/grammes' → ['kiniseis', 'grammes']
+    '/api/orders/{id}/items' → ['orders', 'items']
     Drops the 'api' prefix (too generic) and parameter placeholders.
     """
     parts = route_path.strip("/").split("/")

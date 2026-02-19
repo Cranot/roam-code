@@ -176,6 +176,14 @@ def _check_controller_direct_returns(
     for row in controller_files:
         if _is_test_path(row["path"]):
             continue
+        # Skip console commands and non-HTTP controllers
+        p_lower = row["path"].replace("\\", "/").lower()
+        if "/console/" in p_lower or "/commands/" in p_lower:
+            continue
+        # Only match files in HTTP controller directories
+        if "controller" in os.path.basename(row["path"]).lower() and \
+           "/http/" not in p_lower and "/controllers/" not in p_lower:
+            continue
         abs_path = root / row["path"]
         if not abs_path.is_file():
             continue

@@ -483,7 +483,7 @@ def _analyze_file(abs_path: Path, rel_path: str) -> list[dict]:
     return all_findings
 
 
-def analyze_migration_safety(conn, limit: int = 50) -> list[dict]:
+def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = False) -> list[dict]:
     """Query the index for migration files and analyze each one.
 
     Returns a flat list of finding dicts sorted by confidence (high first)
@@ -503,6 +503,12 @@ def analyze_migration_safety(conn, limit: int = 50) -> list[dict]:
 
     for row in rows:
         rel_path = row["path"]
+        # Skip archive migrations — these are historical and never re-run
+        if not include_archive:
+            rel_lower = rel_path.replace("\\", "/").lower()
+            if "/archive/" in rel_lower or "/archived/" in rel_lower:
+                continue
+
         abs_path = root / rel_path if root else Path(rel_path)
 
         if not abs_path.is_file():
@@ -538,8 +544,10 @@ def analyze_migration_safety(conn, limit: int = 50) -> list[dict]:
     type=click.Choice(["high", "medium", "low"], case_sensitive=False),
     help="Filter by confidence level",
 )
+@click.option("--include-archive", "include_archive", is_flag=True, default=False,
+              help="Include archive/ migrations (skipped by default)")
 @click.pass_context
-def migration_safety_cmd(ctx, limit, confidence_filter):
+def migration_safety_cmd(ctx, limit, confidence_filter, include_archive):
     """Check migration files for non-idempotent (unsafe if run twice) operations.
 
     Scans all PHP migration files in the indexed project and reports
@@ -567,7 +575,7 @@ def migration_safety_cmd(ctx, limit, confidence_filter):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        findings = analyze_migration_safety(conn, limit=limit * 3)  # over-fetch, filter later
+        findings = analyze_migration_safety(conn, limit=limit * 3, include_archive=include_archive)
 
     # Apply confidence filter
     if confidence_filter:

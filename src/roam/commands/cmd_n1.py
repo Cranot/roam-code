@@ -232,7 +232,7 @@ def _find_model_classes(conn):
 def _find_appends_properties(conn, model_id, model_info):
     """Find $appends array entries for a Laravel model.
 
-    Returns list of appended attribute names (e.g., ['branch_kodikos', 'has_attachments']).
+    Returns list of appended attribute names (e.g., ['full_name', 'is_admin']).
     Handles both parent_id-linked and flat (same-file line range) symbol structures.
     If default_value is not captured by the parser, reads from source file.
     """
@@ -322,7 +322,7 @@ def _find_accessor_methods(conn, model_id, model_info, appended_names):
 
     # Build lookup: snake_case appended name → StudlyCase accessor name
     for attr_name in appended_names:
-        # Convert snake_case to StudlyCase: "first_line_kodikos" → "FirstLineKodikos"
+        # Convert snake_case to StudlyCase: "full_name" → "FullName"
         studly = "".join(part.capitalize() for part in attr_name.split("_"))
         accessor_name = f"get{studly}Attribute"
 
@@ -514,7 +514,7 @@ def _find_eager_loads(conn, model_name):
     ).fetchall()
 
     # Convert model class name to resource key pattern
-    # e.g., "Kinisi" → look for Kinisi::class or 'kiniseis' near eagerLoad
+    # e.g., "Post" → look for Post::class or 'posts' near eagerLoad
     model_lower = model_name.lower()
 
     for cf in config_files:

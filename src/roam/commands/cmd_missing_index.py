@@ -154,12 +154,22 @@ def _extract_string_list(raw: str) -> list[str]:
 def _class_to_table(class_name: str) -> str:
     """Convert a StudlyCase class name to a snake_case plural table name.
 
+    Strips common suffixes (Controller, Service, Repository) before converting,
+    since these are not model names.
+
     Examples:
-      Kinisi       -> kiniseis   (no simple pluralisation, just snake_case)
-      DocumentArchive -> document_archives
-      Company     -> companies  (y -> ies)
-      LedgerAccount -> ledger_accounts
+      User              -> users
+      BlogPost          -> blog_posts
+      Category          -> categories  (y -> ies)
+      OrderItem         -> order_items
+      ProductController -> products  (strips Controller suffix)
     """
+    # Strip non-model suffixes before converting
+    for suffix in ("Controller", "Service", "Repository", "Scope", "Factory"):
+        if class_name.endswith(suffix) and len(class_name) > len(suffix):
+            class_name = class_name[:-len(suffix)]
+            break
+
     # Insert underscores before uppercase letters
     s1 = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", class_name)
     snake = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", s1).lower()
@@ -182,7 +192,7 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
     Each entry in the returned set is a tuple of column names that share an
     index, e.g.:
       ('id',)                       -- single-column index
-      ('usage_period_id', 'date')   -- composite index
+      ('user_id', 'created_at')     -- composite index
     """
     table_indexes: dict[str, set[tuple[str, ...]]] = defaultdict(set)
 
@@ -446,7 +456,7 @@ _SKIP_COLUMNS = frozenset({
 
 # Columns typically low-cardinality / not worth indexing individually
 _LOW_CARDINALITY_HINTS = frozenset({
-    "status", "type", "flag", "active", "energo", "is_",
+    "status", "type", "flag", "active", "enabled", "is_",
 })
 
 
@@ -637,7 +647,7 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
     Examples:
         roam missing-index                      # Full scan (default: 50 results)
         roam missing-index --confidence high    # High-confidence only
-        roam missing-index --table kiniseis     # One table
+        roam missing-index --table orders        # One table
         roam missing-index -n 100              # More results
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
