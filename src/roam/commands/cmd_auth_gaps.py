@@ -126,6 +126,40 @@ def _resolve_path(project_root, db_path: str) -> str:
     return os.path.normpath(p)
 
 
+def _count_braces(line: str) -> tuple[int, int]:
+    """Count ``{`` and ``}`` that appear outside quoted strings.
+
+    Route files contain URL parameters like ``{id}`` inside string literals.
+    Naively counting all braces would mis-track brace depth (e.g.
+    ``Route::get('/users/{id}', function () {`` has 2 naive opens but only
+    1 real open).
+    """
+    opens = 0
+    closes = 0
+    in_string: str | None = None  # None, "'", or '"'
+    prev_backslash = False
+    for ch in line:
+        if prev_backslash:
+            prev_backslash = False
+            continue
+        if ch == "\\":
+            prev_backslash = True
+            continue
+        if in_string is not None:
+            if ch == in_string:
+                in_string = None
+            continue
+        if ch == "'":
+            in_string = "'"
+        elif ch == '"':
+            in_string = '"'
+        elif ch == "{":
+            opens += 1
+        elif ch == "}":
+            closes += 1
+    return opens, closes
+
+
 # ---------------------------------------------------------------------------
 # Route file analysis
 # ---------------------------------------------------------------------------
@@ -134,41 +168,51 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
     """Parse a routes file and return routes outside an auth middleware group.
 
     Strategy:
-    - Track brace depth to detect when we're inside a ``->group(function() { ... })``
-    - When the group-opener line matches an auth middleware, mark depth as "protected"
-    - Any Route::verb() calls at unprotected depth are flagged
-    - Handles multi-line middleware arrays like:
+    - Track ``brace_depth`` (every ``{`` and ``}`` in the file).
+    - Maintain an ``auth_depth_stack`` of ``(depth_at_open, is_auth)`` tuples.
+      Each entry records the brace_depth *before* a Route group's ``{`` was
+      counted, so we know at which depth to pop when the matching ``}`` closes.
+    - Non-group braces (closures, if-statements, array literals) change
+      ``brace_depth`` but never push/pop the stack, so they can't accidentally
+      remove auth protection.
+    - Handles multi-line middleware arrays like::
+
         Route::middleware([
             'auth:sanctum',
             SomeMiddleware::class,
         ])->group(function () {
     """
-    findings = []
+    findings: list[dict] = []
     lines = source.splitlines()
 
-    # Stack: each entry is True (protected) or False (unprotected group)
-    auth_depth_stack: list[bool] = []  # True = inside auth group
+    # (depth_at_open, is_auth) — depth_at_open is brace_depth right before
+    # the group's opening ``{``.  We pop when a ``}`` returns us to that depth.
+    auth_depth_stack: list[tuple[int, bool]] = []
     brace_depth = 0
 
-    # Multi-line middleware accumulator: when we see Route::middleware([
-    # but no ->group( on the same line, we accumulate lines until we find
-    # ])->group(  and then check if auth middleware was in the block
+    # Multi-line middleware accumulator
     middleware_accumulator: list[str] | None = None
+
+    def _process_closes(n: int) -> None:
+        """Decrement brace_depth for *n* closing braces, popping group entries
+        whose recorded depth matches."""
+        nonlocal brace_depth
+        for _ in range(n):
+            brace_depth -= 1
+            if brace_depth < 0:
+                brace_depth = 0
+            if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
+                auth_depth_stack.pop()
 
     for lineno, raw_line in enumerate(lines, 1):
         line = raw_line
-
-        # Count braces on this line
-        opens = line.count("{")
-        closes = line.count("}")
+        opens, closes = _count_braces(line)
 
         # --- Multi-line middleware accumulation ---
         if middleware_accumulator is not None:
             middleware_accumulator.append(line)
-            # Check if this line completes the middleware block with ->group(
             if re.search(r'\]\s*\)\s*->\s*group\s*\(', line) or \
                re.search(r'->\s*group\s*\(', line):
-                # Check accumulated lines for auth middleware
                 accumulated = "\n".join(middleware_accumulator)
                 has_auth = bool(re.search(
                     r"""['"]auth(?::sanctum)?['"]""",
@@ -176,46 +220,45 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
                     re.IGNORECASE,
                 ))
                 middleware_accumulator = None
-                for _ in range(opens):
-                    auth_depth_stack.append(has_auth)
-                brace_depth += opens - closes
+                _process_closes(closes)
+                auth_depth_stack.append((brace_depth, has_auth))
+                brace_depth += opens
                 continue
-            # Still accumulating — skip normal processing
-            brace_depth += opens - closes
+            # Still accumulating — track braces but no group push
+            _process_closes(closes)
+            brace_depth += opens
             continue
 
         # --- Check for multi-line middleware start ---
-        # Route::middleware([ ... on this line, but no ->group( yet
         if re.search(r'Route\s*::\s*middleware\s*\(\s*\[', line, re.IGNORECASE) and \
            not re.search(r'->\s*group\s*\(', line):
             middleware_accumulator = [line]
-            brace_depth += opens - closes
+            _process_closes(closes)
+            brace_depth += opens
             continue
 
-        # --- Single-line: Check if this line opens a Route group with auth middleware ---
+        # --- Single-line: auth middleware group opener ---
         if _ROUTE_GROUP_OPEN_RE.search(line) or _ROUTE_GROUP_MIDDLEWARE_RE.search(line):
-            for _ in range(opens):
-                auth_depth_stack.append(True)
-            brace_depth += opens - closes
+            _process_closes(closes)
+            auth_depth_stack.append((brace_depth, True))
+            brace_depth += opens
             continue
 
-        # Check if this line opens *any* Route::group/prefix->group without auth
+        # --- Single-line: non-auth group (prefix/name/domain) ---
         if (re.search(r"Route\s*::\s*(?:prefix|name|domain)\s*\([^)]*\)\s*->\s*group\s*\(", line, re.IGNORECASE) or
                 re.search(r"Route\s*::\s*group\s*\(", line, re.IGNORECASE)) and opens > closes:
-            for _ in range(opens):
-                auth_depth_stack.append(False)
-            brace_depth += opens - closes
+            _process_closes(closes)
+            auth_depth_stack.append((brace_depth, False))
+            brace_depth += opens
             continue
 
-        # Pop stack entries for closing braces
-        for _ in range(closes):
-            if auth_depth_stack:
-                auth_depth_stack.pop()
-        brace_depth += opens - closes
-        brace_depth = max(0, brace_depth)
+        # --- Regular line (not a group opener) ---
+        _process_closes(closes)
 
-        # Is the current position inside an auth-protected group?
-        currently_protected = any(auth_depth_stack)
+        # Check protection AFTER closes, BEFORE opens
+        currently_protected = any(auth for _, auth in auth_depth_stack)
+
+        brace_depth += opens
 
         if currently_protected:
             continue
@@ -248,7 +291,7 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
             "path": path_str,
             "file": file_path,
             "line": lineno,
-            "fix": f"Add ->middleware('auth:sanctum') or move inside auth group",
+            "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
         })
 
     return findings
