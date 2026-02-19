@@ -156,6 +156,46 @@ def _find_api_resource_for_model(conn, model_name: str) -> str | None:
     return None
 
 
+def _count_resource_fields(root, resource_path: str) -> int | None:
+    """Count fields exposed in a Laravel API Resource's ``toArray()`` method.
+
+    Parses the ``return [...]`` array inside ``toArray()`` and counts
+    ``'key' =>`` patterns.  Returns the field count, or ``None`` if the
+    method cannot be parsed (e.g. dynamic or delegated responses).
+    """
+    abs_path = root / resource_path
+    try:
+        source = abs_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+
+    m = re.search(r'function\s+toArray\s*\(', source)
+    if not m:
+        return None
+
+    rest = source[m.end():]
+    return_match = re.search(r'return\s*\[', rest)
+    if not return_match:
+        return None
+
+    bracket_pos = rest.index('[', return_match.start())
+    depth = 0
+    pos = bracket_pos
+    while pos < len(rest):
+        if rest[pos] == '[':
+            depth += 1
+        elif rest[pos] == ']':
+            depth -= 1
+            if depth == 0:
+                break
+        pos += 1
+
+    array_body = rest[bracket_pos:pos + 1]
+
+    # Each 'key' => represents one exposed field in the response
+    return len(re.findall(r"""['\"][^'\"]+['\"]\s*=>""", array_body))
+
+
 def _check_controller_direct_returns(
     conn,
     model_name: str,
@@ -341,6 +381,15 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
         # Check for a matching API Resource
         resource_path = _find_api_resource_for_model(conn, model_info["class_name"])
         has_resource = resource_path is not None
+
+        # If a Resource exists, check how many fields it actually exposes.
+        # When the Resource returns significantly fewer fields than the model
+        # has, the output is well-filtered and the finding can be skipped.
+        resource_field_count = None
+        if has_resource and resource_path:
+            resource_field_count = _count_resource_fields(root, resource_path)
+            if resource_field_count is not None and resource_field_count < fillable_count * 0.5:
+                continue  # Resource properly filters output
 
         # Effective exposed fields = fillable minus hidden (when no $visible)
         exposed_count = fillable_count - hidden_count if not has_visible else 0

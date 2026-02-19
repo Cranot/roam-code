@@ -503,11 +503,16 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
 
     for row in rows:
         rel_path = row["path"]
+        rel_lower = rel_path.replace("\\", "/").lower()
+
         # Skip archive migrations — these are historical and never re-run
         if not include_archive:
-            rel_lower = rel_path.replace("\\", "/").lower()
             if "/archive/" in rel_lower or "/archived/" in rel_lower:
                 continue
+
+        # Skip vendor directory — framework-provided migrations aren't user-authored
+        if "/vendor/" in rel_lower:
+            continue
 
         abs_path = root / rel_path if root else Path(rel_path)
 
