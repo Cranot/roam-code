@@ -45,6 +45,7 @@ _COMMANDS = {
     "why":         ("roam.commands.cmd_why",        "why"),
     "snapshot":    ("roam.commands.cmd_snapshot",   "snapshot"),
     "trend":       ("roam.commands.cmd_trend",     "trend"),
+    "auth-gaps":     ("roam.commands.cmd_auth_gaps",     "auth_gaps_cmd"),
     "coverage-gaps": ("roam.commands.cmd_coverage_gaps", "coverage_gaps"),
     "report":      ("roam.commands.cmd_report",    "report"),
     "understand":  ("roam.commands.cmd_understand", "understand"),
@@ -70,19 +71,24 @@ _COMMANDS = {
     "ws":           ("roam.commands.cmd_ws",           "ws"),
     "visualize":    ("roam.commands.cmd_visualize",    "visualize"),
     "x-lang":       ("roam.commands.cmd_xlang",        "xlang"),
-    "math":         ("roam.commands.cmd_math",         "math_cmd"),
-    "n1":           ("roam.commands.cmd_n1",           "n1_cmd"),
-    "minimap":      ("roam.commands.cmd_minimap",      "minimap"),
+    "math":              ("roam.commands.cmd_math",             "math_cmd"),
+    "n1":                ("roam.commands.cmd_n1",               "n1_cmd"),
+    "minimap":           ("roam.commands.cmd_minimap",          "minimap"),
+    "migration-safety":  ("roam.commands.cmd_migration_safety", "migration_safety_cmd"),
+    "over-fetch":        ("roam.commands.cmd_over_fetch",       "over_fetch_cmd"),
+    "missing-index":     ("roam.commands.cmd_missing_index",    "missing_index_cmd"),
+    "orphan-routes":     ("roam.commands.cmd_orphan_routes",    "orphan_routes_cmd"),
+    "api-drift":         ("roam.commands.cmd_api_drift",        "api_drift_cmd"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest"],
-    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "alerts", "trend", "fitness", "snapshot"],
+    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
-    "Reports & CI": ["report", "breaking", "coverage-gaps", "bus-factor", "owner", "risk"],
+    "Reports & CI": ["report", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift"],
     "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk"],
 }
 
