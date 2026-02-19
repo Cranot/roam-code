@@ -47,7 +47,7 @@ _PUBLIC_COMMENT = re.compile(r"#\s*(public|no.?auth|unauthenticated|open)", re.I
 
 # Class-level middleware in constructor
 _CONSTRUCTOR_MIDDLEWARE_RE = re.compile(
-    r"""\$this\s*->\s*middleware\s*\(\s*['"]auth(?::sanctum)?['"]""",
+    r"""\$this\s*->\s*middleware\s*\(\s*\[?\s*['"]auth(?::sanctum)?['"]""",
     re.IGNORECASE,
 )
 
@@ -65,6 +65,7 @@ _AUTHORIZATION_RE = re.compile(
     | Gate\s*::\s*(?:allows|denies|check|authorize|inspect)\s*\(  # Gate::allows(
     | \$request\s*->\s*user\s*\(\s*\)\s*->\s*can\s*\(             # $request->user()->can(
     | \$user\s*->\s*can\s*\(                                       # $user->can(
+    | auth\s*\(\s*\)\s*->\s*user\s*\(\s*\)\s*->\s*can\s*\(       # auth()->user()->can(
     | \$this\s*->\s*authorizeResource\s*\(                         # $this->authorizeResource(
     | Policy\s*::\s*authorize\s*\(                                 # Policy::authorize(
     | can\s*\(\s*['"]                                              # can('...')
@@ -105,6 +106,14 @@ _PUBLIC_METHOD_RE = re.compile(
 
 # Constructor method (exclude from reporting — it's where class-level middleware goes)
 _CONSTRUCTOR_RE = re.compile(r"^__construct$")
+
+# Controller references in route files — used to cross-reference route-level auth
+# with controller-level analysis.  Matches:
+#   UserController::class       (group 1)
+#   'UserController@method'     (group 2)
+_RE_CONTROLLER_REF = re.compile(
+    r"""(\w+Controller)\s*::class|['"](\w+Controller)@""",
+)
 
 
 # ---------------------------------------------------------------------------
@@ -164,8 +173,13 @@ def _count_braces(line: str) -> tuple[int, int]:
 # Route file analysis
 # ---------------------------------------------------------------------------
 
-def _analyze_route_file(file_path: str, source: str) -> list[dict]:
+def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[str]]:
     """Parse a routes file and return routes outside an auth middleware group.
+
+    Returns ``(findings, protected_controllers)`` where *protected_controllers*
+    is a set of controller class names (e.g. ``'UserController'``) that appear
+    inside an auth-middleware-protected group.  This set is used later to
+    suppress false-positive controller findings.
 
     Strategy:
     - Track ``brace_depth`` (every ``{`` and ``}`` in the file).
@@ -183,6 +197,7 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
         ])->group(function () {
     """
     findings: list[dict] = []
+    protected_controllers: set[str] = set()
     lines = source.splitlines()
 
     # (depth_at_open, is_auth) — depth_at_open is brace_depth right before
@@ -261,6 +276,12 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
         brace_depth += opens
 
         if currently_protected:
+            # Collect controller names referenced inside protected groups
+            # so we can suppress false-positive controller findings later.
+            for cm in _RE_CONTROLLER_REF.finditer(line):
+                name = cm.group(1) or cm.group(2)
+                if name:
+                    protected_controllers.add(name)
             continue
 
         # Check for a route definition on this line
@@ -294,7 +315,7 @@ def _analyze_route_file(file_path: str, source: str) -> list[dict]:
             "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
         })
 
-    return findings
+    return findings, protected_controllers
 
 
 # ---------------------------------------------------------------------------
@@ -347,21 +368,36 @@ def _extract_method_bodies(source: str) -> list[dict]:
     return methods
 
 
-def _analyze_controller_file(file_path: str, source: str) -> list[dict]:
+def _analyze_controller_file(
+    file_path: str,
+    source: str,
+    route_protected_controllers: set[str] | None = None,
+) -> list[dict]:
     """Analyze a PHP controller for missing authorization checks.
 
+    When *route_protected_controllers* is provided, controllers whose class
+    name appears in that set are considered auth-middleware-protected at the
+    route level.  This suppresses ``high`` → ``medium`` for CRUD methods
+    (authentication already handled) and skips read-method findings entirely.
+
     Confidence levels:
-    - ``high``:   CRUD method (store/update/destroy) without auth in constructor
-                  AND without any authorization call in method body
+    - ``high``:   CRUD method with no route-level auth, no constructor
+                  middleware, and no authorization call in method body
     - ``medium``: CRUD method without explicit Gate/Policy/authorize check
-                  (but controller has constructor auth middleware — route-level protection)
-    - ``low``:    Read method (index/show) without authorization
+                  (route or constructor middleware provides authentication)
+    - ``low``:    Read method without authorization (may be intentionally public)
     """
     base = os.path.basename(file_path)
 
     # Skip auth-related controllers
     if _SKIP_CONTROLLER_PATTERNS.search(base):
         return []
+
+    class_name = _controller_class_name(base)
+    is_route_protected = (
+        route_protected_controllers is not None
+        and class_name in route_protected_controllers
+    )
 
     findings = []
 
@@ -393,16 +429,21 @@ def _analyze_controller_file(file_path: str, source: str) -> list[dict]:
             continue
 
         if is_crud:
-            if not has_constructor_auth:
+            if not has_constructor_auth and not is_route_protected:
                 confidence = "high"
-                reason = "CRUD method with no constructor middleware and no authorization call"
+                reason = "CRUD method with no auth middleware and no authorization call"
                 fix = "Add $this->authorize() or Gate::allows() inside the method"
             else:
                 confidence = "medium"
-                reason = "CRUD method without explicit authorization (has constructor middleware)"
+                if is_route_protected and not has_constructor_auth:
+                    reason = "CRUD method without object-level authorization (route auth exists)"
+                else:
+                    reason = "CRUD method without explicit authorization (has constructor middleware)"
                 fix = "Add $this->authorize('action', $model) for object-level authorization"
         else:
-            # Read method
+            # Read method behind route or constructor auth — skip
+            if is_route_protected or has_constructor_auth:
+                continue
             confidence = "low"
             reason = "Read method without authorization (may be intentionally public)"
             fix = "Add $this->authorize('view', $model) if access should be restricted"
@@ -410,7 +451,7 @@ def _analyze_controller_file(file_path: str, source: str) -> list[dict]:
         findings.append({
             "type": "controller",
             "confidence": confidence,
-            "controller": _controller_class_name(base),
+            "controller": class_name,
             "method": name,
             "file": file_path,
             "line": line,
@@ -496,6 +537,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
 
     with open_db(readonly=True) as conn:
         # --- Route file analysis ---
+        # Also collects controller names inside auth-protected groups so we
+        # can suppress false-positive controller findings later.
+        route_protected_controllers: set[str] = set()
         if not controllers_only:
             route_files = _find_route_files(conn)
             for db_path in route_files:
@@ -503,8 +547,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                 source = _read_source(abs_path)
                 if source is None:
                     continue
-                findings = _analyze_route_file(abs_path, source)
+                findings, protected = _analyze_route_file(abs_path, source)
                 all_findings.extend(findings)
+                route_protected_controllers.update(protected)
 
         # --- Controller file analysis ---
         if not routes_only:
@@ -514,7 +559,9 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                 source = _read_source(abs_path)
                 if source is None:
                     continue
-                findings = _analyze_controller_file(abs_path, source)
+                findings = _analyze_controller_file(
+                    abs_path, source, route_protected_controllers
+                )
                 all_findings.extend(findings)
 
     # Apply confidence filter
