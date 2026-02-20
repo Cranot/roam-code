@@ -101,12 +101,12 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command (93 modules)
+    cmd_*.py           # One module per CLI command (93 modules, 94 commands)
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
     schema_registry.py # JSON envelope schema versioning + validation
-tests/                 # 67 test files
+tests/                 # 70 test files
   # Core & legacy
   test_basic.py, test_comprehensive.py, test_fixes.py, test_performance.py,
   test_resolve.py, test_salesforce.py, test_v6_features.py,
@@ -129,7 +129,8 @@ tests/                 # 67 test files
   test_dark_matter.py, test_effects.py, test_effects_propagation.py,
   test_capsule.py, test_forecast.py, test_path_coverage.py,
   test_minimap.py, test_attest.py, test_annotations.py, test_budget.py,
-  test_pr_diff.py, test_framework_detection.py, test_backend_fixes_round2.py
+  test_pr_diff.py, test_framework_detection.py, test_backend_fixes_round2.py,
+  test_backend_fixes_round3.py, test_exclude_patterns.py, test_math_tips.py
 ```
 
 ### Key patterns
