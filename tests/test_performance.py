@@ -16,6 +16,9 @@ from pathlib import Path
 
 import pytest
 
+# Performance tests measure wall-clock time; run sequentially to avoid CPU contention
+pytestmark = pytest.mark.xdist_group("performance")
+
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import roam, git_init, git_commit
 
