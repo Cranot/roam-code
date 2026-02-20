@@ -449,12 +449,15 @@ class Indexer:
             project_root = find_project_root()
         self.root = Path(project_root).resolve()
 
-    def run(self, force: bool = False, verbose: bool = False):
+    def run(self, force: bool = False, verbose: bool = False,
+            include_excluded: bool = False):
         """Run the indexing pipeline.
 
         Args:
             force: If True, re-index all files. Otherwise, only changed files.
             verbose: If True, show detailed warnings during indexing.
+            include_excluded: If True, skip .roamignore / config / built-in
+                exclusion filtering.
         """
         _log(f"Indexing {self.root}")
 
@@ -478,7 +481,8 @@ class Indexer:
 
         lock_path.write_text(str(os.getpid()))
         try:
-            self._do_run(force, verbose=verbose)
+            self._do_run(force, verbose=verbose,
+                         include_excluded=include_excluded)
         finally:
             try:
                 lock_path.unlink()
@@ -710,10 +714,11 @@ class Indexer:
         _relink_annotations(conn)
         _log(f"  Restored {len(saved)} annotations")
 
-    def _do_run(self, force: bool, verbose: bool = False):
+    def _do_run(self, force: bool, verbose: bool = False,
+                include_excluded: bool = False):
         t0 = time.monotonic()
         _log("Discovering files...")
-        all_files = discover_files(self.root)
+        all_files = discover_files(self.root, include_excluded=include_excluded)
         _log(f"  Found {len(all_files)} files")
 
         saved_annotations = []

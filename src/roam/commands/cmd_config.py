@@ -16,9 +16,13 @@ from roam.output.formatter import to_json, json_envelope
 @click.command("config")
 @click.option("--set-db-dir", "db_dir", default=None,
               help="Redirect the index DB to this directory (useful for network drives).")
+@click.option("--exclude", "exclude_pattern", default=None,
+              help="Add a glob pattern to the exclude list in .roam/config.json.")
+@click.option("--remove-exclude", "remove_pattern", default=None,
+              help="Remove a glob pattern from the exclude list in .roam/config.json.")
 @click.option("--show", is_flag=True, help="Print current configuration.")
 @click.pass_context
-def config(ctx, db_dir, show):
+def config(ctx, db_dir, exclude_pattern, remove_pattern, show):
     """Manage per-project roam configuration (.roam/config.json).
 
     Use ``--set-db-dir`` to redirect the SQLite database to a local directory
@@ -30,6 +34,13 @@ def config(ctx, db_dir, show):
       roam config --set-db-dir "C:\\\\Users\\\\you\\\\.roam-dbs\\\\myproject"
       # Or any local path
       roam config --set-db-dir /tmp/roam/myproject
+
+    Use ``--exclude`` to add file exclusion patterns:
+
+    \b
+      roam config --exclude "*_pb2.py"
+      roam config --exclude "generated/**"
+      roam config --remove-exclude "*_pb2.py"
 
     The setting is saved to ``.roam/config.json`` and takes precedence over
     the default ``.roam/index.db`` location (but the ``ROAM_DB_DIR`` env-var
@@ -53,14 +64,74 @@ def config(ctx, db_dir, show):
         click.echo(f"DB will be stored at: {get_db_path(root)}")
         return
 
-    if show or db_dir is None:
+    if exclude_pattern is not None:
+        existing_excludes = current.get("exclude", [])
+        if not isinstance(existing_excludes, list):
+            existing_excludes = []
+        if exclude_pattern not in existing_excludes:
+            existing_excludes.append(exclude_pattern)
+        config_path = write_project_config({"exclude": existing_excludes}, root)
+        if json_mode:
+            click.echo(to_json(json_envelope("config",
+                summary={"verdict": "exclude-added", "pattern": exclude_pattern},
+                exclude=existing_excludes,
+                config_path=str(config_path),
+            )))
+            return
+        click.echo(f"Added exclude pattern: {exclude_pattern!r}")
+        click.echo(f"Active config excludes: {existing_excludes}")
+        click.echo(f"Config written to {config_path}")
+        click.echo("")
+        click.echo("Note: re-run `roam index` to re-index without excluded files.")
+        return
+
+    if remove_pattern is not None:
+        existing_excludes = current.get("exclude", [])
+        if not isinstance(existing_excludes, list):
+            existing_excludes = []
+        if remove_pattern in existing_excludes:
+            existing_excludes.remove(remove_pattern)
+            config_path = write_project_config({"exclude": existing_excludes}, root)
+            if json_mode:
+                click.echo(to_json(json_envelope("config",
+                    summary={"verdict": "exclude-removed", "pattern": remove_pattern},
+                    exclude=existing_excludes,
+                    config_path=str(config_path),
+                )))
+                return
+            click.echo(f"Removed exclude pattern: {remove_pattern!r}")
+            click.echo(f"Active config excludes: {existing_excludes}")
+            click.echo(f"Config written to {config_path}")
+        else:
+            if json_mode:
+                click.echo(to_json(json_envelope("config",
+                    summary={"verdict": "not-found", "pattern": remove_pattern},
+                    exclude=existing_excludes,
+                )))
+                return
+            click.echo(f"Pattern {remove_pattern!r} not found in exclude list.")
+            if existing_excludes:
+                click.echo(f"Current excludes: {existing_excludes}")
+        return
+
+    if show or (db_dir is None and exclude_pattern is None and remove_pattern is None):
+        # Load full exclude patterns (roamignore + config + built-in)
+        from roam.index.discovery import load_exclude_patterns, _load_roamignore, BUILTIN_GENERATED_PATTERNS
+        roamignore_patterns = _load_roamignore(root)
+        config_excludes = current.get("exclude", [])
+        all_patterns = load_exclude_patterns(root)
+
         if json_mode:
             click.echo(to_json(json_envelope("config",
                 summary={"verdict": "ok"},
+                exclude_roamignore=roamignore_patterns,
+                exclude_config=config_excludes if isinstance(config_excludes, list) else [],
+                exclude_builtin=list(BUILTIN_GENERATED_PATTERNS),
+                exclude_all=all_patterns,
                 **current,
             )))
             return
-        if not current:
+        if not current and not roamignore_patterns:
             click.echo("No .roam/config.json found (using defaults).")
             click.echo(f"Default DB path: {get_db_path(root)}")
             click.echo("")
@@ -70,5 +141,28 @@ def config(ctx, db_dir, show):
         else:
             click.echo(f"Config: {root / '.roam' / 'config.json'}")
             for k, v in current.items():
-                click.echo(f"  {k} = {v!r}")
+                if k != "exclude":
+                    click.echo(f"  {k} = {v!r}")
             click.echo(f"Resolved DB path: {get_db_path(root)}")
+
+        # Show exclude patterns
+        click.echo("")
+        click.echo("Exclude patterns:")
+        if roamignore_patterns:
+            click.echo(f"  .roamignore ({len(roamignore_patterns)} patterns):")
+            for p in roamignore_patterns:
+                click.echo(f"    {p}")
+        else:
+            click.echo("  .roamignore: (none)")
+        if isinstance(config_excludes, list) and config_excludes:
+            click.echo(f"  config.json ({len(config_excludes)} patterns):")
+            for p in config_excludes:
+                click.echo(f"    {p}")
+        else:
+            click.echo("  config.json: (none)")
+        click.echo(f"  built-in ({len(BUILTIN_GENERATED_PATTERNS)} patterns):")
+        for p in BUILTIN_GENERATED_PATTERNS:
+            click.echo(f"    {p}")
+        click.echo("")
+        click.echo(f"Total active patterns: {len(all_patterns)}")
+        click.echo("Content-based detection: files with '// Code generated' or '# Generated by' in first 3 lines")

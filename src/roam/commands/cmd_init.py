@@ -56,6 +56,10 @@ Roam initialized! Getting-started path:
 
 Created:
 {created_lines}
+Tip: create a .roamignore file to exclude generated files (protobuf stubs,
+gRPC code, etc.) from indexing. Use gitignore-style glob patterns.
+You can also run `roam config --exclude "pattern"` for local exclusions.
+
 Run `roam --help` for all commands."""
 
 
