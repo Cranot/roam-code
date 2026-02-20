@@ -543,6 +543,38 @@ def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
+@mcp.tool()
+def relate(symbols: list[str], files: list[str] | None = None,
+           depth: int = 3, root: str = ".") -> dict:
+    """Show how a set of symbols relate: shared deps, call chains, conflicts.
+
+    WHEN TO USE: Call this when you have queried multiple symbols via
+    ``context`` and need to understand HOW they connect. Shows direct
+    edges, shared dependencies, shared callers, conflict risks, distance
+    matrix, and a cohesion score. More useful than running ``trace``
+    pairwise for 3+ symbols.
+
+    Parameters
+    ----------
+    symbols:
+        List of symbol names to analyze relationships between.
+    files:
+        Optional file/directory paths to include all symbols from.
+    depth:
+        Max hops for connecting paths (default 3).
+
+    Returns: relationships, shared dependencies, shared callers,
+    conflict risks, distance matrix, and cohesion score.
+    """
+    args = ["relate"] + symbols
+    if files:
+        for f in files:
+            args.extend(["--file", f])
+    if depth != 3:
+        args.extend(["--depth", str(depth)])
+    return _run_roam(args, root)
+
+
 # ===================================================================
 # Tier 3 tools -- agentic memory
 # ===================================================================
@@ -1470,6 +1502,39 @@ def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
         args.append("--runtime")
     if discrepancy:
         args.append("--discrepancy")
+    return _run_roam(args, root)
+
+
+# ===================================================================
+# Semantic search
+# ===================================================================
+
+
+@mcp.tool()
+def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
+                    root: str = ".") -> dict:
+    """Find symbols by natural language query using TF-IDF semantic search.
+
+    WHEN TO USE: Call this when you have a conceptual description of what
+    you are looking for rather than an exact symbol name. For example,
+    "database connection handling" or "user authentication logic". Uses
+    TF-IDF cosine similarity to rank symbols by relevance. For exact
+    name matching, use ``search_symbol`` instead.
+
+    Parameters
+    ----------
+    query:
+        Natural language search query.
+    top:
+        Number of results to return (default 10).
+    threshold:
+        Minimum similarity score (default 0.05).
+
+    Returns: ranked list of matching symbols with similarity scores,
+    file paths, kinds, and line numbers.
+    """
+    args = ["search-semantic", query, "--top", str(top),
+            "--threshold", str(threshold)]
     return _run_roam(args, root)
 
 

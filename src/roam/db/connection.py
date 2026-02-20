@@ -163,6 +163,9 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
     _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
     _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
+    # Cross-language bridge metadata on edges
+    _safe_alter(conn, "edges", "bridge", "TEXT")
+    _safe_alter(conn, "edges", "confidence", "REAL")
     # v9.0: runtime_stats table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
     # Migration: ensure table exists for databases created before this version
     conn.execute(
@@ -195,6 +198,14 @@ def ensure_schema(conn: sqlite3.Connection):
         "shortest_path TEXT, "
         "hop_count INTEGER, "
         "ingested_at TEXT DEFAULT (datetime('now'))"
+        ")"
+    )
+    # TF-IDF semantic search table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS symbol_tfidf ("
+        "symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id), "
+        "terms TEXT NOT NULL, "
+        "updated_at TEXT DEFAULT (datetime('now'))"
         ")"
     )
 
