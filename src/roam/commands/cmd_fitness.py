@@ -471,10 +471,17 @@ def fitness(ctx, do_init, rule_filter, explain):
     rules = _load_rules(root)
 
     if not rules:
-        click.echo(
-            "No fitness rules found. Create .roam/fitness.yaml or run:\n"
-            "  roam fitness --init"
-        )
+        if json_mode:
+            click.echo(to_json(json_envelope("fitness",
+                summary={"rules_checked": 0, "passed": 0, "failed": 0,
+                          "total_violations": 0, "verdict": "no rules configured"},
+                rules=[], violations=[],
+            )))
+        else:
+            click.echo(
+                "No fitness rules found. Create .roam/fitness.yaml or run:\n"
+                "  roam fitness --init"
+            )
         return
 
     if rule_filter:
