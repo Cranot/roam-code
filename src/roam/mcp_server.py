@@ -814,6 +814,94 @@ def attest(commit_range: str = "", staged: bool = False, output_format: str = "j
     return _run_roam(args, root)
 
 
+@mcp.tool()
+def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root: str = ".") -> dict:
+    """Export a sanitized structural graph without function bodies.
+
+    WHEN TO USE: Call this to create a privacy-safe export of the
+    codebase architecture for external review, audits, or consulting.
+    Contains symbols, edges, clusters, and health metrics but no
+    implementation code.
+
+    Parameters
+    ----------
+    redact_paths:
+        If True, anonymize file paths with hashes.
+    no_signatures:
+        If True, omit function signatures.
+
+    Returns: topology, symbols, edges, clusters, and health metrics.
+    """
+    args = ["capsule"]
+    if redact_paths:
+        args.append("--redact-paths")
+    if no_signatures:
+        args.append("--no-signatures")
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def path_coverage(from_pattern: str = "", to_pattern: str = "",
+                  max_depth: int = 8, root: str = ".") -> dict:
+    """Find critical call paths with zero test protection.
+
+    WHEN TO USE: Call this to discover untested paths from entry
+    points to sensitive sinks (DB writes, network, filesystem).
+    Shows which paths are most at risk and suggests optimal test
+    insertion points for maximum coverage.
+
+    Parameters
+    ----------
+    from_pattern:
+        Glob to filter entry points by file path.
+    to_pattern:
+        Glob to filter sinks by file path.
+    max_depth:
+        Maximum path depth (default: 8).
+
+    Returns: untested paths ranked by risk, with test suggestions.
+    """
+    args = ["path-coverage"]
+    if from_pattern:
+        args.extend(["--from", from_pattern])
+    if to_pattern:
+        args.extend(["--to", to_pattern])
+    if max_depth != 8:
+        args.extend(["--max-depth", str(max_depth)])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def forecast(symbol: str = "", horizon: int = 30,
+             alert_only: bool = False, root: str = ".") -> dict:
+    """Predict when metrics will exceed thresholds.
+
+    WHEN TO USE: Call this to identify functions with accelerating
+    complexity or metrics trending toward dangerous thresholds.
+    Uses Theil-Sen regression on snapshot history for aggregate
+    trends and churn-weighted analysis for per-symbol risk.
+
+    Parameters
+    ----------
+    symbol:
+        Specific symbol to forecast.
+    horizon:
+        Number of snapshots to look ahead (default: 30).
+    alert_only:
+        If True, only show non-stable trends.
+
+    Returns: aggregate metric trends and at-risk symbols.
+    """
+    args = ["forecast"]
+    if symbol:
+        args.extend(["--symbol", symbol])
+    if horizon != 30:
+        args.extend(["--horizon", str(horizon)])
+    if alert_only:
+        args.append("--alert-only")
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
