@@ -86,16 +86,19 @@ _COMMANDS = {
     "budget":            ("roam.commands.cmd_budget",           "budget"),
     "effects":           ("roam.commands.cmd_effects",          "effects"),
     "attest":            ("roam.commands.cmd_attest",           "attest"),
+    "capsule":           ("roam.commands.cmd_capsule",          "capsule"),
+    "path-coverage":     ("roam.commands.cmd_path_coverage",    "path_coverage"),
+    "forecast":          ("roam.commands.cmd_forecast",         "forecast"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "pr-diff", "attest", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations"],
-    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot"],
+    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast"],
     "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
-    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift"],
+    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule"],
     "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk"],
 }
 
