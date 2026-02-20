@@ -7,6 +7,10 @@ import os
 import time
 from datetime import datetime, timezone
 
+# Envelope schema versioning (semver: major.minor.patch)
+ENVELOPE_SCHEMA_VERSION = "1.0.0"
+ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
+
 KIND_ABBREV = {
     "function": "fn",
     "class": "cls",
@@ -141,6 +145,8 @@ def json_envelope(command: str, summary: dict | None = None, **payload) -> dict:
     )
 
     out: dict = {
+        "schema": ENVELOPE_SCHEMA_NAME,
+        "schema_version": ENVELOPE_SCHEMA_VERSION,
         "command": command,
         "version": version,
         "timestamp": ts,

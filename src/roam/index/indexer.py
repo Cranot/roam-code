@@ -892,6 +892,18 @@ class Indexer:
                 except Exception:
                     pass
 
+            # TF-IDF semantic search vectors
+            _log("Building TF-IDF vectors...")
+            try:
+                from roam.search.index_embeddings import build_and_store_tfidf
+                build_and_store_tfidf(conn)
+                tfidf_count = conn.execute(
+                    "SELECT COUNT(*) FROM symbol_tfidf"
+                ).fetchone()[0]
+                _log(f"  TF-IDF vectors for {tfidf_count} symbols")
+            except Exception as e:
+                _log(f"  TF-IDF build failed (non-fatal): {e}")
+
             from roam.index.parser import get_parse_error_summary
             error_summary = get_parse_error_summary()
             if error_summary:

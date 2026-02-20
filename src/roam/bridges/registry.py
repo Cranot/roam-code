@@ -37,3 +37,15 @@ def _auto_discover():
         from roam.bridges import bridge_protobuf  # noqa: F401
     except ImportError:
         pass
+    try:
+        from roam.bridges import bridge_rest_api  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        from roam.bridges import bridge_template  # noqa: F401
+    except ImportError:
+        pass
+    try:
+        from roam.bridges import bridge_config  # noqa: F401
+    except ImportError:
+        pass
