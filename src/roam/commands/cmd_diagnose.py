@@ -9,7 +9,6 @@ causes by combining four signals no other tool brings together:
 from __future__ import annotations
 
 import click
-import networkx as nx
 
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
@@ -306,7 +305,7 @@ def diagnose(ctx, name, depth):
                     f"health={target_metrics['health']}/10\n")
 
         if upstream_ranked:
-            click.echo(f"Upstream suspects (callers, ranked by risk):\n")
+            click.echo("Upstream suspects (callers, ranked by risk):\n")
             rows = [
                 [r["name"], r["kind"], f"{r['risk_score']:.2f}",
                  str(r["complexity"]), str(r["commits"]),
@@ -319,7 +318,7 @@ def diagnose(ctx, name, depth):
             ))
 
         if downstream_ranked:
-            click.echo(f"\nDownstream suspects (callees, ranked by risk):\n")
+            click.echo("\nDownstream suspects (callees, ranked by risk):\n")
             rows = [
                 [r["name"], r["kind"], f"{r['risk_score']:.2f}",
                  str(r["complexity"]), str(r["commits"]),
@@ -332,7 +331,7 @@ def diagnose(ctx, name, depth):
             ))
 
         if cochanges:
-            click.echo(f"\nCo-change partners (files that change together):\n")
+            click.echo("\nCo-change partners (files that change together):\n")
             for c in cochanges[:8]:
                 click.echo(f"  {c['file']}  ({c['cochange_count']} co-changes)")
 

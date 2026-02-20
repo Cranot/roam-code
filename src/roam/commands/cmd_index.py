@@ -1,7 +1,6 @@
 """Build or rebuild the codebase index."""
 
 import time
-from collections import Counter
 
 import click
 

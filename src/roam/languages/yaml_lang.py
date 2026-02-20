@@ -337,7 +337,6 @@ class YamlExtractor(LanguageExtractor):
     def _github_symbols(self, lines: list[str], file_path: str) -> list[dict]:
         symbols: list[dict] = []
         in_jobs = False
-        stem = os.path.splitext(os.path.basename(file_path))[0]
 
         for idx, line in enumerate(lines):
             ln = _line_number(lines, idx)

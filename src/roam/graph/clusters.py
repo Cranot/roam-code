@@ -100,7 +100,6 @@ def label_clusters(
         is_mega = len(members) > 100 or (total_nodes > 0 and len(members) > total_nodes * 0.4)
         if is_mega and len(dir_counts) > 1:
             top_dirs = dir_counts.most_common(3)
-            total = sum(c for _, c in top_dirs)
             parts = []
             for d, c in top_dirs:
                 d_short = d.rstrip("/").rsplit("/", 1)[-1] if d else "."

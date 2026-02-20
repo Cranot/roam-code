@@ -7,7 +7,7 @@ import click
 
 from roam.db.connection import open_db, find_project_root
 from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
-from roam.output.formatter import abbrev_kind, loc, format_signature, to_json, json_envelope
+from roam.output.formatter import abbrev_kind, format_signature, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 

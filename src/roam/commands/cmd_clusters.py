@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import os
-from collections import Counter
 
 import click
 
@@ -11,7 +9,7 @@ from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.clusters import compare_with_directories, cluster_quality
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import abbrev_kind, format_table, to_json, json_envelope
+from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 

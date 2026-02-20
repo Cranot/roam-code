@@ -12,7 +12,7 @@ from roam.graph.builder import build_symbol_graph
 from roam.graph.cycles import find_cycles, find_weakest_edge, format_cycles, propagation_cost, algebraic_connectivity
 from roam.graph.layers import detect_layers, find_violations
 from roam.output.formatter import (
-    abbrev_kind, loc, section, format_table, truncate_lines, to_json,
+    abbrev_kind, loc, format_table, to_json,
     json_envelope,
 )
 from roam.commands.resolve import ensure_index

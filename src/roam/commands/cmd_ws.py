@@ -41,7 +41,7 @@ def ws_init(ctx, repos, name):
     json_mode = ctx.obj.get('json') if ctx.obj else False
 
     from roam.workspace.config import (
-        save_workspace_config, get_repo_paths, get_workspace_db_path,
+        save_workspace_config,
     )
     from roam.workspace.db import open_workspace_db, upsert_repo
 
@@ -192,12 +192,11 @@ def ws_status(ctx):
     ws_root, config = _require_workspace()
 
     from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import open_workspace_db, get_repos, get_cross_edges
+    from roam.workspace.db import open_workspace_db, get_cross_edges
 
     repo_infos = get_repo_paths(config, ws_root)
 
     with open_workspace_db(ws_root, readonly=True) as ws_conn:
-        ws_repos = get_repos(ws_conn)
         cross_edges = get_cross_edges(ws_conn)
 
     # Gather per-repo stats
@@ -248,7 +247,7 @@ def ws_resolve(ctx):
 
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import (
-        open_workspace_db, get_repos, clear_cross_edges, upsert_repo,
+        open_workspace_db, clear_cross_edges, upsert_repo,
     )
     from roam.workspace.api_scanner import (
         scan_frontend_api_calls, scan_backend_routes,

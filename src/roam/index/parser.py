@@ -10,7 +10,7 @@ from pathlib import Path
 
 log = logging.getLogger(__name__)
 
-from tree_sitter_language_pack import get_language, get_parser
+from tree_sitter_language_pack import get_parser
 
 # Map file extensions to tree-sitter language names
 EXTENSION_MAP = {
@@ -198,7 +198,6 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
 
         # Find the line range for the script content (excluding the tags)
         block_start = text[:match.start()].count("\n")
-        block_end = text[:match.end()].count("\n")
 
         # Find the opening tag end line and closing tag start line
         inner_text = match.group(0)

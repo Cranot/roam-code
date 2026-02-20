@@ -101,7 +101,7 @@ def _handle_validate(filepath: str, schema: dict, json_mode: bool) -> None:
                 validation={"errors": [f"JSON parse error: {e}"]},
             )))
         else:
-            click.echo(f"VERDICT: invalid JSON file")
+            click.echo("VERDICT: invalid JSON file")
             click.echo(f"  Error: {e}")
         return
 

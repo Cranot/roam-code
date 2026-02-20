@@ -345,7 +345,6 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
     for row in rows:
         file_path = row["file_path"]
         symbol_name = row["name"]
-        symbol_kind = row["kind"]
         in_deg = row["in_degree"]
 
         # File glob filter

@@ -243,7 +243,7 @@ def _predict_extinction(conn, target_name):
                         "name": info["name"],
                         "kind": info["kind"],
                         "location": loc(info["file_path"], info["line_start"]),
-                        "reason": f"only callees removed",
+                        "reason": "only callees removed",
                     })
 
     return sym, cascade

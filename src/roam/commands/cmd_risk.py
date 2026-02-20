@@ -421,7 +421,7 @@ def risk(ctx, count, domain_keywords, explain):
                 if s["zone_weight"] > 1:
                     click.echo(f"  Path zone: {s['zone_match']} (x{s['zone_weight']:.4g})")
                 if s["ui_dampened"]:
-                    click.echo(f"  UI dampened: yes")
+                    click.echo("  UI dampened: yes")
                 click.echo(f"  Location: {loc(s['file_path'], s['line_start'])}")
                 click.echo()
         else:

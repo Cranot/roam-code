@@ -10,16 +10,7 @@ from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.changed_files import is_test_file
 from roam.commands.context_helpers import (
-    get_symbol_metrics as _get_symbol_metrics,
-    get_graph_metrics as _get_graph_metrics,
-    get_file_churn as _get_file_churn,
     get_coupling as _get_coupling,
-    get_affected_tests_bfs as _get_affected_tests_bfs,
-    get_blast_radius as _get_blast_radius,
-    get_cluster_info as _get_cluster_info,
-    get_similar_symbols as _get_similar_symbols,
-    get_entry_points_reaching as _get_entry_points_reaching,
-    get_file_context as _get_file_context,
     gather_task_extras as _gather_task_extras,
     gather_symbol_context as _gather_symbol_context,
     batch_context as _batch_context,

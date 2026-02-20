@@ -198,7 +198,6 @@ def _check_metric_rule_scoped(rule, conn, changed_fids):
 
     metric = rule.get("metric", "")
     max_val = rule.get("max")
-    min_val = rule.get("min")
     violations = []
 
     if metric == "cognitive_complexity" and changed_fids:

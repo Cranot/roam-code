@@ -609,8 +609,8 @@ def pr_risk(ctx, commit_range, staged, author):
                 click.echo(f"  Minor risk:    {minor_risk * 100:5.1f}%"
                             f"  (author is minor contributor to {minor_files}/{minor_assessed} files)")
             else:
-                click.echo(f"  Minor risk:      0.0%"
-                            f"  (author is major contributor to all files)")
+                click.echo("  Minor risk:      0.0%"
+                            "  (author is major contributor to all files)")
         if total_clusters > 1:
             click.echo(f"  Cluster spread: {len(cluster_ids)}/{total_clusters} clusters touched")
         if total_layers > 1:
@@ -644,6 +644,6 @@ def pr_risk(ctx, commit_range, staged, author):
                 click.echo(f"  (+{len(new_dead) - 10} more)")
 
         if top_authors:
-            click.echo(f"\nSuggested reviewers:")
+            click.echo("\nSuggested reviewers:")
             for rev_author, lines in top_authors:
                 click.echo(f"  {rev_author:<30s} ({lines} lines contributed)")

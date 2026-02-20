@@ -8,7 +8,7 @@ import time
 from pathlib import Path
 from typing import Any
 
-from roam.workspace.db import get_repos, get_cross_edges
+from roam.workspace.db import get_cross_edges
 
 
 def aggregate_understand(ws_conn: sqlite3.Connection,

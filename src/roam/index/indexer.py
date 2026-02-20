@@ -113,8 +113,6 @@ def _compute_file_health_scores(conn):
     if not files:
         return
 
-    file_ids = [r["id"] for r in files]
-
     # Max complexity per file
     max_cc_by_file = {}
     rows = conn.execute(

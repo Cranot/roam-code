@@ -8,7 +8,6 @@ inherit the transitive effects of their callees.
 from __future__ import annotations
 
 import re
-from pathlib import Path
 
 # ---------------------------------------------------------------------------
 # Effect taxonomy
@@ -374,7 +373,6 @@ def classify_symbol_effects(
         excluded = _collect_excluded_ranges(tree, source, line_start, line_end)
 
     effects: set[str] = set()
-    body_bytes = body_text.encode("utf-8", errors="replace")
 
     for pattern, effect in patterns:
         for match in pattern.finditer(body_text):
@@ -566,7 +564,7 @@ def compute_and_store_effects(conn, root, G=None):
 
     Called from the indexer after graph construction.
     """
-    from roam.index.parser import parse_file, detect_language
+    from roam.index.parser import parse_file
 
     # 1. Classify direct effects for all files
     direct_effects: dict[int, set[str]] = {}

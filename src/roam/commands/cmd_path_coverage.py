@@ -238,7 +238,6 @@ def _suggest_test_points(untested_paths, tested_set):
             if nid not in tested_set:
                 node_path_count[nid] = node_path_count.get(nid, 0) + 1
 
-    covered = set()
     suggestions = []
     remaining_paths = list(range(len(untested_paths)))
 

@@ -322,7 +322,6 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
             click.echo("  all metrics stable")
         else:
             for t in agg_trends:
-                status = t["status"].upper()
                 slope_str = f"{t['slope']:+.4f}/snapshot"
                 forecast_note = (
                     f"forecast {t['forecast_value']:.1f} in {t['forecast_horizon']} snapshots"

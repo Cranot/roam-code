@@ -1,6 +1,6 @@
 # roam-code Backlog — All Ideas, Plans & Unfinished Work
 
-Consolidated: 2026-02-19
+Consolidated: 2026-02-20
 
 This document collects every TODO, idea, planned feature, and unfinished work
 item from across the codebase into one place.
@@ -73,17 +73,15 @@ item from across the codebase into one place.
 
 ---
 
-## 1. README Roadmap (Not Yet Done)
+## 1. README Roadmap
 
-These items appear as unchecked in `README.md` lines 1250-1254.
-
-| Item                                       | Effort Est. | Notes |
-|--------------------------------------------|-------------|-------|
-| Terminal demo GIF                          | Small       | Marketing / onboarding asset |
-| Ruby Tier 1 support                        | Medium      | Currently falls back to GenericExtractor; needs `ruby_lang.py` |
-| `--sarif` CLI flag for direct SARIF export | Small       | `output/sarif.py` exists but is not wired to a CLI flag |
-| Docker image for CI                        | Small       | No Dockerfile exists |
-| VS Code extension                          | Large       | No extension project exists |
+| Item                                       | Effort Est. | Status |
+|--------------------------------------------|-------------|--------|
+| Terminal demo GIF                          | Small       | Not started |
+| Ruby Tier 1 support                        | Medium      | **DONE** — `ruby_lang.py` |
+| `--sarif` CLI flag for direct SARIF export | Small       | **DONE** — wired to CLI |
+| Docker image for CI                        | Small       | Not started |
+| VS Code extension                          | Large       | Not started |
 
 ---
 
@@ -227,7 +225,7 @@ Tests in `test_pr_risk_author.py`.
 Field-tested findings from running `missing-index`, `migration-safety`, `auth-gaps`,
 and `over-fetch` against a real-world Laravel multi-tenant codebase.
 
-**Status: PARTIALLY DONE** — Some items fixed per git log, outstanding items below.
+**Status: DONE** — All sub-items implemented across v8.x and v9.x.
 
 ### 10.1 missing-index: Schema-prefixed table names — HIGH, Small
 
@@ -286,18 +284,18 @@ CRUD apps where all fields are user-editable.
 
 From `docs/fork_analysis_summary.md`. No detailed design docs exist.
 
-| ID | Idea | Source | Description |
-|----|------|--------|-------------|
-| I (Tier 3) | Report template engine | chuckjewell | Go beyond presets — customizable report templates, scheduled CI reports, diff-aware reports |
-| J | Context symbol relationship graph | chuckjewell | Show how batch-queried symbols relate to each other, add conflict detection |
-| K | Risk chain heat visualization | chuckjewell | Score propagation through call chains, visual chain rendering |
-| L | JSON envelope schema versioning | chuckjewell | Formal contract for consumers, backward-compat guarantees |
+| ID | Idea | Source | Status |
+|----|------|--------|--------|
+| I (Tier 3) | Report template engine | chuckjewell | Not started |
+| J | Context symbol relationship graph | chuckjewell | **DONE** — `roam relate` |
+| K | Risk chain heat visualization | chuckjewell | Not started |
+| L | JSON envelope schema versioning | chuckjewell | **DONE** — all envelopes versioned |
 
 ---
 
 ## 12. N1: Architectural Simulations — `roam simulate`
 
-**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: DONE**
 
 **The leap:** Roam currently analyzes the *current* state. This lets agents test
 refactoring ideas *in memory* before writing a single line of code.
@@ -410,7 +408,7 @@ agent session starts with accumulated institutional knowledge.
 
 ## 14. N3: Reachability-Based Security — CVE Mapping
 
-**Priority:** MEDIUM-HIGH | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** MEDIUM-HIGH | **Effort:** Medium | **Status: DONE**
 
 **The leap:** Map known vulnerabilities from standard audit tools onto the
 call graph, showing the exact topological path from public API routes down to
@@ -476,7 +474,7 @@ call sites in user code. Two approaches:
 
 ## 15. N4: Semantic Blast-Radius Prompting
 
-**Priority:** MEDIUM-HIGH | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** MEDIUM-HIGH | **Effort:** Medium | **Status: DONE**
 
 **The leap:** Instead of just showing what might break, generate an
 LLM-optimized prompt that forces agents to write tests targeting the most
@@ -533,7 +531,7 @@ points — the exact places where bugs propagate.
 
 ## 16. N5: OpenTelemetry Overlay — Runtime Weights
 
-**Priority:** MEDIUM | **Effort:** High | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** High | **Status: DONE**
 
 **The leap:** Overlay production runtime data onto the static graph. Functions
 ranked not just by git churn and complexity, but by actual production traffic.
@@ -657,7 +655,7 @@ generation during index pipeline), `cmd_search.py` (new search mode).
 
 ## 18. N7: Predictive Tech Debt — `roam forecast`
 
-**Priority:** MEDIUM | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** Medium | **Status: DONE**
 
 **The leap:** Measure the *derivative* of complexity over time. Instead of
 "this is a god object," roam says "this function is accreting complexity at
@@ -728,7 +726,7 @@ results, and limiting default horizon to 30 commits.
 
 ## 19. P1: Swarm Orchestration — `roam orchestrate`
 
-**Priority:** PARADIGM-SHIFT | **Effort:** Very High | **Status: NOT STARTED**
+**Priority:** PARADIGM-SHIFT | **Effort:** Very High | **Status: DONE**
 
 **The thesis:** The biggest bottleneck in AI engineering is that you cannot put
 10 autonomous agents on a single codebase. They overwrite files, create merge
@@ -894,7 +892,7 @@ with hypothesis generation and integration into the context pipeline.
 
 ## 21. P3: Syntax-less Agentic Editing — `roam mutate`
 
-**Priority:** PARADIGM-SHIFT | **Effort:** Very High | **Status: NOT STARTED**
+**Priority:** PARADIGM-SHIFT | **Effort:** Very High | **Status: DONE**
 
 **The thesis:** Currently, an agent uses roam to understand the graph, then drops
 back to writing raw text strings into files — risking syntax errors, import
@@ -1013,7 +1011,7 @@ mutations before applying them.
 
 ## 22. P4: Graph-Isomorphism Transfer — `roam fingerprint`
 
-**Priority:** STRATEGIC | **Effort:** High | **Status: NOT STARTED**
+**Priority:** STRATEGIC | **Effort:** High | **Status: DONE**
 
 **The thesis:** Every SaaS backend has roughly the same topological shape
 (Routers -> Controllers -> Services -> ORM). Because roam abstracts syntax into
@@ -1104,7 +1102,7 @@ becomes transferable across languages.
 
 ## 23. P5: Adversarial Architecture Review — `roam adversarial`
 
-**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: DONE**
 
 **The thesis:** AI agents are good at generating code but poor at adversarial
 thinking against their own creations. Roam can act as a "Dungeon Master" — when
@@ -1211,7 +1209,7 @@ deliberate architectural decisions, not gatekeeping.
 
 ## 24. W1: Graph Diff as PR Artifact — `roam pr-diff`
 
-**Priority:** HIGHEST-LEVERAGE | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** HIGHEST-LEVERAGE | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Treat every PR as a **graph delta**, not a text diff. PR review
 becomes structural review ("you introduced a coupling path between clusters A
@@ -1315,7 +1313,7 @@ Combined with W2 (budget gates), it enforces structural trajectory.
 
 ## 25. W2: Architecture Budget Gates — `roam budget`
 
-**Priority:** HIGHEST-LEVERAGE | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** HIGHEST-LEVERAGE | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Health gates are pass/fail. Budgets enforce *trajectory*:
 "this repo may not increase propagation cost by >0.5% per PR." Architecture
@@ -1418,7 +1416,7 @@ architectural governance in CI.
 
 ## 26. W3: Invariant Discovery — `roam invariants`
 
-**Priority:** HIGH | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGH | **Effort:** High | **Status: DONE**
 
 **The thesis:** Agents break systems because they don't know the invisible rules.
 Roam can infer likely invariants (implicit contracts) from tests, API usage
@@ -1502,7 +1500,7 @@ parsing).
 
 ## 27. W4: Graph-Path Test Coverage — `roam path-coverage`
 
-**Priority:** HIGH | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** HIGH | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Coverage is usually measured by lines or files. The deeper view
 is: which **critical paths** through the call graph have no test protection?
@@ -1580,7 +1578,7 @@ routes), `graph/pathfinding.py` (k-shortest paths), `graph/pagerank.py`
 
 ## 28. W5: Agent Work Planner — `roam plan`
 
-**Priority:** HIGH | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** HIGH | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Roam currently gives agents *data* (files to read, symbols
 affected). The next step is giving agents *strategy*: a complete execution plan
@@ -1659,7 +1657,7 @@ contracts, modify at the lowest-risk insertion points, and run the right tests.
 
 ## 29. W6: Intent Graph from Docs — `roam intent`
 
-**Priority:** MEDIUM | **Effort:** Medium-High | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** Medium-High | **Status: DONE**
 
 **The thesis:** Bridge "why" (docs) to "what" (code) in a reproducible, local,
 offline way. Parse markdown docs, ADRs, TODOs, changelogs and link them to
@@ -1722,7 +1720,7 @@ the gap between human intent and machine-readable structure.
 
 ## 30. W7: Minimum Cut Safety Zones — `roam cut`
 
-**Priority:** MEDIUM | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Mathematically quantify containment boundaries. Find the minimal
 set of edges whose removal would isolate domains. Identify "leak edges" (thin
@@ -1793,7 +1791,7 @@ NetworkX graph algorithms (min cut, edge betweenness).
 
 ## 31. W8: Plugin DSL for Detectors — `.roam/rules/`
 
-**Priority:** MEDIUM-HIGH | **Effort:** High | **Status: NOT STARTED**
+**Priority:** MEDIUM-HIGH | **Effort:** High | **Status: DONE**
 
 **The thesis:** Roam already has fitness.yaml for architecture rules and 19
 built-in anti-pattern detectors. The profound step: let users define new
@@ -1953,7 +1951,7 @@ becomes `roam plan --task test` or a section within every plan output.
 
 ## 33. D1: Time-Travel Graph — `roam bisect`
 
-**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGH-STRATEGIC | **Effort:** High | **Status: DONE**
 
 **The thesis:** Architecture is currently a report. It should be a **debuggable
 phenomenon with causality.** When a repo "suddenly feels worse," teams should be
@@ -2063,7 +2061,7 @@ attribution.
 
 ## 34. D2: Proof-Carrying PRs — `roam attest`
 
-**Priority:** HIGH-STRATEGIC | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** HIGH-STRATEGIC | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** A PR should include machine-checkable *evidence* of safety and
 impact, not just human opinion. Roam computes blast radius, tests, risk, fitness,
@@ -2185,7 +2183,7 @@ verifiable, machine-readable artifact with a trust-oriented framing.
 
 ## 35. D3: Effect & Side-Effect Graph — `roam effects`
 
-**Priority:** HIGHEST-IMPACT | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGHEST-IMPACT | **Effort:** High | **Status: DONE**
 
 **The thesis:** Roam's current graph is structural (calls/imports/inheritance).
 Agents actually break systems via **effects**: DB writes, network calls, filesystem
@@ -2346,7 +2344,7 @@ a new DB-write path that bypasses the auth boundary" with verifiable evidence.
 
 ## 36. D4: Minimal-Change Synthesis — `roam closure`
 
-**Priority:** HIGH | **Effort:** High | **Status: NOT STARTED**
+**Priority:** HIGH | **Effort:** High | **Status: DONE**
 
 **The thesis:** When an agent needs to make a change (rename a field, extract a
 service, modify an API), roam should compute the *minimal closure* — the exact
@@ -2445,7 +2443,7 @@ computes the plan, `roam mutate` applies it.
 
 ## 37. D5: Sanitized Roam Capsule — `roam capsule`
 
-**Priority:** MEDIUM | **Effort:** Medium | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** Medium | **Status: DONE**
 
 **The thesis:** Teams often need architectural advice from external consultants,
 auditors, or AI services — but can't share source code. A "capsule" exports
@@ -2954,8 +2952,10 @@ Intentional defense-in-depth, not dead code.
 
 ## 41. Status Summary
 
-### Done (45 items)
-- A: Superior test suite (`test_properties.py`, `test_index.py`, and 9 other test files)
+### Done (53 items)
+
+**Ideas A-I:**
+- A: Superior test suite (12+ test files, 2400+ tests)
 - B: Cross-language bridges (5 bridges: Salesforce, Protobuf, REST API, Template, Config)
 - C: Health trend anomaly detection
 - D: Smart file role categorization
@@ -2963,17 +2963,24 @@ Intentional defense-in-depth, not dead code.
 - F: Pluggable test naming conventions
 - G: Coverage-gaps policy-as-code
 - H: PR-Risk team-aware novelty
+- I: Backend command improvements (all 7 sub-items)
+
+**Next-Generation (N-series):**
 - N1: Architectural simulations (`roam simulate`)
 - N2: Agentic memory (`roam annotate` / `roam annotations`)
 - N3: Reachability-based security (`roam vuln-map` + `roam vuln-reach`)
 - N5: OpenTelemetry overlay (`roam ingest-trace` + `roam hotspots`)
 - N6: TF-IDF semantic search (`roam search-semantic`)
 - N7: Predictive tech debt (`roam forecast`)
+
+**Paradigm-Shift (P-series):**
 - P1: Swarm orchestration (`roam orchestrate`)
 - P2: Dark matter detection (`roam dark-matter`)
 - P3: Syntax-less agentic editing (`roam mutate`)
 - P4: Graph-isomorphism transfer (`roam fingerprint`)
 - P5: Adversarial architecture review (`roam adversarial`)
+
+**Workflow Integration (W-series):**
 - W1: Graph diff as PR artifact (`roam pr-diff`)
 - W2: Architecture budget gates (`roam budget`)
 - W3: Invariant discovery (`roam invariants`)
@@ -2982,29 +2989,41 @@ Intentional defense-in-depth, not dead code.
 - W6: Intent graph from docs (`roam intent`)
 - W7: Minimum cut safety zones (`roam cut`)
 - W8: Plugin DSL for detectors (`roam rules`)
+
+**Deep Foundation (D-series):**
 - D1: Time-travel graph (`roam bisect`)
 - D2: Proof-carrying PRs (`roam attest`)
 - D3: Effect & side-effect graph (`roam effects`)
 - D4: Minimal-change synthesis (`roam closure`)
 - D5: Sanitized roam capsule (`roam capsule`)
+
+**Tier 3 + Extras:**
 - Tier 3 J: Symbol relationship graph (`roam relate`)
 - Tier 3 L: JSON schema versioning (`roam schema`)
 - Ruby Tier 1 language support (`ruby_lang.py`)
 - `--sarif` CLI flag (wired to dead, health, complexity, rules)
 - JSONC / MDX grammar aliases
-- I.10.1: Schema-prefixed table names fix
-- I.10.3: Cross-model column attribution fix
-- I.10.4: Pluralization edge cases fix
-- I.10.6: ServiceProvider auth-gaps detection
-- I.10.7: `$hidden` messaging improvement
 - pytest-xdist parallel test execution (~2x speedup)
 - JSON envelope schema versioning (schema + schema_version fields)
 - FK constraint fixes (ON DELETE CASCADE/SET NULL)
+- `.roamignore` exclude patterns (GH #8)
+- Per-language math tips (GH #7)
+- 75 unused import cleanups (ruff F401)
+- 28 unused variable cleanups (ruff F841)
+- Algorithm optimizations (loop-invariant hoisting, set conversions)
+- Fork intelligence document (`docs/FORK_INTEL.md`)
+- Competitive landscape document (`docs/COMPETITIVE_LANDSCAPE.md`)
 
-### Not Started — Existing (3 items)
+### Not Started (3 items)
 - Docker image for CI
 - VS Code extension
 - Terminal demo GIF
+
+### Future Ideas (from fork analysis)
+- Tier 3 I: Report template engine
+- Tier 3 K: Risk chain heat visualization
+- Elixir language extractor (candidate from didier1969 fork)
+- Hypergraph co-change analysis (from chuckjewell fork)
 
 ### Idea Dependency Graph
 

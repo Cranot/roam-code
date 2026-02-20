@@ -20,16 +20,20 @@ def build_symbol_graph(conn: sqlite3.Connection) -> nx.DiGraph:
         "SELECT s.id, s.name, s.kind, s.qualified_name, f.path AS file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id"
     ).fetchall()
-    for row in rows:
-        sid, name, kind, qname, fpath = row
-        G.add_node(sid, name=name, kind=kind, qualified_name=qname, file_path=fpath)
+    G.add_nodes_from(
+        (row[0], {"name": row[1], "kind": row[2],
+                  "qualified_name": row[3], "file_path": row[4]})
+        for row in rows
+    )
 
-    # Load edges
+    # Load edges — pre-build node set for O(1) membership checks
+    node_set = set(G)
     rows = conn.execute("SELECT source_id, target_id, kind FROM edges").fetchall()
-    for source_id, target_id, kind in rows:
-        # Only add edges whose endpoints exist in the graph
-        if source_id in G and target_id in G:
-            G.add_edge(source_id, target_id, kind=kind)
+    G.add_edges_from(
+        (source_id, target_id, {"kind": kind})
+        for source_id, target_id, kind in rows
+        if source_id in node_set and target_id in node_set
+    )
 
     return G
 

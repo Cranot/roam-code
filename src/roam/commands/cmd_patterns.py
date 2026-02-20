@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import os
-import re
 from collections import defaultdict
 
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
+from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 

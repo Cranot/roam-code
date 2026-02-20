@@ -28,7 +28,6 @@ def hotspots(ctx, sort_runtime, discrepancy):
     ensure_index()
 
     from roam.runtime.hotspots import compute_hotspots
-    from roam.runtime.trace_ingest import ensure_runtime_table
 
     with open_db(readonly=True) as conn:
         # Ensure table exists for query even in readonly mode

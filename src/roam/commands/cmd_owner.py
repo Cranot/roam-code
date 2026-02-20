@@ -180,7 +180,7 @@ def _show_file_owner(conn, project_root, file_row):
     ).fetchall()
 
     if recent:
-        click.echo(f"\nRecent commits:")
+        click.echo("\nRecent commits:")
         for r in recent:
             date = _format_date(r["timestamp"])
             msg = r["message"][:60]
@@ -258,7 +258,7 @@ def _show_dir_owner(conn, project_root, path, dir_files):
     ).fetchall()
 
     if churn_rows:
-        click.echo(f"\nTop churned files:")
+        click.echo("\nTop churned files:")
         tr = []
         for r in churn_rows:
             tr.append([

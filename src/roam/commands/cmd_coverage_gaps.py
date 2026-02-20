@@ -10,7 +10,7 @@ from roam.db.connection import open_db, batched_in
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 from roam.commands.gate_presets import (
-    ALL_PRESETS, GatePreset, GateRule, get_preset, detect_preset, load_gates_config,
+    ALL_PRESETS, get_preset, detect_preset, load_gates_config,
 )
 from roam.commands.graph_helpers import build_forward_adj
 

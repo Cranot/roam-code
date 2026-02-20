@@ -59,10 +59,12 @@ def get_repo_paths(config: dict[str, Any], root: Path) -> list[dict[str, Any]]:
     Returns a list of dicts with keys: name, path (absolute), role,
     db_path (absolute).
     """
+    repos = config.get("repos", [])
+    roam_db_suffix = Path(".roam") / "index.db"
     results = []
-    for repo in config.get("repos", []):
+    for repo in repos:
         repo_path = (root / repo["path"]).resolve()
-        db_path = repo_path / ".roam" / "index.db"
+        db_path = repo_path / roam_db_suffix
         results.append({
             "name": repo.get("name", repo_path.name),
             "path": repo_path,

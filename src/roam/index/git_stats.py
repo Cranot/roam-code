@@ -7,7 +7,6 @@ import logging
 import math
 import sqlite3
 import subprocess
-import time as _time
 from collections import defaultdict
 from itertools import combinations
 from pathlib import Path
@@ -346,7 +345,6 @@ def _populate_hyperedges(
             ).hexdigest()[:16]
 
             edge_id += 1
-            pair_count = n * (n - 1) // 2
             edge_batch.append((edge_id, commit_id, n, sig))
 
             for ordinal, fid in enumerate(sorted_ids):

@@ -56,7 +56,6 @@ def safe_zones(ctx, target, depth):
 
     with open_db(readonly=True) as conn:
         # --- Resolve target to seed symbol IDs ---
-        file_target = False
         seed_ids: set[int] = set()
         target_label = target
 
@@ -64,7 +63,6 @@ def safe_zones(ctx, target, depth):
         file_id, file_syms = _resolve_file_symbols(conn, target)
         if file_syms:
             seed_ids = file_syms
-            file_target = True
             # Fetch the canonical path for display
             frow = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
             if frow:

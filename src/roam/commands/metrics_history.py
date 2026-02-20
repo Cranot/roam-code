@@ -105,18 +105,15 @@ def collect_metrics(conn):
             "SELECT betweenness FROM graph_metrics WHERE betweenness > 0"
         ).fetchall()
     )
-    bn_p70 = _percentile(all_bw, 70)
     bn_p90 = _percentile(all_bw, 90)
 
     bw_rows = conn.execute(TOP_BY_BETWEENNESS, (15,)).fetchall()
-    bn_items = []
-    for r in bw_rows:
-        bw = r["betweenness"] or 0
-        if bw > 0.5:
-            bn_items.append({
-                "betweenness": round(bw, 1),
-                "file": r["file_path"],
-            })
+    _round = round
+    bn_items = [
+        {"betweenness": _round(r["betweenness"] or 0, 1), "file": r["file_path"]}
+        for r in bw_rows
+        if (r["betweenness"] or 0) > 0.5
+    ]
     bottlenecks = len(bn_items)
 
     # Dead exports (filter test files — they're discovered by pytest, not imported)

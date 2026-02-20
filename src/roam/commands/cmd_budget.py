@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 from pathlib import Path
 
 import click
@@ -243,7 +242,7 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
     if not budgets:
         budgets = list(_DEFAULT_BUDGETS)
 
-    from roam.graph.diff import find_before_snapshot, metric_delta
+    from roam.graph.diff import find_before_snapshot
     from roam.commands.metrics_history import collect_metrics
 
     with open_db(readonly=True) as conn:

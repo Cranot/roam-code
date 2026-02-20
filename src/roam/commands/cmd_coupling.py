@@ -1,6 +1,5 @@
 """Show temporal coupling: files that change together."""
 
-import hashlib
 import math
 
 import click
@@ -67,12 +66,6 @@ def _compute_surprise(conn, change_fids):
 
     if not candidate_edges:
         return 0.5, None, 0.0  # no history → moderate surprise
-
-    # Total hyperedges for probability estimation (NPMI)
-    total_edges_row = conn.execute(
-        "SELECT COUNT(*) FROM git_hyperedges"
-    ).fetchone()
-    total_edges = max((total_edges_row[0] if total_edges_row else 1), 1)
 
     max_jaccard = 0.0
     best_pattern = None
