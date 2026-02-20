@@ -32,7 +32,9 @@ CREATE TABLE IF NOT EXISTS edges (
     source_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
     target_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
     kind TEXT NOT NULL,
-    line INTEGER
+    line INTEGER,
+    bridge TEXT,
+    confidence REAL
 );
 
 CREATE TABLE IF NOT EXISTS file_edges (
@@ -248,4 +250,11 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
 CREATE INDEX IF NOT EXISTS idx_vuln_cve ON vulnerabilities(cve_id);
 CREATE INDEX IF NOT EXISTS idx_vuln_package ON vulnerabilities(package_name);
 CREATE INDEX IF NOT EXISTS idx_vuln_symbol ON vulnerabilities(matched_symbol_id);
+
+-- TF-IDF vectors for semantic search
+CREATE TABLE IF NOT EXISTS symbol_tfidf (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id),
+    terms TEXT NOT NULL,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
 """
