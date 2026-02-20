@@ -1120,6 +1120,36 @@ def simulate(operation: str, symbol: str = "", target_file: str = "",
 
 
 @mcp.tool()
+def closure(symbol: str, rename: str = "", delete: bool = False, root: str = ".") -> dict:
+    """Compute the minimal set of changes needed when modifying a symbol.
+
+    WHEN TO USE: Call this when you need to know EXACTLY what must change
+    for a rename, deletion, or modification. Unlike ``impact`` (blast
+    radius -- what MIGHT break), closure tells you what MUST change.
+    Returns the exact files and locations that need updating.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name to compute closure for.
+    rename:
+        New name for a rename operation. If provided, also searches
+        for string references in doc/config files.
+    delete:
+        If True, compute deletion closure.
+
+    Returns: list of changes grouped by type (update_call, update_import,
+    update_test, update_doc), with file paths and line numbers.
+    """
+    args = ["closure", symbol]
+    if rename:
+        args.extend(["--rename", rename])
+    if delete:
+        args.append("--delete")
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def doc_intent(symbol: str = "", doc: str = "",
                drift: bool = False, undocumented: bool = False,
                top_n: int = 20, root: str = ".") -> dict:
@@ -1156,6 +1186,33 @@ def doc_intent(symbol: str = "", doc: str = "",
         args.append("--undocumented")
     if top_n != 20:
         args.extend(["--top", str(top_n)])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
+    """Evaluate custom governance rules defined in .roam/rules/.
+
+    WHEN TO USE: Call this to check architectural constraints defined as
+    YAML rule files. Supports path_match rules (no direct edges between
+    from/to patterns) and symbol_match rules (symbols matching criteria
+    must satisfy requirements like test coverage). Use ``--ci`` in CI
+    pipelines to fail on error-severity violations.
+
+    Parameters
+    ----------
+    ci:
+        If True, exit code 1 on error-severity violations.
+    rules_dir:
+        Custom rules directory path.
+
+    Returns: per-rule pass/fail results with violation details.
+    """
+    args = ["rules"]
+    if ci:
+        args.append("--ci")
+    if rules_dir:
+        args.extend(["--rules-dir", rules_dir])
     return _run_roam(args, root)
 
 
