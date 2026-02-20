@@ -218,7 +218,7 @@ CREATE TABLE IF NOT EXISTS snapshots (
 -- Runtime trace statistics: ingested from OpenTelemetry/Jaeger/Zipkin/generic traces
 CREATE TABLE IF NOT EXISTS runtime_stats (
     id INTEGER PRIMARY KEY,
-    symbol_id INTEGER REFERENCES symbols(id),
+    symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
     symbol_name TEXT,
     file_path TEXT,
     trace_source TEXT,
@@ -240,7 +240,7 @@ CREATE TABLE IF NOT EXISTS vulnerabilities (
     severity TEXT,
     title TEXT,
     source TEXT,
-    matched_symbol_id INTEGER REFERENCES symbols(id),
+    matched_symbol_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
     matched_file TEXT,
     reachable INTEGER DEFAULT 0,
     shortest_path TEXT,
@@ -253,7 +253,7 @@ CREATE INDEX IF NOT EXISTS idx_vuln_symbol ON vulnerabilities(matched_symbol_id)
 
 -- TF-IDF vectors for semantic search
 CREATE TABLE IF NOT EXISTS symbol_tfidf (
-    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id),
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
     terms TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
