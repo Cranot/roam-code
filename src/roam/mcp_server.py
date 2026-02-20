@@ -902,6 +902,111 @@ def forecast(symbol: str = "", horizon: int = 30,
     return _run_roam(args, root)
 
 
+@mcp.tool()
+def generate_plan(target: str = "", task: str = "refactor",
+                  file_path: str = "", staged: bool = False,
+                  depth: int = 2, root: str = ".") -> dict:
+    """Generate a structured execution plan for modifying code.
+
+    WHEN TO USE: Call this before any non-trivial code modification.
+    Returns a step-by-step strategy: read order, invariants to preserve,
+    safe modification points, touch-carefully warnings, test shortlist,
+    and post-change verification commands.
+
+    Parameters
+    ----------
+    target:
+        Symbol name to plan for.
+    task:
+        Task type: refactor, debug, extend, review, understand.
+    file_path:
+        File to plan for (alternative to target).
+    staged:
+        Plan for staged changes.
+    depth:
+        Call graph depth for read order (default: 2).
+
+    Returns: structured plan with 6 sections.
+    """
+    args = ["plan"]
+    if target:
+        args.append(target)
+    if task != "refactor":
+        args.extend(["--task", task])
+    if file_path:
+        args.extend(["--file", file_path])
+    if staged:
+        args.append("--staged")
+    if depth != 2:
+        args.extend(["--depth", str(depth)])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def adversarial_review(staged: bool = False, commit_range: str = "",
+                       severity: str = "low", root: str = ".") -> dict:
+    """Adversarial architecture review — challenge code changes.
+
+    WHEN TO USE: Call this after making changes to get targeted
+    architectural challenges. Acts as a "Dungeon Master" generating
+    questions about cycles, layer violations, anti-patterns, and
+    cross-cluster coupling that the developer must address.
+
+    Parameters
+    ----------
+    staged:
+        Review staged changes only.
+    commit_range:
+        Review a commit range (e.g. main..HEAD).
+    severity:
+        Minimum severity filter: low, medium, high, critical.
+
+    Returns: list of architectural challenges with severity and questions.
+    """
+    args = ["adversarial"]
+    if staged:
+        args.append("--staged")
+    if commit_range:
+        args.extend(["--range", commit_range])
+    if severity != "low":
+        args.extend(["--severity", severity])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def cut_analysis(between_a: str = "", between_b: str = "",
+                 leak_edges: bool = False, top_n: int = 10,
+                 root: str = ".") -> dict:
+    """Minimum cut analysis — find fragile domain boundaries.
+
+    WHEN TO USE: Call this to identify the thinnest boundaries between
+    architectural clusters and the highest-impact "leak edges" whose
+    removal would best improve domain isolation. Useful for targeted
+    refactoring decisions.
+
+    Parameters
+    ----------
+    between_a:
+        First cluster name (use with between_b for specific pair).
+    between_b:
+        Second cluster name.
+    leak_edges:
+        Focus on leak edge analysis.
+    top_n:
+        Show top N boundaries (default: 10).
+
+    Returns: boundary analysis with min-cut sizes, thinness, and leak edges.
+    """
+    args = ["cut"]
+    if between_a and between_b:
+        args.extend(["--between", between_a, between_b])
+    if leak_edges:
+        args.append("--leak-edges")
+    if top_n != 10:
+        args.extend(["--top", str(top_n)])
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
