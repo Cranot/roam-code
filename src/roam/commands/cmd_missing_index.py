@@ -182,9 +182,14 @@ def _class_to_table(class_name: str) -> str:
     snake = re.sub(r"([a-z\d])([A-Z])", r"\1_\2", s1).lower()
 
     # Simple English pluralisation
-    if snake.endswith("y"):
+    if snake.endswith("y") and len(snake) >= 2 and snake[-2] not in "aeiou":
         return snake[:-1] + "ies"
-    if snake.endswith("s") or snake.endswith("x") or snake.endswith("sh"):
+    if snake.endswith("fe"):
+        return snake[:-2] + "ves"
+    if snake.endswith("f") and not snake.endswith("ff"):
+        return snake[:-1] + "ves"
+    if (snake.endswith("s") or snake.endswith("x") or snake.endswith("z")
+            or snake.endswith("sh") or snake.endswith("ch")):
         return snake + "es"
     return snake + "s"
 
