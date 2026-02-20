@@ -64,6 +64,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
     individually moderate but collectively hard to maintain.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -113,7 +114,29 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
         ).fetchall()
 
         if not rows:
+            if sarif_mode:
+                from roam.output.sarif import complexity_to_sarif, write_sarif
+                sarif = complexity_to_sarif([], threshold=threshold or 0)
+                click.echo(write_sarif(sarif))
+                return
             click.echo("No matching symbols found.")
+            return
+
+        if sarif_mode:
+            from roam.output.sarif import complexity_to_sarif, write_sarif
+            complex_symbols = [
+                {
+                    "name": r["qualified_name"] or r["name"],
+                    "kind": r["kind"],
+                    "file": r["file_path"],
+                    "line": r["line_start"],
+                    "cognitive_complexity": r["cognitive_complexity"],
+                    "severity": _severity(r["cognitive_complexity"]),
+                }
+                for r in rows
+            ]
+            sarif = complexity_to_sarif(complex_symbols, threshold=threshold or 0)
+            click.echo(write_sarif(sarif))
             return
 
         if by_file:

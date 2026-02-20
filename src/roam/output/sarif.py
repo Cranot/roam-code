@@ -599,6 +599,68 @@ def health_to_sarif(issues: dict) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
+# ── Rules violations ─────────────────────────────────────────────────
+
+def rules_to_sarif(rule_results: list[dict]) -> dict:
+    """Convert custom governance rule results to SARIF.
+
+    Each *rule_result* dict is expected to carry:
+
+    - ``name`` (str): rule name
+    - ``passed`` (bool): whether the rule passed
+    - ``severity`` (str): ``"error"`` / ``"warning"`` / ``"info"``
+    - ``violations`` (list[dict], optional): each with ``symbol``, ``file``,
+      ``line``, ``reason``
+    """
+    seen_rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for r in rule_results:
+        if r.get("passed", True):
+            continue
+
+        rule_name = r.get("name", "unnamed")
+        severity = r.get("severity", "warning")
+        rule_id = f"rules/{_slugify(rule_name)}"
+
+        if rule_id not in seen_rules:
+            seen_rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": rule_name,
+                "helpUri": _HELP_BASE + "rules",
+                "defaultLevel": _to_level(severity.upper()),
+            }
+
+        for v in r.get("violations", []):
+            fpath = v.get("file", "")
+            line = v.get("line")
+            locations = []
+            if fpath:
+                locations.append(_location(fpath, line))
+
+            symbol = v.get("symbol", "")
+            reason = v.get("reason", "")
+            msg = f"Rule '{rule_name}'"
+            if symbol:
+                msg += f": {symbol}"
+            if reason:
+                msg += f" - {reason}"
+
+            results.append({
+                "ruleId": rule_id,
+                "level": _to_level(severity.upper()),
+                "message": {"text": msg},
+                "locations": locations,
+            })
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        list(seen_rules.values()),
+        results,
+    )
+
+
 # ── Internal helpers ─────────────────────────────────────────────────
 
 def _slugify(text: str) -> str:

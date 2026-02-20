@@ -82,6 +82,7 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
     (exit code 1 on error-severity violations).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     root = find_project_root()
 
     # --init: create example rules
@@ -100,6 +101,11 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
     # Graceful handling when no rules directory exists
     if not rules_dir.is_dir():
         verdict = "no rules directory found"
+        if sarif_mode:
+            from roam.output.sarif import rules_to_sarif, write_sarif
+            sarif = rules_to_sarif([])
+            click.echo(write_sarif(sarif))
+            return
         if json_mode:
             click.echo(to_json(json_envelope(
                 "rules",
@@ -137,6 +143,15 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
         if failed_infos > 0:
             parts.append(f"{failed_infos} info")
         verdict = f"{passed} of {total} rules passed, {', '.join(parts)}"
+
+    # --- SARIF output ---
+    if sarif_mode:
+        from roam.output.sarif import rules_to_sarif, write_sarif
+        sarif = rules_to_sarif(results)
+        click.echo(write_sarif(sarif))
+        if ci_mode and failed_errors > 0:
+            ctx.exit(1)
+        return
 
     # --- JSON output ---
     if json_mode:
