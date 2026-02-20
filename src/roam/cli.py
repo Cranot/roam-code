@@ -96,6 +96,8 @@ _COMMANDS = {
     "bisect":            ("roam.commands.cmd_bisect",          "bisect"),
     "intent":            ("roam.commands.cmd_intent",          "intent"),
     "simulate":          ("roam.commands.cmd_simulate",       "simulate"),
+    "closure":           ("roam.commands.cmd_closure",        "closure"),
+    "rules":             ("roam.commands.cmd_rules",          "rules"),
 }
 
 # Command categories for organized --help display
@@ -105,8 +107,8 @@ _CATEGORIES = {
     "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect"],
     "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "cut", "simulate", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
-    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule"],
-    "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk", "invariants", "intent"],
+    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule", "rules"],
+    "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk", "invariants", "intent", "closure"],
 }
 
 
