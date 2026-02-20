@@ -2,9 +2,9 @@
 
 # roam
 
-**Instant codebase comprehension for AI coding agents. Semantic graph, algorithm anti-pattern detection, architecture health -- one CLI, zero API keys.**
+**The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*70 commands · 22 languages · algorithm catalog · 100% local*
+*94 commands · 26 languages · architecture OS · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -18,18 +18,17 @@
 
 ## What is Roam?
 
-Roam pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture, and git history -- stored in a local SQLite DB. Agents query it via CLI instead of repeatedly grepping files and guessing structure.
+Roam is a structural intelligence engine for software. It pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture layers, git history, and runtime traces -- stored in a local SQLite DB. Agents query it via CLI or MCP instead of repeatedly grepping files and guessing structure.
 
-Unlike LSPs (editor-bound and language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact.
-
-A semantic graph means Roam understands what functions call what, how modules depend on each other, which tests cover which code, the overall architecture structure, and where algorithms can be improved. The built-in algorithm catalog detects 23 anti-patterns (O(n^2) loops, N+1 queries, quadratic string building, branching recursion) and suggests better approaches with Big-O improvements.
+Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> CLI ──> AI Agent
-              │              │                │
-           tree-sitter    symbols           one call
-           22 languages   + edges           replaces
-           git history    + metrics         5-10 tool calls
+Codebase ──> [Index] ──> Semantic Graph ──> 94 Commands ──> AI Agent
+              │              │                  │
+           tree-sitter    symbols            comprehend
+           26 languages   + edges            govern
+           git history    + metrics          refactor
+           runtime traces + architecture     orchestrate
 ```
 
 ### The problem
@@ -63,16 +62,18 @@ $ roam diff                    # blast radius of uncommitted changes
 
 - **Agent-assisted coding** -- structured answers that reduce token usage vs raw file exploration
 - **Large codebases (100+ files)** -- graph queries beat linear search at scale
-- **Architecture governance** -- health scores, CI quality gates, dependency cycle detection
-- **Safe refactoring** -- blast radius, affected tests, pre-change safety checks
+- **Architecture governance** -- health scores, CI quality gates, budget enforcement, fitness functions
+- **Safe refactoring** -- blast radius, affected tests, pre-change safety checks, graph-level editing
+- **Multi-agent orchestration** -- partition codebases for parallel agent work with zero-conflict guarantees
+- **Security analysis** -- vulnerability reachability mapping, auth gaps, CVE path tracing
 - **Algorithm optimization** -- detect O(n^2) loops, N+1 queries, and 21 other anti-patterns with suggested fixes
 - **Backend quality** -- auth gaps, missing indexes, over-fetching models, non-idempotent migrations, orphan routes, API drift
+- **Runtime analysis** -- overlay production trace data onto the static graph for hotspot detection
 - **Multi-repo projects** -- cross-repo API edge detection between frontend and backend
 
 ### When NOT to use Roam
 
 - **Real-time type checking** -- use an LSP (pyright, gopls, tsserver). Roam is static and offline.
-- **Dynamic / runtime analysis** -- Roam cannot trace reflection, eval, or dynamic dispatch.
 - **Small scripts (<10 files)** -- just read the files directly.
 - **Pure text search** -- ripgrep is faster for raw string matching.
 
@@ -180,7 +181,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 70 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 94 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -195,6 +196,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam tour [--write PATH]` | Auto-generated onboarding guide: top symbols, reading order, entry points, language breakdown. `--write` saves to Markdown |
 | `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
 | `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for CLAUDE.md injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
+| `roam config [KEY [VALUE]]` | View or set configuration options |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
 
 ### Daily Workflow
@@ -219,6 +221,10 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam preflight <symbol\|file>` | Compound pre-change check: blast radius + tests + complexity + coupling + fitness |
 | `roam safe-delete <symbol>` | Safe deletion check: SAFE/REVIEW/UNSAFE verdict |
 | `roam test-map <name>` | Map a symbol or file to its test coverage |
+| `roam adversarial [--staged] [--range R]` | Adversarial architecture review: generates targeted challenges based on changes |
+| `roam plan [--staged] [--range R] [--agents N]` | Agent work planner: decompose changes into sequenced, dependency-aware steps |
+| `roam closure <symbol> [--rename] [--delete]` | Minimal-change synthesis: all files to touch for a safe rename/delete |
+| `roam mutate move\|rename\|add-call\|extract` | Graph-level code editing: move symbols, rename across codebase, add calls, extract functions. Dry-run by default |
 
 ### Codebase Health
 
@@ -239,6 +245,9 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot |
 | `roam forecast [--symbol S] [--horizon N] [--alert-only]` | Predict when metrics will exceed thresholds: Theil-Sen regression on snapshot history + churn-weighted per-symbol risk |
 | `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 1 on violation) |
+| `roam bisect [--metric M] [--range R]` | Architectural git bisect: find the commit that degraded a specific metric |
+| `roam ingest-trace <file> [--otel\|--jaeger\|--zipkin\|--generic]` | Ingest runtime trace data (OpenTelemetry, Jaeger, Zipkin) for hotspot overlay |
+| `roam hotspots [--runtime] [--discrepancy]` | Runtime hotspot analysis: find symbols missed by static analysis but critical at runtime |
 
 <details>
 <summary><strong>roam math — algorithm anti-pattern catalog (23 patterns)</strong></summary>
@@ -388,6 +397,10 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam visualize [--format mermaid\|dot] [--focus NAME] [--limit N]` | Generate Mermaid or DOT architecture diagrams. Smart filtering via PageRank, cluster grouping, cycle highlighting |
 | `roam effects [TARGET] [--file F] [--type T]` | Side-effect classification: DB writes, network I/O, filesystem, global mutation. Direct + transitive effects through call graph |
 | `roam dark-matter [--min-cochanges N]` | Detect hidden co-change couplings not explained by import/call edges |
+| `roam simulate move\|extract\|merge\|delete` | Counterfactual architecture simulator: test refactoring ideas in-memory, see metric deltas before writing code |
+| `roam orchestrate --agents N [--files P]` | Multi-agent swarm partitioning: split codebase for parallel agents with zero-conflict guarantees |
+| `roam fingerprint [--compact] [--compare F]` | Topology fingerprint: extract/compare architectural signatures across repos |
+| `roam effects [TARGET] [--file F] [--type T]` | Side-effect classification: DB writes, network I/O, filesystem, global mutation |
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
 
@@ -406,6 +419,9 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam conventions` | Auto-detect naming styles, import preferences. Flags outliers |
 | `roam breaking [REV_RANGE]` | Breaking change detection: removed exports, signature changes |
 | `roam affected-tests <symbol\|file>` | Trace reverse call graph to test files |
+| `roam relate <sym1> <sym2>` | Show relationship between two symbols: shared callers, shortest path, common ancestors |
+| `roam search-semantic <query>` | Semantic search: find symbols by meaning, not just name pattern |
+| `roam intent [--staged] [--range R]` | Doc-to-code linking: match documentation to symbols, detect drift |
 
 ### Reports & CI
 
@@ -419,6 +435,10 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam api-drift [--model M] [--confidence C]` | Detect mismatches between PHP model `$fillable`/`$appends` fields and TypeScript interface properties. Auto-converts snake_case/camelCase for comparison. Single-repo; cross-repo planned for `roam ws api-drift` |
 | `roam path-coverage [--from P] [--to P] [--max-depth N]` | Find critical call paths (entry -> sink) with zero test protection. Suggests optimal test insertion points |
 | `roam capsule [--redact-paths] [--no-signatures] [--output F]` | Export sanitized structural graph (no code bodies) for external architectural review |
+| `roam rules [--init] [--ci] [--rules-dir D]` | Plugin DSL for governance: user-defined architectural rules via `.roam/rules/` YAML |
+| `roam vuln-map --generic\|--npm-audit\|--trivy F` | Ingest vulnerability reports and match to codebase symbols |
+| `roam vuln-reach [--cve C] [--from E]` | Vulnerability reachability: exact paths from entry points to vulnerable calls |
+| `roam invariants [--staged] [--range R]` | Discover architectural contracts (invariants) from the codebase structure |
 
 ### Multi-Repo Workspace
 
@@ -438,6 +458,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 |--------|-------------|
 | `roam --json <command>` | Structured JSON output with consistent envelope |
 | `roam --compact <command>` | Token-efficient output: TSV tables, minimal JSON envelope |
+| `roam --sarif <command>` | SARIF 2.1.0 output for dead, health, complexity, rules (GitHub/CI integration) |
 | `roam <command> --gate EXPR` | CI quality gate (e.g., `--gate score>=70`). Exit code 1 on failure |
 
 </details>
@@ -963,9 +984,13 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 
 </details>
 
+| Ruby | `.rb` | classes, modules, methods, singleton methods, constants | require, require_relative, include/extend, calls, ClassName.new | class inheritance |
+| JSONC | `.jsonc` | via JSON grammar | -- | -- |
+| MDX | `.mdx` | via Markdown grammar | -- | -- |
+
 ### Tier 2 -- Generic extraction
 
-Ruby (`.rb`), Kotlin (`.kt` `.kts`), Swift (`.swift`), Scala (`.scala` `.sc`)
+Kotlin (`.kt` `.kts`), Swift (`.swift`), Scala (`.scala` `.sc`)
 
 Tier 2 languages get symbol extraction and basic inheritance via a generic tree-sitter walker.
 
@@ -1092,7 +1117,7 @@ Roam is **not** a replacement for your linter, LSP, or SonarQube. It fills a dif
 | **ctags / cscope** | Symbol index for editors | Roam adds graph metrics, git signals, architecture analysis, and AI-optimized output |
 | **LSP (pyright, gopls)** | Real-time type checking | LSP requires a running server and file:line:col queries. Roam is offline, exploratory, and cross-language |
 | **Sourcegraph** | Code search + AI | Requires hosted deployment. Roam is local-only, MIT-licensed |
-| **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 50+ architecture commands, CI gates |
+| **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 94 architecture commands, CI gates, multi-agent orchestration |
 | **CodeScene** | Behavioral code analysis | Commercial SaaS. Roam is free, local, uses peer-reviewed algorithms (Mann-Kendall, NPMI, Personalized PageRank) |
 | **SonarQube** | Code quality + security | Heavy server. Roam's cognitive complexity follows SonarSource spec |
 | **grep / ripgrep** | Text search | No semantic understanding. Can't distinguish definitions from usage |
@@ -1106,7 +1131,7 @@ No. Zero network calls. No telemetry, no analytics, no update checks.
 Yes. Once installed, no internet access is required.
 
 **Does Roam modify my source code?**
-No. Read-only. Creates `.roam/` with an index database. Never modifies source files.
+Read-only by default. Creates `.roam/` with an index database. The `roam mutate` command can apply code changes (move/rename/extract) but defaults to `--dry-run` mode — you must explicitly pass `--apply` to write changes.
 
 **How does Roam handle monorepos?**
 Indexes from the root. Batched SQL handles 100k+ symbols. Incremental updates stay fast.
@@ -1121,10 +1146,10 @@ Yes. Roam complements existing tools. Both can run in the same CI pipeline. SARI
 
 Static analysis trade-offs:
 
-- **No runtime analysis** -- can't trace dynamic dispatch, reflection, or eval'd code
+- **Static analysis primarily** -- can't trace dynamic dispatch, reflection, or eval'd code. Runtime trace ingestion (`roam ingest-trace`) adds production data but requires external trace export
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve
-- **Limited cross-language edges** -- Salesforce and multi-repo API edges are supported, but not arbitrary FFI
-- **Tier 2 languages** (Ruby, Kotlin, Swift, Scala) get basic symbol extraction only
+- **Limited cross-language edges** -- Salesforce, Protobuf, REST API, and multi-repo edges are supported, but not arbitrary FFI
+- **Tier 2 languages** (Kotlin, Swift, Scala) get basic symbol extraction only
 - **Large monorepos** (100k+ files) may have slow initial indexing
 
 ## Troubleshooting
@@ -1264,9 +1289,17 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 - [x] `.roamignore` support for excluding files from indexing (v9.1)
 - [x] Implicit N+1 I/O detection: ORM model `$appends`/accessor lazy-load analysis (v9.1)
 - [x] 7 new backend analysis commands: `n1`, `auth-gaps`, `over-fetch`, `missing-index`, `orphan-routes`, `migration-safety`, `api-drift` (v9.1)
+- [x] Ruby Tier 1 support: classes, modules, methods, constants, require/include (v9.1)
+- [x] `--sarif` CLI flag for direct SARIF export on dead, health, complexity, rules (v9.1)
+- [x] Architecture simulation: `roam simulate move|extract|merge|delete` (v9.1)
+- [x] Multi-agent orchestration: `roam orchestrate --agents N` with zero-conflict partitioning (v9.1)
+- [x] Graph-level editing: `roam mutate move|rename|add-call|extract` (v9.1)
+- [x] Vulnerability mapping: `roam vuln-map` + `roam vuln-reach` with CVE reachability paths (v9.1)
+- [x] Runtime trace overlay: `roam ingest-trace` + `roam hotspots` (v9.1)
+- [x] Governance DSL: `roam rules` with `.roam/rules/` YAML plugin system (v9.1)
+- [x] Topology fingerprinting: `roam fingerprint` with cross-repo comparison (v9.1)
+- [x] 30+ new commands: simulate, orchestrate, mutate, closure, adversarial, plan, invariants, bisect, intent, cut, effects, dark-matter, capsule, forecast, path-coverage, fingerprint, rules, vuln-map, vuln-reach, ingest-trace, hotspots, and more (v9.1)
 - [ ] Terminal demo GIF
-- [ ] Ruby Tier 1 support
-- [ ] `--sarif` CLI flag for direct SARIF export
 - [ ] Docker image for CI
 - [ ] VS Code extension
 
@@ -1276,7 +1309,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 1847 tests must pass
+pytest tests/   # All 2400+ tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

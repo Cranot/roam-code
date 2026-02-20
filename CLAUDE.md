@@ -4,7 +4,7 @@
 
 roam-code is a CLI tool that gives AI coding agents instant codebase comprehension.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. 94 commands, 22 languages, 100% local, zero API keys.
+a local SQLite DB. 94 commands, 26 languages, 100% local, zero API keys.
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
 
