@@ -690,6 +690,64 @@ def ws_context(symbol: str, root: str = ".") -> dict:
     return _run_roam(["ws", "context", symbol], root)
 
 
+@mcp.tool()
+def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+    """Show structural consequences of code changes (graph delta).
+
+    WHEN TO USE: Call this during code review to understand the
+    architectural impact of a PR. Shows metric deltas (health score,
+    cycles, complexity), cross-cluster edges, layer violations, symbol
+    changes, and graph footprint. Much richer than a text diff.
+
+    Parameters
+    ----------
+    staged:
+        If True, analyse only staged changes.
+    commit_range:
+        Git range like ``main..HEAD`` for branch comparison.
+
+    Returns: verdict, metric deltas, edge analysis, symbol changes,
+    and graph footprint.
+    """
+    args = ["pr-diff"]
+    if staged:
+        args.append("--staged")
+    if commit_range:
+        args.extend(["--range", commit_range])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def budget_check(config: str = "", staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+    """Check pending changes against architectural budgets.
+
+    WHEN TO USE: Call this as a CI gate or before merging to verify
+    that changes stay within defined quality budgets (max cycles,
+    health floor, complexity ceiling, etc.). Exit code 1 if any
+    budget is exceeded.
+
+    Parameters
+    ----------
+    config:
+        Path to custom budget YAML config.
+    staged:
+        If True, analyse only staged changes.
+    commit_range:
+        Git range like ``main..HEAD`` for branch comparison.
+
+    Returns: verdict, per-rule pass/fail results, and whether a
+    baseline snapshot was available.
+    """
+    args = ["budget"]
+    if config:
+        args.extend(["--config", config])
+    if staged:
+        args.append("--staged")
+    if commit_range:
+        args.extend(["--range", commit_range])
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
