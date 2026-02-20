@@ -55,7 +55,7 @@ def _parse_simple_yaml(path: Path) -> dict | None:
         indent = len(line) - len(line.lstrip())
 
         # Pop stack to matching indent
-        while len(stack) > 1 and indent <= stack[-1][0]:
+        while len(stack) > 1 and indent < stack[-1][0]:
             stack.pop()
 
         if ":" not in stripped:
