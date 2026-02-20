@@ -415,7 +415,9 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
             suggestions.append(
                 f"Add $hidden for unused fields, or use ->select() in queries,\n"
                 f"               or create a {model_info['class_name']}Resource "
-                f"to control output"
+                f"to control output\n"
+                f"               Note: $hidden/$visible also hides fields from edit endpoints.\n"
+                f"               For CRUD apps, prefer API Resources for response shaping."
             )
         elif fillable_count >= 20 and hidden_count < 3:
             confidence = "medium"
@@ -426,7 +428,9 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
             if not has_resource:
                 suggestions.append(
                     f"Consider $hidden or a {model_info['class_name']}Resource "
-                    f"for large list responses"
+                    f"for large list responses\n"
+                    f"               Note: $hidden/$visible also hides fields from edit endpoints.\n"
+                    f"               For CRUD apps, prefer API Resources for response shaping."
                 )
             else:
                 suggestions.append(
