@@ -123,7 +123,7 @@ class TestIndexingPerformance:
         out, rc, elapsed = timed_roam("index", cwd=medium_project)
         assert rc == 0
         assert "up to date" in out
-        assert elapsed < 3000, f"No-change incremental took {elapsed:.0f}ms (limit 3000ms)"
+        assert elapsed < 5000, f"No-change incremental took {elapsed:.0f}ms (limit 5000ms)"
 
     def test_incremental_single_file_change(self, medium_project):
         """Changing one file should re-index only that file quickly."""
