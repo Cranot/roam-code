@@ -1077,6 +1077,49 @@ def bisect_blame(metric: str = "health_score", threshold: float = 0,
 
 
 @mcp.tool()
+def simulate(operation: str, symbol: str = "", target_file: str = "",
+             file_a: str = "", file_b: str = "", root: str = ".") -> dict:
+    """Simulate a structural change and predict metric deltas.
+
+    WHEN TO USE: Call this before making architectural changes (moving,
+    extracting, merging, or deleting symbols/files) to predict the impact
+    on health score, modularity, cycles, and other metrics. Enables
+    gradient-descent on architecture by testing "what if" scenarios.
+
+    Parameters
+    ----------
+    operation:
+        One of: "move", "extract", "merge", "delete".
+    symbol:
+        Symbol name for move/extract/delete operations.
+    target_file:
+        Destination file for move/extract operations.
+    file_a:
+        Target file for merge (file_b merges into file_a).
+    file_b:
+        Source file for merge (merged into file_a).
+
+    Returns: predicted metric deltas (health score, cycles, modularity,
+    layer violations, etc.), operation summary, verdict, and warnings.
+    """
+    args = ["simulate", operation]
+    if operation in ("move", "extract"):
+        if symbol:
+            args.append(symbol)
+        if target_file:
+            args.append(target_file)
+    elif operation == "merge":
+        if file_a:
+            args.append(file_a)
+        if file_b:
+            args.append(file_b)
+    elif operation == "delete":
+        if symbol:
+            args.append(symbol)
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def doc_intent(symbol: str = "", doc: str = "",
                drift: bool = False, undocumented: bool = False,
                top_n: int = 20, root: str = ".") -> dict:
