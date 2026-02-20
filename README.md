@@ -341,7 +341,7 @@ src/
     bridges/
       base.py                 # LanguageBridge
       registry.py             # register_bridge, detect_bridges
-    commands/  (63 files)  # is_test_file, get_changed_files
+    commands/  (93 files)  # is_test_file, get_changed_files
     db/
       connection.py           # find_project_root, batched_in
       schema.py
@@ -353,7 +353,7 @@ src/
       formatter.py            # to_json, json_envelope
     cli.py                    # cli, LazyGroup
     mcp_server.py
-tests/  (30 files)
+tests/  (70 files)
 ` ` `
 
 **Key symbols** (PageRank): `open_db` · `ensure_index` · `json_envelope` · `to_json` · `LanguageExtractor`
@@ -400,7 +400,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam simulate move\|extract\|merge\|delete` | Counterfactual architecture simulator: test refactoring ideas in-memory, see metric deltas before writing code |
 | `roam orchestrate --agents N [--files P]` | Multi-agent swarm partitioning: split codebase for parallel agents with zero-conflict guarantees |
 | `roam fingerprint [--compact] [--compare F]` | Topology fingerprint: extract/compare architectural signatures across repos |
-| `roam effects [TARGET] [--file F] [--type T]` | Side-effect classification: DB writes, network I/O, filesystem, global mutation |
+| `roam cut <target> [--depth N]` | Minimum graph cuts: find critical edges whose removal disconnects components |
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
 
@@ -422,6 +422,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam relate <sym1> <sym2>` | Show relationship between two symbols: shared callers, shortest path, common ancestors |
 | `roam search-semantic <query>` | Semantic search: find symbols by meaning, not just name pattern |
 | `roam intent [--staged] [--range R]` | Doc-to-code linking: match documentation to symbols, detect drift |
+| `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
+| `roam x-lang [--bridges] [--edges]` | Cross-language edge browser: inspect bridge-resolved connections |
 
 ### Reports & CI
 
@@ -708,7 +710,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-27 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+48 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
 <details>
 <summary><strong>MCP tool list</strong></summary>
@@ -742,6 +744,27 @@ fastmcp run roam.mcp_server:mcp
 | `capsule_export` | Export sanitized structural graph (no code bodies) |
 | `path_coverage` | Find critical untested call paths (entry -> sink) |
 | `forecast` | Predict when metrics will exceed thresholds |
+| `simulate` | Counterfactual architecture simulator |
+| `orchestrate` | Multi-agent swarm partitioning |
+| `fingerprint` | Topology fingerprint comparison |
+| `mutate` | Graph-level code editing (move/rename/extract) |
+| `dark_matter` | Hidden co-change coupling detection |
+| `closure` | Minimal-change synthesis for rename/delete |
+| `adversarial_review` | Adversarial architecture review |
+| `generate_plan` | Agent work planner |
+| `get_invariants` | Architectural invariant discovery |
+| `bisect_blame` | Architectural git bisect |
+| `doc_intent` | Doc-to-code linking |
+| `cut_analysis` | Minimum graph cut analysis |
+| `annotate_symbol` | Attach persistent notes to symbols |
+| `get_annotations` | View stored annotations |
+| `relate` | Show relationship between two symbols |
+| `search_semantic` | Semantic search by meaning |
+| `rules_check` | Plugin DSL governance rules |
+| `vuln_map` | Vulnerability report ingestion |
+| `vuln_reach` | Vulnerability reachability paths |
+| `ingest_trace` | Ingest runtime trace data |
+| `runtime_hotspots` | Runtime hotspot analysis |
 
 **Resources:** `roam://health` (current health score), `roam://summary` (project overview)
 
@@ -1044,7 +1067,7 @@ Codebase
     |
 [1] Discovery ──── git ls-files (respects .gitignore + .roamignore)
     |
-[2] Parse ──────── tree-sitter AST per file (22 languages)
+[2] Parse ──────── tree-sitter AST per file (26 languages)
     |
 [3] Extract ────── symbols + references (calls, imports, inheritance)
     |
@@ -1186,7 +1209,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # 1847 tests, Python 3.9-3.13
+pytest tests/              # 2654 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1203,8 +1226,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (63 commands, 7 categories)
-│   ├── mcp_server.py                  # MCP server (20 tools, 2 resources)
+│   ├── cli.py                         # Click CLI (94 commands, 7 categories)
+│   ├── mcp_server.py                  # MCP server (48 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1223,7 +1246,7 @@ roam-code/
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
 │   │   ├── registry.py                # Language detection + aliasing
-│   │   ├── *_lang.py                  # One file per language (14 Tier 1)
+│   │   ├── *_lang.py                  # One file per language (17 Tier 1)
 │   │   └── generic_lang.py            # Tier 2 fallback
 │   ├── bridges/
 │   │   ├── base.py, registry.py       # Cross-language bridge framework
@@ -1249,10 +1272,27 @@ roam-code/
 │   │   ├── context_helpers.py         # Data-gathering helpers for context command
 │   │   ├── gate_presets.py            # Framework-specific gate rules
 │   │   └── cmd_*.py                   # One module per command
+│   ├── analysis/
+│   │   └── effects.py                 # Side-effect classification engine
+│   ├── refactor/
+│   │   ├── codegen.py                 # Import generation (Python/JS/Go)
+│   │   └── transforms.py             # move/rename/add-call/extract transforms
+│   ├── rules/
+│   │   └── engine.py                  # YAML rule parser + graph query evaluator
+│   ├── runtime/
+│   │   ├── trace_ingest.py            # OpenTelemetry/Jaeger/Zipkin ingestion
+│   │   └── hotspots.py                # Runtime hotspot analysis
+│   ├── search/
+│   │   ├── tfidf.py                   # TF-IDF semantic search engine
+│   │   └── index_embeddings.py        # Embedding index builder
+│   ├── security/
+│   │   ├── vuln_store.py              # CVE/vulnerability storage
+│   │   └── vuln_reach.py              # Vulnerability reachability paths
 │   └── output/
 │       ├── formatter.py               # Token-efficient formatting
-│       └── sarif.py                   # SARIF 2.1.0 output
-└── tests/                             # Test suite across 30+ test files
+│       ├── sarif.py                   # SARIF 2.1.0 output
+│       └── schema_registry.py         # JSON envelope schema versioning
+└── tests/                             # Test suite across 70 test files
 ```
 
 </details>
@@ -1309,7 +1349,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 2400+ tests must pass
+pytest tests/   # All 2654 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
