@@ -12,6 +12,9 @@ from pathlib import Path
 
 import pytest
 
+# Workspace tests rely on process-global cwd; run sequentially under xdist
+pytestmark = pytest.mark.xdist_group("workspace")
+
 
 # ---------------------------------------------------------------------------
 # Fixtures
