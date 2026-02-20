@@ -301,8 +301,34 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
       1. An explicit $table = 'name' property
       2. A class declaration (converts to snake_case plural)
       3. A Model::where('...') call that names a model class
+
+    To avoid cross-model attribution (e.g. attributing a query on Model B
+    to Model A because Model A appears earlier in the same file), the search
+    window is truncated at the nearest statement boundary (``;``).  We look
+    back at most 2000 chars but stop at the last ``;`` that is NOT immediately
+    followed by a method-chain continuation (``->``) — this preserves chains
+    like ``Model::where(...)->orderBy(...)`` while cutting off prior statements.
     """
-    window = content[max(0, match_pos - 2000): match_pos]
+    raw_window = content[max(0, match_pos - 2000): match_pos]
+
+    # Truncate at the nearest statement boundary (`;') that is not followed
+    # by a chain continuation ('->').  We scan from the end backwards and
+    # stop at the first ';' whose subsequent non-whitespace is NOT '->'.
+    truncated_window = raw_window
+    search_area = raw_window
+    for i in range(len(search_area) - 1, -1, -1):
+        if search_area[i] == ";":
+            # Check if text after the semicolon starts a chain continuation
+            rest = search_area[i + 1:].lstrip()
+            if rest.startswith("->"):
+                # This semicolon is inside a chained expression context;
+                # keep looking further back.
+                continue
+            # Found a real statement boundary — use only content after it
+            truncated_window = search_area[i + 1:]
+            break
+
+    window = truncated_window
 
     # Explicit $table property
     m = list(_RE_TABLE_PROP.finditer(window))
@@ -318,6 +344,16 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     m3 = list(_RE_MODEL_CALL.finditer(window))
     if m3:
         return _class_to_table(m3[-1].group(1))
+
+    # If truncation removed all context, fall back to the full window
+    # for class declarations and $table properties (they are file-level).
+    if window != raw_window:
+        m_full = list(_RE_TABLE_PROP.finditer(raw_window))
+        if m_full:
+            return m_full[-1].group(1)
+        m2_full = list(_RE_CLASS_DECL.finditer(raw_window))
+        if m2_full:
+            return _class_to_table(m2_full[-1].group(1))
 
     return None
 

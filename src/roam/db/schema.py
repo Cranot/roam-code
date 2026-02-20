@@ -212,4 +212,40 @@ CREATE TABLE IF NOT EXISTS snapshots (
     avg_complexity REAL,
     brain_methods INTEGER
 );
+
+-- Runtime trace statistics: ingested from OpenTelemetry/Jaeger/Zipkin/generic traces
+CREATE TABLE IF NOT EXISTS runtime_stats (
+    id INTEGER PRIMARY KEY,
+    symbol_id INTEGER REFERENCES symbols(id),
+    symbol_name TEXT,
+    file_path TEXT,
+    trace_source TEXT,
+    call_count INTEGER DEFAULT 0,
+    p50_latency_ms REAL,
+    p99_latency_ms REAL,
+    error_rate REAL DEFAULT 0.0,
+    last_seen TEXT,
+    ingested_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_runtime_stats_symbol ON runtime_stats(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_runtime_stats_name ON runtime_stats(symbol_name);
+
+-- Security: vulnerability tracking and reachability
+CREATE TABLE IF NOT EXISTS vulnerabilities (
+    id INTEGER PRIMARY KEY,
+    cve_id TEXT,
+    package_name TEXT NOT NULL,
+    severity TEXT,
+    title TEXT,
+    source TEXT,
+    matched_symbol_id INTEGER REFERENCES symbols(id),
+    matched_file TEXT,
+    reachable INTEGER DEFAULT 0,
+    shortest_path TEXT,
+    hop_count INTEGER,
+    ingested_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_vuln_cve ON vulnerabilities(cve_id);
+CREATE INDEX IF NOT EXISTS idx_vuln_package ON vulnerabilities(package_name);
+CREATE INDEX IF NOT EXISTS idx_vuln_symbol ON vulnerabilities(matched_symbol_id);
 """

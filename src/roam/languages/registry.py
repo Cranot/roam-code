@@ -64,6 +64,10 @@ _EXTENSION_MAP: dict[str, str] = {
     ".tf": "hcl",
     ".tfvars": "hcl",
     ".hcl": "hcl",
+    # JSONC (JSON with comments) — aliased to json grammar
+    ".jsonc": "jsonc",
+    # MDX (Markdown + JSX) — aliased to markdown grammar, contains JSX
+    ".mdx": "mdx",
 }
 
 # Languages with dedicated extractors
@@ -85,6 +89,9 @@ _SUPPORTED_LANGUAGES = frozenset({
     "foxpro",
     "yaml",
     "hcl",
+    # Aliased variants
+    "jsonc",
+    "mdx",
 })
 
 
