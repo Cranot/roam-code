@@ -9,8 +9,7 @@ from collections import Counter, defaultdict
 import networkx as nx
 
 from roam.db.connection import batched_in
-from roam.graph.clusters import detect_clusters, cluster_quality
-from roam.graph.layers import detect_layers
+from roam.graph.clusters import detect_clusters
 
 
 def partition_for_agents(

@@ -115,7 +115,6 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
         click.echo(line)
 
     if not apply_changes:
-        from_f = result.get("from_file", "?")
         click.echo(f"Run `roam mutate move {symbol} {target_file} --apply` to execute.")
 
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 
 import click
 
@@ -160,7 +159,7 @@ def _test_map_file(conn, path):
             (frow["id"],),
         ).fetchall()
         if risky:
-            click.echo(f"\nSuggested symbols to test (by importance):")
+            click.echo("\nSuggested symbols to test (by importance):")
             for r in risky:
                 pr = r["pagerank"] or 0
                 click.echo(f"  {abbrev_kind(r['kind'])}  {r['name']}  (PR={pr:.4f}, in={r['in_degree']})")

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import math
 
 from roam.search.tfidf import tokenize, cosine_similarity
 

@@ -542,7 +542,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         click.echo()
 
         # Section 2: Invariants
-        click.echo(f"2. INVARIANTS TO PRESERVE:")
+        click.echo("2. INVARIANTS TO PRESERVE:")
         if invariants:
             for inv in invariants:
                 sig = inv["signature"] or inv["name"]
@@ -554,7 +554,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         click.echo()
 
         # Section 3: Safe modification points
-        click.echo(f"3. SAFE MODIFICATION POINTS:")
+        click.echo("3. SAFE MODIFICATION POINTS:")
         if safe_points:
             for sp in safe_points[:10]:
                 click.echo(
@@ -566,7 +566,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         click.echo()
 
         # Section 4: Touch carefully
-        click.echo(f"4. TOUCH CAREFULLY:")
+        click.echo("4. TOUCH CAREFULLY:")
         if touch_carefully:
             for tc in touch_carefully[:10]:
                 click.echo(
@@ -590,7 +590,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         click.echo()
 
         # Section 6: Post-change verification
-        click.echo(f"6. POST-CHANGE VERIFICATION:")
+        click.echo("6. POST-CHANGE VERIFICATION:")
         for pc in post_change:
             click.echo(f"   - {pc['command']}")
         click.echo()

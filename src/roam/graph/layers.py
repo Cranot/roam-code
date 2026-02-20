@@ -25,9 +25,11 @@ def detect_layers(G: nx.DiGraph) -> dict[int, int]:
     node_to_scc: dict[int, int] = condensation.graph["mapping"]
 
     # Compute layers on the condensed DAG
+    topo_order = list(nx.topological_sort(condensation))
+    pred_map = {n: list(condensation.predecessors(n)) for n in topo_order}
     scc_layers: dict[int, int] = {}
-    for scc_node in nx.topological_sort(condensation):
-        preds = list(condensation.predecessors(scc_node))
+    for scc_node in topo_order:
+        preds = pred_map[scc_node]
         if not preds:
             scc_layers[scc_node] = 0
         else:

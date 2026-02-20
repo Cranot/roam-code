@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 from collections import Counter
+from pathlib import Path
 
 import click
 
@@ -151,7 +152,7 @@ def _section_architecture(conn):
 
         if layers:
             layer_counts = Counter(layers.values())
-            lines.append(f"- **Layer distribution:** " +
+            lines.append("- **Layer distribution:** " +
                          ", ".join(f"L{k}: {v} symbols" for k, v in sorted(layer_counts.items())[:5]))
     except Exception:
         lines.append("Architecture analysis not available (graph module not loaded).")
@@ -161,7 +162,6 @@ def _section_architecture(conn):
 def _section_testing(conn):
     """Test directories, test file count, test-to-source ratio."""
     lines = ["", "## Testing", ""]
-    test_patterns = ["test_", "_test.", ".test.", ".spec.", "tests/", "test/", "__tests__/", "spec/"]
     files = conn.execute("SELECT path FROM files").fetchall()
     all_paths = [f["path"].replace("\\", "/") for f in files]
 

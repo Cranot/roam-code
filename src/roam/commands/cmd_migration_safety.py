@@ -37,7 +37,6 @@ purely line-based regex analysis.
 
 from __future__ import annotations
 
-import os
 import re
 from collections import defaultdict
 from pathlib import Path
@@ -45,7 +44,7 @@ from pathlib import Path
 import click
 
 from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import loc, to_json, json_envelope
+from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 

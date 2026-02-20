@@ -18,7 +18,7 @@ from __future__ import annotations
 import json
 import os
 
-from roam.catalog.tasks import CATALOG, best_way
+from roam.catalog.tasks import best_way
 
 
 def _is_test_path(path: str) -> bool:

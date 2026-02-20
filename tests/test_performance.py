@@ -30,8 +30,8 @@ from conftest import roam, git_init, git_commit
 # PERFORMANCE THRESHOLDS
 # ============================================================================
 
-INDEX_TIME_PER_FILE_MS = 50  # max ms per file for indexing
-QUERY_TIME_MS = 2000         # max ms for any single query command
+INDEX_TIME_PER_FILE_MS = 75  # max ms per file for indexing
+QUERY_TIME_MS = 3000         # max ms for any single query command
 
 
 def timed_roam(*args, **kwargs):

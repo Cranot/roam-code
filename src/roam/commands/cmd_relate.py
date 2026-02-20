@@ -76,7 +76,6 @@ def _compute_distance_matrix(G, input_ids, depth):
 
     undirected = G.to_undirected()
     matrix = {}
-    input_set = set(input_ids)
     for i, src in enumerate(input_ids):
         for j, tgt in enumerate(input_ids):
             if i >= j:
@@ -230,7 +229,6 @@ def relate(ctx, symbols, files, depth):
 
         # Build relationship list for each pair
         relationships = []
-        input_set = set(input_ids)
         for i, src in enumerate(input_ids):
             for j, tgt in enumerate(input_ids):
                 if i >= j:

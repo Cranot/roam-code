@@ -886,15 +886,12 @@ class CSharpExtractor(LanguageExtractor):
 
     def _extract_using(self, node, source, refs, scope_name):
         """extract using directive as import reference."""
-        is_static = False
         alias_name = None
         import_path = None
         has_equals = any(c.type == "=" for c in node.children)
 
         for child in node.children:
-            if child.type == "static":
-                is_static = True
-            elif child.type == "name_equals":
+            if child.type == "name_equals":
                 # some grammar versions wrap alias in name_equals
                 for gc in child.children:
                     if gc.type == "identifier":

@@ -12,7 +12,7 @@ from roam.graph.builder import build_symbol_graph, build_file_graph
 from roam.graph.pagerank import compute_pagerank
 from roam.graph.clusters import detect_clusters, label_clusters
 from roam.graph.cycles import find_cycles
-from roam.output.formatter import abbrev_kind, to_json, json_envelope
+from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 

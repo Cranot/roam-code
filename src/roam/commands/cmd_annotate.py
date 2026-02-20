@@ -10,7 +10,7 @@ from __future__ import annotations
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import loc, to_json, json_envelope
+from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
 
 

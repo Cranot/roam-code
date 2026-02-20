@@ -29,7 +29,6 @@ Confidence levels:
 from __future__ import annotations
 
 from collections import defaultdict
-import os
 import re
 
 import click
@@ -568,7 +567,6 @@ def _build_findings(
                         c for c in query_cols if not _column_has_any_index(c, indexed)
                     ]
                     confidence = "high" if pat.has_paginate else "medium"
-                    col_str = " + ".join(query_cols)
                     fix_cols = ", ".join(query_cols)
                     findings.append({
                         "confidence": confidence,
@@ -726,9 +724,6 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
         ).fetchall()
         all_php_paths = [r["path"] for r in all_php]
 
-        # Count for summary
-        total_php = len(all_php_paths)
-
         # Step 1: Separate migration files from query source files
         migration_paths = [p for p in all_php_paths if _is_migration_path(p)]
         source_paths = [
@@ -839,7 +834,7 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
             click.echo(f"          Issue: {f['issue']}")
             click.echo(f"          Query: {f['query_location']}")
             if f.get("has_paginate"):
-                click.echo(f"          (paginated query — high impact)")
+                click.echo("          (paginated query — high impact)")
             click.echo(f"          Fix: {f['suggestion']}")
 
         for table_name in sorted(by_table.keys()):

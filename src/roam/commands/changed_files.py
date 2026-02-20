@@ -6,7 +6,7 @@ import os
 import subprocess
 from pathlib import Path
 
-from roam.index.file_roles import classify_file, is_test as _roles_is_test, ROLE_SOURCE
+from roam.index.file_roles import classify_file, is_test as _roles_is_test
 
 
 # ---------------------------------------------------------------------------
@@ -112,15 +112,17 @@ def resolve_changed_to_db(conn, changed_paths: list[str]) -> dict[str, int]:
     prefixes and normalisation differences).
     """
     file_map: dict[str, int] = {}
+    all_files = conn.execute("SELECT id, path FROM files").fetchall()
+    exact: dict[str, tuple[int, str]] = {}
+    for f in all_files:
+        exact[f["path"]] = (f["id"], f["path"])
     for path in changed_paths:
-        row = conn.execute(
-            "SELECT id, path FROM files WHERE path = ?", (path,)
-        ).fetchone()
-        if not row:
-            row = conn.execute(
-                "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
-                (f"%{path}",),
-            ).fetchone()
-        if row:
-            file_map[row["path"]] = row["id"]
+        hit = exact.get(path)
+        if not hit:
+            for f_id, f_path in exact.values():
+                if f_path.endswith(path):
+                    hit = (f_id, f_path)
+                    break
+        if hit:
+            file_map[hit[1]] = hit[0]
     return file_map

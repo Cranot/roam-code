@@ -9,7 +9,6 @@ the index, not hand-written documentation.
 from __future__ import annotations
 
 import click
-import networkx as nx
 
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph

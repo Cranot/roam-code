@@ -194,7 +194,6 @@ class JavaMavenConvention(TestConvention):
         p = source_path.replace("\\", "/")
         if "src/test/" in p:
             return []
-        name = os.path.splitext(os.path.basename(p))[0]
         test_path = p.replace("src/main/", "src/test/")
         test_name = os.path.splitext(test_path)[0]
         return [f"{test_name}Test.java", f"{test_name}Tests.java"]

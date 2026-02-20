@@ -389,7 +389,7 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
 
             # Forecasts
             if analysis["forecasts"]:
-                click.echo(f"\nForecasts:")
+                click.echo("\nForecasts:")
                 for f in analysis["forecasts"]:
                     click.echo(
                         f"  FORECAST: {f['metric']} will reach {f['target']} "

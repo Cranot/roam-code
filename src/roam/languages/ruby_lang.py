@@ -45,6 +45,8 @@ class RubyExtractor(LanguageExtractor):
 
     # ---- Symbol extraction ----
 
+    _ATTR_METHODS = frozenset({"attr_reader", "attr_writer", "attr_accessor"})
+
     def _walk_symbols(self, node, source, symbols, parent_name):
         for child in node.children:
             ntype = child.type
@@ -58,6 +60,8 @@ class RubyExtractor(LanguageExtractor):
                 self._extract_singleton_method(child, source, symbols, parent_name)
             elif ntype == "assignment":
                 self._extract_assignment(child, source, symbols, parent_name)
+            elif ntype == "call":
+                self._maybe_extract_attr(child, source, symbols, parent_name)
             elif ntype in ("body_statement", "program", "then", "else", "begin"):
                 self._walk_symbols(child, source, symbols, parent_name)
 
@@ -210,6 +214,37 @@ class RubyExtractor(LanguageExtractor):
             parent_name=parent_name,
             default_value=value_text,
         ))
+
+    def _maybe_extract_attr(self, node, source, symbols, parent_name):
+        """Extract attr_reader/attr_writer/attr_accessor as property symbols."""
+        method_node = node.child_by_field_name("method")
+        if method_node is None:
+            return
+        method_name = self.node_text(method_node, source)
+        if method_name not in self._ATTR_METHODS:
+            return
+        receiver = node.child_by_field_name("receiver")
+        if receiver is not None:
+            return
+        args_node = node.child_by_field_name("arguments")
+        if args_node is None:
+            return
+        for child in args_node.children:
+            if child.type == "simple_symbol":
+                sym_text = self.node_text(child, source)
+                name = sym_text.lstrip(":")
+                qualified = f"{parent_name}#{name}" if parent_name else name
+                symbols.append(self._make_symbol(
+                    name=name,
+                    kind="property",
+                    line_start=node.start_point[0] + 1,
+                    line_end=node.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=f"{method_name} :{name}",
+                    visibility="public",
+                    is_exported=True,
+                    parent_name=parent_name,
+                ))
 
     # ---- Reference extraction ----
 

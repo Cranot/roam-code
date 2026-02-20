@@ -7,7 +7,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.db.queries import (
-    ALL_FILES, FILE_COUNT, TOP_SYMBOLS_BY_PAGERANK,
+    ALL_FILES, TOP_SYMBOLS_BY_PAGERANK,
 )
 from roam.output.formatter import (
     abbrev_kind, loc, format_signature, format_table, section, to_json,

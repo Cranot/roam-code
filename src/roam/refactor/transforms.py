@@ -133,7 +133,6 @@ def move_symbol(conn, symbol_name: str, target_file: str,
     symbol_lines = source_lines[start_idx:end_idx]
     symbol_line_count = len(symbol_lines)
 
-    language = detect_language(source_file)
     old_module = _module_name_from_path(source_file)
     new_module = _module_name_from_path(target_file)
 

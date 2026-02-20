@@ -4,9 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import subprocess
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -90,7 +88,7 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
         from roam.commands.changed_files import is_low_risk_file
         from roam.commands.cmd_coupling import _compute_surprise
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
+        from roam.graph.layers import detect_layers  # noqa: F401
         import networkx as nx
     except ImportError:
         return None
@@ -197,7 +195,6 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
         familiarity_risk, _ = _author_familiarity(conn, author, file_map)
 
     # Composite risk score
-    import math
     _factors = [
         min(blast_pct / 100, 0.40),
         hotspot_score * 0.30,
@@ -524,8 +521,8 @@ def _format_markdown(attestation, evidence, verdict):
     br = evidence.get("blast_radius", {})
     lines.append("### Blast Radius")
     lines.append("")
-    lines.append(f"| Metric | Value |")
-    lines.append(f"|--------|-------|")
+    lines.append("| Metric | Value |")
+    lines.append("|--------|-------|")
     lines.append(f"| Changed files | {br.get('changed_files', 0)} |")
     lines.append(f"| Affected symbols | {br.get('affected_symbols', 0)} |")
     lines.append(f"| Affected files | {br.get('affected_files', 0)} |")

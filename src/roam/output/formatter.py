@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json as _json
-import os
 import time
 from datetime import datetime, timezone
 
@@ -91,9 +90,10 @@ def format_table(headers: list[str], rows: list[list[str]],
     if not rows:
         return "(none)"
     widths = [len(h) for h in headers]
+    num_cols = len(widths)
     for row in rows:
         for i, cell in enumerate(row):
-            if i < len(widths):
+            if i < num_cols:
                 widths[i] = max(widths[i], len(str(cell)))
     lines = []
     header_line = "  ".join(h.ljust(widths[i]) for i, h in enumerate(headers))

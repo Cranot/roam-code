@@ -7,7 +7,7 @@ from collections import Counter
 import click
 
 from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
+from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 

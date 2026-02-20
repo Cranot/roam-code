@@ -713,7 +713,7 @@ def _understand_text(
         click.echo()
 
     if debt_hotspots:
-        click.echo(f"Debt hotspots:")
+        click.echo("Debt hotspots:")
         for d in debt_hotspots:
             click.echo(
                 f"  {d['path']:<50s}  "
@@ -721,6 +721,6 @@ def _understand_text(
             )
         click.echo()
 
-    click.echo(f"Suggested reading order:")
+    click.echo("Suggested reading order:")
     for ro in reading_order:
         click.echo(f"  {ro['priority']:>2d}. {ro['path']:<50s}  ({ro['reason']})")

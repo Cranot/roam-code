@@ -125,16 +125,6 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
         return []
 
     routes = []
-    lines = source.splitlines()
-
-    # Track active prefix stack (very simplified — handles one level)
-    # We do a first pass to collect prefix blocks, then match routes.
-    # For the purposes of orphan detection the path segment matching is
-    # loose, so prefix tracking is best-effort.
-    current_prefix = ""
-    prefix_match = _PREFIX_RE.search(source)
-    if prefix_match:
-        current_prefix = prefix_match.group(1).strip("/")
 
     def _line_of(match):
         """Return 1-based line number for a regex match in 'source'."""
@@ -478,7 +468,6 @@ def _analyse_orphan_routes(project_root: Path,
 
         # Remove the route files themselves and the controller file from matches
         controller_name = route.get("controller") or ""
-        controller_snake = re.sub(r'([A-Z])', r'_\1', controller_name).lower().lstrip("_")
 
         def _is_self_reference(file_path: str) -> bool:
             norm = file_path.replace("\\", "/")

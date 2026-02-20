@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, find_project_root
+from roam.db.connection import open_db
 from roam.output.formatter import to_json, json_envelope, abbrev_kind
 from roam.commands.resolve import ensure_index
 
@@ -279,7 +279,7 @@ def _show_by_type(ctx, conn, effect_type, transitive, json_mode):
     for r in rows:
         kind = abbrev_kind(r["kind"])
         loc = f"{r['path']}:{r['line_start']}" if r["line_start"] else r["path"]
-        source = f" (transitive)" if r["source"] == "transitive" else ""
+        source = " (transitive)" if r["source"] == "transitive" else ""
         click.echo(f"  {kind} {r['name']}{source}    {loc}")
 
 

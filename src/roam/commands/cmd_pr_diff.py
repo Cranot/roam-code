@@ -213,7 +213,7 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
 def _emit_markdown(verdict, deltas, deltas_available, edges,
                    sym_changes, footprint, changed):
     """Emit GitHub/GitLab compatible markdown output."""
-    click.echo(f"## PR Structural Diff")
+    click.echo("## PR Structural Diff")
     click.echo()
     click.echo(f"**Verdict:** {verdict}")
     click.echo()

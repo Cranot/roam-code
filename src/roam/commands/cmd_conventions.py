@@ -617,7 +617,7 @@ def conventions(ctx, max_outliers):
             click.echo("  (no import edges found)")
 
         # -- Error handling --
-        click.echo(f"\n=== Error Handling ===")
+        click.echo("\n=== Error Handling ===")
         if error_info["error_symbol_count"] > 0:
             click.echo(
                 f"  {error_info['error_symbol_count']} error-related symbols "

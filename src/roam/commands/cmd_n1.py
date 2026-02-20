@@ -24,14 +24,13 @@ Detection algorithm:
 from __future__ import annotations
 
 from collections import defaultdict
-import json
 import os
 import re
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
+from roam.db.connection import open_db
+from roam.output.formatter import loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 
 
@@ -856,7 +855,7 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
                 click.echo(f"        Fix: {f['suggestion']}")
 
                 if verbose and f["collection_contexts"]:
-                    click.echo(f"        Used in:")
+                    click.echo("        Used in:")
                     for ctx_info in f["collection_contexts"]:
                         click.echo(f"          {ctx_info['type']}: {ctx_info['location']}")
 

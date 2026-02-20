@@ -7,7 +7,7 @@ from collections import defaultdict
 import click
 
 from roam.db.connection import open_db, batched_in
-from roam.output.formatter import format_table, to_json, json_envelope, loc
+from roam.output.formatter import to_json, json_envelope, loc
 from roam.commands.resolve import ensure_index
 
 

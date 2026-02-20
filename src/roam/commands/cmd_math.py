@@ -7,9 +7,9 @@ from collections import defaultdict
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
+from roam.output.formatter import abbrev_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-from roam.catalog.tasks import CATALOG, get_task, best_way, get_tip
+from roam.catalog.tasks import get_task, get_tip
 
 
 @click.command()

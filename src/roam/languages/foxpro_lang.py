@@ -603,8 +603,6 @@ class FoxProExtractor(LanguageExtractor):
             if not stripped:
                 continue
 
-            upper = stripped.upper()
-
             # ENDDEFINE
             if _RE_ENDDEFINE.match(stripped):
                 _close_func_at(orig)
@@ -742,8 +740,6 @@ class FoxProExtractor(LanguageExtractor):
             stripped = line.strip()
             if not stripped:
                 continue
-
-            upper = stripped.upper()
 
             # Track scope
             m = _RE_CLASS.match(stripped)

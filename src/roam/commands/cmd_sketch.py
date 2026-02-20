@@ -1,6 +1,5 @@
 """Compact structural skeleton of a directory — API surface without implementation."""
 
-import os
 from collections import defaultdict
 
 import click

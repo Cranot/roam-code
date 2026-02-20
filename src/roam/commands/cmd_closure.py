@@ -254,9 +254,9 @@ def closure(ctx, name, rename, delete_mode):
         if rename:
             click.echo(f"Mode: rename -> {rename}")
         elif delete_mode:
-            click.echo(f"Mode: delete")
+            click.echo("Mode: delete")
         else:
-            click.echo(f"Mode: modify")
+            click.echo("Mode: modify")
         click.echo()
 
         for change_type in sorted(by_type.keys()):

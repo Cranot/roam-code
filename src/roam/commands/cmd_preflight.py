@@ -5,24 +5,20 @@ and fitness violations into a single call -- reducing round-trips for AI
 agents from 5-6 calls to 1.
 """
 
-import os
 from collections import Counter, defaultdict
-from pathlib import Path
 
 import click
 
 from roam.db.connection import open_db, find_project_root
 from roam.output.formatter import (
-    abbrev_kind, loc, to_json, json_envelope,
+    loc, to_json, json_envelope,
 )
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.changed_files import (
     get_changed_files,
     resolve_changed_to_db,
-    is_test_file,
 )
 from roam.commands.cmd_affected_tests import (
-    _bfs_reverse_callers,
     _gather_affected_tests,
     _resolve_file_symbols,
     _looks_like_file,
