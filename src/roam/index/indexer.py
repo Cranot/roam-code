@@ -81,6 +81,15 @@ def _try_import_git_stats():
         return None
 
 
+def _try_import_effects():
+    """Try to import the effect classification module."""
+    try:
+        from roam.analysis.effects import compute_and_store_effects
+        return compute_and_store_effects
+    except ImportError:
+        return None
+
+
 def _log(msg: str):
     print(msg, file=sys.stderr, flush=True)
 
@@ -840,6 +849,20 @@ class Indexer:
                     _log(f"  Clustering failed: {e}")
             else:
                 _log("Skipping clustering (module not available)")
+
+            # Effect classification + propagation
+            _effects_fn = _try_import_effects()
+            if _effects_fn is not None:
+                _log("Classifying symbol effects...")
+                try:
+                    _effects_fn(conn, self.root, G)
+                    effect_count = conn.execute(
+                        "SELECT COUNT(*) FROM symbol_effects"
+                    ).fetchone()[0]
+                    if effect_count:
+                        _log(f"  {effect_count} effects classified")
+                except Exception as e:
+                    _log(f"  Effect analysis failed: {e}")
 
             # Per-file health scores
             _log("Computing per-file health scores...")
