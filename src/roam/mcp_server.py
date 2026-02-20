@@ -13,6 +13,7 @@ Usage:
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 
 try:
@@ -22,6 +23,27 @@ except ImportError:
         "fastmcp is required for the roam MCP server.  "
         "Install it with:  pip install fastmcp"
     )
+
+# ---------------------------------------------------------------------------
+# Lite mode: expose only ~15 core tools when ROAM_MCP_LITE=1
+# ---------------------------------------------------------------------------
+
+_LITE = os.environ.get("ROAM_MCP_LITE", "").lower() in ("1", "true", "yes")
+
+_CORE_TOOLS = {
+    "understand", "health", "preflight", "search_symbol", "context",
+    "trace", "impact", "file_info", "pr_risk", "affected_tests",
+    "dead_code", "complexity_report", "diagnose", "visualize", "closure",
+}
+
+
+def _tool():
+    """MCP tool decorator. In lite mode (ROAM_MCP_LITE=1), only core tools register."""
+    def decorator(fn):
+        if _LITE and fn.__name__ not in _CORE_TOOLS:
+            return fn
+        return mcp.tool()(fn)
+    return decorator
 
 # ---------------------------------------------------------------------------
 # Server instance
@@ -87,7 +109,7 @@ def _run_roam(args: list[str], root: str = ".") -> dict:
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def understand(root: str = ".") -> dict:
     """Get a full codebase briefing in a single call.
 
@@ -105,7 +127,7 @@ def understand(root: str = ".") -> dict:
     return _run_roam(["understand"], root)
 
 
-@mcp.tool()
+@_tool()
 def health(root: str = ".") -> dict:
     """Get the codebase health score (0-100) with issue breakdown.
 
@@ -121,7 +143,7 @@ def health(root: str = ".") -> dict:
     return _run_roam(["health"], root)
 
 
-@mcp.tool()
+@_tool()
 def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
@@ -151,7 +173,7 @@ def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def search_symbol(query: str, root: str = ".") -> dict:
     """Find symbols by name (case-insensitive substring match).
 
@@ -172,7 +194,7 @@ def search_symbol(query: str, root: str = ".") -> dict:
     return _run_roam(["search", query], root)
 
 
-@mcp.tool()
+@_tool()
 def context(symbol: str, task: str = "", root: str = ".") -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
@@ -201,7 +223,7 @@ def context(symbol: str, task: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def trace(source: str, target: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
@@ -223,7 +245,7 @@ def trace(source: str, target: str, root: str = ".") -> dict:
     return _run_roam(["trace", source, target], root)
 
 
-@mcp.tool()
+@_tool()
 def impact(symbol: str, root: str = ".") -> dict:
     """Show the blast radius of changing a symbol.
 
@@ -243,7 +265,7 @@ def impact(symbol: str, root: str = ".") -> dict:
     return _run_roam(["impact", symbol], root)
 
 
-@mcp.tool()
+@_tool()
 def file_info(path: str, root: str = ".") -> dict:
     """Show a file skeleton: every symbol definition with its signature.
 
@@ -268,7 +290,7 @@ def file_info(path: str, root: str = ".") -> dict:
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def pr_risk(staged: bool = False, root: str = ".") -> dict:
     """Compute a risk score (0-100) for pending changes.
 
@@ -291,7 +313,7 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
     """Detect breaking API changes between git refs.
 
@@ -311,7 +333,7 @@ def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
     return _run_roam(["breaking", target], root)
 
 
-@mcp.tool()
+@_tool()
 def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Find test files that exercise the changed code.
 
@@ -338,7 +360,7 @@ def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> d
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
     """Detect suboptimal algorithms and suggest better approaches.
 
@@ -366,7 +388,7 @@ def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") -> dict:
     """Detect dark matter: file pairs that co-change but have no structural link.
 
@@ -392,7 +414,7 @@ def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") 
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 
@@ -406,7 +428,7 @@ def dead_code(root: str = ".") -> dict:
     return _run_roam(["dead"], root)
 
 
-@mcp.tool()
+@_tool()
 def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     """Rank functions by cognitive complexity.
 
@@ -426,7 +448,7 @@ def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     return _run_roam(["complexity", "--threshold", str(threshold)], root)
 
 
-@mcp.tool()
+@_tool()
 def repo_map(budget: int = 0, root: str = ".") -> dict:
     """Show a compact project skeleton with key symbols.
 
@@ -449,7 +471,7 @@ def repo_map(budget: int = 0, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def tour(root: str = ".") -> dict:
     """Generate a codebase onboarding guide.
 
@@ -468,7 +490,7 @@ def tour(root: str = ".") -> dict:
     return _run_roam(["tour"], root)
 
 
-@mcp.tool()
+@_tool()
 def visualize(
     focus: str = "",
     format: str = "mermaid",
@@ -518,7 +540,7 @@ def visualize(
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     """Root cause analysis for a failing symbol.
 
@@ -543,7 +565,7 @@ def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def relate(symbols: list[str], files: list[str] | None = None,
            depth: int = 3, root: str = ".") -> dict:
     """Show how a set of symbols relate: shared deps, call chains, conflicts.
@@ -580,7 +602,7 @@ def relate(symbols: list[str], files: list[str] | None = None,
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def annotate_symbol(
     target: str, content: str,
     tag: str = "", author: str = "", expires: str = "",
@@ -618,7 +640,7 @@ def annotate_symbol(
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def get_annotations(
     target: str = "", tag: str = "", since: str = "",
     root: str = ".",
@@ -682,7 +704,7 @@ def get_summary_resource() -> str:
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def ws_understand(root: str = ".") -> dict:
     """Get a unified overview of a multi-repo workspace.
 
@@ -702,7 +724,7 @@ def ws_understand(root: str = ".") -> dict:
     return _run_roam(["ws", "understand"], root)
 
 
-@mcp.tool()
+@_tool()
 def ws_context(symbol: str, root: str = ".") -> dict:
     """Get cross-repo augmented context for a symbol.
 
@@ -722,7 +744,7 @@ def ws_context(symbol: str, root: str = ".") -> dict:
     return _run_roam(["ws", "context", symbol], root)
 
 
-@mcp.tool()
+@_tool()
 def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Show structural consequences of code changes (graph delta).
 
@@ -749,7 +771,7 @@ def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> di
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def effects(target: str = "", file: str = "", effect_type: str = "", root: str = ".") -> dict:
     """Show side effects of functions (DB writes, network, filesystem, etc.).
 
@@ -780,7 +802,7 @@ def effects(target: str = "", file: str = "", effect_type: str = "", root: str =
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def budget_check(config: str = "", staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Check pending changes against architectural budgets.
 
@@ -811,7 +833,7 @@ def budget_check(config: str = "", staged: bool = False, commit_range: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def attest(commit_range: str = "", staged: bool = False, output_format: str = "json",
            sign: bool = False, root: str = ".") -> dict:
     """Generate a proof-carrying PR attestation with all evidence bundled.
@@ -846,7 +868,7 @@ def attest(commit_range: str = "", staged: bool = False, output_format: str = "j
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root: str = ".") -> dict:
     """Export a sanitized structural graph without function bodies.
 
@@ -872,7 +894,7 @@ def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def path_coverage(from_pattern: str = "", to_pattern: str = "",
                   max_depth: int = 8, root: str = ".") -> dict:
     """Find critical call paths with zero test protection.
@@ -903,7 +925,7 @@ def path_coverage(from_pattern: str = "", to_pattern: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def forecast(symbol: str = "", horizon: int = 30,
              alert_only: bool = False, root: str = ".") -> dict:
     """Predict when metrics will exceed thresholds.
@@ -934,7 +956,7 @@ def forecast(symbol: str = "", horizon: int = 30,
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def generate_plan(target: str = "", task: str = "refactor",
                   file_path: str = "", staged: bool = False,
                   depth: int = 2, root: str = ".") -> dict:
@@ -974,7 +996,7 @@ def generate_plan(target: str = "", task: str = "refactor",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def adversarial_review(staged: bool = False, commit_range: str = "",
                        severity: str = "low", root: str = ".") -> dict:
     """Adversarial architecture review — challenge code changes.
@@ -1005,7 +1027,7 @@ def adversarial_review(staged: bool = False, commit_range: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def cut_analysis(between_a: str = "", between_b: str = "",
                  leak_edges: bool = False, top_n: int = 10,
                  root: str = ".") -> dict:
@@ -1039,7 +1061,7 @@ def cut_analysis(between_a: str = "", between_b: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def get_invariants(target: str = "", public_api: bool = False,
                    breaking_risk: bool = False, top_n: int = 20,
                    root: str = ".") -> dict:
@@ -1074,7 +1096,7 @@ def get_invariants(target: str = "", public_api: bool = False,
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def bisect_blame(metric: str = "health_score", threshold: float = 0,
                  direction: str = "degraded", top_n: int = 10,
                  root: str = ".") -> dict:
@@ -1108,7 +1130,7 @@ def bisect_blame(metric: str = "health_score", threshold: float = 0,
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def simulate(operation: str, symbol: str = "", target_file: str = "",
              file_a: str = "", file_b: str = "", root: str = ".") -> dict:
     """Simulate a structural change and predict metric deltas.
@@ -1151,7 +1173,7 @@ def simulate(operation: str, symbol: str = "", target_file: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def closure(symbol: str, rename: str = "", delete: bool = False, root: str = ".") -> dict:
     """Compute the minimal set of changes needed when modifying a symbol.
 
@@ -1181,7 +1203,7 @@ def closure(symbol: str, rename: str = "", delete: bool = False, root: str = "."
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def doc_intent(symbol: str = "", doc: str = "",
                drift: bool = False, undocumented: bool = False,
                top_n: int = 20, root: str = ".") -> dict:
@@ -1221,7 +1243,7 @@ def doc_intent(symbol: str = "", doc: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def fingerprint(compact: bool = False, export_path: str = "",
                 compare_path: str = "", root: str = ".") -> dict:
     """Extract a topology fingerprint for cross-repo comparison.
@@ -1254,7 +1276,7 @@ def fingerprint(compact: bool = False, export_path: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     """Evaluate custom governance rules defined in .roam/rules/.
 
@@ -1281,7 +1303,7 @@ def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def orchestrate(n_agents: int, files: list[str] | None = None,
                 staged: bool = False, root: str = ".") -> dict:
     """Partition codebase for parallel multi-agent work (swarm orchestration).
@@ -1312,7 +1334,7 @@ def orchestrate(n_agents: int, files: list[str] | None = None,
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def mutate(operation: str, symbol: str = "", target_file: str = "",
            new_name: str = "", from_symbol: str = "", to_symbol: str = "",
            args: str = "", lines: str = "", apply: bool = False,
@@ -1378,7 +1400,7 @@ def mutate(operation: str, symbol: str = "", target_file: str = "",
     return _run_roam(cmd_args, root)
 
 
-@mcp.tool()
+@_tool()
 def vuln_map(npm_audit: str = "", pip_audit: str = "", trivy: str = "",
              osv: str = "", generic: str = "", root: str = ".") -> dict:
     """Ingest vulnerability scanner reports and match to codebase symbols.
@@ -1418,7 +1440,7 @@ def vuln_map(npm_audit: str = "", pip_audit: str = "", trivy: str = "",
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
     """Query reachability of ingested vulnerabilities through the call graph.
 
@@ -1450,7 +1472,7 @@ def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
     """Ingest runtime traces and match spans to symbols.
 
@@ -1478,7 +1500,7 @@ def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@mcp.tool()
+@_tool()
 def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
                      root: str = ".") -> dict:
     """Show runtime hotspots where static and runtime rankings disagree.
@@ -1510,7 +1532,7 @@ def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
 # ===================================================================
 
 
-@mcp.tool()
+@_tool()
 def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
                     root: str = ".") -> dict:
     """Find symbols by natural language query using TF-IDF semantic search.

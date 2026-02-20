@@ -712,8 +712,16 @@ fastmcp run roam.mcp_server:mcp
 
 48 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
+**Lite mode:** For smaller models or latency-sensitive setups, set `ROAM_MCP_LITE=1` to expose only 15 core tools:
+
+```bash
+ROAM_MCP_LITE=1 fastmcp run roam.mcp_server:mcp
+```
+
+Core tools in lite mode: `understand`, `health`, `preflight`, `search_symbol`, `context`, `trace`, `impact`, `file_info`, `pr_risk`, `affected_tests`, `dead_code`, `complexity_report`, `diagnose`, `visualize`, `closure`.
+
 <details>
-<summary><strong>MCP tool list</strong></summary>
+<summary><strong>MCP tool list (all 48)</strong></summary>
 
 | Tool | Description |
 |------|-------------|

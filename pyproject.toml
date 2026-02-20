@@ -55,7 +55,7 @@ where = ["src"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-q --tb=short -n auto --dist loadgroup"
+addopts = "-q --tb=short"
 markers = [
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
 ]
