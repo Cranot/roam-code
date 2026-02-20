@@ -94,19 +94,14 @@ These items appear as unchecked in `README.md` lines 1250-1254.
 **Goal:** Write 12 test files (~545 tests) using CliRunner, shared fixtures, JSON
 contract validation, snapshot testing, and property-based testing.
 
-**Status: PARTIALLY DONE**
+**Status: DONE**
 
 Implemented files:
 - `test_smoke.py`, `test_json_contracts.py`, `test_formatters.py`, `test_languages.py`
 - `test_commands_exploration.py`, `test_commands_health.py`, `test_commands_architecture.py`
 - `test_commands_workflow.py`, `test_commands_refactoring.py`
-
-Still missing:
-- `test_properties.py` — Hypothesis property-based fuzz tests for search, formatters, `batched_in`
+- `test_properties.py` — Property-based tests for search, formatters, `batched_in`
 - `test_index.py` — Full/incremental indexing integration tests, language detection
-
-Also missing from plan:
-- Dev dependencies not added: `jsonschema`, `syrupy`, `pytest-timeout`, `hypothesis`
 
 ---
 
@@ -122,25 +117,19 @@ Three-layer architecture:
 2. Bridge plugins (auto-discovered `bridge_*.py` files)
 3. Heuristic string-literal matching (REST URLs, CSS classes, SQL tables, config refs)
 
-**Status: PARTIALLY DONE**
+**Status: DONE**
 
 Implemented:
 - `bridges/base.py` — `LanguageBridge` ABC
-- `bridges/registry.py` — Bridge auto-discovery
+- `bridges/registry.py` — Bridge auto-discovery (5 bridges)
 - `bridges/bridge_salesforce.py` — Apex/Aura/LWC/Visualforce
 - `bridges/bridge_protobuf.py` — .proto to Go/Java/Python stubs
-
-Not implemented:
-- `bridge_rest_api.py` — URL string matching frontend<->backend
-- `bridge_template.py` — Template engine to host language
-- `bridge_config.py` — Config string to code symbol
+- `bridges/bridge_rest_api.py` — URL string matching frontend<->backend
+- `bridges/bridge_template.py` — Template engine to host language (Jinja2/Django/ERB/Handlebars)
+- `bridges/bridge_config.py` — Config/env var reads to .env/.yml definitions
 - Schema columns: `bridge TEXT` and `confidence REAL` on edges table
 - `roam x-lang` command showing cross-language boundaries
-- Heuristic string-literal matching layer (Layer 3)
-
-Implementation phases remaining:
-- Phase 4: Add heuristic bridges one at a time (REST API, templates, config)
-- Phase 5: New `roam x-lang` command
+- Tests in `test_bridges.py` and `test_bridges_extended.py`
 
 ---
 
@@ -611,7 +600,7 @@ a heavy runtime tool.
 
 ## 17. N6: Local Vector Embeddings — `sqlite-vec`
 
-**Priority:** MEDIUM | **Effort:** High | **Status: NOT STARTED**
+**Priority:** MEDIUM | **Effort:** High | **Status: DONE (TF-IDF lite approach)**
 
 **The leap:** Semantic search over the codebase by meaning, not just string
 matching. "Where do we handle credit card retries?" returns the exact symbol
@@ -2965,8 +2954,9 @@ Intentional defense-in-depth, not dead code.
 
 ## 41. Status Summary
 
-### Done (39 items)
+### Done (45 items)
 - A: Superior test suite (`test_properties.py`, `test_index.py`, and 9 other test files)
+- B: Cross-language bridges (5 bridges: Salesforce, Protobuf, REST API, Template, Config)
 - C: Health trend anomaly detection
 - D: Smart file role categorization
 - E: Dead code aging
@@ -2977,6 +2967,7 @@ Intentional defense-in-depth, not dead code.
 - N2: Agentic memory (`roam annotate` / `roam annotations`)
 - N3: Reachability-based security (`roam vuln-map` + `roam vuln-reach`)
 - N5: OpenTelemetry overlay (`roam ingest-trace` + `roam hotspots`)
+- N6: TF-IDF semantic search (`roam search-semantic`)
 - N7: Predictive tech debt (`roam forecast`)
 - P1: Swarm orchestration (`roam orchestrate`)
 - P2: Dark matter detection (`roam dark-matter`)
@@ -2996,6 +2987,8 @@ Intentional defense-in-depth, not dead code.
 - D3: Effect & side-effect graph (`roam effects`)
 - D4: Minimal-change synthesis (`roam closure`)
 - D5: Sanitized roam capsule (`roam capsule`)
+- Tier 3 J: Symbol relationship graph (`roam relate`)
+- Tier 3 L: JSON schema versioning (`roam schema`)
 - Ruby Tier 1 language support (`ruby_lang.py`)
 - `--sarif` CLI flag (wired to dead, health, complexity, rules)
 - JSONC / MDX grammar aliases
@@ -3005,18 +2998,13 @@ Intentional defense-in-depth, not dead code.
 - I.10.6: ServiceProvider auth-gaps detection
 - I.10.7: `$hidden` messaging improvement
 - pytest-xdist parallel test execution (~2x speedup)
+- JSON envelope schema versioning (schema + schema_version fields)
+- FK constraint fixes (ON DELETE CASCADE/SET NULL)
 
-### Partially Done (1 item)
-- B: Cross-language bridges — missing 3 bridge plugins, Layer 3
-
-### Not Started — Existing (4 items)
+### Not Started — Existing (3 items)
 - Docker image for CI
 - VS Code extension
 - Terminal demo GIF
-- Tier 3 ideas (report templates, symbol relationship graph, risk heat viz, schema versioning)
-
-### Not Started — Next-Generation (1 item)
-- N6: Local vector embeddings (`sqlite-vec`)
 
 ### Idea Dependency Graph
 
@@ -3196,11 +3184,11 @@ After Phase 6:   "The operating system for multi-agent software engineering"
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Existing (A-I + Tier 3 + README) | 15 | 8 done (A,C,D,E,F,G,H,I), 1 partial (B), 6 not started |
-| Next-Gen N-series | 7 | 5 done (N1,N2,N3,N5,N7), 1 subsumed (N4→W5), 1 not started (N6) |
+| Existing (A-I + Tier 3 + README) | 15 | 10 done (A,B,C,D,E,F,G,H,I,Tier3-J,L), 5 not started |
+| Next-Gen N-series | 7 | 6 done (N1,N2,N3,N5,N6,N7), 1 subsumed (N4→W5) |
 | Paradigm-Shift P-series | 5 | 5 done (P1,P2,P3,P4,P5) |
 | Workflow W-series | 8 | 8 done |
 | Deep Foundation D-series | 5 | 5 done |
-| **Total ideas** | **40** | **31 done, 1 subsumed, 1 partial, 7 not started** |
+| **Total ideas** | **40** | **34 done, 1 subsumed, 5 not started** |
 
-**Bonus items shipped** (beyond the 40-idea framework): Ruby Tier 1 language support, `--sarif` CLI flag, JSONC/MDX aliases, pytest-xdist parallel tests, I.10.1/I.10.3/I.10.4/I.10.6/I.10.7 backend fixes.
+**Bonus items shipped** (beyond the 40-idea framework): Ruby Tier 1 language support, `--sarif` CLI flag, JSONC/MDX aliases, pytest-xdist parallel tests, JSON envelope schema versioning, FK constraint fixes, I.10.1/I.10.3/I.10.4/I.10.6/I.10.7 backend fixes.
