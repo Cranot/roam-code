@@ -4,7 +4,7 @@
 
 **Instant codebase comprehension for AI coding agents. Semantic graph, algorithm anti-pattern detection, architecture health -- one CLI, zero API keys.**
 
-*63 commands · 22 languages · algorithm catalog · 100% local*
+*70 commands · 22 languages · algorithm catalog · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -180,7 +180,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 63 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 70 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -211,6 +211,10 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam impact <symbol>` | Blast radius: what breaks if a symbol changes (Personalized PageRank weighted) |
 | `roam diff [--staged] [--full] [REV_RANGE]` | Blast radius of uncommitted changes or a commit range |
 | `roam pr-risk [REV_RANGE]` | PR risk score (0-100, multiplicative model) + structural spread + suggested reviewers |
+| `roam pr-diff [--staged] [--range R] [--format markdown]` | Structural PR diff: metric deltas, edge analysis, symbol changes, footprint. Not text diff — graph delta |
+| `roam attest [REV_RANGE] [--format markdown] [--sign]` | Proof-carrying PR attestation: bundles blast radius, risk, breaking changes, fitness, budget, tests, effects into one verifiable artifact |
+| `roam annotate <symbol> <note>` | Attach persistent notes to symbols (agentic memory across sessions) |
+| `roam annotations [--file F] [--symbol S]` | View stored annotations |
 | `roam diagnose <symbol> [--depth N]` | Root cause analysis: ranks suspects by z-score normalized risk |
 | `roam preflight <symbol\|file>` | Compound pre-change check: blast radius + tests + complexity + coupling + fitness |
 | `roam safe-delete <symbol>` | Safe deletion check: SAFE/REVIEW/UNSAFE verdict |
@@ -233,6 +237,8 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam snapshot [--tag TAG]` | Persist health metrics snapshot for trend tracking |
 | `roam trend` | Health score history with sparkline visualization |
 | `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot |
+| `roam forecast [--symbol S] [--horizon N] [--alert-only]` | Predict when metrics will exceed thresholds: Theil-Sen regression on snapshot history + churn-weighted per-symbol risk |
+| `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 1 on violation) |
 
 <details>
 <summary><strong>roam math — algorithm anti-pattern catalog (23 patterns)</strong></summary>
@@ -380,6 +386,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam entry-points` | Entry point catalog with protocol classification |
 | `roam patterns` | Architectural pattern recognition: Strategy, Factory, Observer, etc. |
 | `roam visualize [--format mermaid\|dot] [--focus NAME] [--limit N]` | Generate Mermaid or DOT architecture diagrams. Smart filtering via PageRank, cluster grouping, cycle highlighting |
+| `roam effects [TARGET] [--file F] [--type T]` | Side-effect classification: DB writes, network I/O, filesystem, global mutation. Direct + transitive effects through call graph |
+| `roam dark-matter [--min-cochanges N]` | Detect hidden co-change couplings not explained by import/call edges |
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
 
@@ -409,6 +417,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam orphan-routes [-n N] [--confidence C]` | Detect backend routes with no frontend consumer: parses route definitions, searches frontend for API call references, reports controller methods with no route mapping |
 | `roam migration-safety [-n N] [--include-archive]` | Detect non-idempotent migrations: missing `hasTable`/`hasColumn` guards, raw SQL without `IF NOT EXISTS`, index operations without existence checks |
 | `roam api-drift [--model M] [--confidence C]` | Detect mismatches between PHP model `$fillable`/`$appends` fields and TypeScript interface properties. Auto-converts snake_case/camelCase for comparison. Single-repo; cross-repo planned for `roam ws api-drift` |
+| `roam path-coverage [--from P] [--to P] [--max-depth N]` | Find critical call paths (entry -> sink) with zero test protection. Suggests optimal test insertion points |
+| `roam capsule [--redact-paths] [--no-signatures] [--output F]` | Export sanitized structural graph (no code bodies) for external architectural review |
 
 ### Multi-Repo Workspace
 
@@ -677,7 +687,7 @@ pip install fastmcp
 fastmcp run roam.mcp_server:mcp
 ```
 
-20 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+27 read-only tools and 2 resources. All tools query the index -- they never modify your code.
 
 <details>
 <summary><strong>MCP tool list</strong></summary>
@@ -704,6 +714,13 @@ fastmcp run roam.mcp_server:mcp
 | `math` | Algorithm anti-pattern detection with confidence calibration |
 | `ws_understand` | Unified multi-repo workspace overview |
 | `ws_context` | Cross-repo augmented symbol context |
+| `pr_diff` | Structural PR diff: metric deltas, edge analysis, symbol changes |
+| `budget_check` | Check changes against architectural budgets |
+| `effects` | Side-effect classification (DB writes, network, filesystem) |
+| `attest` | Proof-carrying PR attestation with all evidence bundled |
+| `capsule_export` | Export sanitized structural graph (no code bodies) |
+| `path_coverage` | Find critical untested call paths (entry -> sink) |
+| `forecast` | Predict when metrics will exceed thresholds |
 
 **Resources:** `roam://health` (current health score), `roam://summary` (project overview)
 
