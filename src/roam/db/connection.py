@@ -200,10 +200,28 @@ def ensure_schema(conn: sqlite3.Connection):
         "ingested_at TEXT DEFAULT (datetime('now'))"
         ")"
     )
-    # TF-IDF semantic search table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
+    # TF-IDF semantic search table — recreate with ON DELETE CASCADE if missing
+    # Drop and recreate to ensure proper FK constraint (data is recomputed on index)
+    _ensure_tfidf_cascade(conn)
+
+
+def _ensure_tfidf_cascade(conn: sqlite3.Connection):
+    """Ensure symbol_tfidf has ON DELETE CASCADE (missing in early schema)."""
+    # Check if table exists and has proper FK — simplest: check table_info
+    row = conn.execute(
+        "SELECT sql FROM sqlite_master WHERE type='table' AND name='symbol_tfidf'"
+    ).fetchone()
+    if row is None:
+        # Table doesn't exist yet; SCHEMA_SQL will create it with CASCADE
+        return
+    sql = row[0] or ""
+    if "ON DELETE CASCADE" in sql.upper():
+        return  # Already correct
+    # Recreate with proper FK (TF-IDF data is recomputed on every index)
+    conn.execute("DROP TABLE IF EXISTS symbol_tfidf")
     conn.execute(
         "CREATE TABLE IF NOT EXISTS symbol_tfidf ("
-        "symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id), "
+        "symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE, "
         "terms TEXT NOT NULL, "
         "updated_at TEXT DEFAULT (datetime('now'))"
         ")"

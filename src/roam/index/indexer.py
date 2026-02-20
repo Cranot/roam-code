@@ -745,7 +745,23 @@ class Indexer:
             for path in removed + modified:
                 row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
                 if row:
-                    conn.execute("DELETE FROM files WHERE id = ?", (row["id"],))
+                    fid = row["id"]
+                    # Clean up tables with non-cascading FKs before deleting file
+                    sym_ids = [r[0] for r in conn.execute(
+                        "SELECT id FROM symbols WHERE file_id = ?", (fid,)
+                    ).fetchall()]
+                    if sym_ids:
+                        ph = ",".join("?" for _ in sym_ids)
+                        for cleanup_sql in [
+                            f"DELETE FROM symbol_tfidf WHERE symbol_id IN ({ph})",
+                            f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
+                            f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
+                        ]:
+                            try:
+                                conn.execute(cleanup_sql, sym_ids)
+                            except Exception:
+                                pass  # Table may not exist in older DBs
+                    conn.execute("DELETE FROM files WHERE id = ?", (fid,))
 
             get_extractor = _try_import_get_extractor()
             compute_complexity_fn = _try_import_complexity()
