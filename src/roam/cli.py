@@ -82,16 +82,18 @@ _COMMANDS = {
     "annotate":          ("roam.commands.cmd_annotate",         "annotate"),
     "annotations":       ("roam.commands.cmd_annotate",         "annotations"),
     "dark-matter":       ("roam.commands.cmd_dark_matter",      "dark_matter"),
+    "pr-diff":           ("roam.commands.cmd_pr_diff",          "pr_diff"),
+    "budget":            ("roam.commands.cmd_budget",           "budget"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
-    "Daily Workflow": ["preflight", "pr-risk", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations"],
+    "Daily Workflow": ["preflight", "pr-risk", "pr-diff", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot"],
     "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
-    "Reports & CI": ["report", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift"],
+    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift"],
     "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk"],
 }
 
