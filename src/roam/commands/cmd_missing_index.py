@@ -219,7 +219,7 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         # index declarations within the closure that follows it.
         for i, sm in enumerate(schema_matches):
             raw_table = sm.group(1)
-            table_name = raw_table.rsplit(".", 1)[-1].strip('{}"\' ')
+            table_name = raw_table.rsplit(".", 1)[-1].strip('{}"\' $')
 
             # The closure starts after the match and ends at the next
             # Schema:: call or end of file.
@@ -270,7 +270,7 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         # 7. Raw SQL CREATE INDEX outside Schema blocks
         for m in _RE_CREATE_INDEX_RAW.finditer(content):
             raw_tbl = m.group(1)
-            tbl = raw_tbl.rsplit(".", 1)[-1].strip('{}"\' ')
+            tbl = raw_tbl.rsplit(".", 1)[-1].strip('{}"\' $')
             cols = tuple(_extract_string_list(m.group(2)))
             if not cols:
                 # Fallback: split on comma for unquoted column names
