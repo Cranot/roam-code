@@ -14,6 +14,7 @@ from roam.graph.cycles import (
 )
 from roam.graph.layers import detect_layers, find_violations, format_layers
 from roam.graph.pagerank import compute_centrality, compute_pagerank, store_metrics
+from roam.graph.dark_matter import dark_matter_edges, HypothesisEngine
 from roam.graph.pathfinding import find_symbol_id, format_path
 
 __all__ = [
@@ -34,4 +35,6 @@ __all__ = [
     "format_layers",
     "find_symbol_id",
     "format_path",
+    "dark_matter_edges",
+    "HypothesisEngine",
 ]
