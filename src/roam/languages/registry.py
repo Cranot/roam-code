@@ -70,7 +70,7 @@ _EXTENSION_MAP: dict[str, str] = {
 _DEDICATED_EXTRACTORS = frozenset({
     "python", "javascript", "typescript", "tsx",
     "go", "rust", "java", "c", "cpp", "php",
-    "c_sharp",
+    "c_sharp", "ruby",
 })
 
 # All supported tree-sitter language names (includes aliased languages)
@@ -161,6 +161,9 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     elif language == "c_sharp":
         from .csharp_lang import CSharpExtractor
         return CSharpExtractor()
+    elif language == "ruby":
+        from .ruby_lang import RubyExtractor
+        return RubyExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor
@@ -197,7 +200,7 @@ def get_extractor(language: str) -> "LanguageExtractor":
     """Get an extractor instance for a language.
 
     Returns a dedicated extractor for tier-1 languages, or a GenericExtractor
-    for tier-2 languages (Ruby, Kotlin, Swift, Scala).
+    for tier-2 languages (Kotlin, Swift, Scala).
 
     Args:
         language: Language name string.
