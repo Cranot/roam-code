@@ -779,6 +779,41 @@ def budget_check(config: str = "", staged: bool = False, commit_range: str = "",
     return _run_roam(args, root)
 
 
+@mcp.tool()
+def attest(commit_range: str = "", staged: bool = False, output_format: str = "json",
+           sign: bool = False, root: str = ".") -> dict:
+    """Generate a proof-carrying PR attestation with all evidence bundled.
+
+    WHEN TO USE: Call this before merging or in CI to get a single
+    verifiable artifact that bundles blast radius, risk score, breaking
+    changes, fitness violations, budget consumed, affected tests, and
+    effects. The verdict indicates whether it is safe to merge.
+
+    Parameters
+    ----------
+    commit_range:
+        Git range like ``main..HEAD`` for branch comparison.
+    staged:
+        If True, attest only staged changes.
+    output_format:
+        Output format: ``json``, ``text``, or ``markdown``.
+    sign:
+        If True, include SHA-256 content hash for tamper detection.
+
+    Returns: attestation metadata, evidence bundle, and merge verdict.
+    """
+    args = ["attest"]
+    if commit_range:
+        args.append(commit_range)
+    if staged:
+        args.append("--staged")
+    if output_format:
+        args.extend(["--format", output_format])
+    if sign:
+        args.append("--sign")
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
