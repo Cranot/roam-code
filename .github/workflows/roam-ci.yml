@@ -28,11 +28,10 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install -e .
-          pip install pytest
+          pip install -e ".[dev]"
 
       - name: Run tests
-        run: pytest tests/ -x -q
+        run: pytest tests/ -x -q -m "not slow"
 
   # -- Self-analysis: roam analyses its own codebase on PRs ------------------
   self-analysis:

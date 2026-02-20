@@ -208,7 +208,7 @@ tests/                 # 70 test files
 ## Testing
 
 - All tests must pass before committing (run `pytest tests/` to verify)
-- **Parallel by default:** pytest-xdist runs 4 workers (`-n 4 --dist loadgroup`)
+- **Parallel by default:** pytest-xdist runs auto workers (`-n auto --dist loadgroup`)
 - Use `-n 0` to run sequentially when debugging
 - Use `-m "not slow"` to skip timing-sensitive performance tests
 - Tests create temporary project directories with fixture files
