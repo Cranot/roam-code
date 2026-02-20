@@ -11,17 +11,17 @@ a local SQLite DB. 94 commands, 26 languages, 100% local, zero API keys.
 ## Quick reference
 
 ```bash
-# Run tests (parallel by default, 4 workers)
+# Run tests
 pytest tests/
 
-# Run tests sequentially (for debugging)
-pytest tests/ -n 0
+# Run tests in parallel (requires pytest-xdist)
+pytest tests/ -n auto
 
 # Skip timing-sensitive perf tests
 pytest tests/ -m "not slow"
 
 # Run a single test file
-pytest tests/test_comprehensive.py -x -v -n 0
+pytest tests/test_comprehensive.py -x -v
 
 # Install in dev mode
 pip install -e .
