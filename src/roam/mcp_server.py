@@ -361,7 +361,7 @@ def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> d
 
 
 @_tool()
-def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
+def algo(task: str = "", confidence: str = "", root: str = ".") -> dict:
     """Detect suboptimal algorithms and suggest better approaches.
 
     WHEN TO USE: Call this to find code that uses naive algorithms when
@@ -380,7 +380,7 @@ def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
     Returns: findings grouped by algorithm category, each with current
     vs. better approach, complexity comparison, and improvement tips.
     """
-    args = ["math"]
+    args = ["algo"]
     if task:
         args.extend(["--task", task])
     if confidence:

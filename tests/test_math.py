@@ -1,7 +1,7 @@
-"""Tests for roam math -- algorithmic improvement detection.
+"""Tests for roam algo (formerly math) -- algorithmic improvement detection.
 
 Covers: catalog structure, AST signal extraction, detector functions,
-CLI text/JSON output, and filtering options.
+CLI text/JSON output, filtering options, and backward compat alias.
 """
 
 from __future__ import annotations
@@ -268,44 +268,44 @@ class TestMathSignalsDB:
 # CLI command tests
 # ============================================================================
 
-class TestMathCLI:
-    """Tests for `roam math` CLI output."""
+class TestAlgoCLI:
+    """Tests for `roam algo` CLI output."""
 
-    def test_math_runs(self, cli_runner, indexed_project, monkeypatch):
-        """roam math should run without error on indexed project."""
+    def test_algo_runs(self, cli_runner, indexed_project, monkeypatch):
+        """roam algo should run without error on indexed project."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project)
-        assert result.exit_code == 0, f"math failed: {result.output}"
+        result = invoke_cli(cli_runner, ["algo"], cwd=indexed_project)
+        assert result.exit_code == 0, f"algo failed: {result.output}"
 
-    def test_math_verdict(self, cli_runner, indexed_project, monkeypatch):
-        """roam math should output a VERDICT line."""
+    def test_algo_verdict(self, cli_runner, indexed_project, monkeypatch):
+        """roam algo should output a VERDICT line."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project)
+        result = invoke_cli(cli_runner, ["algo"], cwd=indexed_project)
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
 
-    def test_math_json_envelope(self, cli_runner, indexed_project, monkeypatch):
-        """roam --json math should return valid envelope."""
+    def test_algo_json_envelope(self, cli_runner, indexed_project, monkeypatch):
+        """roam --json algo should return valid envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project, json_mode=True)
-        data = parse_json_output(result, "math")
-        assert_json_envelope(data, "math")
+        result = invoke_cli(cli_runner, ["algo"], cwd=indexed_project, json_mode=True)
+        data = parse_json_output(result, "algo")
+        assert_json_envelope(data, "algo")
         assert "verdict" in data["summary"]
         assert "total" in data["summary"]
         assert "findings" in data
 
-    def test_math_json_findings_structure(self, cli_runner, indexed_project, monkeypatch):
+    def test_algo_json_findings_structure(self, cli_runner, indexed_project, monkeypatch):
         """Each finding in JSON should have required fields."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project, json_mode=True)
-        data = parse_json_output(result, "math")
+        result = invoke_cli(cli_runner, ["algo"], cwd=indexed_project, json_mode=True)
+        data = parse_json_output(result, "algo")
         for f in data.get("findings", []):
             for key in ("task_id", "detected_way", "suggested_way",
                         "symbol_name", "kind", "location", "confidence", "reason"):
                 assert key in f, f"Finding missing {key}: {f}"
 
-    def test_math_with_algorithmic_code(self, project_factory, monkeypatch):
-        """roam math should detect patterns in code with known anti-patterns."""
+    def test_algo_with_algorithmic_code(self, project_factory, monkeypatch):
+        """roam algo should detect patterns in code with known anti-patterns."""
         proj = project_factory({
             "algo.py": (
                 "def bubble_sort(arr):\n"
@@ -318,8 +318,8 @@ class TestMathCLI:
         })
         monkeypatch.chdir(proj)
         runner = CliRunner()
-        result = invoke_cli(runner, ["math"], cwd=proj, json_mode=True)
-        data = parse_json_output(result, "math")
+        result = invoke_cli(runner, ["algo"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "algo")
         # Should detect the manual sort
         findings = data.get("findings", [])
         sort_findings = [f for f in findings if f["task_id"] == "sorting"]
@@ -327,25 +327,25 @@ class TestMathCLI:
             f"Expected sorting finding, got: {[f['task_id'] for f in findings]}"
         )
 
-    def test_math_filter_task(self, cli_runner, indexed_project, monkeypatch):
+    def test_algo_filter_task(self, cli_runner, indexed_project, monkeypatch):
         """--task filter should limit to a specific task."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math", "--task", "sorting"],
+        result = invoke_cli(cli_runner, ["algo", "--task", "sorting"],
                             cwd=indexed_project, json_mode=True)
-        data = parse_json_output(result, "math")
+        data = parse_json_output(result, "algo")
         for f in data.get("findings", []):
             assert f["task_id"] == "sorting"
 
-    def test_math_filter_confidence(self, cli_runner, indexed_project, monkeypatch):
+    def test_algo_filter_confidence(self, cli_runner, indexed_project, monkeypatch):
         """--confidence filter should limit to a specific level."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["math", "--confidence", "high"],
+        result = invoke_cli(cli_runner, ["algo", "--confidence", "high"],
                             cwd=indexed_project, json_mode=True)
-        data = parse_json_output(result, "math")
+        data = parse_json_output(result, "algo")
         for f in data.get("findings", []):
             assert f["confidence"] == "high"
 
-    def test_math_limit(self, project_factory, monkeypatch):
+    def test_algo_limit(self, project_factory, monkeypatch):
         """--limit should cap the number of findings."""
         proj = project_factory({
             "algo.py": (
@@ -370,9 +370,23 @@ class TestMathCLI:
         })
         monkeypatch.chdir(proj)
         runner = CliRunner()
-        result = invoke_cli(runner, ["math", "--limit", "1"], cwd=proj, json_mode=True)
-        data = parse_json_output(result, "math")
+        result = invoke_cli(runner, ["algo", "--limit", "1"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "algo")
         assert len(data.get("findings", [])) <= 1
+
+    def test_math_alias_still_works(self, cli_runner, indexed_project, monkeypatch):
+        """roam math should still work as a backward compat alias for algo."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project)
+        assert result.exit_code == 0, f"math alias failed: {result.output}"
+        assert "VERDICT:" in result.output
+
+    def test_math_alias_json_envelope(self, cli_runner, indexed_project, monkeypatch):
+        """roam --json math should return envelope with command='algo'."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(cli_runner, ["math"], cwd=indexed_project, json_mode=True)
+        data = parse_json_output(result, "algo")
+        assert_json_envelope(data, "algo")
 
 
 # ============================================================================

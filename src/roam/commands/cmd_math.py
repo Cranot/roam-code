@@ -1,4 +1,4 @@
-"""Detect suboptimal algorithms and suggest better approaches."""
+"""Detect suboptimal algorithms and suggest better approaches (algo command)."""
 
 from __future__ import annotations
 
@@ -26,6 +26,8 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
     Scans indexed symbols for common algorithmic anti-patterns
     (manual sort, linear search, nested-loop lookup, busy wait, etc.)
     and recommends better alternatives from a universal catalog.
+
+    Primary name: algo. Alias: math (backward compat).
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
     ensure_index()
@@ -91,7 +93,7 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope("math",
+            click.echo(to_json(json_envelope("algo",
                 summary={
                     "verdict": verdict,
                     "total": total,

@@ -232,7 +232,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 |---------|-------------|
 | `roam health [--no-framework]` | Composite health score (0-100): weighted geometric mean of tangle ratio, god components, bottlenecks, layer violations. Includes propagation cost and algebraic connectivity |
 | `roam complexity [--bumpy-road]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
-| `roam math [--task T] [--confidence C]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count and bounded-loop analysis |
+| `roam algo [--task T] [--confidence C]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count and bounded-loop analysis. Language-aware tips. Alias: `roam math` |
 | `roam n1 [--confidence C] [--verbose]` | Implicit N+1 I/O detection: finds ORM model computed properties (`$appends`/accessors) that trigger lazy-loaded DB queries in collection contexts. Cross-references with eager loading config. Supports Laravel, Django, Rails, SQLAlchemy, JPA |
 | `roam over-fetch [--threshold N] [--confidence C]` | Detect models serializing too many fields: large `$fillable` without `$hidden`/`$visible`, direct controller returns bypassing API Resources, poor exposed-to-hidden ratio |
 | `roam missing-index [--table T] [--confidence C]` | Find queries on non-indexed columns: cross-references `WHERE`/`ORDER BY` clauses, foreign keys, and paginated queries against migration-defined indexes |
@@ -250,12 +250,12 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam hotspots [--runtime] [--discrepancy]` | Runtime hotspot analysis: find symbols missed by static analysis but critical at runtime |
 
 <details>
-<summary><strong>roam math — algorithm anti-pattern catalog (23 patterns)</strong></summary>
+<summary><strong>roam algo — algorithm anti-pattern catalog (23 patterns)</strong></summary>
 
-`roam math` scans every indexed function against a 23-pattern catalog, ranks findings by confidence, and shows the exact Big-O improvement available:
+`roam algo` scans every indexed function against a 23-pattern catalog, ranks findings by confidence, and shows the exact Big-O improvement available. Tips are language-aware (Python, JS, Go, Rust, Java, etc.):
 
 ```
-$ roam math
+$ roam algo
 VERDICT: 8 algorithmic improvements found (3 high, 4 medium, 1 low)
 
 Nested loop lookup (2):
@@ -313,10 +313,10 @@ Branching recursion without memoization (1):
 **Filtering:**
 
 ```bash
-roam math --task nested-lookup       # one pattern type only
-roam math --confidence high          # high-confidence findings only
-roam math --task io-in-loop -n 5    # top 5 N+1 query sites
-roam --json math                     # machine-readable output
+roam algo --task nested-lookup       # one pattern type only
+roam algo --confidence high          # high-confidence findings only
+roam algo --task io-in-loop -n 5    # top 5 N+1 query sites
+roam --json algo                     # machine-readable output
 ```
 
 **Confidence calibration:** `high` = strong structural signal (unbounded loop + high caller count + pattern confirmed); `medium` = pattern matched but loop may be bounded; `low` = heuristic signal only.
@@ -742,7 +742,7 @@ Core tools in lite mode: `understand`, `health`, `preflight`, `search_symbol`, `
 | `tour` | Auto-generated onboarding guide |
 | `diagnose` | Root cause analysis for debugging |
 | `visualize` | Generate Mermaid or DOT architecture diagrams |
-| `math` | Algorithm anti-pattern detection with confidence calibration |
+| `algo` | Algorithm anti-pattern detection with language-aware tips |
 | `ws_understand` | Unified multi-repo workspace overview |
 | `ws_context` | Cross-repo augmented symbol context |
 | `pr_diff` | Structural PR diff: metric deltas, edge analysis, symbol changes |

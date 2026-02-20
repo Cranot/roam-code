@@ -1,6 +1,6 @@
 """Detect implicit N+1 I/O patterns across ORM frameworks.
 
-Unlike ``roam math``'s explicit "I/O in loop" detector, this command finds
+Unlike ``roam algo``'s explicit "I/O in loop" detector, this command finds
 **implicit** N+1 patterns: computed properties on data classes that trigger
 I/O (DB queries, HTTP calls) when the object is serialized in a collection.
 
@@ -768,7 +768,7 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
     queries when the model is serialized in a collection (pagination,
     API responses, etc.).
 
-    Unlike 'roam math' which finds explicit loops with I/O, this
+    Unlike 'roam algo' which finds explicit loops with I/O, this
     command finds IMPLICIT N+1 patterns where the loop is hidden
     inside the ORM's serialization layer.
 
