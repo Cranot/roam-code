@@ -718,6 +718,37 @@ def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> di
 
 
 @mcp.tool()
+def effects(target: str = "", file: str = "", effect_type: str = "", root: str = ".") -> dict:
+    """Show side effects of functions (DB writes, network, filesystem, etc.).
+
+    WHEN TO USE: Call this to understand what a function actually DOES
+    beyond its signature. Shows both direct effects (from the function
+    body) and transitive effects (inherited from callees via the call
+    graph). Useful for assessing change risk and understanding data flow.
+
+    Parameters
+    ----------
+    target:
+        Symbol name to inspect effects for.
+    file:
+        File path to show effects per function.
+    effect_type:
+        Filter by effect type (e.g. "writes_db", "network").
+
+    Returns: classified effects (direct and transitive) for the symbol,
+    file, or entire codebase.
+    """
+    args = ["effects"]
+    if target:
+        args.append(target)
+    if file:
+        args.extend(["--file", file])
+    if effect_type:
+        args.extend(["--type", effect_type])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def budget_check(config: str = "", staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Check pending changes against architectural budgets.
 

@@ -181,6 +181,16 @@ CREATE INDEX IF NOT EXISTS idx_annotations_qname ON annotations(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_annotations_file ON annotations(file_path);
 CREATE INDEX IF NOT EXISTS idx_annotations_tag ON annotations(tag);
 
+-- Symbol effects: what functions DO (side-effect classification)
+CREATE TABLE IF NOT EXISTS symbol_effects (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    symbol_id INTEGER NOT NULL REFERENCES symbols(id) ON DELETE CASCADE,
+    effect_type TEXT NOT NULL,
+    source TEXT NOT NULL DEFAULT 'direct'
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_effects_symbol ON symbol_effects(symbol_id);
+CREATE INDEX IF NOT EXISTS idx_symbol_effects_type ON symbol_effects(effect_type);
+
 -- Snapshots: health metrics over time
 CREATE TABLE IF NOT EXISTS snapshots (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
