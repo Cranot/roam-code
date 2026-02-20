@@ -2965,7 +2965,8 @@ Intentional defense-in-depth, not dead code.
 
 ## 41. Status Summary
 
-### Done (26 ideas)
+### Done (30 ideas)
+- A: Superior test suite (`test_properties.py`, `test_index.py`, and 9 other test files)
 - C: Health trend anomaly detection
 - D: Smart file role categorization
 - E: Dead code aging
@@ -2990,19 +2991,20 @@ Intentional defense-in-depth, not dead code.
 - D3: Effect & side-effect graph (`roam effects`)
 - D4: Minimal-change synthesis (`roam closure`)
 - D5: Sanitized roam capsule (`roam capsule`)
-
-### Partially Done (3 items)
-- A: Test suite — missing `test_index.py` (`test_properties.py` done)
-- B: Cross-language bridges — missing 3 bridge plugins, Layer 3, `roam x-lang` command
-- I: Backend command improvements — 10.1 fixed, 10.2/10.5 already fixed, 10.3/10.4/10.6/10.7 outstanding
-
-### Not Started — Existing (9 items)
 - Ruby Tier 1 language support (`ruby_lang.py`)
-- `--sarif` CLI flag
+- `--sarif` CLI flag (wired to dead, health, complexity, rules)
+- I.10.1: Schema-prefixed table names fix
+- I.10.4: Pluralization edge cases fix
+- I.10.7: `$hidden` messaging improvement
+
+### Partially Done (2 items)
+- B: Cross-language bridges — missing 3 bridge plugins, Layer 3, `roam x-lang` command
+- I: Backend command improvements — 10.3 (cross-model attribution), 10.6 (service provider routes) outstanding
+
+### Not Started — Existing (5 items)
 - Docker image for CI
 - VS Code extension
 - Terminal demo GIF
-- `roam ws api-drift` workspace command
 - JSONC / MDX grammar aliases
 - Tier 3 ideas (report templates, symbol relationship graph, risk heat viz, schema versioning)
 
@@ -3194,9 +3196,11 @@ After Phase 6:   "The operating system for multi-agent software engineering"
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Existing (A-I + Tier 3 + README) | 15 | 6 done, 3 partial, 6 not started |
+| Existing (A-I + Tier 3 + README) | 15 | 7 done (A,C,D,E,F,G,H), 2 partial (B,I), 6 not started |
 | Next-Gen N-series | 7 | 3 done (N1, N2, N7), 1 subsumed (N4→W5), 3 not started |
 | Paradigm-Shift P-series | 5 | 2 done (P2, P5), 3 not started |
 | Workflow W-series | 8 | 8 done |
 | Deep Foundation D-series | 5 | 5 done |
-| **Total ideas** | **40** | **26 done, 3 partial, 12 not started** |
+| **Total ideas** | **40** | **25 done, 1 subsumed, 2 partial, 12 not started** |
+
+**Bonus items shipped** (beyond the 40-idea framework): Ruby Tier 1 language support, `--sarif` CLI flag, I.10.1/I.10.4/I.10.7 backend fixes.
