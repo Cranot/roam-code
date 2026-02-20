@@ -71,6 +71,7 @@ _COMMANDS = {
     "ws":           ("roam.commands.cmd_ws",           "ws"),
     "visualize":    ("roam.commands.cmd_visualize",    "visualize"),
     "x-lang":       ("roam.commands.cmd_xlang",        "xlang"),
+    "algo":              ("roam.commands.cmd_math",             "math_cmd"),
     "math":              ("roam.commands.cmd_math",             "math_cmd"),
     "n1":                ("roam.commands.cmd_n1",               "n1_cmd"),
     "minimap":           ("roam.commands.cmd_minimap",          "minimap"),
@@ -114,7 +115,7 @@ _COMMANDS = {
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws", "schema"],
     "Daily Workflow": ["preflight", "pr-risk", "pr-diff", "attest", "adversarial", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations", "plan"],
-    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect", "ingest-trace", "hotspots"],
+    "Codebase Health": ["health", "weather", "debt", "complexity", "algo", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect", "ingest-trace", "hotspots"],
     "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "cut", "simulate", "orchestrate", "entry-points", "patterns", "safe-zones", "visualize", "x-lang", "fingerprint"],
     "Exploration": ["search", "search-semantic", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact", "relate"],
     "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule", "rules", "vuln-map", "vuln-reach"],

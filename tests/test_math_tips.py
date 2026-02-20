@@ -1,4 +1,4 @@
-"""Tests for language-aware tips in roam math.
+"""Tests for language-aware tips in roam algo (formerly math).
 
 Covers: get_tip() lookup, language-specific tip selection in CLI text
 and JSON output, fallback to default tips for unknown languages.
@@ -162,8 +162,8 @@ class TestLanguageTipVariety:
 # Integration: CLI output with language-specific tips
 # ============================================================================
 
-class TestMathCLILanguageTips:
-    """Test that `roam math` uses language-aware tips in output."""
+class TestAlgoCLILanguageTips:
+    """Test that `roam algo` uses language-aware tips in output."""
 
     def test_python_file_gets_python_tip_json(self, project_factory, monkeypatch):
         """Python file should get Python-specific tip in JSON output."""
@@ -179,8 +179,8 @@ class TestMathCLILanguageTips:
         })
         monkeypatch.chdir(proj)
         runner = CliRunner()
-        result = invoke_cli(runner, ["math"], cwd=proj, json_mode=True)
-        data = parse_json_output(result, "math")
+        result = invoke_cli(runner, ["algo"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "algo")
         findings = data.get("findings", [])
         sort_findings = [f for f in findings if f["task_id"] == "sorting"]
         assert len(sort_findings) >= 1, "Expected sorting finding"
@@ -204,7 +204,7 @@ class TestMathCLILanguageTips:
         })
         monkeypatch.chdir(proj)
         runner = CliRunner()
-        result = invoke_cli(runner, ["math"], cwd=proj)
+        result = invoke_cli(runner, ["algo"], cwd=proj)
         assert result.exit_code == 0
         # Text output should contain the Python-specific tip
         assert "sorted()" in result.output or "list.sort()" in result.output, (
@@ -229,8 +229,8 @@ class TestMathCLILanguageTips:
         })
         monkeypatch.chdir(proj)
         runner = CliRunner()
-        result = invoke_cli(runner, ["math"], cwd=proj, json_mode=True)
-        data = parse_json_output(result, "math")
+        result = invoke_cli(runner, ["algo"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "algo")
         for f in data.get("findings", []):
             assert "language" in f, f"Finding missing 'language' field: {f}"
             assert "tip" in f, f"Finding missing 'tip' field: {f}"
