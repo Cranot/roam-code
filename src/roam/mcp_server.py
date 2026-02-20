@@ -1007,6 +1007,115 @@ def cut_analysis(between_a: str = "", between_b: str = "",
     return _run_roam(args, root)
 
 
+@mcp.tool()
+def get_invariants(target: str = "", public_api: bool = False,
+                   breaking_risk: bool = False, top_n: int = 20,
+                   root: str = ".") -> dict:
+    """Discover implicit contracts for symbols.
+
+    WHEN TO USE: Call this before modifying a symbol to understand what
+    must remain true. Returns signature contracts, caller stability,
+    usage spread, and breaking risk scores.
+
+    Parameters
+    ----------
+    target:
+        Symbol name or file path to analyze.
+    public_api:
+        Analyze all exported/public symbols.
+    breaking_risk:
+        Rank symbols by breaking risk (callers * file spread).
+    top_n:
+        Max symbols to show (default: 20).
+
+    Returns: invariants per symbol with breaking risk scores.
+    """
+    args = ["invariants"]
+    if target:
+        args.append(target)
+    if public_api:
+        args.append("--public-api")
+    if breaking_risk:
+        args.append("--breaking-risk")
+    if top_n != 20:
+        args.extend(["--top", str(top_n)])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def bisect_blame(metric: str = "health_score", threshold: float = 0,
+                 direction: str = "degraded", top_n: int = 10,
+                 root: str = ".") -> dict:
+    """Find which snapshots caused architectural degradation.
+
+    WHEN TO USE: Call this when health score has dropped or metrics
+    have worsened. Walks snapshot history and ranks snapshots by the
+    magnitude of metric changes to identify the commits that caused
+    the biggest structural regressions.
+
+    Parameters
+    ----------
+    metric:
+        Metric to track (health_score, cycles, avg_complexity, etc.).
+    threshold:
+        Only show deltas exceeding this threshold.
+    direction:
+        Filter: degraded, improved, or both.
+    top_n:
+        Show top N snapshots by impact (default: 10).
+
+    Returns: ranked list of snapshots by architectural impact.
+    """
+    args = ["bisect", "--metric", metric]
+    if threshold > 0:
+        args.extend(["--threshold", str(threshold)])
+    if direction != "degraded":
+        args.extend(["--direction", direction])
+    if top_n != 10:
+        args.extend(["--top", str(top_n)])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def doc_intent(symbol: str = "", doc: str = "",
+               drift: bool = False, undocumented: bool = False,
+               top_n: int = 20, root: str = ".") -> dict:
+    """Link documentation to code — find what docs describe what code.
+
+    WHEN TO USE: Call this to understand the relationship between
+    documentation and code. Finds doc-to-code links, drift (dead
+    references to removed symbols), and undocumented high-centrality
+    symbols that should have docs.
+
+    Parameters
+    ----------
+    symbol:
+        Find docs mentioning this specific symbol.
+    doc:
+        Find code referenced by this specific doc file.
+    drift:
+        Show references to symbols that no longer exist.
+    undocumented:
+        Show important symbols not mentioned in any docs.
+    top_n:
+        Max items to show (default: 20).
+
+    Returns: doc-code links, drift, and undocumented symbols.
+    """
+    args = ["intent"]
+    if symbol:
+        args.extend(["--symbol", symbol])
+    if doc:
+        args.extend(["--doc", doc])
+    if drift:
+        args.append("--drift")
+    if undocumented:
+        args.append("--undocumented")
+    if top_n != 20:
+        args.extend(["--top", str(top_n)])
+    return _run_roam(args, root)
+
+
 # ---------------------------------------------------------------------------
 # Entry point
 # ---------------------------------------------------------------------------
