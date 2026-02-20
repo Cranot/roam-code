@@ -98,17 +98,24 @@ _COMMANDS = {
     "simulate":          ("roam.commands.cmd_simulate",       "simulate"),
     "closure":           ("roam.commands.cmd_closure",        "closure"),
     "rules":             ("roam.commands.cmd_rules",          "rules"),
+    "fingerprint":       ("roam.commands.cmd_fingerprint",   "fingerprint"),
+    "orchestrate":       ("roam.commands.cmd_orchestrate",    "orchestrate"),
+    "mutate":            ("roam.commands.cmd_mutate",         "mutate"),
+    "vuln-map":          ("roam.commands.cmd_vuln_map",       "vuln_map"),
+    "vuln-reach":        ("roam.commands.cmd_vuln_reach",     "vuln_reach"),
+    "ingest-trace":      ("roam.commands.cmd_ingest_trace",  "ingest_trace"),
+    "hotspots":          ("roam.commands.cmd_hotspots",      "hotspots"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws"],
     "Daily Workflow": ["preflight", "pr-risk", "pr-diff", "attest", "adversarial", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations", "plan"],
-    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect"],
-    "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "cut", "simulate", "entry-points", "patterns", "safe-zones", "visualize", "x-lang"],
+    "Codebase Health": ["health", "weather", "debt", "complexity", "math", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect", "ingest-trace", "hotspots"],
+    "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "cut", "simulate", "orchestrate", "entry-points", "patterns", "safe-zones", "visualize", "x-lang", "fingerprint"],
     "Exploration": ["search", "grep", "file", "symbol", "module", "trace", "deps", "uses", "fan", "impact"],
-    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule", "rules"],
-    "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk", "invariants", "intent", "closure"],
+    "Reports & CI": ["report", "budget", "breaking", "coverage-gaps", "auth-gaps", "orphan-routes", "bus-factor", "owner", "risk", "migration-safety", "api-drift", "path-coverage", "capsule", "rules", "vuln-map", "vuln-reach"],
+    "Refactoring": ["dead", "safe-delete", "split", "fn-coupling", "doc-staleness", "conventions", "sketch", "test-map", "why", "pr-risk", "invariants", "intent", "closure", "mutate"],
 }
 
 

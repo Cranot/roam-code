@@ -62,7 +62,9 @@ EXTENSION_MAP = {
     ".yml": "yaml",
     ".toml": "toml",
     ".json": "json",
+    ".jsonc": "jsonc",
     ".md": "markdown",
+    ".mdx": "mdx",
     ".sql": "sql",
     ".tf": "hcl",
     ".hcl": "hcl",
@@ -92,9 +94,10 @@ GRAMMAR_ALIASES = {
     "sfxml": "html",          # SF metadata XML → HTML parser (close enough for structure)
     "aura": "html",
     "visualforce": "html",
-    # Future candidates:
-    # "jsonc": "json",
-    # "mdx": "markdown",
+    # JSONC (JSON with comments) → json grammar
+    "jsonc": "json",
+    # MDX (Markdown + JSX) → markdown grammar
+    "mdx": "markdown",
 }
 
 # Languages that use regex-only extraction (no tree-sitter grammar)

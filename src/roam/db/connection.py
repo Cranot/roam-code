@@ -163,6 +163,40 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
     _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
     _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
+    # v9.0: runtime_stats table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
+    # Migration: ensure table exists for databases created before this version
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS runtime_stats ("
+        "id INTEGER PRIMARY KEY, "
+        "symbol_id INTEGER REFERENCES symbols(id), "
+        "symbol_name TEXT, "
+        "file_path TEXT, "
+        "trace_source TEXT, "
+        "call_count INTEGER DEFAULT 0, "
+        "p50_latency_ms REAL, "
+        "p99_latency_ms REAL, "
+        "error_rate REAL DEFAULT 0.0, "
+        "last_seen TEXT, "
+        "ingested_at TEXT DEFAULT (datetime('now'))"
+        ")"
+    )
+    # v9.x: vulnerabilities table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
+    conn.execute(
+        "CREATE TABLE IF NOT EXISTS vulnerabilities ("
+        "id INTEGER PRIMARY KEY, "
+        "cve_id TEXT, "
+        "package_name TEXT NOT NULL, "
+        "severity TEXT, "
+        "title TEXT, "
+        "source TEXT, "
+        "matched_symbol_id INTEGER REFERENCES symbols(id), "
+        "matched_file TEXT, "
+        "reachable INTEGER DEFAULT 0, "
+        "shortest_path TEXT, "
+        "hop_count INTEGER, "
+        "ingested_at TEXT DEFAULT (datetime('now'))"
+        ")"
+    )
 
 
 def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str):

@@ -1190,6 +1190,39 @@ def doc_intent(symbol: str = "", doc: str = "",
 
 
 @mcp.tool()
+def fingerprint(compact: bool = False, export_path: str = "",
+                compare_path: str = "", root: str = ".") -> dict:
+    """Extract a topology fingerprint for cross-repo comparison.
+
+    WHEN TO USE: Call this to get the structural signature of a codebase
+    (layers, modularity, connectivity, clusters, hub/bridge ratio,
+    PageRank distribution). Use --compare to diff against another repo's
+    saved fingerprint. Useful for identifying similar architectures or
+    tracking structural drift over time.
+
+    Parameters
+    ----------
+    compact:
+        If True, return a single-line summary.
+    export_path:
+        If provided, save fingerprint JSON to this file path.
+    compare_path:
+        If provided, compare with a previously saved fingerprint JSON.
+
+    Returns: topology metrics, cluster summaries, hub/bridge ratio,
+    PageRank Gini, dependency direction, and anti-patterns.
+    """
+    args = ["fingerprint"]
+    if compact:
+        args.append("--compact")
+    if export_path:
+        args.extend(["--export", export_path])
+    if compare_path:
+        args.extend(["--compare", compare_path])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     """Evaluate custom governance rules defined in .roam/rules/.
 
@@ -1213,6 +1246,230 @@ def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
         args.append("--ci")
     if rules_dir:
         args.extend(["--rules-dir", rules_dir])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def orchestrate(n_agents: int, files: list[str] | None = None,
+                staged: bool = False, root: str = ".") -> dict:
+    """Partition codebase for parallel multi-agent work (swarm orchestration).
+
+    WHEN TO USE: Call this before splitting work across multiple AI agents.
+    Assigns exclusive write zones, read-only dependencies, interface
+    contracts, a merge order, and a conflict probability score so agents
+    can work in parallel without stepping on each other.
+
+    Parameters
+    ----------
+    n_agents:
+        Number of agents to partition work for.
+    files:
+        Optional list of files or directories to restrict to.
+    staged:
+        If True, restrict to files in the git staging area.
+
+    Returns: per-agent write/read file lists, contracts, merge order,
+    conflict probability, and shared interface symbols.
+    """
+    args = ["orchestrate", "--agents", str(n_agents)]
+    if files:
+        for f in files:
+            args.extend(["--files", f])
+    if staged:
+        args.append("--staged")
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def mutate(operation: str, symbol: str = "", target_file: str = "",
+           new_name: str = "", from_symbol: str = "", to_symbol: str = "",
+           args: str = "", lines: str = "", apply: bool = False,
+           root: str = ".") -> dict:
+    """Syntax-less agentic editing -- move, rename, add-call, extract symbols.
+
+    WHEN TO USE: Call this when you need to make structural code changes
+    (move a symbol to a new file, rename across the codebase, add a call
+    between functions, or extract lines into a new function). Automatically
+    rewrites imports and updates references. Default is dry-run (preview);
+    set apply=True to write changes.
+
+    Parameters
+    ----------
+    operation:
+        One of: "move", "rename", "add-call", "extract".
+    symbol:
+        Symbol name for move/rename/extract operations.
+    target_file:
+        Destination file for move operation.
+    new_name:
+        New name for rename or extract operations.
+    from_symbol:
+        Calling symbol for add-call operation.
+    to_symbol:
+        Callee symbol for add-call operation.
+    args:
+        Arguments string for add-call (e.g. "data, config").
+    lines:
+        Line range for extract (e.g. "5-10").
+    apply:
+        If True, write changes to disk. Default is dry-run.
+
+    Returns: change plan with files modified, per-file changes, and verdict.
+    """
+    cmd_args = ["mutate", operation]
+    if operation == "move":
+        if symbol:
+            cmd_args.append(symbol)
+        if target_file:
+            cmd_args.append(target_file)
+    elif operation == "rename":
+        if symbol:
+            cmd_args.append(symbol)
+        if new_name:
+            cmd_args.append(new_name)
+    elif operation == "add-call":
+        if from_symbol:
+            cmd_args.extend(["--from", from_symbol])
+        if to_symbol:
+            cmd_args.extend(["--to", to_symbol])
+        if args:
+            cmd_args.extend(["--args", args])
+    elif operation == "extract":
+        if symbol:
+            cmd_args.append(symbol)
+        if lines:
+            cmd_args.extend(["--lines", lines])
+        if new_name:
+            cmd_args.extend(["--name", new_name])
+    if apply:
+        cmd_args.append("--apply")
+    return _run_roam(cmd_args, root)
+
+
+@mcp.tool()
+def vuln_map(npm_audit: str = "", pip_audit: str = "", trivy: str = "",
+             osv: str = "", generic: str = "", root: str = ".") -> dict:
+    """Ingest vulnerability scanner reports and match to codebase symbols.
+
+    WHEN TO USE: Call this to import vulnerability data from security scanners
+    (npm audit, pip-audit, Trivy, OSV, or a generic JSON format). Each
+    vulnerability is matched to symbols in the codebase index so you can
+    assess real exposure. After ingestion, use ``vuln_reach`` to check
+    reachability.
+
+    Parameters
+    ----------
+    npm_audit:
+        Path to npm audit JSON report.
+    pip_audit:
+        Path to pip-audit JSON report.
+    trivy:
+        Path to Trivy JSON report.
+    osv:
+        Path to OSV scanner JSON report.
+    generic:
+        Path to generic JSON vulnerability list.
+
+    Returns: ingested vulnerabilities with symbol match status.
+    """
+    args = ["vuln-map"]
+    if npm_audit:
+        args.extend(["--npm-audit", npm_audit])
+    if pip_audit:
+        args.extend(["--pip-audit", pip_audit])
+    if trivy:
+        args.extend(["--trivy", trivy])
+    if osv:
+        args.extend(["--osv", osv])
+    if generic:
+        args.extend(["--generic", generic])
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
+    """Query reachability of ingested vulnerabilities through the call graph.
+
+    WHEN TO USE: Call this after ``vuln_map`` to determine which vulnerabilities
+    are actually reachable from entry points in your code. Unreachable vulns
+    can be safely deprioritized. Shows shortest path, hop count, and blast
+    radius for each reachable vulnerability.
+
+    Parameters
+    ----------
+    from_entry:
+        Check reachability from a specific entry point symbol.
+    cve:
+        Analyze a specific CVE ID.
+
+    Returns: reachability status, paths, hop counts, and blast radius
+    for each vulnerability.
+    """
+    args = ["vuln-reach"]
+    if from_entry:
+        args.extend(["--from", from_entry])
+    if cve:
+        args.extend(["--cve", cve])
+    return _run_roam(args, root)
+
+
+# ===================================================================
+# Runtime trace tools
+# ===================================================================
+
+
+@mcp.tool()
+def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
+    """Ingest runtime traces and match spans to symbols.
+
+    WHEN TO USE: Call this to overlay runtime performance data on top of
+    the static codebase graph. Supports OpenTelemetry, Jaeger, Zipkin,
+    and a simple generic JSON format. After ingestion, use ``hotspots``
+    to find discrepancies between static and runtime rankings.
+
+    Parameters
+    ----------
+    trace_file:
+        Path to the JSON trace file.
+    format:
+        Trace format: "otel", "jaeger", "zipkin", "generic".
+        If empty, auto-detects from the JSON structure.
+
+    Returns: ingested span count, matched/unmatched symbols, and per-span
+    details including call count, latency, and error rate.
+    """
+    args = ["ingest-trace"]
+    if format:
+        args.extend([f"--{format}", trace_file])
+    else:
+        args.append(trace_file)
+    return _run_roam(args, root)
+
+
+@mcp.tool()
+def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
+                     root: str = ".") -> dict:
+    """Show runtime hotspots where static and runtime rankings disagree.
+
+    WHEN TO USE: Call this after ingesting traces to find hidden hotspots
+    -- symbols that static analysis considers safe but are runtime-critical
+    (UPGRADE), or statically risky symbols with low traffic (DOWNGRADE).
+
+    Parameters
+    ----------
+    runtime_sort:
+        If True, sort by runtime metrics (call count).
+    discrepancy:
+        If True, only show static/runtime mismatches (UPGRADE/DOWNGRADE).
+
+    Returns: hotspots with classification, static rank, runtime rank,
+    and both static and runtime metrics.
+    """
+    args = ["hotspots"]
+    if runtime_sort:
+        args.append("--runtime")
+    if discrepancy:
+        args.append("--discrepancy")
     return _run_roam(args, root)
 
 

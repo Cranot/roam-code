@@ -115,6 +115,18 @@ _RE_CONTROLLER_REF = re.compile(
     r"""(\w+Controller)\s*::class|['"](\w+Controller)@""",
 )
 
+# ServiceProvider patterns — routes registered in boot() with middleware
+# e.g.:  Route::middleware(['auth:sanctum'])->group(function () { ... });
+#        Route::middleware('auth:sanctum')->group(function () { ... });
+# within a class that extends ServiceProvider
+_RE_SERVICE_PROVIDER_CLASS = re.compile(
+    r"class\s+(\w+)\s+extends\s+ServiceProvider",
+)
+_RE_PROVIDER_ROUTE_MIDDLEWARE = re.compile(
+    r"""Route\s*::\s*middleware\s*\(\s*(?:\[?\s*['"]auth(?::sanctum)?['"]\s*\]?)""",
+    re.IGNORECASE,
+)
+
 
 # ---------------------------------------------------------------------------
 # Source reading helpers
@@ -496,6 +508,77 @@ def _find_controller_files(conn) -> list[str]:
     return [r["path"] for r in rows]
 
 
+def _find_service_provider_files(conn) -> list[str]:
+    """Return file paths for ServiceProvider files from the index."""
+    rows = conn.execute(
+        "SELECT path FROM files "
+        "WHERE (path LIKE '%Provider%' OR path LIKE '%provider%') "
+        "  AND (path LIKE '%.php' OR language = 'php') "
+        "ORDER BY path"
+    ).fetchall()
+    return [r["path"] for r in rows]
+
+
+def _analyze_service_provider(file_path: str, source: str) -> set[str]:
+    """Scan a ServiceProvider file for controllers registered inside auth middleware groups.
+
+    Returns a set of controller class names (e.g. ``'OrderController'``) that are
+    referenced inside ``Route::middleware(['auth:sanctum'])->group(...)`` blocks
+    within a ServiceProvider ``boot()`` method.
+    """
+    protected_controllers: set[str] = set()
+
+    # Quick check: file must extend ServiceProvider and contain Route::middleware auth
+    if not _RE_SERVICE_PROVIDER_CLASS.search(source):
+        return protected_controllers
+    if not _RE_PROVIDER_ROUTE_MIDDLEWARE.search(source):
+        return protected_controllers
+
+    # Track brace depth to detect controllers inside auth middleware groups.
+    # Strategy: when we see Route::middleware('auth...')->group(, mark that depth
+    # as auth-protected and collect controller refs until the group closes.
+    lines = source.splitlines()
+    brace_depth = 0
+    auth_depth_stack: list[tuple[int, bool]] = []  # (depth_at_open, is_auth)
+
+    for line in lines:
+        opens, closes = _count_braces(line)
+
+        # Check for auth middleware group opener
+        if _RE_PROVIDER_ROUTE_MIDDLEWARE.search(line) and re.search(r'->\s*group\s*\(', line):
+            # Process closes first
+            for _ in range(closes):
+                brace_depth -= 1
+                if brace_depth < 0:
+                    brace_depth = 0
+                if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
+                    auth_depth_stack.pop()
+            auth_depth_stack.append((brace_depth, True))
+            brace_depth += opens
+            continue
+
+        # Process closing braces
+        for _ in range(closes):
+            brace_depth -= 1
+            if brace_depth < 0:
+                brace_depth = 0
+            if auth_depth_stack and auth_depth_stack[-1][0] == brace_depth:
+                auth_depth_stack.pop()
+
+        # Check if currently inside auth group
+        currently_protected = any(auth for _, auth in auth_depth_stack)
+
+        brace_depth += opens
+
+        if currently_protected:
+            for cm in _RE_CONTROLLER_REF.finditer(line):
+                name = cm.group(1) or cm.group(2)
+                if name:
+                    protected_controllers.add(name)
+
+    return protected_controllers
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -550,6 +633,20 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                 findings, protected = _analyze_route_file(abs_path, source)
                 all_findings.extend(findings)
                 route_protected_controllers.update(protected)
+
+        # --- ServiceProvider analysis ---
+        # Routes can also be registered in ServiceProvider::boot() methods
+        # with Route::middleware(['auth:sanctum'])->group(...).  Controllers
+        # referenced inside those groups should be treated as protected.
+        if not controllers_only:
+            provider_files = _find_service_provider_files(conn)
+            for db_path in provider_files:
+                abs_path = _resolve_path(project_root, db_path)
+                source = _read_source(abs_path)
+                if source is None:
+                    continue
+                provider_protected = _analyze_service_provider(abs_path, source)
+                route_protected_controllers.update(provider_protected)
 
         # --- Controller file analysis ---
         if not routes_only:
