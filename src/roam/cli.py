@@ -200,10 +200,12 @@ def _check_gate(gate_expr: str, data: dict) -> bool:
 @click.option('--json', 'json_mode', is_flag=True, help='Output in JSON format')
 @click.option('--compact', is_flag=True, help='Compact output: TSV tables, minimal JSON envelope')
 @click.option('--sarif', 'sarif_mode', is_flag=True, help='Output in SARIF 2.1.0 format (for dead, health, complexity, rules)')
+@click.option('--include-excluded', is_flag=True, help='Include files normally excluded by .roamignore / config / built-in patterns')
 @click.pass_context
-def cli(ctx, json_mode, compact, sarif_mode):
+def cli(ctx, json_mode, compact, sarif_mode, include_excluded):
     """Roam: Codebase comprehension tool."""
     ctx.ensure_object(dict)
     ctx.obj['json'] = json_mode
     ctx.obj['compact'] = compact
     ctx.obj['sarif'] = sarif_mode
+    ctx.obj['include_excluded'] = include_excluded

@@ -9,7 +9,7 @@ import click
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-from roam.catalog.tasks import CATALOG, get_task, best_way
+from roam.catalog.tasks import CATALOG, get_task, best_way, get_tip
 
 
 @click.command()
@@ -34,6 +34,22 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
 
     with open_db(readonly=True) as conn:
         findings = run_detectors(conn, task_filter, confidence_filter)
+
+        # Build symbol_id -> language mapping for language-aware tips
+        sym_ids = [f["symbol_id"] for f in findings if f.get("symbol_id")]
+        lang_map: dict[int, str] = {}
+        if sym_ids:
+            from roam.db.connection import batched_in
+            rows = batched_in(
+                conn,
+                "SELECT s.id, f.language FROM symbols s "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE s.id IN ({ph})",
+                sym_ids,
+            )
+            for r in rows:
+                if r["language"]:
+                    lang_map[r["id"]] = r["language"]
 
         # Sort: high first, then medium, then low
         _conf_order = {"high": 0, "medium": 1, "low": 2}
@@ -66,6 +82,12 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
             f"({conf_str})"
             if total else "No algorithmic issues detected"
         )
+
+        # Enrich findings with language-aware tips
+        for f in findings:
+            lang = lang_map.get(f.get("symbol_id"), "")
+            f["language"] = lang
+            f["tip"] = get_tip(f["task_id"], f["suggested_way"], lang)
 
         # --- JSON output ---
         if json_mode:
@@ -121,8 +143,9 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                     click.echo(f"        Current: {detected['name']} -- {detected['time']}")
                 if suggested:
                     click.echo(f"        Better:  {suggested['name']} -- {suggested['time']}")
-                    if suggested.get("tip"):
-                        click.echo(f"        Tip: {suggested['tip']}")
+                    tip_text = f.get("tip", "")
+                    if tip_text:
+                        click.echo(f"        Tip: {tip_text}")
 
             click.echo()
 
