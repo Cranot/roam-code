@@ -2965,7 +2965,7 @@ Intentional defense-in-depth, not dead code.
 
 ## 41. Status Summary
 
-### Done (30 ideas)
+### Done (39 items)
 - A: Superior test suite (`test_properties.py`, `test_index.py`, and 9 other test files)
 - C: Health trend anomaly detection
 - D: Smart file role categorization
@@ -2975,8 +2975,13 @@ Intentional defense-in-depth, not dead code.
 - H: PR-Risk team-aware novelty
 - N1: Architectural simulations (`roam simulate`)
 - N2: Agentic memory (`roam annotate` / `roam annotations`)
+- N3: Reachability-based security (`roam vuln-map` + `roam vuln-reach`)
+- N5: OpenTelemetry overlay (`roam ingest-trace` + `roam hotspots`)
 - N7: Predictive tech debt (`roam forecast`)
+- P1: Swarm orchestration (`roam orchestrate`)
 - P2: Dark matter detection (`roam dark-matter`)
+- P3: Syntax-less agentic editing (`roam mutate`)
+- P4: Graph-isomorphism transfer (`roam fingerprint`)
 - P5: Adversarial architecture review (`roam adversarial`)
 - W1: Graph diff as PR artifact (`roam pr-diff`)
 - W2: Architecture budget gates (`roam budget`)
@@ -2993,30 +2998,25 @@ Intentional defense-in-depth, not dead code.
 - D5: Sanitized roam capsule (`roam capsule`)
 - Ruby Tier 1 language support (`ruby_lang.py`)
 - `--sarif` CLI flag (wired to dead, health, complexity, rules)
+- JSONC / MDX grammar aliases
 - I.10.1: Schema-prefixed table names fix
+- I.10.3: Cross-model column attribution fix
 - I.10.4: Pluralization edge cases fix
+- I.10.6: ServiceProvider auth-gaps detection
 - I.10.7: `$hidden` messaging improvement
+- pytest-xdist parallel test execution (~2x speedup)
 
-### Partially Done (2 items)
-- B: Cross-language bridges — missing 3 bridge plugins, Layer 3, `roam x-lang` command
-- I: Backend command improvements — 10.3 (cross-model attribution), 10.6 (service provider routes) outstanding
+### Partially Done (1 item)
+- B: Cross-language bridges — missing 3 bridge plugins, Layer 3
 
-### Not Started — Existing (5 items)
+### Not Started — Existing (4 items)
 - Docker image for CI
 - VS Code extension
 - Terminal demo GIF
-- JSONC / MDX grammar aliases
 - Tier 3 ideas (report templates, symbol relationship graph, risk heat viz, schema versioning)
 
-### Not Started — Next-Generation (3 items)
-- N3: Reachability-based security (CVE mapping)
-- N5: OpenTelemetry overlay (runtime weights)
+### Not Started — Next-Generation (1 item)
 - N6: Local vector embeddings (`sqlite-vec`)
-
-### Not Started — Paradigm-Shift (3 items)
-- P1: Swarm orchestration (`roam orchestrate`)
-- P3: Syntax-less agentic editing (`roam mutate`)
-- P4: Graph-isomorphism transfer (`roam fingerprint`)
 
 ### Idea Dependency Graph
 
@@ -3196,11 +3196,11 @@ After Phase 6:   "The operating system for multi-agent software engineering"
 
 | Category | Count | Status |
 |----------|-------|--------|
-| Existing (A-I + Tier 3 + README) | 15 | 7 done (A,C,D,E,F,G,H), 2 partial (B,I), 6 not started |
-| Next-Gen N-series | 7 | 3 done (N1, N2, N7), 1 subsumed (N4→W5), 3 not started |
-| Paradigm-Shift P-series | 5 | 2 done (P2, P5), 3 not started |
+| Existing (A-I + Tier 3 + README) | 15 | 8 done (A,C,D,E,F,G,H,I), 1 partial (B), 6 not started |
+| Next-Gen N-series | 7 | 5 done (N1,N2,N3,N5,N7), 1 subsumed (N4→W5), 1 not started (N6) |
+| Paradigm-Shift P-series | 5 | 5 done (P1,P2,P3,P4,P5) |
 | Workflow W-series | 8 | 8 done |
 | Deep Foundation D-series | 5 | 5 done |
-| **Total ideas** | **40** | **25 done, 1 subsumed, 2 partial, 12 not started** |
+| **Total ideas** | **40** | **31 done, 1 subsumed, 1 partial, 7 not started** |
 
-**Bonus items shipped** (beyond the 40-idea framework): Ruby Tier 1 language support, `--sarif` CLI flag, I.10.1/I.10.4/I.10.7 backend fixes.
+**Bonus items shipped** (beyond the 40-idea framework): Ruby Tier 1 language support, `--sarif` CLI flag, JSONC/MDX aliases, pytest-xdist parallel tests, I.10.1/I.10.3/I.10.4/I.10.6/I.10.7 backend fixes.
