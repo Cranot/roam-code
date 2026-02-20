@@ -367,6 +367,32 @@ def math(task: str = "", confidence: str = "", root: str = ".") -> dict:
 
 
 @mcp.tool()
+def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") -> dict:
+    """Detect dark matter: file pairs that co-change but have no structural link.
+
+    WHEN TO USE: Call this when you suspect hidden coupling between files
+    that don't import each other but always change together. Returns
+    dark-matter pairs with hypothesized reasons (shared DB, event bus,
+    config, copy-paste). Complements `coupling` which shows all co-change
+    pairs -- this filters to only structurally unlinked ones.
+
+    Parameters
+    ----------
+    min_npmi:
+        Minimum NPMI threshold (default 0.3). Higher = stronger coupling.
+    min_cochanges:
+        Minimum co-change count (default 3).
+
+    Returns: dark-matter pairs with NPMI, lift, strength, co-change count,
+    and hypothesis (category + detail + confidence) for each pair.
+    """
+    args = ["dark-matter", "--explain",
+            "--min-npmi", str(min_npmi),
+            "--min-cochanges", str(min_cochanges)]
+    return _run_roam(args, root)
+
+
+@mcp.tool()
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 
