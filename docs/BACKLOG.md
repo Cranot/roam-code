@@ -2965,7 +2965,7 @@ Intentional defense-in-depth, not dead code.
 
 ## 41. Status Summary
 
-### Done (24 ideas)
+### Done (26 ideas)
 - C: Health trend anomaly detection
 - D: Smart file role categorization
 - E: Dead code aging
@@ -2984,15 +2984,17 @@ Intentional defense-in-depth, not dead code.
 - W5: Agent work planner (`roam plan`) — subsumes N4
 - W6: Intent graph from docs (`roam intent`)
 - W7: Minimum cut safety zones (`roam cut`)
+- W8: Plugin DSL for detectors (`roam rules`)
 - D1: Time-travel graph (`roam bisect`)
 - D2: Proof-carrying PRs (`roam attest`)
 - D3: Effect & side-effect graph (`roam effects`)
+- D4: Minimal-change synthesis (`roam closure`)
 - D5: Sanitized roam capsule (`roam capsule`)
 
 ### Partially Done (3 items)
-- A: Test suite — missing `test_properties.py` and `test_index.py`
+- A: Test suite — missing `test_index.py` (`test_properties.py` done)
 - B: Cross-language bridges — missing 3 bridge plugins, Layer 3, `roam x-lang` command
-- I: Backend command improvements — 7 items, some fixed, several outstanding
+- I: Backend command improvements — 10.1 fixed, 10.2/10.5 already fixed, 10.3/10.4/10.6/10.7 outstanding
 
 ### Not Started — Existing (9 items)
 - Ruby Tier 1 language support (`ruby_lang.py`)
@@ -3013,12 +3015,6 @@ Intentional defense-in-depth, not dead code.
 - P1: Swarm orchestration (`roam orchestrate`)
 - P3: Syntax-less agentic editing (`roam mutate`)
 - P4: Graph-isomorphism transfer (`roam fingerprint`)
-
-### Not Started — Workflow Integration (1 item)
-- W8: Plugin DSL for detectors (`.roam/rules/`)
-
-### Not Started — Deep Foundation (1 item)
-- D4: Minimal-change synthesis (`roam closure`)
 
 ### Idea Dependency Graph
 
@@ -3201,6 +3197,6 @@ After Phase 6:   "The operating system for multi-agent software engineering"
 | Existing (A-I + Tier 3 + README) | 15 | 6 done, 3 partial, 6 not started |
 | Next-Gen N-series | 7 | 3 done (N1, N2, N7), 1 subsumed (N4→W5), 3 not started |
 | Paradigm-Shift P-series | 5 | 2 done (P2, P5), 3 not started |
-| Workflow W-series | 8 | 7 done, 1 not started (W8) |
-| Deep Foundation D-series | 5 | 4 done (D1-D3, D5), 1 not started (D4) |
-| **Total ideas** | **40** | **22 done, 3 partial, 14 not started** |
+| Workflow W-series | 8 | 8 done |
+| Deep Foundation D-series | 5 | 5 done |
+| **Total ideas** | **40** | **26 done, 3 partial, 12 not started** |
