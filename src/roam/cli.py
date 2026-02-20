@@ -189,9 +189,11 @@ def _check_gate(gate_expr: str, data: dict) -> bool:
 @click.version_option(package_name="roam-code")
 @click.option('--json', 'json_mode', is_flag=True, help='Output in JSON format')
 @click.option('--compact', is_flag=True, help='Compact output: TSV tables, minimal JSON envelope')
+@click.option('--sarif', 'sarif_mode', is_flag=True, help='Output in SARIF 2.1.0 format (for dead, health, complexity, rules)')
 @click.pass_context
-def cli(ctx, json_mode, compact):
+def cli(ctx, json_mode, compact, sarif_mode):
     """Roam: Codebase comprehension tool."""
     ctx.ensure_object(dict)
     ctx.obj['json'] = json_mode
     ctx.obj['compact'] = compact
+    ctx.obj['sarif'] = sarif_mode

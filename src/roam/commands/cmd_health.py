@@ -114,6 +114,7 @@ def _unique_dirs(file_paths):
 def health(ctx, no_framework):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
     ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
@@ -340,6 +341,53 @@ def health(ctx, no_framework):
             verdict = f"Needs attention ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
         else:
             verdict = f"Unhealthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+
+        if sarif_mode:
+            from roam.output.sarif import health_to_sarif, write_sarif
+            issues = {
+                "cycles": [
+                    {
+                        "size": c["size"],
+                        "severity": c.get("severity", "WARNING"),
+                        "symbols": [s["name"] for s in c["symbols"]],
+                        "files": c["files"],
+                    }
+                    for c in formatted_cycles
+                ],
+                "god_components": [
+                    {
+                        "name": g["name"],
+                        "kind": g["kind"],
+                        "degree": g["degree"],
+                        "file": g["file"],
+                        "severity": g.get("severity", "WARNING"),
+                    }
+                    for g in god_items
+                ],
+                "bottlenecks": [
+                    {
+                        "name": b["name"],
+                        "kind": b["kind"],
+                        "betweenness": b["betweenness"],
+                        "file": b["file"],
+                        "severity": b.get("severity", "WARNING"),
+                    }
+                    for b in bn_items
+                ],
+                "layer_violations": [
+                    {
+                        "severity": "WARNING",
+                        "source": v_lookup.get(v["source"], {}).get("name", "?"),
+                        "source_layer": v["source_layer"],
+                        "target": v_lookup.get(v["target"], {}).get("name", "?"),
+                        "target_layer": v["target_layer"],
+                    }
+                    for v in violations
+                ],
+            }
+            sarif = health_to_sarif(issues)
+            click.echo(write_sarif(sarif))
+            return
 
         if json_mode:
             j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
