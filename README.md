@@ -643,6 +643,21 @@ roam describe --agent-prompt        # compact ~500-token prompt (append to any c
 roam minimap --update               # inject/refresh annotated codebase minimap in CLAUDE.md
 ```
 
+**Agent not using Roam correctly?** If your agent is ignoring Roam and falling back to grep/read exploration, it likely doesn't have the instructions. Run:
+
+```bash
+roam describe --write          # writes instructions to your agent's config (CLAUDE.md, AGENTS.md, etc.)
+```
+
+If you already have a config file and don't want to overwrite it:
+
+```bash
+roam describe --agent-prompt   # prints a compact prompt — copy-paste into your existing config
+roam minimap --update          # injects an annotated codebase snapshot into CLAUDE.md (won't touch other content)
+```
+
+This teaches the agent which Roam command to use for each situation (e.g., `roam preflight` before changes, `roam context` for files to read, `roam diagnose` for debugging).
+
 <details>
 <summary><strong>Copy-paste agent instructions</strong></summary>
 
