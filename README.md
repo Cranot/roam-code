@@ -709,12 +709,12 @@ Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) serve
 roam mcp
 ```
 
-61 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+61 tools and 2 resources. All tools are read-only and query the index -- they never modify your code.
 
-**Lite mode:** For smaller models or latency-sensitive setups, set `ROAM_MCP_LITE=1` to expose only 16 core tools:
+**Lite mode (default):** By default, 16 core tools are exposed to keep the tool list manageable for agents. Set `ROAM_MCP_LITE=0` to expose all 61 tools:
 
 ```bash
-ROAM_MCP_LITE=1 roam mcp
+ROAM_MCP_LITE=0 roam mcp
 ```
 
 Core tools in lite mode: `roam_understand`, `roam_search_symbol`, `roam_context`, `roam_file_info`, `roam_deps`, `roam_preflight`, `roam_diff`, `roam_pr_risk`, `roam_affected_tests`, `roam_impact`, `roam_uses`, `roam_health`, `roam_dead_code`, `roam_complexity_report`, `roam_diagnose`, `roam_trace`.
