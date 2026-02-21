@@ -24,7 +24,7 @@ except ImportError:
 # Lite mode: expose only ~15 core tools when ROAM_MCP_LITE=1
 # ---------------------------------------------------------------------------
 
-_LITE = os.environ.get("ROAM_MCP_LITE", "").lower() in ("1", "true", "yes")
+_LITE = os.environ.get("ROAM_MCP_LITE", "1").lower() in ("1", "true", "yes")
 
 _CORE_TOOLS = {
     # comprehension (5)
