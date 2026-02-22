@@ -693,17 +693,13 @@ def _extract_loop_vars(loop_node, source: bytes) -> set[str]:
 
 
 def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
-    """Check if any argument of a call expression references a loop variable."""
-    # Find argument list node
-    args_node = None
-    for child in call_node.children:
-        if child.type in ("argument_list", "arguments", "template_string"):
-            args_node = child
-            break
-    if args_node is None:
-        return False
+    """Check if a call expression depends on a loop variable.
 
-    # Walk all identifiers in the arguments
+    Checks both arguments AND the call receiver (the object before ``.method()``).
+    For example, ``loop_var.method()`` and ``dict[loop_var].call()`` are both
+    loop-dependent even if the argument list is empty or constant.
+    """
+
     def _has_loop_var(node) -> bool:
         if node.type == "identifier":
             name = source[node.start_byte:node.end_byte].decode(
@@ -715,7 +711,32 @@ def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
                 return True
         return False
 
-    return _has_loop_var(args_node)
+    # Check the call receiver (object before .method())
+    for child in call_node.children:
+        if child.type in ("member_expression", "attribute",
+                          "field_expression"):
+            # Check the object part (everything except the method name)
+            for sub in child.children:
+                if sub.type not in ("identifier", "property_identifier",
+                                    "field_identifier", "."):
+                    if _has_loop_var(sub):
+                        return True
+            # Also check if the direct object identifier is a loop var
+            for sub in child.children:
+                if sub.type == "identifier":
+                    name = source[sub.start_byte:sub.end_byte].decode(
+                        "utf-8", errors="replace")
+                    if name in loop_vars:
+                        return True
+                break  # only check the first identifier (the object)
+
+    # Check argument list
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments", "template_string"):
+            if _has_loop_var(child):
+                return True
+
+    return False
 
 
 def _is_bounded_loop(loop_node, source: bytes) -> bool:
