@@ -70,9 +70,10 @@ def print_task_table(task: str, lookup: dict):
     print(f"{'=' * 80}")
 
     # Header
-    header = f"{'Agent':<14} {'Mode':<10}"
+    header_parts = [f"{'Agent':<14} {'Mode':<10}"]
     for _, label, _, _ in SCORE_COLUMNS:
-        header += f" {label:>8}"
+        header_parts.append(f" {label:>8}")
+    header = "".join(header_parts)
     print(header)
     print("-" * len(header))
 
@@ -83,19 +84,19 @@ def print_task_table(task: str, lookup: dict):
             if not scores:
                 continue
 
-            row = f"{agent:<14} {mode:<10}"
+            row_parts = [f"{agent:<14} {mode:<10}"]
             for field, _, fmt, _ in SCORE_COLUMNS:
                 val = scores.get(field)
                 if val is None:
-                    row += f" {'N/A':>8}"
+                    row_parts.append(f" {'N/A':>8}")
                 elif isinstance(val, bool):
-                    row += f" {'PASS' if val else 'FAIL':>8}"
+                    row_parts.append(f" {'PASS' if val else 'FAIL':>8}")
                 else:
                     try:
-                        row += f" {fmt.format(val):>8}"
+                        row_parts.append(f" {fmt.format(val):>8}")
                     except (ValueError, TypeError):
-                        row += f" {str(val)[:8]:>8}"
-            print(row)
+                        row_parts.append(f" {str(val)[:8]:>8}")
+            print("".join(row_parts))
 
 
 def print_agent_summary(agent: str, lookup: dict):

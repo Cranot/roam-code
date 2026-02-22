@@ -822,9 +822,29 @@ def detect_loop_invariant_call(conn):
 
     # Calls that are intentionally per-iteration (suppress)
     _INTENTIONAL_CALLS = {
+        # Logging / output
         "print", "log", "debug", "info", "warn", "warning", "error",
+        # Collection mutation
         "append", "add", "push", "extend", "write", "send",
+        "get", "values", "items", "keys", "update", "pop", "remove",
+        "insert", "setdefault", "discard",
+        # String methods (inherently per-item)
+        "startswith", "endswith", "replace", "format", "strip", "split",
+        "join", "lower", "upper", "lstrip", "rstrip", "encode", "decode",
+        "ljust", "rjust", "center", "zfill",
+        # Event / tracking
         "emit", "track", "record", "increment", "decrement",
+        # Iteration helpers / builtins
+        "enumerate", "zip", "range", "sorted", "reversed",
+        "list", "dict", "set", "tuple", "len", "str", "int", "float",
+        "bool", "bytes", "type",
+        # Math / comparison builtins (per-item reductions)
+        "max", "min", "sum", "abs", "round", "pow",
+        "isinstance", "issubclass", "hasattr", "getattr", "setattr",
+        # File / IO
+        "resolve", "execute", "fetchone", "fetchall", "read_text",
+        "read_bytes", "open",
+        # Control flow
         "sleep", "yield",
     }
 
