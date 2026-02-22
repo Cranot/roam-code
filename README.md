@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*94 commands · 26 languages · architecture OS · 100% local*
+*95 commands · 26 languages · architecture OS · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -87,7 +87,7 @@ $ roam diff                    # blast radius of uncommitted changes
 
 **Fully local.** No API keys, telemetry, or network calls. Works in air-gapped environments.
 
-**Algorithm-aware.** Built-in catalog of 23 anti-patterns. Detects suboptimal algorithms (quadratic loops, N+1 queries, unbounded recursion) and suggests fixes with Big-O improvements and confidence scores.
+**Algorithm-aware.** Built-in catalog of 23 anti-patterns. Detects suboptimal algorithms (quadratic loops, N+1 queries, unbounded recursion) and suggests fixes with Big-O improvements and confidence scores. Receiver-aware loop-invariant analysis minimizes false positives.
 
 **CI-ready.** `--json` output, `--gate` quality gates, GitHub Action, SARIF 2.1.0.
 
@@ -181,7 +181,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 94 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 95 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -198,6 +198,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for CLAUDE.md injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
 | `roam config [KEY [VALUE]]` | View or set configuration options |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
+| `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
 
 ### Daily Workflow
 
@@ -1162,10 +1163,13 @@ Roam is **not** a replacement for your linter, LSP, or SonarQube. It fills a dif
 |------|-------------|------------------|
 | **ctags / cscope** | Symbol index for editors | Roam adds graph metrics, git signals, architecture analysis, and AI-optimized output |
 | **LSP (pyright, gopls)** | Real-time type checking | LSP requires a running server and file:line:col queries. Roam is offline, exploratory, and cross-language |
-| **Sourcegraph** | Code search + AI | Requires hosted deployment. Roam is local-only, MIT-licensed |
-| **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 94 architecture commands, CI gates, multi-agent orchestration |
-| **CodeScene** | Behavioral code analysis | Commercial SaaS. Roam is free, local, uses peer-reviewed algorithms (Mann-Kendall, NPMI, Personalized PageRank) |
-| **SonarQube** | Code quality + security | Heavy server. Roam's cognitive complexity follows SonarSource spec |
+| **Sourcegraph / Cody** | Code search + AI | Requires hosted deployment. Roam is local-only, MIT-licensed, zero infrastructure |
+| **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 95 architecture commands, CI gates, multi-agent orchestration |
+| **CodeScene** | Behavioral code analysis | Commercial SaaS ($20-60k/yr). Roam is free, local, uses peer-reviewed algorithms (Mann-Kendall, NPMI, Personalized PageRank) |
+| **SonarQube** | Code quality + security | Heavy server ($15-45k/yr). Roam's cognitive complexity follows SonarSource spec |
+| **Serena MCP** | LSP-based symbol navigation | 6 MCP tools for navigation. Roam has 48 MCP tools covering architecture, governance, simulation, and orchestration |
+| **Repomix / code2prompt** | Codebase packing for LLMs | Flat file packing with no graph intelligence. Roam gives structural queries, not raw file dumps |
+| **Augment Code** | Cloud context engine | Cloud-hosted, enterprise-priced. Roam is 100% local, air-gapped, MIT-licensed |
 | **grep / ripgrep** | Text search | No semantic understanding. Can't distinguish definitions from usage |
 
 ## FAQ
@@ -1232,7 +1236,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # 2654 tests, Python 3.9-3.13
+pytest tests/              # 2656 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1249,7 +1253,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (94 commands, 7 categories)
+│   ├── cli.py                         # Click CLI (95 commands, 7 categories)
 │   ├── mcp_server.py                  # MCP server (48 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1362,9 +1366,17 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 - [x] Governance DSL: `roam rules` with `.roam/rules/` YAML plugin system (v9.1)
 - [x] Topology fingerprinting: `roam fingerprint` with cross-repo comparison (v9.1)
 - [x] 30+ new commands: simulate, orchestrate, mutate, closure, adversarial, plan, invariants, bisect, intent, cut, effects, dark-matter, capsule, forecast, path-coverage, fingerprint, rules, vuln-map, vuln-reach, ingest-trace, hotspots, and more (v9.1)
+- [x] MCP lite mode: `ROAM_MCP_LITE=1` for 15 core tools (v10.0)
+- [x] YAML/HCL Tier 1 support: CI/CD pipelines, Terraform configs (v10.0)
+- [x] Compact annotated minimap for CLAUDE.md injection (v10.0)
+- [x] Algorithm detection false-positive reduction: receiver-aware loop-invariant analysis (v10.0)
 - [ ] Terminal demo GIF
 - [ ] Docker image for CI
-- [ ] VS Code extension
+- [ ] VS Code extension (CodeLens for callers/callees, inline health indicators)
+- [ ] File-system watch mode for sub-second incremental re-indexing
+- [ ] Embedding-based semantic search via local models (Ollama integration)
+- [ ] Official GitHub Action marketplace listing
+- [ ] Token budget management (`--max-tokens` flag for context-aware output)
 
 ## Contributing
 
@@ -1372,7 +1384,7 @@ Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 2654 tests must pass
+pytest tests/   # All 2656 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
