@@ -1,6 +1,6 @@
 <div align="center">
 
-# roam
+# Roam Code
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
