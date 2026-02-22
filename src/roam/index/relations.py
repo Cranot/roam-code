@@ -19,7 +19,7 @@ def resolve_references(
         files_by_path: Mapping from file path -> file_id.
 
     Returns:
-        List of edge dicts with source_id, target_id, kind, line.
+        List of edge dicts with source_id, target_id, kind, line, source_file_id.
     """
     # Build a lookup: qualified_name -> list of symbols (multiple files may define same qn)
     symbols_by_qualified: dict[str, list[dict]] = {}
@@ -133,6 +133,7 @@ def resolve_references(
             "target_id": target_id,
             "kind": kind,
             "line": line,
+            "source_file_id": files_by_path.get(source_file),
         })
 
     return edges
