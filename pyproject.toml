@@ -44,6 +44,9 @@ Issues = "https://github.com/Cranot/roam-code/issues"
 roam = "roam.cli:cli"
 
 [project.optional-dependencies]
+mcp = [
+    "fastmcp>=2.0",
+]
 dev = [
     "pytest>=7.0",
     "pytest-xdist>=3.0",

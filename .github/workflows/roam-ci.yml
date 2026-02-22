@@ -49,4 +49,4 @@ jobs:
       - run: pip install -e .
       - run: roam index
       - run: roam fitness
-      - run: roam health --json
+      - run: roam --json health
