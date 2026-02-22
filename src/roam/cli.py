@@ -109,11 +109,12 @@ _COMMANDS = {
     "schema":            ("roam.commands.cmd_schema",        "schema_cmd"),
     "search-semantic":   ("roam.commands.cmd_search_semantic", "search_semantic"),
     "relate":            ("roam.commands.cmd_relate",        "relate"),
+    "mcp":               ("roam.mcp_server",                 "mcp_cmd"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
-    "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws", "schema"],
+    "Getting Started": ["index", "init", "config", "understand", "tour", "describe", "minimap", "ws", "schema", "mcp"],
     "Daily Workflow": ["preflight", "pr-risk", "pr-diff", "attest", "adversarial", "diff", "context", "affected-tests", "diagnose", "digest", "annotate", "annotations", "plan"],
     "Codebase Health": ["health", "weather", "debt", "complexity", "algo", "n1", "over-fetch", "missing-index", "alerts", "trend", "fitness", "snapshot", "forecast", "bisect", "ingest-trace", "hotspots"],
     "Architecture": ["map", "layers", "clusters", "coupling", "dark-matter", "effects", "cut", "simulate", "orchestrate", "entry-points", "patterns", "safe-zones", "visualize", "x-lang", "fingerprint"],

@@ -722,73 +722,86 @@ Run `roam --help` for all commands. Use `roam --json <cmd>` for structured outpu
 Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with tools that support MCP.
 
 ```bash
-pip install fastmcp
-fastmcp run roam.mcp_server:mcp
+pip install roam-code[mcp]
+roam mcp
 ```
 
-48 read-only tools and 2 resources. All tools query the index -- they never modify your code.
+61 tools and 2 resources. All tools are read-only and query the index -- they never modify your code.
 
-**Lite mode:** For smaller models or latency-sensitive setups, set `ROAM_MCP_LITE=1` to expose only 15 core tools:
+**Lite mode (default):** By default, 16 core tools are exposed to keep the tool list manageable for agents. Set `ROAM_MCP_LITE=0` to expose all 61 tools:
 
 ```bash
-ROAM_MCP_LITE=1 fastmcp run roam.mcp_server:mcp
+ROAM_MCP_LITE=0 roam mcp
 ```
 
-Core tools in lite mode: `understand`, `health`, `preflight`, `search_symbol`, `context`, `trace`, `impact`, `file_info`, `pr_risk`, `affected_tests`, `dead_code`, `complexity_report`, `diagnose`, `visualize`, `closure`.
+Core tools in lite mode: `roam_understand`, `roam_search_symbol`, `roam_context`, `roam_file_info`, `roam_deps`, `roam_preflight`, `roam_diff`, `roam_pr_risk`, `roam_affected_tests`, `roam_impact`, `roam_uses`, `roam_health`, `roam_dead_code`, `roam_complexity_report`, `roam_diagnose`, `roam_trace`.
 
 <details>
-<summary><strong>MCP tool list (all 48)</strong></summary>
+<summary><strong>MCP tool list (all 61)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
-| `understand` | Full codebase briefing |
-| `health` | Health score (0-100) + issues |
-| `preflight` | Pre-change safety check |
-| `search_symbol` | Find symbols by name |
-| `context` | Files-to-read for modifying a symbol |
-| `trace` | Dependency path between two symbols |
-| `impact` | Blast radius of changing a symbol |
-| `file_info` | File skeleton with all definitions |
-| `pr_risk` | Risk score for pending changes |
-| `breaking_changes` | Detect breaking changes between refs |
-| `affected_tests` | Find tests affected by a change |
-| `dead_code` | List unreferenced exports |
-| `complexity_report` | Per-symbol cognitive complexity |
-| `repo_map` | Project skeleton with key symbols |
-| `tour` | Auto-generated onboarding guide |
-| `diagnose` | Root cause analysis for debugging |
-| `visualize` | Generate Mermaid or DOT architecture diagrams |
-| `algo` | Algorithm anti-pattern detection with language-aware tips |
-| `ws_understand` | Unified multi-repo workspace overview |
-| `ws_context` | Cross-repo augmented symbol context |
-| `pr_diff` | Structural PR diff: metric deltas, edge analysis, symbol changes |
-| `budget_check` | Check changes against architectural budgets |
-| `effects` | Side-effect classification (DB writes, network, filesystem) |
-| `attest` | Proof-carrying PR attestation with all evidence bundled |
-| `capsule_export` | Export sanitized structural graph (no code bodies) |
-| `path_coverage` | Find critical untested call paths (entry -> sink) |
-| `forecast` | Predict when metrics will exceed thresholds |
-| `simulate` | Counterfactual architecture simulator |
-| `orchestrate` | Multi-agent swarm partitioning |
-| `fingerprint` | Topology fingerprint comparison |
-| `mutate` | Graph-level code editing (move/rename/extract) |
-| `dark_matter` | Hidden co-change coupling detection |
-| `closure` | Minimal-change synthesis for rename/delete |
-| `adversarial_review` | Adversarial architecture review |
-| `generate_plan` | Agent work planner |
-| `get_invariants` | Architectural invariant discovery |
-| `bisect_blame` | Architectural git bisect |
-| `doc_intent` | Doc-to-code linking |
-| `cut_analysis` | Minimum graph cut analysis |
-| `annotate_symbol` | Attach persistent notes to symbols |
-| `get_annotations` | View stored annotations |
-| `relate` | Show relationship between two symbols |
-| `search_semantic` | Semantic search by meaning |
-| `rules_check` | Plugin DSL governance rules |
-| `vuln_map` | Vulnerability report ingestion |
-| `vuln_reach` | Vulnerability reachability paths |
-| `ingest_trace` | Ingest runtime trace data |
-| `runtime_hotspots` | Runtime hotspot analysis |
+| `roam_understand` | Full codebase briefing |
+| `roam_health` | Health score (0-100) + issues |
+| `roam_preflight` | Pre-change safety check |
+| `roam_search_symbol` | Find symbols by name |
+| `roam_context` | Files-to-read for modifying a symbol |
+| `roam_trace` | Dependency path between two symbols |
+| `roam_impact` | Blast radius of changing a symbol |
+| `roam_file_info` | File skeleton with all definitions |
+| `roam_pr_risk` | Risk score for pending changes |
+| `roam_breaking_changes` | Detect breaking changes between refs |
+| `roam_affected_tests` | Find tests affected by a change |
+| `roam_dead_code` | List unreferenced exports |
+| `roam_complexity_report` | Per-symbol cognitive complexity |
+| `roam_repo_map` | Project skeleton with key symbols |
+| `roam_tour` | Auto-generated onboarding guide |
+| `roam_diagnose` | Root cause analysis for debugging |
+| `roam_visualize` | Generate Mermaid or DOT architecture diagrams |
+| `roam_algo` | Algorithm anti-pattern detection with language-aware tips |
+| `roam_ws_understand` | Unified multi-repo workspace overview |
+| `roam_ws_context` | Cross-repo augmented symbol context |
+| `roam_pr_diff` | Structural PR diff: metric deltas, edge analysis, symbol changes |
+| `roam_budget_check` | Check changes against architectural budgets |
+| `roam_effects` | Side-effect classification (DB writes, network, filesystem) |
+| `roam_attest` | Proof-carrying PR attestation with all evidence bundled |
+| `roam_capsule_export` | Export sanitized structural graph (no code bodies) |
+| `roam_path_coverage` | Find critical untested call paths (entry -> sink) |
+| `roam_forecast` | Predict when metrics will exceed thresholds |
+| `roam_simulate` | Counterfactual architecture simulator |
+| `roam_orchestrate` | Multi-agent swarm partitioning |
+| `roam_fingerprint` | Topology fingerprint comparison |
+| `roam_mutate` | Graph-level code editing (move/rename/extract) |
+| `roam_dark_matter` | Hidden co-change coupling detection |
+| `roam_closure` | Minimal-change synthesis for rename/delete |
+| `roam_adversarial_review` | Adversarial architecture review |
+| `roam_generate_plan` | Agent work planner |
+| `roam_get_invariants` | Architectural invariant discovery |
+| `roam_bisect_blame` | Architectural git bisect |
+| `roam_doc_intent` | Doc-to-code linking |
+| `roam_cut_analysis` | Minimum graph cut analysis |
+| `roam_annotate_symbol` | Attach persistent notes to symbols |
+| `roam_get_annotations` | View stored annotations |
+| `roam_relate` | Show relationship between two symbols |
+| `roam_search_semantic` | Semantic search by meaning |
+| `roam_rules_check` | Plugin DSL governance rules |
+| `roam_vuln_map` | Vulnerability report ingestion |
+| `roam_vuln_reach` | Vulnerability reachability paths |
+| `roam_ingest_trace` | Ingest runtime trace data |
+| `roam_runtime_hotspots` | Runtime hotspot analysis |
+| `roam_diff` | Blast radius of uncommitted/committed changes |
+| `roam_symbol` | Symbol definition, callers, callees, metrics |
+| `roam_deps` | File-level import/imported-by relationships |
+| `roam_uses` | All consumers of a symbol by edge type |
+| `roam_weather` | Code hotspots: churn x complexity ranking |
+| `roam_debt` | Hotspot-weighted technical debt prioritization |
+| `roam_n1` | Detect N+1 I/O patterns in ORM code |
+| `roam_auth_gaps` | Find endpoints missing auth |
+| `roam_over_fetch` | Detect models serializing too many fields |
+| `roam_missing_index` | Find queries on non-indexed columns |
+| `roam_orphan_routes` | Detect dead backend routes |
+| `roam_migration_safety` | Detect non-idempotent migrations |
+| `roam_api_drift` | Backend/frontend model mismatch detection |
 
 **Resources:** `roam://health` (current health score), `roam://summary` (project overview)
 
@@ -798,7 +811,7 @@ Core tools in lite mode: `understand`, `health`, `preflight`, `search_symbol`, `
 <summary><strong>Claude Code</strong></summary>
 
 ```bash
-claude mcp add roam -- fastmcp run roam.mcp_server:mcp
+claude mcp add roam-code -- roam mcp
 ```
 
 Or add to `.mcp.json` in your project root:
@@ -806,9 +819,9 @@ Or add to `.mcp.json` in your project root:
 ```json
 {
   "mcpServers": {
-    "roam": {
-      "command": "fastmcp",
-      "args": ["run", "roam.mcp_server:mcp"]
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"]
     }
   }
 }
@@ -824,9 +837,9 @@ Add to your `claude_desktop_config.json`:
 ```json
 {
   "mcpServers": {
-    "roam": {
-      "command": "fastmcp",
-      "args": ["run", "roam.mcp_server:mcp"],
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"],
       "cwd": "/path/to/your/project"
     }
   }
@@ -843,9 +856,9 @@ Add to `.cursor/mcp.json`:
 ```json
 {
   "mcpServers": {
-    "roam": {
-      "command": "fastmcp",
-      "args": ["run", "roam.mcp_server:mcp"]
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"]
     }
   }
 }
@@ -861,10 +874,10 @@ Add to `.vscode/mcp.json`:
 ```json
 {
   "servers": {
-    "roam": {
+    "roam-code": {
       "type": "stdio",
-      "command": "fastmcp",
-      "args": ["run", "roam.mcp_server:mcp"]
+      "command": "roam",
+      "args": ["mcp"]
     }
   }
 }
@@ -1167,7 +1180,7 @@ Roam is **not** a replacement for your linter, LSP, or SonarQube. It fills a dif
 | **Aider repo map** | Tree-sitter + PageRank | Context selection for chat. Roam adds git signals, 95 architecture commands, CI gates, multi-agent orchestration |
 | **CodeScene** | Behavioral code analysis | Commercial SaaS ($20-60k/yr). Roam is free, local, uses peer-reviewed algorithms (Mann-Kendall, NPMI, Personalized PageRank) |
 | **SonarQube** | Code quality + security | Heavy server ($15-45k/yr). Roam's cognitive complexity follows SonarSource spec |
-| **Serena MCP** | LSP-based symbol navigation | 6 MCP tools for navigation. Roam has 48 MCP tools covering architecture, governance, simulation, and orchestration |
+| **Serena MCP** | LSP-based symbol navigation | 6 MCP tools for navigation. Roam has 61 MCP tools covering architecture, governance, simulation, and orchestration |
 | **Repomix / code2prompt** | Codebase packing for LLMs | Flat file packing with no graph intelligence. Roam gives structural queries, not raw file dumps |
 | **Augment Code** | Cloud context engine | Cloud-hosted, enterprise-priced. Roam is 100% local, air-gapped, MIT-licensed |
 | **grep / ripgrep** | Text search | No semantic understanding. Can't distinguish definitions from usage |
@@ -1254,7 +1267,7 @@ roam-code/
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
 │   ├── cli.py                         # Click CLI (95 commands, 7 categories)
-│   ├── mcp_server.py                  # MCP server (48 tools, 2 resources)
+│   ├── mcp_server.py                  # MCP server (61 tools, 2 resources)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1333,7 +1346,7 @@ roam-code/
 | [tree-sitter-language-pack](https://github.com/nicolo-ribaudo/tree-sitter-language-pack) >= 0.6 | 165+ grammars |
 | [networkx](https://networkx.org/) >= 3.0 | Graph algorithms |
 
-Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server)
+Optional: [fastmcp](https://github.com/jlowin/fastmcp) >= 2.0 (MCP server — install with `pip install roam-code[mcp]`)
 
 ## Roadmap
 
