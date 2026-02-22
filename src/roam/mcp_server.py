@@ -32,6 +32,8 @@ except ImportError:
 # ---------------------------------------------------------------------------
 
 _CORE_TOOLS = {
+    # compound operations (4) — each replaces 2-4 individual calls
+    "roam_explore", "roam_prepare_change", "roam_review_change", "roam_diagnose_issue",
     # comprehension (5)
     "roam_understand", "roam_search_symbol", "roam_context", "roam_file_info", "roam_deps",
     # daily workflow (6)
@@ -111,7 +113,143 @@ else:
 _REGISTERED_TOOLS: list[str] = []
 
 
-def _tool(name: str, description: str = ""):
+# ---------------------------------------------------------------------------
+# Output schemas — JSON Schema dicts for MCP tool return types.
+# All tools default to the envelope schema; compound/core tools override.
+# ---------------------------------------------------------------------------
+
+_ENVELOPE_SCHEMA: dict = {
+    "type": "object",
+    "properties": {
+        "command": {"type": "string"},
+        "summary": {
+            "type": "object",
+            "properties": {
+                "verdict": {"type": "string", "description": "One-line result summary"},
+            },
+        },
+    },
+}
+
+
+def _make_schema(summary_fields: dict | None = None, **payload_fields) -> dict:
+    """Build a JSON Schema extending the standard envelope with custom fields."""
+    summary_props: dict = {
+        "verdict": {"type": "string", "description": "One-line result summary"},
+    }
+    if summary_fields:
+        summary_props.update(summary_fields)
+
+    props: dict = {
+        "command": {"type": "string"},
+        "summary": {"type": "object", "properties": summary_props},
+    }
+    if payload_fields:
+        props.update(payload_fields)
+
+    return {"type": "object", "properties": props}
+
+
+# -- Compound operation schemas ------------------------------------------------
+
+_SCHEMA_EXPLORE = _make_schema(
+    {"sections": {"type": "array", "items": {"type": "string"}}},
+    understand={"type": "object", "description": "Full codebase briefing"},
+    context={"type": "object", "description": "Symbol context (when symbol provided)"},
+)
+
+_SCHEMA_PREPARE_CHANGE = _make_schema(
+    {"sections": {"type": "array"}, "target": {"type": "string"}},
+    preflight={"type": "object", "description": "Safety check: blast radius, tests, fitness"},
+    context={"type": "object", "description": "Files and line ranges to read"},
+    effects={"type": "object", "description": "Side effects of the target symbol"},
+)
+
+_SCHEMA_REVIEW_CHANGE = _make_schema(
+    {"sections": {"type": "array"}},
+    pr_risk={"type": "object", "description": "Risk score and per-file breakdown"},
+    breaking_changes={"type": "object", "description": "Removed/changed API signatures"},
+    pr_diff={"type": "object", "description": "Structural graph delta"},
+)
+
+_SCHEMA_DIAGNOSE_ISSUE = _make_schema(
+    {"sections": {"type": "array"}, "target": {"type": "string"}},
+    diagnose={"type": "object", "description": "Root cause suspects ranked by risk"},
+    effects={"type": "object", "description": "Side effects of the symbol"},
+)
+
+# -- Core tool schemas ---------------------------------------------------------
+
+_SCHEMA_UNDERSTAND = _make_schema(
+    {"health_score": {"type": "number"}, "tech_stack": {"type": "array"}},
+    architecture={"type": "object"},
+    hotspots={"type": "array"},
+)
+
+_SCHEMA_HEALTH = _make_schema(
+    {"health_score": {"type": "number"}, "total_files": {"type": "integer"},
+     "total_symbols": {"type": "integer"}},
+    issues={"type": "array"},
+    bottlenecks={"type": "array"},
+)
+
+_SCHEMA_SEARCH = _make_schema(
+    {"total_matches": {"type": "integer"}, "query": {"type": "string"}},
+    results={
+        "type": "array",
+        "items": {"type": "object", "properties": {
+            "name": {"type": "string"}, "kind": {"type": "string"},
+            "file_path": {"type": "string"}, "line_start": {"type": "integer"},
+        }},
+    },
+)
+
+_SCHEMA_PREFLIGHT = _make_schema(
+    {"risk_level": {"type": "string"}, "target": {"type": "string"}},
+    blast_radius={"type": "object"},
+    affected_tests={"type": "array"},
+    complexity={"type": "object"},
+)
+
+_SCHEMA_CONTEXT = _make_schema(
+    {"target": {"type": "string"}},
+    definition={"type": "object"},
+    callers={"type": "array"},
+    callees={"type": "array"},
+    files_to_read={"type": "array"},
+)
+
+_SCHEMA_IMPACT = _make_schema(
+    {"total_affected": {"type": "integer"}, "target": {"type": "string"}},
+    affected_symbols={"type": "array"},
+    affected_files={"type": "array"},
+)
+
+_SCHEMA_PR_RISK = _make_schema(
+    {"risk_score": {"type": "number"}, "risk_level": {"type": "string"}},
+    per_file={"type": "array"},
+)
+
+_SCHEMA_DIFF = _make_schema(
+    {"changed_files": {"type": "integer"}},
+    files={"type": "array"},
+    affected_symbols={"type": "array"},
+)
+
+_SCHEMA_DIAGNOSE = _make_schema(
+    {"target": {"type": "string"}, "top_suspect": {"type": "string"}},
+    upstream_suspects={"type": "array"},
+    downstream_suspects={"type": "array"},
+)
+
+_SCHEMA_TRACE = _make_schema(
+    {"source": {"type": "string"}, "target": {"type": "string"},
+     "hop_count": {"type": "integer"}},
+    path={"type": "array"},
+)
+
+
+def _tool(name: str, description: str = "", output_schema: dict | None = None):
     """Register an MCP tool if it belongs to the active preset."""
     def decorator(fn):
         if mcp is None:
@@ -124,7 +262,14 @@ def _tool(name: str, description: str = ""):
         kwargs: dict = {"name": name}
         if description:
             kwargs["description"] = description
-        return mcp.tool(**kwargs)(fn)
+        schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
+        kwargs["output_schema"] = schema
+        try:
+            return mcp.tool(**kwargs)(fn)
+        except TypeError:
+            # FastMCP version doesn't support output_schema — retry without it
+            kwargs.pop("output_schema", None)
+            return mcp.tool(**kwargs)(fn)
     return decorator
 
 
@@ -246,6 +391,200 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
 
 
 # ===================================================================
+# Compound operations -- each replaces 2-4 individual tool calls
+# ===================================================================
+
+
+def _compound_envelope(
+    command: str,
+    sub_results: list[tuple[str, dict]],
+    **meta,
+) -> dict:
+    """Build a compound operation response from multiple sub-command results."""
+    errors: list[dict] = []
+    sections: dict = {}
+
+    for name, data in sub_results:
+        if not data or "error" in data:
+            err_msg = data.get("error", "empty result") if data else "empty result"
+            errors.append({"command": name, "error": err_msg})
+        else:
+            sections[name] = data
+
+    # Build compound verdict from sub-verdicts
+    verdicts: list[str] = []
+    for name, data in sub_results:
+        if isinstance(data, dict):
+            summary = data.get("summary", {})
+            if isinstance(summary, dict) and "verdict" in summary:
+                verdicts.append(f"{name}: {summary['verdict']}")
+
+    result: dict = {
+        "command": command,
+        "summary": {
+            "verdict": " | ".join(verdicts) if verdicts else "compound operation completed",
+            "sections": list(sections.keys()),
+            "errors": len(errors),
+            **meta,
+        },
+    }
+    result.update(sections)
+
+    if errors:
+        result["_errors"] = errors
+
+    return result
+
+
+@_tool(name="roam_explore",
+       description="Codebase exploration bundle: understand overview + optional symbol deep-dive in one call.",
+       output_schema=_SCHEMA_EXPLORE)
+def explore(symbol: str = "", root: str = ".") -> dict:
+    """Full codebase exploration in one call.
+
+    WHEN TO USE: Call this FIRST when starting work on a new codebase.
+    If you have a specific symbol in mind, pass it to also get focused
+    context (callers, callees, files to read). Replaces calling
+    ``understand`` + ``context`` separately — saves one round-trip.
+
+    Parameters
+    ----------
+    symbol:
+        Optional symbol to deep-dive into after the overview.
+
+    Returns: codebase overview (tech stack, architecture, health) and
+    optionally focused context for the given symbol.
+    """
+    overview = _run_roam(["understand"], root)
+
+    if not symbol:
+        return _compound_envelope("explore", [("understand", overview)])
+
+    ctx = _run_roam(["context", symbol, "--task", "understand"], root)
+    return _compound_envelope("explore", [
+        ("understand", overview),
+        ("context", ctx),
+    ], target=symbol)
+
+
+@_tool(name="roam_prepare_change",
+       description="Pre-change bundle: preflight + context + effects in one call. Call BEFORE modifying code.",
+       output_schema=_SCHEMA_PREPARE_CHANGE)
+def prepare_change(target: str, staged: bool = False, root: str = ".") -> dict:
+    """Everything needed before modifying code, in one call.
+
+    WHEN TO USE: Call this BEFORE making any non-trivial code change.
+    Bundles safety check (blast radius, tests, fitness), context (files
+    and line ranges to read), and side effects into a single response.
+    Replaces calling ``preflight`` + ``context`` + ``effects`` separately
+    — saves two round-trips.
+
+    Parameters
+    ----------
+    target:
+        Symbol name or file path to prepare for changing.
+    staged:
+        If True, check staged (git add-ed) changes instead.
+
+    Returns: preflight safety data, context files to read, and side
+    effects of the target. Each section includes its own verdict.
+    """
+    pf_args = ["preflight"]
+    if target:
+        pf_args.append(target)
+    if staged:
+        pf_args.append("--staged")
+
+    preflight_data = _run_roam(pf_args, root)
+
+    ctx_data: dict = {}
+    effects_data: dict = {}
+    if target:
+        ctx_data = _run_roam(["context", target, "--task", "refactor"], root)
+        effects_data = _run_roam(["effects", target], root)
+
+    return _compound_envelope("prepare-change", [
+        ("preflight", preflight_data),
+        ("context", ctx_data),
+        ("effects", effects_data),
+    ], target=target)
+
+
+@_tool(name="roam_review_change",
+       description="Change review bundle: pr-risk + breaking changes + structural diff in one call.",
+       output_schema=_SCHEMA_REVIEW_CHANGE)
+def review_change(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+    """Review pending changes in one call.
+
+    WHEN TO USE: Call this before committing or creating a PR.
+    Bundles risk assessment, breaking API changes, and structural
+    graph delta into a single response. Replaces calling ``pr_risk`` +
+    ``breaking_changes`` + ``pr_diff`` separately — saves two round-trips.
+
+    Parameters
+    ----------
+    staged:
+        If True, analyze staged changes only.
+    commit_range:
+        Git range like ``main..HEAD`` for branch comparison.
+
+    Returns: risk score, breaking changes, and structural delta.
+    Each section includes its own verdict.
+    """
+    risk_args = ["pr-risk"]
+    breaking_args = ["breaking"]
+    diff_args = ["pr-diff"]
+
+    if staged:
+        risk_args.append("--staged")
+        diff_args.append("--staged")
+    if commit_range:
+        breaking_args.append(commit_range)
+        diff_args.extend(["--range", commit_range])
+
+    risk_data = _run_roam(risk_args, root)
+    breaking_data = _run_roam(breaking_args, root)
+    diff_data = _run_roam(diff_args, root)
+
+    return _compound_envelope("review-change", [
+        ("pr_risk", risk_data),
+        ("breaking_changes", breaking_data),
+        ("pr_diff", diff_data),
+    ])
+
+
+@_tool(name="roam_diagnose_issue",
+       description="Debug bundle: root cause suspects + side effects in one call.",
+       output_schema=_SCHEMA_DIAGNOSE_ISSUE)
+def diagnose_issue(symbol: str, depth: int = 2, root: str = ".") -> dict:
+    """Debug a failing symbol in one call.
+
+    WHEN TO USE: Call this when debugging a bug or test failure.
+    Bundles root-cause analysis (upstream/downstream suspects ranked
+    by composite risk) with side-effect analysis into one response.
+    Replaces calling ``diagnose`` + ``effects`` separately — saves
+    one round-trip.
+
+    Parameters
+    ----------
+    symbol:
+        The symbol suspected of being involved in the bug.
+    depth:
+        How many hops upstream/downstream to analyze (default 2).
+
+    Returns: root cause suspects ranked by risk and side effects
+    of the target symbol.
+    """
+    diag_data = _run_roam(["diagnose", symbol, "--depth", str(depth)], root)
+    effects_data = _run_roam(["effects", symbol], root)
+
+    return _compound_envelope("diagnose-issue", [
+        ("diagnose", diag_data),
+        ("effects", effects_data),
+    ], target=symbol)
+
+
+# ===================================================================
 # Tier 1 tools -- the most valuable for day-to-day AI agent work
 # ===================================================================
 
@@ -289,7 +628,8 @@ def expand_toolset(preset: str = "") -> dict:
 
 
 @_tool(name="roam_understand",
-       description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.")
+       description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
+       output_schema=_SCHEMA_UNDERSTAND)
 def understand(root: str = ".") -> dict:
     """Get a full codebase briefing in a single call.
 
@@ -308,7 +648,8 @@ def understand(root: str = ".") -> dict:
 
 
 @_tool(name="roam_health",
-       description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.")
+       description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
+       output_schema=_SCHEMA_HEALTH)
 def health(root: str = ".") -> dict:
     """Get the codebase health score (0-100) with issue breakdown.
 
@@ -325,7 +666,8 @@ def health(root: str = ".") -> dict:
 
 
 @_tool(name="roam_preflight",
-       description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.")
+       description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.",
+       output_schema=_SCHEMA_PREFLIGHT)
 def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
@@ -356,7 +698,8 @@ def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
 
 
 @_tool(name="roam_search_symbol",
-       description="Find symbols by name substring. Returns kind, file, line, PageRank importance.")
+       description="Find symbols by name substring. Returns kind, file, line, PageRank importance.",
+       output_schema=_SCHEMA_SEARCH)
 def search_symbol(query: str, root: str = ".") -> dict:
     """Find symbols by name (case-insensitive substring match).
 
@@ -378,7 +721,8 @@ def search_symbol(query: str, root: str = ".") -> dict:
 
 
 @_tool(name="roam_context",
-       description="Minimal files + line ranges needed to work with a symbol.")
+       description="Minimal files + line ranges needed to work with a symbol.",
+       output_schema=_SCHEMA_CONTEXT)
 def context(symbol: str, task: str = "", root: str = ".") -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
@@ -408,7 +752,8 @@ def context(symbol: str, task: str = "", root: str = ".") -> dict:
 
 
 @_tool(name="roam_trace",
-       description="Shortest dependency path between two symbols with hop details.")
+       description="Shortest dependency path between two symbols with hop details.",
+       output_schema=_SCHEMA_TRACE)
 def trace(source: str, target: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
@@ -431,7 +776,8 @@ def trace(source: str, target: str, root: str = ".") -> dict:
 
 
 @_tool(name="roam_impact",
-       description="Blast radius: all symbols and files affected by changing a symbol.")
+       description="Blast radius: all symbols and files affected by changing a symbol.",
+       output_schema=_SCHEMA_IMPACT)
 def impact(symbol: str, root: str = ".") -> dict:
     """Show the blast radius of changing a symbol.
 
@@ -478,7 +824,8 @@ def file_info(path: str, root: str = ".") -> dict:
 
 
 @_tool(name="roam_pr_risk",
-       description="Risk score (0-100) for pending changes with per-file breakdown.")
+       description="Risk score (0-100) for pending changes with per-file breakdown.",
+       output_schema=_SCHEMA_PR_RISK)
 def pr_risk(staged: bool = False, root: str = ".") -> dict:
     """Compute a risk score (0-100) for pending changes.
 
@@ -738,7 +1085,8 @@ def visualize(
 
 
 @_tool(name="roam_diagnose",
-       description="Root cause analysis: upstream/downstream suspects ranked by composite risk.")
+       description="Root cause analysis: upstream/downstream suspects ranked by composite risk.",
+       output_schema=_SCHEMA_DIAGNOSE)
 def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     """Root cause analysis for a failing symbol.
 
@@ -1793,7 +2141,8 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
 
 
 @_tool(name="roam_diff",
-       description="Blast radius of uncommitted/committed changes: affected symbols, files, tests.")
+       description="Blast radius of uncommitted/committed changes: affected symbols, files, tests.",
+       output_schema=_SCHEMA_DIFF)
 def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> dict:
     """Blast radius of uncommitted or committed changes.
 
