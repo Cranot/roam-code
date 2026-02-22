@@ -1,12 +1,13 @@
 # Installing roam-code
 
 roam-code provides instant codebase comprehension for AI coding agents.
-94 commands, 26 languages, 100% local, zero API keys.
+95 commands, 26 languages, 100% local, zero API keys.
 
 ## Quick install
 
 ```bash
 pip install roam-code
+pip install roam-code[mcp]  # optional: MCP server support
 ```
 
 Or with isolated environments:
@@ -71,4 +72,4 @@ Add to your MCP config:
 | `roam context <symbol>` | Files and line ranges to read |
 | `roam diff` | Blast radius of uncommitted changes |
 
-Run `roam --help` for all 94 commands.
+Run `roam --help` for all 95 commands.

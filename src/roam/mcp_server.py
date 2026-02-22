@@ -14,6 +14,9 @@ from __future__ import annotations
 import json
 import os
 import subprocess
+import sys
+
+import click
 
 try:
     from fastmcp import FastMCP
@@ -21,10 +24,11 @@ except ImportError:
     FastMCP = None
 
 # ---------------------------------------------------------------------------
-# Lite mode: expose only ~15 core tools when ROAM_MCP_LITE=1
+# Lite mode (default): expose only core tools for better agent tool selection.
+# Set ROAM_MCP_LITE=0 to expose all tools.
 # ---------------------------------------------------------------------------
 
-_LITE = os.environ.get("ROAM_MCP_LITE", "1").lower() in ("1", "true", "yes")
+_LITE = os.environ.get("ROAM_MCP_LITE", "1").lower() not in ("0", "false", "no")
 
 _CORE_TOOLS = {
     # comprehension (5)
@@ -55,17 +59,18 @@ else:
     mcp = None
 
 
-def _tool(name=None):
-    """MCP tool decorator. In lite mode (ROAM_MCP_LITE=1), only core tools register."""
+_REGISTERED_TOOLS: list[str] = []
+
+
+def _tool(name: str):
+    """Register an MCP tool. In lite mode, only _CORE_TOOLS are registered."""
     def decorator(fn):
         if mcp is None:
             return fn
-        tool_name = name or fn.__name__
-        if _LITE and tool_name not in _CORE_TOOLS:
+        if _LITE and name not in _CORE_TOOLS:
             return fn
-        if name:
-            return mcp.tool(name=name)(fn)
-        return mcp.tool()(fn)
+        _REGISTERED_TOOLS.append(name)
+        return mcp.tool(name=name)(fn)
     return decorator
 
 
@@ -74,35 +79,36 @@ def _tool(name=None):
 # ---------------------------------------------------------------------------
 
 
+_ERROR_PATTERNS: list[tuple[str, str, str]] = [
+    # (pattern, error_code, hint) — checked in order, first match wins.
+    # More specific patterns MUST come before broader ones.
+    ("no .roam",            "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
+    ("not found in index",  "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
+    ("index is stale",      "INDEX_STALE",      "run `roam index` to refresh."),
+    ("out of date",         "INDEX_STALE",      "run `roam index` to refresh."),
+    ("not a git repository","NOT_GIT_REPO",     "some commands require git history. run: git init."),
+    ("database is locked",  "DB_LOCKED",        "another roam process is running. wait or delete .roam/index.lock."),
+    ("permission denied",   "PERMISSION_DENIED","check file permissions."),
+    ("cannot open index",   "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
+    ("symbol not found",    "NO_RESULTS",       "try a different search term or check spelling."),
+    ("no matches",          "NO_RESULTS",       "try a different search term or check spelling."),
+    ("no results",          "NO_RESULTS",       "try a different search term or check spelling."),
+]
+
+
 def _classify_error(stderr: str, exit_code: int) -> tuple[str, str]:
-    """classify error and return (error_code, hint)."""
+    """Classify error and return (error_code, hint)."""
     s = stderr.lower()
-    if "not found in index" in s or "no .roam" in s or "index.db" in s:
-        return ("INDEX_NOT_FOUND", "run `roam init` to create the codebase index.")
-    if "stale" in s or "out of date" in s:
-        return ("INDEX_STALE", "run `roam index` to refresh.")
-    if "not found" in s or "no matches" in s or "no results" in s:
-        return ("NO_RESULTS", "try a different search term or check spelling.")
-    if "not a git repository" in s:
-        return ("NOT_GIT_REPO", "some commands require git history. run: git init")
-    if "permission denied" in s:
-        return ("PERMISSION_DENIED", "check file permissions.")
-    if "database" in s and "locked" in s:
-        return ("DB_LOCKED", "another roam process is running. wait or delete .roam/index.lock")
-    if exit_code == 1:
+    for pattern, code, hint in _ERROR_PATTERNS:
+        if pattern in s:
+            return (code, hint)
+    if exit_code != 0:
         return ("COMMAND_FAILED", "check arguments and try again.")
     return ("UNKNOWN", "check the error message for details.")
 
 
 def _ensure_fresh_index(root: str = ".") -> dict | None:
-    """check index freshness, rebuild if stale. returns None if ok."""
-    from pathlib import Path
-    index_path = Path(root).resolve() / ".roam" / "index.db"
-    if not index_path.exists():
-        result = _run_roam(["index"], root)
-        if "error" in result:
-            return {"error": f"failed to create index: {result['error']}"}
-        return None
+    """Run incremental index to ensure freshness. Returns None on success."""
     result = _run_roam(["index"], root)
     if "error" in result:
         return {"error": f"index update failed: {result['error']}"}
@@ -1990,8 +1996,6 @@ def roam_api_drift(model: str = "", confidence: str = "medium",
 # CLI command
 # ---------------------------------------------------------------------------
 
-import click
-
 
 @click.command()
 @click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio',
@@ -1999,31 +2003,42 @@ import click
 @click.option('--host', default='localhost', help='host for SSE mode')
 @click.option('--port', type=int, default=8000, help='port for SSE mode')
 @click.option('--no-auto-index', is_flag=True, help='skip automatic index freshness check')
-def mcp_cmd(transport, host, port, no_auto_index):
+@click.option('--list-tools', is_flag=True, help='list registered tools and exit')
+def mcp_cmd(transport, host, port, no_auto_index, list_tools):
     """Start the roam MCP server.
 
     \b
     usage:
       roam mcp                    # stdio (for Claude Code, Cursor, etc.)
       roam mcp --transport sse    # SSE on localhost:8000
+      roam mcp --list-tools       # show registered tools
 
     \b
     environment:
-      ROAM_MCP_LITE=1             # expose only core tools
+      ROAM_MCP_LITE=0             # expose all tools (default: lite/core only)
 
     \b
     integration:
       claude mcp add roam-code -- roam mcp
-    """
-    import sys
 
+    \b
+    requires:
+      pip install roam-code[mcp]
+    """
     if mcp is None:
         click.echo(
             "error: fastmcp is required for the MCP server.\n"
-            "install it with:  pip install fastmcp",
+            "install it with:  pip install roam-code[mcp]",
             err=True,
         )
         raise SystemExit(1)
+
+    if list_tools:
+        mode = "lite" if _LITE else "full"
+        click.echo(f"{len(_REGISTERED_TOOLS)} tools registered ({mode} mode):\n")
+        for t in sorted(_REGISTERED_TOOLS):
+            click.echo(f"  {t}")
+        return
 
     if not no_auto_index:
         sys.stderr.write("checking index freshness...\n")
@@ -2044,4 +2059,9 @@ def mcp_cmd(transport, host, port, no_auto_index):
 # ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
+    if mcp is None:
+        raise SystemExit(
+            "fastmcp is required for the MCP server.\n"
+            "Install it with:  pip install roam-code[mcp]"
+        )
     mcp.run()

@@ -706,6 +706,7 @@ Run `roam --help` for all commands. Use `roam --json <cmd>` for structured outpu
 Roam includes a [Model Context Protocol](https://modelcontextprotocol.io/) server for direct integration with tools that support MCP.
 
 ```bash
+pip install roam-code[mcp]
 roam mcp
 ```
 
@@ -1326,7 +1327,7 @@ roam-code/
 | [tree-sitter-language-pack](https://github.com/nicolo-ribaudo/tree-sitter-language-pack) >= 0.6 | 165+ grammars |
 | [networkx](https://networkx.org/) >= 3.0 | Graph algorithms |
 
-Optional: [fastmcp](https://github.com/jlowin/fastmcp) (MCP server dependency)
+Optional: [fastmcp](https://github.com/jlowin/fastmcp) >= 2.0 (MCP server — install with `pip install roam-code[mcp]`)
 
 ## Roadmap
 
