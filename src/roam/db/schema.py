@@ -34,7 +34,8 @@ CREATE TABLE IF NOT EXISTS edges (
     kind TEXT NOT NULL,
     line INTEGER,
     bridge TEXT,
-    confidence REAL
+    confidence REAL,
+    source_file_id INTEGER REFERENCES files(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS file_edges (
@@ -100,7 +101,6 @@ CREATE INDEX IF NOT EXISTS idx_symbols_qualified ON symbols(qualified_name);
 CREATE INDEX IF NOT EXISTS idx_symbols_kind ON symbols(kind);
 CREATE INDEX IF NOT EXISTS idx_edges_source ON edges(source_id);
 CREATE INDEX IF NOT EXISTS idx_edges_target ON edges(target_id);
-CREATE INDEX IF NOT EXISTS idx_edges_kind ON edges(kind);
 CREATE INDEX IF NOT EXISTS idx_file_edges_source ON file_edges(source_file_id);
 CREATE INDEX IF NOT EXISTS idx_file_edges_target ON file_edges(target_file_id);
 CREATE INDEX IF NOT EXISTS idx_git_changes_file ON git_file_changes(file_id);
@@ -110,6 +110,15 @@ CREATE INDEX IF NOT EXISTS idx_graph_metrics_pagerank ON graph_metrics(pagerank 
 CREATE INDEX IF NOT EXISTS idx_symbols_parent ON symbols(parent_id);
 CREATE INDEX IF NOT EXISTS idx_edges_kind_target ON edges(kind, target_id);
 CREATE INDEX IF NOT EXISTS idx_file_stats_churn ON file_stats(total_churn DESC);
+
+-- v11: composite indexes for hot query paths
+CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id);
+CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id);
+CREATE INDEX IF NOT EXISTS idx_symbols_file_kind ON symbols(file_id, kind);
+CREATE INDEX IF NOT EXISTS idx_symbols_file_exported ON symbols(file_id, is_exported);
+CREATE INDEX IF NOT EXISTS idx_file_edges_source_target ON file_edges(source_file_id, target_file_id);
+CREATE INDEX IF NOT EXISTS idx_files_language ON files(language);
+CREATE INDEX IF NOT EXISTS idx_clusters_cluster ON clusters(cluster_id);
 
 -- Hypergraph: n-ary commit patterns (beyond pairwise co-change)
 CREATE TABLE IF NOT EXISTS git_hyperedges (
