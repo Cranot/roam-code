@@ -220,17 +220,25 @@ class TestToolDecorator:
         """Core tools set should contain the documented tools."""
         from roam.mcp_server import _CORE_TOOLS
         expected = {
+            # compound operations (4)
+            "roam_explore", "roam_prepare_change", "roam_review_change",
+            "roam_diagnose_issue",
+            # comprehension (5)
             "roam_understand", "roam_search_symbol", "roam_context",
-            "roam_file_info", "roam_deps", "roam_preflight", "roam_diff",
+            "roam_file_info", "roam_deps",
+            # daily workflow (6)
+            "roam_preflight", "roam_diff",
             "roam_pr_risk", "roam_affected_tests", "roam_impact",
-            "roam_uses", "roam_health", "roam_dead_code",
+            "roam_uses",
+            # code quality (5)
+            "roam_health", "roam_dead_code",
             "roam_complexity_report", "roam_diagnose", "roam_trace",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
-        assert len(_CORE_TOOLS) == 16
+        assert len(_CORE_TOOLS) == 20
 
     def test_presets_all_defined(self):
         """All 6 presets should be defined."""
@@ -305,13 +313,13 @@ class TestExpandToolset:
         assert result["requested_preset"] == "review"
         assert "tools" in result
         assert isinstance(result["tools"], list)
-        assert len(result["tools"]) > 16  # review has more than core
+        assert len(result["tools"]) > 20  # review has more than core
         assert "switch_instructions" in result
 
     def test_inspect_core_preset(self):
         from roam.mcp_server import expand_toolset
         result = expand_toolset(preset="core")
-        assert result["tool_count"] == 16
+        assert result["tool_count"] == 20
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset
@@ -505,3 +513,304 @@ class TestErrorPatterns:
         from roam.mcp_server import _ERROR_PATTERNS
         patterns = [p for p, _, _ in _ERROR_PATTERNS]
         assert len(patterns) == len(set(patterns)), "duplicate patterns found"
+
+
+# ---------------------------------------------------------------------------
+# _compound_envelope tests
+# ---------------------------------------------------------------------------
+
+
+class TestCompoundEnvelope:
+    """Test the compound envelope builder."""
+
+    def test_all_sections_succeed(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {"summary": {"verdict": "ok alpha"}, "data": [1, 2]}),
+            ("beta", {"summary": {"verdict": "ok beta"}, "extra": "hi"}),
+        ])
+        assert result["command"] == "test-op"
+        assert "alpha" in result
+        assert "beta" in result
+        assert result["summary"]["sections"] == ["alpha", "beta"]
+        assert result["summary"]["errors"] == 0
+        assert "alpha: ok alpha" in result["summary"]["verdict"]
+        assert "beta: ok beta" in result["summary"]["verdict"]
+        assert "_errors" not in result
+
+    def test_one_section_fails(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {"summary": {"verdict": "good"}, "val": 1}),
+            ("beta", {"error": "something broke"}),
+        ])
+        assert result["summary"]["errors"] == 1
+        assert "alpha" in result
+        assert "beta" not in result  # failed section not in top-level
+        assert "_errors" in result
+        assert result["_errors"][0]["command"] == "beta"
+
+    def test_all_sections_fail(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {"error": "err1"}),
+            ("beta", {"error": "err2"}),
+        ])
+        assert result["summary"]["errors"] == 2
+        assert result["summary"]["sections"] == []
+        assert len(result["_errors"]) == 2
+
+    def test_empty_dict_treated_as_error(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {}),
+        ])
+        assert result["summary"]["errors"] == 1
+
+    def test_meta_kwargs_in_summary(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {"summary": {"verdict": "ok"}}),
+        ], target="my_func")
+        assert result["summary"]["target"] == "my_func"
+
+    def test_verdict_without_sub_verdicts(self):
+        from roam.mcp_server import _compound_envelope
+        result = _compound_envelope("test-op", [
+            ("alpha", {"data": 1}),  # no summary.verdict
+        ])
+        assert result["summary"]["verdict"] == "compound operation completed"
+
+
+# ---------------------------------------------------------------------------
+# Compound operation tests
+# ---------------------------------------------------------------------------
+
+
+class TestCompoundOperations:
+    """Test compound MCP operations."""
+
+    def test_explore_without_symbol(self):
+        from roam.mcp_server import explore
+        overview = {"summary": {"verdict": "Python codebase, 85/100"}, "stack": ["python"]}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = overview
+            result = explore()
+            mock.assert_called_once_with(["understand"], ".")
+        assert result["command"] == "explore"
+        assert "understand" in result
+        assert result["understand"] == overview
+
+    def test_explore_with_symbol(self):
+        from roam.mcp_server import explore
+        overview = {"summary": {"verdict": "Python codebase"}}
+        ctx = {"summary": {"verdict": "open_db context"}, "callers": []}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.side_effect = [overview, ctx]
+            result = explore(symbol="open_db")
+            assert mock.call_count == 2
+            assert mock.call_args_list[0][0][0] == ["understand"]
+            assert mock.call_args_list[1][0][0] == ["context", "open_db", "--task", "understand"]
+        assert "understand" in result
+        assert "context" in result
+        assert result["summary"]["target"] == "open_db"
+
+    def test_prepare_change(self):
+        from roam.mcp_server import prepare_change
+        pf = {"summary": {"verdict": "LOW risk"}, "blast_radius": {}}
+        ctx = {"summary": {"verdict": "3 files to read"}, "files": []}
+        eff = {"summary": {"verdict": "2 effects"}, "effects": []}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.side_effect = [pf, ctx, eff]
+            result = prepare_change(target="my_func")
+            assert mock.call_count == 3
+            assert mock.call_args_list[0][0][0] == ["preflight", "my_func"]
+            assert mock.call_args_list[1][0][0] == ["context", "my_func", "--task", "refactor"]
+            assert mock.call_args_list[2][0][0] == ["effects", "my_func"]
+        assert "preflight" in result
+        assert "context" in result
+        assert "effects" in result
+        assert result["summary"]["target"] == "my_func"
+
+    def test_prepare_change_staged(self):
+        from roam.mcp_server import prepare_change
+        pf = {"summary": {"verdict": "ok"}}
+        ctx = {"summary": {"verdict": "ok"}}
+        eff = {"summary": {"verdict": "ok"}}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.side_effect = [pf, ctx, eff]
+            prepare_change(target="func", staged=True)
+            # First call should include --staged
+            assert "--staged" in mock.call_args_list[0][0][0]
+
+    def test_review_change_default(self):
+        from roam.mcp_server import review_change
+        risk = {"summary": {"verdict": "LOW 12/100"}}
+        brk = {"summary": {"verdict": "0 breaking"}}
+        diff = {"summary": {"verdict": "2 files"}}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.side_effect = [risk, brk, diff]
+            result = review_change()
+            assert mock.call_count == 3
+            assert mock.call_args_list[0][0][0] == ["pr-risk"]
+            assert mock.call_args_list[1][0][0] == ["breaking"]
+            assert mock.call_args_list[2][0][0] == ["pr-diff"]
+        assert "pr_risk" in result
+        assert "breaking_changes" in result
+        assert "pr_diff" in result
+
+    def test_review_change_with_range(self):
+        from roam.mcp_server import review_change
+        data = {"summary": {"verdict": "ok"}}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = data
+            review_change(commit_range="main..HEAD")
+            assert mock.call_args_list[1][0][0] == ["breaking", "main..HEAD"]
+            assert "--range" in mock.call_args_list[2][0][0]
+
+    def test_review_change_staged(self):
+        from roam.mcp_server import review_change
+        data = {"summary": {"verdict": "ok"}}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = data
+            review_change(staged=True)
+            assert "--staged" in mock.call_args_list[0][0][0]
+            assert "--staged" in mock.call_args_list[2][0][0]
+
+    def test_diagnose_issue(self):
+        from roam.mcp_server import diagnose_issue
+        diag = {"summary": {"verdict": "top suspect: parse_input"}, "suspects": []}
+        eff = {"summary": {"verdict": "3 effects"}, "effects": []}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.side_effect = [diag, eff]
+            result = diagnose_issue(symbol="broken_func")
+            assert mock.call_count == 2
+            assert mock.call_args_list[0][0][0] == ["diagnose", "broken_func", "--depth", "2"]
+            assert mock.call_args_list[1][0][0] == ["effects", "broken_func"]
+        assert "diagnose" in result
+        assert "effects" in result
+        assert result["summary"]["target"] == "broken_func"
+
+    def test_diagnose_issue_custom_depth(self):
+        from roam.mcp_server import diagnose_issue
+        data = {"summary": {"verdict": "ok"}}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = data
+            diagnose_issue(symbol="func", depth=5)
+            assert "--depth" in mock.call_args_list[0][0][0]
+            assert "5" in mock.call_args_list[0][0][0]
+
+    def test_compound_handles_sub_error(self):
+        """Compound operations should include errors without crashing."""
+        from roam.mcp_server import explore
+        overview = {"error": "No .roam directory found"}
+        with patch("roam.mcp_server._run_roam") as mock:
+            mock.return_value = overview
+            result = explore()
+        assert result["summary"]["errors"] == 1
+        assert "_errors" in result
+
+    def test_compound_functions_are_callable(self):
+        """All 4 compound functions should be importable and callable."""
+        from roam.mcp_server import explore, prepare_change, review_change, diagnose_issue
+        assert callable(explore)
+        assert callable(prepare_change)
+        assert callable(review_change)
+        assert callable(diagnose_issue)
+
+
+# ---------------------------------------------------------------------------
+# Schema tests
+# ---------------------------------------------------------------------------
+
+
+class TestSchemas:
+    """Test output schema infrastructure."""
+
+    def test_envelope_schema_structure(self):
+        from roam.mcp_server import _ENVELOPE_SCHEMA
+        assert _ENVELOPE_SCHEMA["type"] == "object"
+        props = _ENVELOPE_SCHEMA["properties"]
+        assert "command" in props
+        assert "summary" in props
+        assert "verdict" in props["summary"]["properties"]
+
+    def test_make_schema_basic(self):
+        from roam.mcp_server import _make_schema
+        schema = _make_schema()
+        assert schema["type"] == "object"
+        assert "verdict" in schema["properties"]["summary"]["properties"]
+
+    def test_make_schema_with_summary_fields(self):
+        from roam.mcp_server import _make_schema
+        schema = _make_schema({"score": {"type": "number"}})
+        summary_props = schema["properties"]["summary"]["properties"]
+        assert "verdict" in summary_props
+        assert "score" in summary_props
+        assert summary_props["score"]["type"] == "number"
+
+    def test_make_schema_with_payload_fields(self):
+        from roam.mcp_server import _make_schema
+        schema = _make_schema(results={"type": "array"})
+        assert "results" in schema["properties"]
+        assert schema["properties"]["results"]["type"] == "array"
+
+    def test_compound_schemas_exist(self):
+        from roam.mcp_server import (
+            _SCHEMA_EXPLORE, _SCHEMA_PREPARE_CHANGE,
+            _SCHEMA_REVIEW_CHANGE, _SCHEMA_DIAGNOSE_ISSUE,
+        )
+        for schema in [_SCHEMA_EXPLORE, _SCHEMA_PREPARE_CHANGE,
+                       _SCHEMA_REVIEW_CHANGE, _SCHEMA_DIAGNOSE_ISSUE]:
+            assert schema["type"] == "object"
+            assert "summary" in schema["properties"]
+
+    def test_explore_schema_has_sections(self):
+        from roam.mcp_server import _SCHEMA_EXPLORE
+        props = _SCHEMA_EXPLORE["properties"]
+        assert "understand" in props
+        assert "context" in props
+        assert "sections" in props["summary"]["properties"]
+
+    def test_prepare_change_schema_has_sections(self):
+        from roam.mcp_server import _SCHEMA_PREPARE_CHANGE
+        props = _SCHEMA_PREPARE_CHANGE["properties"]
+        assert "preflight" in props
+        assert "context" in props
+        assert "effects" in props
+
+    def test_review_change_schema_has_sections(self):
+        from roam.mcp_server import _SCHEMA_REVIEW_CHANGE
+        props = _SCHEMA_REVIEW_CHANGE["properties"]
+        assert "pr_risk" in props
+        assert "breaking_changes" in props
+        assert "pr_diff" in props
+
+    def test_diagnose_issue_schema_has_sections(self):
+        from roam.mcp_server import _SCHEMA_DIAGNOSE_ISSUE
+        props = _SCHEMA_DIAGNOSE_ISSUE["properties"]
+        assert "diagnose" in props
+        assert "effects" in props
+
+    def test_core_tool_schemas_exist(self):
+        from roam.mcp_server import (
+            _SCHEMA_UNDERSTAND, _SCHEMA_HEALTH, _SCHEMA_SEARCH,
+            _SCHEMA_PREFLIGHT, _SCHEMA_CONTEXT, _SCHEMA_IMPACT,
+            _SCHEMA_PR_RISK, _SCHEMA_DIFF, _SCHEMA_DIAGNOSE, _SCHEMA_TRACE,
+        )
+        for schema in [_SCHEMA_UNDERSTAND, _SCHEMA_HEALTH, _SCHEMA_SEARCH,
+                       _SCHEMA_PREFLIGHT, _SCHEMA_CONTEXT, _SCHEMA_IMPACT,
+                       _SCHEMA_PR_RISK, _SCHEMA_DIFF, _SCHEMA_DIAGNOSE,
+                       _SCHEMA_TRACE]:
+            assert schema["type"] == "object"
+            assert "summary" in schema["properties"]
+
+    def test_health_schema_has_score(self):
+        from roam.mcp_server import _SCHEMA_HEALTH
+        summary_props = _SCHEMA_HEALTH["properties"]["summary"]["properties"]
+        assert "health_score" in summary_props
+
+    def test_search_schema_has_results(self):
+        from roam.mcp_server import _SCHEMA_SEARCH
+        assert "results" in _SCHEMA_SEARCH["properties"]
+        assert _SCHEMA_SEARCH["properties"]["results"]["type"] == "array"
