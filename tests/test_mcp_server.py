@@ -126,9 +126,48 @@ class TestEnsureFreshIndex:
 
 
 class TestRunRoam:
-    """Test the roam CLI subprocess wrapper."""
+    """Test the roam CLI runner wrapper."""
 
-    def test_success(self):
+    def test_inprocess_success(self):
+        """In-process path (root='.') parses CliRunner JSON output."""
+        from roam.mcp_server import _run_roam
+        payload = {"summary": {"health_score": 85}}
+        mock_result = MagicMock()
+        mock_result.exit_code = 0
+        mock_result.output = json.dumps(payload)
+        mock_result.exception = None
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
+            result = _run_roam(["health"], ".")
+            assert result == payload
+
+    def test_inprocess_failure(self):
+        """In-process path classifies errors from CliRunner output."""
+        from roam.mcp_server import _run_roam
+        mock_result = MagicMock()
+        mock_result.exit_code = 1
+        mock_result.output = "Error: No .roam directory found"
+        mock_result.exception = None
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
+            result = _run_roam(["health"], ".")
+            assert "error" in result
+            assert result["error_code"] == "INDEX_NOT_FOUND"
+            assert "hint" in result
+            assert result["exit_code"] == 1
+
+    def test_inprocess_json_decode_error(self):
+        """In-process path handles non-JSON output gracefully."""
+        from roam.mcp_server import _run_roam
+        mock_result = MagicMock()
+        mock_result.exit_code = 0
+        mock_result.output = "not json {{{"
+        mock_result.exception = None
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
+            result = _run_roam(["health"], ".")
+            assert "error" in result
+            assert "JSON" in result["error"]
+
+    def test_subprocess_fallback_for_remote_root(self):
+        """Non-'.' root falls back to subprocess."""
         from roam.mcp_server import _run_roam
         payload = {"summary": {"health_score": 85}}
         with patch("subprocess.run") as mock:
@@ -137,43 +176,29 @@ class TestRunRoam:
                 stdout=json.dumps(payload),
                 stderr="",
             )
-            result = _run_roam(["health"], ".")
+            result = _run_roam(["health"], "/other/project")
             assert result == payload
+            mock.assert_called_once()
 
-    def test_failure_with_structured_error(self):
-        from roam.mcp_server import _run_roam
-        with patch("subprocess.run") as mock:
-            mock.return_value = MagicMock(
-                returncode=1,
-                stdout="",
-                stderr="Error: No .roam directory found",
-            )
-            result = _run_roam(["health"], ".")
-            assert "error" in result
-            assert result["error_code"] == "INDEX_NOT_FOUND"
-            assert "hint" in result
-            assert result["exit_code"] == 1
-            assert "command" in result
-
-    def test_timeout(self):
+    def test_subprocess_timeout(self):
+        """Subprocess path handles timeout."""
         from roam.mcp_server import _run_roam
         import subprocess
         with patch("subprocess.run", side_effect=subprocess.TimeoutExpired(cmd="roam", timeout=60)):
-            result = _run_roam(["health"], ".")
+            result = _run_roam(["health"], "/other/project")
             assert "error" in result
             assert "timed out" in result["error"]
 
-    def test_json_decode_error(self):
+    def test_inprocess_exception(self):
+        """In-process path handles unexpected exceptions."""
         from roam.mcp_server import _run_roam
-        with patch("subprocess.run") as mock:
-            mock.return_value = MagicMock(
-                returncode=0,
-                stdout="not json {{{",
-                stderr="",
-            )
+        mock_result = MagicMock()
+        mock_result.exit_code = 1
+        mock_result.output = ""
+        mock_result.exception = RuntimeError("something broke")
+        with patch("click.testing.CliRunner.invoke", return_value=mock_result):
             result = _run_roam(["health"], ".")
             assert "error" in result
-            assert "JSON" in result["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -184,10 +209,10 @@ class TestRunRoam:
 class TestToolDecorator:
     """Test the MCP tool registration decorator."""
 
-    def test_lite_mode_filters_non_core(self):
-        """Non-core tools should be plain functions in lite mode."""
+    def test_default_preset_filters_non_core(self):
+        """Non-core tools should be plain functions in core preset (default)."""
         import roam.mcp_server as mod
-        # In lite mode (default), non-core tool functions are not registered
+        # In core preset (default), non-core tool functions are not registered
         # They should still be callable as regular functions
         assert callable(mod.visualize)
 
@@ -206,6 +231,93 @@ class TestToolDecorator:
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
         assert len(_CORE_TOOLS) == 16
+
+    def test_presets_all_defined(self):
+        """All 6 presets should be defined."""
+        from roam.mcp_server import _PRESETS
+        assert set(_PRESETS.keys()) == {"core", "review", "refactor", "debug", "architecture", "full"}
+
+    def test_presets_are_supersets_of_core(self):
+        """Named presets (except full) should include all core tools."""
+        from roam.mcp_server import _PRESETS, _CORE_TOOLS
+        for name, tools in _PRESETS.items():
+            if name == "full":
+                assert tools == set(), "full preset should be empty set (no filtering)"
+            else:
+                assert _CORE_TOOLS.issubset(tools), f"{name} preset missing core tools"
+
+    def test_meta_tool_is_callable(self):
+        """expand_toolset should be a callable function regardless of FastMCP."""
+        from roam.mcp_server import expand_toolset
+        assert callable(expand_toolset)
+
+    def test_resolve_preset_default(self):
+        """Default preset should be 'core'."""
+        from roam.mcp_server import _resolve_preset
+        with patch.dict(os.environ, {}, clear=False):
+            # Remove both env vars if present
+            env = os.environ.copy()
+            env.pop("ROAM_MCP_PRESET", None)
+            env.pop("ROAM_MCP_LITE", None)
+            with patch.dict(os.environ, env, clear=True):
+                # With neither env var, default is core
+                result = _resolve_preset()
+                assert result == "core"
+
+    def test_resolve_preset_explicit(self):
+        """Explicit ROAM_MCP_PRESET should override default."""
+        from roam.mcp_server import _resolve_preset
+        with patch.dict(os.environ, {"ROAM_MCP_PRESET": "review"}):
+            assert _resolve_preset() == "review"
+
+    def test_resolve_preset_legacy_lite_off(self):
+        """ROAM_MCP_LITE=0 should map to 'full' preset."""
+        from roam.mcp_server import _resolve_preset
+        with patch.dict(os.environ, {"ROAM_MCP_LITE": "0"}, clear=False):
+            env = os.environ.copy()
+            env.pop("ROAM_MCP_PRESET", None)
+            with patch.dict(os.environ, env, clear=True):
+                env["ROAM_MCP_LITE"] = "0"
+                with patch.dict(os.environ, env, clear=True):
+                    assert _resolve_preset() == "full"
+
+
+# ---------------------------------------------------------------------------
+# expand_toolset meta-tool tests
+# ---------------------------------------------------------------------------
+
+
+class TestExpandToolset:
+    """Test the expand_toolset meta-tool."""
+
+    def test_list_all_presets(self):
+        from roam.mcp_server import expand_toolset
+        result = expand_toolset()
+        assert "active_preset" in result
+        assert "presets" in result
+        assert set(result["presets"].keys()) == {
+            "core", "review", "refactor", "debug", "architecture", "full",
+        }
+
+    def test_inspect_specific_preset(self):
+        from roam.mcp_server import expand_toolset
+        result = expand_toolset(preset="review")
+        assert result["requested_preset"] == "review"
+        assert "tools" in result
+        assert isinstance(result["tools"], list)
+        assert len(result["tools"]) > 16  # review has more than core
+        assert "switch_instructions" in result
+
+    def test_inspect_core_preset(self):
+        from roam.mcp_server import expand_toolset
+        result = expand_toolset(preset="core")
+        assert result["tool_count"] == 16
+
+    def test_invalid_preset(self):
+        from roam.mcp_server import expand_toolset
+        result = expand_toolset(preset="nonexistent")
+        # Falls through to list-all-presets path
+        assert "presets" in result
 
 
 # ---------------------------------------------------------------------------
