@@ -253,19 +253,11 @@ def _compute_file_health_scores(conn):
         updates.append((score, fid))
 
     with conn:
-        for health, fid in updates:
-            conn.execute(
-                "UPDATE file_stats SET health_score = ? WHERE file_id = ?",
-                (health, fid),
-            )
-            # If row doesn't exist, create it
-            if conn.execute(
-                "SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)
-            ).fetchone() is None:
-                conn.execute(
-                    "INSERT INTO file_stats (file_id, health_score) VALUES (?, ?)",
-                    (fid, health),
-                )
+        conn.executemany(
+            "INSERT INTO file_stats (health_score, file_id) VALUES (?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET health_score = excluded.health_score",
+            updates,
+        )
 
     _log(f"  Health scores for {len(updates)} files")
 
@@ -361,18 +353,11 @@ def _compute_cognitive_load(conn):
         updates.append((load, fid))
 
     with conn:
-        for load, fid in updates:
-            conn.execute(
-                "UPDATE file_stats SET cognitive_load = ? WHERE file_id = ?",
-                (load, fid),
-            )
-            if conn.execute(
-                "SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)
-            ).fetchone() is None:
-                conn.execute(
-                    "INSERT INTO file_stats (file_id, cognitive_load) VALUES (?, ?)",
-                    (fid, load),
-                )
+        conn.executemany(
+            "INSERT INTO file_stats (cognitive_load, file_id) VALUES (?, ?) "
+            "ON CONFLICT(file_id) DO UPDATE SET cognitive_load = excluded.cognitive_load",
+            updates,
+        )
 
     _log(f"  Cognitive load for {len(updates)} files")
 
@@ -601,19 +586,92 @@ class Indexer:
 
         return all_symbol_rows, all_references, file_id_by_path
 
-    def _re_extract_unchanged(self, conn, all_files, files_to_process,
-                              removed, get_extractor, all_references,
-                              verbose):
-        """Re-extract references from unchanged files for incremental edge rebuild."""
-        processed_set = set(files_to_process) | set(removed)
-        unchanged = [p for p in all_files if p not in processed_set]
-        if not unchanged:
-            return
-        _log(f"Re-extracting references from {len(unchanged)} unchanged files...")
-        conn.execute("DELETE FROM edges")
-        conn.execute("DELETE FROM file_edges")
+    @staticmethod
+    def _find_affected_neighbor_files(conn, changed_file_ids):
+        """Find file IDs of unchanged files that had edges into changed files.
 
-        for rel_path in unchanged:
+        When a changed file's symbols are deleted (CASCADE), edges FROM
+        other files TO those symbols are also deleted.  We need to re-extract
+        references from those "affected neighbor" files to re-establish edges
+        pointing to the new symbols.
+
+        Returns a set of file_ids (excluding the changed files themselves).
+        """
+        if not changed_file_ids:
+            return set()
+
+        changed_set = set(changed_file_ids)
+
+        # Use source_file_id if available (v11+ databases)
+        has_source_file_id = False
+        try:
+            row = conn.execute(
+                "SELECT source_file_id FROM edges LIMIT 1"
+            ).fetchone()
+            has_source_file_id = row is not None and row["source_file_id"] is not None
+        except Exception:
+            pass
+
+        affected = set()
+        ph = ",".join("?" for _ in changed_file_ids)
+
+        if has_source_file_id:
+            # Fast path: edges already track source_file_id
+            rows = conn.execute(
+                f"SELECT DISTINCT e.source_file_id "
+                f"FROM edges e "
+                f"JOIN symbols s_tgt ON e.target_id = s_tgt.id "
+                f"WHERE s_tgt.file_id IN ({ph}) "
+                f"AND e.source_file_id NOT IN ({ph})",
+                changed_file_ids + changed_file_ids,
+            ).fetchall()
+            affected = {r[0] for r in rows if r[0] is not None}
+        else:
+            # Fallback for pre-v11 databases: derive source file from source symbol
+            rows = conn.execute(
+                f"SELECT DISTINCT s_src.file_id "
+                f"FROM edges e "
+                f"JOIN symbols s_src ON e.source_id = s_src.id "
+                f"JOIN symbols s_tgt ON e.target_id = s_tgt.id "
+                f"WHERE s_tgt.file_id IN ({ph}) "
+                f"AND s_src.file_id NOT IN ({ph})",
+                changed_file_ids + changed_file_ids,
+            ).fetchall()
+            affected = {r[0] for r in rows}
+
+        return affected - changed_set
+
+    def _re_extract_affected(self, conn, affected_file_ids, get_extractor,
+                             all_references, verbose):
+        """Re-extract references from only the affected neighbor files.
+
+        These are files whose edges into changed files were CASCADE-deleted.
+        We surgically delete their remaining edges and re-extract references
+        so they can be re-resolved against the updated symbol table.
+        """
+        if not affected_file_ids:
+            return
+
+        # Map file_id -> path for affected files
+        ph = ",".join("?" for _ in affected_file_ids)
+        fid_list = list(affected_file_ids)
+        rows = conn.execute(
+            f"SELECT id, path FROM files WHERE id IN ({ph})", fid_list
+        ).fetchall()
+        affected_paths = {r["id"]: r["path"] for r in rows}
+
+        _log(f"Re-extracting references from {len(affected_paths)} affected neighbor files...")
+
+        # Delete edges originating from affected files (they'll be rebuilt)
+        conn.execute(
+            f"DELETE FROM edges WHERE source_file_id IN ({ph})", fid_list
+        )
+        # Also delete file_edges from affected files
+        conn.execute(
+            f"DELETE FROM file_edges WHERE source_file_id IN ({ph})", fid_list
+        )
+
+        for fid, rel_path in affected_paths.items():
             full_path = self.root / rel_path
             language = detect_language(rel_path)
             tree, parsed_source, lang = parse_file(full_path, language)
@@ -745,18 +803,35 @@ class Indexer:
 
             _log(f"  {len(added)} added, {len(modified)} modified, {len(removed)} removed")
 
+            # Collect file IDs of changed/removed files BEFORE deleting them
+            changed_file_ids = []
+            for path in removed + modified:
+                row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+                if row:
+                    changed_file_ids.append(row["id"])
+
+            # Find affected neighbor files BEFORE CASCADE deletes the edges
+            # we need for the query.  These are files whose edges INTO the
+            # changed files will be lost and need rebuilding.
+            affected_file_ids = set()
+            if not force and modified and changed_file_ids:
+                affected_file_ids = self._find_affected_neighbor_files(
+                    conn, changed_file_ids,
+                )
+
+            # Now delete the changed/removed file records (CASCADE cleans up
+            # their symbols, edges, file_edges, graph_metrics, clusters, etc.)
             for path in removed + modified:
                 row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
                 if row:
                     fid = row["id"]
-                    # Clean up tables with non-cascading FKs before deleting file
+                    # Clean up tables with SET NULL FKs (not CASCADE)
                     sym_ids = [r[0] for r in conn.execute(
                         "SELECT id FROM symbols WHERE file_id = ?", (fid,)
                     ).fetchall()]
                     if sym_ids:
                         ph = ",".join("?" for _ in sym_ids)
                         for cleanup_sql in [
-                            f"DELETE FROM symbol_tfidf WHERE symbol_id IN ({ph})",
                             f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
                             f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
                         ]:
@@ -799,11 +874,12 @@ class Indexer:
             for row in conn.execute("SELECT id, path FROM files").fetchall():
                 file_id_by_path[row["path"]] = row["id"]
 
-            # Fix incremental edge loss
-            if not force and modified:
-                self._re_extract_unchanged(
-                    conn, all_files, files_to_process, removed,
-                    get_extractor, all_references, verbose,
+            # Fix incremental edge loss: re-extract only affected neighbors
+            # instead of all unchanged files (O(affected) vs O(N))
+            if not force and modified and affected_file_ids:
+                self._re_extract_affected(
+                    conn, affected_file_ids, get_extractor,
+                    all_references, verbose,
                 )
 
             # Resolve references into edges
@@ -815,8 +891,8 @@ class Indexer:
             symbol_edges = resolve_references(all_references, symbols_by_name, file_id_by_path)
 
             conn.executemany(
-                "INSERT INTO edges (source_id, target_id, kind, line) VALUES (?, ?, ?, ?)",
-                [(e["source_id"], e["target_id"], e["kind"], e["line"]) for e in symbol_edges],
+                "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
+                [(e["source_id"], e["target_id"], e["kind"], e["line"], e.get("source_file_id")) for e in symbol_edges],
             )
             _log(f"  {len(symbol_edges)} symbol edges")
 
@@ -911,17 +987,23 @@ class Indexer:
                 except Exception:
                     pass
 
-            # TF-IDF semantic search vectors
-            _log("Building TF-IDF vectors...")
+            # Full-text search index (FTS5/BM25 primary, TF-IDF fallback)
+            _log("Building search index...")
             try:
-                from roam.search.index_embeddings import build_and_store_tfidf
-                build_and_store_tfidf(conn)
-                tfidf_count = conn.execute(
-                    "SELECT COUNT(*) FROM symbol_tfidf"
-                ).fetchone()[0]
-                _log(f"  TF-IDF vectors for {tfidf_count} symbols")
+                from roam.search.index_embeddings import build_fts_index, fts5_available
+                build_fts_index(conn)
+                if fts5_available(conn):
+                    fts_count = conn.execute(
+                        "SELECT COUNT(*) FROM symbol_fts"
+                    ).fetchone()[0]
+                    _log(f"  FTS5 index for {fts_count} symbols")
+                else:
+                    tfidf_count = conn.execute(
+                        "SELECT COUNT(*) FROM symbol_tfidf"
+                    ).fetchone()[0]
+                    _log(f"  TF-IDF vectors for {tfidf_count} symbols (FTS5 unavailable)")
             except Exception as e:
-                _log(f"  TF-IDF build failed (non-fatal): {e}")
+                _log(f"  Search index build failed (non-fatal): {e}")
 
             from roam.index.parser import get_parse_error_summary
             error_summary = get_parse_error_summary()

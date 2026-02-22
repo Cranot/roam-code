@@ -1,4 +1,4 @@
-"""Semantic search: find symbols by natural language query using TF-IDF."""
+"""Semantic search: find symbols by natural language query (FTS5/BM25)."""
 
 from __future__ import annotations
 
@@ -17,12 +17,12 @@ from roam.commands.resolve import ensure_index
               help="Minimum similarity score (default 0.05)")
 @click.pass_context
 def search_semantic(ctx, query, top_k, threshold):
-    """Find symbols by natural language query (TF-IDF semantic search)."""
+    """Find symbols by natural language query (FTS5/BM25 semantic search)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        # Try stored vectors first; fall back to live computation
+        # FTS5/BM25 primary → stored TF-IDF fallback → live TF-IDF last resort
         try:
             from roam.search.index_embeddings import search_stored
             results = search_stored(conn, query, top_k=top_k)
