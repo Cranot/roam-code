@@ -165,33 +165,34 @@ def _matches_glob(file_path: str, pattern: str) -> bool:
         return fnmatch.fnmatch(norm, pat)
 
     # Convert glob pattern with ** to regex
-    regex = ""
+    parts: list[str] = []
     i = 0
     while i < len(pat):
         c = pat[i]
         if c == "*":
             if i + 1 < len(pat) and pat[i + 1] == "*":
                 if i + 2 < len(pat) and pat[i + 2] == "/":
-                    regex += "(?:.+/)?"
+                    parts.append("(?:.+/)?")
                     i += 3
                     continue
                 else:
-                    regex += ".*"
+                    parts.append(".*")
                     i += 2
                     continue
             else:
-                regex += "[^/]*"
+                parts.append("[^/]*")
                 i += 1
         elif c == "?":
-            regex += "[^/]"
+            parts.append("[^/]")
             i += 1
         elif c in r".+^${}()|[]":
-            regex += "\\" + c
+            parts.append("\\" + c)
             i += 1
         else:
-            regex += c
+            parts.append(c)
             i += 1
 
+    regex = "".join(parts)
     return re.match("^" + regex + "$", norm) is not None
 
 

@@ -360,6 +360,12 @@ def _determine_confidence(classified: dict) -> str:
 # Controller method analysis
 # ---------------------------------------------------------------------------
 
+_RE_PUBLIC_METHOD = re.compile(
+    r"public\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
+    re.IGNORECASE,
+)
+
+
 def _extract_controller_public_methods(project_root: Path,
                                        controller_name: str) -> list[str]:
     """Find public methods in a controller PHP file.
@@ -383,12 +389,7 @@ def _extract_controller_public_methods(project_root: Path,
         except OSError:
             continue
 
-        # Extract public function names
-        method_re = re.compile(
-            r"public\s+function\s+([A-Za-z_][A-Za-z0-9_]*)\s*\(",
-            re.IGNORECASE,
-        )
-        methods = method_re.findall(source)
+        methods = _RE_PUBLIC_METHOD.findall(source)
         # Filter out magic methods
         return [m for m in methods if not m.startswith("__")]
 
