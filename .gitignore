@@ -40,3 +40,6 @@ bench-repos/
 venv/
 .venv/
 env/
+
+# Node (benchmark workspaces)
+node_modules/
