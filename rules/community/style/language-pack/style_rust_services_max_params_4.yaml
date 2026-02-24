@@ -1,0 +1,10 @@
+name: "Style: rust services max params 4"
+description: "Rust functions/methods in services/ should use at most 4 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "services/**/*.rs"
+  require:
+    max_params: 4

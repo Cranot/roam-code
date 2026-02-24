@@ -1,0 +1,29 @@
+---
+import BaseLayout from '../layouts/BaseLayout.astro';
+import Navigation from '../components/Navigation.astro';
+import Hero from '../components/Hero.astro';
+import Features from '../components/Features.astro';
+import HowItWorks from '../components/HowItWorks.astro';
+import Pricing from '../components/Pricing.astro';
+import Testimonials from '../components/Testimonials.astro';
+import FAQ from '../components/FAQ.astro';
+import Contact from '../components/Contact.astro';
+import Footer from '../components/Footer.astro';
+---
+
+<BaseLayout
+  title="FlowBoard — Project Management That Teams Love"
+  description="FlowBoard helps teams plan, track, and deliver projects faster. Visual boards, smart automation, and real-time analytics in one intuitive workspace."
+>
+  <Navigation />
+  <main id="main-content">
+    <Hero />
+    <Features />
+    <HowItWorks />
+    <Pricing />
+    <Testimonials />
+    <FAQ />
+    <Contact />
+  </main>
+  <Footer />
+</BaseLayout>

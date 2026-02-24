@@ -1,0 +1,10 @@
+name: "Style: swift services max symbol lines 120"
+description: "Swift functions/methods in services/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "services/**/*.swift"
+  require:
+    max_symbol_lines: 120

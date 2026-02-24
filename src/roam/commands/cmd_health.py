@@ -6,6 +6,7 @@ import math
 
 import click
 
+from roam.coverage_reports import imported_coverage_overview
 from roam.db.connection import open_db, batched_in
 from roam.db.queries import TOP_BY_DEGREE, TOP_BY_BETWEENNESS
 from roam.graph.builder import build_symbol_graph
@@ -13,9 +14,10 @@ from roam.graph.cycles import find_cycles, find_weakest_edge, format_cycles, pro
 from roam.graph.layers import detect_layers, find_violations
 from roam.output.formatter import (
     abbrev_kind, loc, format_table, to_json,
-    json_envelope,
+    json_envelope, budget_truncate, summary_envelope,
 )
 from roam.commands.resolve import ensure_index
+from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
 
 
 _FRAMEWORK_NAMES = frozenset({
@@ -107,14 +109,39 @@ def _unique_dirs(file_paths):
     return dirs
 
 
+def _load_gate_config() -> dict:
+    """Load quality gate thresholds from .roam-gates.yml or use defaults."""
+    defaults = {"health_min": 60}
+    try:
+        import yaml
+    except ImportError:
+        return defaults
+    from pathlib import Path
+    config_path = Path(".roam-gates.yml")
+    if not config_path.exists():
+        return defaults
+    try:
+        with open(config_path) as f:
+            data = yaml.safe_load(f)
+        if data and "health" in data:
+            defaults.update(data["health"])
+        return defaults
+    except Exception:
+        return defaults
+
+
 @click.command()
 @click.option('--no-framework', is_flag=True,
               help='Filter out framework/boilerplate symbols from god components and bottlenecks')
+@click.option('--gate', is_flag=True,
+              help='Run quality gate checks (exit 5 on failure)')
 @click.pass_context
-def health(ctx, no_framework):
+def health(ctx, no_framework, gate):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    detail = ctx.obj.get('detail', False) if ctx.obj else False
     ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
@@ -309,8 +336,10 @@ def health(ctx, no_framework):
         bn_critical = sum(1 for b in bn_items if b.get("severity") == "CRITICAL")
         bn_signal = bn_critical * 2 + len(bn_items) * 0.3
 
-        # (factor, weight) — weights sum to 1.0
-        _health_factors = [
+        coverage_import = imported_coverage_overview(conn)
+
+        # Base factors (weights sum to 1.0 before optional imported coverage).
+        base_factors = [
             (_health_factor(tangle_ratio, 10), 0.30),      # tangle ratio
             (_health_factor(god_signal, 5), 0.20),          # god components
             (_health_factor(bn_signal, 4), 0.15),           # bottlenecks
@@ -322,11 +351,24 @@ def health(ctx, no_framework):
                 "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
             ).fetchone()[0]
             if avg_file_health is not None:
-                _health_factors.append((min(1.0, avg_file_health / 10.0), 0.20))
+                base_factors.append((min(1.0, avg_file_health / 10.0), 0.20))
             else:
-                _health_factors.append((1.0, 0.20))
+                base_factors.append((1.0, 0.20))
         except Exception:
-            _health_factors.append((1.0, 0.20))
+            base_factors.append((1.0, 0.20))
+
+        # Imported test coverage (#134): when available, reserve 10% score weight
+        # and scale existing weights to 90%. This avoids over-dominance while
+        # still penalizing high-centrality codebases with low real coverage.
+        if (
+            coverage_import.get("coverable_lines", 0) > 0
+            and coverage_import.get("coverage_pct") is not None
+        ):
+            cov_factor = min(1.0, max(0.05, coverage_import["coverage_pct"] / 100.0))
+            _health_factors = [(h, w * 0.90) for h, w in base_factors]
+            _health_factors.append((cov_factor, 0.10))
+        else:
+            _health_factors = base_factors
 
         # Weighted geometric mean in log space
         log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
@@ -341,6 +383,81 @@ def health(ctx, no_framework):
             verdict = f"Needs attention ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
         else:
             verdict = f"Unhealthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+
+        # --- Quality Gate ---
+        if gate:
+            gate_config = _load_gate_config()
+            gate_results = []
+            all_passed = True
+
+            # Health minimum
+            h_min = gate_config.get("health_min", 60)
+            passed = health_score >= h_min
+            gate_results.append({"gate": "health_min", "threshold": h_min, "actual": health_score, "passed": passed})
+            if not passed:
+                all_passed = False
+
+            # Optional gates
+            c_max = gate_config.get("complexity_max")
+            if c_max is not None:
+                try:
+                    max_cc = conn.execute("SELECT MAX(complexity) FROM symbols WHERE complexity IS NOT NULL").fetchone()[0] or 0
+                except Exception:
+                    max_cc = 0
+                passed = max_cc <= c_max
+                gate_results.append({"gate": "complexity_max", "threshold": c_max, "actual": max_cc, "passed": passed})
+                if not passed:
+                    all_passed = False
+
+            cyc_max = gate_config.get("cycle_max")
+            if cyc_max is not None:
+                passed = len(cycles) <= cyc_max
+                gate_results.append({"gate": "cycle_max", "threshold": cyc_max, "actual": len(cycles), "passed": passed})
+                if not passed:
+                    all_passed = False
+
+            t_max = gate_config.get("tangle_max")
+            if t_max is not None:
+                passed = tangle_ratio <= t_max
+                gate_results.append({"gate": "tangle_max", "threshold": t_max, "actual": tangle_ratio, "passed": passed})
+                if not passed:
+                    all_passed = False
+
+            if json_mode:
+                envelope = json_envelope("health",
+                    budget=token_budget,
+                    summary={
+                        "verdict": verdict,
+                        "health_score": health_score,
+                        "gate_passed": all_passed,
+                        "imported_coverage_pct": coverage_import.get("coverage_pct"),
+                    },
+                    gate_results=gate_results,
+                    health_score=health_score,
+                    imported_coverage_pct=coverage_import.get("coverage_pct"),
+                    imported_coverage_files=coverage_import.get("files_with_coverage", 0),
+                )
+                click.echo(to_json(envelope))
+                if not all_passed:
+                    from roam.exit_codes import GateFailureError
+                    raise GateFailureError("Quality gate failed")
+                return
+
+            # Text output for gate mode
+            click.echo(f"VERDICT: {verdict}\n")
+            click.echo("=== Quality Gates ===")
+            for gr in gate_results:
+                status = "PASS" if gr["passed"] else "FAIL"
+                click.echo(f"  [{status}] {gr['gate']}: {gr['actual']} (threshold: {gr['threshold']})")
+
+            if all_passed:
+                click.echo("\nAll gates passed.")
+            else:
+                failed = [g["gate"] for g in gate_results if not g["passed"]]
+                click.echo(f"\nFailed gates: {', '.join(failed)}")
+                from roam.exit_codes import GateFailureError
+                raise GateFailureError(f"Quality gate failed: {', '.join(failed)}")
+            return
 
         if sarif_mode:
             from roam.output.sarif import health_to_sarif, write_sarif
@@ -391,7 +508,13 @@ def health(ctx, no_framework):
 
         if json_mode:
             j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
-            click.echo(to_json(json_envelope("health",
+            next_steps = suggest_next_steps("health", {
+                "score": health_score,
+                "critical_issues": sev_counts["CRITICAL"],
+                "cycles": len(cycles),
+            })
+            envelope = json_envelope("health",
+                budget=token_budget,
                 summary={
                     "verdict": verdict,
                     "health_score": health_score,
@@ -400,13 +523,20 @@ def health(ctx, no_framework):
                     "algebraic_connectivity": fiedler,
                     "issue_count": j_issue_count,
                     "severity": sev_counts,
+                    "imported_coverage_pct": coverage_import.get("coverage_pct"),
+                    "imported_coverage_files": coverage_import.get("files_with_coverage", 0),
                 },
+                next_steps=next_steps,
                 health_score=health_score,
                 tangle_ratio=tangle_ratio,
                 propagation_cost=prop_cost,
                 algebraic_connectivity=fiedler,
                 issue_count=j_issue_count,
                 severity=sev_counts,
+                imported_coverage_pct=coverage_import.get("coverage_pct"),
+                imported_coverage_files=coverage_import.get("files_with_coverage", 0),
+                imported_covered_lines=coverage_import.get("covered_lines", 0),
+                imported_coverable_lines=coverage_import.get("coverable_lines", 0),
                 framework_filtered=filtered_count,
                 actionable_count=actionable_count,
                 utility_count=utility_count,
@@ -450,7 +580,10 @@ def health(ctx, no_framework):
                     }
                     for v in violations
                 ],
-            )))
+            )
+            if not detail:
+                envelope = summary_envelope(envelope)
+            click.echo(to_json(envelope))
             return
 
         # --- Text output ---
@@ -473,6 +606,12 @@ def health(ctx, no_framework):
                    f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)")
         click.echo(f"Propagation Cost: {prop_cost:.1%}  |  "
                    f"Algebraic Connectivity: {fiedler:.4f}")
+        if coverage_import.get("coverable_lines", 0) > 0:
+            click.echo(
+                f"Imported Coverage: {coverage_import['coverage_pct']}% "
+                f"({coverage_import['covered_lines']}/{coverage_import['coverable_lines']} lines, "
+                f"{coverage_import['files_with_coverage']} files)"
+            )
         click.echo()
         if issue_count == 0:
             click.echo("Issues: None detected")
@@ -486,11 +625,35 @@ def health(ctx, no_framework):
                 sev_parts.append(f"{sev_counts['INFO']} INFO")
             click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} "
                         f"— {', '.join(sev_parts)}")
-            detail = ', '.join(parts)
+            detail_str = ', '.join(parts)
             if filtered_count:
-                detail += f"; {filtered_count} framework symbols filtered"
-            click.echo(f"  ({detail})")
+                detail_str += f"; {filtered_count} framework symbols filtered"
+            click.echo(f"  ({detail_str})")
         click.echo()
+
+        # --- Summary mode (no --detail): only show top 3 issues ---
+        if not detail:
+            top_critical = [
+                item for item_list in [
+                    [(c, "cycle") for c in formatted_cycles if c.get("severity") == "CRITICAL"],
+                    [(g, "god") for g in god_items if g.get("severity") == "CRITICAL"],
+                    [(b, "bottleneck") for b in bn_items if b.get("severity") == "CRITICAL"],
+                ]
+                for item in item_list
+            ]
+            if top_critical:
+                click.echo("Top CRITICAL issues (use --detail for full breakdown):")
+                for item, kind in top_critical[:3]:
+                    if kind == "cycle":
+                        names = [s["name"] for s in item["symbols"][:3]]
+                        click.echo(f"  cycle ({item['size']} symbols): {', '.join(names)}")
+                    elif kind == "god":
+                        click.echo(f"  god component: {item['name']} ({abbrev_kind(item['kind'])}, degree={item['degree']})")
+                    elif kind == "bottleneck":
+                        click.echo(f"  bottleneck: {item['name']} ({abbrev_kind(item['kind'])}, betweenness={item['betweenness']})")
+            else:
+                click.echo("(use --detail for full breakdown of cycles, god components, bottlenecks, and layer violations)")
+            return
 
         click.echo("=== Cycles ===")
         if formatted_cycles:
@@ -558,3 +721,12 @@ def health(ctx, no_framework):
             click.echo("  (none)")
         else:
             click.echo("  (no layers detected)")
+
+        next_steps = suggest_next_steps("health", {
+            "score": health_score,
+            "critical_issues": sev_counts["CRITICAL"],
+            "cycles": len(cycles),
+        })
+        ns_text = format_next_steps_text(next_steps)
+        if ns_text:
+            click.echo(ns_text)

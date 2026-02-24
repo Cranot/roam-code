@@ -1,0 +1,13 @@
+name: "Architecture: arch no plugins to app"
+description: "Plugins should depend on stable interfaces, not app internals."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/plugins/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/app/**"
+    kind: [function, method, class]
+  max_distance: 1

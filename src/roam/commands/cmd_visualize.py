@@ -13,7 +13,7 @@ from roam.graph.pagerank import compute_pagerank
 from roam.graph.clusters import detect_clusters, label_clusters
 from roam.graph.cycles import find_cycles
 from roam.output.formatter import to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 
 
 # -- Node shape helpers -------------------------------------------------------
@@ -59,10 +59,16 @@ def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiG
     """BFS neighborhood around a focal symbol."""
     sym = find_symbol(conn, focus_name)
     if sym is None:
-        raise click.ClickException(f"Symbol not found: {focus_name}")
+        raise click.ClickException(
+            f'Symbol not found: "{focus_name}"\n'
+            f"  Tip: Run `roam search {focus_name}` to find similar symbols."
+        )
     sid = sym["id"]
     if sid not in G:
-        raise click.ClickException(f"Symbol '{focus_name}' (id={sid}) not in graph")
+        raise click.ClickException(
+            f"Symbol '{focus_name}' (id={sid}) exists in the index but is not in the graph.\n"
+            "  Tip: Run `roam index` to rebuild the graph."
+        )
     return nx.ego_graph(G, sid, radius=depth, undirected=True)
 
 

@@ -1,0 +1,10 @@
+name: "Security: js no query concat (javascript)"
+description: "Disallow SQL query concatenation in db.query()."
+severity: warning
+type: ast_match
+
+match:
+  ast: "db.query($SQL + $EXPR)"
+  language: javascript
+  file_glob: "**/*.js"
+  max_matches: 100

@@ -1,0 +1,10 @@
+name: "Security: py no dill loads"
+description: "Disallow dill.loads on potentially untrusted input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "dill.loads($SRC)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

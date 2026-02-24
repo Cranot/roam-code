@@ -1,0 +1,13 @@
+name: "Architecture: arch no infra to domain services"
+description: "Infrastructure should use interfaces, not concrete domain services."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/infrastructure/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/domain/services/**"
+    kind: [function, method, class]
+  max_distance: 1

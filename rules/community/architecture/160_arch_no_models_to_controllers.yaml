@@ -1,0 +1,13 @@
+name: "Architecture: arch no models to controllers"
+description: "Models should not depend on controllers."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

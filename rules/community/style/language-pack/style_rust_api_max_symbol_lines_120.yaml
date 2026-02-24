@@ -1,0 +1,10 @@
+name: "Style: rust api max symbol lines 120"
+description: "Rust functions/methods in api/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "api/**/*.rs"
+  require:
+    max_symbol_lines: 120

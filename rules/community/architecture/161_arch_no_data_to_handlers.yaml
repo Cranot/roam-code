@@ -1,0 +1,13 @@
+name: "Architecture: arch no data to handlers"
+description: "Data layer should not call request handlers."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/data/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  max_distance: 1

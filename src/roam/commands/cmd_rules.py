@@ -57,6 +57,41 @@ exempt:
   files: ["**/migrations/**"]
 """
 
+_EXAMPLE_AST_RULE = """\
+# Rule: Forbid dynamic eval-style execution
+name: "No eval-style execution"
+description: "Disallow eval(...) calls in Python source"
+severity: error
+type: ast_match
+
+match:
+  ast: "eval($EXPR)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 50
+
+exempt:
+  files: ["**/tests/**"]
+"""
+
+_EXAMPLE_DATAFLOW_RULE = """\
+# Rule: Detect intra-procedural dataflow issues
+name: "Basic dataflow hygiene"
+description: "Find dead assignments, unused params, and source-to-sink flows in functions"
+severity: warning
+type: dataflow_match
+
+match:
+  patterns: [dead_assignment, unused_param, source_to_sink]
+  file_glob: "**/*.py"
+  max_matches: 100
+  sources: ["input(", "request.args"]
+  sinks: ["eval(", "exec("]
+
+exempt:
+  files: ["**/tests/**"]
+"""
+
 
 # ---------------------------------------------------------------------------
 # CLI command
@@ -75,8 +110,10 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
     """Evaluate custom governance rules defined in .roam/rules/.
 
     Rules are YAML files that define architectural constraints. Two rule
-    types are supported: path_match (edges between from/to patterns)
-    and symbol_match (symbols matching criteria with optional require).
+    types are supported: path_match (edges between from/to patterns),
+    symbol_match (symbols matching criteria with optional require),
+    ast_match (AST structural patterns with `$METAVAR` captures),
+    and dataflow_match (basic intra-procedural dataflow heuristics).
 
     Use --init to create example rule files. Use --ci for CI gates
     (exit code 1 on error-severity violations).
@@ -150,7 +187,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
         sarif = rules_to_sarif(results)
         click.echo(write_sarif(sarif))
         if ci_mode and failed_errors > 0:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- JSON output ---
@@ -162,7 +200,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
             results=results,
         )))
         if ci_mode and failed_errors > 0:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Text output ---
@@ -212,6 +251,8 @@ def _handle_init(root: Path, json_mode: bool, rules_dir_opt: str | None):
 
     path_rule_file = rules_dir / "no_controller_calls_db.yaml"
     symbol_rule_file = rules_dir / "exported_need_tests.yaml"
+    ast_rule_file = rules_dir / "no_eval_style_execution.yaml"
+    dataflow_rule_file = rules_dir / "basic_dataflow_hygiene.yaml"
 
     created: list[str] = []
 
@@ -222,6 +263,14 @@ def _handle_init(root: Path, json_mode: bool, rules_dir_opt: str | None):
     if not symbol_rule_file.exists():
         symbol_rule_file.write_text(_EXAMPLE_SYMBOL_RULE, encoding="utf-8")
         created.append(str(symbol_rule_file))
+
+    if not ast_rule_file.exists():
+        ast_rule_file.write_text(_EXAMPLE_AST_RULE, encoding="utf-8")
+        created.append(str(ast_rule_file))
+
+    if not dataflow_rule_file.exists():
+        dataflow_rule_file.write_text(_EXAMPLE_DATAFLOW_RULE, encoding="utf-8")
+        created.append(str(dataflow_rule_file))
 
     if json_mode:
         verdict = f"created {len(created)} example rule(s)" if created else "rule files already exist"

@@ -1,0 +1,10 @@
+name: "Security: js no function ctor (typescript)"
+description: "Disallow dynamic Function constructor."
+severity: warning
+type: ast_match
+
+match:
+  ast: "Function($EXPR)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

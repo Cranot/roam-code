@@ -29,6 +29,12 @@ class TestCatalog:
         from roam.catalog.tasks import CATALOG
         assert len(CATALOG) == 23, f"Expected 23 tasks, got {len(CATALOG)}"
 
+    def test_detector_registry_covers_catalog(self):
+        from roam.catalog.tasks import CATALOG
+        from roam.catalog.detectors import _MATH_DETECTORS
+        detector_tasks = {task_id for task_id, _way_id, _fn in _MATH_DETECTORS}
+        assert detector_tasks == set(CATALOG.keys())
+
     def test_all_tasks_have_required_fields(self):
         from roam.catalog.tasks import CATALOG
         for task_id, task in CATALOG.items():
@@ -578,6 +584,44 @@ class TestDetectors:
             assert len(hits) >= 1
             assert hits[0]["task_id"] == "io-in-loop"
 
+    def test_detect_io_in_loop_requests_get(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "fetcher.py": (
+                "import requests\n"
+                "def fetch_users(urls):\n"
+                "    users = []\n"
+                "    for url in urls:\n"
+                "        users.append(requests.get(url))\n"
+                "    return users\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_io_in_loop
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) >= 1
+            assert any("requests.get" in h["reason"] for h in hits)
+
+    def test_detect_io_in_loop_ignores_local_query_helper(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "fetcher.py": (
+                "def query(user_id):\n"
+                "    return user_id\n"
+                "def fetch_users(ids):\n"
+                "    users = []\n"
+                "    for uid in ids:\n"
+                "        users.append(query(uid))\n"
+                "    return users\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_io_in_loop
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) == 0
+
     def test_detect_loop_lookup(self, project_factory, monkeypatch):
         proj = project_factory({
             "checker.py": (
@@ -596,6 +640,130 @@ class TestDetectors:
             hits = detect_loop_lookup(conn)
             assert len(hits) >= 1
             assert hits[0]["task_id"] == "loop-lookup"
+
+    def test_loop_lookup_avoids_string_find_false_positive(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "checker.py": (
+                "def grep_lines(lines):\n"
+                "    out = []\n"
+                "    for line in lines:\n"
+                "        if line.find('ERR') >= 0:\n"
+                "            out.append(line)\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_loop_lookup
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_loop_lookup(conn)
+            assert len(hits) == 0
+
+    def test_list_prepend_avoids_set_add_false_positive(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "dedup.py": (
+                "def dedup(values):\n"
+                "    seen = set()\n"
+                "    for v in values:\n"
+                "        seen.add(v)\n"
+                "    return seen\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_list_prepend
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_list_prepend(conn)
+            assert len(hits) == 0
+
+    def test_detect_sort_to_select_sorted_index(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "ranker.py": (
+                "def top_one(items):\n"
+                "    return sorted(items)[0]\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_sort_to_select
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_sort_to_select(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "sort-to-select"
+
+    def test_detect_manual_power(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "math_ops.py": (
+                "def power(base, exp):\n"
+                "    out = 1\n"
+                "    for _ in range(exp):\n"
+                "        out *= base\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_manual_power
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_manual_power(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "manual-power"
+
+    def test_detect_manual_gcd(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "math_ops.py": (
+                "def gcd(a, b):\n"
+                "    while b != 0:\n"
+                "        a, b = b, a % b\n"
+                "    return a\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_manual_gcd
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_manual_gcd(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "manual-gcd"
+
+    def test_detect_string_reverse(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "strings.py": (
+                "def reverse_string(s):\n"
+                "    out = ''\n"
+                "    for ch in s:\n"
+                "        out = ch + out\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_string_reverse
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_string_reverse(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "string-reverse"
+
+    def test_detect_matrix_mult(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "matrix.py": (
+                "def matrix_multiply(a, b):\n"
+                "    n = len(a)\n"
+                "    out = [[0] * n for _ in range(n)]\n"
+                "    for i in range(n):\n"
+                "        for j in range(n):\n"
+                "            for k in range(n):\n"
+                "                out[i][j] += a[i][k] * b[k][j]\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_matrix_mult
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_matrix_mult(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "matrix-mult"
 
     def test_run_detectors_combined(self, project_factory, monkeypatch):
         """run_detectors should combine results from all detectors."""
@@ -621,6 +789,25 @@ class TestDetectors:
             task_ids = {f["task_id"] for f in findings}
             assert "sorting" in task_ids
             assert "fibonacci" in task_ids
+
+    def test_run_detectors_meta(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "algo.py": (
+                "def bubble_sort(arr):\n"
+                "    for i in range(len(arr)):\n"
+                "        for j in range(len(arr) - 1):\n"
+                "            if arr[j] > arr[j+1]:\n"
+                "                arr[j], arr[j+1] = arr[j+1], arr[j]\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import run_detectors
+        with open_db(readonly=True, project_root=proj) as conn:
+            findings, meta = run_detectors(conn, return_meta=True)
+            assert len(findings) >= 1
+            assert meta["detectors_executed"] >= 1
+            assert "detectors_failed" in meta
 
 
 # ============================================================================
@@ -748,6 +935,54 @@ class TestMathSignalsTier2:
         sig = _extract_math_signals(fn, code.encode(), "small_matrix")
         assert sig["loop_bound_small"] == 1
 
+    def test_calls_in_loops_qualified(self):
+        from roam.index.complexity import _find_function_node, _extract_math_signals
+        import tree_sitter_language_pack as tslp
+        parser = tslp.get_parser("python")
+        code = (
+            "import requests\n"
+            "def fetch_all(urls):\n"
+            "    for u in urls:\n"
+            "        requests.get(u)\n"
+        )
+        tree = parser.parse(code.encode())
+        fn = _find_function_node(tree, 2, 4)
+        assert fn is not None
+        sig = _extract_math_signals(fn, code.encode(), "fetch_all")
+        assert "requests.get" in sig["calls_in_loops_qualified"]
+
+    def test_front_ops_in_loop_signal(self):
+        from roam.index.complexity import _find_function_node, _extract_math_signals
+        import tree_sitter_language_pack as tslp
+        parser = tslp.get_parser("python")
+        code = (
+            "def build(vals):\n"
+            "    out = []\n"
+            "    for v in vals:\n"
+            "        out.insert(0, v)\n"
+            "    return out\n"
+        )
+        tree = parser.parse(code.encode())
+        fn = _find_function_node(tree, 1, 5)
+        assert fn is not None
+        sig = _extract_math_signals(fn, code.encode(), "build")
+        assert sig["front_ops_in_loop"] == 1
+
+    def test_loop_lookup_calls_signal(self):
+        from roam.index.complexity import _find_function_node, _extract_math_signals
+        import tree_sitter_language_pack as tslp
+        parser = tslp.get_parser("python")
+        code = (
+            "def find_dupes(items, blacklist):\n"
+            "    for item in items:\n"
+            "        blacklist.index(item)\n"
+        )
+        tree = parser.parse(code.encode())
+        fn = _find_function_node(tree, 1, 3)
+        assert fn is not None
+        sig = _extract_math_signals(fn, code.encode(), "find_dupes")
+        assert any("index" in c for c in sig["loop_lookup_calls"])
+
 
 # ============================================================================
 # Tier 2 detector tests
@@ -865,3 +1100,263 @@ class TestDetectorsTier2:
                 if f["symbol_name"] == "check_grid" or "check_grid" in f.get("symbol_name", ""):
                     assert f["confidence"] != "high", \
                         f"Bounded loop finding should not be high confidence: {f}"
+
+
+# ============================================================================
+# Rich evidence / profile tests
+# ============================================================================
+
+class TestAlgoRicher:
+    """Coverage for richer evidence, framework packs, runtime fusion, and profiles."""
+
+    def test_io_in_loop_framework_fix_hint(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "service.py": (
+                "class User:\n"
+                "    objects = None\n"
+                "\n"
+                "def load_users(ids):\n"
+                "    out = []\n"
+                "    for uid in ids:\n"
+                "        out.append(User.objects.get(uid))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_io_in_loop
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) >= 1
+            assert any("django-orm" in (h.get("reason") or "") for h in hits)
+            assert any("select_related" in (h.get("fix") or "") for h in hits)
+
+    def test_runtime_evidence_is_attached(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "fetcher.py": (
+                "def fetch_users(ids):\n"
+                "    out = []\n"
+                "    for uid in ids:\n"
+                "        out.append(query(uid))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import run_detectors
+        with open_db(readonly=False, project_root=proj) as conn:
+            sym = conn.execute(
+                "SELECT id FROM symbols WHERE name = 'fetch_users' LIMIT 1"
+            ).fetchone()
+            assert sym is not None
+            conn.execute(
+                "INSERT INTO runtime_stats "
+                "(symbol_id, symbol_name, trace_source, call_count, p99_latency_ms, error_rate) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (sym["id"], "fetch_users", "generic", 5000, 450.0, 0.01),
+            )
+            conn.commit()
+
+            hits = run_detectors(conn, task_filter="io-in-loop")
+            assert len(hits) >= 1
+            hit = hits[0]
+            runtime = hit.get("evidence", {}).get("runtime", {})
+            assert runtime.get("call_count", 0) >= 5000
+            assert "runtime:" in hit.get("reason", "")
+
+    def test_runtime_db_semantics_raise_impact_score(self, project_factory, monkeypatch):
+        """OTel DB semantic attributes should increase runtime impact signal quality."""
+        proj = project_factory({
+            "fetcher.py": (
+                "def fetch_users(ids):\n"
+                "    out = []\n"
+                "    for uid in ids:\n"
+                "        out.append(query(uid))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import run_detectors
+
+        with open_db(readonly=False, project_root=proj) as conn:
+            sym = conn.execute(
+                "SELECT id FROM symbols WHERE name = 'fetch_users' LIMIT 1"
+            ).fetchone()
+            assert sym is not None
+
+            conn.execute("DELETE FROM runtime_stats")
+            conn.execute(
+                "INSERT INTO runtime_stats "
+                "(symbol_id, symbol_name, trace_source, call_count, p99_latency_ms, error_rate) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (sym["id"], "fetch_users", "generic", 1200, 160.0, 0.0),
+            )
+            generic_hits = run_detectors(conn, task_filter="io-in-loop")
+            generic_hit = next(
+                (h for h in generic_hits if "fetch_users" in h.get("symbol_name", "")),
+                None,
+            )
+            assert generic_hit is not None
+
+            conn.execute("DELETE FROM runtime_stats")
+            conn.execute(
+                "INSERT INTO runtime_stats "
+                "(symbol_id, symbol_name, trace_source, call_count, p99_latency_ms, error_rate, "
+                "otel_db_system, otel_db_operation, otel_db_statement_type) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                (
+                    sym["id"],
+                    "fetch_users",
+                    "otel",
+                    1200,
+                    160.0,
+                    0.0,
+                    "postgresql",
+                    "DELETE",
+                    "DELETE",
+                ),
+            )
+            otel_hits = run_detectors(conn, task_filter="io-in-loop")
+            otel_hit = next(
+                (h for h in otel_hits if "fetch_users" in h.get("symbol_name", "")),
+                None,
+            )
+            assert otel_hit is not None
+            assert otel_hit["impact_score"] > generic_hit["impact_score"]
+
+            runtime = otel_hit.get("evidence", {}).get("runtime", {})
+            assert runtime.get("db_system") == "postgresql"
+            assert runtime.get("db_operation") == "DELETE"
+
+    def test_strict_profile_filters_low_confidence(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "search.py": (
+                "def search_sorted(items, target):\n"
+                "    for i, x in enumerate(items):\n"
+                "        if x == target:\n"
+                "            return i\n"
+                "    return -1\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import run_detectors
+        with open_db(readonly=True, project_root=proj) as conn:
+            balanced = run_detectors(conn, task_filter="search-sorted", profile="balanced")
+            strict = run_detectors(conn, task_filter="search-sorted", profile="strict")
+            assert len(balanced) >= 1
+            assert len(strict) == 0
+
+    def test_algo_json_includes_profile_evidence_and_fix(
+        self, project_factory, monkeypatch
+    ):
+        proj = project_factory({
+            "fetcher.py": (
+                "import requests\n"
+                "def fetch_users(urls):\n"
+                "    out = []\n"
+                "    for url in urls:\n"
+                "        out.append(requests.get(url))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = invoke_cli(
+            runner,
+            ["algo", "--task", "io-in-loop", "--profile", "aggressive"],
+            cwd=proj,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "algo")
+        assert data["summary"]["profile"] == "aggressive"
+        findings = data.get("findings", [])
+        assert len(findings) >= 1
+        finding = findings[0]
+        assert "evidence" in finding
+        assert "evidence_path" in finding
+        assert finding.get("fix", "") != ""
+
+    def test_detector_metadata_and_impact_score(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "fetcher.py": (
+                "import requests\n"
+                "def fetch_users(urls):\n"
+                "    out = []\n"
+                "    for url in urls:\n"
+                "        out.append(requests.get(url))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import run_detectors
+        with open_db(readonly=True, project_root=proj) as conn:
+            findings, meta = run_detectors(
+                conn, task_filter="io-in-loop", return_meta=True
+            )
+            assert len(findings) >= 1
+            f = findings[0]
+            assert f.get("precision") in {"high", "medium", "low"}
+            assert f.get("impact") in {"high", "medium", "low"}
+            assert isinstance(f.get("impact_score"), float)
+            assert f.get("impact_band") in {"high", "medium", "low"}
+            assert "io-in-loop" in meta.get("detector_metadata", {})
+
+    def test_io_in_loop_guard_hints_reduce_confidence(self, project_factory, monkeypatch):
+        proj = project_factory({
+            "service.py": (
+                "class User:\n"
+                "    objects = None\n"
+                "\n"
+                "def load_users(ids):\n"
+                "    users = User.objects.select_related('team').all()\n"
+                "    out = []\n"
+                "    for uid in ids:\n"
+                "        out.append(User.objects.get(uid))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        from roam.db.connection import open_db
+        from roam.catalog.detectors import detect_io_in_loop
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) >= 1
+            hit = hits[0]
+            assert hit["confidence"] != "high"
+            assert "guard_hints" in hit.get("evidence", {})
+
+    def test_algo_sarif_contains_fingerprint_codeflow_and_fix(
+        self, project_factory, monkeypatch
+    ):
+        proj = project_factory({
+            "fetcher.py": (
+                "import requests\n"
+                "def fetch_users(urls):\n"
+                "    out = []\n"
+                "    for url in urls:\n"
+                "        out.append(requests.get(url))\n"
+                "    return out\n"
+            ),
+        })
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = invoke_cli(
+            runner,
+            ["--sarif", "algo", "--task", "io-in-loop"],
+            cwd=proj,
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data.get("version") == "2.1.0"
+        runs = data.get("runs", [])
+        assert runs
+        results = runs[0].get("results", [])
+        assert results
+        res = results[0]
+        assert "partialFingerprints" in res
+        assert "primaryLocationLineHash" in res["partialFingerprints"]
+        assert "codeFlows" in res
+        assert "fixes" in res

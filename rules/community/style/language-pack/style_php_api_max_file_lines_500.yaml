@@ -1,0 +1,10 @@
+name: "Style: php api max file lines 500"
+description: "Php files in api/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "api/**/*.php"
+  require:
+    max_file_lines: 500

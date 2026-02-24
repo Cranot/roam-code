@@ -232,7 +232,7 @@ class TestBisectCommand:
             f"Expected command='bisect', got {data.get('command')}"
         )
         assert "version" in data
-        assert "timestamp" in data
+        assert "timestamp" in data.get("_meta", data)
         assert "summary" in data
         assert isinstance(data["summary"], dict)
 

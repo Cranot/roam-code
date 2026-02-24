@@ -1,0 +1,10 @@
+name: "Style: java lib max file lines 500"
+description: "Java files in lib/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "lib/**/*.java"
+  require:
+    max_file_lines: 500

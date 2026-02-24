@@ -1,0 +1,10 @@
+name: "Security: js no exec command (typescript)"
+description: "Avoid deprecated execCommand where possible."
+severity: warning
+type: ast_match
+
+match:
+  ast: "document.execCommand($CMD)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

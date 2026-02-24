@@ -1,0 +1,10 @@
+name: "Style: max params 6 (core source)"
+description: "Functions and methods in core source should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**"
+  require:
+    max_params: 6

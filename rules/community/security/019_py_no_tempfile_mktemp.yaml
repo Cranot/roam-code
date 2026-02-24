@@ -1,0 +1,10 @@
+name: "Security: py no tempfile mktemp"
+description: "Disallow tempfile.mktemp race-prone temp file creation."
+severity: warning
+type: ast_match
+
+match:
+  ast: "tempfile.mktemp($PREFIX)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

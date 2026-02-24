@@ -1,0 +1,13 @@
+name: "Architecture: arch no api to db"
+description: "API layer should not call DB layer directly."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

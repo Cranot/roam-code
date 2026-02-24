@@ -1,0 +1,10 @@
+name: "Style: kotlin app max file lines 500"
+description: "Kotlin files in app/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "app/**/*.kt"
+  require:
+    max_file_lines: 500

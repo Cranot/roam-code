@@ -1,0 +1,13 @@
+name: "Architecture: arch no batch to api"
+description: "Batch jobs should not depend on HTTP API layer."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/batch/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  max_distance: 1

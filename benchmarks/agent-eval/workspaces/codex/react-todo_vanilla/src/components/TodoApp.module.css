@@ -1,0 +1,45 @@
+.page {
+  padding: 1rem;
+}
+
+.container {
+  width: min(980px, 100%);
+  margin: 0 auto;
+  display: grid;
+  gap: 1rem;
+}
+
+.header {
+  background: linear-gradient(135deg, #0f766e, #0e7490);
+  color: #ecfeff;
+  border-radius: 20px;
+  padding: 1.25rem;
+  box-shadow: 0 14px 28px rgba(15, 118, 110, 0.2);
+}
+
+.header h1 {
+  margin: 0;
+  font-size: clamp(1.6rem, 3vw, 2rem);
+}
+
+.subtitle {
+  margin: 0.4rem 0 0;
+}
+
+.kicker {
+  margin: 0 0 0.35rem;
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  font-weight: 700;
+}
+
+@media (min-width: 720px) {
+  .page {
+    padding: 2rem;
+  }
+
+  .container {
+    gap: 1.25rem;
+  }
+}

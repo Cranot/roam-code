@@ -43,3 +43,14 @@ env/
 
 # Node (benchmark workspaces)
 node_modules/
+
+# Windows artifacts
+NUL
+
+# Benchmark results (ephemeral)
+benchmarks/agent-eval/results/
+benchmarks/oss-eval/results/
+
+# Build artifacts in benchmark workspaces
+**/build-mingw/
+**/cmake-build-*/

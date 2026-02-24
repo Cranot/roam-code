@@ -1,0 +1,10 @@
+name: "Style: rust app max params 6"
+description: "Rust functions/methods in app/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**/*.rs"
+  require:
+    max_params: 6

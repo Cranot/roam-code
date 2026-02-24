@@ -1,0 +1,284 @@
+---
+
+---
+
+<section class="hero section" id="hero" aria-labelledby="hero-heading">
+  <div class="container hero-container">
+    <div class="hero-content">
+      <span class="hero-badge">New: AI-Powered Sprint Planning</span>
+      <h1 id="hero-heading">
+        Manage projects with
+        <span class="gradient-text">clarity and speed</span>
+      </h1>
+      <p class="hero-subtitle">
+        FlowBoard helps teams plan, track, and deliver projects faster. Replace
+        scattered tools with one intuitive workspace that keeps everyone aligned.
+      </p>
+      <form class="hero-form" aria-label="Email signup" id="hero-signup-form">
+        <div class="input-group">
+          <label for="hero-email" class="sr-only">Email address</label>
+          <input
+            type="email"
+            id="hero-email"
+            name="email"
+            placeholder="Enter your work email"
+            required
+            autocomplete="email"
+          />
+          <button type="submit" class="btn btn-primary">
+            Start Free Trial
+          </button>
+        </div>
+        <p class="hero-note">Free 14-day trial. No credit card required.</p>
+      </form>
+      <div class="hero-social-proof">
+        <div class="avatar-stack" aria-hidden="true">
+          <div class="avatar" style="background-color: #818cf8;">S</div>
+          <div class="avatar" style="background-color: #06b6d4;">M</div>
+          <div class="avatar" style="background-color: #f59e0b;">A</div>
+          <div class="avatar" style="background-color: #22c55e;">R</div>
+        </div>
+        <p><strong>2,000+</strong> teams already on FlowBoard</p>
+      </div>
+    </div>
+    <div class="hero-visual" aria-hidden="true">
+      <div class="hero-graphic">
+        <div class="board">
+          <div class="board-col">
+            <div class="board-col-title">To Do</div>
+            <div class="board-card card-blue">Design system audit</div>
+            <div class="board-card card-purple">API documentation</div>
+          </div>
+          <div class="board-col">
+            <div class="board-col-title">In Progress</div>
+            <div class="board-card card-amber">Sprint planning v2</div>
+            <div class="board-card card-green">User onboarding flow</div>
+          </div>
+          <div class="board-col">
+            <div class="board-col-title">Done</div>
+            <div class="board-card card-teal">Auth integration</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding-top: calc(var(--header-height) + var(--space-2xl));
+    background: linear-gradient(
+      180deg,
+      var(--color-bg-alt) 0%,
+      var(--color-bg) 100%
+    );
+  }
+
+  .hero-container {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xl);
+    align-items: center;
+  }
+
+  .hero-content {
+    text-align: center;
+    max-width: 640px;
+  }
+
+  .hero-badge {
+    display: inline-block;
+    padding: var(--space-xs) var(--space-md);
+    background-color: rgba(79, 70, 229, 0.1);
+    color: var(--color-primary);
+    border-radius: var(--radius-full);
+    font-size: 0.875rem;
+    font-weight: 600;
+    margin-bottom: var(--space-lg);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-subtitle {
+    margin-top: var(--space-lg);
+    font-size: 1.125rem;
+    color: var(--color-text-light);
+    line-height: 1.7;
+  }
+
+  .hero-form {
+    margin-top: var(--space-xl);
+  }
+
+  .input-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+    max-width: 460px;
+    margin-inline: auto;
+  }
+
+  .input-group input {
+    padding: 0.875rem 1rem;
+    font-size: 1rem;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+    font-family: var(--font-sans);
+  }
+
+  .input-group input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .hero-note {
+    margin-top: var(--space-sm);
+    font-size: 0.8125rem;
+    color: var(--color-text-light);
+  }
+
+  .hero-social-proof {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: var(--space-md);
+    margin-top: var(--space-xl);
+    font-size: 0.9375rem;
+    color: var(--color-text-light);
+  }
+
+  .avatar-stack {
+    display: flex;
+  }
+
+  .avatar {
+    width: 32px;
+    height: 32px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.75rem;
+    font-weight: 700;
+    color: white;
+    border: 2px solid var(--color-bg);
+    margin-left: -8px;
+  }
+
+  .avatar:first-child {
+    margin-left: 0;
+  }
+
+  /* Hero graphic - Kanban board illustration */
+  .hero-visual {
+    width: 100%;
+    max-width: 560px;
+  }
+
+  .hero-graphic {
+    background: var(--color-bg);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-xl);
+    padding: var(--space-lg);
+    box-shadow: var(--shadow-xl);
+  }
+
+  .board {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: var(--space-md);
+  }
+
+  .board-col {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .board-col-title {
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--color-text-light);
+    padding-bottom: var(--space-sm);
+    border-bottom: 2px solid var(--color-border);
+  }
+
+  .board-card {
+    padding: var(--space-sm) var(--space-md);
+    border-radius: var(--radius-sm);
+    font-size: 0.8125rem;
+    font-weight: 500;
+    border-left: 3px solid;
+    background: var(--color-bg-alt);
+  }
+
+  .card-blue {
+    border-color: #3b82f6;
+  }
+  .card-purple {
+    border-color: #8b5cf6;
+  }
+  .card-amber {
+    border-color: #f59e0b;
+  }
+  .card-green {
+    border-color: #22c55e;
+  }
+  .card-teal {
+    border-color: #14b8a6;
+  }
+
+  @media (min-width: 480px) {
+    .input-group {
+      flex-direction: row;
+    }
+
+    .input-group input {
+      flex: 1;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .hero-container {
+      flex-direction: row;
+      gap: var(--space-4xl);
+    }
+
+    .hero-content {
+      text-align: left;
+      flex: 1;
+    }
+
+    .hero-form .input-group {
+      margin-inline: 0;
+    }
+
+    .hero-social-proof {
+      justify-content: flex-start;
+    }
+
+    .hero-visual {
+      flex: 1;
+    }
+  }
+</style>
+
+<script>
+  const heroForm = document.getElementById('hero-signup-form');
+  heroForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+    const emailInput = document.getElementById('hero-email') as HTMLInputElement;
+    if (emailInput?.checkValidity()) {
+      alert(`Thanks! We'll send a trial invite to ${emailInput.value}`);
+      emailInput.value = '';
+    }
+  });
+</script>

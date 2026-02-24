@@ -154,14 +154,19 @@ def parse_json_output(result, command=None):
 def assert_json_envelope(data, command=None):
     """Validate that a parsed JSON dict follows the roam envelope contract.
 
-    Checks required top-level keys: command, version, timestamp, summary.
+    Checks required top-level keys: command, version, summary.
+    Checks _meta contains timestamp (non-deterministic metadata).
     Checks summary contains a verdict string.
     """
     assert isinstance(data, dict), f"Expected dict, got {type(data)}"
     assert "command" in data, f"Missing 'command' key in envelope"
     assert "version" in data, f"Missing 'version' key in envelope"
-    assert "timestamp" in data, f"Missing 'timestamp' key in envelope"
     assert "summary" in data, f"Missing 'summary' key in envelope"
+    # timestamp lives in _meta (or legacy top-level for backward compat)
+    meta = data.get("_meta", {})
+    assert (
+        "timestamp" in meta or "timestamp" in data
+    ), "Missing 'timestamp' in _meta or top-level envelope"
     if command:
         assert data["command"] == command, (
             f"Expected command={command}, got {data['command']}"

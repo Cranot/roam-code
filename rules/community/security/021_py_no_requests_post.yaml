@@ -1,0 +1,10 @@
+name: "Security: py no requests post"
+description: "Review outbound POST requests for SSRF risk."
+severity: warning
+type: ast_match
+
+match:
+  ast: "requests.post($URL)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

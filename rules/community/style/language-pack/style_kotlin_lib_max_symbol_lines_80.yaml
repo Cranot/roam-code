@@ -1,0 +1,10 @@
+name: "Style: kotlin lib max symbol lines 80"
+description: "Kotlin functions/methods in lib/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "lib/**/*.kt"
+  require:
+    max_symbol_lines: 80

@@ -74,7 +74,7 @@ class TestHealth:
     def test_health_json_has_structural_keys(self, cli_runner, indexed_project, monkeypatch):
         """roam --json health should include top-level structural data keys."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["health"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "health"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "health")
         # These keys should exist at top level of the envelope
         for key in ["cycles", "god_components", "bottlenecks"]:
@@ -93,7 +93,7 @@ class TestHealth:
     def test_health_text_has_sections(self, cli_runner, indexed_project, monkeypatch):
         """roam health text output should have structural sections."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["health"], cwd=indexed_project)
+        result = invoke_cli(cli_runner, ["--detail", "health"], cwd=indexed_project)
         assert result.exit_code == 0
         out = result.output
         assert "=== Cycles ===" in out, f"Missing Cycles section:\n{out}"
@@ -218,6 +218,30 @@ class TestDebt:
         assert "items" in data or "groups" in data, (
             f"Missing items/groups in debt JSON: {list(data.keys())}"
         )
+
+    def test_debt_roi_text(self, cli_runner, indexed_project, monkeypatch):
+        """roam debt --roi should print ROI estimate summary."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(cli_runner, ["debt", "--roi"], cwd=indexed_project)
+        assert result.exit_code == 0, f"debt --roi failed: {result.output}"
+        out = result.output
+        assert "Refactoring ROI estimate" in out, f"Missing ROI estimate in output:\n{out}"
+        assert "h/quarter" in out, f"Missing ROI hours in output:\n{out}"
+
+    def test_debt_roi_json(self, cli_runner, indexed_project, monkeypatch):
+        """roam --json debt --roi should include ROI summary object."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            ["debt", "--roi"],
+            cwd=indexed_project,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "debt")
+        assert "roi" in data, f"Missing roi key in debt JSON: {list(data.keys())}"
+        roi = data["roi"]
+        assert "estimated_hours_saved_quarter" in roi
+        assert "confidence" in roi
 
 
 # ============================================================================

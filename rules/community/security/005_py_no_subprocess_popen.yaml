@@ -1,0 +1,10 @@
+name: "Security: py no subprocess popen"
+description: "Disallow subprocess.Popen with dynamic input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "subprocess.Popen($CMD)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

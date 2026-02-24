@@ -4,21 +4,25 @@ from __future__ import annotations
 
 ENVELOPE_SCHEMA = {
     "name": "roam-envelope-v1",
-    "version": "1.0.0",
+    "version": "1.1.0",
     "description": "Standard JSON output envelope for all roam commands",
     "required_fields": {
         "schema": "Schema identifier string",
         "schema_version": "Semantic version of the envelope format",
         "command": "The roam command that produced this output",
         "version": "The roam CLI version",
-        "timestamp": "ISO 8601 timestamp of when the command ran",
         "summary": "Dict containing at minimum a 'verdict' string",
     },
     "optional_fields": {
+        "_meta": "Non-deterministic metadata (timestamp, index_age_s) — separated for LLM cache stability",
         "Any additional keys": "Command-specific data fields",
     },
     "changelog": [
         {"version": "1.0.0", "date": "2026-02-20", "changes": ["Initial schema version"]},
+        {"version": "1.1.0", "date": "2026-02-22", "changes": [
+            "Moved timestamp and index_age_s to _meta sub-dict for deterministic output",
+            "Added sort_keys=True to JSON serialization for LLM prompt-caching compatibility",
+        ]},
     ],
 }
 

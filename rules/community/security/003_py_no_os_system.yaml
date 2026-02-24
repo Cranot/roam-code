@@ -1,0 +1,10 @@
+name: "Security: py no os system"
+description: "Disallow shell execution via os.system."
+severity: warning
+type: ast_match
+
+match:
+  ast: "os.system($CMD)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

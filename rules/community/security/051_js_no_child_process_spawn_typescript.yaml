@@ -1,0 +1,10 @@
+name: "Security: js no child process spawn (typescript)"
+description: "Review child_process.spawn invocation input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "child_process.spawn($CMD)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

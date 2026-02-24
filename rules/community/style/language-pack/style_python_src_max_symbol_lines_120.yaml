@@ -1,0 +1,10 @@
+name: "Style: python src max symbol lines 120"
+description: "Python functions/methods in src/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**/*.py"
+  require:
+    max_symbol_lines: 120

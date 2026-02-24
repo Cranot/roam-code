@@ -1,0 +1,10 @@
+name: "Security: py no yaml load"
+description: "Disallow yaml.load without explicit safe loader."
+severity: warning
+type: ast_match
+
+match:
+  ast: "yaml.load($SRC)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

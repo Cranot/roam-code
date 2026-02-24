@@ -1,0 +1,10 @@
+name: "Style: max symbol lines 120 (application)"
+description: "Functions and methods in application should be <= 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**"
+  require:
+    max_symbol_lines: 120

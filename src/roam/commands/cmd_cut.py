@@ -117,7 +117,7 @@ def cut(ctx, between, leak_edges, top_n):
 
                 # Get edge details for cut edges
                 cut_details: list[dict] = []
-                for u, v in min_cut_edges:
+                for u, v in sorted(min_cut_edges):
                     u_node = G.nodes.get(u, {})
                     v_node = G.nodes.get(v, {})
                     cut_details.append({

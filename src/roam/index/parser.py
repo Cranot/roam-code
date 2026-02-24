@@ -12,15 +12,25 @@ log = logging.getLogger(__name__)
 
 from tree_sitter_language_pack import get_parser
 
-# Map file extensions to tree-sitter language names
+# Map file extensions to tree-sitter language names.
+# This is the single canonical source of truth for extension → language mapping.
+# registry.py's _EXTENSION_MAP is derived from this dict (see registry.py).
 EXTENSION_MAP = {
     ".vue": "vue",
     ".svelte": "svelte",
+    # Python
     ".py": "python",
+    ".pyi": "python",
+    # JavaScript / ESM variants
     ".js": "javascript",
     ".jsx": "javascript",
+    ".mjs": "javascript",
+    ".cjs": "javascript",
+    # TypeScript variants
     ".ts": "typescript",
     ".tsx": "tsx",
+    ".mts": "typescript",
+    ".cts": "typescript",
     ".rs": "rust",
     ".go": "go",
     ".java": "java",
@@ -30,6 +40,7 @@ EXTENSION_MAP = {
     ".cc": "cpp",
     ".cxx": "cpp",
     ".hpp": "cpp",
+    ".hxx": "cpp",
     ".hh": "cpp",
     ".cs": "c_sharp",
     ".rb": "ruby",
@@ -37,7 +48,10 @@ EXTENSION_MAP = {
     ".swift": "swift",
     ".kt": "kotlin",
     ".kts": "kotlin",
+    # Scala
     ".scala": "scala",
+    ".sc": "scala",
+    # Tier-2 / tree-sitter-only languages (no dedicated roam extractor)
     ".lua": "lua",
     ".zig": "zig",
     ".el": "elisp",
@@ -66,7 +80,9 @@ EXTENSION_MAP = {
     ".md": "markdown",
     ".mdx": "mdx",
     ".sql": "sql",
+    # HCL / Terraform (regex-only)
     ".tf": "hcl",
+    ".tfvars": "hcl",
     ".hcl": "hcl",
     # Salesforce
     ".cls": "apex",
@@ -105,6 +121,24 @@ REGEX_ONLY_LANGUAGES = frozenset({"foxpro", "yaml", "hcl"})
 
 # Track parse error stats
 parse_errors = {"no_grammar": 0, "parse_error": 0, "unreadable": 0}
+
+
+def _plugin_language_extensions() -> dict[str, str]:
+    try:
+        from roam.plugins import get_plugin_language_extensions
+
+        return get_plugin_language_extensions()
+    except Exception:
+        return {}
+
+
+def _plugin_grammar_aliases() -> dict[str, str]:
+    try:
+        from roam.plugins import get_plugin_language_grammar_aliases
+
+        return get_plugin_language_grammar_aliases()
+    except Exception:
+        return {}
 
 
 def _find_sct_path(scx_path: Path) -> Path | None:
@@ -151,7 +185,11 @@ def detect_language(file_path: str) -> str | None:
     if file_path.endswith("-meta.xml"):
         return "sfxml"
     _, ext = os.path.splitext(file_path)
-    return EXTENSION_MAP.get(ext)
+    ext = ext.lower()
+    language = EXTENSION_MAP.get(ext)
+    if language:
+        return language
+    return _plugin_language_extensions().get(ext)
 
 
 def read_source(path: Path) -> bytes | None:
@@ -256,7 +294,8 @@ def parse_file(path: Path, language: str | None = None):
         source, language = _preprocess_vue(source)
 
     # Resolve grammar alias (e.g. apex → java, sfxml → html)
-    grammar = GRAMMAR_ALIASES.get(language, language)
+    plugin_alias = _plugin_grammar_aliases().get(language)
+    grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
     try:
         parser = get_parser(grammar)

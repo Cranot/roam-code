@@ -1,0 +1,10 @@
+name: "Style: javascript internal max file lines 500"
+description: "Javascript files in internal/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "internal/**/*.js"
+  require:
+    max_file_lines: 500

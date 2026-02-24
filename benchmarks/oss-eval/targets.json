@@ -1,0 +1,104 @@
+{
+  "version": "2026-02-24",
+  "description": "Open-source repositories tracked for backlog item #37 benchmark expansion.",
+  "targets": [
+    {
+      "id": "linux",
+      "repo": "torvalds/linux",
+      "local_path": "bench-repos/linux",
+      "tier": "major",
+      "required_for_item_37": true
+    },
+    {
+      "id": "react",
+      "repo": "facebook/react",
+      "local_path": "bench-repos/react",
+      "tier": "major",
+      "required_for_item_37": true
+    },
+    {
+      "id": "django",
+      "repo": "django/django",
+      "local_path": "bench-repos/django",
+      "tier": "major",
+      "required_for_item_37": true
+    },
+    {
+      "id": "cpython",
+      "repo": "python/cpython",
+      "local_path": "bench-repos/cpython",
+      "tier": "major",
+      "required_for_item_37": true
+    },
+    {
+      "id": "fastapi",
+      "repo": "fastapi/fastapi",
+      "local_path": "bench-repos/fastapi",
+      "tier": "major",
+      "required_for_item_37": true
+    },
+    {
+      "id": "axios",
+      "repo": "axios/axios",
+      "local_path": "bench-repos/axios",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "express",
+      "repo": "expressjs/express",
+      "local_path": "bench-repos/express",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "gin",
+      "repo": "gin-gonic/gin",
+      "local_path": "bench-repos/gin",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "laravel",
+      "repo": "laravel/framework",
+      "local_path": "bench-repos/laravel",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "lodash",
+      "repo": "lodash/lodash",
+      "local_path": "bench-repos/lodash",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "ripgrep",
+      "repo": "BurntSushi/ripgrep",
+      "local_path": "bench-repos/ripgrep",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "svelte",
+      "repo": "sveltejs/svelte",
+      "local_path": "bench-repos/svelte",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "tokio",
+      "repo": "tokio-rs/tokio",
+      "local_path": "bench-repos/tokio",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    },
+    {
+      "id": "vue",
+      "repo": "vuejs/core",
+      "local_path": "bench-repos/vue",
+      "tier": "local-corpus",
+      "required_for_item_37": false
+    }
+  ]
+}

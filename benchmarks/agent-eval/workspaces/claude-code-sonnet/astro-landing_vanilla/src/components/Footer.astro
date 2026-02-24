@@ -1,0 +1,315 @@
+---
+const currentYear = new Date().getFullYear();
+
+const footerLinks = {
+  product: [
+    { name: 'Features', href: '#features' },
+    { name: 'Pricing', href: '#pricing' },
+    { name: 'Integrations', href: '#' },
+    { name: 'Updates', href: '#' }
+  ],
+  company: [
+    { name: 'About', href: '#' },
+    { name: 'Blog', href: '#' },
+    { name: 'Careers', href: '#' },
+    { name: 'Press', href: '#' }
+  ],
+  resources: [
+    { name: 'Documentation', href: '#' },
+    { name: 'Help Center', href: '#' },
+    { name: 'Contact', href: '#contact' },
+    { name: 'Status', href: '#' }
+  ],
+  legal: [
+    { name: 'Privacy', href: '#' },
+    { name: 'Terms', href: '#' },
+    { name: 'Security', href: '#' },
+    { name: 'GDPR', href: '#' }
+  ]
+};
+
+const socialLinks = [
+  {
+    name: 'Twitter',
+    href: '#',
+    icon: 'twitter'
+  },
+  {
+    name: 'LinkedIn',
+    href: '#',
+    icon: 'linkedin'
+  },
+  {
+    name: 'GitHub',
+    href: '#',
+    icon: 'github'
+  },
+  {
+    name: 'YouTube',
+    href: '#',
+    icon: 'youtube'
+  }
+];
+---
+
+<footer class="footer">
+  <div class="container">
+    <div class="footer-content">
+      <div class="footer-brand">
+        <a href="#hero" class="footer-logo" aria-label="FlowBoard home">
+          <span class="logo-text">FlowBoard</span>
+        </a>
+        <p class="footer-description">
+          The modern project management tool for high-performing teams. Stay organized, collaborate seamlessly, and deliver projects on time.
+        </p>
+        <div class="social-links">
+          {socialLinks.map((social) => (
+            <a
+              href={social.href}
+              class="social-link"
+              aria-label={social.name}
+              target="_blank"
+              rel="noopener noreferrer"
+            >
+              <svg class="social-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                {social.icon === 'twitter' && (
+                  <path d="M23 3a10.9 10.9 0 01-3.14 1.53 4.48 4.48 0 00-7.86 3v1A10.66 10.66 0 013 4s-4 9 5 13a11.64 11.64 0 01-7 2c9 5 20 0 20-11.5a4.5 4.5 0 00-.08-.83A7.72 7.72 0 0023 3z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                )}
+                {social.icon === 'linkedin' && (
+                  <>
+                    <path d="M16 8a6 6 0 016 6v7h-4v-7a2 2 0 00-2-2 2 2 0 00-2 2v7h-4v-7a6 6 0 016-6zM2 9h4v12H2z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <circle cx="4" cy="4" r="2" stroke="currentColor" stroke-width="2"/>
+                  </>
+                )}
+                {social.icon === 'github' && (
+                  <path d="M9 19c-5 1.5-5-2.5-7-3m14 6v-3.87a3.37 3.37 0 00-.94-2.61c3.14-.35 6.44-1.54 6.44-7A5.44 5.44 0 0020 4.77 5.07 5.07 0 0019.91 1S18.73.65 16 2.48a13.38 13.38 0 00-7 0C6.27.65 5.09 1 5.09 1A5.07 5.07 0 005 4.77a5.44 5.44 0 00-1.5 3.78c0 5.42 3.3 6.61 6.44 7A3.37 3.37 0 009 18.13V22" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                )}
+                {social.icon === 'youtube' && (
+                  <>
+                    <path d="M22.54 6.42a2.78 2.78 0 00-1.94-2C18.88 4 12 4 12 4s-6.88 0-8.6.46a2.78 2.78 0 00-1.94 2A29 29 0 001 11.75a29 29 0 00.46 5.33A2.78 2.78 0 003.4 19c1.72.46 8.6.46 8.6.46s6.88 0 8.6-.46a2.78 2.78 0 001.94-2 29 29 0 00.46-5.25 29 29 0 00-.46-5.33z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                    <path d="M9.75 15.02l5.75-3.27-5.75-3.27v6.54z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                  </>
+                )}
+              </svg>
+            </a>
+          ))}
+        </div>
+      </div>
+
+      <div class="footer-links">
+        <div class="link-column">
+          <h3 class="column-title">Product</h3>
+          <ul class="link-list">
+            {footerLinks.product.map((link) => (
+              <li>
+                <a href={link.href} class="footer-link">{link.name}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div class="link-column">
+          <h3 class="column-title">Company</h3>
+          <ul class="link-list">
+            {footerLinks.company.map((link) => (
+              <li>
+                <a href={link.href} class="footer-link">{link.name}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div class="link-column">
+          <h3 class="column-title">Resources</h3>
+          <ul class="link-list">
+            {footerLinks.resources.map((link) => (
+              <li>
+                <a href={link.href} class="footer-link">{link.name}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <div class="link-column">
+          <h3 class="column-title">Legal</h3>
+          <ul class="link-list">
+            {footerLinks.legal.map((link) => (
+              <li>
+                <a href={link.href} class="footer-link">{link.name}</a>
+              </li>
+            ))}
+          </ul>
+        </div>
+      </div>
+    </div>
+
+    <div class="footer-bottom">
+      <p class="copyright">
+        &copy; {currentYear} FlowBoard. All rights reserved.
+      </p>
+      <p class="built-with">
+        Built with <a href="https://astro.build" target="_blank" rel="noopener noreferrer" class="astro-link">Astro</a>
+      </p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    background-color: var(--color-text);
+    color: rgba(255, 255, 255, 0.8);
+    padding: var(--space-4xl) 0 var(--space-xl);
+  }
+
+  .footer-content {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3xl);
+    padding-bottom: var(--space-3xl);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+    margin-bottom: var(--space-xl);
+  }
+
+  .footer-brand {
+    max-width: 300px;
+  }
+
+  .footer-logo {
+    display: inline-block;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+    text-decoration: none;
+    margin-bottom: var(--space-md);
+    transition: transform var(--transition-fast);
+  }
+
+  .footer-logo:hover {
+    transform: scale(1.05);
+    color: white;
+  }
+
+  .logo-text {
+    background: linear-gradient(135deg, #ffffff 0%, rgba(255, 255, 255, 0.7) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .footer-description {
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    margin-bottom: var(--space-lg);
+    color: rgba(255, 255, 255, 0.7);
+  }
+
+  .social-links {
+    display: flex;
+    gap: var(--space-md);
+  }
+
+  .social-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 40px;
+    height: 40px;
+    border-radius: var(--radius-full);
+    background-color: rgba(255, 255, 255, 0.1);
+    color: white;
+    transition: all var(--transition-fast);
+  }
+
+  .social-link:hover {
+    background-color: var(--color-primary);
+    transform: translateY(-2px);
+    color: white;
+  }
+
+  .social-icon {
+    width: 20px;
+    height: 20px;
+  }
+
+  .footer-links {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-2xl);
+  }
+
+  .link-column {
+    min-width: 0;
+  }
+
+  .column-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: white;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    margin-bottom: var(--space-md);
+  }
+
+  .link-list {
+    list-style: none;
+    padding: 0;
+    margin: 0;
+  }
+
+  .link-list li {
+    margin-bottom: var(--space-sm);
+  }
+
+  .footer-link {
+    font-size: 0.9375rem;
+    color: rgba(255, 255, 255, 0.7);
+    text-decoration: none;
+    transition: color var(--transition-fast);
+  }
+
+  .footer-link:hover {
+    color: white;
+  }
+
+  .footer-bottom {
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    gap: var(--space-sm);
+    text-align: center;
+  }
+
+  .copyright,
+  .built-with {
+    font-size: 0.875rem;
+    color: rgba(255, 255, 255, 0.6);
+    margin-bottom: 0;
+  }
+
+  .astro-link {
+    color: rgba(255, 255, 255, 0.8);
+    text-decoration: underline;
+    transition: color var(--transition-fast);
+  }
+
+  .astro-link:hover {
+    color: white;
+  }
+
+  @media (min-width: 640px) {
+    .footer-links {
+      grid-template-columns: repeat(4, 1fr);
+    }
+
+    .footer-bottom {
+      flex-direction: row;
+      justify-content: space-between;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .footer-content {
+      grid-template-columns: 1.5fr 2fr;
+    }
+  }
+</style>

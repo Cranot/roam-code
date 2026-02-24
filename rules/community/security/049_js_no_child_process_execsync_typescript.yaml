@@ -1,0 +1,10 @@
+name: "Security: js no child process execsync (typescript)"
+description: "Disallow child_process.execSync with untrusted input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "child_process.execSync($CMD)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

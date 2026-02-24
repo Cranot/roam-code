@@ -1,0 +1,10 @@
+name: "Style: go app max symbol lines 120"
+description: "Go functions/methods in app/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**/*.go"
+  require:
+    max_symbol_lines: 120

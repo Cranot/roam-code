@@ -1,0 +1,282 @@
+---
+const plans = [
+  {
+    name: 'Free',
+    price: '$0',
+    period: 'forever',
+    description: 'Perfect for individuals and small side projects.',
+    features: [
+      { text: 'Up to 3 projects', included: true },
+      { text: '5 team members', included: true },
+      { text: 'Basic boards', included: true },
+      { text: 'Community support', included: true },
+      { text: 'Advanced analytics', included: false },
+      { text: 'Automations', included: false },
+      { text: 'SSO & SAML', included: false },
+      { text: 'Priority support', included: false },
+    ],
+    cta: 'Get Started Free',
+    highlighted: false,
+  },
+  {
+    name: 'Pro',
+    price: '$12',
+    period: '/mo per user',
+    description: 'For growing teams that need more power and flexibility.',
+    features: [
+      { text: 'Unlimited projects', included: true },
+      { text: 'Unlimited members', included: true },
+      { text: 'Advanced boards', included: true },
+      { text: 'Email support', included: true },
+      { text: 'Advanced analytics', included: true },
+      { text: 'Automations', included: true },
+      { text: 'SSO & SAML', included: false },
+      { text: 'Priority support', included: false },
+    ],
+    cta: 'Start Pro Trial',
+    highlighted: true,
+  },
+  {
+    name: 'Enterprise',
+    price: '$49',
+    period: '/mo per user',
+    description: 'For organizations that need security, compliance, and scale.',
+    features: [
+      { text: 'Unlimited projects', included: true },
+      { text: 'Unlimited members', included: true },
+      { text: 'Advanced boards', included: true },
+      { text: 'Dedicated support', included: true },
+      { text: 'Advanced analytics', included: true },
+      { text: 'Automations', included: true },
+      { text: 'SSO & SAML', included: true },
+      { text: 'Priority support', included: true },
+    ],
+    cta: 'Contact Sales',
+    highlighted: false,
+  },
+];
+---
+
+<section class="pricing section" id="pricing" aria-labelledby="pricing-heading">
+  <div class="container">
+    <div class="section-header">
+      <h2 id="pricing-heading">Simple, transparent pricing</h2>
+      <p>No hidden fees. No surprises. Cancel anytime.</p>
+    </div>
+    <div class="pricing-grid" role="list">
+      {
+        plans.map((plan) => (
+          <article
+            class:list={['pricing-card', { highlighted: plan.highlighted }]}
+            role="listitem"
+          >
+            {plan.highlighted && (
+              <span class="popular-badge">Most Popular</span>
+            )}
+            <div class="pricing-header">
+              <h3>{plan.name}</h3>
+              <div class="pricing-amount">
+                <span class="price">{plan.price}</span>
+                <span class="period">{plan.period}</span>
+              </div>
+              <p class="pricing-description">{plan.description}</p>
+            </div>
+            <ul class="pricing-features" role="list">
+              {plan.features.map((feature) => (
+                <li
+                  class:list={[
+                    'pricing-feature',
+                    { excluded: !feature.included },
+                  ]}
+                >
+                  <span class="feature-check" aria-hidden="true">
+                    {feature.included ? (
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path
+                          d="M3 8l3.5 3.5L13 5"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                          stroke-linejoin="round"
+                        />
+                      </svg>
+                    ) : (
+                      <svg
+                        width="16"
+                        height="16"
+                        viewBox="0 0 16 16"
+                        fill="none"
+                      >
+                        <path
+                          d="M4 8h8"
+                          stroke="currentColor"
+                          stroke-width="2"
+                          stroke-linecap="round"
+                        />
+                      </svg>
+                    )}
+                  </span>
+                  <span>
+                    {feature.included ? feature.text : feature.text}
+                    {!feature.included && (
+                      <span class="sr-only"> (not included)</span>
+                    )}
+                  </span>
+                </li>
+              ))}
+            </ul>
+            <a
+              href="#hero"
+              class:list={[
+                'btn',
+                'pricing-cta',
+                plan.highlighted ? 'btn-primary' : 'btn-secondary',
+              ]}
+            >
+              {plan.cta}
+            </a>
+          </article>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .pricing {
+    background-color: var(--color-bg);
+  }
+
+  .pricing-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-xl);
+    max-width: 1000px;
+    margin-inline: auto;
+  }
+
+  .pricing-card {
+    display: flex;
+    flex-direction: column;
+    padding: var(--space-xl);
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    position: relative;
+    background: var(--color-bg);
+    transition: transform var(--transition-base);
+  }
+
+  .pricing-card:hover {
+    transform: translateY(-4px);
+  }
+
+  .pricing-card.highlighted {
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 1px var(--color-primary), var(--shadow-xl);
+  }
+
+  .popular-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    color: white;
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-full);
+    font-size: 0.8125rem;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  .pricing-header {
+    text-align: center;
+    padding-bottom: var(--space-xl);
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: var(--space-xl);
+  }
+
+  .pricing-header h3 {
+    font-size: 1.25rem;
+    margin-bottom: var(--space-md);
+  }
+
+  .pricing-amount {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    gap: var(--space-xs);
+  }
+
+  .price {
+    font-size: 3rem;
+    font-weight: 800;
+    line-height: 1;
+    color: var(--color-text);
+  }
+
+  .period {
+    color: var(--color-text-light);
+    font-size: 0.9375rem;
+  }
+
+  .pricing-description {
+    margin-top: var(--space-md);
+    color: var(--color-text-light);
+    font-size: 0.9375rem;
+  }
+
+  .pricing-features {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    margin-bottom: var(--space-xl);
+  }
+
+  .pricing-feature {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: 0.9375rem;
+  }
+
+  .pricing-feature .feature-check {
+    flex-shrink: 0;
+    color: var(--color-success);
+  }
+
+  .pricing-feature.excluded {
+    color: var(--color-text-light);
+    opacity: 0.6;
+  }
+
+  .pricing-feature.excluded .feature-check {
+    color: var(--color-text-light);
+  }
+
+  .pricing-cta {
+    width: 100%;
+    text-align: center;
+  }
+
+  @media (min-width: 768px) {
+    .pricing-grid {
+      grid-template-columns: repeat(3, 1fr);
+      align-items: start;
+    }
+
+    .pricing-card.highlighted {
+      transform: scale(1.05);
+    }
+
+    .pricing-card.highlighted:hover {
+      transform: scale(1.05) translateY(-4px);
+    }
+  }
+</style>

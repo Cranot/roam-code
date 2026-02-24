@@ -1,0 +1,10 @@
+name: "Style: ruby domain max file lines 500"
+description: "Ruby files in domain/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "domain/**/*.rb"
+  require:
+    max_file_lines: 500

@@ -1,0 +1,10 @@
+name: "Style: style py class pascal case"
+description: "Python classes should use PascalCase."
+severity: info
+type: symbol_match
+
+match:
+  kind: [class]
+  file_glob: "**/*.py"
+  require:
+    name_regex: "^[A-Z][A-Za-z0-9]*$"

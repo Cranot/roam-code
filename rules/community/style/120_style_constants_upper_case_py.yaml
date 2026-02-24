@@ -1,0 +1,10 @@
+name: "Style: style constants upper case py"
+description: "Python constants should use UPPER_SNAKE_CASE."
+severity: info
+type: symbol_match
+
+match:
+  kind: [variable]
+  file_glob: "**/*.py"
+  require:
+    name_regex: "^[A-Z][A-Z0-9_]*$"

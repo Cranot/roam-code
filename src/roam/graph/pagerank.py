@@ -50,13 +50,18 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
 
 
 def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
-    """Compute in-degree, out-degree, and betweenness centrality.
+    """Compute SNA metric vector for each symbol.
 
-    Returns ``{symbol_id: {"in_degree": int, "out_degree": int,
-    "betweenness": float}}``.
+    Returns
+    -------
+    dict
+        ``{symbol_id: {in_degree, out_degree, betweenness, closeness,
+        eigenvector, clustering_coefficient, debt_score}}``
     """
     if len(G) == 0:
         return {}
+
+    UG = G.to_undirected()
 
     # Adaptive sampling: exact for small graphs, sqrt-scaled for large.
     # For n < 1000, compute exact betweenness O(n*m).
@@ -69,12 +74,68 @@ def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     else:
         k = min(n, max(200, int(n ** 0.5 * 5)))
     betweenness = nx.betweenness_centrality(G, k=k, normalized=False)
+
+    # Closeness: for very large graphs use degree-based proxy for speed.
+    if n <= 3000:
+        closeness = nx.closeness_centrality(UG)
+    else:
+        max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
+        closeness = {v: UG.degree(v) / max_deg for v in UG.nodes}
+
+    # Eigenvector centrality on undirected projection.
+    try:
+        if n <= 2500:
+            eigen = nx.eigenvector_centrality(UG, max_iter=300, tol=1e-06)
+        else:
+            # Large-graph fallback: normalized degree proxy.
+            max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
+            eigen = {v: UG.degree(v) / max_deg for v in UG.nodes}
+    except Exception:
+        max_deg = max((UG.degree(v) for v in UG.nodes), default=1) or 1
+        eigen = {v: UG.degree(v) / max_deg for v in UG.nodes}
+
+    clustering = nx.clustering(UG) if len(UG) > 0 else {}
+
+    def _norm(metric: dict[int, float]) -> dict[int, float]:
+        if not metric:
+            return {}
+        values = list(metric.values())
+        lo = min(values)
+        hi = max(values)
+        if hi <= lo:
+            return {k: 0.0 for k in metric}
+        span = hi - lo
+        return {k: (float(v) - lo) / span for k, v in metric.items()}
+
+    degree_raw = {
+        node: float(G.in_degree(node) + G.out_degree(node))
+        for node in G.nodes
+    }
+    degree_n = _norm(degree_raw)
+    bw_n = _norm({k: float(v) for k, v in betweenness.items()})
+    close_n = _norm({k: float(v) for k, v in closeness.items()})
+    eig_n = _norm({k: float(v) for k, v in eigen.items()})
     result: dict[int, dict] = {}
     for node in G.nodes:
+        cc = float(clustering.get(node, 0.0))
+        debt_score = (
+            100.0
+            * (
+                0.30 * degree_n.get(node, 0.0)
+                + 0.25 * bw_n.get(node, 0.0)
+                + 0.20 * close_n.get(node, 0.0)
+                + 0.15 * eig_n.get(node, 0.0)
+                + 0.10 * (1.0 - cc)
+            )
+        )
         result[node] = {
             "in_degree": G.in_degree(node),
             "out_degree": G.out_degree(node),
             "betweenness": betweenness.get(node, 0.0),
+            "closeness": float(closeness.get(node, 0.0)),
+            "eigenvector": float(eigen.get(node, 0.0)),
+            "clustering_coefficient": cc,
+            "debt_score": max(0.0, min(100.0, debt_score)),
         }
     return result
 
@@ -99,12 +160,17 @@ def store_metrics(conn: sqlite3.Connection, G: nx.DiGraph) -> int:
             c.get("in_degree", 0),
             c.get("out_degree", 0),
             c.get("betweenness", 0.0),
+            c.get("closeness", 0.0),
+            c.get("eigenvector", 0.0),
+            c.get("clustering_coefficient", 0.0),
+            c.get("debt_score", 0.0),
         ))
 
     conn.executemany(
         "INSERT OR REPLACE INTO graph_metrics "
-        "(symbol_id, pagerank, in_degree, out_degree, betweenness) "
-        "VALUES (?, ?, ?, ?, ?)",
+        "(symbol_id, pagerank, in_degree, out_degree, betweenness, "
+        "closeness, eigenvector, clustering_coefficient, debt_score) "
+        "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
         rows,
     )
     conn.commit()

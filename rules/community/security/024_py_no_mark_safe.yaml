@@ -1,0 +1,10 @@
+name: "Security: py no mark safe"
+description: "Review explicit HTML trust boundaries."
+severity: warning
+type: ast_match
+
+match:
+  ast: "mark_safe($HTML)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

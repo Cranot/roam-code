@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import ensure_index, symbol_not_found_hint
 
 
 @click.command()
@@ -14,6 +14,7 @@ from roam.commands.resolve import ensure_index
 def uses(ctx, name, full):
     """Show all consumers of a symbol: callers, importers, inheritors."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -31,7 +32,7 @@ def uses(ctx, name, full):
             ).fetchall()
 
         if not targets:
-            click.echo(f"Symbol '{name}' not found.")
+            click.echo(symbol_not_found_hint(name))
             raise SystemExit(1)
 
         target_ids = [t["id"] for t in targets]
@@ -98,6 +99,7 @@ def uses(ctx, name, full):
                     "total_consumers": total_consumers,
                     "total_files": len(files),
                 },
+                budget=token_budget,
                 symbol=name,
                 consumers=json_groups,
                 total_files=len(files),

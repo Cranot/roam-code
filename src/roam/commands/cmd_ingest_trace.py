@@ -59,7 +59,8 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
         fmt = auto_detect_format(trace_file)
     else:
         click.echo("Error: provide a trace file (positional or via --otel/--jaeger/--zipkin/--generic)")
-        ctx.exit(1)
+        from roam.exit_codes import EXIT_USAGE
+        ctx.exit(EXIT_USAGE)
         return
 
     ingesters = {
@@ -97,6 +98,9 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
                     "p50_latency_ms": r["p50_latency_ms"],
                     "p99_latency_ms": r["p99_latency_ms"],
                     "error_rate": r["error_rate"],
+                    "otel_db_system": r.get("otel_db_system"),
+                    "otel_db_operation": r.get("otel_db_operation"),
+                    "otel_db_statement_type": r.get("otel_db_statement_type"),
                     "matched": r["matched"],
                 }
                 for r in results

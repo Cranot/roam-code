@@ -1,0 +1,10 @@
+name: "Style: style js function camel case"
+description: "JavaScript functions should use camelCase."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "**/*.js"
+  require:
+    name_regex: "^[a-z][A-Za-z0-9]*$"
