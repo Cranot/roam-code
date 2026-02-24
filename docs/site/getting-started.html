@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roam -- Getting Started Tutorial</title>
+  <meta name="description" content="Step-by-step roam tutorial: install, index, query, connect MCP, and enforce CI gates.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./docs.css">
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <div class="nav-links">
+        <a href="./getting-started.html" class="active">Getting Started</a>
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="./command-reference.html">Command Reference</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./landscape.html">Research</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-head">
+      <p class="page-kicker">Tutorial</p>
+      <h1>Getting Started with roam</h1>
+      <p class="page-subtitle">
+        This walkthrough takes you from zero to a working structural index, then through daily workflows:
+        impact analysis, safety checks, and agent integration.
+      </p>
+      <div class="callout">
+        Tutorial scope: local CLI usage, MCP setup, and CI gate setup. Non-goal: cloud hosting or SaaS deployment.
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>Quick Path (10 minutes)</h2>
+      <div class="step-grid">
+        <article class="step">
+          <h3>Step 1: Install</h3>
+          <pre><code>pip install roam-code
+pip install "roam-code[mcp]"  # optional MCP support</code></pre>
+        </article>
+        <article class="step">
+          <h3>Step 2: Initialize in your repo</h3>
+          <pre><code>cd /path/to/repo
+roam init</code></pre>
+          <p>Creates <code>.roam/index.db</code> and writes agent instructions.</p>
+        </article>
+        <article class="step">
+          <h3>Step 3: Ask your first structural question</h3>
+          <pre><code>roam context UserService
+roam impact UserService</code></pre>
+          <p>Get ranked reading order plus blast radius before changing code.</p>
+        </article>
+        <article class="step">
+          <h3>Step 4: Run a pre-change check</h3>
+          <pre><code>roam preflight UserService
+roam health</code></pre>
+          <p>Checks complexity, coupling, test impact, and architecture risk.</p>
+        </article>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Hands-on Workflow</h2>
+      <h3>1. Explore the codebase</h3>
+      <pre><code>roam understand
+roam search auth
+roam symbols src/auth/service.py</code></pre>
+
+      <h3>2. Estimate change risk</h3>
+      <pre><code>roam impact auth_login
+roam preflight auth_login
+roam test-gaps --staged</code></pre>
+
+      <h3>3. Enforce quality and governance</h3>
+      <pre><code>roam check-rules
+roam rules --rules-dir rules/community
+roam health --gate "score&gt;=70,tangle_ratio&lt;=0.10"</code></pre>
+
+      <h3>4. Integrate with your agent</h3>
+      <pre><code>roam mcp-setup claude-code
+roam mcp --list-tools
+roam mcp --preset core</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>CI Example (GitHub Actions)</h2>
+      <p>Minimal gate pipeline:</p>
+      <pre><code>roam init
+roam check-rules --severity error
+roam health --gate "score&gt;=70,tangle_ratio&lt;=0.10" --sarif
+roam test-gaps --staged --json</code></pre>
+      <p>
+        Use <code>--sarif</code> output for code scanning annotations and <code>--json</code> envelopes for stable machine parsing.
+      </p>
+    </section>
+
+    <section class="section">
+      <h2>Troubleshooting</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Symptom</th><th>Command</th><th>Expected fix</th></tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Command says index missing</td>
+              <td><code>roam init</code></td>
+              <td>Creates/refreshed <code>.roam/index.db</code></td>
+            </tr>
+            <tr>
+              <td>Environment diagnostics unclear</td>
+              <td><code>roam doctor</code></td>
+              <td>Shows PASS/FAIL checks with remediation hints</td>
+            </tr>
+            <tr>
+              <td>MCP client cannot see tools</td>
+              <td><code>roam mcp --list-tools</code></td>
+              <td>Verifies server + current preset/tool exposure</td>
+            </tr>
+            <tr>
+              <td>Rule results too noisy</td>
+              <td><code>roam check-rules --profile ai-code-review</code></td>
+              <td>Applies tuned thresholds and severities</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <footer>
+      <p>Next: use <a href="./integration-tutorials.html">integration tutorials</a>, then go deeper with the full <a href="./command-reference.html">command reference</a> and <a href="./architecture.html">architecture guide</a>.</p>
+      <div class="footer-links">
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="./index.html">Home</a>
+        <a href="https://github.com/Cranot/roam-code#readme">Repository README</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

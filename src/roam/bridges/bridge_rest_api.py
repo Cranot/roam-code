@@ -2,8 +2,12 @@
 
 Resolves cross-references between:
 - Frontend fetch/axios/jQuery calls to API endpoints
-- Backend route definitions in Flask, Express, Go net/http, etc.
+- Backend route definitions in Flask, Express, Go net/http, Spring Boot, etc.
 - Python HTTP client calls (requests, httpx) to backend routes
+
+Spring Boot support: class-level @RequestMapping prefix is concatenated with
+method-level @GetMapping/@PostMapping/@PutMapping/@PatchMapping/@DeleteMapping
+routes (e.g. @RequestMapping("/api/v1") + @GetMapping("/users") -> /api/v1/users).
 """
 from __future__ import annotations
 
@@ -66,9 +70,10 @@ _GO_ROUTE_RE = re.compile(
     r'''(?:HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Group|Any)\s*\(\s*["'](/[^"']+)["']''',
 )
 
-# Java Spring: @GetMapping("/api/users"), @RequestMapping("/api/users")
+# Java Spring: @GetMapping("/api/users"), @RequestMapping("/api/users"),
+# @RequestMapping(value = "/api"), @GetMapping("users") (no leading /)
 _JAVA_ROUTE_RE = re.compile(
-    r'''@\s*(?:GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\s*\(\s*(?:value\s*=\s*)?["'](/[^"']+)["']''',
+    r'''@\s*(?:GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\s*\(\s*(?:value\s*=\s*|path\s*=\s*)?["'](/?\w[^"']*)["']''',
 )
 
 # Ruby/Rails: get '/api/users', post '/api/orders'
@@ -153,8 +158,24 @@ class RestApiBridge(LanguageBridge):
         """Extract URL strings from symbol metadata.
 
         Returns list of (url, symbol_qualified_name) tuples.
+
+        For Spring Boot, handles class-level @RequestMapping prefix
+        concatenation with method-level @GetMapping/@PostMapping etc.
         """
         results: list[tuple[str, str]] = []
+
+        # First pass: collect class-level route prefixes (Spring Boot pattern)
+        class_prefixes: dict[str, str] = {}
+        if mode == "server":
+            for sym in symbols:
+                kind = sym.get("kind", "")
+                if kind != "class":
+                    continue
+                sig = sym.get("signature", "") or ""
+                qname = sym.get("qualified_name", sym.get("name", ""))
+                for m in _JAVA_ROUTE_RE.finditer(sig):
+                    class_prefixes[qname] = m.group(1).rstrip("/")
+                    break
 
         for sym in symbols:
             name = sym.get("name", "")
@@ -177,6 +198,15 @@ class RestApiBridge(LanguageBridge):
                 urls.extend(m.group(1) for m in _GO_ROUTE_RE.finditer(text))
                 urls.extend(m.group(1) for m in _JAVA_ROUTE_RE.finditer(text))
                 urls.extend(m.group(1) for m in _RUBY_ROUTE_RE.finditer(text))
+
+                # Spring Boot: prepend class-level prefix to method routes
+                kind = sym.get("kind", "")
+                if kind == "method" and class_prefixes:
+                    parent = sym.get("parent", "")
+                    prefix = class_prefixes.get(parent, "")
+                    if prefix:
+                        urls = [prefix + u if not u.startswith(prefix) else u
+                                for u in urls]
 
             for url in urls:
                 results.append((url, qname))
