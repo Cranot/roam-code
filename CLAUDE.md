@@ -4,9 +4,16 @@
 
 roam-code is a CLI tool that gives AI coding agents instant codebase comprehension.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. 95 commands, 26 languages, 100% local, zero API keys.
+a local SQLite DB. 136 canonical commands (+1 legacy alias = 137 invokable names),
+26 languages, 100% local, zero API keys.
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
+
+## Documentation Hub
+
+- Getting started tutorial: `docs/site/getting-started.html`
+- Command reference with examples: `docs/site/command-reference.html`
+- Architecture guide and diagram: `docs/site/architecture.html`
 
 ## Quick reference
 
@@ -38,7 +45,7 @@ roam health
 ```
 src/roam/
   cli.py              # Click CLI entry point — LazyGroup, _COMMANDS dict, _CATEGORIES
-  mcp_server.py       # FastMCP server (61 tools, 2 resources) + `roam mcp` CLI command
+  mcp_server.py       # FastMCP server (101 tools, 10 resources, 5 prompts) + `roam mcp` CLI command
   __init__.py          # Version string (reads from pyproject.toml via importlib.metadata)
   db/
     schema.py          # SQLite schema (CREATE TABLE statements)
@@ -101,7 +108,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command (93 modules, 95 commands)
+    cmd_*.py           # One module per CLI command (134 modules, 136 canonical commands + 1 legacy alias)
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -224,7 +231,7 @@ tests/                 # 71 test files
 - tree-sitter >= 0.23 (AST parsing)
 - tree-sitter-language-pack >= 0.6 (165+ grammars)
 - networkx >= 3.0 (graph algorithms)
-- Optional: fastmcp >= 2.0 (MCP server — `pip install roam-code[mcp]`)
+- Optional: fastmcp >= 2.0 (MCP server — `pip install "roam-code[mcp]"`)
 - Dev: pytest >= 7.0, pytest-xdist >= 3.0, ruff >= 0.4
 
 ## Version bumping
@@ -250,5 +257,5 @@ Additional commands: `roam health` (0-100 score), `roam impact <name>` (what bre
 `roam simulate move <sym> <file>` (what-if architecture), `roam orchestrate` (multi-agent partitioning),
 `roam adversarial` (attack surface review), `roam mutate move <sym> <file>` (code transforms).
 
-Run `roam --help` for all 95 commands. Use `roam --json <cmd>` for structured output.
+Run `roam --help` for all 137 invokable command names (136 canonical + `math` legacy alias). Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).
