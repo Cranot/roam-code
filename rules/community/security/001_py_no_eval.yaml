@@ -1,0 +1,10 @@
+name: "Security: py no eval"
+description: "Disallow eval() execution in Python code."
+severity: warning
+type: ast_match
+
+match:
+  ast: "eval($EXPR)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

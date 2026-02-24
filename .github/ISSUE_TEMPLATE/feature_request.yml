@@ -1,0 +1,55 @@
+name: Feature Request
+description: Suggest a new feature for roam-code
+title: "[Feature]: "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for suggesting a feature! Please describe the problem you are
+        trying to solve and the solution you have in mind.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem or use case
+      description: What problem does this feature solve? What workflow would it improve?
+    validations:
+      required: true
+
+  - type: textarea
+    id: solution
+    attributes:
+      label: Proposed solution
+      description: How would you like this to work? Include example commands or output if applicable.
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Any alternative solutions or workarounds you have considered.
+
+  - type: dropdown
+    id: category
+    attributes:
+      label: Category
+      description: Which area of roam-code does this relate to?
+      options:
+        - CLI Command
+        - MCP Tool
+        - Language Support
+        - CI/CD Integration
+        - Performance
+        - Developer Experience
+        - Documentation
+        - Other
+    validations:
+      required: true
+
+  - type: textarea
+    id: additional
+    attributes:
+      label: Additional context
+      description: Any other context, screenshots, or references that help explain the request.

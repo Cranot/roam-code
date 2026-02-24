@@ -1,0 +1,10 @@
+name: "Style: rust internal max params 4"
+description: "Rust functions/methods in internal/ should use at most 4 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**/*.rs"
+  require:
+    max_params: 4

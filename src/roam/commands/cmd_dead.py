@@ -12,8 +12,10 @@ import click
 
 from roam.db.connection import open_db, find_project_root, batched_in, batched_count
 from roam.db.queries import UNREFERENCED_EXPORTS
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope, summary_envelope
 from roam.commands.resolve import ensure_index
+from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
+from roam.rules.dataflow import collect_dataflow_findings
 
 
 _ENTRY_NAMES = {
@@ -695,6 +697,8 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
     """Show unreferenced exported symbols (dead code)."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
+    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
 
     # Any extended flag implies we need extended data
@@ -741,6 +745,11 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         # --- Standard dead code analysis ---
         high, low, imported_files = _analyze_dead(conn)
         all_items = high + low
+        unused_assignments = collect_dataflow_findings(
+            conn,
+            patterns=["dead_assignment"],
+            max_matches=500,
+        )
 
         if not all_items:
             if sarif_mode:
@@ -750,12 +759,15 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                 return
             if json_mode:
                 click.echo(to_json(json_envelope("dead",
-                    summary={"safe": 0, "review": 0, "intentional": 0},
+                    summary={"safe": 0, "review": 0, "intentional": 0, "unused_assignments": len(unused_assignments)},
                     high_confidence=[], low_confidence=[],
+                    unused_assignments=unused_assignments[:10],
                 )))
             else:
                 click.echo("=== Unreferenced Exports (0) ===")
                 click.echo("  (none -- all exports are referenced)")
+                if unused_assignments:
+                    click.echo(f"  Intra-procedural unused assignments: {len(unused_assignments)}")
             return
 
         # Compute action verdicts
@@ -881,27 +893,53 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                     d["decay_score"] = ext["decay_score"]
                 return d
 
-            summary = {"safe": n_safe, "review": n_review, "intentional": n_intent}
+            summary = {
+                "safe": n_safe,
+                "review": n_review,
+                "intentional": n_intent,
+                "unused_assignments": len(unused_assignments),
+            }
             if need_extended:
                 summary.update(ext_summary)
 
+            _next_steps = suggest_next_steps("dead", {
+                "safe": n_safe,
+                "review": n_review,
+            })
             envelope = json_envelope("dead",
                 summary=summary,
+                budget=token_budget,
                 high_confidence=[_build_sym_dict(r, True) for r in high],
                 low_confidence=[_build_sym_dict(r, False) for r in low],
+                unused_assignments=(
+                    unused_assignments if detail else unused_assignments[:10]
+                ),
+                next_steps=_next_steps,
             )
             if group_by:
                 envelope["grouping"] = group_by
                 envelope["groups"] = groups_data
             if show_clusters:
                 envelope["dead_clusters"] = clusters_data
+            if not detail:
+                envelope = summary_envelope(envelope)
             click.echo(to_json(envelope))
             return
 
-        # --- Text: summary-only mode ---
-        if summary_only:
+        # --- Text: summary-only mode (also used by --detail-less default) ---
+        if summary_only or not detail:
             click.echo(f"Dead exports: {len(all_items)} "
                         f"({n_safe} safe, {n_review} review, {n_intent} intentional)")
+            if unused_assignments:
+                click.echo(f"Intra-procedural unused assignments: {len(unused_assignments)}")
+            # Show top 5 high-confidence dead symbols as a preview
+            if not summary_only and high:
+                click.echo("Top dead symbols (high confidence):")
+                for r in high[:5]:
+                    action, confidence = _dead_action(r, True)
+                    click.echo(f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}")
+                if len(high) > 5:
+                    click.echo(f"  (+{len(high) - 5} more — use --detail for full list)")
             if need_extended and ext_summary:
                 click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}")
                 click.echo(f"  Median age: {ext_summary['median_age_days']} days")
@@ -953,6 +991,8 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===")
         click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, "
                     f"{n_intent} likely intentional")
+        if unused_assignments:
+            click.echo(f"  Intra-procedural unused assignments: {len(unused_assignments)}")
 
         # Show extended summary if any extended flag is set
         if need_extended and ext_summary:
@@ -1110,3 +1150,11 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         ).fetchone()[0]
         if unparsed:
             click.echo(f"\nNote: {unparsed} files had no symbols extracted (may cause false positives)")
+
+        _next_steps = suggest_next_steps("dead", {
+            "safe": n_safe,
+            "review": n_review,
+        })
+        _ns_text = format_next_steps_text(_next_steps)
+        if _ns_text:
+            click.echo(_ns_text)

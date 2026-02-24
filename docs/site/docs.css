@@ -1,0 +1,265 @@
+:root {
+  --bg: #f8fafc;
+  --bg-soft: #eef4f9;
+  --paper: #ffffff;
+  --ink: #112033;
+  --ink-soft: #3d5266;
+  --line: #dbe5ef;
+  --accent: #0e6f95;
+  --accent-strong: #0a4f6a;
+  --accent-soft: #e5f2f8;
+  --ok: #146a4d;
+  --warn: #8a5a19;
+  --radius: 8px;
+  --shadow: 0 2px 8px rgba(13, 30, 44, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: radial-gradient(circle at top right, #e7f2fa 0%, var(--bg) 38%);
+  color: var(--ink);
+  font-family: "Space Grotesk", "Segoe UI", system-ui, sans-serif;
+  line-height: 1.6;
+}
+
+.site-nav {
+  position: sticky;
+  top: 0;
+  z-index: 40;
+  border-bottom: 1px solid var(--line);
+  background: rgba(248, 250, 252, 0.92);
+  backdrop-filter: blur(8px);
+}
+
+.nav-inner {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 0 auto;
+  min-height: 58px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+}
+
+.site-logo {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+  text-decoration: none;
+  color: var(--ink);
+  font-size: 1.1rem;
+  font-weight: 700;
+}
+
+.logo-dot {
+  color: var(--accent);
+}
+
+.nav-links {
+  display: flex;
+  align-items: center;
+  gap: 0.8rem;
+  flex-wrap: wrap;
+}
+
+.nav-links a {
+  text-decoration: none;
+  color: var(--ink-soft);
+  font-size: 0.88rem;
+  font-weight: 500;
+}
+
+.nav-links a.active {
+  color: var(--accent-strong);
+}
+
+.container {
+  width: min(1100px, calc(100% - 2rem));
+  margin: 0 auto;
+}
+
+.page-head {
+  padding: 2.2rem 0 1.2rem;
+}
+
+.page-kicker {
+  margin: 0;
+  color: var(--accent-strong);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  font-size: 0.72rem;
+  font-weight: 700;
+}
+
+h1 {
+  margin: 0.2rem 0 0.7rem;
+  font-size: clamp(1.8rem, 3.1vw, 2.5rem);
+  line-height: 1.15;
+}
+
+.page-subtitle {
+  margin: 0;
+  max-width: 75ch;
+  color: var(--ink-soft);
+}
+
+.callout {
+  border: 1px solid #c8dfeb;
+  background: var(--accent-soft);
+  border-radius: var(--radius);
+  padding: 0.9rem 1rem;
+  margin-top: 1rem;
+}
+
+.section {
+  margin: 1.1rem 0;
+  background: var(--paper);
+  border: 1px solid var(--line);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  padding: 1rem 1.1rem;
+}
+
+.section h2 {
+  margin-top: 0;
+  margin-bottom: 0.65rem;
+  font-size: 1.2rem;
+}
+
+.section h3 {
+  margin-top: 1rem;
+  margin-bottom: 0.45rem;
+  font-size: 1rem;
+}
+
+.step-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.8rem;
+}
+
+.step {
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  background: #fbfdff;
+  padding: 0.75rem 0.8rem;
+}
+
+.step h3 {
+  margin-top: 0;
+  font-size: 0.98rem;
+}
+
+code,
+pre,
+kbd {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+code {
+  border-radius: 4px;
+  background: #e9f1f8;
+  padding: 0.12rem 0.3rem;
+}
+
+pre {
+  margin: 0.55rem 0 0.2rem;
+  border-radius: 7px;
+  border: 1px solid #cad8e6;
+  background: #0f1f2a;
+  color: #e8f3ff;
+  padding: 0.7rem 0.8rem;
+  overflow-x: auto;
+  font-size: 0.86rem;
+  line-height: 1.45;
+}
+
+.table-wrap {
+  overflow-x: auto;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 760px;
+}
+
+th,
+td {
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+  padding: 0.52rem 0.5rem;
+  vertical-align: top;
+}
+
+th {
+  background: var(--bg-soft);
+  font-size: 0.8rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: #405566;
+}
+
+.badge {
+  display: inline-block;
+  border-radius: 999px;
+  padding: 0.1rem 0.5rem;
+  font-size: 0.72rem;
+  font-weight: 600;
+}
+
+.badge.ok {
+  color: var(--ok);
+  background: #e7f6ef;
+}
+
+.badge.warn {
+  color: var(--warn);
+  background: #fff4e4;
+}
+
+.diagram {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #fcfeff;
+  padding: 0.9rem;
+  overflow: auto;
+}
+
+svg text {
+  font-family: "IBM Plex Mono", ui-monospace, monospace;
+}
+
+footer {
+  margin: 1.4rem 0 2.2rem;
+  color: #53687c;
+  font-size: 0.83rem;
+}
+
+.footer-links {
+  display: flex;
+  gap: 0.7rem;
+  flex-wrap: wrap;
+}
+
+.footer-links a {
+  color: var(--accent-strong);
+  text-decoration: none;
+}
+
+@media (max-width: 860px) {
+  .step-grid {
+    grid-template-columns: 1fr;
+  }
+
+  table {
+    min-width: 640px;
+  }
+}

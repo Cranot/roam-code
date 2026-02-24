@@ -1,0 +1,10 @@
+name: "Security: py no subprocess check output"
+description: "Disallow subprocess.check_output with dynamic input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "subprocess.check_output($CMD)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

@@ -1,0 +1,10 @@
+name: "Style: style ts function camel case"
+description: "TypeScript functions should use camelCase."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "**/*.ts"
+  require:
+    name_regex: "^[a-z][A-Za-z0-9]*$"

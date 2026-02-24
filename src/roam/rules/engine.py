@@ -10,6 +10,15 @@ import fnmatch
 import re
 from pathlib import Path
 
+from roam.db.connection import find_project_root
+from roam.index.parser import detect_language, parse_file
+from roam.rules.ast_match import (
+    compile_ast_pattern,
+    find_ast_matches,
+    normalize_language_name,
+)
+from roam.rules.dataflow import collect_dataflow_findings
+
 
 # ---------------------------------------------------------------------------
 # YAML loading with fallback
@@ -110,7 +119,9 @@ def load_rules(rules_dir: Path) -> list[dict]:
         return []
 
     rules: list[dict] = []
-    for p in sorted(rules_dir.iterdir()):
+    for p in sorted(rules_dir.rglob("*")):
+        if not p.is_file():
+            continue
         if p.suffix not in (".yaml", ".yml"):
             continue
         data = _load_yaml(p)
@@ -203,6 +214,45 @@ def _matches_kind(kind: str, kind_filter: list | str | None) -> bool:
     if isinstance(kind_filter, str):
         kind_filter = [kind_filter]
     return kind in kind_filter
+
+
+def _table_exists(conn, table_name: str) -> bool:
+    """Return True when a table exists in the current SQLite DB."""
+    try:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name = ? LIMIT 1",
+            (table_name,),
+        ).fetchone()
+    except Exception:
+        return False
+    return row is not None
+
+
+def _table_columns(conn, table_name: str) -> set[str]:
+    """Return the set of columns for a table, or empty set if unavailable."""
+    try:
+        rows = conn.execute("PRAGMA table_info({})".format(table_name)).fetchall()
+    except Exception:
+        return set()
+
+    cols: set[str] = set()
+    for row in rows:
+        try:
+            cols.add(str(row["name"]))
+        except Exception:
+            if len(row) > 1:
+                cols.add(str(row[1]))
+    return cols
+
+
+def _as_float_or_none(value) -> float | None:
+    """Convert value to float when possible, else return None."""
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -302,8 +352,12 @@ def _evaluate_path_match(rule: dict, conn) -> dict:
 def _evaluate_symbol_match(rule: dict, conn) -> dict:
     """Evaluate a symbol_match rule: find symbols matching criteria.
 
-    Supports ``require.has_test`` to check that matched symbols have
-    test coverage (edges from test files).
+    Supports requirement checks under ``match.require``:
+    - ``has_test``: matched symbols must have test coverage
+    - ``name_regex``: symbol name must match regex
+    - ``max_params`` / ``min_params``
+    - ``max_symbol_lines`` / ``min_symbol_lines``
+    - ``max_file_lines`` / ``min_file_lines``
     """
     match = rule.get("match", {})
     exempt = rule.get("exempt", {})
@@ -312,20 +366,89 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
     exported_filter = match.get("exported")
     file_glob = match.get("file_glob")
     min_fan_in = match.get("min_fan_in")
+    max_fan_in = match.get("max_fan_in")
 
     require = match.get("require", {})
-    require_has_test = require.get("has_test", False)
+    require_has_test = bool(require.get("has_test", False))
+    require_name_regex = require.get("name_regex")
+    require_max_params = _as_float_or_none(require.get("max_params"))
+    require_min_params = _as_float_or_none(require.get("min_params"))
+    require_max_symbol_lines = _as_float_or_none(require.get("max_symbol_lines"))
+    require_min_symbol_lines = _as_float_or_none(require.get("min_symbol_lines"))
+    require_max_file_lines = _as_float_or_none(require.get("max_file_lines"))
+    require_min_file_lines = _as_float_or_none(require.get("min_file_lines"))
+
+    compiled_name_regex = None
+    if isinstance(require_name_regex, str) and require_name_regex.strip():
+        try:
+            compiled_name_regex = re.compile(require_name_regex)
+        except re.error as exc:
+            return {
+                "name": rule.get("name", "unnamed"),
+                "severity": rule.get("severity", "error"),
+                "passed": False,
+                "violations": [{
+                    "symbol": "",
+                    "file": rule.get("_file", ""),
+                    "line": None,
+                    "reason": "invalid require.name_regex: {}".format(exc),
+                }],
+            }
 
     # Build the base query
+    file_cols = _table_columns(conn, "files")
+    symbol_cols = _table_columns(conn, "symbols")
+    has_symbol_metrics = _table_exists(conn, "symbol_metrics")
+
+    if "line_count" in file_cols and "loc" in file_cols:
+        file_lines_expr = "COALESCE(f.line_count, f.loc)"
+    elif "line_count" in file_cols:
+        file_lines_expr = "f.line_count"
+    elif "loc" in file_cols:
+        file_lines_expr = "f.loc"
+    else:
+        file_lines_expr = "NULL"
+
+    if "file_role" in file_cols:
+        file_role_expr = "f.file_role"
+    else:
+        file_role_expr = "NULL"
+
+    symbol_lines_fallback = (
+        "(CASE WHEN s.line_start IS NOT NULL AND s.line_end IS NOT NULL "
+        "THEN (s.line_end - s.line_start + 1) ELSE NULL END)"
+        if "line_end" in symbol_cols
+        else "NULL"
+    )
+
+    if has_symbol_metrics:
+        param_expr = "sm.param_count"
+        symbol_lines_expr = "COALESCE(sm.line_count, {})".format(symbol_lines_fallback)
+        symbol_metrics_join = "LEFT JOIN symbol_metrics sm ON s.id = sm.symbol_id"
+    else:
+        param_expr = "NULL"
+        symbol_lines_expr = symbol_lines_fallback
+        symbol_metrics_join = ""
+
     query = """
         SELECT s.id, s.name, s.kind, s.line_start, s.is_exported,
-               f.path AS file_path, f.file_role,
-               COALESCE(gm.in_degree, 0) AS in_degree
+               f.path AS file_path, {file_role_expr} AS file_role,
+               COALESCE(gm.in_degree, 0) AS in_degree,
+               {param_expr} AS param_count,
+               {symbol_lines_expr} AS symbol_line_count,
+               {file_lines_expr} AS file_line_count
         FROM symbols s
         JOIN files f ON s.file_id = f.id
         LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+        {symbol_metrics_join}
         WHERE 1=1
-    """
+    """.format(
+        file_role_expr=file_role_expr,
+        param_expr=param_expr,
+        symbol_lines_expr=symbol_lines_expr,
+        file_lines_expr=file_lines_expr,
+        symbol_metrics_join=symbol_metrics_join,
+    )
     params: list = []
 
     if kind_filter:
@@ -342,37 +465,122 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
     rows = conn.execute(query, params).fetchall()
 
+    has_requirements = any([
+        require_has_test,
+        compiled_name_regex is not None,
+        require_max_params is not None,
+        require_min_params is not None,
+        require_max_symbol_lines is not None,
+        require_min_symbol_lines is not None,
+        require_max_file_lines is not None,
+        require_min_file_lines is not None,
+    ])
+
     violations: list[dict] = []
     for row in rows:
         file_path = row["file_path"]
         symbol_name = row["name"]
-        in_deg = row["in_degree"]
+        in_deg = _as_float_or_none(row["in_degree"]) or 0.0
+        param_count = _as_float_or_none(row["param_count"])
+        symbol_line_count = _as_float_or_none(row["symbol_line_count"])
+        file_line_count = _as_float_or_none(row["file_line_count"])
 
         # File glob filter
         if file_glob and not _matches_glob(file_path, file_glob):
             continue
 
         # Min fan-in filter
-        if min_fan_in is not None and in_deg < min_fan_in:
+        if min_fan_in is not None and in_deg < float(min_fan_in):
+            continue
+        if max_fan_in is not None and in_deg > float(max_fan_in):
             continue
 
         # Exemptions
         if _is_exempt(symbol_name, file_path, exempt):
             continue
 
-        # Check require.has_test
-        if require_has_test:
-            has_test = _symbol_has_test(conn, row["id"])
-            if has_test:
-                continue  # Requirement met, no violation
+        if has_requirements:
+            reasons: list[str] = []
+
+            if require_has_test and not _symbol_has_test(conn, row["id"]):
+                reasons.append("{} has no test coverage".format(symbol_name))
+
+            if compiled_name_regex and not compiled_name_regex.search(symbol_name):
+                reasons.append(
+                    "name '{}' does not match {}".format(symbol_name, compiled_name_regex.pattern)
+                )
+
+            if require_max_params is not None:
+                if param_count is None:
+                    reasons.append("parameter count unavailable")
+                elif param_count > require_max_params:
+                    reasons.append(
+                        "parameter count {:.0f} exceeds {:.0f}".format(
+                            param_count, require_max_params
+                        )
+                    )
+
+            if require_min_params is not None:
+                if param_count is None:
+                    reasons.append("parameter count unavailable")
+                elif param_count < require_min_params:
+                    reasons.append(
+                        "parameter count {:.0f} is below {:.0f}".format(
+                            param_count, require_min_params
+                        )
+                    )
+
+            if require_max_symbol_lines is not None:
+                if symbol_line_count is None:
+                    reasons.append("symbol line count unavailable")
+                elif symbol_line_count > require_max_symbol_lines:
+                    reasons.append(
+                        "symbol line count {:.0f} exceeds {:.0f}".format(
+                            symbol_line_count, require_max_symbol_lines
+                        )
+                    )
+
+            if require_min_symbol_lines is not None:
+                if symbol_line_count is None:
+                    reasons.append("symbol line count unavailable")
+                elif symbol_line_count < require_min_symbol_lines:
+                    reasons.append(
+                        "symbol line count {:.0f} is below {:.0f}".format(
+                            symbol_line_count, require_min_symbol_lines
+                        )
+                    )
+
+            if require_max_file_lines is not None:
+                if file_line_count is None:
+                    reasons.append("file line count unavailable")
+                elif file_line_count > require_max_file_lines:
+                    reasons.append(
+                        "file line count {:.0f} exceeds {:.0f}".format(
+                            file_line_count, require_max_file_lines
+                        )
+                    )
+
+            if require_min_file_lines is not None:
+                if file_line_count is None:
+                    reasons.append("file line count unavailable")
+                elif file_line_count < require_min_file_lines:
+                    reasons.append(
+                        "file line count {:.0f} is below {:.0f}".format(
+                            file_line_count, require_min_file_lines
+                        )
+                    )
+
+            if not reasons:
+                continue
+
             violations.append({
                 "symbol": symbol_name,
                 "file": file_path,
                 "line": row["line_start"],
-                "reason": f"{symbol_name} has no test coverage",
+                "reason": "; ".join(reasons),
             })
         else:
-            # If no require, the match itself is the violation
+            # If no requirements are set, the match itself is the violation.
             violations.append({
                 "symbol": symbol_name,
                 "file": file_path,
@@ -406,6 +614,228 @@ def _symbol_has_test(conn, symbol_id: int) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# Rule evaluation: ast_match
+# ---------------------------------------------------------------------------
+
+
+def _format_capture_preview(captures: dict[str, str]) -> str:
+    """Format captured metavariables for rule output."""
+    if not captures:
+        return ""
+    parts: list[str] = []
+    for name in sorted(captures.keys()):
+        text = " ".join(captures[name].split())
+        if len(text) > 40:
+            text = text[:37] + "..."
+        parts.append("${}={}".format(name, text))
+    return ", ".join(parts)
+
+
+def _evaluate_ast_match(rule: dict, conn) -> dict:
+    """Evaluate an ast_match rule: structural pattern matching with metavars.
+
+    Rule shape:
+
+    type: ast_match
+    match:
+      ast: "eval($EXPR)"
+      language: python
+      file_glob: "**/*.py"
+      max_matches: 100
+    """
+    match = rule.get("match", {})
+    exempt = rule.get("exempt", {})
+
+    pattern = match.get("ast")
+    if pattern is None and rule.get("type") == "ast_match":
+        # Compatibility: allow `match.pattern` when type is explicit.
+        pattern = match.get("pattern")
+
+    language_filter = normalize_language_name(match.get("language"))
+    file_glob = match.get("file_glob")
+    max_matches = int(match.get("max_matches", 0) or 0)
+
+    name = rule.get("name", "unnamed")
+    severity = rule.get("severity", "error")
+
+    if not isinstance(pattern, str) or not pattern.strip():
+        return {
+            "name": name,
+            "severity": severity,
+            "passed": False,
+            "violations": [{
+                "symbol": "",
+                "file": rule.get("_file", ""),
+                "line": None,
+                "reason": "ast_match rule missing non-empty match.ast pattern",
+            }],
+        }
+
+    try:
+        root = find_project_root()
+    except Exception:
+        root = Path.cwd()
+
+    rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
+    violations: list[dict] = []
+    compiled_cache: dict[str, object] = {}
+
+    for row in rows:
+        rel_path = row["path"]
+
+        if file_glob and not _matches_glob(rel_path, file_glob):
+            continue
+        if _is_exempt("", rel_path, exempt):
+            continue
+
+        detected_lang = normalize_language_name(detect_language(rel_path))
+        if language_filter and detected_lang != language_filter:
+            continue
+        if detected_lang is None:
+            continue
+
+        full_path = root / rel_path
+        tree, source, parsed_lang = parse_file(full_path, detected_lang)
+        if tree is None or source is None:
+            continue
+
+        active_lang = normalize_language_name(parsed_lang or detected_lang or language_filter)
+        if active_lang is None:
+            continue
+
+        compiled = compiled_cache.get(active_lang)
+        if compiled is None:
+            try:
+                compiled = compile_ast_pattern(pattern, active_lang)
+            except Exception as exc:
+                return {
+                    "name": name,
+                    "severity": severity,
+                    "passed": False,
+                    "violations": [{
+                        "symbol": "",
+                        "file": rule.get("_file", ""),
+                        "line": None,
+                        "reason": "AST pattern compile failed: {}".format(exc),
+                    }],
+                }
+            compiled_cache[active_lang] = compiled
+
+        remaining = 0
+        if max_matches > 0:
+            remaining = max_matches - len(violations)
+            if remaining <= 0:
+                break
+
+        matches = find_ast_matches(
+            tree,
+            source,
+            compiled,
+            max_matches=remaining,
+        )
+        for m in matches:
+            cap_text = _format_capture_preview(m.get("captures", {}))
+            reason = "AST pattern matched: {}".format(pattern)
+            if cap_text:
+                reason += " ({})".format(cap_text)
+
+            violations.append({
+                "symbol": "",
+                "file": rel_path,
+                "line": m.get("line"),
+                "reason": reason,
+                "captures": m.get("captures", {}),
+            })
+
+            if max_matches > 0 and len(violations) >= max_matches:
+                break
+
+    return {
+        "name": name,
+        "severity": severity,
+        "passed": len(violations) == 0,
+        "violations": violations,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Rule evaluation: dataflow_match
+# ---------------------------------------------------------------------------
+
+
+def _evaluate_dataflow_match(rule: dict, conn) -> dict:
+    """Evaluate a dataflow_match rule using intra-procedural heuristics.
+
+    Rule shape:
+
+    type: dataflow_match
+    match:
+      patterns: [dead_assignment, unused_param, source_to_sink]
+      file_glob: "**/*.py"
+      max_matches: 100
+      sources: ["input(", "request.args"]
+      sinks: ["eval(", "exec("]
+    """
+    match = rule.get("match", {})
+    exempt = rule.get("exempt", {})
+
+    patterns = match.get("patterns")
+    if patterns is None:
+        # Compatibility aliases:
+        # - singular "pattern"
+        # - "dataflow" value
+        patterns = match.get("pattern", match.get("dataflow"))
+
+    file_glob = match.get("file_glob")
+    max_matches = int(match.get("max_matches", 0) or 0)
+    sources = match.get("sources")
+    sinks = match.get("sinks")
+
+    name = rule.get("name", "unnamed")
+    severity = rule.get("severity", "error")
+
+    findings = collect_dataflow_findings(
+        conn,
+        patterns=patterns,
+        file_glob=file_glob,
+        max_matches=max_matches if max_matches > 0 else 0,
+        sources=sources,
+        sinks=sinks,
+    )
+
+    violations: list[dict] = []
+    for item in findings:
+        symbol_name = item.get("symbol", "")
+        file_path = item.get("file", "")
+        if _is_exempt(symbol_name, file_path, exempt):
+            continue
+        violation = {
+            "symbol": symbol_name,
+            "file": file_path,
+            "line": item.get("line"),
+            "reason": item.get("reason", "dataflow rule matched"),
+            "type": item.get("type"),
+        }
+        if "variable" in item:
+            violation["variable"] = item["variable"]
+        if "source" in item:
+            violation["source"] = item["source"]
+        if "sink" in item:
+            violation["sink"] = item["sink"]
+        violations.append(violation)
+
+    if max_matches > 0:
+        violations = violations[:max_matches]
+
+    return {
+        "name": name,
+        "severity": severity,
+        "passed": len(violations) == 0,
+        "violations": violations,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Rule type detection + dispatch
 # ---------------------------------------------------------------------------
 
@@ -413,12 +843,24 @@ def _symbol_has_test(conn, symbol_id: int) -> bool:
 def _detect_rule_type(rule: dict) -> str:
     """Detect the rule type from its match specification.
 
-    If the match block has both ``from`` and ``to``, it is a path_match.
-    Otherwise it is a symbol_match.
+    If ``type`` is explicitly set, it wins.
+    Otherwise:
+    - ``from`` + ``to`` => path_match
+    - ``ast``           => ast_match
+    - ``dataflow``      => dataflow_match
+    - fallback          => symbol_match
     """
+    explicit = rule.get("type")
+    if isinstance(explicit, str) and explicit:
+        return explicit
+
     match = rule.get("match", {})
     if "from" in match and "to" in match:
         return "path_match"
+    if "ast" in match:
+        return "ast_match"
+    if "dataflow" in match or "patterns" in match and isinstance(match.get("patterns"), list):
+        return "dataflow_match"
     return "symbol_match"
 
 
@@ -442,10 +884,14 @@ def evaluate_rule(rule: dict, conn, G=None) -> dict:
                             "line": None, "reason": rule["_error"]}],
         }
 
-    rule_type = rule.get("type") or _detect_rule_type(rule)
+    rule_type = _detect_rule_type(rule)
 
     if rule_type == "path_match":
         return _evaluate_path_match(rule, conn)
+    if rule_type == "ast_match":
+        return _evaluate_ast_match(rule, conn)
+    if rule_type == "dataflow_match":
+        return _evaluate_dataflow_match(rule, conn)
     else:
         return _evaluate_symbol_match(rule, conn)
 

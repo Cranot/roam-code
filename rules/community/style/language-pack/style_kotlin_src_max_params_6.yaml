@@ -1,0 +1,10 @@
+name: "Style: kotlin src max params 6"
+description: "Kotlin functions/methods in src/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**/*.kt"
+  require:
+    max_params: 6

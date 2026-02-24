@@ -1,0 +1,10 @@
+name: "Style: php lib max symbol lines 80"
+description: "Php functions/methods in lib/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "lib/**/*.php"
+  require:
+    max_symbol_lines: 80

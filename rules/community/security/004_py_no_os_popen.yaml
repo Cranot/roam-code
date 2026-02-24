@@ -1,0 +1,10 @@
+name: "Security: py no os popen"
+description: "Disallow shell execution via os.popen."
+severity: warning
+type: ast_match
+
+match:
+  ast: "os.popen($CMD)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

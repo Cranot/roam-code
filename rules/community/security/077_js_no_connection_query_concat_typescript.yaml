@@ -1,0 +1,10 @@
+name: "Security: js no connection query concat (typescript)"
+description: "Disallow SQL query concatenation in connection.query()."
+severity: warning
+type: ast_match
+
+match:
+  ast: "connection.query($SQL + $EXPR)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

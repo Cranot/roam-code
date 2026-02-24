@@ -108,6 +108,23 @@ python run_eval.py --force
 - Terminal: comparison tables printed automatically
 - HTML: `results/report.html`
 - Raw JSON: `results/{agent}_{task}_{mode}.json`
+- Aggregated summary: `python summarize_results.py` -> `results/summary.json`, `results/summary.md`
+
+## OSS Repo Expansion (#37)
+
+To benchmark roam directly on open-source repositories available in your local `bench-repos/` corpus:
+
+```bash
+python benchmarks/oss-eval/run_oss_bench.py
+```
+
+Outputs:
+
+- `benchmarks/oss-eval/results/latest.json`
+- `benchmarks/oss-eval/results/latest.md`
+
+The manifest (`benchmarks/oss-eval/targets.json`) tracks required major repositories for item `#37`
+and marks any missing local clones explicitly so coverage gaps are auditable.
 
 ## Modes Explained
 

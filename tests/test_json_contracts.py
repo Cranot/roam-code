@@ -33,8 +33,9 @@ COMMANDS_WITH_JSON = [
     "impact", "coupling", "diff", "context", "safe-delete",
     "pr-risk", "split", "risk", "why", "trend", "coverage-gaps",
     "report", "complexity", "debt", "conventions", "bus-factor",
-    "entry-points", "breaking", "safe-zones", "doc-staleness",
+    "entry-points", "breaking", "safe-zones", "doc-staleness", "docs-coverage",
     "fn-coupling", "alerts", "fitness", "patterns", "preflight",
+    "guard", "agent-plan", "agent-context",
     "snapshot", "describe", "trace", "owner", "sketch",
     "affected-tests", "diagnose", "test-map", "module",
 ]
@@ -55,6 +56,9 @@ COMMAND_ARGS = {
     "split": ["src/models.py"],
     "why": ["User"],
     "preflight": ["User"],
+    "guard": ["User"],
+    "agent-plan": ["--agents", "2"],
+    "agent-context": ["--agent-id", "1", "--agents", "2"],
     "owner": ["src/models.py"],
     "diagnose": ["User"],
     "affected-tests": ["--staged"],
@@ -86,6 +90,7 @@ FRAGILE_COMMANDS = {
     "safe-delete",      # symbol resolution may fail in minimal project
     "why",              # symbol resolution may fail in minimal project
     "preflight",        # symbol resolution may fail in minimal project
+    "guard",            # symbol resolution may fail in minimal project
     "diagnose",         # symbol resolution may fail in minimal project
     "sketch",           # may need specific project structure
     "symbol",           # symbol resolution may fail in minimal project
@@ -202,14 +207,15 @@ def test_envelope_has_version(cmd, cli_runner, indexed_project):
 @pytest.mark.parametrize("cmd", ["health", "map", "dead", "weather", "search",
                                   "report", "complexity", "debt"])
 def test_envelope_has_timestamp(cmd, cli_runner, indexed_project):
-    """data['timestamp'] must be a valid ISO 8601 timestamp."""
+    """data['_meta']['timestamp'] must be a valid ISO 8601 timestamp."""
     args = _build_args(cmd)
     result = invoke_cli(cli_runner, args, cwd=indexed_project, json_mode=True)
     if result.exit_code != 0:
         pytest.skip(f"{cmd} failed, skipping timestamp check")
 
     data = json.loads(result.output)
-    ts = data.get("timestamp")
+    meta = data.get("_meta", {})
+    ts = meta.get("timestamp") or data.get("timestamp")
     assert isinstance(ts, str), f"timestamp should be str, got {type(ts)}"
     assert len(ts) > 0, "timestamp should be non-empty"
 
@@ -353,14 +359,15 @@ def test_summary_has_verdict(cmd, cli_runner, indexed_project):
 
 @pytest.mark.parametrize("cmd", ["health", "map", "dead", "report"])
 def test_envelope_index_age(cmd, cli_runner, indexed_project):
-    """data['index_age_s'] should be an int (seconds) or None."""
+    """data['_meta']['index_age_s'] should be an int (seconds) or None."""
     args = _build_args(cmd)
     result = invoke_cli(cli_runner, args, cwd=indexed_project, json_mode=True)
     if result.exit_code != 0:
         pytest.skip(f"{cmd} failed")
 
     data = json.loads(result.output)
-    age = data.get("index_age_s")
+    meta = data.get("_meta", {})
+    age = meta.get("index_age_s") if meta else data.get("index_age_s")
     assert age is None or isinstance(age, (int, float)), (
         f"index_age_s should be int/float/None, got {type(age)}"
     )
@@ -426,10 +433,15 @@ def test_envelope_top_level_keys(cmd, cli_runner, indexed_project):
 
     data = json.loads(result.output)
 
-    required_keys = {"command", "version", "timestamp", "summary"}
+    required_keys = {"command", "version", "summary"}
     actual_keys = set(data.keys())
     missing = required_keys - actual_keys
     assert not missing, (
         f"'{cmd}' envelope missing required keys: {missing}. "
         f"Got: {sorted(actual_keys)}"
+    )
+    # timestamp moved to _meta for deterministic output (LLM cache compat)
+    meta = data.get("_meta", {})
+    assert "timestamp" in meta or "timestamp" in data, (
+        f"'{cmd}' envelope missing timestamp in _meta or top-level"
     )

@@ -1,0 +1,13 @@
+name: "Architecture: arch no repository to controller"
+description: "Repositories should not import controllers."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

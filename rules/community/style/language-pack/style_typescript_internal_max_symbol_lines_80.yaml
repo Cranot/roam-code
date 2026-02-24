@@ -1,0 +1,10 @@
+name: "Style: typescript internal max symbol lines 80"
+description: "Typescript functions/methods in internal/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**/*.ts"
+  require:
+    max_symbol_lines: 80

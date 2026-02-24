@@ -5,8 +5,8 @@ from __future__ import annotations
 import click
 
 from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope, budget_truncate
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 
 
 def _collect_dependents(G, RG, sym_id, conn):
@@ -67,12 +67,13 @@ def _impact_verdict(dependents, affected_files, total_syms):
 def impact(ctx, name):
     """Show blast radius: what breaks if a symbol changes."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(f"Symbol not found: {name}")
+            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
         sym_id = sym["id"]
 
@@ -84,12 +85,18 @@ def impact(ctx, name):
             from roam.graph.builder import build_symbol_graph
             import networkx as nx
         except ImportError:
-            click.echo("Graph module not available. Run `roam index` first.")
+            click.echo(
+                "Graph module not available. Run `roam index` to build the dependency graph."
+            )
             return
 
         G = build_symbol_graph(conn)
         if sym_id not in G:
-            click.echo("Symbol not in graph.")
+            click.echo(
+                f"Symbol '{name}' exists in the index but is not in the dependency graph.\n"
+                f"  Tip: Run `roam index` to rebuild the graph, or use `roam symbol {name}`"
+                " to view raw symbol data."
+            )
             return
 
         RG = G.reverse()
@@ -107,6 +114,7 @@ def impact(ctx, name):
         if not dependents:
             if json_mode:
                 click.echo(to_json(json_envelope("impact",
+                    budget=token_budget,
                     summary={"affected_symbols": 0, "affected_files": 0},
                     symbol=sym["qualified_name"] or sym["name"],
                     affected_symbols=0, affected_files=0,
@@ -120,11 +128,36 @@ def impact(ctx, name):
         verdict, reach_pct = _impact_verdict(dependents, affected_files, len(G))
 
         if json_mode:
+            # Look up global PageRank for dependent symbols
+            global_pr: dict[int, float] = {}
+            try:
+                pr_rows = conn.execute(
+                    "SELECT symbol_id, pagerank FROM graph_metrics"
+                ).fetchall()
+                global_pr = {r["symbol_id"]: r["pagerank"] for r in pr_rows}
+            except Exception:
+                pass
+
             json_deps = {
                 ek: [{"name": i[1], "kind": i[0], "file": i[2]} for i in items]
                 for ek, items in by_kind.items()
             }
+            # Build affected file list with importance scores.
+            # File importance = max PageRank of any dependent symbol in that file.
+            file_importance: dict[str, float] = {}
+            for dep_id in dependents:
+                node = G.nodes.get(dep_id, {})
+                fp = node.get("file_path", "?")
+                pr_val = global_pr.get(dep_id, ppr.get(dep_id, 0.0))
+                if pr_val > file_importance.get(fp, 0.0):
+                    file_importance[fp] = pr_val
+
+            affected_file_dicts = [
+                {"path": fp, "importance": round(file_importance.get(fp, 0.0), 6)}
+                for fp in sorted(affected_files)
+            ]
             click.echo(to_json(json_envelope("impact",
+                budget=token_budget,
                 summary={
                     "verdict": verdict,
                     "affected_symbols": len(dependents),
@@ -139,7 +172,7 @@ def impact(ctx, name):
                 weighted_impact=round(weighted_impact, 4),
                 reach_pct=round(reach_pct, 1),
                 direct_dependents=json_deps,
-                affected_file_list=sorted(affected_files),
+                affected_file_list=affected_file_dicts,
                 sf_convention_tests=sorted(sf_test_files),
             )))
             return

@@ -10,6 +10,7 @@ from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 from roam.catalog.tasks import get_task, get_tip
+from roam.catalog.fixes import get_fix
 
 
 @click.command()
@@ -18,9 +19,16 @@ from roam.catalog.tasks import get_task, get_tip
 @click.option("--confidence", "confidence_filter", default=None,
               type=click.Choice(["high", "medium", "low"], case_sensitive=False),
               help="Filter by confidence level")
+@click.option(
+    "--profile",
+    "profile",
+    default="balanced",
+    type=click.Choice(["balanced", "strict", "aggressive"], case_sensitive=False),
+    help="Precision profile (strict reduces false positives; aggressive surfaces more candidates)",
+)
 @click.option("--limit", "-n", default=30, help="Max findings to show")
 @click.pass_context
-def math_cmd(ctx, task_filter, confidence_filter, limit):
+def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
     """Detect suboptimal algorithms and suggest better approaches.
 
     Scans indexed symbols for common algorithmic anti-patterns
@@ -30,12 +38,19 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
     Primary name: algo. Alias: math (backward compat).
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
     ensure_index()
 
     from roam.catalog.detectors import run_detectors
 
     with open_db(readonly=True) as conn:
-        findings = run_detectors(conn, task_filter, confidence_filter)
+        findings, detector_meta = run_detectors(
+            conn,
+            task_filter,
+            confidence_filter,
+            profile=profile,
+            return_meta=True,
+        )
 
         # Build symbol_id -> language mapping for language-aware tips
         sym_ids = [f["symbol_id"] for f in findings if f.get("symbol_id")]
@@ -53,9 +68,22 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                 if r["language"]:
                     lang_map[r["id"]] = r["language"]
 
-        # Sort: high first, then medium, then low
+        # Enrich findings with language-aware tips
+        for f in findings:
+            lang = lang_map.get(f.get("symbol_id"), "")
+            f["language"] = lang
+            f["tip"] = get_tip(f["task_id"], f["suggested_way"], lang)
+            if not f.get("fix"):
+                f["fix"] = get_fix(f["task_id"], lang)
+
+        # Sort by impact score first, then confidence.
         _conf_order = {"high": 0, "medium": 1, "low": 2}
-        findings.sort(key=lambda f: _conf_order.get(f["confidence"], 9))
+        findings.sort(
+            key=lambda f: (
+                -float(f.get("impact_score", 0.0) or 0.0),
+                _conf_order.get(f["confidence"], 9),
+            )
+        )
 
         # Apply limit
         truncated = len(findings) > limit
@@ -85,11 +113,14 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
             if total else "No algorithmic issues detected"
         )
 
-        # Enrich findings with language-aware tips
-        for f in findings:
-            lang = lang_map.get(f.get("symbol_id"), "")
-            f["language"] = lang
-            f["tip"] = get_tip(f["task_id"], f["suggested_way"], lang)
+        if sarif_mode:
+            from roam.output.sarif import algo_to_sarif, write_sarif
+            sarif = algo_to_sarif(
+                findings,
+                detector_meta.get("detector_metadata", {}),
+            )
+            click.echo(write_sarif(sarif))
+            return
 
         # --- JSON output ---
         if json_mode:
@@ -102,6 +133,16 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                     ),
                     "by_confidence": dict(by_confidence),
                     "truncated": truncated,
+                    "detectors_executed": detector_meta.get("detectors_executed", 0),
+                    "detectors_failed": detector_meta.get("detectors_failed", 0),
+                    "failed_detectors": detector_meta.get("failed_detectors", []),
+                    "detector_metadata": detector_meta.get("detector_metadata", {}),
+                    "profile": detector_meta.get("profile", profile),
+                    "profile_filtered": detector_meta.get("profile_filtered", 0),
+                    "max_impact_score": max(
+                        [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
+                        default=0.0,
+                    ),
                 },
                 findings=findings,
             )))
@@ -109,6 +150,16 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
 
         # --- Text output ---
         click.echo(f"VERDICT: {verdict}")
+        click.echo("Ordering: highest impact first")
+        click.echo(
+            f"Profile: {detector_meta.get('profile', profile)} "
+            f"(filtered {detector_meta.get('profile_filtered', 0)} low-signal findings)"
+        )
+        if detector_meta.get("detectors_failed"):
+            click.echo(
+                f"NOTE: {detector_meta['detectors_failed']} detector(s) failed "
+                "(use --json for details)."
+            )
         if not findings:
             return
 
@@ -129,6 +180,7 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                 name = f["symbol_name"]
                 location = f["location"]
                 conf = f["confidence"]
+                impact_score = float(f.get("impact_score", 0.0) or 0.0)
 
                 # Get catalog info for display
                 detected = None
@@ -140,7 +192,10 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                         if w["id"] == f["suggested_way"]:
                             suggested = w
 
-                click.echo(f"  {kind_abbr:<5s} {name:<40s} {location}  [{conf}]")
+                click.echo(
+                    f"  {kind_abbr:<5s} {name:<40s} {location}  "
+                    f"[{conf}, impact={impact_score:.1f}]"
+                )
                 if detected:
                     click.echo(f"        Current: {detected['name']} -- {detected['time']}")
                 if suggested:
@@ -148,6 +203,9 @@ def math_cmd(ctx, task_filter, confidence_filter, limit):
                     tip_text = f.get("tip", "")
                     if tip_text:
                         click.echo(f"        Tip: {tip_text}")
+                    fix_text = f.get("fix", "")
+                    if fix_text:
+                        click.echo(f"        Fix: {fix_text.splitlines()[0]}")
 
             click.echo()
 

@@ -1,0 +1,10 @@
+name: "Style: max params 4 (src)"
+description: "High-risk directories should keep parameter counts low."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**"
+  require:
+    max_params: 4

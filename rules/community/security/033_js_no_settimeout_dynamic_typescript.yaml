@@ -1,0 +1,10 @@
+name: "Security: js no settimeout dynamic (typescript)"
+description: "Review dynamic setTimeout usage."
+severity: warning
+type: ast_match
+
+match:
+  ast: "setTimeout($EXPR, $DELAY)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

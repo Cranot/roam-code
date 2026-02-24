@@ -1,0 +1,13 @@
+name: "Architecture: arch no tests to prod private"
+description: "Tests should avoid tight coupling to internal modules."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/tests/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/internal/**"
+    kind: [function, method, class]
+  max_distance: 1

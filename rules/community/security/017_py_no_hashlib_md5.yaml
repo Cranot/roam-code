@@ -1,0 +1,10 @@
+name: "Security: py no hashlib md5"
+description: "Disallow MD5 for security-sensitive hashing."
+severity: warning
+type: ast_match
+
+match:
+  ast: "hashlib.md5($DATA)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

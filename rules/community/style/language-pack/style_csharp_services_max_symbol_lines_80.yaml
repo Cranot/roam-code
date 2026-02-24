@@ -1,0 +1,10 @@
+name: "Style: csharp services max symbol lines 80"
+description: "Csharp functions/methods in services/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "services/**/*.cs"
+  require:
+    max_symbol_lines: 80

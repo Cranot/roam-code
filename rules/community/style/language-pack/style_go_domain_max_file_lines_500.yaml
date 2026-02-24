@@ -1,0 +1,10 @@
+name: "Style: go domain max file lines 500"
+description: "Go files in domain/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "domain/**/*.go"
+  require:
+    max_file_lines: 500

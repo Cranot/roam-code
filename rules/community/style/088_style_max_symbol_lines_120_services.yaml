@@ -1,0 +1,10 @@
+name: "Style: max symbol lines 120 (services)"
+description: "Functions and methods in services should be <= 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "services/**"
+  require:
+    max_symbol_lines: 120

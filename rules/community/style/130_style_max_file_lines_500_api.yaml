@@ -1,0 +1,10 @@
+name: "Style: max file lines 500 (api)"
+description: "Critical files should stay below 500 lines."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "api/**"
+  require:
+    max_file_lines: 500

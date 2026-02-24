@@ -1,5 +1,7 @@
 """Build or rebuild the codebase index."""
 
+from __future__ import annotations
+
 import time
 
 import click
@@ -10,19 +12,29 @@ from roam.output.formatter import to_json, json_envelope
 @click.command()
 @click.option('--force', is_flag=True, help='Force full reindex')
 @click.option('--verbose', is_flag=True, help='Show detailed warnings during indexing')
+@click.option('--quiet', '-q', is_flag=True, help='Suppress progress output')
 @click.pass_context
-def index(ctx, force, verbose):
+def index(ctx, force, verbose, quiet):
     """Build or rebuild the codebase index."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
     include_excluded = ctx.obj.get('include_excluded') if ctx.obj else False
     from roam.index.indexer import Indexer
     from roam.db.connection import open_db, db_exists
+
+    # Suppress progress in JSON mode (consumers don't want progress text)
+    suppress_progress = quiet or json_mode
+
     t0 = time.monotonic()
     indexer = Indexer()
-    indexer.run(force=force, verbose=verbose, include_excluded=include_excluded)
+    indexer.run(
+        force=force,
+        verbose=verbose,
+        include_excluded=include_excluded,
+        quiet=suppress_progress,
+    )
     elapsed = time.monotonic() - t0
 
-    if not json_mode:
+    if not json_mode and not quiet:
         click.echo(f"Index complete. ({elapsed:.1f}s)")
 
     # Show summary stats
@@ -66,7 +78,7 @@ def index(ctx, force, verbose):
                     avg_symbols_per_file=round(avg_sym, 1),
                     parse_coverage_pct=round(coverage, 0),
                 )))
-            else:
+            elif not quiet:
                 lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
@@ -77,7 +89,7 @@ def index(ctx, force, verbose):
                 from roam.commands.metrics_history import append_snapshot
                 with open_db() as wconn:
                     snap = append_snapshot(wconn, source="index")
-                if not json_mode:
+                if not json_mode and not quiet:
                     click.echo(f"  Health: {snap['health_score']}/100 (snapshot saved)")
             except Exception:
                 pass  # Don't fail indexing if snapshot fails

@@ -51,7 +51,7 @@ class TestDead:
 
     def test_dead_json_has_confidence_arrays(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["dead"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "dead"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "dead")
         assert "high_confidence" in data
         assert "low_confidence" in data
@@ -63,6 +63,13 @@ class TestDead:
         summary = data.get("summary", {})
         for key in ["safe", "review", "intentional"]:
             assert key in summary, f"Missing '{key}' in dead summary: {summary}"
+
+    def test_dead_json_summary_has_unused_assignments(self, cli_runner, indexed_project, monkeypatch):
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(cli_runner, ["dead"], cwd=indexed_project, json_mode=True)
+        data = parse_json_output(result, "dead")
+        summary = data.get("summary", {})
+        assert "unused_assignments" in summary
 
     def test_dead_all_flag(self, cli_runner, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)

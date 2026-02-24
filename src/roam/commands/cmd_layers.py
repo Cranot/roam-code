@@ -9,7 +9,8 @@ import click
 from roam.db.connection import open_db, batched_in
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers, find_violations, format_layers
-from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json, json_envelope
+from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json, json_envelope, summary_envelope
+from roam.output.mermaid import sanitize_id, node as mnode, edge as medge, subgraph as msubgraph, diagram as mdiagram
 from roam.commands.resolve import ensure_index
 
 import networkx as nx
@@ -33,7 +34,7 @@ def _layer_dir_breakdown(conn, layer_map, layer_num):
     return Counter(r["dir"] for r in dr).most_common(5)
 
 
-def _layers_json(conn, formatted, layer_map, max_layer, violations):
+def _layers_json(conn, formatted, layer_map, max_layer, violations, mermaid=None, detail=True, token_budget=0):
     """Emit JSON output for layers command."""
     v_lookup = {}
     if violations:
@@ -55,11 +56,16 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations):
                     {"dir": d, "count": c} for d, c in dir_counts
                 ]
 
-    click.echo(to_json(json_envelope("layers",
+    extra = {}
+    if mermaid is not None:
+        extra["mermaid"] = mermaid
+
+    envelope = json_envelope("layers",
         summary={
             "total_layers": max_layer + 1,
             "violations": len(violations),
         },
+        budget=token_budget,
         total_layers=max_layer + 1,
         layers=[
             {
@@ -82,7 +88,11 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations):
             }
             for v in violations
         ],
-    )))
+        **extra,
+    )
+    if not detail:
+        envelope = summary_envelope(envelope)
+    click.echo(to_json(envelope))
 
 
 def _print_layer_detail(conn, layer_map, layer_info):
@@ -157,6 +167,78 @@ def _print_deepest_chain(conn, G):
         pass
 
 
+def _layers_mermaid(conn, G, layer_map, formatted, max_layer):
+    """Generate a Mermaid top-down flowchart for architecture layers.
+
+    Shows up to 6 files per layer (ranked by PageRank) and inter-layer
+    dependency edges.  Returns the diagram as a string.
+    """
+    elements: list[str] = []
+    files_per_layer = 6
+
+    # Collect top files per layer by PageRank
+    layer_files: dict[int, list[dict]] = {}
+    for layer_info in formatted:
+        layer_num = layer_info["layer"]
+        sym_ids = [nid for nid, lv in layer_map.items() if lv == layer_num]
+        if not sym_ids:
+            continue
+        rows = batched_in(
+            conn,
+            "SELECT DISTINCT f.path, MAX(COALESCE(gm.pagerank, 0)) as pr "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE s.id IN ({ph}) "
+            "GROUP BY f.path ORDER BY pr DESC",
+            sym_ids,
+        )
+        top_files = [{"path": r["path"].replace("\\", "/"), "pr": r["pr"]}
+                     for r in rows[:files_per_layer]]
+        if top_files:
+            layer_files[layer_num] = top_files
+
+    # Build subgraphs for each layer
+    for layer_num in sorted(layer_files):
+        label = "Foundation" if layer_num == 0 else f"Layer {layer_num}"
+        node_lines = []
+        for f in layer_files[layer_num]:
+            short = f["path"].rsplit("/", 1)[-1] if "/" in f["path"] else f["path"]
+            node_lines.append(mnode(f["path"], short))
+        elements.append(msubgraph(f"Layer {layer_num} - {label}", node_lines))
+
+    # Add edges: for each file in a higher layer, find files it depends on
+    # in lower layers.  Use the symbol graph to derive file-level deps.
+    file_to_layer: dict[str, int] = {}
+    for layer_num, files in layer_files.items():
+        for f in files:
+            file_to_layer[f["path"]] = layer_num
+
+    # Build file-level adjacency from the symbol graph
+    node_file: dict[int, str] = {}
+    for nid in G.nodes:
+        data = G.nodes[nid]
+        fp = data.get("file_path", "").replace("\\", "/")
+        if fp in file_to_layer:
+            node_file[nid] = fp
+
+    seen_edges: set[tuple[str, str]] = set()
+    for src, tgt in G.edges:
+        sf = node_file.get(src)
+        tf = node_file.get(tgt)
+        if sf and tf and sf != tf:
+            sl = file_to_layer.get(sf)
+            tl = file_to_layer.get(tf)
+            # Only draw downward edges (higher layer -> lower layer)
+            if sl is not None and tl is not None and sl > tl:
+                pair = (sf, tf)
+                if pair not in seen_edges:
+                    seen_edges.add(pair)
+                    elements.append(medge(sf, tf))
+
+    return mdiagram("TD", elements)
+
+
 def _print_violations(conn, violations):
     """Print layer violation table."""
     click.echo(f"\n=== Violations ({len(violations)}) ===")
@@ -196,10 +278,13 @@ def _print_violations(conn, violations):
 
 
 @click.command()
+@click.option('--mermaid', 'mermaid_mode', is_flag=True, help='Output Mermaid diagram')
 @click.pass_context
-def layers(ctx):
+def layers(ctx, mermaid_mode):
     """Show dependency layers and violations."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
@@ -209,6 +294,7 @@ def layers(ctx):
             if json_mode:
                 click.echo(to_json(json_envelope("layers",
                     summary={"total_layers": 0, "violations": 0},
+                    budget=token_budget,
                     layers=[], violations=[],
                 )))
             else:
@@ -219,8 +305,17 @@ def layers(ctx):
         max_layer = max(l["layer"] for l in formatted) if formatted else 0
         violations = find_violations(G, layer_map)
 
+        if mermaid_mode:
+            mermaid_text = _layers_mermaid(conn, G, layer_map, formatted, max_layer)
+            if json_mode:
+                _layers_json(conn, formatted, layer_map, max_layer, violations,
+                             mermaid=mermaid_text, detail=detail, token_budget=token_budget)
+            else:
+                click.echo(mermaid_text)
+            return
+
         if json_mode:
-            _layers_json(conn, formatted, layer_map, max_layer, violations)
+            _layers_json(conn, formatted, layer_map, max_layer, violations, detail=detail, token_budget=token_budget)
             return
 
         total_symbols = sum(len(l["symbols"]) for l in formatted)
@@ -238,6 +333,12 @@ def layers(ctx):
         else:
             shape = f"Well-layered ({max_layer + 1} levels, even distribution)"
         click.echo(f"  Architecture: {shape}")
+        click.echo(f"  Violations: {len(violations)}")
+
+        if not detail:
+            # Summary mode: just show layer count + verdict
+            click.echo("(use --detail for per-layer symbol breakdown and violation list)")
+            return
 
         for layer_info in formatted:
             _print_layer_detail(conn, layer_map, layer_info)

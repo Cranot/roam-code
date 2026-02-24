@@ -1,0 +1,10 @@
+name: "Style: swift app max params 6"
+description: "Swift functions/methods in app/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**/*.swift"
+  require:
+    max_params: 6

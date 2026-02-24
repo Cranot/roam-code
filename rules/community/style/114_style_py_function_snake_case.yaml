@@ -1,0 +1,10 @@
+name: "Style: style py function snake case"
+description: "Python functions should use snake_case."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "**/*.py"
+  require:
+    name_regex: "^[a-z_][a-z0-9_]*$"

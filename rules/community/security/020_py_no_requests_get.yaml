@@ -1,0 +1,10 @@
+name: "Security: py no requests get"
+description: "Review outbound requests for SSRF risk."
+severity: warning
+type: ast_match
+
+match:
+  ast: "requests.get($URL)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

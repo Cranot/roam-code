@@ -1,0 +1,13 @@
+name: "Architecture: arch no ui to data"
+description: "UI should not import data access directly."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/ui/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/data/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -147,6 +147,9 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "file_stats", "health_score", "REAL")
     _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
     _safe_alter(conn, "file_stats", "cognitive_load", "REAL")
+    _safe_alter(conn, "file_stats", "coverage_pct", "REAL")
+    _safe_alter(conn, "file_stats", "covered_lines", "INTEGER")
+    _safe_alter(conn, "file_stats", "coverable_lines", "INTEGER")
     _safe_alter(conn, "snapshots", "tangle_ratio", "REAL")
     _safe_alter(conn, "snapshots", "avg_complexity", "REAL")
     _safe_alter(conn, "snapshots", "brain_methods", "INTEGER")
@@ -156,6 +159,9 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "symbol_metrics", "halstead_difficulty", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_effort", "REAL")
     _safe_alter(conn, "symbol_metrics", "halstead_bugs", "REAL")
+    _safe_alter(conn, "symbol_metrics", "coverage_pct", "REAL")
+    _safe_alter(conn, "symbol_metrics", "covered_lines", "INTEGER")
+    _safe_alter(conn, "symbol_metrics", "coverable_lines", "INTEGER")
     # v7.6: file role classification
     _safe_alter(conn, "files", "file_role", "TEXT DEFAULT 'source'")
     # v8.3: math_signals table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
@@ -164,45 +170,29 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "math_signals", "str_concat_in_loop", "INTEGER DEFAULT 0")
     _safe_alter(conn, "math_signals", "loop_invariant_calls", "TEXT")
     _safe_alter(conn, "math_signals", "loop_bound_small", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "calls_in_loops_qualified", "TEXT")
+    _safe_alter(conn, "math_signals", "loop_lookup_calls", "TEXT")
+    _safe_alter(conn, "math_signals", "front_ops_in_loop", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "loop_with_multiplication", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "math_signals", "loop_with_modulo", "INTEGER DEFAULT 0")
     # Cross-language bridge metadata on edges
     _safe_alter(conn, "edges", "bridge", "TEXT")
     _safe_alter(conn, "edges", "confidence", "REAL")
     # v11: source file tracking for O(changed) incremental edge rebuild
     _safe_alter(conn, "edges", "source_file_id", "INTEGER REFERENCES files(id) ON DELETE CASCADE")
-    # v9.0: runtime_stats table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
-    # Migration: ensure table exists for databases created before this version
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS runtime_stats ("
-        "id INTEGER PRIMARY KEY, "
-        "symbol_id INTEGER REFERENCES symbols(id), "
-        "symbol_name TEXT, "
-        "file_path TEXT, "
-        "trace_source TEXT, "
-        "call_count INTEGER DEFAULT 0, "
-        "p50_latency_ms REAL, "
-        "p99_latency_ms REAL, "
-        "error_rate REAL DEFAULT 0.0, "
-        "last_seen TEXT, "
-        "ingested_at TEXT DEFAULT (datetime('now'))"
-        ")"
-    )
-    # v9.x: vulnerabilities table — CREATE TABLE IF NOT EXISTS in SCHEMA_SQL handles it
-    conn.execute(
-        "CREATE TABLE IF NOT EXISTS vulnerabilities ("
-        "id INTEGER PRIMARY KEY, "
-        "cve_id TEXT, "
-        "package_name TEXT NOT NULL, "
-        "severity TEXT, "
-        "title TEXT, "
-        "source TEXT, "
-        "matched_symbol_id INTEGER REFERENCES symbols(id), "
-        "matched_file TEXT, "
-        "reachable INTEGER DEFAULT 0, "
-        "shortest_path TEXT, "
-        "hop_count INTEGER, "
-        "ingested_at TEXT DEFAULT (datetime('now'))"
-        ")"
-    )
+    # v9.0+: runtime_stats, vulnerabilities, symbol_tfidf, metric_snapshots tables
+    # are all defined in SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) and created above
+    # by conn.executescript(SCHEMA_SQL). No inline duplicates needed here.
+    # v8.1: runtime_stats OTel DB semantic attributes
+    _safe_alter(conn, "runtime_stats", "otel_db_system", "TEXT")
+    _safe_alter(conn, "runtime_stats", "otel_db_operation", "TEXT")
+    _safe_alter(conn, "runtime_stats", "otel_db_statement_type", "TEXT")
+    # v8.6: expanded SNA metric vector + composite debt score
+    _safe_alter(conn, "graph_metrics", "closeness", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "eigenvector", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")
+    _safe_alter(conn, "graph_metrics", "debt_score", "REAL DEFAULT 0")
+
     # v11: drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
     conn.execute("DROP INDEX IF EXISTS idx_edges_kind")
     # TF-IDF semantic search table — recreate with ON DELETE CASCADE if missing
@@ -335,12 +325,35 @@ def db_exists(project_root: Path | None = None) -> bool:
 
 @contextmanager
 def open_db(readonly: bool = False, project_root: Path | None = None):
-    """Context manager for database access. Creates schema if needed."""
+    """Context manager for database access. Creates schema if needed.
+
+    Raises a descriptive ``click.ClickException`` if the database file is
+    missing or corrupted so that agents receive actionable remediation steps
+    instead of a raw SQLite traceback.
+    """
+    import click
+
     db_path = get_db_path(project_root)
-    conn = get_connection(db_path, readonly=readonly)
+    try:
+        conn = get_connection(db_path, readonly=readonly)
+    except sqlite3.DatabaseError as exc:
+        raise click.ClickException(
+            f"Database error: {exc}\n"
+            "  The roam index may be corrupted. Run `roam init --force` to rebuild it\n"
+            "  from scratch, or delete .roam/index.db and run `roam init`."
+        ) from exc
     try:
         if not readonly:
-            ensure_schema(conn)
+            try:
+                ensure_schema(conn)
+            except sqlite3.DatabaseError as exc:
+                conn.close()
+                raise click.ClickException(
+                    f"Database schema error: {exc}\n"
+                    "  The roam index may be corrupted or from an incompatible version.\n"
+                    "  Run `roam init --force` to rebuild it, or delete .roam/index.db\n"
+                    "  and run `roam init`."
+                ) from exc
         yield conn
         if not readonly:
             conn.commit()

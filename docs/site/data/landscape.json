@@ -1,0 +1,4529 @@
+{
+  "tracker_updated": "24 February 2026 (Round 6 \u2014 deep competitive gap analysis + fresh web verification)",
+  "tracker_updated_iso": "2026-02-24",
+  "tracker_file": "reports/competitor_tracker.md",
+  "competitors": [
+    {
+      "name": "roam-code",
+      "category": "mcp_server",
+      "category_label": "CLI Tool",
+      "stars": "286",
+      "mcp": "101",
+      "local": true,
+      "cli_commands": "136 canonical (+1 alias)",
+      "graph": "PageRank + Tarjan + Louvain + layers",
+      "arch": 85,
+      "agent": 92,
+      "scores": {
+        "total": 84,
+        "max_total": 100,
+        "map_x": 92,
+        "map_y": 85,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 14,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "cross_file",
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "graph",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "reference",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "intra",
+                "points": 1,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 26,
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 10,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 10,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 16,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 101,
+                "points": 6,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 136,
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 13,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "remediation",
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 602,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 14,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "full",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 200,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 2,
+                "points": 2,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 7,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Graph-first code intelligence CLI + MCP server",
+      "relationship": "self",
+      "peer": true,
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 99 MCP tools, 134 CLI commands.",
+      "confidence": "High",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "measured",
+      "version_evaluated": "11.0.0",
+      "repo_url": "https://github.com/Cranot/roam-code"
+    },
+    {
+      "name": "SonarQube",
+      "category": "sast",
+      "category_label": "Code Quality",
+      "stars": "~10.2k",
+      "mcp": "34+",
+      "local": false,
+      "cli_commands": "1",
+      "graph": "CFG/DFG",
+      "arch": 50,
+      "agent": 63,
+      "scores": {
+        "total": 63,
+        "max_total": 100,
+        "map_x": 63,
+        "map_y": 50,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 20,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "dataflow",
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "taint",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "dataflow",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "full",
+                "points": 4,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 30,
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 9,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 34,
+                "points": 6,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 5,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 15,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "remediation",
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 6500,
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 15,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "partial",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 10200,
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 2,
+                "points": 2,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 4,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Enterprise code quality and security platform",
+      "relationship": "adjacent_competitor",
+      "peer": true,
+      "note": "6,500+ rules with CFG/DFG and taint tracking across 30 languages. Server-based deployment (Docker/cloud).",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "mixed",
+      "stars_note": "~10.2k stars is the main SonarQube product; the MCP server extension has ~389 stars.",
+      "version_evaluated": "26.2.0",
+      "repo_url": "https://github.com/SonarSource/sonarqube"
+    },
+    {
+      "name": "CodeQL",
+      "category": "sast",
+      "category_label": "SAST",
+      "stars": "~9k",
+      "mcp": "4 (community)",
+      "local": true,
+      "cli_commands": "78",
+      "graph": "CFG/DFG",
+      "arch": 42,
+      "agent": 38,
+      "scores": {
+        "total": 49,
+        "max_total": 100,
+        "map_x": 38,
+        "map_y": 42,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 17,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "dataflow",
+                "points": 3,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "taint",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "dataflow",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "full",
+                "points": 4,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 12,
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 3,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 0,
+                "points": 0,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 10,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 13,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "semantic",
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 3000,
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 16,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "partial",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 8000,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 2,
+                "points": 2,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Dataflow and taint analysis engine",
+      "relationship": "adjacent_competitor",
+      "peer": true,
+      "note": "Full dataflow and taint tracking with a custom query language (QL). GitHub-owned. Security-focused.",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "mixed",
+      "version_evaluated": "2.24.2",
+      "repo_url": "https://github.com/github/codeql"
+    },
+    {
+      "name": "CodeScene",
+      "category": "code_search",
+      "category_label": "Code Intel",
+      "stars": "18",
+      "mcp": "14",
+      "local": false,
+      "cli_commands": "N/A",
+      "graph": "Behavioral analytics",
+      "arch": 40,
+      "agent": 42,
+      "scores": {
+        "total": 33,
+        "max_total": 100,
+        "map_x": 42,
+        "map_y": 40,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 8,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "none",
+                "points": 0,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 15,
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 8,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 7,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 11,
+                "points": 4,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 5,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 3,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 50,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 7,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 500,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 1,
+                "points": 1,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Behavioral code analysis platform",
+      "relationship": "adjacent_competitor",
+      "peer": false,
+      "note": "Git-based behavioral analysis: temporal coupling, team dynamics, code health trends. 15 languages.",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "mixed",
+      "version_evaluated": "7.3",
+      "repo_url": "https://codescene.com"
+    },
+    {
+      "name": "CKB/CodeMCP",
+      "category": "mcp_server",
+      "category_label": "MCP Server",
+      "stars": "59",
+      "mcp": "76/80+ vs 90+/92 (core 14)",
+      "local": true,
+      "cli_commands": "N/A",
+      "graph": "SCIP symbol graph",
+      "arch": 22,
+      "agent": 71,
+      "scores": {
+        "total": 35,
+        "max_total": 100,
+        "map_x": 71,
+        "map_y": 22,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 9,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "cross_file",
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "reference",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "none",
+                "points": 0,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 12,
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 13,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 76,
+                "points": 6,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 1,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "regex",
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 9,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "full",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 400,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 1,
+                "points": 1,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 3,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "SCIP-based semantic code intelligence",
+      "relationship": "direct_competitor",
+      "peer": true,
+      "note": "SCIP-based semantic indexing with compound and batch MCP operations. Precise symbol resolution across 12+ languages.",
+      "confidence": "High",
+      "source_count": 4,
+      "last_verified": "2026-02-24",
+      "claim_type": "mixed",
+      "mcp_note": "MCP count varies across sources (76-92 reported); core unique tools ~14.",
+      "version_evaluated": "v8.1.0",
+      "repo_url": "https://github.com/AbanteAI/codeMCP"
+    },
+    {
+      "name": "CodeGraphMCPServer",
+      "category": "mcp_server",
+      "category_label": "mcp_server",
+      "stars": "200",
+      "mcp": "14",
+      "local": true,
+      "cli_commands": "0",
+      "graph": "NetworkX (Louvain)",
+      "arch": 22,
+      "agent": 40,
+      "scores": {
+        "total": 25,
+        "max_total": 100,
+        "map_x": 40,
+        "map_y": 22,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 7,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "basic",
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "none",
+                "points": 0,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 12,
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 2,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 6,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 14,
+                "points": 4,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 0,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 9,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "full",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 200,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 1,
+                "points": 1,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 1,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Graph-based code intelligence MCP server",
+      "relationship": "direct_competitor",
+      "peer": true,
+      "note": "Tree-sitter AST parsing + NetworkX graph analysis. 14 MCP tools. Local, open source.",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "estimated",
+      "version_evaluated": "v0.7.3",
+      "repo_url": "https://github.com/nahisaho/CodeGraphMCPServer"
+    },
+    {
+      "name": "Sourcegraph/Amp",
+      "category": "code_search",
+      "category_label": "Code Search",
+      "stars": "N/A (closed)",
+      "mcp": "Server",
+      "local": false,
+      "cli_commands": "N/A",
+      "graph": "SCIP code graph (cloud)",
+      "arch": 20,
+      "agent": 30,
+      "scores": {
+        "total": 27,
+        "max_total": 100,
+        "map_x": 30,
+        "map_y": 20,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 8,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "basic",
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "none",
+                "points": 0,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 20,
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 3,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 0,
+                "points": 0,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 10,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 0,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 11,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "partial",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 10000,
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 2,
+                "points": 2,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 5,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "SCIP code search platform",
+      "relationship": "adjacent_competitor",
+      "peer": false,
+      "note": "Invented SCIP indexing protocol. Code search + cross-repo navigation. Amp agent spun off Dec 2025.",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "estimated",
+      "version_evaluated": "6.12",
+      "repo_url": "https://sourcegraph.com/amp"
+    },
+    {
+      "name": "Semgrep",
+      "category": "sast",
+      "category_label": "SAST",
+      "stars": "~13k",
+      "mcp": "Server (beta)",
+      "local": true,
+      "cli_commands": "N/A",
+      "graph": "Pattern matching",
+      "arch": 18,
+      "agent": 49,
+      "scores": {
+        "total": 45,
+        "max_total": 100,
+        "map_x": 49,
+        "map_y": 18,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 7,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "inter",
+                "points": 3,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 30,
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 5,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 3,
+                "points": 2,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 10,
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 13,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "semantic",
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 3500,
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 17,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "partial",
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 11000,
+                "points": 2,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 2,
+                "points": 2,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 3,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Lightweight pattern matching engine",
+      "relationship": "adjacent_competitor",
+      "peer": false,
+      "note": "Fast AST-based pattern matching with a community rules marketplace. 3,500+ rules across 30 languages.",
+      "confidence": "High",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "estimated",
+      "version_evaluated": "v1.152.0",
+      "repo_url": "https://github.com/semgrep/semgrep"
+    },
+    {
+      "name": "CodePrism",
+      "category": "mcp_server",
+      "category_label": "mcp_server",
+      "stars": "200",
+      "mcp": "20",
+      "local": true,
+      "cli_commands": "0",
+      "graph": "Graph-based analysis engine",
+      "arch": 18,
+      "agent": 40,
+      "scores": {
+        "total": 22,
+        "max_total": 100,
+        "map_x": 40,
+        "map_y": 18,
+        "categories": [
+          {
+            "id": "static_analysis",
+            "label": "Static Analysis Depth",
+            "score": 7,
+            "max": 20,
+            "criteria": [
+              {
+                "id": "ast_parsing",
+                "label": "AST parsing",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "persistent_index",
+                "label": "Persistent index",
+                "value": true,
+                "points": 3,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "call_graph",
+                "label": "Call graph extraction",
+                "value": "basic",
+                "points": 1,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "cognitive_complexity",
+                "label": "Cognitive complexity metrics",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "vuln_reachability",
+                "label": "Vulnerability reachability",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dead_code",
+                "label": "Dead code detection",
+                "value": "none",
+                "points": 0,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "dataflow_taint",
+                "label": "Dataflow/taint analysis",
+                "value": "none",
+                "points": 0,
+                "max": 4,
+                "type": "tiered"
+              },
+              {
+                "id": "languages_supported",
+                "label": "Languages supported",
+                "value": 10,
+                "points": 1,
+                "max": 2,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "graph_intelligence",
+            "label": "Graph Intelligence",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "pagerank_centrality",
+                "label": "PageRank / centrality",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cycle_detection_scc",
+                "label": "Cycle detection (SCC)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "community_detection",
+                "label": "Community detection (Louvain)",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topological_layers",
+                "label": "Topological layers",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "architecture_simulation",
+                "label": "Architecture simulation",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "topology_fingerprint",
+                "label": "Topology fingerprinting",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "git_temporal",
+            "label": "Git & Temporal Analysis",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "git_churn_hotspots",
+                "label": "Git churn / hotspots",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "co_change_coupling",
+                "label": "Co-change coupling",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "blame_ownership",
+                "label": "Blame / ownership",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "entropy_analysis",
+                "label": "Entropy analysis",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "pr_diff_risk",
+                "label": "PR/diff risk scoring",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "agent_integration",
+            "label": "Agent Integration",
+            "score": 6,
+            "max": 16,
+            "criteria": [
+              {
+                "id": "mcp_tools_count",
+                "label": "MCP tools",
+                "value": 20,
+                "points": 4,
+                "max": 6,
+                "type": "tiered"
+              },
+              {
+                "id": "json_structured_output",
+                "label": "JSON structured output",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "token_budget",
+                "label": "Token budget awareness",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "tool_presets",
+                "label": "Tool presets / progressive disclosure",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "cli_commands_count",
+                "label": "CLI commands",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "compound_batch",
+                "label": "Compound/batch operations",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "security_governance",
+            "label": "Security & Governance",
+            "score": 0,
+            "max": 15,
+            "criteria": [
+              {
+                "id": "vuln_scanning",
+                "label": "Vulnerability scanning",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "reachability_from_vulns",
+                "label": "Reachability from vulns",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "secret_detection",
+                "label": "Secret detection",
+                "value": "none",
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "quality_gates",
+                "label": "Quality gates / policy rules",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "rule_count",
+                "label": "Rule count",
+                "value": 0,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              }
+            ]
+          },
+          {
+            "id": "ecosystem",
+            "label": "Ecosystem & Accessibility",
+            "score": 9,
+            "max": 19,
+            "criteria": [
+              {
+                "id": "open_source",
+                "label": "Open source",
+                "value": "full",
+                "points": 2,
+                "max": 2,
+                "type": "tiered"
+              },
+              {
+                "id": "free_tier",
+                "label": "Free tier",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "github_stars",
+                "label": "GitHub stars",
+                "value": 200,
+                "points": 0,
+                "max": 3,
+                "type": "tiered"
+              },
+              {
+                "id": "ci_cd_integration",
+                "label": "CI/CD integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "ide_integration",
+                "label": "IDE integration",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_platform",
+                "label": "Multi-platform",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "documentation_quality",
+                "label": "Documentation quality",
+                "value": 1,
+                "points": 1,
+                "max": 2,
+                "type": "subjective"
+              },
+              {
+                "id": "active_maintenance",
+                "label": "Active maintenance (90 days)",
+                "value": true,
+                "points": 1,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "sarif_output",
+                "label": "SARIF output",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "local_zero_api",
+                "label": "100% local / zero API keys",
+                "value": true,
+                "points": 2,
+                "max": 2,
+                "type": "binary"
+              }
+            ]
+          },
+          {
+            "id": "unique_capabilities",
+            "label": "Unique Capabilities",
+            "score": 0,
+            "max": 10,
+            "criteria": [
+              {
+                "id": "multi_agent_partitioning",
+                "label": "Multi-agent partitioning",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              },
+              {
+                "id": "structural_pattern_matching",
+                "label": "Structural pattern matching",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "semantic_search",
+                "label": "Embedding / semantic search",
+                "value": false,
+                "points": 0,
+                "max": 2,
+                "type": "binary"
+              },
+              {
+                "id": "multi_repo_federation",
+                "label": "Multi-repo federation",
+                "value": false,
+                "points": 0,
+                "max": 3,
+                "type": "binary"
+              },
+              {
+                "id": "daemon_live_watch",
+                "label": "Daemon / live-watch mode",
+                "value": false,
+                "points": 0,
+                "max": 1,
+                "type": "binary"
+              }
+            ]
+          }
+        ],
+        "subjective_count": 1,
+        "total_criteria": 45
+      },
+      "status": "Graph-based MCP server",
+      "relationship": "direct_competitor",
+      "peer": true,
+      "note": "Rust-based code intelligence MCP server. Universal AST, graph analysis, 20 tools. Local, open source.",
+      "confidence": "Medium",
+      "source_count": 1,
+      "last_verified": "2026-02-24",
+      "claim_type": "estimated",
+      "version_evaluated": "v0.4.6",
+      "repo_url": "https://github.com/rustic-ai/codeprism"
+    }
+  ],
+  "methodology": {
+    "scoring_model": [
+      "45 criteria across 7 categories, scored as binary (has/doesn't), count-tiered, or subjective.",
+      "Y-axis (Analysis Depth) = Static Analysis (50%) + Graph Intelligence (25%) + Git Temporal (25%).",
+      "X-axis (Agent Readiness) = Agent Integration (70%) + Ecosystem (30%).",
+      "Security and Unique Capabilities affect total score only, not map position.",
+      "All criteria scored by project maintainers. 44/45 are binary or tiered (count-based or depth-based). 1/45 is subjective (documentation quality).",
+      "Weight sliders let viewers apply their own category priorities."
+    ],
+    "limitations": [
+      "Criteria selection bias: we chose which capabilities to measure, favoring tools with graph algorithms.",
+      "Category weight bias: default weights reflect our perspective. Adjust sliders for yours.",
+      "Assessment bias: we scored all competitors. Errors or missed capabilities are possible.",
+      "Public vendor claims can be stale or inconsistent across pages.",
+      "GitHub star counts may conflate main product repos with MCP extension repos."
+    ],
+    "reproducibility": {
+      "tracker": "reports/competitor_tracker.md",
+      "generator": "src/roam/competitor_site_data.py",
+      "generated_at_reference": "2026-02-24"
+    }
+  },
+  "rubric": [
+    {
+      "id": "static_analysis",
+      "label": "Static Analysis Depth",
+      "max_points": 20,
+      "default_weight": 20,
+      "criteria": [
+        {
+          "id": "ast_parsing",
+          "label": "AST parsing",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "persistent_index",
+          "label": "Persistent index",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "call_graph",
+          "label": "Call graph extraction",
+          "type": "tiered",
+          "max": 3,
+          "tiers": {
+            "none": 0,
+            "basic": 1,
+            "cross_file": 2,
+            "dataflow": 3
+          }
+        },
+        {
+          "id": "cognitive_complexity",
+          "label": "Cognitive complexity metrics",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "vuln_reachability",
+          "label": "Vulnerability reachability",
+          "type": "tiered",
+          "max": 2,
+          "tiers": {
+            "none": 0,
+            "graph": 1,
+            "taint": 2
+          }
+        },
+        {
+          "id": "dead_code",
+          "label": "Dead code detection",
+          "type": "tiered",
+          "max": 2,
+          "tiers": {
+            "none": 0,
+            "reference": 1,
+            "dataflow": 2
+          }
+        },
+        {
+          "id": "dataflow_taint",
+          "label": "Dataflow/taint analysis",
+          "type": "tiered",
+          "max": 4,
+          "tiers": {
+            "none": 0,
+            "intra": 1,
+            "inter": 3,
+            "full": 4
+          }
+        },
+        {
+          "id": "languages_supported",
+          "label": "Languages supported",
+          "type": "tiered",
+          "max": 2,
+          "tiers": [
+            [
+              0,
+              4,
+              0
+            ],
+            [
+              5,
+              15,
+              1
+            ],
+            [
+              16,
+              null,
+              2
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "graph_intelligence",
+      "label": "Graph Intelligence",
+      "max_points": 10,
+      "default_weight": 10,
+      "criteria": [
+        {
+          "id": "pagerank_centrality",
+          "label": "PageRank / centrality",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "cycle_detection_scc",
+          "label": "Cycle detection (SCC)",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "community_detection",
+          "label": "Community detection (Louvain)",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "topological_layers",
+          "label": "Topological layers",
+          "type": "binary",
+          "max": 1
+        },
+        {
+          "id": "architecture_simulation",
+          "label": "Architecture simulation",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "topology_fingerprint",
+          "label": "Topology fingerprinting",
+          "type": "binary",
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "git_temporal",
+      "label": "Git & Temporal Analysis",
+      "max_points": 10,
+      "default_weight": 10,
+      "criteria": [
+        {
+          "id": "git_churn_hotspots",
+          "label": "Git churn / hotspots",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "co_change_coupling",
+          "label": "Co-change coupling",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "blame_ownership",
+          "label": "Blame / ownership",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "entropy_analysis",
+          "label": "Entropy analysis",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "pr_diff_risk",
+          "label": "PR/diff risk scoring",
+          "type": "binary",
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "agent_integration",
+      "label": "Agent Integration",
+      "max_points": 16,
+      "default_weight": 16,
+      "criteria": [
+        {
+          "id": "mcp_tools_count",
+          "label": "MCP tools",
+          "type": "tiered",
+          "max": 6,
+          "tiers": [
+            [
+              0,
+              0,
+              0
+            ],
+            [
+              1,
+              10,
+              2
+            ],
+            [
+              11,
+              30,
+              4
+            ],
+            [
+              31,
+              null,
+              6
+            ]
+          ]
+        },
+        {
+          "id": "json_structured_output",
+          "label": "JSON structured output",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "token_budget",
+          "label": "Token budget awareness",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "tool_presets",
+          "label": "Tool presets / progressive disclosure",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "cli_commands_count",
+          "label": "CLI commands",
+          "type": "tiered",
+          "max": 3,
+          "tiers": [
+            [
+              0,
+              4,
+              0
+            ],
+            [
+              5,
+              20,
+              1
+            ],
+            [
+              21,
+              50,
+              2
+            ],
+            [
+              51,
+              null,
+              3
+            ]
+          ]
+        },
+        {
+          "id": "compound_batch",
+          "label": "Compound/batch operations",
+          "type": "binary",
+          "max": 1
+        }
+      ]
+    },
+    {
+      "id": "security_governance",
+      "label": "Security & Governance",
+      "max_points": 15,
+      "default_weight": 15,
+      "criteria": [
+        {
+          "id": "vuln_scanning",
+          "label": "Vulnerability scanning",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "reachability_from_vulns",
+          "label": "Reachability from vulns",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "secret_detection",
+          "label": "Secret detection",
+          "type": "tiered",
+          "max": 3,
+          "tiers": {
+            "none": 0,
+            "regex": 1,
+            "semantic": 2,
+            "remediation": 3
+          }
+        },
+        {
+          "id": "quality_gates",
+          "label": "Quality gates / policy rules",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "rule_count",
+          "label": "Rule count",
+          "type": "tiered",
+          "max": 3,
+          "tiers": [
+            [
+              0,
+              99,
+              0
+            ],
+            [
+              100,
+              999,
+              1
+            ],
+            [
+              1000,
+              4999,
+              2
+            ],
+            [
+              5000,
+              null,
+              3
+            ]
+          ]
+        }
+      ]
+    },
+    {
+      "id": "ecosystem",
+      "label": "Ecosystem & Accessibility",
+      "max_points": 19,
+      "default_weight": 19,
+      "criteria": [
+        {
+          "id": "open_source",
+          "label": "Open source",
+          "type": "tiered",
+          "max": 2,
+          "tiers": {
+            "full": 2,
+            "partial": 1,
+            "none": 0
+          }
+        },
+        {
+          "id": "free_tier",
+          "label": "Free tier",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "github_stars",
+          "label": "GitHub stars",
+          "type": "tiered",
+          "max": 3,
+          "tiers": [
+            [
+              0,
+              999,
+              0
+            ],
+            [
+              1000,
+              9999,
+              1
+            ],
+            [
+              10000,
+              49999,
+              2
+            ],
+            [
+              50000,
+              null,
+              3
+            ]
+          ]
+        },
+        {
+          "id": "ci_cd_integration",
+          "label": "CI/CD integration",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "ide_integration",
+          "label": "IDE integration",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "multi_platform",
+          "label": "Multi-platform",
+          "type": "binary",
+          "max": 1
+        },
+        {
+          "id": "documentation_quality",
+          "label": "Documentation quality",
+          "type": "subjective",
+          "max": 2
+        },
+        {
+          "id": "active_maintenance",
+          "label": "Active maintenance (90 days)",
+          "type": "binary",
+          "max": 1
+        },
+        {
+          "id": "sarif_output",
+          "label": "SARIF output",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "local_zero_api",
+          "label": "100% local / zero API keys",
+          "type": "binary",
+          "max": 2
+        }
+      ]
+    },
+    {
+      "id": "unique_capabilities",
+      "label": "Unique Capabilities",
+      "max_points": 10,
+      "default_weight": 10,
+      "criteria": [
+        {
+          "id": "multi_agent_partitioning",
+          "label": "Multi-agent partitioning",
+          "type": "binary",
+          "max": 1
+        },
+        {
+          "id": "structural_pattern_matching",
+          "label": "Structural pattern matching",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "semantic_search",
+          "label": "Embedding / semantic search",
+          "type": "binary",
+          "max": 2
+        },
+        {
+          "id": "multi_repo_federation",
+          "label": "Multi-repo federation",
+          "type": "binary",
+          "max": 3
+        },
+        {
+          "id": "daemon_live_watch",
+          "label": "Daemon / live-watch mode",
+          "type": "binary",
+          "max": 1
+        }
+      ]
+    }
+  ]
+}

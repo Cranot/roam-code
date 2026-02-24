@@ -13,7 +13,8 @@ import click
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
+from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
 
 
 def _get_symbol_metrics(conn, sym_id):
@@ -190,14 +191,18 @@ def diagnose(ctx, name, depth):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(f"Symbol not found: {name}")
+            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
 
         sym_id = sym["id"]
         G = build_symbol_graph(conn)
 
         if sym_id not in G:
-            click.echo(f"Symbol not in dependency graph: {name}")
+            click.echo(
+                f"Symbol '{name}' is not in the dependency graph.\n"
+                "  Tip: Run `roam index` to rebuild the graph. If the symbol has no\n"
+                "       callers or callees, it may not appear in the graph."
+            )
             raise SystemExit(1)
 
         target_metrics = _get_symbol_metrics(conn, sym_id)
@@ -279,10 +284,17 @@ def diagnose(ctx, name, depth):
         else:
             verdict = "No upstream/downstream symbols found within depth range."
 
+        _target_name = sym["qualified_name"] or sym["name"]
+        _top_suspect = all_suspects[0]["name"] if all_suspects else ""
+        _next_steps = suggest_next_steps("diagnose", {
+            "symbol": _target_name,
+            "top_suspect": _top_suspect,
+        })
+
         if json_mode:
             click.echo(to_json(json_envelope("diagnose",
                 summary={
-                    "target": sym["qualified_name"] or sym["name"],
+                    "target": _target_name,
                     "verdict": verdict,
                     "upstream_count": len(upstream_ranked),
                     "downstream_count": len(downstream_ranked),
@@ -292,6 +304,7 @@ def diagnose(ctx, name, depth):
                 downstream=downstream_ranked[:15],
                 cochange_partners=cochanges,
                 recent_commits=recent,
+                next_steps=_next_steps,
             )))
             return
 
@@ -339,3 +352,7 @@ def diagnose(ctx, name, depth):
             click.echo(f"\nRecent commits to {target_metrics['file_path']}:\n")
             for c in recent:
                 click.echo(f"  {c['hash']}  {c['author']:<20} {c['message']}")
+
+        _ns_text = format_next_steps_text(_next_steps)
+        if _ns_text:
+            click.echo(_ns_text)

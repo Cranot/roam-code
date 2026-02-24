@@ -8,7 +8,7 @@ import click
 from roam.db.connection import open_db, find_project_root
 from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
 from roam.output.formatter import abbrev_kind, format_signature, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import ensure_index, file_not_found_hint
 
 
 # ---------------------------------------------------------------------------
@@ -242,7 +242,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         if len(unique_paths) == 1:
             frow = _resolve_file(conn, unique_paths[0])
             if frow is None:
-                click.echo(f"File not found in index: {unique_paths[0]}")
+                click.echo(file_not_found_hint(unique_paths[0]))
                 raise SystemExit(1)
 
             frow, symbols, kind_counts, parent_ids = _build_file_skeleton(conn, frow)

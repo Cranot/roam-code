@@ -1,0 +1,10 @@
+name: "Style: kotlin src max file lines 500"
+description: "Kotlin files in src/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "src/**/*.kt"
+  require:
+    max_file_lines: 500

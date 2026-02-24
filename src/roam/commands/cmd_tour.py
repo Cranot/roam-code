@@ -14,6 +14,7 @@ from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers
 from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
+from roam.output.mermaid import sanitize_id, node as mnode, edge as medge, diagram as mdiagram
 from roam.commands.resolve import ensure_index
 
 
@@ -171,11 +172,73 @@ def _patterns(conn):
     }
 
 
+def _tour_mermaid(conn, G, top, order):
+    """Generate a Mermaid top-down diagram for the codebase tour.
+
+    Shows the top symbols as nodes (labeled with name and role) and
+    edges between them derived from the symbol graph.  Returns the
+    diagram as a string.
+    """
+    if not top:
+        return mdiagram("TD", ['    empty["No symbols indexed"]'])
+
+    elements: list[str] = []
+
+    # Collect symbol IDs for the top symbols so we can find edges
+    top_names = {s["name"] for s in top}
+    # Map qualified name -> symbol row for edge lookup
+    top_rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path "
+        "FROM symbols s JOIN files f ON s.file_id = f.id "
+        "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+        "ORDER BY COALESCE(gm.pagerank, 0) DESC "
+        "LIMIT 20"
+    ).fetchall()
+
+    id_to_info: dict[int, dict] = {}
+    for r in top_rows:
+        qname = r["qualified_name"] or r["name"]
+        if qname in top_names or r["name"] in top_names:
+            id_to_info[r["id"]] = {
+                "name": r["name"],
+                "qname": qname,
+                "kind": r["kind"],
+                "path": r["path"].replace("\\", "/"),
+            }
+
+    top_ids = set(id_to_info.keys())
+
+    # Create nodes
+    role_lookup = {s["name"]: s["role"] for s in top}
+    for sid, info in sorted(id_to_info.items()):
+        short_path = info["path"].rsplit("/", 1)[-1] if "/" in info["path"] else info["path"]
+        role = role_lookup.get(info["qname"], role_lookup.get(info["name"], ""))
+        label_parts = [info["name"]]
+        if role:
+            label_parts.append(role)
+        elements.append(mnode(info["name"], " | ".join(label_parts)))
+
+    # Create edges among top symbols
+    seen_edges: set[tuple[str, str]] = set()
+    for src, tgt in G.edges:
+        if src in top_ids and tgt in top_ids:
+            s_name = id_to_info[src]["name"]
+            t_name = id_to_info[tgt]["name"]
+            if s_name != t_name:
+                pair = (s_name, t_name)
+                if pair not in seen_edges:
+                    seen_edges.add(pair)
+                    elements.append(medge(s_name, t_name))
+
+    return mdiagram("TD", elements)
+
+
 @click.command()
 @click.option("--write", "write_file", default=None, type=click.Path(),
               help="Write the tour to a Markdown file instead of stdout")
+@click.option('--mermaid', 'mermaid_mode', is_flag=True, help='Output Mermaid diagram')
 @click.pass_context
-def tour(ctx, write_file):
+def tour(ctx, write_file, mermaid_mode):
     """Generate a codebase onboarding tour.
 
     Produces a structured guide: project overview, top symbols to learn,
@@ -197,6 +260,27 @@ def tour(ctx, write_file):
         top = _top_symbols(conn, G, limit=10)
         order = _reading_order(conn, G)
         entries = _entry_points(conn)
+
+        if mermaid_mode:
+            mermaid_text = _tour_mermaid(conn, G, top, order)
+            if json_mode:
+                click.echo(to_json(json_envelope("tour",
+                    summary={
+                        "files": stats["files"],
+                        "symbols": stats["symbols"],
+                        "languages": len(langs),
+                        "top_symbols": len(top),
+                    },
+                    languages=langs,
+                    statistics=stats,
+                    top_symbols=top,
+                    reading_order=order,
+                    entry_points=entries,
+                    mermaid=mermaid_text,
+                )))
+            else:
+                click.echo(mermaid_text)
+            return
 
         if json_mode:
             click.echo(to_json(json_envelope("tour",

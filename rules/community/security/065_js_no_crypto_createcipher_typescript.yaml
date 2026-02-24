@@ -1,0 +1,10 @@
+name: "Security: js no crypto createcipher (typescript)"
+description: "Disallow deprecated createCipher API."
+severity: warning
+type: ast_match
+
+match:
+  ast: "crypto.createCipher($ALG, $KEY)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

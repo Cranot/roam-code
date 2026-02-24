@@ -7,22 +7,37 @@ and change-risk through a standard tool interface.
 Usage:
     roam mcp                    # stdio (for Claude Code, Cursor, etc.)
     roam mcp --transport sse    # SSE on localhost:8000
+    roam mcp --transport streamable-http  # Streamable HTTP on localhost:8000
 """
 
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 import click
 from click.testing import CliRunner as _CliRunner
 
 try:
+    from fastmcp import Context as _Context
     from fastmcp import FastMCP
 except ImportError:
+    _Context = None
     FastMCP = None
+
+try:
+    from mcp.types import ToolAnnotations as _ToolAnnotations
+except ImportError:
+    _ToolAnnotations = None
+
+try:
+    from fastmcp.server.tasks.config import TaskConfig as _TaskConfig
+except Exception:
+    _TaskConfig = None
 
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
@@ -34,10 +49,13 @@ except ImportError:
 _CORE_TOOLS = {
     # compound operations (4) — each replaces 2-4 individual calls
     "roam_explore", "roam_prepare_change", "roam_review_change", "roam_diagnose_issue",
+    # batch operations (2) — replace 10-50 sequential calls with one
+    "roam_batch_search", "roam_batch_get",
     # comprehension (5)
     "roam_understand", "roam_search_symbol", "roam_context", "roam_file_info", "roam_deps",
-    # daily workflow (6)
+    # daily workflow (7)
     "roam_preflight", "roam_diff", "roam_pr_risk", "roam_affected_tests", "roam_impact", "roam_uses",
+    "roam_syntax_check",
     # code quality (5)
     "roam_health", "roam_dead_code", "roam_complexity_report", "roam_diagnose", "roam_trace",
 }
@@ -48,10 +66,11 @@ _PRESETS: dict[str, set[str]] = {
         "roam_breaking_changes", "roam_pr_diff", "roam_effects",
         "roam_adversarial_review", "roam_budget_check", "roam_attest",
         "roam_rules_check", "roam_weather", "roam_debt", "roam_symbol",
-        "roam_algo",
+        "roam_algo", "roam_secrets", "roam_docs_coverage",
     },
     "refactor": _CORE_TOOLS | {
         "roam_simulate", "roam_closure", "roam_mutate", "roam_generate_plan",
+        "roam_suggest_refactoring", "roam_plan_refactor",
         "roam_get_invariants", "roam_cut_analysis", "roam_fingerprint",
         "roam_relate", "roam_symbol", "roam_visualize",
     },
@@ -65,7 +84,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_visualize", "roam_tour", "roam_dark_matter", "roam_repo_map",
         "roam_simulate", "roam_fingerprint", "roam_orchestrate",
         "roam_capsule_export", "roam_cut_analysis", "roam_forecast",
-        "roam_algo", "roam_symbol", "roam_relate",
+        "roam_algo", "roam_symbol", "roam_relate", "roam_agent_export",
     },
     "full": set(),  # empty = all tools exposed
 }
@@ -103,7 +122,7 @@ if FastMCP is not None:
             "Pre-indexes symbols, call graphs, dependencies, architecture, "
             "and git history into a local SQLite DB. "
             "One tool call replaces 5-10 Glob/Grep/Read calls. "
-            "All tools are read-only and safe to call freely."
+            "Most tools are read-only; side-effect tools are explicitly marked."
         ),
     )
 else:
@@ -111,6 +130,180 @@ else:
 
 
 _REGISTERED_TOOLS: list[str] = []
+
+# Tools with side effects or non-idempotent behavior.
+_NON_READ_ONLY_TOOLS = {
+    "roam_annotate_symbol",
+    "roam_ingest_trace",
+    "roam_vuln_map",
+    "roam_mutate",
+    "roam_init",
+    "roam_reindex",
+}
+_DESTRUCTIVE_TOOLS = {"roam_mutate"}
+_NON_IDEMPOTENT_TOOLS = _NON_READ_ONLY_TOOLS.copy()
+
+# Tools where task execution must be used (non-blocking by default).
+_TASK_REQUIRED_TOOLS = {
+    "roam_init",
+    "roam_reindex",
+}
+
+# Long-running tools where task support is useful when FastMCP task extras exist.
+_TASK_OPTIONAL_TOOLS = {
+    "roam_orchestrate",
+    "roam_mutate",
+    "roam_vuln_map",
+    "roam_ingest_trace",
+    "roam_bisect_blame",
+    "roam_forecast",
+    "roam_path_coverage",
+    "roam_search_semantic",
+    "roam_simulate",
+    "roam_closure",
+    "roam_cut_analysis",
+    "roam_generate_plan",
+    "roam_adversarial_review",
+}
+
+
+# ---------------------------------------------------------------------------
+# Client compatibility matrix (conformance profile baseline)
+# ---------------------------------------------------------------------------
+
+_KNOWN_INSTRUCTION_FILES = (
+    "AGENTS.md",
+    "CLAUDE.md",
+    "CODEX.md",
+    "GEMINI.md",
+    ".github/copilot-instructions.md",
+    ".cursorrules",
+    ".cursor/rules/roam.mdc",
+)
+
+_CLIENT_COMPAT_PROFILES: dict[str, dict] = {
+    "claude": {
+        "display_name": "Claude Code",
+        "instruction_precedence": ["CLAUDE.md", "AGENTS.md", "GEMINI.md", "CODEX.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "supported",
+            "prompts": "supported",
+        },
+        "remote_auth": "oauth2.1-compatible",
+        "constraints": [],
+    },
+    "codex": {
+        "display_name": "OpenAI Codex",
+        "instruction_precedence": ["AGENTS.md", "CODEX.md", "CLAUDE.md", "GEMINI.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "unknown",
+            "prompts": "unknown",
+        },
+        "remote_auth": "client-dependent",
+        "constraints": [],
+    },
+    "gemini": {
+        "display_name": "Gemini CLI",
+        "instruction_precedence": ["GEMINI.md", "AGENTS.md", "CLAUDE.md", "CODEX.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "unknown",
+            "prompts": "unknown",
+        },
+        "remote_auth": "client-dependent",
+        "constraints": ["config-schema-strictness"],
+    },
+    "copilot": {
+        "display_name": "GitHub Copilot Coding Agent",
+        "instruction_precedence": [".github/copilot-instructions.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "unsupported",
+            "prompts": "unsupported",
+        },
+        "remote_auth": "limited",
+        "constraints": ["tools-only"],
+    },
+    "vscode": {
+        "display_name": "VS Code Agent Mode",
+        "instruction_precedence": ["AGENTS.md", "CLAUDE.md", "GEMINI.md", "CODEX.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "client-dependent",
+            "prompts": "client-dependent",
+        },
+        "remote_auth": "client-dependent",
+        "constraints": [],
+    },
+    "cursor": {
+        "display_name": "Cursor",
+        "instruction_precedence": [".cursor/rules/roam.mdc", ".cursorrules", "AGENTS.md", "CLAUDE.md"],
+        "mcp_capabilities": {
+            "tools": "supported",
+            "resources": "unknown",
+            "prompts": "unknown",
+        },
+        "remote_auth": "client-dependent",
+        "constraints": [],
+    },
+}
+
+
+def _detect_instruction_files(root: str = ".") -> list[str]:
+    """Detect known agent instruction/config files in the project root."""
+    base = Path(root)
+    found: list[str] = []
+    for rel in _KNOWN_INSTRUCTION_FILES:
+        if (base / rel).exists():
+            found.append(rel)
+    return found
+
+
+def _select_instruction_file(precedence: list[str], existing: list[str]) -> str:
+    """Pick the highest-precedence existing instruction file, else AGENTS.md."""
+    for rel in precedence:
+        if rel in existing:
+            return rel
+    return "AGENTS.md"
+
+
+def _compat_profile_payload(profile: str, root: str = ".") -> dict:
+    """Build MCP client compatibility payload for one profile or all profiles."""
+    existing = _detect_instruction_files(root)
+
+    def _build(name: str, data: dict) -> dict:
+        selected = _select_instruction_file(data["instruction_precedence"], existing)
+        return {
+            "id": name,
+            "display_name": data["display_name"],
+            "instruction_precedence": data["instruction_precedence"],
+            "selected_instruction_file": selected,
+            "preferred_instruction_missing": selected not in existing,
+            "mcp_capabilities": data["mcp_capabilities"],
+            "remote_auth": data["remote_auth"],
+            "constraints": data["constraints"],
+        }
+
+    if profile == "all":
+        profiles = {name: _build(name, data) for name, data in _CLIENT_COMPAT_PROFILES.items()}
+        return {
+            "server": "roam-code",
+            "compat_version": "2026-02-22",
+            "detected_instruction_files": existing,
+            "profiles": profiles,
+        }
+
+    data = _CLIENT_COMPAT_PROFILES[profile]
+    payload = _build(profile, data)
+    payload.update({
+        "server": "roam-code",
+        "compat_version": "2026-02-22",
+        "detected_instruction_files": existing,
+        "profile": profile,
+    })
+    return payload
 
 
 # ---------------------------------------------------------------------------
@@ -248,9 +441,101 @@ _SCHEMA_TRACE = _make_schema(
     path={"type": "array"},
 )
 
+_SCHEMA_BATCH_SEARCH = _make_schema(
+    {"queries_executed": {"type": "integer"}, "total_matches": {"type": "integer"}},
+    results={
+        "type": "object",
+        "description": "Map of query -> list of matching symbols",
+        "additionalProperties": {
+            "type": "array",
+            "items": {"type": "object", "properties": {
+                "name": {"type": "string"}, "kind": {"type": "string"},
+                "file_path": {"type": "string"}, "line_start": {"type": "integer"},
+                "pagerank": {"type": "number"},
+            }},
+        },
+    },
+    errors={
+        "type": "object",
+        "description": "Map of query -> error message (only present if some queries failed)",
+        "additionalProperties": {"type": "string"},
+    },
+)
+
+_SCHEMA_BATCH_GET = _make_schema(
+    {"symbols_resolved": {"type": "integer"}, "symbols_requested": {"type": "integer"}},
+    results={
+        "type": "object",
+        "description": "Map of symbol name -> symbol details dict",
+        "additionalProperties": {"type": "object"},
+    },
+    errors={
+        "type": "object",
+        "description": "Map of symbol name -> error message for unresolved symbols",
+        "additionalProperties": {"type": "string"},
+    },
+)
+
+_SCHEMA_INIT = _make_schema(
+    {
+        "had_index": {"type": "boolean"},
+        "created_count": {"type": "integer"},
+        "skipped_count": {"type": "integer"},
+    },
+    created={"type": "array", "items": {"type": "string"}},
+    skipped={"type": "array", "items": {"type": "string"}},
+    had_index={"type": "boolean"},
+    health={"type": "object"},
+)
+
+_SCHEMA_REINDEX = _make_schema(
+    {
+        "files": {"type": "integer"},
+        "symbols": {"type": "integer"},
+        "edges": {"type": "integer"},
+        "cancelled": {"type": "boolean"},
+    },
+    files={"type": "integer"},
+    symbols={"type": "integer"},
+    edges={"type": "integer"},
+    elapsed_s={"type": "number"},
+    cancelled={"type": "boolean"},
+    force={"type": "boolean"},
+)
+
+
+def _tool_title(name: str) -> str:
+    """Convert roam tool name to a human title."""
+    short = name.removeprefix("roam_").replace("_", " ")
+    return short.title()
+
+
+def _tool_annotations(name: str) -> dict:
+    """Build MCP tool annotations with capability hints."""
+    read_only = name not in _NON_READ_ONLY_TOOLS
+    annotations = {
+        "title": _tool_title(name),
+        "readOnlyHint": read_only,
+        "destructiveHint": name in _DESTRUCTIVE_TOOLS,
+        "idempotentHint": name not in _NON_IDEMPOTENT_TOOLS,
+        "openWorldHint": False,
+    }
+    # Non-core tools are lazily discoverable in clients that support this extension.
+    if name not in _CORE_TOOLS and name != _META_TOOL:
+        annotations["deferLoading"] = True
+    return annotations
+
 
 def _tool(name: str, description: str = "", output_schema: dict | None = None):
-    """Register an MCP tool if it belongs to the active preset."""
+    """Register an MCP tool if it belongs to the active preset.
+
+    Automatically sets ``deferLoading`` in MCP tool annotations:
+    - Core tools and the meta-tool: ``deferLoading`` is absent (always loaded)
+    - All other tools: ``deferLoading=True`` (loaded on-demand via Tool Search)
+
+    This enables Claude Code's Tool Search feature to achieve ~85% context
+    reduction by only loading non-core tool descriptions when needed.
+    """
     def decorator(fn):
         if mcp is None:
             return fn
@@ -259,17 +544,54 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
             if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
                 return fn
         _REGISTERED_TOOLS.append(name)
-        kwargs: dict = {"name": name}
+        kwargs: dict = {"name": name, "title": _tool_title(name)}
         if description:
             kwargs["description"] = description
         schema = output_schema if output_schema is not None else _ENVELOPE_SCHEMA
         kwargs["output_schema"] = schema
-        try:
-            return mcp.tool(**kwargs)(fn)
-        except TypeError:
-            # FastMCP version doesn't support output_schema — retry without it
-            kwargs.pop("output_schema", None)
-            return mcp.tool(**kwargs)(fn)
+        kwargs["annotations"] = _tool_annotations(name)
+
+        task_mode: str | None = None
+        if name in _TASK_REQUIRED_TOOLS:
+            task_mode = "required"
+        elif name in _TASK_OPTIONAL_TOOLS:
+            task_mode = "optional"
+        if task_mode:
+            # Metadata fallback for clients even when FastMCP task extras are absent.
+            kwargs["meta"] = {"taskSupport": task_mode}
+            if _TaskConfig is not None:
+                kwargs["task"] = _TaskConfig(mode=task_mode)
+
+        # Register with compatibility fallbacks:
+        # 1) Full feature set
+        # 2) Drop task support when tasks extras aren't installed
+        # 3) Legacy FastMCP without output_schema/annotations/title/meta/task
+        attempts = [dict(kwargs)]
+        if "task" in kwargs:
+            no_task = dict(kwargs)
+            no_task.pop("task", None)
+            attempts.append(no_task)
+        legacy = dict(kwargs)
+        for key in ("output_schema", "annotations", "title", "meta", "task"):
+            legacy.pop(key, None)
+        attempts.append(legacy)
+
+        last_error: Exception | None = None
+        seen: set[tuple[str, ...]] = set()
+        for attempt in attempts:
+            signature = tuple(sorted(attempt.keys()))
+            if signature in seen:
+                continue
+            seen.add(signature)
+            try:
+                return mcp.tool(**attempt)(fn)
+            except (TypeError, ImportError) as exc:
+                last_error = exc
+                continue
+
+        if last_error is not None:
+            raise last_error
+        return fn
     return decorator
 
 
@@ -295,15 +617,50 @@ _ERROR_PATTERNS: list[tuple[str, str, str]] = [
 ]
 
 
-def _classify_error(stderr: str, exit_code: int) -> tuple[str, str]:
-    """Classify error and return (error_code, hint)."""
+_RETRYABLE_CODES = {"DB_LOCKED", "INDEX_STALE"}
+
+
+def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
+    """Classify error and return (error_code, hint, retryable).
+
+    Checks standardized exit codes first (more reliable than text matching),
+    then falls back to text pattern matching for legacy/subprocess output.
+    The *retryable* flag indicates whether the agent should retry the call
+    (True for DB_LOCKED, INDEX_STALE; False for everything else).
+    """
+    from roam.exit_codes import (
+        EXIT_USAGE, EXIT_INDEX_MISSING, EXIT_INDEX_STALE,
+        EXIT_GATE_FAILURE, EXIT_PARTIAL,
+    )
+    # Standardized exit code mapping (takes priority)
+    _EXIT_CODE_MAP: dict[int, tuple[str, str]] = {
+        EXIT_USAGE: ("USAGE_ERROR", "invalid arguments or flags. check --help."),
+        EXIT_INDEX_MISSING: ("INDEX_NOT_FOUND", "run `roam init` to create the codebase index."),
+        EXIT_INDEX_STALE: ("INDEX_STALE", "run `roam index` to refresh."),
+        EXIT_GATE_FAILURE: ("GATE_FAILURE", "quality gate check failed."),
+        EXIT_PARTIAL: ("PARTIAL_FAILURE", "command completed with warnings."),
+    }
+    if exit_code in _EXIT_CODE_MAP:
+        code, hint = _EXIT_CODE_MAP[exit_code]
+        return (code, hint, code in _RETRYABLE_CODES)
+
+    # Fall back to text pattern matching
     s = stderr.lower()
     for pattern, code, hint in _ERROR_PATTERNS:
         if pattern in s:
-            return (code, hint)
+            return (code, hint, code in _RETRYABLE_CODES)
     if exit_code != 0:
-        return ("COMMAND_FAILED", "check arguments and try again.")
-    return ("UNKNOWN", "check the error message for details.")
+        return ("COMMAND_FAILED", "check arguments and try again.", False)
+    return ("UNKNOWN", "check the error message for details.", False)
+
+
+def _structured_error(error_dict: dict) -> dict:
+    """Wrap error dict with MCP-compliant structured error fields (#116, #117)."""
+    error_dict["isError"] = True
+    code = error_dict.get("error_code", "UNKNOWN")
+    error_dict["retryable"] = code in _RETRYABLE_CODES
+    error_dict["suggested_action"] = error_dict.get("hint", "check the error message")
+    return error_dict
 
 
 def _ensure_fresh_index(root: str = ".") -> dict | None:
@@ -334,34 +691,55 @@ def _run_roam_inprocess(args: list[str]) -> dict:
     try:
         result = runner.invoke(_cli, cmd_args, catch_exceptions=True)
     except Exception as exc:
-        return {"error": str(exc)}
+        return _structured_error({
+            "error": str(exc),
+            "error_code": "UNKNOWN",
+            "hint": "an unexpected error occurred.",
+        })
 
     output = result.output.strip() if result.output else ""
 
+    # Gate failure (exit code 5) still produces valid JSON output — the
+    # command completed but found issues.  Treat it like success for output
+    # parsing, but annotate the result with gate_failure=True.
+    from roam.exit_codes import EXIT_GATE_FAILURE
+    _success_codes = {0, EXIT_GATE_FAILURE}
+
     # Successful JSON output — look for JSON object in output
-    if result.exit_code == 0 and output:
+    if result.exit_code in _success_codes and output:
         try:
-            return json.loads(output)
+            parsed = json.loads(output)
+            if result.exit_code == EXIT_GATE_FAILURE:
+                parsed["gate_failure"] = True
+                parsed["exit_code"] = EXIT_GATE_FAILURE
+            return parsed
         except json.JSONDecodeError as exc:
-            return {"error": f"Failed to parse JSON output: {exc}"}
+            return _structured_error({
+                "error": f"Failed to parse JSON output: {exc}",
+                "error_code": "COMMAND_FAILED",
+                "hint": "command produced invalid JSON output.",
+            })
 
     # Error path — classify and return structured error
     error_text = output
     if result.exception:
         error_text = error_text or str(result.exception)
 
-    error_code, hint = _classify_error(error_text, result.exit_code)
-    return {
+    error_code, hint, _retryable = _classify_error(error_text, result.exit_code)
+    return _structured_error({
         "error": error_text or "command failed",
         "error_code": error_code,
         "hint": hint,
         "exit_code": result.exit_code,
         "command": "roam --json " + " ".join(args),
-    }
+    })
 
 
 def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command via subprocess (fallback for non-local roots)."""
+    from roam.exit_codes import EXIT_GATE_FAILURE
+    _success_codes = {0, EXIT_GATE_FAILURE}
+
     cmd = ["roam", "--json"] + args
     try:
         result = subprocess.run(
@@ -371,23 +749,116 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
             cwd=root,
             timeout=60,
         )
-        if result.returncode == 0 and result.stdout.strip():
-            return json.loads(result.stdout)
+        if result.returncode in _success_codes and result.stdout.strip():
+            parsed = json.loads(result.stdout)
+            if result.returncode == EXIT_GATE_FAILURE:
+                parsed["gate_failure"] = True
+                parsed["exit_code"] = EXIT_GATE_FAILURE
+            return parsed
         stderr = result.stderr.strip()
-        error_code, hint = _classify_error(stderr, result.returncode)
-        return {
+        error_code, hint, _retryable = _classify_error(stderr, result.returncode)
+        return _structured_error({
             "error": stderr or "command failed",
             "error_code": error_code,
             "hint": hint,
             "exit_code": result.returncode,
             "command": " ".join(cmd),
-        }
+        })
     except subprocess.TimeoutExpired:
-        return {"error": "Command timed out after 60s"}
+        return _structured_error({
+            "error": "Command timed out after 60s",
+            "error_code": "COMMAND_FAILED",
+            "hint": "the command took too long. try a smaller scope or check system load.",
+        })
     except json.JSONDecodeError as exc:
-        return {"error": f"Failed to parse JSON output: {exc}"}
+        return _structured_error({
+            "error": f"Failed to parse JSON output: {exc}",
+            "error_code": "COMMAND_FAILED",
+            "hint": "command produced invalid JSON output.",
+        })
     except Exception as exc:
-        return {"error": str(exc)}
+        return _structured_error({
+            "error": str(exc),
+            "error_code": "UNKNOWN",
+            "hint": "an unexpected error occurred.",
+        })
+
+
+async def _run_roam_async(args: list[str], root: str = ".") -> dict:
+    """Run a roam CLI command in a worker thread from async tool handlers."""
+    return await asyncio.to_thread(_run_roam, args, root)
+
+
+async def _ctx_report_progress(
+    ctx: _Context | None, progress: float, total: float | None = None, message: str | None = None,
+) -> None:
+    """Best-effort MCP progress reporting (safe on clients without support)."""
+    if ctx is None or not hasattr(ctx, "report_progress"):
+        return
+    try:
+        await ctx.report_progress(progress=progress, total=total, message=message)
+    except Exception:
+        pass
+
+
+async def _ctx_info(ctx: _Context | None, message: str) -> None:
+    """Best-effort MCP log message to the client."""
+    if ctx is None or not hasattr(ctx, "info"):
+        return
+    try:
+        await ctx.info(message)
+    except Exception:
+        pass
+
+
+def _coerce_yes_no(value) -> bool | None:
+    """Normalize elicitation payloads into True/False when possible."""
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (int, float)):
+        return bool(value)
+    if isinstance(value, str):
+        norm = value.strip().lower()
+        if norm in {"y", "yes", "true", "1", "continue", "proceed", "confirm"}:
+            return True
+        if norm in {"n", "no", "false", "0", "cancel", "stop", "decline"}:
+            return False
+        return None
+    if isinstance(value, list):
+        for item in value:
+            parsed = _coerce_yes_no(item)
+            if parsed is not None:
+                return parsed
+        return None
+    if isinstance(value, dict):
+        for key in ("value", "confirm", "decision", "answer", "choice"):
+            if key in value:
+                parsed = _coerce_yes_no(value[key])
+                if parsed is not None:
+                    return parsed
+        for item in value.values():
+            parsed = _coerce_yes_no(item)
+            if parsed is not None:
+                return parsed
+    return None
+
+
+async def _confirm_force_reindex(ctx: _Context | None) -> bool | None:
+    """Ask the client to confirm force reindex via MCP elicitation."""
+    if ctx is None or not hasattr(ctx, "elicit"):
+        return None
+    try:
+        response = await ctx.elicit(
+            "Force reindex may take longer and rewrites index metadata. Continue?",
+            ["continue", "cancel"],
+        )
+    except Exception:
+        return None
+
+    if getattr(response, "action", "") != "accept":
+        return False
+    parsed = _coerce_yes_no(getattr(response, "data", None))
+    return parsed if parsed is not None else False
 
 
 # ===================================================================
@@ -436,10 +907,35 @@ def _compound_envelope(
     return result
 
 
+def _apply_budget(data: dict, budget: int) -> dict:
+    """Apply token budget truncation to a compound operation result.
+
+    Delegates to :func:`budget_truncate_json` from the formatter module.
+    """
+    if budget <= 0:
+        return data
+    from roam.output.formatter import budget_truncate_json
+    return budget_truncate_json(data, budget)
+
+
+def _append_context_personalization_args(args: list[str], session_hint: str = "",
+                                         recent_symbols: str = "") -> list[str]:
+    """Append optional context personalization flags to a roam CLI arg list."""
+    if session_hint:
+        args.extend(["--session-hint", session_hint])
+    if recent_symbols:
+        for raw in str(recent_symbols).split(","):
+            sym = raw.strip()
+            if sym:
+                args.extend(["--recent-symbol", sym])
+    return args
+
+
 @_tool(name="roam_explore",
        description="Codebase exploration bundle: understand overview + optional symbol deep-dive in one call.",
        output_schema=_SCHEMA_EXPLORE)
-def explore(symbol: str = "", root: str = ".") -> dict:
+def explore(symbol: str = "", budget: int = 0, session_hint: str = "",
+            recent_symbols: str = "", root: str = ".") -> dict:
     """Full codebase exploration in one call.
 
     WHEN TO USE: Call this FIRST when starting work on a new codebase.
@@ -451,26 +947,43 @@ def explore(symbol: str = "", root: str = ".") -> dict:
     ----------
     symbol:
         Optional symbol to deep-dive into after the overview.
+    budget:
+        Max output tokens (0 = unlimited). Truncates intelligently.
+    session_hint:
+        Optional conversation hint used to personalize context ranking.
+    recent_symbols:
+        Comma-separated recently discussed symbols for rank biasing.
 
     Returns: codebase overview (tech stack, architecture, health) and
     optionally focused context for the given symbol.
     """
-    overview = _run_roam(["understand"], root)
+    budget_args = ["--budget", str(budget)] if budget else []
+    overview = _run_roam(budget_args + ["understand"], root)
 
     if not symbol:
-        return _compound_envelope("explore", [("understand", overview)])
+        result = _compound_envelope("explore", [("understand", overview)])
+        return _apply_budget(result, budget)
 
-    ctx = _run_roam(["context", symbol, "--task", "understand"], root)
-    return _compound_envelope("explore", [
+    ctx_args = budget_args + ["context", symbol, "--task", "understand"]
+    _append_context_personalization_args(
+        ctx_args,
+        session_hint=session_hint,
+        recent_symbols=recent_symbols,
+    )
+    ctx = _run_roam(ctx_args, root)
+    result = _compound_envelope("explore", [
         ("understand", overview),
         ("context", ctx),
     ], target=symbol)
+    return _apply_budget(result, budget)
 
 
 @_tool(name="roam_prepare_change",
        description="Pre-change bundle: preflight + context + effects in one call. Call BEFORE modifying code.",
        output_schema=_SCHEMA_PREPARE_CHANGE)
-def prepare_change(target: str, staged: bool = False, root: str = ".") -> dict:
+def prepare_change(target: str, staged: bool = False, budget: int = 0,
+                   session_hint: str = "", recent_symbols: str = "",
+                   root: str = ".") -> dict:
     """Everything needed before modifying code, in one call.
 
     WHEN TO USE: Call this BEFORE making any non-trivial code change.
@@ -485,11 +998,18 @@ def prepare_change(target: str, staged: bool = False, root: str = ".") -> dict:
         Symbol name or file path to prepare for changing.
     staged:
         If True, check staged (git add-ed) changes instead.
+    budget:
+        Max output tokens (0 = unlimited). Truncates intelligently.
+    session_hint:
+        Optional conversation hint used to personalize context ranking.
+    recent_symbols:
+        Comma-separated recently discussed symbols for rank biasing.
 
     Returns: preflight safety data, context files to read, and side
     effects of the target. Each section includes its own verdict.
     """
-    pf_args = ["preflight"]
+    budget_args = ["--budget", str(budget)] if budget else []
+    pf_args = budget_args + ["preflight"]
     if target:
         pf_args.append(target)
     if staged:
@@ -500,20 +1020,27 @@ def prepare_change(target: str, staged: bool = False, root: str = ".") -> dict:
     ctx_data: dict = {}
     effects_data: dict = {}
     if target:
-        ctx_data = _run_roam(["context", target, "--task", "refactor"], root)
-        effects_data = _run_roam(["effects", target], root)
+        ctx_args = budget_args + ["context", target, "--task", "refactor"]
+        _append_context_personalization_args(
+            ctx_args,
+            session_hint=session_hint,
+            recent_symbols=recent_symbols,
+        )
+        ctx_data = _run_roam(ctx_args, root)
+        effects_data = _run_roam(budget_args + ["effects", target], root)
 
-    return _compound_envelope("prepare-change", [
+    result = _compound_envelope("prepare-change", [
         ("preflight", preflight_data),
         ("context", ctx_data),
         ("effects", effects_data),
     ], target=target)
+    return _apply_budget(result, budget)
 
 
 @_tool(name="roam_review_change",
        description="Change review bundle: pr-risk + breaking changes + structural diff in one call.",
        output_schema=_SCHEMA_REVIEW_CHANGE)
-def review_change(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
+def review_change(staged: bool = False, commit_range: str = "", budget: int = 0, root: str = ".") -> dict:
     """Review pending changes in one call.
 
     WHEN TO USE: Call this before committing or creating a PR.
@@ -527,13 +1054,16 @@ def review_change(staged: bool = False, commit_range: str = "", root: str = ".")
         If True, analyze staged changes only.
     commit_range:
         Git range like ``main..HEAD`` for branch comparison.
+    budget:
+        Max output tokens (0 = unlimited). Truncates intelligently.
 
     Returns: risk score, breaking changes, and structural delta.
     Each section includes its own verdict.
     """
-    risk_args = ["pr-risk"]
-    breaking_args = ["breaking"]
-    diff_args = ["pr-diff"]
+    budget_args = ["--budget", str(budget)] if budget else []
+    risk_args = budget_args + ["pr-risk"]
+    breaking_args = budget_args + ["breaking"]
+    diff_args = budget_args + ["pr-diff"]
 
     if staged:
         risk_args.append("--staged")
@@ -546,17 +1076,18 @@ def review_change(staged: bool = False, commit_range: str = "", root: str = ".")
     breaking_data = _run_roam(breaking_args, root)
     diff_data = _run_roam(diff_args, root)
 
-    return _compound_envelope("review-change", [
+    result = _compound_envelope("review-change", [
         ("pr_risk", risk_data),
         ("breaking_changes", breaking_data),
         ("pr_diff", diff_data),
     ])
+    return _apply_budget(result, budget)
 
 
 @_tool(name="roam_diagnose_issue",
        description="Debug bundle: root cause suspects + side effects in one call.",
        output_schema=_SCHEMA_DIAGNOSE_ISSUE)
-def diagnose_issue(symbol: str, depth: int = 2, root: str = ".") -> dict:
+def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = ".") -> dict:
     """Debug a failing symbol in one call.
 
     WHEN TO USE: Call this when debugging a bug or test failure.
@@ -571,17 +1102,331 @@ def diagnose_issue(symbol: str, depth: int = 2, root: str = ".") -> dict:
         The symbol suspected of being involved in the bug.
     depth:
         How many hops upstream/downstream to analyze (default 2).
+    budget:
+        Max output tokens (0 = unlimited). Truncates intelligently.
 
     Returns: root cause suspects ranked by risk and side effects
     of the target symbol.
     """
-    diag_data = _run_roam(["diagnose", symbol, "--depth", str(depth)], root)
-    effects_data = _run_roam(["effects", symbol], root)
+    budget_args = ["--budget", str(budget)] if budget else []
+    diag_data = _run_roam(budget_args + ["diagnose", symbol, "--depth", str(depth)], root)
+    effects_data = _run_roam(budget_args + ["effects", symbol], root)
 
-    return _compound_envelope("diagnose-issue", [
+    result = _compound_envelope("diagnose-issue", [
         ("diagnose", diag_data),
         ("effects", effects_data),
     ], target=symbol)
+    return _apply_budget(result, budget)
+
+
+# ===================================================================
+# Batch operations — 10x fewer MCP round trips for agents
+# ===================================================================
+
+_MAX_BATCH_QUERIES = 10
+_MAX_BATCH_SYMBOLS = 50
+
+# FTS5 search SQL used by batch_search — same as resolve.fts_suggestions
+_BATCH_FTS_SQL = (
+    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
+    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
+    "FROM symbol_fts sf "
+    "JOIN symbols s ON sf.rowid = s.id "
+    "JOIN files f ON s.file_id = f.id "
+    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+    "WHERE symbol_fts MATCH ? "
+    "ORDER BY rank "
+    "LIMIT ?"
+)
+
+# Fallback LIKE SQL when FTS5 is unavailable or returns nothing
+_BATCH_LIKE_SQL = (
+    "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
+    "s.line_start, COALESCE(gm.pagerank, 0) as pagerank "
+    "FROM symbols s "
+    "JOIN files f ON s.file_id = f.id "
+    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+    "WHERE s.name LIKE ? COLLATE NOCASE "
+    "ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name "
+    "LIMIT ?"
+)
+
+
+def _fts_query_for(q: str) -> str:
+    """Build an FTS5 MATCH expression for a raw search query string."""
+    tokens = q.replace("_", " ").replace(".", " ").split()
+    if tokens:
+        return " OR ".join(f'"{t}"*' for t in tokens)
+    return f'"{q}"*'
+
+
+def _batch_search_one(conn, q: str, limit: int) -> tuple[list, str | None]:
+    """Search for one query in an open DB connection.
+
+    Returns (rows, error_or_None).  Rows are plain dicts.
+    Tries FTS5 first; falls back to LIKE match if FTS5 is unavailable.
+    """
+    rows: list = []
+    try:
+        fts_q = _fts_query_for(q)
+        rows = conn.execute(_BATCH_FTS_SQL, (fts_q, limit)).fetchall()
+    except Exception:
+        rows = []
+
+    if not rows:
+        try:
+            rows = conn.execute(_BATCH_LIKE_SQL, (f"%{q}%", limit)).fetchall()
+        except Exception as exc:
+            return [], str(exc)
+
+    return [
+        {
+            "name": r["name"],
+            "qualified_name": r["qualified_name"] or "",
+            "kind": r["kind"],
+            "file_path": r["file_path"],
+            "line_start": r["line_start"],
+            "pagerank": round(float(r["pagerank"] or 0), 4),
+        }
+        for r in rows
+    ], None
+
+
+def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
+    """Retrieve full details for a single symbol in an open DB connection.
+
+    Returns (details_dict, error_or_None).
+    Uses the same lookup chain as find_symbol(): qualified -> name -> fuzzy.
+    """
+    from roam.commands.resolve import find_symbol
+    from roam.db.queries import CALLERS_OF, CALLEES_OF, METRICS_FOR_SYMBOL
+    from roam.output.formatter import loc
+
+    try:
+        s = find_symbol(conn, sym)
+    except Exception as exc:
+        return None, str(exc)
+
+    if s is None:
+        return None, f"symbol not found: {sym!r}"
+
+    try:
+        metrics = conn.execute(METRICS_FOR_SYMBOL, (s["id"],)).fetchone()
+        callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()
+        callees = conn.execute(CALLEES_OF, (s["id"],)).fetchall()
+    except Exception as exc:
+        return None, f"db error fetching details for {sym!r}: {exc}"
+
+    details: dict = {
+        "name": s["qualified_name"] or s["name"],
+        "kind": s["kind"],
+        "signature": s["signature"] or "",
+        "location": loc(s["file_path"], s["line_start"]),
+        "docstring": s["docstring"] or "",
+    }
+    if metrics:
+        details["pagerank"] = round(float(metrics["pagerank"] or 0), 4)
+        details["in_degree"] = metrics["in_degree"]
+        details["out_degree"] = metrics["out_degree"]
+
+    details["callers"] = [
+        {
+            "name": c["name"],
+            "kind": c["kind"],
+            "edge_kind": c["edge_kind"],
+            "location": loc(c["file_path"], c["edge_line"]),
+        }
+        for c in callers
+    ]
+    details["callees"] = [
+        {
+            "name": c["name"],
+            "kind": c["kind"],
+            "edge_kind": c["edge_kind"],
+            "location": loc(c["file_path"], c["edge_line"]),
+        }
+        for c in callees
+    ]
+    return details, None
+
+
+@_tool(name="roam_batch_search",
+       description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
+       output_schema=_SCHEMA_BATCH_SEARCH)
+def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> dict:
+    """Batch symbol search: run multiple name queries in one MCP call.
+
+    WHEN TO USE: Use this instead of calling roam_search_symbol 3+ times
+    in a row with different queries. Executes all queries over a single
+    DB connection — dramatically fewer round trips for agents doing broad
+    symbol discovery (e.g. finding all auth, user, and request symbols at once).
+
+    Parameters
+    ----------
+    queries:
+        List of name substrings to search for (up to 10). Each entry is
+        treated the same as a single roam_search_symbol query.
+    limit_per_query:
+        Max results per query (default 5, max 50).
+    root:
+        Project root directory (default ".").
+
+    Returns: per-query result lists plus aggregate match count.
+    Partial failures are collected in ``errors``; remaining queries still run.
+    """
+    from roam.commands.resolve import ensure_index
+    from roam.db.connection import open_db
+    from roam.output.formatter import json_envelope, to_json
+
+    ensure_index()
+
+    queries_list: list[str] = [str(q) for q in (queries or [])][:_MAX_BATCH_QUERIES]
+    limit = max(1, min(int(limit_per_query), 50))
+
+    results: dict = {}
+    errors: dict = {}
+
+    if not queries_list:
+        return {
+            "command": "batch-search",
+            "summary": {
+                "verdict": "no queries provided",
+                "queries_executed": 0,
+                "total_matches": 0,
+            },
+            "results": {},
+            "errors": {},
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            for q in queries_list:
+                rows, err = _batch_search_one(conn, q, limit)
+                if err:
+                    errors[q] = err
+                else:
+                    results[q] = rows
+    except Exception as exc:
+        # Index not available or other fatal DB error — return structured error
+        return {
+            "command": "batch-search",
+            "summary": {
+                "verdict": f"batch search failed: {exc}",
+                "queries_executed": 0,
+                "total_matches": 0,
+            },
+            "results": {},
+            "errors": {"_fatal": str(exc)},
+        }
+
+    total_matches = sum(len(v) for v in results.values())
+    verdict = (
+        f"{total_matches} matches across {len(results)} queries"
+        if results
+        else "no matches found"
+    )
+    if errors:
+        verdict += f", {len(errors)} queries failed"
+
+    payload: dict = {
+        "command": "batch-search",
+        "summary": {
+            "verdict": verdict,
+            "queries_executed": len(queries_list),
+            "total_matches": total_matches,
+        },
+        "results": results,
+    }
+    if errors:
+        payload["errors"] = errors
+
+    return payload
+
+
+@_tool(name="roam_batch_get",
+       description="Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls.",
+       output_schema=_SCHEMA_BATCH_GET)
+def batch_get(symbols: list, root: str = ".") -> dict:
+    """Batch symbol detail retrieval: fetch multiple symbol definitions in one MCP call.
+
+    WHEN TO USE: Use this instead of calling a symbol lookup tool 3+ times.
+    Common pattern: after roam_batch_search or roam_search_symbol returns
+    several candidates, call this to get callers/callees/metrics for all of
+    them at once instead of one tool call per symbol.
+
+    Parameters
+    ----------
+    symbols:
+        List of symbol names or qualified names to look up (up to 50).
+        Accepts the same formats as roam_symbol: bare name, qualified name,
+        or ``file.py:SymbolName`` syntax.
+    root:
+        Project root directory (default ".").
+
+    Returns: per-symbol detail dicts with callers, callees, pagerank, and
+    location. Unresolved symbols appear in ``errors``; resolved symbols
+    appear in ``results``.
+    """
+    from roam.commands.resolve import ensure_index
+    from roam.db.connection import open_db
+
+    ensure_index()
+
+    symbols_list: list[str] = [str(s) for s in (symbols or [])][:_MAX_BATCH_SYMBOLS]
+
+    results: dict = {}
+    errors: dict = {}
+
+    if not symbols_list:
+        return {
+            "command": "batch-get",
+            "summary": {
+                "verdict": "no symbols provided",
+                "symbols_requested": 0,
+                "symbols_resolved": 0,
+            },
+            "results": {},
+            "errors": {},
+        }
+
+    try:
+        with open_db(readonly=True) as conn:
+            for sym in symbols_list:
+                details, err = _batch_get_one(conn, sym)
+                if err or details is None:
+                    errors[sym] = err or "not found"
+                else:
+                    results[sym] = details
+    except Exception as exc:
+        return {
+            "command": "batch-get",
+            "summary": {
+                "verdict": f"batch get failed: {exc}",
+                "symbols_requested": len(symbols_list),
+                "symbols_resolved": 0,
+            },
+            "results": {},
+            "errors": {"_fatal": str(exc)},
+        }
+
+    resolved = len(results)
+    verdict = f"{resolved}/{len(symbols_list)} symbols resolved"
+    if errors:
+        verdict += f", {len(errors)} not found"
+
+    payload: dict = {
+        "command": "batch-get",
+        "summary": {
+            "verdict": verdict,
+            "symbols_requested": len(symbols_list),
+            "symbols_resolved": resolved,
+        },
+        "results": results,
+    }
+    if errors:
+        payload["errors"] = errors
+
+    return payload
 
 
 # ===================================================================
@@ -627,6 +1472,80 @@ def expand_toolset(preset: str = "") -> dict:
     }
 
 
+@_tool(name="roam_init",
+       description="Initialize roam and build the first index. Task-mode for non-blocking setup.",
+       output_schema=_SCHEMA_INIT)
+async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = None) -> dict:
+    """Initialize roam for a repo and create the first index.
+
+    WHEN TO USE: first run in a repository without a `.roam/index.db`.
+    This is task-enabled for non-blocking setup in MCP clients.
+    """
+    args = ["init"]
+    if yes:
+        args.append("--yes")
+    if root != ".":
+        args.extend(["--root", root])
+
+    await _ctx_info(ctx, "Starting roam initialization.")
+    await _ctx_report_progress(ctx, 5, total=100, message="initializing")
+    result = await _run_roam_async(args, root)
+    await _ctx_report_progress(ctx, 100, total=100, message="completed")
+    return result
+
+
+@_tool(name="roam_reindex",
+       description="Incremental or force reindex. Task-mode + elicited confirmation for force runs.",
+       output_schema=_SCHEMA_REINDEX)
+async def roam_reindex(
+    force: bool = False,
+    verbose: bool = False,
+    confirm_force: bool = False,
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
+    """Refresh the code index (`roam index`) with async task support.
+
+    WHEN TO USE: after large code changes, generated file churn, or parser upgrades.
+    Use `force=True` for a full rebuild. If `force=True` and `confirm_force=False`,
+    the tool requests user confirmation via MCP elicitation when available.
+    """
+    if force and not confirm_force:
+        approved = await _confirm_force_reindex(ctx)
+        if approved is None:
+            return _structured_error({
+                "error": "force reindex requires confirmation but elicitation is unavailable.",
+                "error_code": "ELICITATION_REQUIRED",
+                "hint": "rerun with confirm_force=true or use a client with elicitation support.",
+                "command": "roam_reindex",
+            })
+        if not approved:
+            return {
+                "command": "index",
+                "summary": {
+                    "verdict": "force reindex cancelled by user",
+                    "cancelled": True,
+                    "force": True,
+                },
+                "cancelled": True,
+                "force": True,
+            }
+
+    args = ["index"]
+    if force:
+        args.append("--force")
+    if verbose:
+        args.append("--verbose")
+
+    await _ctx_info(ctx, "Starting index refresh.")
+    await _ctx_report_progress(ctx, 5, total=100, message="indexing")
+    result = await _run_roam_async(args, root)
+    await _ctx_report_progress(ctx, 100, total=100, message="completed")
+    if force and "error" not in result:
+        result["force"] = True
+    return result
+
+
 @_tool(name="roam_understand",
        description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
        output_schema=_SCHEMA_UNDERSTAND)
@@ -645,6 +1564,24 @@ def understand(root: str = ".") -> dict:
     use `search_symbol` or `context` to drill into specific areas.
     """
     return _run_roam(["understand"], root)
+
+
+@_tool(name="roam_onboard")
+def onboard(detail: str = "normal", root: str = ".") -> dict:
+    """Generate a new-developer onboarding guide for the codebase.
+
+    WHEN TO USE: Call this when onboarding to a codebase and you need
+    a structured learning path. Returns architecture overview, entry
+    points, critical paths, risk areas, reading order, and conventions.
+    More comprehensive than `understand` for onboarding; use `understand`
+    for a quick briefing.
+
+    Args: detail: 'brief', 'normal', or 'full' (default: 'normal').
+    """
+    args = ["onboard"]
+    if detail and detail != "normal":
+        args.extend(["--detail", detail])
+    return _run_roam(args, root)
 
 
 @_tool(name="roam_health",
@@ -723,7 +1660,8 @@ def search_symbol(query: str, root: str = ".") -> dict:
 @_tool(name="roam_context",
        description="Minimal files + line ranges needed to work with a symbol.",
        output_schema=_SCHEMA_CONTEXT)
-def context(symbol: str, task: str = "", root: str = ".") -> dict:
+def context(symbol: str, task: str = "", session_hint: str = "",
+            recent_symbols: str = "", root: str = ".") -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
     WHEN TO USE: Call this when you need to understand or modify a
@@ -740,6 +1678,10 @@ def context(symbol: str, task: str = "", root: str = ".") -> dict:
         Optional hint: "refactor", "debug", "extend", "review", or
         "understand". Tailors output (e.g., adds complexity details
         for refactor, test coverage for debug).
+    session_hint:
+        Optional conversation hint used to personalize files-to-read rank.
+    recent_symbols:
+        Comma-separated recently discussed symbols for rank biasing.
 
     Returns: symbol definition, direct callers and callees, file location
     with line ranges, related tests, graph metrics (PageRank, fan-in/out,
@@ -748,6 +1690,11 @@ def context(symbol: str, task: str = "", root: str = ".") -> dict:
     args = ["context", symbol]
     if task:
         args.extend(["--task", task])
+    _append_context_personalization_args(
+        args,
+        session_hint=session_hint,
+        recent_symbols=recent_symbols,
+    )
     return _run_roam(args, root)
 
 
@@ -848,6 +1795,58 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
+@_tool(name="roam_suggest_reviewers")
+def suggest_reviewers(top: int = 3, exclude: str = "",
+                      changed: bool = True, root: str = ".") -> dict:
+    """Suggest optimal code reviewers for changed files.
+
+    WHEN TO USE: Call this before creating a PR to find the best reviewers.
+    Scores candidates using blame ownership, CODEOWNERS, recency, and
+    expertise breadth across the changed files.
+
+    Parameters
+    ----------
+    top:
+        Number of reviewers to suggest (default 3).
+    exclude:
+        Comma-separated developer names to exclude (e.g. the PR author).
+    changed:
+        Use git diff to detect changed files (default True).
+
+    Returns: ranked reviewers with per-signal scores, file coverage stats.
+    """
+    args = ["suggest-reviewers", "--top", str(top)]
+    if changed:
+        args.append("--changed")
+    if exclude:
+        for name in exclude.split(","):
+            name = name.strip()
+            if name:
+                args.extend(["--exclude", name])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_verify")
+def verify(threshold: int = 70, root: str = ".") -> dict:
+    """Check changed files for naming, import, error-handling, and duplicate issues.
+
+    WHEN TO USE: Call this before committing to check that changed files
+    follow established codebase conventions. Scores 5 categories (naming,
+    imports, error handling, duplicates, syntax) and returns PASS/WARN/FAIL.
+
+    Parameters
+    ----------
+    threshold:
+        Minimum passing score (default 70).
+    root:
+        Working directory (project root).
+
+    Returns: composite score, per-category scores and violations, verdict.
+    """
+    args = ["verify", "--changed", "--threshold", str(threshold)]
+    return _run_roam(args, root)
+
+
 @_tool(name="roam_breaking_changes",
        description="Detect breaking API changes between git refs: removed exports, changed signatures.")
 def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
@@ -867,6 +1866,28 @@ def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
     params_reordered).
     """
     return _run_roam(["breaking", target], root)
+
+
+@_tool(name="roam_api_changes")
+def api_changes(base: str = "HEAD~1", severity: str = "warning", root: str = ".") -> dict:
+    """Detect breaking and non-breaking API changes vs a git ref.
+
+    WHEN TO USE: Before merging or releasing, check for removed symbols,
+    changed signatures, visibility reductions, type changes, and renames.
+    More detailed than breaking_changes with severity filtering.
+
+    Parameters
+    ----------
+    base:
+        Git ref to compare against (default: HEAD~1).
+    severity:
+        Minimum severity: breaking, warning, or info (default: warning).
+
+    Returns: changes list with category, severity, symbol info, and
+    old/new signatures.
+    """
+    args = ["api-changes", "--base", base, "--severity", severity]
+    return _run_roam(args, root)
 
 
 @_tool(name="roam_affected_tests",
@@ -894,6 +1915,37 @@ def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> d
         args.append(target)
     if staged:
         args.append("--staged")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_test_gaps")
+def test_gaps(changed: bool = True, severity: str = "medium",
+              files: str = "", root: str = ".") -> dict:
+    """Find changed symbols missing test coverage, ranked by severity.
+
+    WHEN TO USE: Call this after making changes to see which new or
+    modified symbols have no tests. Returns gaps classified as HIGH
+    (public + high PageRank), MEDIUM (public), or LOW (private), plus
+    stale tests that need updating.
+
+    Parameters
+    ----------
+    changed:
+        If True, analyze files from git diff.
+    severity:
+        Minimum severity: high, medium, or low (default: medium).
+    files:
+        Space-separated file paths to analyze (alternative to changed).
+
+    Returns: gap lists by severity, stale tests, recommendations.
+    """
+    args = ["test-gaps"]
+    if changed:
+        args.append("--changed")
+    if severity and severity != "medium":
+        args.extend(["--severity", severity])
+    if files:
+        args.extend(files.split())
     return _run_roam(args, root)
 
 
@@ -968,6 +2020,154 @@ def dead_code(root: str = ".") -> dict:
     return _run_roam(["dead"], root)
 
 
+@_tool(name="roam_duplicates")
+def duplicates_tool(threshold: float = 0.75, min_lines: int = 5,
+                    scope: str = "", root: str = ".") -> dict:
+    """Detect semantically duplicate functions via structural similarity.
+
+    WHEN TO USE: Call this to find functions with similar structure that
+    could be consolidated. Unlike textual clone detection, this finds
+    functions with the same control flow but different implementations.
+
+    Parameters
+    ----------
+    threshold:
+        Similarity threshold 0.0-1.0 (default 0.75).
+    min_lines:
+        Minimum function size to consider (default 5).
+    scope:
+        Limit analysis to files under this path prefix.
+
+    Returns: duplicate clusters with similarity scores, shared patterns,
+    and refactoring suggestions.
+    """
+    args = ["duplicates", "--threshold", str(threshold),
+            "--min-lines", str(min_lines)]
+    if scope:
+        args.extend(["--scope", scope])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_vibe_check",
+       description="AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns.")
+def vibe_check(threshold: int = 0, root: str = ".") -> dict:
+    """Detect AI code anti-patterns and compute composite AI rot score.
+
+    WHEN TO USE: Call this to audit a codebase for AI-generated code
+    smells: dead exports, empty handlers, stubs, hallucinated imports,
+    copy-paste functions, comment anomalies, error inconsistency, churn.
+
+    Parameters
+    ----------
+    threshold:
+        Fail (exit 5) if score exceeds threshold (0=no gate).
+
+    Returns: 0-100 score with per-pattern breakdown and worst files.
+    """
+    args = ["vibe-check"]
+    if threshold > 0:
+        args.extend(["--threshold", str(threshold)])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_supply_chain",
+       description="Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.")
+def supply_chain_tool(top: int = 5, root: str = ".") -> dict:
+    """Analyze project dependency files for supply-chain risk.
+
+    WHEN TO USE: Call this to audit dependency pin coverage and identify
+    unpinned or loosely-versioned dependencies across requirements.txt,
+    package.json, go.mod, Cargo.toml, Gemfile, pom.xml, and pyproject.toml.
+
+    Parameters
+    ----------
+    top:
+        Number of riskiest dependencies to highlight (default 5).
+
+    Returns: risk score (0-100), pin coverage %, unpinned/range/exact counts,
+    ecosystem breakdown, and top riskiest dependencies.
+    """
+    args = ["supply-chain"]
+    if top != 5:
+        args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_dashboard",
+       description="Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot.")
+def dashboard_tool(root: str = ".") -> dict:
+    """One-call codebase status combining health, hotspots, risks, and AI rot.
+
+    WHEN TO USE: Call this for a quick unified overview instead of running
+    health, hotspot, bus-factor, dead, and vibe-check separately.
+    Returns health score, top hotspots, risk areas, and approximate AI rot.
+    """
+    return _run_roam(["dashboard"], root)
+
+
+@_tool(name="roam_ai_readiness",
+       description="AI readiness score (0-100): how effectively AI agents can work on this codebase.")
+def ai_readiness(threshold: int = 0, root: str = ".") -> dict:
+    """Estimate AI agent effectiveness on this codebase across 7 dimensions.
+
+    WHEN TO USE: Call this to assess whether AI agents will work well
+    on this codebase. Scores naming, coupling, dead code, tests, docs,
+    navigability, and architecture clarity.
+
+    Parameters
+    ----------
+    threshold:
+        Fail (exit 5) if score is below threshold (0=no gate).
+
+    Returns: 0-100 composite score with per-dimension breakdown and recommendations.
+    """
+    args = ["ai-readiness"]
+    if threshold > 0:
+        args.extend(["--threshold", str(threshold)])
+    return _run_roam(args, root)
+
+
+
+
+@_tool(name="roam_check_rules",
+       description="Run 10 built-in structural rules: cycles, fan-out, complexity, tests, god classes, layer violations.")
+def check_rules(
+    rule: str = "",
+    severity: str = "",
+    config: str = "",
+    root: str = ".",
+) -> dict:
+    """Run built-in structural governance rules against the codebase.
+
+    WHEN TO USE: Call this for governance checks including circular imports,
+    excessive coupling, missing tests, oversized classes, and layer violations.
+    Use rule to run a single check. Use severity to filter results.
+
+    Built-in rule IDs:
+      no-circular-imports, max-fan-out, max-fan-in, max-file-complexity,
+      max-file-length, test-file-exists, no-god-classes,
+      no-deep-inheritance, layer-violation, no-orphan-symbols
+
+    Parameters
+    ----------
+    rule:
+        Run only this rule ID.
+    severity:
+        Filter to this severity (error/warning/info).
+    config:
+        Path to .roam-rules.yml override file.
+
+    Returns: per-rule pass/fail with violation details. FAIL = exit 1.
+    """
+    args = ["check-rules"]
+    if rule:
+        args.extend(["--rule", rule])
+    if severity:
+        args.extend(["--severity", severity])
+    if config:
+        args.extend(["--config", config])
+    return _run_roam(args, root)
+
 @_tool(name="roam_complexity_report",
        description="Functions ranked by cognitive complexity above threshold.")
 def complexity_report(threshold: int = 15, root: str = ".") -> dict:
@@ -1031,6 +2231,28 @@ def tour(root: str = ".") -> dict:
     by topological layer, and entry points for exploration.
     """
     return _run_roam(["tour"], root)
+
+
+@_tool(name="roam_agent_export",
+       description="Generate AI agent context file (CLAUDE.md/AGENTS.md/.cursorrules) from index.")
+def agent_export(format: str = "claude", root: str = ".") -> dict:
+    """Generate an AI agent context file from the roam index.
+
+    WHEN TO USE: Call this to generate a CLAUDE.md, AGENTS.md, or
+    .cursorrules file that gives AI coding agents instant codebase
+    comprehension.  The output covers architecture, key files, entry
+    points, hotspots, test patterns, and health -- all derived from
+    the pre-built index.
+
+    Args:
+        format: Output format variant -- "claude" (CLAUDE.md),
+                "agents" (AGENTS.md), or "cursor" (.cursorrules).
+        root: Project root directory.
+
+    Returns: JSON envelope with project overview, architecture,
+    key files, entry points, hotspots, test info, and health summary.
+    """
+    return _run_roam(["agent-export", "--format", format], root)
 
 
 @_tool(name="roam_visualize",
@@ -1221,6 +2443,38 @@ def get_annotations(
     return _run_roam(args, root)
 
 
+@_tool(name="roam_endpoints",
+       description="List all REST/GraphQL/gRPC endpoints with handlers, methods, and locations.")
+def endpoints_tool(framework: str = "", method: str = "", group_by: str = "framework",
+                   root: str = ".") -> dict:
+    """List all detected API endpoints in the codebase.
+
+    WHEN TO USE: Call this to get a full map of all API routes and their
+    handlers. Supports Flask, FastAPI, Django, Express, Spring, Rails,
+    Laravel, Go net/http, GraphQL schemas, and gRPC .proto files.
+
+    Parameters
+    ----------
+    framework:
+        Filter to a specific framework (e.g. "flask", "express", "django").
+    method:
+        Filter by HTTP method (e.g. "GET", "POST").
+    group_by:
+        Group output by: "framework" (default), "file", or "method".
+
+    Returns: verdict, count, frameworks detected, and list of endpoints
+    each with method, path, handler, file, and line number.
+    """
+    args = ["endpoints"]
+    if framework:
+        args.extend(["--framework", framework])
+    if method:
+        args.extend(["--method", method])
+    if group_by and group_by != "framework":
+        args.extend(["--group-by", group_by])
+    return _run_roam(args, root)
+
+
 # ===================================================================
 # MCP Resources -- static/cached summaries available at fixed URIs
 # ===================================================================
@@ -1245,6 +2499,61 @@ if mcp is not None:
         resource for agents that prefer resource-based access.
         """
         data = _run_roam(["understand"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://architecture")
+    def get_architecture_resource() -> str:
+        """Architectural layers and module boundaries (JSON)."""
+        data = _run_roam(["layers"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://hotspots")
+    def get_hotspots_resource() -> str:
+        """Complexity and churn hotspots (JSON)."""
+        data = _run_roam(["hotspots"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://tech-stack")
+    def get_tech_stack_resource() -> str:
+        """Language and framework breakdown (JSON)."""
+        data = _run_roam(["understand"])
+        # Extract just the tech stack portion
+        if isinstance(data, dict):
+            return json.dumps({
+                "languages": data.get("languages", {}),
+                "files": data.get("files", {}),
+                "frameworks": data.get("frameworks", []),
+            }, indent=2)
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://dead-code")
+    def get_dead_code_resource() -> str:
+        """Dead/unreferenced symbols (JSON)."""
+        data = _run_roam(["dead"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://recent-changes")
+    def get_recent_changes_resource() -> str:
+        """Recent git changes and their impact (JSON)."""
+        data = _run_roam(["diff"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://dependencies")
+    def get_dependencies_resource() -> str:
+        """Module dependency graph overview (JSON)."""
+        data = _run_roam(["deps"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://test-coverage")
+    def get_test_coverage_resource() -> str:
+        """Test file coverage analysis (JSON)."""
+        data = _run_roam(["test-gaps"])
+        return json.dumps(data, indent=2)
+
+    @mcp.resource("roam://complexity")
+    def get_complexity_resource() -> str:
+        """Cognitive complexity analysis (JSON)."""
+        data = _run_roam(["complexity"])
         return json.dumps(data, indent=2)
 
 
@@ -2039,6 +3348,30 @@ def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
+@_tool(name="roam_secrets",
+       description="Scan for hardcoded secrets, API keys, tokens, passwords (24 patterns).")
+def secrets_scan(severity: str = "all", root: str = ".") -> dict:
+    """Scan indexed files for hardcoded secrets and credentials.
+
+    WHEN TO USE: Call this to find leaked API keys, tokens, passwords,
+    private keys, and database connection strings in source code.
+    Supports 24 detection patterns covering AWS, GitHub, Slack, Stripe,
+    Google, database URIs, JWTs, and generic secrets.
+
+    Parameters
+    ----------
+    severity:
+        Filter by minimum severity: "all", "high", "medium", "low".
+
+    Returns: list of findings with file, line, severity, pattern name,
+    and masked matched text. Never exposes full secret values.
+    """
+    args = ["secrets"]
+    if severity != "all":
+        args.extend(["--severity", severity])
+    return _run_roam(args, root)
+
+
 # ===================================================================
 # Runtime trace tools
 # ===================================================================
@@ -2107,16 +3440,17 @@ def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
 
 
 @_tool(name="roam_search_semantic",
-       description="Find symbols by natural language query (FTS5/BM25 semantic search).")
+       description="Find symbols by natural language query (hybrid BM25 + vector + framework packs).")
 def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
                     root: str = ".") -> dict:
-    """Find symbols by natural language query using FTS5/BM25 semantic search.
+    """Find symbols by natural language query using hybrid BM25+vector search.
 
     WHEN TO USE: Call this when you have a conceptual description of what
     you are looking for rather than an exact symbol name. For example,
     "database connection handling" or "user authentication logic". Uses
-    TF-IDF cosine similarity to rank symbols by relevance. For exact
-    name matching, use ``search_symbol`` instead.
+    hybrid BM25 + TF-IDF vector fusion plus pre-indexed framework/library
+    packs to improve cold-start retrieval for common stacks. For exact name
+    matching, use ``search_symbol`` instead.
 
     Parameters
     ----------
@@ -2285,6 +3619,7 @@ def roam_weather(count: int = 20, root: str = ".") -> dict:
 @_tool(name="roam_debt",
        description="Prioritized tech debt with SQALE remediation cost estimates.")
 def roam_debt(limit: int = 20, by_kind: bool = False, threshold: float = 0.0,
+              roi: bool = False,
               root: str = ".") -> dict:
     """Hotspot-weighted technical debt prioritization with remediation costs.
 
@@ -2300,18 +3635,112 @@ def roam_debt(limit: int = 20, by_kind: bool = False, threshold: float = 0.0,
         Group results by parent directory.
     threshold:
         Only show files with debt score >= this value.
+    roi:
+        Include estimated refactoring ROI (hours saved per quarter).
     root:
         Working directory (project root).
 
     Returns: summary (total_files, total_debt, remediation time),
-    suggestions, items list with debt_score, health_penalty, hotspot_factor,
-    breakdown, commit_count, distinct_authors.
+    suggestions, optional ROI estimate, and items list with debt_score,
+    health_penalty, hotspot_factor, breakdown, commit_count, distinct_authors.
     """
     args = ["debt", "-n", str(limit)]
     if by_kind:
         args.append("--by-kind")
     if threshold > 0:
         args.extend(["--threshold", str(threshold)])
+    if roi:
+        args.append("--roi")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_docs_coverage",
+       description="Doc coverage + stale-doc drift with PageRank-ranked missing docs.")
+def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0,
+                       root: str = ".") -> dict:
+    """Analyze exported-symbol documentation coverage and staleness drift.
+
+    WHEN TO USE: documentation hygiene audits and CI gating for doc quality.
+    Combines:
+    - coverage of exported/public symbols with docs,
+    - stale docs where implementation changed long after docs,
+    - missing-doc hotlist ranked by symbol PageRank.
+
+    Parameters
+    ----------
+    limit:
+        Max number of missing/stale symbols returned (default 20).
+    days:
+        Staleness threshold in days (default 90).
+    threshold:
+        Fail gate when coverage percentage is below this threshold (0 disables gate).
+    root:
+        Working directory (project root).
+
+    Returns: summary (coverage_pct, documented/public counts, stale/missing),
+    stale_docs list, and missing_docs list.
+    """
+    args = ["docs-coverage", "--limit", str(limit), "--days", str(days)]
+    if threshold > 0:
+        args.extend(["--threshold", str(threshold)])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_suggest_refactoring",
+       description="Rank proactive refactoring candidates using complexity/coupling/churn/smells.")
+def roam_suggest_refactoring(limit: int = 20, min_score: int = 45,
+                             root: str = ".") -> dict:
+    """Suggest high-ROI refactoring candidates.
+
+    WHEN TO USE: proactive refactoring triage. Ranks symbols by a weighted
+    blend of complexity, coupling, churn, smell density, coverage gaps,
+    and structural debt.
+
+    Parameters
+    ----------
+    limit:
+        Maximum number of recommendations (default 20).
+    min_score:
+        Minimum recommendation score threshold (0-100, default 45).
+    root:
+        Working directory (project root).
+
+    Returns: ranked recommendations with score, effort bucket (S/M/L),
+    suggested action, reasons, and signal breakdown.
+    """
+    args = ["suggest-refactoring", "--limit", str(limit), "--min-score", str(min_score)]
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_plan_refactor",
+       description="Build an ordered refactor plan for one symbol using risk/test/simulation context.")
+def roam_plan_refactor(symbol: str, operation: str = "auto", target_file: str = "",
+                       max_steps: int = 7, root: str = ".") -> dict:
+    """Build a compound refactoring plan for a symbol.
+
+    WHEN TO USE: before making structural edits to a high-impact symbol.
+    Composes callers/callees, blast radius, test gaps, layer risks, and
+    simulation previews into an executable plan.
+
+    Parameters
+    ----------
+    symbol:
+        Target symbol name or qualified name.
+    operation:
+        "auto", "extract", or "move" (default auto).
+    target_file:
+        Optional explicit target file path for simulation preview.
+    max_steps:
+        Maximum number of plan steps returned (default 7).
+    root:
+        Working directory (project root).
+
+    Returns: ordered plan steps, selected strategy preview, risk factors,
+    and verification commands.
+    """
+    args = ["plan-refactor", symbol, "--operation", operation, "--max-steps", str(max_steps)]
+    if target_file:
+        args.extend(["--target-file", target_file])
     return _run_roam(args, root)
 
 
@@ -2526,26 +3955,423 @@ def roam_api_drift(model: str = "", confidence: str = "medium",
     return _run_roam(args, root)
 
 
+@_tool(name="roam_simulate_departure")
+def roam_simulate_departure(developer: str, root: str = ".") -> dict:
+    """Simulate knowledge loss if a developer leaves the team.
+
+    WHEN TO USE: to assess risk before a team member departs. Shows files,
+    symbols, and modules that would become orphaned or under-owned. Combines
+    git blame ownership, CODEOWNERS, PageRank importance, and cluster impact.
+
+    Parameters
+    ----------
+    developer:
+        Developer name or email (as it appears in git blame).
+    root:
+        Working directory (project root).
+
+    Returns: verdict, risk-categorized files (critical/high/medium),
+    key symbols at risk with PageRank, affected module count,
+    and actionable recommendations.
+    """
+    args = ["simulate-departure", developer]
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_ai_ratio")
+def roam_ai_ratio(since: int = 90, root: str = ".") -> dict:
+    """Estimate AI-generated code percentage from git commit heuristics.
+
+    WHEN TO USE: Call this to understand how much of the codebase was
+    likely written or co-authored by AI tools. Uses Gini coefficient,
+    burst-addition detection, co-author tags, comment density anomalies,
+    and temporal patterns.
+
+    Parameters
+    ----------
+    since:
+        Analyze commits from last N days (default: 90).
+    root:
+        Working directory (project root).
+
+    Returns: AI ratio (0-1), confidence level, per-signal scores,
+    top AI-likely files, and trend direction.
+    """
+    args = ["ai-ratio", "--since", str(since)]
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_syntax_check",
+       description="Tree-sitter syntax validation. Finds ERROR/MISSING AST nodes. No index needed.",
+       output_schema=_make_schema(
+           {"total_files": {"type": "integer"}, "total_errors": {"type": "integer"},
+            "clean": {"type": "boolean"}},
+           files={"type": "array", "items": {"type": "object"}},
+       ))
+def roam_syntax_check(paths: str = "", changed: bool = False, root: str = ".") -> dict:
+    """Check files for tree-sitter syntax errors (ERROR/MISSING AST nodes).
+
+    WHEN TO USE: in multi-agent workflows to validate that a Worker agent
+    did not corrupt file syntax. Works WITHOUT a roam index -- parses
+    files directly with tree-sitter.
+
+    WHEN NOT TO USE: for full code quality analysis use roam_health instead.
+
+    Parameters
+    ----------
+    paths:
+        Space-separated file paths to check.
+        Empty with changed=True = check git-changed files.
+    changed:
+        If True, check only git-changed files (unstaged + staged + untracked).
+    root:
+        Working directory (project root).
+
+    Returns: per-file error list with line, column, node_type, and text.
+    Exit code 5 if any syntax errors found, 0 if clean.
+    """
+    args = ["syntax-check"]
+    if changed:
+        args.append("--changed")
+    if paths:
+        args.extend(paths.split())
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_doctor",
+       description="Setup diagnostics: Python version, tree-sitter, git, index existence, freshness, SQLite.",
+       output_schema=_make_schema(
+           {"total": {"type": "integer"}, "passed": {"type": "integer"},
+            "failed": {"type": "integer"}, "all_passed": {"type": "boolean"}},
+           checks={"type": "array", "items": {
+               "type": "object",
+               "properties": {
+                   "name": {"type": "string"},
+                   "passed": {"type": "boolean"},
+                   "detail": {"type": "string"},
+               },
+           }},
+           failed_checks={"type": "array", "items": {"type": "object"}},
+       ))
+def roam_doctor(root: str = ".") -> dict:
+    """Diagnose environment setup: Python, dependencies, index state.
+
+    WHEN TO USE: when troubleshooting setup issues, onboarding a new
+    developer, or when an agent reports that roam commands are failing.
+    Checks Python version, tree-sitter, tree-sitter-language-pack, git,
+    networkx, index existence, index freshness, and SQLite connectivity.
+
+    Returns: per-check PASS/FAIL results and a summary verdict.
+    Exit code 1 if any check fails, 0 if all pass.
+    """
+    return _run_roam(["doctor"], root)
+
+
+@_tool(name="roam_codeowners",
+       description="CODEOWNERS coverage, ownership distribution, unowned files, drift detection.")
+def roam_codeowners(unowned: bool = False, owner: str = "", root: str = ".") -> dict:
+    """Analyze CODEOWNERS coverage, ownership distribution, and unowned files.
+
+    WHEN TO USE: to understand code ownership from CODEOWNERS file --
+    who owns what, coverage gaps, unowned critical files, drift between
+    declared and actual contributors.
+
+    Parameters
+    ----------
+    unowned:
+        If True, show only unowned files sorted by importance (PageRank).
+    owner:
+        Filter to show files owned by a specific owner (e.g. "@backend-team").
+    root:
+        Working directory (project root).
+
+    Returns: coverage percentage, owner distribution with key areas,
+    unowned files ranked by PageRank, ownership drift warnings.
+    """
+    args = ["codeowners"]
+    if unowned:
+        args.append("--unowned")
+    if owner:
+        args.extend(["--owner", owner])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_drift",
+       description="Ownership drift detection: declared CODEOWNERS vs actual time-decayed contributors.")
+def roam_drift(threshold: float = 0.5, root: str = ".") -> dict:
+    """Detect ownership drift using time-decayed blame scoring.
+
+    WHEN TO USE: to find files where the declared CODEOWNERS no longer
+    match who actually maintains the code, weighted by recency.
+
+    Parameters
+    ----------
+    threshold:
+        Drift threshold 0-1 (default 0.5). Higher = only severe drift.
+    root:
+        Working directory (project root).
+
+    Returns: files with drift, drift scores, actual top contributors,
+    recommendations for CODEOWNERS updates.
+    """
+    args = ["drift", "--threshold", str(threshold)]
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_dev_profile",
+       description="Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection.")
+def roam_dev_profile(author: str = "", days: int = 90, limit: int = 20, root: str = ".") -> dict:
+    """Profile developer commit behavior for PR risk scoring.
+
+    WHEN TO USE: to assess whether a PR author's coding patterns indicate
+    elevated risk (late-night commits, broad unfocused changes, burst coding).
+    Useful before approving large PRs or during risk triage.
+
+    Parameters
+    ----------
+    author:
+        Developer email or substring to filter (empty = all authors).
+    days:
+        Lookback window in days (default 90).
+    limit:
+        Max authors to profile (default 20).
+    root:
+        Working directory (project root).
+
+    Returns: per-author behavioral profiles with risk scores, hour/day
+    distributions, Gini scatter coefficient, burst scores, session patterns,
+    and top directories. Higher risk_score = more anomalous patterns.
+    """
+    args = ["dev-profile"]
+    if author:
+        args.append(author)
+    args.extend(["--days", str(days), "--limit", str(limit)])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_partition",
+       description="Multi-agent work partitioning: split codebase into independent work zones.")
+def roam_partition(n_agents: int = 4, output_format: str = "text", root: str = ".") -> dict:
+    """Partition codebase into independent work zones for parallel agents.
+
+    WHEN TO USE: when splitting work across multiple AI agents or developers
+    who need to work in parallel without conflicts.
+
+    Parameters
+    ----------
+    n_agents:
+        Number of agents/partitions (default 4).
+    output_format:
+        Output format: text, json, or claude-teams.
+    root:
+        Working directory (project root).
+
+    Returns: partitions with file lists, conflict scores, coupling boundaries,
+    and suggested ownership assignments.
+    """
+    args = ["partition", "--n-agents", str(n_agents)]
+    if output_format != "text":
+        args.extend(["--format", output_format])
+    return _run_roam(args, root)
+
+
+
+
+@_tool(name="roam_spectral",
+       description="Spectral bisection: Fiedler vector partition tree and modularity gap.")
+def roam_spectral(depth: int = 3, compare: bool = False, gap_only: bool = False,
+                  k: int = 0, root: str = ".") -> dict:
+    """Spectral bisection using the Fiedler vector as an alternative to Louvain.
+
+    Parameters
+    ----------
+    depth:
+        Maximum recursion depth for bisection (default 3).
+    compare:
+        If True, also run Louvain and report Adjusted Rand Index.
+    gap_only:
+        If True, only return the spectral gap metric.
+    k:
+        Number of communities to detect (0 = auto-detect from gap).
+    root:
+        Project root directory.
+
+    Returns: spectral gap, verdict, partition tree, optional Louvain comparison.
+    """
+    args = ["spectral", "--depth", str(depth)]
+    if compare:
+        args.append("--compare")
+    if gap_only:
+        args.append("--gap-only")
+    if k > 0:
+        args.extend(["--k", str(k)])
+    return _run_roam(args, root)
+
+@_tool(name="roam_affected",
+       description="Monorepo impact analysis: find all affected packages/modules from changes.")
+def roam_affected(base: str = "HEAD~1", depth: int = 3, changed: str = "", root: str = ".") -> dict:
+    """Analyze which packages/modules are affected by recent changes.
+
+    WHEN TO USE: in monorepos or large codebases, to determine what needs
+    rebuilding, retesting, or redeploying after changes.
+
+    Parameters
+    ----------
+    base:
+        Git base ref for comparison (default HEAD~1).
+    depth:
+        Maximum transitive dependency depth (default 3).
+    changed:
+        Comma-separated list of changed files (overrides git diff).
+    root:
+        Working directory (project root).
+
+    Returns: affected files/modules with DIRECT/TRANSITIVE classification,
+    impact scores, and rebuild recommendations.
+    """
+    args = ["affected", "--base", base, "--depth", str(depth)]
+    if changed:
+        args.extend(["--changed", changed])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_semantic_diff",
+       description="Structural change summary: what symbols were added/removed/modified.")
+def roam_semantic_diff(base: str = "HEAD~1", root: str = ".") -> dict:
+    """Produce a semantic diff showing structural changes between commits.
+
+    WHEN TO USE: when you need a high-level summary of what changed structurally
+    (added/removed/modified functions, classes, imports) rather than line-level diffs.
+
+    Parameters
+    ----------
+    base:
+        Git base ref for comparison (default HEAD~1).
+    root:
+        Working directory (project root).
+
+    Returns: added/removed/modified symbols, import changes, and a
+    human-readable structural change summary.
+    """
+    args = ["semantic-diff", "--base", base]
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_trends",
+       description="Historical metric tracking: record and query health metric trends over time.")
+def roam_trends(record: bool = False, days: int = 30, metric: str = "", root: str = ".") -> dict:
+    """Track and query health metric trends over time.
+
+    WHEN TO USE: to see how codebase health metrics have changed over time,
+    or to record a new snapshot of current metrics.
+
+    Parameters
+    ----------
+    record:
+        If True, record current metrics as a new snapshot.
+    days:
+        Number of days of history to show (default 30).
+    metric:
+        Filter to a specific metric name.
+    root:
+        Working directory (project root).
+
+    Returns: metric snapshots with timestamps, sparkline trends, and
+    improvement/regression indicators.
+    """
+    args = ["trends"]
+    if record:
+        args.append("--record")
+    if days != 30:
+        args.extend(["--days", str(days)])
+    if metric:
+        args.extend(["--metric", metric])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_reset",
+       description="Delete index DB and rebuild from scratch. Requires force=True. Recovery for corrupted indexes.",
+       output_schema=_make_schema(
+           {"removed": {"type": "boolean"}, "db_path": {"type": "string"}},
+       ))
+def roam_reset(force: bool = False, root: str = ".") -> dict:
+    """Delete the roam index DB and rebuild from scratch.
+
+    WHEN TO USE: when the index is corrupted, out of sync, or producing
+    wrong results. Equivalent to `rm .roam/index.db && roam init`.
+    Use roam_clean first for lighter cleanup (removes orphaned files only).
+
+    Parameters
+    ----------
+    force:
+        Must be True to confirm the destructive reset (required safety guard).
+    root:
+        Working directory (project root).
+
+    Returns: verdict with removed/db_path fields.
+    Exit code 2 if force=False (aborted), 0 on success.
+    """
+    args = ["reset"]
+    if force:
+        args.append("--force")
+    if root != ".":
+        args.extend(["--root", root])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_clean",
+       description="Remove orphaned index entries (files deleted from disk) without full rebuild.",
+       output_schema=_make_schema(
+           {"files_removed": {"type": "integer"}, "symbols_removed": {"type": "integer"},
+            "edges_removed": {"type": "integer"}},
+           orphaned_paths={"type": "array", "items": {"type": "string"}},
+       ))
+def roam_clean(root: str = ".") -> dict:
+    """Remove stale/orphaned entries from the index without a full rebuild.
+
+    WHEN TO USE: after deleting or moving files outside of git tracking.
+    Faster than roam_reset -- only removes file records no longer on disk
+    plus any dangling symbol edges, then optionally compacts the DB.
+
+    Parameters
+    ----------
+    root:
+        Working directory (project root).
+
+    Returns: counts of files/symbols/edges removed.
+    """
+    return _run_roam(["clean"], root)
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
 
 @click.command()
-@click.option('--transport', type=click.Choice(['stdio', 'sse']), default='stdio',
+@click.option('--transport', type=click.Choice(['stdio', 'sse', 'streamable-http']), default='stdio',
               help='transport protocol (default: stdio)')
-@click.option('--host', default='localhost', help='host for SSE mode')
-@click.option('--port', type=int, default=8000, help='port for SSE mode')
+@click.option('--host', default='127.0.0.1', help='host for network transports')
+@click.option('--port', type=int, default=8000, help='port for network transports')
 @click.option('--no-auto-index', is_flag=True, help='skip automatic index freshness check')
 @click.option('--list-tools', is_flag=True, help='list registered tools and exit')
-def mcp_cmd(transport, host, port, no_auto_index, list_tools):
+@click.option('--list-tools-json', is_flag=True,
+              help='list registered tools with metadata as JSON and exit')
+@click.option('--compat-profile',
+              type=click.Choice(['all', 'claude', 'codex', 'gemini', 'copilot', 'vscode', 'cursor']),
+              default=None,
+              help='emit client compatibility profile JSON and exit')
+def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, compat_profile):
     """Start the roam MCP server.
 
     \b
     usage:
       roam mcp                    # stdio (for Claude Code, Cursor, etc.)
       roam mcp --transport sse    # SSE on localhost:8000
+      roam mcp --transport streamable-http  # Streamable HTTP on localhost:8000
       roam mcp --list-tools       # show registered tools
+      roam mcp --list-tools-json  # JSON metadata for conformance checks
+      roam mcp --compat-profile all  # client compatibility matrix (JSON)
 
     \b
     environment:
@@ -2560,6 +4386,11 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools):
     requires:
       pip install roam-code[mcp]
     """
+    if compat_profile:
+        payload = _compat_profile_payload(compat_profile, ".")
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
     if mcp is None:
         click.echo(
             "error: fastmcp is required for the MCP server.\n"
@@ -2567,6 +4398,32 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools):
             err=True,
         )
         raise SystemExit(1)
+
+    if list_tools_json:
+        async def _collect_tools():
+            return await mcp.list_tools()
+
+        tools = asyncio.run(_collect_tools())
+        payload_tools = []
+        for tool in sorted(tools, key=lambda t: t.name):
+            ann = tool.annotations.model_dump(exclude_none=True) if tool.annotations else {}
+            execution = tool.execution.model_dump(exclude_none=True) if tool.execution else {}
+            meta = dict(tool.meta or {})
+            payload_tools.append({
+                "name": tool.name,
+                "title": tool.title,
+                "description": tool.description,
+                "annotations": ann,
+                "task_support": execution.get("taskSupport") or meta.get("taskSupport"),
+            })
+        payload = {
+            "server": "roam-code",
+            "preset": _ACTIVE_PRESET,
+            "tool_count": len(payload_tools),
+            "tools": payload_tools,
+        }
+        click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
 
     if list_tools:
         click.echo(f"{len(_REGISTERED_TOOLS)} tools registered (preset: {_ACTIVE_PRESET}):\n")
@@ -2585,8 +4442,149 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools):
 
     if transport == "stdio":
         mcp.run()
-    else:
+    elif transport == "sse":
         mcp.run(transport="sse", host=host, port=port)
+    else:
+        try:
+            mcp.run(transport="streamable-http", host=host, port=port)
+        except TypeError:
+            # Older FastMCP versions may use "http" alias.
+            mcp.run(transport="http", host=host, port=port)
+
+
+# ---------------------------------------------------------------------------
+# MCP Prompts — show as slash commands in Claude Code, VS Code, etc.
+# ---------------------------------------------------------------------------
+
+if mcp is not None:
+    try:
+        @mcp.prompt(name="roam-onboard", description="Get started with a new codebase")
+        def prompt_onboard() -> str:
+            return (
+                "I'm new to this codebase. Please run roam_explore to get an overview, "
+                "then summarize the architecture, key entry points, and tech stack. "
+                "Suggest 3 files I should read first to understand the codebase."
+            )
+
+        @mcp.prompt(name="roam-review", description="Review pending code changes")
+        def prompt_review() -> str:
+            return (
+                "Review my pending code changes. Run roam_review_change to check for "
+                "breaking changes, risk score, and structural impact. Then run "
+                "roam_affected_tests to identify what tests I should run. "
+                "Summarize findings with actionable items."
+            )
+
+        @mcp.prompt(name="roam-debug", description="Debug a failing symbol or test")
+        def prompt_debug(symbol: str = "") -> str:
+            target = f" for `{symbol}`" if symbol else ""
+            return (
+                f"Help me debug an issue{target}. Run roam_diagnose_issue "
+                f"{'with target=' + repr(symbol) + ' ' if symbol else ''}"
+                "to find root cause suspects, then check the call chain and "
+                "side effects. Suggest the most likely cause and a fix."
+            )
+
+        @mcp.prompt(name="roam-refactor", description="Plan a safe refactoring")
+        def prompt_refactor(symbol: str = "") -> str:
+            target = f" `{symbol}`" if symbol else " the target symbol"
+            return (
+                f"Help me safely refactor{target}. Run roam_prepare_change to check "
+                "blast radius, affected tests, and side effects. Then suggest a "
+                "step-by-step refactoring plan that minimizes risk."
+            )
+
+        @mcp.prompt(name="roam-health-check", description="Full codebase health assessment")
+        def prompt_health_check() -> str:
+            return (
+                "Run a comprehensive health check on this codebase. Use roam_health "
+                "for the overall score, roam_dead_code for unused code, and "
+                "roam_complexity_report for complexity hotspots. Prioritize the "
+                "top 3 issues I should fix first and explain why."
+            )
+    except (TypeError, AttributeError):
+        # Older FastMCP versions may not support @mcp.prompt() — define as
+        # plain functions so they're still importable for testing.
+        def prompt_onboard() -> str:  # type: ignore[no-redef]
+            return (
+                "I'm new to this codebase. Please run roam_explore to get an overview, "
+                "then summarize the architecture, key entry points, and tech stack. "
+                "Suggest 3 files I should read first to understand the codebase."
+            )
+
+        def prompt_review() -> str:  # type: ignore[no-redef]
+            return (
+                "Review my pending code changes. Run roam_review_change to check for "
+                "breaking changes, risk score, and structural impact. Then run "
+                "roam_affected_tests to identify what tests I should run. "
+                "Summarize findings with actionable items."
+            )
+
+        def prompt_debug(symbol: str = "") -> str:  # type: ignore[no-redef]
+            target = f" for `{symbol}`" if symbol else ""
+            return (
+                f"Help me debug an issue{target}. Run roam_diagnose_issue "
+                f"{'with target=' + repr(symbol) + ' ' if symbol else ''}"
+                "to find root cause suspects, then check the call chain and "
+                "side effects. Suggest the most likely cause and a fix."
+            )
+
+        def prompt_refactor(symbol: str = "") -> str:  # type: ignore[no-redef]
+            target = f" `{symbol}`" if symbol else " the target symbol"
+            return (
+                f"Help me safely refactor{target}. Run roam_prepare_change to check "
+                "blast radius, affected tests, and side effects. Then suggest a "
+                "step-by-step refactoring plan that minimizes risk."
+            )
+
+        def prompt_health_check() -> str:  # type: ignore[no-redef]
+            return (
+                "Run a comprehensive health check on this codebase. Use roam_health "
+                "for the overall score, roam_dead_code for unused code, and "
+                "roam_complexity_report for complexity hotspots. Prioritize the "
+                "top 3 issues I should fix first and explain why."
+            )
+else:
+    # FastMCP not available — define plain functions for importability.
+    def prompt_onboard() -> str:
+        return (
+            "I'm new to this codebase. Please run roam_explore to get an overview, "
+            "then summarize the architecture, key entry points, and tech stack. "
+            "Suggest 3 files I should read first to understand the codebase."
+        )
+
+    def prompt_review() -> str:
+        return (
+            "Review my pending code changes. Run roam_review_change to check for "
+            "breaking changes, risk score, and structural impact. Then run "
+            "roam_affected_tests to identify what tests I should run. "
+            "Summarize findings with actionable items."
+        )
+
+    def prompt_debug(symbol: str = "") -> str:
+        target = f" for `{symbol}`" if symbol else ""
+        return (
+            f"Help me debug an issue{target}. Run roam_diagnose_issue "
+            f"{'with target=' + repr(symbol) + ' ' if symbol else ''}"
+            "to find root cause suspects, then check the call chain and "
+            "side effects. Suggest the most likely cause and a fix."
+        )
+
+    def prompt_refactor(symbol: str = "") -> str:
+        target = f" `{symbol}`" if symbol else " the target symbol"
+        return (
+            f"Help me safely refactor{target}. Run roam_prepare_change to check "
+            "blast radius, affected tests, and side effects. Then suggest a "
+            "step-by-step refactoring plan that minimizes risk."
+        )
+
+    def prompt_health_check() -> str:
+        return (
+            "Run a comprehensive health check on this codebase. Use roam_health "
+            "for the overall score, roam_dead_code for unused code, and "
+            "roam_complexity_report for complexity hotspots. Prioritize the "
+            "top 3 issues I should fix first and explain why."
+        )
 
 
 # ---------------------------------------------------------------------------

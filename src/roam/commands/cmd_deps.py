@@ -1,11 +1,13 @@
 """Show file import/imported-by relationships."""
 
+from __future__ import annotations
+
 import click
 
 from roam.db.connection import open_db
 from roam.db.queries import FILE_BY_PATH, FILE_IMPORTS, FILE_IMPORTED_BY
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.output.formatter import format_table, to_json, json_envelope, summary_envelope
+from roam.commands.resolve import ensure_index, file_not_found_hint
 
 
 @click.command()
@@ -15,6 +17,8 @@ from roam.commands.resolve import ensure_index
 def deps(ctx, path, full):
     """Show file import/imported-by relationships."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
 
     path = path.replace("\\", "/")
@@ -27,7 +31,7 @@ def deps(ctx, path, full):
                 (f"%{path}",),
             ).fetchone()
         if frow is None:
-            click.echo(f"File not found in index: {path}")
+            click.echo(file_not_found_hint(path))
             raise SystemExit(1)
 
         # --- Imports ---
@@ -51,11 +55,12 @@ def deps(ctx, path, full):
         imported_by = conn.execute(FILE_IMPORTED_BY, (frow["id"],)).fetchall()
 
         if json_mode:
-            click.echo(to_json(json_envelope("deps",
+            envelope = json_envelope("deps",
                 summary={
                     "imports": len(imports),
                     "imported_by": len(imported_by),
                 },
+                budget=token_budget,
                 path=frow["path"],
                 imports=[
                     {
@@ -69,12 +74,32 @@ def deps(ctx, path, full):
                     {"path": i["path"], "symbol_count": i["symbol_count"]}
                     for i in imported_by
                 ],
-            )))
+            )
+            if not detail:
+                envelope = summary_envelope(envelope)
+            click.echo(to_json(envelope))
             return
 
         # --- Text output ---
         click.echo(f"{frow['path']}")
+        click.echo(f"Imports: {len(imports)}  |  Imported by: {len(imported_by)}")
         click.echo()
+
+        if not detail:
+            # Summary mode: show counts and top 5
+            if imports:
+                click.echo("Imports (top 5, use --detail for full list):")
+                for i in imports[:5]:
+                    names = used_from.get(i["id"], set())
+                    sym_str = ", ".join(sorted(names)[:3])
+                    if len(names) > 3:
+                        sym_str += f" (+{len(names) - 3})"
+                    click.echo(f"  {i['path']}  ({sym_str})")
+                if len(imports) > 5:
+                    click.echo(f"  (+{len(imports) - 5} more)")
+            else:
+                click.echo("Imports: (none)")
+            return
 
         if imports:
             rows = []

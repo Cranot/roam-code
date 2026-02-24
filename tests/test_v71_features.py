@@ -721,6 +721,7 @@ class TestReportConfig:
         assert "security" in PRESETS
         assert "pre-pr" in PRESETS
         assert "refactor" in PRESETS
+        assert "guardian" in PRESETS
 
 
 # ---------------------------------------------------------------------------

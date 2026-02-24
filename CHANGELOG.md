@@ -1,455 +1,433 @@
 # Changelog
 
-## v8.3.0
-
-C# Tier 1 language support with dedicated parser.
-
-### C# Tier 1 Extractor
-
-- **New `CSharpExtractor`** (`src/roam/languages/csharp_lang.py`) -- dedicated Tier 1 parser for C# (`.cs` files), replacing the generic Tier 2 walker. ~1,000 lines.
-- **Fixed C# grammar alias** -- added `"c_sharp": "csharp"` to `GRAMMAR_ALIASES` in `parser.py`. Without this, ALL `.cs` files silently failed to parse (tree-sitter-language-pack expects `"csharp"`, not `"c_sharp"`). C# parsing now works for the first time.
-
-### Symbols
-
-- Classes, interfaces, structs, enums, records (including record structs)
-- Methods, constructors (including primary constructors, C# 12), destructors
-- Fields (with const/static/readonly detection), properties (with get/set/init accessors and `required` modifier)
-- Delegates, events (both declaration and field-like), indexers
-- Local functions, operator overloads, conversion operators
-- Namespace-qualified names for both block-scoped and file-scoped namespaces
-- Generic signatures with type parameter constraints (truncated at 200 chars)
-- Class modifiers in signatures (static, sealed, abstract, partial, readonly, unsafe, file)
-- Async method detection in signatures
-- XML doc comment extraction (`///` chains)
-- Context-dependent visibility defaults (top-level=internal, nested=private, interface/enum members=public)
-- Compound modifier handling (`protected internal`, `private protected`)
-
-### References
-
-- Using directives: standard, static, alias, and global variants
-- Method/function calls via `invocation_expression`
-- Constructor calls via `object_creation_expression`
-- Inheritance classification: positional heuristic on `base_list` (first non-I-prefixed entry = `inherits`, rest = `implements`)
-- Attribute references as `type_ref` from `attribute_list` (`[HttpGet]`, `[Authorize]`, etc.)
-- Nullable type unwrapping: `IService?`, `List<IHandler>?` produce `type_ref` edges (builtins like `string?` skipped)
-- `catch` clause exception type references (`catch (InvalidOperationException)`)
-- `typeof()` expression type references
-- `is` pattern and `as` cast type references
-- Cast expression type references
-
-### Registration
-
-- Added `"c_sharp"` to `_DEDICATED_EXTRACTORS` in `registry.py`
-- Removed `c_sharp` fallback configs from `generic_lang.py` (`_EXTENDS_CONFIG`, `_TRAIT_CONFIG`, `_PROPERTY_CONFIG`)
-
-### Polish (post-PR)
-
-- Fixed `CSharpConvention.languages` to include `"c_sharp"` (the actual DB language key) so convention-based test discovery works with `affected-tests`
-- Changed attribute references from `call` to `type_ref` (attributes are type annotations, not invocations)
-- Optimized `_detect_frameworks` in `cmd_understand.py` to scan only a sample of files (LIMIT 200) instead of all files
-- Moved `re` and `fnmatch` imports to module level in `cmd_understand.py`
-
-### Real-World Validation
-
-- Tested on demand-ordering-api (~1,550 C# files): 20,061 symbols, 6,890 edges in 15s
-- Symbol breakdown: method=6,270, class=4,801, constructor=3,920, field=1,939, module=1,397, property=765, constant=683, delegate=135, interface=111, enum=40
-- Tier 2 baseline was 0 symbols (grammar alias bug). Tier 1 = 20,061 symbols.
-
-## v8.2.0
-
-Self-analysis driven improvements: ran roam on itself, fixed every discrepancy and false positive it surfaced.
-
-### Bug Fixes
-
-- **Fixed dead export count discrepancy** -- `roam understand` reported 1967 dead exports vs `roam dead --summary` reporting 190. Root cause: `collect_metrics()` in metrics_history.py used raw UNREFERENCED_EXPORTS query without test-file filtering. Now consistent.
-- **Fixed alerts health score mismatch** -- `roam alerts` showed health_score=26 while `roam health` showed 38. Replaced simple penalty-based formula in `collect_metrics()` with weighted geometric mean matching `cmd_health.py`.
-- **Fixed patterns command self-detection** -- `roam patterns` was detecting its own detector functions (`_detect_factory`, `_detect_middleware`, `_detect_decorator`) as pattern instances. Added `_is_test_or_detector_path()` filter that excludes test files and `cmd_patterns.py` itself.
-- **Fixed middleware false positives** -- Removed `%Handler` and `%Filter` from middleware SQL patterns, keeping only genuine middleware indicators (`%Middleware`, `%Interceptor`, `%Pipe`, `%Pipeline`).
-
-### Improved Analysis
-
-- **Smarter health scoring** -- Added `_NON_PRODUCTION_PATH_PATTERNS` in `cmd_health.py` to classify `dev/`, `tests/`, `scripts/`, `benchmark/`, `conftest.py` as expected utilities rather than actionable god-components or bottlenecks.
-- **File role: dev/ as scripts** -- Added `dev/` directory pattern to `file_roles.py` classifier, correctly assigning `ROLE_SCRIPTS` to development tools.
-- **Python extractor: with-statement references** -- Context managers (`with open_db() as conn:`) now produce call edges to the context manager function.
-- **Python extractor: raise references** -- `raise ValueError(...)` and `raise StopIteration` now produce call edges to the exception type.
-- **Python extractor: except clause references** -- `except CustomError as e:` now produces type_ref edges. Handles single types, tuples, as-patterns, and dotted attributes.
-
-### Dead Code Removal
-
-- Removed 5 unused functions: `condense_cycles`, `layer_balance`, `find_path`, `build_reverse_adj`, `get_symbol_blame` (total: ~200 lines).
-
-### Testing
-
-- 1729 tests across 30 test files (up from 1691 across 29)
-- New test file: `test_v82_features.py` (38 tests covering with/except/raise extraction, metrics consistency, pattern filtering, health scoring, file roles, dead code removal)
-
-## v8.1.1
-
-Deep Python extractor improvements based on Pyan, PyCG, and Scalpel research.
-
-### Python Extractor
-
-- **Instance attribute extraction** -- `self.x = value` assignments in `__init__` now produce property symbols. Detects self-name from first parameter (Pyan-inspired, not hardcoded to `self`). Recurses into `if`/`try`/`with` blocks. Deduplicates with class-level properties.
-- **Assignment type annotation references** -- Class fields (`path: Path`), module variables (`cache: Dict[str, Config]`), and instance attributes (`self.x: List[Item] = []`) with type annotations now create `type_ref` edges.
-- **Forward reference support** -- String annotations like `Optional["Config"]` and `"module.ClassName"` now produce `type_ref` edges. Validates that string content is a valid identifier before creating references.
-
-### Testing
-
-- 1691 tests across 29 test files (up from 1664 across 28)
-- New test file: `test_python_extractor_v2.py` (27 tests covering instance attrs, self-name detection, deduplication, assignment type refs, forward refs)
-
-## v8.1.0
-
-Self-analysis driven improvements: ran roam on itself and fixed every issue it surfaced.
-
-### Bug Fixes
-
-- **Fixed `complexity` command crash** -- `roam complexity` crashed with `IndexError` on databases missing v7.4 columns (`cyclomatic_density`, `halstead_*`). Now uses defensive `_safe_metric()` accessor with graceful fallback.
-- **Fixed CHANGELOG v8.0.0** -- Incorrectly listed `roam anomalies` as a standalone command. The anomaly detection shipped as `roam trend --analyze` (with `--anomalies`, `--forecast`, `--fail-on-anomaly`, `--sensitivity`).
-
-### Improved Analysis
-
-- **Smarter health scoring** -- Expanded utility path detection to recognize `output/`, `db/`, `common/`, `internal/`, `infra/` directories and utility files (`resolve.py`, `helpers.py`, `base.py`). Shared infrastructure symbols are now properly categorized as expected utilities instead of false god-component alerts.
-- **95% fewer dead code false positives** -- Test files (`test_*.py`) now excluded from dead export analysis. ABC method overrides, CLI command functions, and dynamically-loaded symbols correctly marked as intentional. Total false reports dropped from 668 to ~131.
-- **Python extractor: decorator references** -- `@decorator` and `@module.decorator(args)` now create reference edges, enabling accurate decorator dependency tracking.
-- **Python extractor: type annotation references** -- Function parameter types (`x: SomeClass`), return types (`-> Result`), and generic type arguments (`List[Item]`) now create `type_ref` edges. Builtin types (`int`, `str`, etc.) are excluded.
-
-## v8.0.1
-
-Project organization and code quality improvements.
-
-### Refactoring
-
-- **Extracted `graph_helpers.py`** -- Deduplicated BFS/adjacency code from 4 command files (`cmd_coverage_gaps`, `cmd_entry_points`, `cmd_safe_zones`, `cmd_context`) into shared `build_forward_adj`, `build_reverse_adj`, `bfs_reachable`, `bfs_nx` helpers.
-- **Split `cmd_context.py`** -- Extracted 13 data-gathering functions into `context_helpers.py`, reducing cmd_context.py from 1,622 to 1,022 lines.
-- **Renamed `test_new_features.py`** to `test_v6_features.py` for naming consistency.
-
-### Infrastructure
-
-- Added Python 3.9 to CI matrix (matches `requires-python = ">=3.9"`).
-- Added `[tool.pytest.ini_options]`, `[tool.ruff]`, and `[project.optional-dependencies]` dev extras to pyproject.toml.
-- Added `Makefile` with install, dev, test, lint, format, build, publish, clean targets.
-- Moved `roam-bench.py` to `dev/` directory.
-
-## v8.0.0
-
-Major release: anomaly detection, file role classification, dead code aging, cross-language bridges, gate presets, test convention adapters, and massive test suite expansion.
-
-### New Capabilities
-
-- **Anomaly detection** (`src/roam/graph/anomaly.py`) -- Statistical anomaly detection using Modified Z-Score, Theil-Sen regression, Mann-Kendall trend test, and CUSUM change-point detection. Surfaces outlier symbols and files across multiple metrics.
-- **File role classifier** (`src/roam/index/file_roles.py`) -- Smart classifier that assigns roles (source, test, config, docs, build, generated, etc.) to files based on path patterns, naming conventions, and content heuristics.
-- **Dead code aging** -- Dead exports now include git blame age data, showing how long dead code has been accumulating. Helps prioritize cleanup by staleness.
-- **Cross-language bridges** (`src/roam/bridges/`) -- Abstract `LanguageBridge` infrastructure for resolving symbols across language boundaries. Includes Salesforce bridge (Apex to Aura/LWC/Visualforce) and Protobuf bridge (.proto to Go/Java/Python stubs).
-- **Gate presets** (`src/roam/commands/gate_presets.py`) -- Framework-specific gate rules for `coverage-gaps`. Built-in presets for Python, JavaScript, Go, Java, and Rust. Custom rules via `.roam-gates.yml`.
-- **Test convention adapters** (`src/roam/index/test_conventions.py`) -- Pluggable test naming adapters for Python, Go, JavaScript, Java, Ruby, and Apex. Improves test discovery in `test-map` and `impact` commands.
-
-### Enhanced Commands
-
-- **`roam trend --analyze`** -- Full anomaly analysis: Modified Z-Score outlier detection, Theil-Sen trend estimation, Mann-Kendall significance testing, CUSUM change-point detection, and linear forecasting. Also available as `--anomalies`, `--forecast`, `--fail-on-anomaly`, `--sensitivity=[low|medium|high]`.
-
-### Testing
-
-- **1656 total tests passing** (up from 669 in v7.5.0)
-- New test files: `test_anomaly.py`, `test_file_roles.py`, `test_pr_risk_author.py`, `test_dead_aging.py`, `test_bridges.py`, `test_test_conventions.py`, `test_gate_presets.py`
-
-### Infrastructure
-
-- 12 research-backed math improvements across core analysis modules (v7.5.0)
-- Enhanced PR risk scoring with author experience factor
-
-## v7.4.0
-
-Multi-repo workspace support: group sibling repos, detect cross-repo REST API connections, and run unified analysis commands.
-
-### Multi-Repo Workspace
-
-- **`roam ws init`** -- Initialize a workspace from multiple repo directories. Auto-detects frontend/backend roles from package.json, composer.json, etc. Creates `.roam-workspace.json` config and `.roam-workspace/workspace.db` overlay DB.
-- **`roam ws status`** -- Show workspace repos with file/symbol counts, index ages, and cross-repo edge count.
-- **`roam ws resolve`** -- Scan frontend repos for API calls (axios, fetch, useFetch) and backend repos for route definitions (Laravel `Route::get`, Express `router.get`, FastAPI `@app.get`). Normalize URL patterns, match by path + HTTP method, store as cross-repo edges.
-- **`roam ws understand`** -- Unified workspace overview: per-repo stats (files, symbols, languages, key symbols by PageRank) + cross-repo connection summary.
-- **`roam ws health`** -- Workspace-wide health report: per-repo health scores, cross-repo coupling assessment (low/moderate/high).
-- **`roam ws context <symbol>`** -- Cross-repo augmented context: find a symbol across all repos, show callers/callees within each repo, plus cross-repo API edges.
-- **`roam ws trace <source> <target>`** -- Trace cross-repo paths: find symbols in their respective repos, show API bridge edges connecting them.
-
-### Architecture
-
-- **Federated DB** -- Each repo keeps its own `.roam/index.db`. Workspace overlay DB stores only cross-repo edges and metadata. Single-repo commands work unchanged.
-- **Post-hoc scanning** -- No changes to per-repo indexing pipeline. API edge detection runs separately via regex scanning of source files.
-- **Zero new dependencies** -- JSON config (stdlib `json`), no YAML or external packages.
-
-### MCP Server
-
-- **`ws_understand`** tool -- Unified multi-repo workspace overview via MCP.
-- **`ws_context`** tool -- Cross-repo augmented symbol context via MCP.
-
-### Testing
-
-- 46 new workspace tests: config parsing, DB operations, init/status commands, API call scanning (JS/TS), route scanning (Laravel/Express/FastAPI), URL normalization, endpoint matching, cross-repo edge storage, resolve integration, aggregation, understand/health/context/trace commands, formatter helpers.
-- **636 total tests passing**
-
-## v7.3.0
-
-Visual FoxPro language support and regex-only language infrastructure.
-
-### Visual FoxPro Support (Tier 1)
-
-- **Full VFP extractor** (`src/roam/languages/foxpro_lang.py`) — Pure regex-based extractor for `.prg` files. No tree-sitter grammar exists for VFP, so this is the first **regex-only** Tier 1 language.
-- **Symbols**: functions, procedures, classes, methods, properties, `#DEFINE` constants, implicit file-functions (`.prg` with no routines → file stem as function name).
-- **References**: `DO filename`, `DO proc IN lib`, `SET PROCEDURE TO`, `SET CLASSLIB TO`, `#INCLUDE`, `CREATEOBJECT()`, `NEWOBJECT()`, `DECLARE ... IN dll`, `=funcname()` expression calls, `THIS.method()` / `obj.method()` dot calls, `DEFINE CLASS X AS Y` inheritance.
-- **VFP preprocessing**: line continuation (`;`), comment stripping (`*`, `&&`, `*!*` blocks, `NOTE`), case-insensitive keyword matching.
-- **Built-in filtering**: 100+ VFP built-in functions excluded from call references to reduce noise.
-
-### Regex-Only Language Infrastructure
-
-- **`REGEX_ONLY_LANGUAGES`** in `parser.py` — Generic mechanism for languages without tree-sitter grammars. Returns `(None, source_bytes, language)` so extractors receive source without a tree.
-- **Pipeline bypass** — `indexer.py`, `symbols.py`, `complexity.py` all relaxed from `tree is None → skip` to `tree is None and source is None → skip`.
-- **GenericExtractor guard** — Supplement pass skipped for regex-only languages (requires tree-sitter AST nodes).
-- **Complexity fallback** — VFP files use indentation-based complexity estimation (no AST available).
-
-### Case-Insensitive Reference Resolution
-
-- **Fallback index** in `relations.py` — When exact-case symbol lookup fails, tries case-insensitive matching. Resolves `DO BACKUP` → `FUNCTION backup` across files. Non-breaking: only fires when exact match yields nothing, so case-sensitive languages are unaffected.
-
-### Smart Encoding Detection
-
-- **Multi-codepage heuristic** in `foxpro_lang.py` — Detects BOM (UTF-8, UTF-16), tries strict UTF-8, then scores 11 Windows codepages (CP1252 Western, CP1251 Cyrillic, CP1253 Greek, CP1250 Central European, CJK codepages, etc.) by printable character ratio. Zero external dependencies.
-
-### Testing
-
-- 34 new tests: 10 symbol extraction, 16 reference extraction, 5 encoding detection (UTF-8, Latin-1, CP1253 Greek, BOM, empty), 1 case-insensitive resolution, 2 integration.
-- **590 total tests passing**
-
-### Quality (tested on 468-file, 97K-line Greek accounting VFP codebase)
-
-- 2,718 symbols extracted, 500 edges (+19% from case-insensitive resolution), 232 file-level edges
-- All 50 roam commands produce meaningful output
-- 8 Louvain clusters, 4 clean layers, zero layer violations
-- Pattern detection: Factory (20), Strategy (3), Observer (1), Middleware (3)
-
-## v7.2.0
-
-AI agent experience, new analysis commands, and deeper per-file metrics.
-
-### New Commands
-
-- **`roam tour [--write PATH]`** — Auto-generated onboarding guide: top symbols by PageRank with role labels (Hub/Core utility/Orchestrator/Leaf), suggested file reading order based on topological layers, entry points, language breakdown, and codebase statistics. `--write` saves to Markdown.
-- **`roam diagnose <symbol> [--depth N]`** — Root cause analysis for debugging. Given a failing symbol, walks upstream callers and downstream callees up to N hops, ranks suspects by a composite risk score combining git churn (30%), cognitive complexity (30%), file health (25%), and co-change entropy (15%). Shows co-change partners and recent git history.
-
-### Cognitive Load Index
-
-- **Per-file cognitive load (0-100)** — New metric stored in `file_stats.cognitive_load`. Combines max cognitive complexity (30%), avg nesting depth (15%), dependency surface area (20%), co-change entropy (15%), dead export ratio (10%), and file size (10%). Surfaced in `roam file` output (both text and JSON).
-
-### Trend-Based Fitness Rules
-
-- **`type: trend` fitness rules** — New rule type in `.roam/fitness.yaml` that compares snapshot metrics over a configurable window. Guards against regressions: `max_decrease: 5` fails if health_score dropped more than 5 from the window average, `max_increase: 3` fails if cycles grew by more than 3. Supports all snapshot metrics (health_score, tangle_ratio, avg_complexity, cycles, etc.).
-
-### Agent Experience
-
-- **Verdict-first output** — Key commands (`health`, `preflight`, `pr-risk`, `impact`, `diagnose`) now emit a one-line VERDICT as the first line of text output and include a `verdict` field in the JSON summary. Agents can stop reading after the first line for quick decisions.
-- **Engineered MCP tool descriptions** — All 16 MCP tool descriptions rewritten with "WHEN TO USE" guidance, "Do NOT call X if Y covers your need" hints, and expected output descriptions. Based on Anthropic's research that tool descriptions are prompts.
-- **MCP tools for tour + diagnose** — 2 new MCP tools (`tour`, `diagnose`). Total: 16 tools, 2 resources.
-
-### PR Risk Enhancement
-
-- **Structural profile** — `roam pr-risk` now includes cluster spread (how many Louvain communities the change touches) and layer spread (how many architectural layers crossed), surfaced in both text and JSON output.
-
-### Distribution
-
-- **PyPI Trusted Publishing workflow** — `.github/workflows/publish.yml` uses GitHub OIDC tokens, no API secrets needed.
-- **`glama.json`** — MCP server discovery file for Glama.ai registry.
-- **`llms-install.md`** — Machine-readable installation guide for AI agent auto-install.
-
-## v7.1.0
-
-Large-repo safety, deeper Salesforce cross-language edges, and custom report presets. Fixes a latent crash on repos with >999 symbols in queries.
-
-### Batched SQL Infrastructure
-
-- **`batched_in()` / `batched_count()` helpers** — Centralized IN-clause batching in `connection.py`. SQLite's default `SQLITE_MAX_VARIABLE_NUMBER` is 999; Python's `sqlite3` module doesn't expose `sqlite3_limit()`, so a conservative batch size of 400 prevents crashes on large codebases. Handles single and double `{ph}` placeholders with automatic chunk sizing.
-- **41 unbatched IN-clause sites fixed** across 15 command modules and 2 graph modules: `clusters.py`, `cycles.py`, `cmd_dead.py`, `cmd_context.py`, `cmd_layers.py`, `cmd_module.py`, `cmd_debt.py`, `cmd_affected_tests.py`, `cmd_fn_coupling.py`, `cmd_health.py`, `cmd_coverage_gaps.py`, `cmd_risk.py`, `cmd_safe_zones.py`, `cmd_why.py`, `cmd_impact.py`.
-- **AND-based double-IN correctness** — Queries like `WHERE source_id IN (...) AND target_id IN (...)` cannot be batched by repeating the same subset to both placeholders (cross-batch edges would be missed). Fixed by fetching single-IN results and filtering in Python.
-- **OR-based double-IN** — Split into two separate single-IN queries with dict-based deduplication.
-- **GROUP BY / ORDER BY / LIMIT** — Queries with aggregation that can't work across batches use Python-side `Counter` and `sort` instead.
-
-### Salesforce Enhancements
-
-- **LWC anonymous class extraction** — Lightning Web Components use `export default class extends LightningElement {}` (anonymous). The JavaScript extractor now derives the class name from the filename (e.g., `myComponent.js` → `MyComponent`).
-- **`@salesforce/*` import resolution** — Cross-language edges for `@salesforce/apex/ClassName.method` (→ call), `@salesforce/schema/Object.Field` (→ schema_ref), `@salesforce/label/c.LabelName` (→ label), and `@salesforce/messageChannel/Channel` (→ import).
-- **Apex generic type references** — `List<Account>`, `Set<Contact__c>`, `Map<Id, Opportunity>` now produce `type_ref` edges to the parameterized types. Built-in types (`String`, `Integer`, `Id`, etc.) are filtered out.
-- **Flow actionCalls → Apex edges** — Salesforce Flow XML files with `<actionCalls>` blocks containing `<actionType>apex</actionType>` now produce `call` edges to the referenced Apex class. Block-scoped parsing prevents cross-block false positives.
-- **SF test naming conventions** — `roam test-map` and `roam impact` now discover Salesforce-style test classes (`{Name}Test.cls`, `{Name}_Test.cls`) via convention-based queries, in addition to path/filename pattern matching.
-
-### Custom Report Presets
-
-- **`roam report --config <path>`** — Load custom report presets from a JSON file. Custom presets are merged with built-in ones (`first-contact`, `security`, `pre-pr`, `refactor`). Each preset defines sections with title + command arrays.
-
-### Correctness Fixes
-
-- **Flow XML cross-block regex** — Fixed a bug where the `_extract_flow_refs` regex could span across `</actionCalls>` boundaries, pairing an `actionName` from one block with an `actionType` from another. Replaced with block-scoped parsing.
-- **AND-based double-IN batching** — Fixed `cmd_module.py` cohesion calculation and `cmd_dead.py` cluster detection that undercounted internal edges for large datasets (>200 symbols).
-- **Report `--config` error handling** — Malformed JSON now raises a clean `click.BadParameter` instead of an unhandled traceback.
-
-### Testing
-
-- 67 new tests covering: batched helpers, SF import resolution, Apex generic types, LWC anonymous class, Flow actionCalls, report --config, SF test detection, cross-block safety, cross-batch edge correctness.
-- **556 total tests passing**
-
-## v7.0.0
-
-Major release: Composite health scoring, SARIF output, MCP server, guided onboarding, and deep enhancements across 8 existing commands. Shifts roam from single-metric health to multi-factor CodeScene-inspired analysis.
-
-### New Commands (3)
-
-- **`roam init`** — Guided project onboarding. Creates `.roam/fitness.yaml` with starter rules, generates `.github/workflows/roam.yml` CI workflow, runs initial index, and shows health summary. One command to go from zero to full analysis.
-- **`roam digest`** — Compare current metrics against the most recent snapshot. Shows deltas with directional arrows (improvement/regression), `--brief` for one-line summary, `--since <tag>` for specific comparisons. Generates actionable recommendations.
-- **`roam describe --agent-prompt`** — Compact agent-oriented project summary under 500 tokens. Returns project name, stack, conventions, key abstractions, hotspots, health score, and test command in a format optimized for LLM system prompts.
-
-### New Modules
-
-- **SARIF 2.1.0 output** (`src/roam/output/sarif.py`) — Static Analysis Results Interchange Format for GitHub code scanning. Converters for: dead code, complexity, fitness violations, health issues, breaking changes, and naming conventions. Upload to GitHub Advanced Security for inline PR annotations.
-- **MCP server** (`src/roam/mcp_server.py`) — Model Context Protocol server exposing 12 roam tools (`understand`, `health`, `preflight`, `search_symbol`, `context`, `trace`, `impact`, `file_info`, `pr_risk`, `breaking_changes`, `affected_tests`, `dead_code`, `complexity_report`, `repo_map`) plus 2 resources (`roam://health`, `roam://summary`). Run with `fastmcp run roam.mcp_server:mcp`.
-- **GitHub Action** (`action.yml`) — Reusable composite action for CI. Installs roam, indexes, runs analysis, and posts/updates PR comments with results. Supports `command`, `comment`, `fail-on-violation`, and `roam-version` inputs.
-
-### Composite Health Scoring
-
-- **Multi-factor project health score (0-100)** — Replaces the old cycles-only formula with a composite that weights: tangle ratio (up to -30), god components (up to -20), bottlenecks (up to -15), layer violations (up to -15), and average per-file health (up to -20). Much more accurate for real-world codebases.
-- **Tangle ratio** — Percentage of symbols involved in dependency cycles (Structure101 concept). Displayed in health output: `Tangle: 5.2% (42/800 symbols in cycles)`.
-- **Per-file health score (1-10)** — CodeScene-inspired 7-factor composite per file: max cognitive complexity, file-level indentation complexity, cycle membership, god component membership, dead export ratio, co-change entropy, and churn amplification. Stored in `file_stats.health_score`.
-- **Co-change entropy** — Shannon entropy of co-change distribution per file. High entropy = shotgun surgery. Stored in `file_stats.cochange_entropy`.
-
-### Correctness Fixes
-
-- **elif complexity scoring** — Fixed critical bug where `elif`/`else`/`case` chains inflated cognitive complexity ~3x vs SonarSource spec. Continuation nodes now get +1 flat (no nesting penalty), matching SonarQube behavior exactly.
-
-### Enhanced Commands (8)
-
-- **`roam describe --agent-prompt`** — Compact agent-oriented output mode (under 500 tokens) with project overview, stack, conventions, key abstractions, hotspots, and health.
-- **`roam fitness --explain`** — Show `reason` and `link` fields for each rule. Rules can now include `reason:` and `link:` in `.roam/fitness.yaml`.
-- **`roam file <path1> <path2> ...`** — Multi-file mode with `--changed` (show all uncommitted changed files) and `--deps-of PATH` (show file + all its imports).
-- **`roam context --for-file PATH`** — File-level context: callers grouped by source file, callees grouped by target file, tests, coupling partners, and complexity summary.
-- **`roam bus-factor --brain-methods`** — Brain method detection (cc >= 25 AND line_count >= 50) and Shannon entropy contribution analysis with knowledge risk labels.
-- **`roam health`** — Now shows composite score with tangle ratio in both text and JSON output.
-- **`roam snapshot` / `roam trend`** — Store and track tangle_ratio, avg_complexity, and brain_methods in snapshot history.
-
-### CLI Infrastructure
-
-- **`--compact` flag** — Token-efficient output mode across all commands. TSV tables (40-50% fewer tokens) and minimal JSON envelope (strips version/timestamp/project). For AI agent pipelines where every token counts.
-- **`--gate EXPR`** — CI quality gate expressions (e.g., `roam health --gate score>=70`). Supports `>=`, `<=`, `>`, `<`, `=` operators.
-- **Categorized `--help`** — Progressive disclosure: 48 commands organized into 7 categories (Getting Started, Daily Workflow, Codebase Health, Architecture, Exploration, Reports & CI, Refactoring) instead of flat alphabetical list.
-
-### Schema & Migrations
-
-- `file_stats.health_score REAL` — Per-file health score (1-10)
-- `file_stats.cochange_entropy REAL` — Shannon entropy of co-change partners
-- `snapshots.tangle_ratio REAL` — % of symbols in cycles at snapshot time
-- `snapshots.avg_complexity REAL` — Average cognitive complexity at snapshot time
-- `snapshots.brain_methods INTEGER` — Count of brain methods at snapshot time
-- Safe ALTER TABLE migrations via `_safe_alter()` for existing databases
-
-### Testing
-
-- Comprehensive v7 tests covering: SARIF module, init, digest, describe --agent-prompt, fitness reason/link, multi-file mode, context --for-file, bus-factor entropy/brain-methods, compact mode, gate expressions, categorized help, elif fix, per-file health, composite health, tangle ratio
-- 56 new v7 feature tests
-- **489 total tests passing**
-
-## v6.0.0
-
-Major release: 15 new intelligence commands, cognitive complexity analysis, architectural fitness functions, and compound agent-friendly operations. Shifts roam from descriptive ("what the code looks like") to prescriptive ("how to work with it").
-
-### New Commands (15)
-
-- **`roam complexity`** — Per-function cognitive complexity metrics with multi-factor scoring (nesting, boolean ops, callback depth, params). Includes `--bumpy-road` mode for files with many moderate-complexity functions.
-- **`roam conventions`** — Auto-detect implicit codebase patterns: naming styles (snake_case/camelCase/PascalCase), file organization, import preferences, export patterns. Flags outliers.
-- **`roam debt`** — Hotspot-weighted technical debt prioritization. Combines complexity, churn, cycle membership, and god components. Code in hotspots costs 15x more — focus refactoring here.
-- **`roam fitness`** — Architectural fitness function runner. Define rules in `.roam/fitness.yaml` for dependency constraints, metric thresholds, and naming conventions. Returns exit code 1 for CI integration.
-- **`roam preflight`** — Compound pre-change safety check. Combines blast radius + affected tests + complexity + coupling + conventions + fitness into one call. Reduces agent round-trips by 60-70%.
-- **`roam affected-tests`** — Trace from changed symbol/file through reverse call graph to test files. Classifies as DIRECT/TRANSITIVE/COLOCATED. Outputs runnable `pytest` command with `--command`.
-- **`roam entry-points`** — Entry point catalog with protocol classification (HTTP, CLI, Event, Scheduled, Message, Main, Export). Shows fan-out and reachability coverage per entry point.
-- **`roam safe-zones`** — Graph-based containment boundary analysis. Shows ISOLATED/CONTAINED/EXPOSED zones, internal symbols safe to change, and boundary symbols requiring contract maintenance.
-- **`roam patterns`** — Architectural pattern recognition: Strategy, Factory, Observer, Repository, Middleware, Decorator. Detects patterns from graph structure and naming.
-- **`roam bus-factor`** — Knowledge loss risk per module. Tracks author concentration, recency, and bus factor. Flags single-point-of-failure directories.
-- **`roam breaking`** — Breaking change detection between git refs. Finds removed exports, signature changes, and renamed symbols.
-- **`roam alerts`** — Health degradation trend detection from snapshot history. Fires CRITICAL/WARNING/INFO alerts for threshold violations and worsening trends.
-- **`roam fn-coupling`** — Function-level temporal coupling. Finds symbols that co-change across files without direct edges — hidden dependencies.
-- **`roam doc-staleness`** — Detect stale docstrings where code body changed long after documentation was last updated.
-- **`roam complexity --bumpy-road`** — Files where many functions are individually moderate but collectively hard to maintain.
-
-### Enhanced Commands
-
-- **`roam understand`** — Now includes conventions, complexity overview (avg/critical/high), pattern summary, and debt hotspots alongside existing sections.
-- **`roam describe`** — Generates CLAUDE.md with Coding Conventions and Complexity Hotspots sections for agents to follow.
-- **`roam context --task`** — Task-aware context mode: `refactor|debug|extend|review|understand` tailors output to agent intent. Refactor shows coupling + blast radius; debug shows execution flow; extend shows conventions to follow.
-- **`roam map --budget N`** — Token-budget-aware repo map. Constrains output to N tokens using PageRank ranking.
-- **`roam diff --tests --coupling --fitness`** — Enhanced diff with affected tests, coupling warnings for missing co-change partners, and fitness rule checks. `--full` enables all three.
-
-### Infrastructure
-
-- **`symbol_metrics` table** — Per-function complexity data stored during indexing: cognitive_complexity, nesting_depth, param_count, line_count, return_count, bool_op_count, callback_depth.
-- **Cognitive complexity module** (`src/roam/index/complexity.py`) — Tree-sitter AST-based complexity analysis. Walks control flow nodes with nesting penalties (SonarSource-inspired).
-- **Fitness YAML config** — `.roam/fitness.yaml` for user-defined architectural rules. Supports dependency, metric, and naming rule types.
-
-### Testing
-
-- 62 new v6 feature tests (conventions, complexity, debt, preflight, fitness, patterns, safe-zones, entry-points, alerts, bus-factor, fn-coupling, doc-staleness, task-context, enhanced understand/describe)
-- 17 new performance benchmarks for v6 commands
-- **393 total tests passing**
-
-## v5.0.0
-
-Major release: 6 new commands, Salesforce language support, hypergraph co-change analysis, and defensive hardening across all commands.
-
-### New Commands
-
-- **`roam understand`** — Single-call codebase comprehension for AI agents. Returns tech stack, architecture overview, key abstractions, health summary, and entry points in one shot. Designed for LLM context priming.
-- **`roam coverage-gaps`** — Find unprotected entry points with no path to a required gate (auth, permission, etc.). BFS reachability from entry points to gate symbols.
-- **`roam snapshot`** — Persist a timestamped health metrics snapshot to the index DB. Use `--tag` to label milestones.
-- **`roam trend`** — Display health score history with sparkline visualization. Supports `--assert "metric<=N"` for CI quality gates.
-- **`roam report`** — Run compound presets (first-contact, security, pre-pr, refactor) that execute multiple commands in one shot. Supports `--list` and custom preset names.
-- **`roam coupling --set`** — Set-mode coupling analysis against changesets with hypergraph surprise scoring.
-
-### Enhanced Commands
-
-- **`roam dead`** — Added `--summary`, `--by-kind`, `--clusters` flags for grouped dead-code analysis and cluster detection.
-- **`roam context`** — Batch mode: pass multiple symbols to get shared callers and merged context.
-- **`roam risk`** — Added `--explain` flag with full BFS chain reasoning showing why symbols are risky.
-- **`roam grep`** — Added `--source-only`, `--exclude`, `--test-only` filters.
-- **`roam coupling`** — Added `--staged` changeset mode and hypergraph surprise score.
-- **`roam pr-risk`** — Added hypergraph novelty factor for change-pattern analysis.
-
-### Salesforce Support
-
-- **Grammar aliasing infrastructure** — Languages without dedicated tree-sitter grammars can piggyback on existing ones (apex -> java, aura/visualforce/sfxml -> html).
-- **Apex extractor** (`.cls`, `.trigger`) — Extends Java extractor with SOQL query refs, System.Label refs, sharing modifiers, trigger declarations, and Salesforce annotations.
-- **Aura extractor** (`.cmp`, `.app`, `.evt`, `.intf`, `.design`) — Component structure, attribute/method/event symbols, controller refs, custom component refs.
-- **Visualforce extractor** (`.page`) — Page symbols, controller/extensions refs, merge field scanning.
-- **SF Metadata XML extractor** (`*-meta.xml`) — Object/field/class metadata, formula scanning, sidecar deduplication.
-- **Cross-language edge resolution** — `@salesforce/apex/`, `@salesforce/schema/`, `@salesforce/label/` import paths resolve across language boundaries.
-
-### Infrastructure
-
-- **JSON envelope contract** — All `--json` output now wrapped in `json_envelope(command, summary, **payload)` with consistent `command`, `timestamp`, `summary` fields across all 34 commands.
-- **Hypergraph co-change tables** — N-ary commit patterns stored in `git_hyperedges`/`git_hyperedge_files` for surprise scoring.
-- **Shared `changed_files` utility** — Extracted common `--staged`/`--diff`/`--branch` file detection into reusable module.
-- **Metrics history** — `metrics_snapshots` table for trend tracking with `append_snapshot()` API.
-- **Defensive hardening** — `.get()` safety patterns, `or 0` null-safe arithmetic, and empty-result guards across all commands and graph metrics.
-
-### Testing
-
-- 27 Salesforce-specific tests covering all 4 extractors, grammar aliasing, and project-level indexing.
-- 20 integration tests for new commands (understand, dead enhancements, context batch, snapshot, trend, coverage-gaps, report, JSON envelope).
-- 72 performance tests including indexing benchmarks, query latency, stress tests, and self-benchmarks on roam-code itself.
-
-### Performance (self-benchmark on roam-code, ~140 files)
-
-| Command | Latency |
-|---------|---------|
-| understand | ~800ms |
-| health | ~770ms |
-| layers | ~780ms |
-| map | ~200ms |
-| dead | ~220ms |
-| coupling | ~220ms |
-| weather | ~190ms |
-
-All commands under 1s on a real-world Python project.
+All notable changes to [roam-code](https://github.com/Cranot/roam-code) will be documented in this file.
+
+The format is based on [Keep a Changelog](https://keepachangelog.com/),
+and this project adheres to [Semantic Versioning](https://semver.org/).
+
+## [Unreleased]
+
+## [11.0.0] - 2026-02-25
+
+### Added
+- **MCP v2 Overhaul:**
+  - In-process MCP execution via CliRunner -- eliminates subprocess overhead (#1)
+  - 4 compound MCP operations: `roam_explore`, `roam_prepare_change`, `roam_review_change`, `roam_diagnose_issue` -- each replaces 2-4 tool calls (#2)
+  - 6 MCP tool presets: core (20 tools), review, refactor, debug, architecture, full (65 tools) via `ROAM_MCP_PRESET` env var (#3)
+  - Structured return schemas (`output_schema`) on all 65 MCP tools (#4)
+  - `roam_expand_toolset` meta-tool for dynamic mid-session preset switching (#6)
+- **Performance Foundations:**
+  - SQLite FTS5/BM25 search replacing TF-IDF -- symbol search is now ~1000x faster (#14)
+  - O(changed) incremental edge rebuild via `source_file_id` provenance tracking (#13)
+  - 7 new database indexes, UPSERT pattern, batch size optimization (#15)
+  - `PRAGMA mmap_size=268435456` (256MB memory-mapped I/O) (#11)
+  - Size guard on `propagation_cost()` for graphs >500 nodes (#12)
+- **MCP Protocol Compliance (Epic 14):**
+  - Structured error responses with `isError`, `retryable`, and `suggested_action` fields (#116)
+  - `structuredContent` alongside text on MCP tool failures (#117)
+  - 5 MCP Prompts: `/roam-onboard`, `/roam-review`, `/roam-debug`, `/roam-refactor`, `/roam-health-check` (#118)
+  - Response metadata in `_meta`: `response_tokens`, `latency_ms`, `cacheable`, `cache_ttl_s` (#119)
+- **Code Smell Detection:**
+  - `roam smells` — 15 deterministic detectors (brain methods, god classes, feature envy, shotgun surgery, data clumps, etc.) with per-file health scores (#120)
+- **Quality Gates and Setup:**
+  - `roam health --gate` — quality gate checks from `.roam-gates.yml` with exit code 5 on failure (#122)
+  - `roam mcp-setup <platform>` — config snippets for claude-code, cursor, windsurf, vscode, gemini-cli, codex-cli (#130)
+- **Security and Verification:**
+  - `roam verify-imports [--file F]` — import hallucination firewall: validate imports against indexed symbol table with FTS5 fuzzy suggestions (#125)
+  - `roam vulns [--import-file F] [--reachable-only]` — vulnerability scanning CLI: auto-detect npm/pip/trivy/osv formats, reachability filtering, SARIF output (#131)
+  - `roam secrets` upgraded: test/doc suppression, env-var detection, Shannon entropy detector, per-finding remediation suggestions (#133)
+- **Analytics and Scoring:**
+  - `roam metrics <file|symbol>` — unified vital signs: complexity, fan-in/out, PageRank, churn, test coverage, dead code risk (#137)
+  - `roam debt --roi` — refactoring ROI estimate (developer-hours saved per quarter/year) with confidence band based on complexity, churn, and coupling signals (#144)
+  - Composite difficulty scoring for partitions: weighted complexity + coupling + churn + size with Easy/Medium/Hard/Critical labels (#128)
+  - Quality rule profiles with inheritance: default, strict-security, ai-code-review, legacy-maintenance, minimal — `--profile` flag on `roam check-rules` (#138)
+- **Documentation Intelligence:**
+  - `roam docs-coverage` — exported-symbol docs coverage report with stale-doc drift detection and PageRank-ranked missing-doc hotlist, plus threshold gate support (`--threshold`) (#143)
+- MCP resources expanded from 2 to 10: architecture, hotspots, tech-stack, dead-code, recent-changes, dependencies, test-coverage, complexity (#129)
+- **CI/Runtime Ergonomics:**
+  - Standardized exit codes for CI integration (0=success, 3=index missing, 5=gate failure) (#19)
+  - GitHub Action: composite action with SARIF upload, sticky PR comments, quality gates, SQLite caching (#20)
+  - Progress indicators during `roam init` / `roam index` with `--quiet` flag (#30)
+  - `defer_loading` annotations on non-core MCP tools for Claude Code Tool Search compatibility (#66)
+- **Ownership and Reviewer Intelligence:**
+  - `roam codeowners` (#38)
+  - `roam drift` (#39)
+  - `roam simulate-departure` (#40)
+  - `roam suggest-reviewers` (#41)
+- **Change-risk and Structural Review:**
+  - `roam api-changes` (#42)
+  - `roam test-gaps` (#43)
+  - `roam secrets` (#44)
+  - `roam semantic-diff` (#77)
+- **Agent Quality and Governance Suite:**
+  - `roam vibe-check` (#57)
+  - `roam ai-readiness` (#84)
+  - `roam verify` (#85)
+  - `roam ai-ratio` (#86)
+  - `roam duplicates` (#87)
+- **Dashboard and Trend Visibility:**
+  - `roam dashboard` (#80)
+  - `roam trends` (#81)
+  - `--mermaid` architecture output support (#82)
+  - `roam onboard` (#83)
+- **Multi-agent Workflows:**
+  - `roam partition` (#88)
+  - `roam affected` (#89)
+  - `roam syntax-check` (#92)
+- **Output Determinism and Context Ranking:**
+  - Deterministic output ordering for cache-friendly prompts (#90)
+  - PageRank-weighted budget truncation metadata (#91)
+  - Conversation-aware ranking personalization (#94)
+- **Agent Context Export and MCP Compatibility:**
+  - Agent context export bundles (`AGENTS.md` + provider overlays) (#65, #68, #97)
+  - Streamable HTTP transport baseline (`roam mcp --transport streamable-http`) (#98)
+  - Expanded MCP annotations + task-support metadata (#99)
+  - MCP client conformance/profile suite (#100)
+- **Algorithm Detection Upgrades:**
+  - Precision profiles (`balanced`/`strict`/`aggressive`) (#101)
+  - Runtime-aware impact scoring + evidence paths + framework-aware N+1 packs (#102)
+  - `roam algo --sarif` with stable fingerprints, codeFlows, and fixes payloads (#103)
+- **CI Quality-gate Hardening:**
+  - Idempotent sticky PR comment updater with duplicate cleanup (#23)
+  - Trend-aware fitness gates (#74)
+  - `--changed-only` incremental CI mode (#75)
+  - SARIF guardrails + configurable category + truncation warnings (#105)
+- **Documentation/Release Hygiene:**
+  - CONTRIBUTING.md with issue/PR templates (#28)
+  - README competitive positioning table (#76)
+  - Command/matrix count reconciliation helpers and tests (#108)
+  - README command/MCP inventory overhaul to match source reality (#106)
+  - Product landing page at `docs/site/index.html` with competitive comparison, feature showcase, and install instructions
+  - Competitive research page at `docs/site/landscape.html` with fairness-recalibrated scores
+- PyPI discoverability: keywords, Documentation URL, and expanded classifiers in `pyproject.toml` (#111)
+- Pre-commit integration: `.pre-commit-hooks.yaml` with 5 hooks (`roam-secrets`, `roam-syntax-check`, `roam-verify`, `roam-health`, `roam-vibe-check`) (#21)
+- Fuzzy symbol-not-found suggestions via FTS5/BM25 search in `roam symbol`, `roam impact`, `roam context`, `roam diagnose` (#51)
+- Actionable remediation hints in all major error messages — "index missing", "symbol not found", "database error" now include next steps (#50)
+- **Agent Error Recovery and Diagnostics:**
+  - `roam doctor` — setup diagnostics: Python version, tree-sitter, git, index freshness, SQLite, networkx checks (#48)
+  - `roam reset` — destructive index rebuild with `--force` safety flag (#52)
+  - `roam clean` — lightweight orphaned-file cleanup without full rebuild (#52)
+  - Next-step suggestions in `roam health`, `roam context`, `roam hotspots`, `roam diagnose`, `roam dead` output (#45)
+  - `roam endpoints` — multi-framework API endpoint scanner (Flask, FastAPI, Django, Express, Go, Spring, Laravel, GraphQL, gRPC) (#113)
+- **Progressive Disclosure and Batch Operations:**
+  - Universal progressive disclosure: `--detail` flag for full output, compact summary by default. Applied to `health`, `hotspots`, `dead`, `deps`, `layers`, `clusters` (#10)
+  - Batch MCP operations: `roam_batch_search` (10 queries) and `roam_batch_get` (50 symbols) in single MCP call with shared DB connection (#7)
+- **Developer Workflow Tools:**
+  - Git hook auto-indexing: `roam hooks install/uninstall/status` with append-mode markers for post-merge/post-checkout/post-rewrite (#61)
+  - Install verification: `roam --check` eager flag for quick first-run validation (#115)
+  - `roam dev-profile` — developer behavioral profiling: commit time patterns, Gini scatter, burst detection, session analysis, risk scoring (#78)
+  - `roam watch` — poll-based file watcher with debouncing for always-on agent sessions, plus authenticated webhook daemon mode (`POST /roam/reindex`, `GET /health`) for warm refresh workflows (#60, #95)
+- **Search and Analysis:**
+  - `roam search-semantic` now uses hybrid retrieval: BM25 lexical ranking + TF-IDF vector ranking fused with Reciprocal Rank Fusion for stronger semantic recall (#54)
+  - Pre-indexed framework/library packs now enrich semantic retrieval for common stacks (Django, Flask, FastAPI, React, Express, SQLAlchemy, pytest, stdlib) to improve cold-start recall (#96)
+  - `roam search --explain` — BM25 score breakdown with field match highlights for search result transparency (#55)
+  - `roam supply-chain` — dependency risk dashboard: 7 package formats, pin coverage scoring, maintenance signals (#79)
+  - `roam spectral` — Fiedler vector bisection for module decomposition, spectral gap metric, `--compare` vs Louvain (#73)
+- **Structural Governance:**
+  - `roam check-rules` — structural rule engine with 10 built-in rules and `.roam-rules.yml` config (#93)
+  - Bottom-up context propagation through call graph for `roam context` ranking (#72)
+
+### Changed
+- All MCP tool descriptions shortened to <60 tokens each for agent efficiency (#5)
+- MCP token overhead reduced from ~36K to <3K tokens (core preset) -- 92% reduction
+- `--budget N` Phase 2: extended to all list-producing commands (13 more commands), completing universal budget support across the full CLI (#9)
+- MCP core preset expanded from 21 to 23 tools (added `roam_batch_search`, `roam_batch_get`)
+- CI workflows consolidated: removed redundant `ci.yml`, enhanced `roam-ci.yml` with lint job, converted `roam.yml` to `workflow_dispatch`-only template (#110)
+- Competitive landscape scoring rebalanced: equal weights (0.5/0.5), self-assessed labels, roam arch score 90→78, SonarQube 62→72, CodeQL 60→74
+- roam-code category in competitive data changed from standalone `"roam"` to `"mcp_server"`
+- Confidence system removed from competitive landscape page
+- Consolidated duplicated EXTENSION_MAP and schema definitions to single sources of truth (#17)
+
+### Fixed
+- Command-count drift removed from docs and launch copy by adopting canonical-vs-alias counting (`algo` + legacy `math`) (#108)
+- README command tables and MCP inventory now match code (121 canonical CLI commands + 1 alias, 93 MCP tools) (#106)
+- Bare `except:` audit confirmed — codebase already clean, no broad exception swallowing (#18)
+- Cycle detection in health scoring now uses Tarjan SCC (O(V+E)) instead of 2-cycle self-join (#16)
+
+## [10.0.1] - 2026-02-21
+
+### Added
+- MCP lite mode (16 core tools) as the default; full mode via `ROAM_MCP_LITE=0`
+- MCP tool namespacing with `roam_` prefix across all 61 tools
+- `roam mcp` command with `--transport` and `--list-tools` flags
+- 13 additional MCP tools with structured error handling
+
+### Fixed
+- Community issues #7 and #9 addressed
+- YAML fallback parser indentation handling corrected
+- `--json` flag position in CI workflow examples fixed
+- CI dev dependencies (pytest-xdist) properly installed
+
+## [10.0.0] - 2026-02-20
+
+### Added
+- **30+ new commands** bringing total to 94 (from 56 in v9.1):
+  - Architecture: `simulate`, `fingerprint`, `orchestrate`, `cut`, `adversarial`, `plan`
+  - Debugging: `invariants`, `bisect`, `intent`, `closure`
+  - Governance: `rules`, `attest`, `pr-diff`, `budget`, `capsule`, `forecast`, `path-coverage`
+  - Analysis: `dark-matter`, `effects`, `annotate`, `annotations`, `relate`
+  - Backend quality: `n1`, `auth-gaps`, `over-fetch`, `migration-safety` (and 3 more)
+- Cross-language bridges: Salesforce (Apex/Aura/LWC), Protobuf, REST API, Jinja2/Django templates, env var config
+- Semantic search via TF-IDF with cosine similarity (`roam search --semantic`)
+- JSON envelope schema versioning and validation on all command output
+- `--sarif` global CLI flag for SARIF 2.1.0 output (health, debt, complexity)
+- `--include-excluded` flag for inspecting normally-excluded files
+- Algorithm catalog tips integrated into analysis output
+- Ruby Tier 1 language support (26 languages total)
+- `roam fingerprint` for topology fingerprinting and comparison
+- `roam orchestrate` for multi-agent work partitioning (Louvain-based)
+- `roam mutate` for code transforms (move, rename, add-call, extract)
+- Vulnerability mapping (`roam vuln-map`) and trace ingestion (`roam ingest-trace`)
+- Property-based and indexing integration tests
+
+### Fixed
+- ON DELETE CASCADE/SET NULL added to foreign key constraints
+- `fitness` command outputs proper JSON when no rules are configured
+- Schema-prefixed `$` table names stripped in `missing-index` detection
+- Pluralization edge cases and `$hidden` symbol messaging
+- Algorithm findings accuracy: auth-gaps brace tracking, over-fetch, migration-safety
+- Loop-invariant false positive rate reduced
+
+### Changed
+- Lint cleanup and algorithm optimizations across codebase
+- pytest-xdist enabled for parallel test execution (~2x speedup)
+
+## [9.1.0] - 2026-02-18
+
+### Added
+- `roam minimap` -- compact annotated codebase snapshot for CLAUDE.md generation
+- YAML language support (Tier 1)
+- HCL/Terraform language support (Tier 1)
+- `roam describe --write` for agent-generated project instructions
+- `.roamignore` support for excluding files from indexing
+
+### Fixed
+- Network drive path detection with automatic SQLite journal mode adaptation
+- Indexer stall on binary formats (SCX files) with cloud-sync hardening
+
+## [9.0.0] - 2026-02-18
+
+### Added
+- Universal algorithm catalog -- 23 tasks with ranked solution approaches (`roam math`)
+- Algorithm anti-pattern detectors that query DB signals to find suboptimal code
+- Command decomposition: large CLI modules split into focused `cmd_*.py` files
+- `roam n1` -- implicit N+1 I/O pattern detection
+- 6 backend quality analysis commands
+
+## [8.2.0] - 2026-02-14
+
+### Added
+- Python extractor: `with`, `except`, `raise` statement extraction
+
+### Fixed
+- Dead export count discrepancy between `roam understand` and `roam dead --summary`
+- Alerts health score mismatch with `roam health` (replaced simple penalty formula with weighted geometric mean)
+- `roam patterns` self-detection of its own detector functions
+- Middleware false positives from `%Handler` and `%Filter` patterns
+
+### Changed
+- Smarter health scoring: `dev/`, `tests/`, `scripts/`, `benchmark/` classified as expected utilities
+- File role classifier: `dev/` directory assigned `ROLE_SCRIPTS`
+
+### Removed
+- 5 unused functions: `condense_cycles`, `layer_balance`, `find_path`, `build_reverse_adj`, `get_symbol_blame` (~200 lines)
+
+## [8.1.1] - 2026-02-14
+
+### Added
+- Python extractor: instance attribute extraction from `__init__` methods (Pyan-inspired)
+- Python extractor: assignment type annotation references for class fields and module variables
+- Python extractor: forward reference support for string annotations (`Optional["Config"]`)
+
+## [8.1.0] - 2026-02-14
+
+### Added
+- Python extractor: decorator references (`@decorator` and `@module.decorator(args)`)
+- Python extractor: type annotation references for parameters, returns, and generics
+
+### Fixed
+- `roam complexity` crash on databases missing v7.4 columns (defensive `_safe_metric()` accessor)
+- 95% fewer dead code false positives (test files excluded, ABC overrides and CLI functions marked intentional)
+- Smarter health scoring with expanded utility path detection (`output/`, `db/`, `common/`, `internal/`)
+
+## [8.0.1] - 2026-02-14
+
+### Changed
+- Extracted `graph_helpers.py` with shared BFS/adjacency code from 4 command files
+- Split `cmd_context.py` into focused modules (1,622 to 1,022 lines)
+- Added Python 3.9 to CI matrix, `Makefile`, and dev tooling
+
+## [8.0.0] - 2026-02-14
+
+### Added
+- Statistical anomaly detection: Modified Z-Score, Theil-Sen regression, Mann-Kendall trend, CUSUM change-point detection
+- Smart file role classifier (source, test, config, docs, build, generated, etc.)
+- Dead code aging with git blame temporal decay scoring
+- Cross-language bridge framework (abstract `LanguageBridge` with auto-discovery)
+- C# Tier 1 language support (attributes, nullable types, using directives, constructors)
+- `roam visualize` command for Mermaid/DOT architecture diagrams
+- SCX/SCT binary form support for Visual FoxPro
+- Agent-agnostic `roam describe` with auto-detection
+- Gate presets for `coverage-gaps` (Python, JavaScript, Go, Java, Rust) with `.roam-gates.yml`
+- Pluggable test convention adapters (Python, Go, JavaScript, Java, Ruby, Apex)
+- `roam trend --analyze` with anomaly detection, forecasting, and `--fail-on-anomaly` flag
+- 1,656 tests (up from 669 in v7.5.0)
+
+### Changed
+- Version sourced from single location (`pyproject.toml` via `importlib.metadata`)
+- License format updated to SPDX string
+
+### Fixed
+- Cloud-synced path auto-detection with SQLite journal mode adaptation
+- Indexer stall on binary SCX formats
+
+## [7.5.0] - 2026-02-13
+
+### Changed
+- 12 research-backed math improvements across core analysis algorithms
+- Percentile-based betweenness severity scoring (scales across codebase sizes)
+- Three-factor trace quality scoring (directness + coupling + scaled hub penalty)
+
+## [7.4.0] - 2026-02-12
+
+### Added
+- Multi-repo workspace support (`roam ws init`, `roam ws add`, `roam ws query`)
+- Visual FoxPro (VFP) Tier 1 language support with regex-only extractor
+- Cross-repo API edge detection (REST routes and HTTP client calls)
+- Smart encoding detection for multi-codepage files (11 Windows codepages)
+- Case-insensitive reference resolution fallback for VFP
+
+## [7.2.0] - 2026-02-12
+
+### Added
+- Cognitive load index (0-100) per file combining complexity, dependencies, entropy, and size
+- `roam tour` -- auto-generated onboarding guide with PageRank-ranked symbols
+- `roam diagnose` -- root cause ranking with composite risk scoring
+- Verdict-first output pattern across key commands (VERDICT line + JSON `verdict` field)
+- Trend-based fitness rules (`type: trend` in `.roam/fitness.yaml`)
+- MCP tools for `tour` and `diagnose`
+- PR risk structural profile (cluster spread + layer spread)
+- PyPI Trusted Publishing workflow
+
+## [7.1.0] - 2026-02-12
+
+### Added
+- `batched_in()` / `batched_count()` helpers preventing >999 parameter SQL crashes
+- Salesforce cross-language edges (LWC anonymous classes, `@salesforce/*` imports, Apex generics)
+- Flow XML `actionCalls` to Apex class edge resolution
+- Custom report presets via `roam report --config <path>`
+
+### Fixed
+- 41 unbatched IN-clause sites across 15 command modules and 2 graph modules
+- Flow XML cross-block regex spanning across `</actionCalls>` boundaries
+
+## [7.0.0] - 2026-02-12
+
+### Added
+- Composite health scoring (0-100) replacing old cycles-only formula
+- SARIF 2.1.0 output for GitHub Code Scanning
+- MCP server with 12 tools and 2 resources via FastMCP
+- `roam init` -- guided project onboarding with CI workflow generation
+- `roam digest` -- metric comparison against snapshots with delta arrows
+- `roam describe --agent-prompt` -- compact agent-oriented summary under 500 tokens
+- Per-file health score (1-10) with 7-factor CodeScene-inspired composite
+- Co-change entropy (Shannon) for shotgun surgery detection
+- Tangle ratio metric (Structure101 concept)
+- `--compact` flag for token-efficient output across all commands
+- `--gate EXPR` for CI quality gates (`roam health --gate score>=70`)
+- Categorized `--help` with 7 command categories
+- GitHub Action (`action.yml`) for CI integration
+
+### Fixed
+- `elif`/`else`/`case` chains inflating cognitive complexity ~3x vs SonarSource spec
+
+## [6.0.0] - 2026-02-12
+
+### Added
+- 15 new commands: `complexity`, `conventions`, `debt`, `fitness`, `preflight`, `affected-tests`, `entry-points`, `safe-zones`, `patterns`, `bus-factor`, `breaking`, `alerts`, `fn-coupling`, `doc-staleness`, `complexity --bumpy-road`
+- Cognitive complexity analysis (SonarSource-compatible, tree-sitter based)
+- Architectural fitness functions via `.roam/fitness.yaml`
+- `roam context --task` with mode-specific output (refactor/debug/extend/review/understand)
+- `roam map --budget N` token-budget-aware repo map
+- `roam diff --tests --coupling --fitness` enhanced diff analysis
+- `symbol_metrics` table for per-function complexity data
+
+## [5.0.0] - 2026-02-10
+
+### Added
+- `roam understand` -- single-call codebase comprehension for AI agents
+- `roam coverage-gaps` -- unprotected entry point detection via BFS reachability
+- `roam snapshot` / `roam trend` -- health metric history with sparklines and CI assertions
+- `roam report` -- compound preset runner (first-contact, security, pre-pr, refactor)
+- Salesforce support: Apex, Aura, Visualforce, SF Metadata XML extractors
+- Hypergraph co-change analysis with surprise scoring
+- JSON envelope contract across all `--json` output
+- `roam dead --summary --by-kind --clusters` grouped analysis modes
+- `roam context` batch mode for multiple symbols
+
+## [4.0.0] - 2026-02-10
+
+### Added
+- Location-aware health scoring, callee-chain risk, multi-path trace
+- `roam why` -- symbol role classification with reach and verdict
+- PHP Tier 1 language support
+- `--json` global flag on all commands
+
+### Changed
+- Precision refinements: utility-aware bottlenecks, zone-override risk, hub-aware trace
+
+## [3.7.0] - 2026-02-10
+
+### Added
+- `roam describe`, `roam test-map`, `roam sketch` commands
+- Method call extraction
+- `.svelte` file support
+
+## [3.0.0] - 2026-02-09
+
+### Added
+- Vue SFC parsing with template consumption analysis
+- `roam diff` for blast radius of uncommitted changes
+- Cross-file resolution with exported preference and Go same-directory matching
+- Dead code transitive consumption check
+
+### Fixed
+- Vue import resolution and preprocessing off-by-one errors
+- Windows NUL device crash
+- Symbol disambiguation accuracy
+
+## [1.0.0] - 2026-02-09
+
+### Added
+- Initial release: instant codebase comprehension for AI coding agents
+- Tree-sitter AST parsing for Python, JavaScript, TypeScript, Go, Java, Rust, C
+- Symbol extraction with qualified names and visibility
+- Reference resolution and call graph construction
+- Dependency graph with NetworkX (PageRank, cycles, layers, clusters)
+- Core commands: `search`, `get`, `callers`, `callees`, `uses`, `map`, `layers`, `clusters`, `health`, `dead`, `hotspot`, `risk`, `owner`, `coupling`, `trace`, `grep`, `deps`
+- SQLite local index (`.roam/index.db`)
+- Incremental indexing via mtime + hash change detection
+- Git integration: churn, blame, co-change analysis
+
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v11.0.0...HEAD
+[11.0.0]: https://github.com/Cranot/roam-code/compare/v10.0.1...v11.0.0
+[10.0.1]: https://github.com/Cranot/roam-code/compare/v10.0.0...v10.0.1
+[10.0.0]: https://github.com/Cranot/roam-code/compare/v9.1.0...v10.0.0
+[9.1.0]: https://github.com/Cranot/roam-code/compare/v9.0.0...v9.1.0
+[9.0.0]: https://github.com/Cranot/roam-code/compare/v8.2.0...v9.0.0
+[8.2.0]: https://github.com/Cranot/roam-code/compare/v8.1.1...v8.2.0
+[8.1.1]: https://github.com/Cranot/roam-code/compare/v8.1.0...v8.1.1
+[8.1.0]: https://github.com/Cranot/roam-code/compare/v8.0.1...v8.1.0
+[8.0.1]: https://github.com/Cranot/roam-code/compare/v8.0.0...v8.0.1
+[8.0.0]: https://github.com/Cranot/roam-code/compare/v7.5.0...v8.0.0
+[7.5.0]: https://github.com/Cranot/roam-code/compare/v7.4.0...v7.5.0
+[7.4.0]: https://github.com/Cranot/roam-code/compare/v7.2.0...v7.4.0
+[7.2.0]: https://github.com/Cranot/roam-code/compare/v7.1.0...v7.2.0
+[7.1.0]: https://github.com/Cranot/roam-code/compare/v7.0.0...v7.1.0
+[7.0.0]: https://github.com/Cranot/roam-code/compare/v6.0.0...v7.0.0
+[6.0.0]: https://github.com/Cranot/roam-code/compare/v5.0.0...v6.0.0
+[5.0.0]: https://github.com/Cranot/roam-code/compare/v4.0.0...v5.0.0
+[4.0.0]: https://github.com/Cranot/roam-code/compare/v3.7.0...v4.0.0
+[3.7.0]: https://github.com/Cranot/roam-code/compare/v3.0.0...v3.7.0
+[3.0.0]: https://github.com/Cranot/roam-code/compare/v1.0.0...v3.0.0
+[1.0.0]: https://github.com/Cranot/roam-code/releases/tag/v1.0.0

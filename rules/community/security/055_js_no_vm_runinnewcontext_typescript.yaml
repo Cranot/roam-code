@@ -1,0 +1,10 @@
+name: "Security: js no vm runinnewcontext (typescript)"
+description: "Disallow vm.runInNewContext with untrusted code."
+severity: warning
+type: ast_match
+
+match:
+  ast: "vm.runInNewContext($CODE)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

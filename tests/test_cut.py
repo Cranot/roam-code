@@ -88,7 +88,7 @@ def check_envelope(data, command="cut"):
     assert "command" in data
     assert data["command"] == command
     assert "version" in data
-    assert "timestamp" in data
+    assert "timestamp" in data.get("_meta", data)
     assert "summary" in data
     assert isinstance(data["summary"], dict)
 

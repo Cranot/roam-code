@@ -1,0 +1,10 @@
+name: "Style: max params 6 (domain)"
+description: "Functions and methods in domain should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "domain/**"
+  require:
+    max_params: 6

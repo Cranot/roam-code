@@ -10,7 +10,7 @@ import networkx as nx
 
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import ensure_index, file_not_found_hint
 
 
 def _label_group(symbols):
@@ -81,7 +81,7 @@ def split(ctx, path, min_group):
                 (f"%{path}",),
             ).fetchone()
         if frow is None:
-            click.echo(f"File not found in index: {path}")
+            click.echo(file_not_found_hint(path))
             raise SystemExit(1)
 
         file_id = frow["id"]

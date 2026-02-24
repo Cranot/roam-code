@@ -1,132 +1,525 @@
-# Reusable composite action for roam-code analysis.
-# Usage in other repos:
-#   - uses: Cranot/roam-code@main
-#     with:
-#       command: 'fitness'
-#       comment: 'true'
-
-name: 'Roam Code Analysis'
-description: 'Run roam-code analysis on your codebase with PR comments and SARIF upload'
+name: 'roam-code Analysis'
+description: 'Pre-indexed code intelligence for AI coding agents — health scoring, quality gates, SARIF output'
 branding:
   icon: 'search'
   color: 'blue'
 
 inputs:
-  command:
-    description: 'Roam command to run (e.g., "preflight --staged", "fitness", "pr-risk")'
+  version:
+    description: 'roam-code version to install (default: latest)'
     required: false
-    default: 'fitness'
-  python-version:
-    description: 'Python version'
+    default: 'latest'
+  commands:
+    description: 'Space-separated roam commands to run (default: "health")'
     required: false
-    default: '3.12'
-  comment:
-    description: 'Post results as PR comment'
-    required: false
-    default: 'true'
-  fail-on-violation:
-    description: 'Fail the build on violations (non-zero exit code)'
+    default: 'health'
+  changed-only:
+    description: 'Incremental mode: adapt commands to changed files + dependents when possible (true/false)'
     required: false
     default: 'false'
-  roam-version:
-    description: 'Specific roam-code version (empty for latest)'
+  changed-depth:
+    description: 'Transitive depth for changed-only dependent expansion (used by roam affected)'
+    required: false
+    default: '3'
+  base-ref:
+    description: 'Optional explicit base ref/SHA for changed-only mode (default: PR base SHA or push before SHA)'
     required: false
     default: ''
+  sarif:
+    description: 'Upload SARIF results to GitHub Code Scanning (true/false)'
+    required: false
+    default: 'false'
+  sarif-commands:
+    description: 'Space-separated commands to export as SARIF (`auto` = SARIF-capable subset of `commands`)'
+    required: false
+    default: 'auto'
+  sarif-category:
+    description: 'Base category for SARIF upload (job/python suffixes are auto-appended)'
+    required: false
+    default: 'roam-code'
+  sarif-max-runs:
+    description: 'Pre-upload SARIF cap: maximum runs kept in combined payload'
+    required: false
+    default: '20'
+  sarif-max-results:
+    description: 'Pre-upload SARIF cap: maximum results per run'
+    required: false
+    default: '25000'
+  sarif-max-bytes:
+    description: 'Pre-upload SARIF cap: maximum JSON bytes for combined SARIF'
+    required: false
+    default: '10000000'
+  comment:
+    description: 'Post sticky PR comment with results (true/false)'
+    required: false
+    default: 'true'
+  gate:
+    description: 'Quality gate expression (supports key ops + trend functions like velocity(metric)<=0). Empty = no gate.'
+    required: false
+    default: ''
+  cache:
+    description: 'Cache the SQLite index between runs (true/false)'
+    required: false
+    default: 'true'
+  python-version:
+    description: 'Python version to use'
+    required: false
+    default: '3.11'
+
+outputs:
+  health-score:
+    description: 'The health score (0-100) if health command was run'
+    value: ${{ steps.run-analysis.outputs.health-score }}
+  exit-code:
+    description: 'The exit code from roam commands (0=success, 5=gate failure)'
+    value: ${{ steps.run-analysis.outputs.exit-code }}
+  sarif-file:
+    description: 'Path to generated SARIF file (if sarif input is true)'
+    value: ${{ steps.generate-sarif.outputs.sarif-file }}
+  sarif-category:
+    description: 'Resolved SARIF upload category'
+    value: ${{ steps.generate-sarif.outputs.sarif-category }}
+  sarif-truncated:
+    description: 'Whether SARIF guardrails truncated runs/results before upload'
+    value: ${{ steps.generate-sarif.outputs.sarif-truncated }}
+  sarif-results:
+    description: 'Result count in final SARIF payload after guardrails'
+    value: ${{ steps.generate-sarif.outputs.sarif-results }}
+  changed-only:
+    description: 'Whether changed-only mode was enabled'
+    value: ${{ steps.run-analysis.outputs.changed-only }}
+  base-ref:
+    description: 'Resolved base ref used for changed-only mode'
+    value: ${{ steps.run-analysis.outputs.base-ref }}
+  affected-count:
+    description: 'Detected changed+dependent file count in changed-only mode'
+    value: ${{ steps.run-analysis.outputs.affected-count }}
 
 runs:
   using: 'composite'
   steps:
-    # -- Python setup --------------------------------------------------------
+    # ---- 1. Setup Python ----------------------------------------------------
     - name: Set up Python
       uses: actions/setup-python@v5
       with:
         python-version: ${{ inputs.python-version }}
 
-    # -- Install roam-code ---------------------------------------------------
+    # ---- 2. Cache pip packages ----------------------------------------------
+    - name: Cache pip packages
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: ~/.cache/pip
+        key: roam-pip-${{ runner.os }}-py${{ inputs.python-version }}-${{ inputs.version }}
+        restore-keys: |
+          roam-pip-${{ runner.os }}-py${{ inputs.python-version }}-
+
+    # ---- 3. Cache roam index (SQLite DB) ------------------------------------
+    - name: Cache roam index
+      if: inputs.cache == 'true'
+      uses: actions/cache@v4
+      with:
+        path: .roam/
+        key: roam-index-${{ runner.os }}-${{ hashFiles('**/*.py', '**/*.js', '**/*.ts', '**/*.go', '**/*.rs', '**/*.java', '**/*.rb', '**/*.php', '**/*.cs', '**/*.c', '**/*.cpp') }}
+        restore-keys: |
+          roam-index-${{ runner.os }}-
+
+    # ---- 4. Install roam-code -----------------------------------------------
     - name: Install roam-code
       shell: bash
       run: |
-        if [ -n "${{ inputs.roam-version }}" ]; then
-          pip install "roam-code==${{ inputs.roam-version }}"
+        if [ "${{ inputs.version }}" = "latest" ]; then
+          pip install --quiet roam-code
         else
-          pip install roam-code
+          pip install --quiet "roam-code==${{ inputs.version }}"
         fi
 
-    # -- Index the repo so all commands have data to work with ---------------
-    - name: Index codebase
+    # ---- 5. Build/refresh index ---------------------------------------------
+    - name: Build index
       shell: bash
-      run: roam index --root .
+      run: roam init
 
-    # -- Run the requested analysis command ----------------------------------
+    # ---- 6. Run analysis commands -------------------------------------------
     - name: Run analysis
-      id: analysis
+      id: run-analysis
       shell: bash
       run: |
-        set +e
-        OUTPUT=$(roam --json ${{ inputs.command }} --root . 2>&1)
-        EXIT_CODE=$?
-        echo "exit_code=$EXIT_CODE" >> $GITHUB_OUTPUT
-        echo "$OUTPUT" > roam-output.json
-        set -e
-        if [ "${{ inputs.fail-on-violation }}" = "true" ] && [ $EXIT_CODE -ne 0 ]; then
-          echo "::error::Roam analysis found violations"
+        COMMANDS="${{ inputs.commands }}"
+        CHANGED_ONLY="${{ inputs.changed-only }}"
+        CHANGED_DEPTH="${{ inputs.changed-depth }}"
+        BASE_REF_INPUT="${{ inputs.base-ref }}"
+        EVENT_NAME="${{ github.event_name }}"
+        PR_BASE_SHA="${{ github.event.pull_request.base.sha }}"
+        PUSH_BEFORE_SHA="${{ github.event.before }}"
+        FINAL_EXIT=0
+        RESULTS_DIR="${RUNNER_TEMP}/roam-results"
+        mkdir -p "${RESULTS_DIR}"
+        AFFECTED_LIST_FILE="${RUNNER_TEMP}/roam-affected-files.txt"
+        : > "${AFFECTED_LIST_FILE}"
+        BASE_REF=""
+        AFFECTED_COUNT=0
+
+        # Resolve incremental analysis baseline for changed-only mode.
+        if [ "${CHANGED_ONLY}" = "true" ]; then
+          if [ -n "${BASE_REF_INPUT}" ]; then
+            BASE_REF="${BASE_REF_INPUT}"
+          elif [ "${EVENT_NAME}" = "pull_request" ] && [ -n "${PR_BASE_SHA}" ]; then
+            BASE_REF="${PR_BASE_SHA}"
+          elif [ -n "${PUSH_BEFORE_SHA}" ] && [ "${PUSH_BEFORE_SHA}" != "0000000000000000000000000000000000000000" ]; then
+            BASE_REF="${PUSH_BEFORE_SHA}"
+          fi
+
+          if [ -n "${BASE_REF}" ]; then
+            AFFECTED_PLAN="${RUNNER_TEMP}/roam-affected-plan.tmp"
+            set +e
+            roam --json affected --base "${BASE_REF}" --depth "${CHANGED_DEPTH}" > "${AFFECTED_PLAN}" 2>/dev/null
+            PLAN_EXIT=$?
+            set -e
+
+            if [ ${PLAN_EXIT} -eq 0 ]; then
+              AFFECTED_COUNT=$(python3 - "${AFFECTED_PLAN}" "${AFFECTED_LIST_FILE}" <<'PY'
+        import json
+        import sys
+        from pathlib import Path
+
+        plan_path = Path(sys.argv[1])
+        out_path = Path(sys.argv[2])
+        paths = []
+
+        try:
+            data = json.loads(plan_path.read_text(encoding="utf-8", errors="replace"))
+        except Exception:
+            out_path.write_text("", encoding="utf-8")
+            print(0)
+            raise SystemExit(0)
+
+        for p in data.get("affected_direct", []) or data.get("changed_files", []):
+            if isinstance(p, str):
+                paths.append(p)
+
+        for item in data.get("affected_transitive_1", []):
+            if isinstance(item, dict):
+                p = item.get("file")
+                if p:
+                    paths.append(p)
+
+        for item in data.get("affected_transitive_2plus", []):
+            if isinstance(item, dict):
+                p = item.get("file")
+                if p:
+                    paths.append(p)
+
+        deduped = []
+        seen = set()
+        for p in paths:
+            if p and p not in seen:
+                deduped.append(p)
+                seen.add(p)
+
+        out_path.write_text("\n".join(deduped), encoding="utf-8")
+        print(len(deduped))
+        PY
+              )
+            else
+              echo "::warning::Could not compute affected file set; using per-command changed detection."
+            fi
+          else
+            echo "::warning::changed-only requested but no base ref was resolved; using per-command changed detection."
+          fi
+        fi
+
+        for CMD in ${COMMANDS}; do
+          ARGS=("${CMD}")
+
+          if [ "${CHANGED_ONLY}" = "true" ]; then
+            case "${CMD}" in
+              verify|syntax-check|test-gaps|suggest-reviewers|file)
+                if [ -s "${AFFECTED_LIST_FILE}" ]; then
+                  while IFS= read -r FILE_PATH; do
+                    if [ -n "${FILE_PATH}" ]; then
+                      ARGS+=("${FILE_PATH}")
+                    fi
+                  done < "${AFFECTED_LIST_FILE}"
+                else
+                  ARGS+=("--changed")
+                fi
+                ;;
+              api-changes)
+                if [ -n "${BASE_REF}" ]; then
+                  ARGS+=("--base" "${BASE_REF}")
+                fi
+                ARGS+=("--changed")
+                ;;
+              pr-risk)
+                if [ -n "${BASE_REF}" ]; then
+                  ARGS+=("${BASE_REF}..HEAD")
+                fi
+                ;;
+              pr-diff)
+                if [ -n "${BASE_REF}" ]; then
+                  ARGS+=("--range" "${BASE_REF}..HEAD")
+                fi
+                ;;
+              semantic-diff)
+                if [ -n "${BASE_REF}" ]; then
+                  ARGS+=("--base" "${BASE_REF}")
+                fi
+                ;;
+              affected)
+                if [ -n "${BASE_REF}" ]; then
+                  ARGS+=("--base" "${BASE_REF}")
+                fi
+                ARGS+=("--depth" "${CHANGED_DEPTH}")
+                ;;
+              *)
+                ;;
+            esac
+          fi
+
+          echo "::group::roam ${ARGS[*]}"
+          set +e
+          roam --json "${ARGS[@]}" > "${RESULTS_DIR}/${CMD}.json" 2>&1
+          CMD_EXIT=$?
+          set -e
+
+          cat "${RESULTS_DIR}/${CMD}.json"
+          echo ""
+          echo "::endgroup::"
+
+          if [ ${CMD_EXIT} -ne 0 ] && [ ${CMD_EXIT} -gt ${FINAL_EXIT} ]; then
+            FINAL_EXIT=${CMD_EXIT}
+          fi
+        done
+
+        # Extract health score if health command was run
+        if [ -f "${RESULTS_DIR}/health.json" ]; then
+          HEALTH_SCORE=$(python3 -c "
+        import json, sys
+        try:
+            data = json.load(open('${RESULTS_DIR}/health.json'))
+            score = data.get('summary', {}).get('health_score', data.get('health_score', ''))
+            print(score)
+        except Exception:
+            print('')
+        " 2>/dev/null || echo "")
+          echo "health-score=${HEALTH_SCORE}" >> "${GITHUB_OUTPUT}"
+        fi
+
+        echo "exit-code=${FINAL_EXIT}" >> "${GITHUB_OUTPUT}"
+        echo "results-dir=${RESULTS_DIR}" >> "${GITHUB_OUTPUT}"
+        echo "changed-only=${CHANGED_ONLY}" >> "${GITHUB_OUTPUT}"
+        echo "base-ref=${BASE_REF}" >> "${GITHUB_OUTPUT}"
+        echo "affected-count=${AFFECTED_COUNT}" >> "${GITHUB_OUTPUT}"
+
+    # ---- 7. Quality gate ----------------------------------------------------
+    - name: Quality gate
+      id: quality-gate
+      if: inputs.gate != ''
+      shell: bash
+      run: |
+        GATE_SCRIPT="${ACTION_PATH}/.github/scripts/gate_eval.py"
+        if [ ! -f "${GATE_SCRIPT}" ]; then
+          echo "::error::Missing gate evaluator script: ${GATE_SCRIPT}"
           exit 1
         fi
 
-    # -- Post (or update) a PR comment with the results ----------------------
+        GATE_RESULT=$(python3 "${GATE_SCRIPT}" \
+          --expr "${GATE_EXPR}" \
+          --results-dir "${RESULTS_DIR}")
+
+        echo "gate-passed=${GATE_RESULT}" >> "${GITHUB_OUTPUT}"
+
+        if [ "${GATE_RESULT}" = "false" ]; then
+          echo "::error::Quality gate failed: ${{ inputs.gate }}"
+          exit 5
+        fi
+      env:
+        RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
+        GATE_EXPR: ${{ inputs.gate }}
+        ACTION_PATH: ${{ github.action_path }}
+
+    # ---- 8. Generate SARIF --------------------------------------------------
+    - name: Generate SARIF
+      id: generate-sarif
+      if: inputs.sarif == 'true'
+      shell: bash
+      run: |
+        SARIF_DIR="${RUNNER_TEMP}/roam-sarif"
+        SARIF_FILE="${RUNNER_TEMP}/roam-results.sarif"
+        SARIF_SUMMARY="${RUNNER_TEMP}/roam-sarif-summary.json"
+        mkdir -p "${SARIF_DIR}"
+
+        REQUESTED_SARIF_COMMANDS="${{ inputs.sarif-commands }}"
+        ANALYSIS_COMMANDS="${{ inputs.commands }}"
+
+        # Build a non-colliding category baseline per job/runtime.
+        UPLOAD_CATEGORY="${{ inputs.sarif-category }}"
+        if [ -n "${GITHUB_JOB}" ]; then
+          UPLOAD_CATEGORY="${UPLOAD_CATEGORY}/${GITHUB_JOB}"
+        fi
+        if [ -n "${{ inputs.python-version }}" ]; then
+          UPLOAD_CATEGORY="${UPLOAD_CATEGORY}/py${{ inputs.python-version }}"
+        fi
+        echo "sarif-category=${UPLOAD_CATEGORY}" >> "${GITHUB_OUTPUT}"
+
+        declare -a SARIF_COMMANDS=()
+        declare -a SARIF_FILES=()
+        declare -A _SEEN=()
+
+        # Commands that currently emit SARIF via global --sarif flag.
+        _SUPPORTED_SARIF="health dead complexity rules secrets algo"
+
+        if [ "${REQUESTED_SARIF_COMMANDS}" = "auto" ] || [ -z "${REQUESTED_SARIF_COMMANDS}" ]; then
+          for CMD in ${ANALYSIS_COMMANDS}; do
+            case " ${_SUPPORTED_SARIF} " in
+              *" ${CMD} "*) ;;
+              *) continue ;;
+            esac
+            if [ -z "${_SEEN["${CMD}"]+x}" ]; then
+              SARIF_COMMANDS+=("${CMD}")
+              _SEEN["${CMD}"]=1
+            fi
+          done
+          if [ ${#SARIF_COMMANDS[@]} -eq 0 ]; then
+            SARIF_COMMANDS=("health")
+          fi
+        else
+          for CMD in ${REQUESTED_SARIF_COMMANDS}; do
+            if [ -z "${_SEEN["${CMD}"]+x}" ]; then
+              SARIF_COMMANDS+=("${CMD}")
+              _SEEN["${CMD}"]=1
+            fi
+          done
+        fi
+
+        for CMD in "${SARIF_COMMANDS[@]}"; do
+          OUT_FILE="${SARIF_DIR}/${CMD}.sarif"
+          set +e
+          roam --sarif "${CMD}" > "${OUT_FILE}" 2>/dev/null
+          CMD_EXIT=$?
+          set -e
+
+          if [ ${CMD_EXIT} -ne 0 ] || [ ! -s "${OUT_FILE}" ]; then
+            echo "::warning::SARIF generation failed or empty for command '${CMD}'"
+            continue
+          fi
+
+          if python3 - "${OUT_FILE}" <<'PY'
+        import json
+        import sys
+        p = sys.argv[1]
+        try:
+            data = json.load(open(p, encoding="utf-8"))
+        except Exception:
+            raise SystemExit(1)
+        if not isinstance(data, dict):
+            raise SystemExit(1)
+        if data.get("version") != "2.1.0":
+            raise SystemExit(1)
+        runs = data.get("runs")
+        if not isinstance(runs, list):
+            raise SystemExit(1)
+        raise SystemExit(0)
+        PY
+          then
+            SARIF_FILES+=("${OUT_FILE}")
+          else
+            echo "::warning::Command '${CMD}' did not produce valid SARIF and will be skipped"
+          fi
+        done
+
+        if [ ${#SARIF_FILES[@]} -eq 0 ]; then
+          echo "::warning::No valid SARIF outputs generated from requested command set"
+          exit 0
+        fi
+
+        set +e
+        python3 "${ACTION_PATH}/.github/scripts/sarif_guard.py" \
+          --output "${SARIF_FILE}" \
+          --summary-out "${SARIF_SUMMARY}" \
+          --max-runs "${{ inputs.sarif-max-runs }}" \
+          --max-results "${{ inputs.sarif-max-results }}" \
+          --max-bytes "${{ inputs.sarif-max-bytes }}" \
+          "${SARIF_FILES[@]}"
+        GUARD_EXIT=$?
+        set -e
+
+        if [ ${GUARD_EXIT} -ne 0 ]; then
+          echo "::warning::SARIF guardrails failed (exit=${GUARD_EXIT}); skipping upload"
+          exit 0
+        fi
+
+        if [ -s "${SARIF_FILE}" ]; then
+          echo "sarif-file=${SARIF_FILE}" >> "${GITHUB_OUTPUT}"
+        else
+          echo "::warning::SARIF guardrails produced empty output"
+          exit 0
+        fi
+
+        python3 - "${SARIF_SUMMARY}" "${GITHUB_OUTPUT}" <<'PY'
+        import json
+        import sys
+
+        summary_path = sys.argv[1]
+        output_path = sys.argv[2]
+
+        try:
+            summary = json.load(open(summary_path, encoding="utf-8"))
+        except Exception:
+            summary = {}
+
+        truncated = bool(summary.get("truncated", False))
+        results_after = int(summary.get("results_after", 0) or 0)
+        dropped = int(summary.get("results_dropped_total", 0) or 0)
+        dropped_runs = int(summary.get("dropped_runs", 0) or 0)
+
+        with open(output_path, "a", encoding="utf-8") as fh:
+            fh.write(f"sarif-truncated={'true' if truncated else 'false'}\n")
+            fh.write(f"sarif-results={results_after}\n")
+
+        if truncated:
+            print(
+                "::warning::SARIF truncated by guardrails "
+                f"(dropped_results={dropped}, dropped_runs={dropped_runs}, "
+                f"results_after={results_after})."
+            )
+        PY
+      env:
+        ACTION_PATH: ${{ github.action_path }}
+
+    # ---- 9. Upload SARIF to GitHub Code Scanning ----------------------------
+    - name: Upload SARIF
+      if: inputs.sarif == 'true' && steps.generate-sarif.outputs.sarif-file != ''
+      uses: github/codeql-action/upload-sarif@v3
+      with:
+        sarif_file: ${{ steps.generate-sarif.outputs.sarif-file }}
+        category: ${{ steps.generate-sarif.outputs.sarif-category }}
+      continue-on-error: true
+
+    # ---- 10. Post PR comment ------------------------------------------------
     - name: Post PR comment
       if: inputs.comment == 'true' && github.event_name == 'pull_request'
       uses: actions/github-script@v7
+      env:
+        RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
+        HEALTH_SCORE: ${{ steps.run-analysis.outputs.health-score }}
+        GATE_EXPR: ${{ inputs.gate }}
+        GATE_PASSED: ${{ steps.quality-gate.outputs.gate-passed }}
+        COMMANDS_RUN: ${{ inputs.commands }}
+        CHANGED_ONLY: ${{ steps.run-analysis.outputs.changed-only }}
+        BASE_REF: ${{ steps.run-analysis.outputs.base-ref }}
+        AFFECTED_COUNT: ${{ steps.run-analysis.outputs.affected-count }}
+        SARIF_CATEGORY: ${{ steps.generate-sarif.outputs.sarif-category }}
+        SARIF_TRUNCATED: ${{ steps.generate-sarif.outputs.sarif-truncated }}
+        SARIF_RESULTS: ${{ steps.generate-sarif.outputs.sarif-results }}
       with:
         script: |
           const fs = require('fs');
-          let output;
-          try {
-            output = JSON.parse(fs.readFileSync('roam-output.json', 'utf8'));
-          } catch(e) {
-            output = { summary: fs.readFileSync('roam-output.json', 'utf8') };
-          }
+          const path = require('path');
 
-          const summary = output.summary || 'Analysis complete';
-          const command = '${{ inputs.command }}';
-
-          const body = [
-            '## Roam Code Analysis',
-            '',
-            `**Command:** \`roam ${command}\``,
-            `**Summary:** ${typeof summary === 'string' ? summary : JSON.stringify(summary)}`,
-            '',
-            '<details><summary>Full output</summary>',
-            '',
-            '```json',
-            JSON.stringify(output, null, 2).substring(0, 60000),
-            '```',
-            '',
-            '</details>',
-            '',
-            '---',
-            '*Generated by [roam-code](https://github.com/Cranot/roam-code)*'
-          ].join('\n');
-
-          // Find and update existing comment or create new one
-          const { data: comments } = await github.rest.issues.listComments({
-            issue_number: context.issue.number,
-            owner: context.repo.owner,
-            repo: context.repo.repo,
-          });
-          const existing = comments.find(c => c.body.includes('## Roam Code Analysis'));
-          if (existing) {
-            await github.rest.issues.updateComment({
-              comment_id: existing.id,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body,
-            });
-          } else {
-            await github.rest.issues.createComment({
-              issue_number: context.issue.number,
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              body: body,
-            });
-          }
+          // ${{ github.action_path }} resolves to the action's root directory,
+          // which works both for remote (uses: cosmohac/roam-code@main) and
+          // local (uses: ./) references.
+          const scriptPath = path.join('${{ github.action_path }}', '.github', 'scripts', 'pr-comment.js');
+          const script = require(scriptPath);
+          await script({ github, context, core, fs, path });

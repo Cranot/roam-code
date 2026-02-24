@@ -1,0 +1,10 @@
+name: "Security: js no vm runincontext (typescript)"
+description: "Disallow vm.runInContext with untrusted code."
+severity: warning
+type: ast_match
+
+match:
+  ast: "vm.runInContext($CODE, $CTX)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

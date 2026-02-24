@@ -456,7 +456,7 @@ class TestDeps:
     def test_deps_json(self, cli_runner, indexed_project, monkeypatch):
         """--json returns envelope with imports and imported_by."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["deps", "src/service.py"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "deps", "src/service.py"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "deps")
         assert_json_envelope(data, "deps")
         assert "imports" in data
@@ -497,7 +497,7 @@ class TestDeps:
     def test_deps_json_imports_structure(self, cli_runner, indexed_project, monkeypatch):
         """JSON imports entries have path field."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["deps", "src/service.py"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "deps", "src/service.py"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "deps")
         if data["imports"]:
             first = data["imports"][0]

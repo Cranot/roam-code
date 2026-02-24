@@ -1,0 +1,683 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roam -- Code Intelligence Landscape</title>
+  <meta name="description" content="Architecture-level analysis of code intelligence tools. What each tool can and can't build, and why.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./styles.css">
+</head>
+<body>
+
+  <!-- Sticky nav matching the landing page -->
+  <nav class="site-nav">
+    <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
+    <div class="nav-right">
+      <a href="./index.html" class="nav-back">Product Page</a>
+      <a href="./getting-started.html" class="nav-link">Getting Started</a>
+      <a href="./integration-tutorials.html" class="nav-link">Integrations</a>
+      <a href="./command-reference.html" class="nav-link">Command Reference</a>
+      <a href="./architecture.html" class="nav-link">Architecture</a>
+      <a href="https://github.com/Cranot/roam-code" class="nav-link">GitHub</a>
+    </div>
+  </nav>
+
+  <!-- Research context banner -->
+  <div class="research-banner section">
+    <p>
+      Scored by project maintainers. 44/45 criteria are binary or count-based.
+      Use the weight sliders to apply your own priorities.
+      All data is in <a href="https://github.com/Cranot/roam-code/blob/main/reports/competitor_tracker.md">the open-source tracker</a>.
+    </p>
+  </div>
+
+  <header class="hero section">
+    <h1>Code Intelligence Landscape</h1>
+    <p class="lede">
+      What each code intelligence tool can and can't build, based on architecture.
+      9 tools scored across 45 criteria. Interactive map, weight sliders, and honest competitor analysis.
+    </p>
+    <div class="hero-stats">
+      <article>
+        <h2 id="competitor-count">9</h2>
+        <p>Tools analyzed</p>
+      </article>
+      <article>
+        <h2 id="roam-mcp-count">99</h2>
+        <p>roam MCP tools (23 core)</p>
+      </article>
+      <article>
+        <h2 id="roam-cli-count">135</h2>
+        <p>roam CLI commands</p>
+      </article>
+      <article>
+        <h2 id="last-updated">2026-02-23</h2>
+        <p>Last matrix refresh</p>
+      </article>
+    </div>
+    <div class="hero-links">
+      <a class="btn primary" href="https://github.com/Cranot/roam-code/blob/main/reports/competitor_tracker.md">Open Source Tracker</a>
+      <a class="btn" href="https://github.com/Cranot/roam-code/tree/main/reports/competitors">Per-Competitor Reports</a>
+    </div>
+  </header>
+
+  <main>
+    <section class="section">
+      <div class="section-head">
+        <h2>Landscape Map</h2>
+        <p>Y-axis: analysis depth. X-axis: agent readiness. Click any point for details.</p>
+      </div>
+      <p class="formula-note">
+        9 tools scored across <strong>45 criteria</strong> in <strong>7 categories</strong>.
+        Adjust weights below to apply your own priorities.
+      </p>
+      <div class="map-grid">
+        <article class="map-card">
+          <div class="map-wrapper">
+            <div class="axis axis-y">
+              <span class="axis-label-lo">Shallow</span>
+              <span class="axis-title">Analysis Depth</span>
+              <span class="axis-label-hi">Deep</span>
+            </div>
+            <div class="map-inner">
+              <div class="map" id="map" role="img" aria-label="Code intelligence landscape map">
+                <div class="map-points" id="map-points"></div>
+              </div>
+              <div class="axis axis-x">
+                <span class="axis-label-lo">Low</span>
+                <span class="axis-title">Agent Readiness</span>
+                <span class="axis-label-hi">High</span>
+              </div>
+            </div>
+          </div>
+        </article>
+        <aside class="detail-card" id="detail"></aside>
+      </div>
+    </section>
+
+    <!-- Weight sliders -->
+    <section class="section" id="weight-sliders-section">
+      <div class="section-head">
+        <h2>Category Weight Sliders</h2>
+        <p>Drag sliders to reweight categories. Map positions and total scores update in real-time.</p>
+      </div>
+      <div class="sliders-container" id="weight-sliders"></div>
+      <div class="slider-actions">
+        <button type="button" class="btn" id="reset-weights">Reset to Defaults</button>
+        <span class="weight-total" id="weight-total-display">Total weight: 100</span>
+      </div>
+    </section>
+
+    <!-- Scoring disclosure (brief) -->
+    <section class="section">
+      <div class="scoring-disclosure">
+        <h3>Scoring Disclosure</h3>
+        <p>
+          This scoring system was designed by the roam project maintainers.
+          While 97% of criteria (44/45) are binary or count-based, three forms of bias exist:
+          <strong>criteria selection</strong> (we chose what to measure),
+          <strong>category weights</strong> (we set defaults),
+          <strong>assessment</strong> (we scored all competitors).
+          The weight sliders, open-source data, and per-criterion visibility are mitigations.
+        </p>
+      </div>
+    </section>
+
+    <!-- Tool-by-Tool Analysis -->
+    <section class="section" id="competitor-analysis">
+      <div class="section-head">
+        <h2>Tool-by-Tool Analysis</h2>
+        <p>Architecture determines capability ceilings. Here's what each tool can and can't build -- and where roam stands honestly against each.</p>
+      </div>
+
+      <div class="competitor-cards">
+
+        <p class="group-label">Static Analysis &amp; Security</p>
+
+        <!-- SonarQube -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>SonarQube</h3>
+            <span class="competitor-arch">Rule-first &middot; CFG/DFG &middot; 6,500+ rules &middot; 42+ languages &middot; Server-based</span>
+          </div>
+          <p class="competitor-desc">
+            The enterprise standard for code quality. Full intra-function dataflow and taint propagation.
+            Research-backed Cognitive Complexity (they defined the spec). Quality Gates (they invented the concept).
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>20/20 static analysis -- deepest available. Full dataflow tracks data through variables, branches, and function calls</li>
+                <li>Taint propagation traces untrusted input source-to-sink across call boundaries</li>
+                <li>6,500+ language-specific rules (~200 unique concepts across 30+ languages)</li>
+                <li>SCA/SBOM generation, enterprise governance, mature CI/CD ecosystem</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>Cross-file dependency graphs -- the rule engine processes files individually</li>
+                <li>Graph algorithms -- no PageRank, SCC, Louvain, Fiedler</li>
+                <li>Architecture simulation (no graph to simulate on)</li>
+                <li>Git-based temporal analysis (churn, co-change, blame entropy)</li>
+                <li>Multi-agent work partitioning, topology fingerprinting</li>
+                <li>MCP agent integration (their MCP server wraps a running SonarQube instance)</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Full dataflow analysis -- we don't trace data through variables within functions</li>
+                <li>Taint propagation -- we can't track untrusted data source-to-sink</li>
+                <li>Rule depth -- 6,500 rules vs our ~50 cross-language detectors</li>
+                <li>Enterprise governance workflows and team management</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Cognitive complexity scoring (they invented it, we reimplemented it)</li>
+                <li>Code smell detection, dead code identification</li>
+                <li>CI gate integration (both output SARIF)</li>
+              </ul>
+            </div>
+            <div class="comp-section roadmap">
+              <h4>Our path forward</h4>
+              <ul>
+                <li>#121 AST pattern library -- structural matching similar to their rule engine</li>
+                <li>#136 100+ cross-language rules -- expand detector catalog</li>
+                <li>#70 Taint analysis -- source-to-sink tracking on our graph</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- CodeQL -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>CodeQL</h3>
+            <span class="competitor-arch">Security-focused &middot; Full dataflow &middot; Custom QL language &middot; GitHub-owned</span>
+          </div>
+          <p class="competitor-desc">
+            GitHub's security analysis engine. Full source-to-sink taint tracking with a custom query language
+            for expressing complex vulnerability patterns. Powers GitHub Code Scanning and Copilot Autofix.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Full source-to-sink taint analysis across function boundaries</li>
+                <li>Custom QL query language -- express arbitrary code patterns with precision</li>
+                <li>Deep GitHub integration (Code Scanning, Copilot Autofix, GHAS)</li>
+                <li>Strong community of security researchers writing QL queries</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>Dependency graph algorithms -- no PageRank, SCC, community detection</li>
+                <li>Git temporal analysis -- no churn, co-change, blame entropy</li>
+                <li>Architecture simulation or topology comparison</li>
+                <li>Multi-agent partitioning, algo detection, health scoring</li>
+                <li>MCP agent integration (community-maintained, only 4 tools)</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Source-to-sink taint tracking for security vulnerabilities</li>
+                <li>Custom query language for expressing arbitrary patterns</li>
+                <li>GitHub-native integration -- zero configuration for GitHub repos</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Security vulnerability detection (different approaches)</li>
+                <li>CI integration via SARIF output</li>
+                <li>Dead code detection</li>
+              </ul>
+            </div>
+            <div class="comp-section roadmap">
+              <h4>Our path forward</h4>
+              <ul>
+                <li>#70 Taint analysis -- source-to-sink tracking on our graph</li>
+                <li>Custom query language is a long-horizon consideration</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- Semgrep -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>Semgrep</h3>
+            <span class="competitor-arch">Pattern matching &middot; Metavariables &middot; Rules marketplace &middot; Local + cloud</span>
+          </div>
+          <p class="competitor-desc">
+            Fast structural pattern matching with a large community rules marketplace.
+            Lightweight by design -- no persistent index, no dependency model. Semgrep Pro adds inter-procedural taint.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Fast AST-level pattern matching with metavariable capture</li>
+                <li>5,000+ community rules in the marketplace</li>
+                <li>User-friendly rule authoring -- write a code pattern, Semgrep finds matches</li>
+                <li>Semgrep Pro: inter-procedural taint analysis</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>No persistent index -- re-scans the full codebase each time</li>
+                <li>No graph algorithms -- no PageRank, SCC, Louvain, community detection</li>
+                <li>No git history analysis -- churn, co-change, blame entropy</li>
+                <li>No architecture metrics, health scoring, or simulation</li>
+                <li>No MCP agent integration (beta server, no stable tool count)</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Mature pattern matching with metavariable capture and autofix</li>
+                <li>Large rules marketplace (5,000+ community rules)</li>
+                <li>Lightweight and fast for targeted pattern scans</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>AST-based code analysis (tree-sitter)</li>
+                <li>SARIF output for CI integration</li>
+              </ul>
+            </div>
+            <div class="comp-section roadmap">
+              <h4>Our path forward</h4>
+              <ul>
+                <li>#121 AST pattern library -- structural matching with language-aware patterns</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <p class="group-label">Code Intelligence (Our Space)</p>
+
+        <!-- CKB/CodeMCP -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>CKB / CodeMCP</h3>
+            <span class="competitor-arch">SCIP semantic indexing &middot; Compound MCP &middot; 76-92 tools &middot; Local</span>
+          </div>
+          <p class="competitor-desc">
+            The closest MCP competitor by tool count. SCIP-based semantic indexing gives precise
+            type-aware cross-references. Designed specifically for AI agent workflows with compound and batch operations.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>SCIP protocol gives precise type-aware cross-references (not text matching)</li>
+                <li>76-92 MCP tools (count varies across their docs) with compound operations</li>
+                <li>Better "go to definition" accuracy in languages with complex type systems</li>
+                <li>Local-first, designed for agent workflows</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>No graph algorithms -- SCIP indexes symbols but doesn't model a queryable relationship graph</li>
+                <li>No PageRank, SCC, Louvain, Fiedler, or any graph-theoretic analysis</li>
+                <li>No git history analysis (churn, co-change, blame, entropy)</li>
+                <li>No architecture simulation, topology fingerprinting, or health scoring</li>
+                <li>No vulnerability analysis or algo anti-pattern detection</li>
+                <li>No community detection or multi-agent partitioning</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>SCIP gives type-aware precision that tree-sitter AST matching can't match</li>
+                <li>Better for Java generics, C++ templates, and similar type-heavy code</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>MCP agent integration with compound operations</li>
+                <li>Symbol lookup, reference navigation</li>
+                <li>Local-first architecture, no API keys</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- Sourcegraph -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>Sourcegraph</h3>
+            <span class="competitor-arch">Code search &middot; Cross-repo navigation &middot; Enterprise cloud &middot; Invented SCIP</span>
+          </div>
+          <p class="competitor-desc">
+            Enterprise-scale code search and navigation across thousands of repositories.
+            Invented the SCIP protocol for precise code intelligence. Code monitoring and batch changes.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Cross-repository search at massive enterprise scale</li>
+                <li>Code monitoring -- get alerts when patterns appear across repos</li>
+                <li>Batch changes -- modify code across hundreds of repos in one operation</li>
+                <li>Precise code navigation via SCIP protocol</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>Not local-first -- requires cloud or self-hosted instance</li>
+                <li>No graph algorithms on code structure</li>
+                <li>No git-based temporal analysis</li>
+                <li>No architecture simulation, health scoring, or algo detection</li>
+                <li>No MCP agent integration</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Cross-repo search at scales roam can't match (thousands of repos)</li>
+                <li>Code monitoring and batch changes for large organizations</li>
+                <li>Mature enterprise deployment and team features</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Code search, symbol navigation</li>
+                <li>Multi-language support</li>
+              </ul>
+            </div>
+            <div class="comp-section roadmap">
+              <h4>Our path forward</h4>
+              <ul>
+                <li>#54 Hybrid BM25 + vector search (DONE)</li>
+                <li>#56 Local embedding model for semantic search (DONE)</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- CodeGraphMCPServer -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>CodeGraphMCPServer</h3>
+            <span class="competitor-arch">Tree-sitter + NetworkX &middot; Louvain &middot; 14 MCP tools &middot; Local</span>
+          </div>
+          <p class="competitor-desc">
+            Shares our architectural DNA -- tree-sitter parsing into a NetworkX graph with Louvain community detection.
+            Simpler scope, focused on basic graph queries. 14 MCP tools.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Clean, focused graph-first approach</li>
+                <li>Louvain community detection on the code graph</li>
+                <li>Simpler codebase -- easier to understand and extend</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build (without expanding scope)</h4>
+              <ul>
+                <li>Only Louvain -- no PageRank centrality, no SCC/Tarjan, no spectral (Fiedler)</li>
+                <li>No git history integration at all</li>
+                <li>No architecture simulation, health scoring, or vulnerability analysis</li>
+                <li>14 MCP tools vs 96 -- limited agent vocabulary</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Simpler -- if you only need Louvain communities, there's less to learn</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Tree-sitter parsing, NetworkX graph, Louvain communities</li>
+                <li>MCP agent integration, local-first</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <!-- CodePrism -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>CodePrism</h3>
+            <span class="competitor-arch">Rust-based &middot; Universal AST &middot; 20 MCP tools &middot; Local</span>
+          </div>
+          <p class="competitor-desc">
+            Rust-based graph analysis engine with a Universal AST abstraction. Newer project,
+            focused on fast parsing and multi-language AST uniformity. 20 MCP tools.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Rust performance for large codebases</li>
+                <li>Universal AST abstraction may be more uniform across languages</li>
+                <li>Open source, local-first</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build (without expanding scope)</h4>
+              <ul>
+                <li>No git history analysis</li>
+                <li>No vulnerability analysis or security features</li>
+                <li>No architecture simulation, health scoring, spectral analysis</li>
+                <li>Limited graph algorithm breadth</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Rust parsing performance -- faster for very large codebases</li>
+                <li>Universal AST may provide more consistent cross-language behavior</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Graph-based code analysis, MCP tools, multi-language AST</li>
+                <li>Local-first, open source</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+        <p class="group-label">Behavioral Analysis</p>
+
+        <!-- CodeScene -->
+        <article class="competitor-card">
+          <div class="competitor-header">
+            <h3>CodeScene</h3>
+            <span class="competitor-arch">Behavioral &middot; Git history as primary data &middot; Team dynamics &middot; Cloud</span>
+          </div>
+          <p class="competitor-desc">
+            Git history as the primary data source. Temporal coupling, team dynamics, knowledge distribution.
+            Behavioral signals that complement structural analysis. The only tool with deeper team-level analysis than roam.
+          </p>
+          <div class="comp-grid">
+            <div class="comp-section strengths">
+              <h4>Their strengths</h4>
+              <ul>
+                <li>Temporal coupling detection -- what files and functions change together</li>
+                <li>Team dynamics: developer profiles, knowledge silos, bus factor</li>
+                <li>Code health trends over long time horizons</li>
+                <li>Organizational coupling analysis (who works on what with whom)</li>
+              </ul>
+            </div>
+            <div class="comp-section cannot">
+              <h4>What they architecturally can't build</h4>
+              <ul>
+                <li>No AST-level analysis -- can't see function structure, only file-level</li>
+                <li>No graph algorithms on code structure</li>
+                <li>No MCP agent integration (14 tools via community server)</li>
+                <li>No vulnerability analysis or architecture simulation</li>
+                <li>Not local -- requires cloud or self-hosted instance</li>
+              </ul>
+            </div>
+            <div class="comp-section beats-us">
+              <h4>Where they beat us</h4>
+              <ul>
+                <li>Deeper team dynamics -- developer profiles, organizational coupling, knowledge silos</li>
+                <li>Code health trends over longer time horizons</li>
+                <li>More refined temporal coupling detection</li>
+              </ul>
+            </div>
+            <div class="comp-section overlap">
+              <h4>Shared capabilities</h4>
+              <ul>
+                <li>Git-based analysis: churn, coupling, code health scoring</li>
+                <li>Cognitive complexity (both implement it)</li>
+              </ul>
+            </div>
+          </div>
+        </article>
+
+      </div><!-- /.competitor-cards -->
+    </section>
+
+    <section class="section" id="architecture-tradeoffs">
+      <div class="section-head">
+        <h2>Architecture Trade-offs: What the Scores Don't Show</h2>
+        <p>Different architectures answer different questions. Understanding these trade-offs gives the complete picture beyond point comparisons.</p>
+      </div>
+
+      <div class="tradeoffs-grid">
+        <article class="tradeoff-card">
+          <h3>Why rule counts vary 100x</h3>
+          <p>
+            SonarQube has 6,500+ rules because each rule is language-specific.
+            "Don't use eval" exists as separate rules for JavaScript, Python, PHP, Ruby, Perl, and Groovy.
+            "Max function length" is another 30 language-specific copies.
+            ~200 unique concepts &times; 30 languages = 6,000+ rules.
+          </p>
+          <p>
+            Tools built on tree-sitter (roam, CodeGraphMCPServer, CodePrism) define rules that work across
+            all supported languages from a single definition. One cross-language rule replaces 26 language-specific
+            rules. 100 well-designed cross-language rules can match the coverage of 3,000+ per-language rules.
+          </p>
+        </article>
+
+        <article class="tradeoff-card">
+          <h3>Graph-first vs Rule-first</h3>
+          <p>
+            <strong>Rule-first tools</strong> (SonarQube, CodeQL, Semgrep) scan files individually against a catalog
+            of patterns. They excel at: "Is this line vulnerable?" "Does this code match a known bad pattern?"
+            Their strength is depth -- tracking data through variables, branches, and function calls to find exploitable paths.
+          </p>
+          <p>
+            <strong>Graph-first tools</strong> (roam, CodeScene) model the codebase as a connected system and compute
+            structural properties. They excel at: "What breaks if I change this?" "Where are the architectural bottlenecks?"
+            "Which modules are too coupled?" Their strength is breadth -- seeing the forest, not just individual trees.
+          </p>
+          <p>
+            These approaches are complementary: graph analysis finds architectural risks that no amount of line-level
+            scanning can detect. Taint analysis finds security vulnerabilities that no graph algorithm can trace.
+          </p>
+        </article>
+
+        <article class="tradeoff-card">
+          <h3>What each architecture can and cannot build</h3>
+          <dl class="arch-capabilities">
+            <dt>Graph + Git + AST (roam)</dt>
+            <dd>
+              <strong>Can:</strong> PageRank centrality, cycle detection, community clustering, architecture simulation,
+              impact analysis, co-change coupling, churn hotspots, multi-agent partitioning, topology fingerprinting.
+              <br>
+              <strong>Cannot:</strong> Intra-function dataflow tracking, taint propagation, type inference, virtual dispatch resolution.
+            </dd>
+            <dt>CFG + DFG + Rules (SonarQube, CodeQL)</dt>
+            <dd>
+              <strong>Can:</strong> Source-to-sink taint tracking, context-sensitive call resolution, dead code via data flow,
+              type-aware analysis, custom query languages (QL).
+              <br>
+              <strong>Cannot:</strong> Cross-file dependency graphs, architectural metrics, git-based temporal analysis,
+              community detection, topology comparison, multi-agent work partitioning.
+            </dd>
+            <dt>Pattern matching (Semgrep, ast-grep)</dt>
+            <dd>
+              <strong>Can:</strong> Fast structural pattern search, user-defined rules with metavariables, lightweight
+              inter-procedural taint (Semgrep Pro).
+              <br>
+              <strong>Cannot:</strong> Persistent index, architectural metrics, git history analysis, graph algorithms.
+            </dd>
+          </dl>
+        </article>
+      </div>
+    </section>
+
+    <section class="section" id="also-considered">
+      <div class="section-head">
+        <h2>Also Considered</h2>
+        <p>Tools evaluated but excluded from the landscape. They overlap with code intelligence in narrow ways but don't build a persistent structural model of your codebase.</p>
+      </div>
+      <div class="also-considered-list">
+        <dl>
+          <dt>Serena MCP</dt>
+          <dd>LSP-based agent navigation and editing. 40 MCP tools. Strong symbol lookup but no persistent analysis graph or architecture metrics.</dd>
+          <dt>Aider</dt>
+          <dd>AI coding agent that uses PageRank internally for repo-map ranking. The graph is transient and not queryable -- it's an implementation detail, not a feature.</dd>
+          <dt>Greptile</dt>
+          <dd>Cloud AI code intelligence API. Indexes repositories for natural-language queries. No deterministic graph algorithms or local analysis.</dd>
+        </dl>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <h2>Complete Matrix Snapshot</h2>
+        <p>Compact comparison aligned to the source tracker.</p>
+      </div>
+      <div class="table-controls" id="matrix-mode-controls" aria-label="Matrix view mode">
+        <button type="button" class="chip active" data-mode="simple">Simple View</button>
+        <button type="button" class="chip" data-mode="full">Full View</button>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead id="matrix-head"></thead>
+          <tbody id="matrix-body"></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section sources">
+      <div class="section-head">
+        <h2>Evidence and Sources</h2>
+      </div>
+      <p>
+        Based on primary product documentation, public repositories, and direct feature verification.
+        Scores are computed from 45 criteria across 7 categories. 44 are binary or count-based.
+        1 (documentation quality) is subjective and marked as such.
+      </p>
+      <p>
+        Snapshot date: <strong>February 23, 2026</strong>. Vendor claims change quickly; this page is
+        version-pinned and refreshed with explicit evidence notes.
+      </p>
+    </section>
+  </main>
+
+  <footer class="footer section">
+    <p>roam code intelligence landscape &middot; evidence-based &middot; <a href="./index.html">Product page</a></p>
+  </footer>
+
+  <script src="./app.js"></script>
+</body>
+</html>

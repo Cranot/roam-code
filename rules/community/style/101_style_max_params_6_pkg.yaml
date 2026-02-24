@@ -1,0 +1,10 @@
+name: "Style: max params 6 (package)"
+description: "Functions and methods in package should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "pkg/**"
+  require:
+    max_params: 6

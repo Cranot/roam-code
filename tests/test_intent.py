@@ -174,7 +174,7 @@ class TestIntentBasic:
         # Check required top-level keys
         assert "command" in data, "Missing 'command' key in envelope"
         assert "version" in data, "Missing 'version' key in envelope"
-        assert "timestamp" in data, "Missing 'timestamp' key in envelope"
+        assert "timestamp" in data.get("_meta", data), "Missing 'timestamp' in _meta or envelope"
         assert "summary" in data, "Missing 'summary' key in envelope"
         assert data["command"] == "intent", (
             f"Expected command='intent', got {data['command']}"

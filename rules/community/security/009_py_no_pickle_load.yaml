@@ -1,0 +1,10 @@
+name: "Security: py no pickle load"
+description: "Disallow pickle.load on potentially untrusted input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "pickle.load($SRC)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

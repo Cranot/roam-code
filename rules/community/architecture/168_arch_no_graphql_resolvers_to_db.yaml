@@ -1,0 +1,13 @@
+name: "Architecture: arch no graphql resolvers to db"
+description: "Resolvers should call services, not DB directly."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/graphql/resolvers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,45 @@
+name: Architecture Guardian
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 6 * * *"
+
+jobs:
+  guardian:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install roam-code
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Build index
+        run: roam init
+
+      - name: Generate guardian markdown report
+        run: |
+          mkdir -p .roam/reports
+          roam report guardian --md > .roam/reports/architecture_guardian.md
+
+      - name: Run guardian gate (strict JSON)
+        run: |
+          roam --json report guardian --strict > .roam/reports/architecture_guardian.json
+
+      - name: Upload guardian artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: architecture-guardian
+          path: .roam/reports/

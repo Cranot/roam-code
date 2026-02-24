@@ -97,7 +97,7 @@ def _assert_envelope(data, cmd="forecast"):
     assert isinstance(data, dict)
     assert data.get("command") == cmd, f"Expected command={cmd}, got {data.get('command')}"
     assert "version" in data
-    assert "timestamp" in data
+    assert "timestamp" in data.get("_meta", data)
     assert "summary" in data
     assert isinstance(data["summary"], dict)
 

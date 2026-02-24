@@ -6,7 +6,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.output.formatter import to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
 
 
 def _resolve_symbols_from_files(conn, file_paths):
@@ -201,7 +201,7 @@ def relate(ctx, symbols, files, depth):
                     input_ids.append(sid)
                     input_names[sid] = sym["name"]
             else:
-                click.echo(f"Symbol not found: {name}")
+                click.echo(symbol_not_found_hint(name))
                 if not json_mode:
                     raise SystemExit(1)
 
@@ -216,7 +216,11 @@ def relate(ctx, symbols, files, depth):
                         input_names[sid] = info["name"]
 
         if not input_ids:
-            click.echo("No symbols to analyze.")
+            click.echo(
+                "No symbols to analyze.\n"
+                "  Tip: Provide at least one valid symbol name or --file path.\n"
+                "       Use `roam search <partial-name>` to find symbol names."
+            )
             raise SystemExit(1)
 
         # Analysis

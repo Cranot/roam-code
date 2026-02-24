@@ -10,7 +10,7 @@ from roam.output.formatter import (
     abbrev_kind, loc, format_signature, format_edge_kind,
     truncate_lines, section, to_json, json_envelope,
 )
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 
 _EDGE_PRIORITY = {"call": 0, "template": 0, "inherits": 1, "implements": 2, "import": 3}
 
@@ -39,7 +39,7 @@ def symbol(ctx, name, full):
         s = find_symbol(conn, name)
 
         if s is None:
-            click.echo(f"Symbol not found: {name}")
+            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
         metrics = conn.execute(METRICS_FOR_SYMBOL, (s["id"],)).fetchone()
         callers = conn.execute(CALLERS_OF, (s["id"],)).fetchall()

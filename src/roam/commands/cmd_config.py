@@ -16,13 +16,48 @@ from roam.output.formatter import to_json, json_envelope
 @click.command("config")
 @click.option("--set-db-dir", "db_dir", default=None,
               help="Redirect the index DB to this directory (useful for network drives).")
+@click.option(
+    "--semantic-backend",
+    type=click.Choice(["auto", "tfidf", "onnx", "hybrid"], case_sensitive=False),
+    default=None,
+    help="Semantic search backend mode.",
+)
+@click.option(
+    "--set-onnx-model",
+    "onnx_model",
+    default=None,
+    help="Path to local ONNX model file for semantic search.",
+)
+@click.option(
+    "--set-onnx-tokenizer",
+    "onnx_tokenizer",
+    default=None,
+    help="Path to tokenizer.json matching the ONNX model.",
+)
+@click.option(
+    "--set-onnx-max-length",
+    "onnx_max_length",
+    default=None,
+    type=int,
+    help="Max token length for ONNX encoder (16-1024).",
+)
 @click.option("--exclude", "exclude_pattern", default=None,
               help="Add a glob pattern to the exclude list in .roam/config.json.")
 @click.option("--remove-exclude", "remove_pattern", default=None,
               help="Remove a glob pattern from the exclude list in .roam/config.json.")
 @click.option("--show", is_flag=True, help="Print current configuration.")
 @click.pass_context
-def config(ctx, db_dir, exclude_pattern, remove_pattern, show):
+def config(
+    ctx,
+    db_dir,
+    semantic_backend,
+    onnx_model,
+    onnx_tokenizer,
+    onnx_max_length,
+    exclude_pattern,
+    remove_pattern,
+    show,
+):
     """Manage per-project roam configuration (.roam/config.json).
 
     Use ``--set-db-dir`` to redirect the SQLite database to a local directory
@@ -41,6 +76,14 @@ def config(ctx, db_dir, exclude_pattern, remove_pattern, show):
       roam config --exclude "*_pb2.py"
       roam config --exclude "generated/**"
       roam config --remove-exclude "*_pb2.py"
+
+    Configure local ONNX semantic search:
+
+    \b
+      roam config --semantic-backend onnx
+      roam config --set-onnx-model "./models/all-MiniLM-L6-v2.onnx"
+      roam config --set-onnx-tokenizer "./models/tokenizer.json"
+      roam config --set-onnx-max-length 256
 
     The setting is saved to ``.roam/config.json`` and takes precedence over
     the default ``.roam/index.db`` location (but the ``ROAM_DB_DIR`` env-var
@@ -62,6 +105,32 @@ def config(ctx, db_dir, exclude_pattern, remove_pattern, show):
         click.echo(f"Saved db_dir = {db_dir!r}")
         click.echo(f"Config written to {config_path}")
         click.echo(f"DB will be stored at: {get_db_path(root)}")
+        return
+
+    semantic_updates = {}
+    if semantic_backend is not None:
+        semantic_updates["semantic_backend"] = semantic_backend.lower()
+    if onnx_model is not None:
+        semantic_updates["onnx_model_path"] = onnx_model
+    if onnx_tokenizer is not None:
+        semantic_updates["onnx_tokenizer_path"] = onnx_tokenizer
+    if onnx_max_length is not None:
+        semantic_updates["onnx_max_length"] = max(16, min(int(onnx_max_length), 1024))
+
+    if semantic_updates:
+        config_path = write_project_config(semantic_updates, root)
+        if json_mode:
+            click.echo(to_json(json_envelope("config",
+                summary={"verdict": "saved-semantic-settings"},
+                config_path=str(config_path),
+                **semantic_updates,
+            )))
+            return
+        click.echo("Saved semantic settings:")
+        for k, v in semantic_updates.items():
+            click.echo(f"  {k} = {v!r}")
+        click.echo(f"Config written to {config_path}")
+        click.echo("Re-run `roam index` to refresh semantic vectors with new settings.")
         return
 
     if exclude_pattern is not None:
@@ -114,7 +183,15 @@ def config(ctx, db_dir, exclude_pattern, remove_pattern, show):
                 click.echo(f"Current excludes: {existing_excludes}")
         return
 
-    if show or (db_dir is None and exclude_pattern is None and remove_pattern is None):
+    if show or (
+        db_dir is None
+        and semantic_backend is None
+        and onnx_model is None
+        and onnx_tokenizer is None
+        and onnx_max_length is None
+        and exclude_pattern is None
+        and remove_pattern is None
+    ):
         # Load full exclude patterns (roamignore + config + built-in)
         from roam.index.discovery import load_exclude_patterns, _load_roamignore, BUILTIN_GENERATED_PATTERNS
         roamignore_patterns = _load_roamignore(root)

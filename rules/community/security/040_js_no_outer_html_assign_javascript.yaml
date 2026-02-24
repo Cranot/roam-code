@@ -1,0 +1,10 @@
+name: "Security: js no outer html assign (javascript)"
+description: "Disallow direct outerHTML assignment."
+severity: warning
+type: ast_match
+
+match:
+  ast: "$EL.outerHTML = $HTML"
+  language: javascript
+  file_glob: "**/*.js"
+  max_matches: 100

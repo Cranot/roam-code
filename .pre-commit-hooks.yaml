@@ -1,0 +1,84 @@
+# pre-commit hooks for roam-code
+#
+# Add to your .pre-commit-config.yaml:
+#
+#   repos:
+#     - repo: https://github.com/Cranot/roam-code
+#       rev: v11.0.0          # pin to a release tag
+#       hooks:
+#         - id: roam-secrets  # recommended: always-safe, no index required
+#         - id: roam-syntax-check
+#         - id: roam-verify
+#         - id: roam-health   # optional: slower, requires index
+#
+# All hooks run against the whole repository (pass_filenames: false).
+# roam-secrets and roam-syntax-check work without a pre-existing index.
+# roam-verify and roam-health require `roam init` to have been run first
+# (they call ensure_index() internally and will auto-index if needed).
+#
+# Exit codes:
+#   0  -- all checks passed
+#   5  -- quality gate failed (issues found)
+#   3  -- index missing (run `roam init` once to initialise the project)
+
+- id: roam-secrets
+  name: roam secrets scan
+  description: >
+    Scan for hardcoded secrets, API keys, tokens, and passwords using 24
+    regex patterns.  Fails (exit 5) if any secret is found.
+  entry: roam secrets --fail-on-found
+  language: python
+  pass_filenames: false
+  always_run: true
+  additional_dependencies: ['roam-code']
+
+- id: roam-syntax-check
+  name: roam syntax check
+  description: >
+    Parse staged + unstaged files with tree-sitter and fail (exit 5) if
+    any ERROR or MISSING nodes are found in the AST.  Works without a roam
+    index -- files are parsed directly.
+  entry: roam syntax-check --changed
+  language: python
+  pass_filenames: false
+  always_run: true
+  additional_dependencies: ['roam-code']
+
+- id: roam-verify
+  name: roam verify
+  description: >
+    Check changed files for naming conventions, import patterns, error
+    handling consistency, duplicate logic, and syntax errors against the
+    codebase's established patterns.  Fails (exit 5) when the composite
+    score drops below --threshold (default 70).
+  entry: roam verify --changed
+  language: python
+  pass_filenames: false
+  always_run: true
+  additional_dependencies: ['roam-code']
+
+- id: roam-health
+  name: roam health
+  description: >
+    Report the composite codebase health score (0-100) covering cycles,
+    god components, bottlenecks, and layer violations.  Informational by
+    default -- does not fail the commit.  Pair with the GitHub Action gate
+    expression (health_score>=50) for enforced thresholds in CI.
+  entry: roam health
+  language: python
+  pass_filenames: false
+  always_run: true
+  additional_dependencies: ['roam-code']
+
+- id: roam-vibe-check
+  name: roam vibe check
+  description: >
+    Detect AI code anti-patterns (dead exports, empty error handlers,
+    abandoned stubs, copy-paste functions, etc.) and report the composite
+    AI rot score (0-100).  Pass --threshold N to fail (exit 5) when the
+    score exceeds N.
+  entry: roam vibe-check
+  language: python
+  pass_filenames: false
+  always_run: true
+  additional_dependencies: ['roam-code']

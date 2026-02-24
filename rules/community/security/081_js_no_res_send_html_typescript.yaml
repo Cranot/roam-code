@@ -1,0 +1,10 @@
+name: "Security: js no res send html (typescript)"
+description: "Review direct HTML send for XSS risk."
+severity: warning
+type: ast_match
+
+match:
+  ast: "res.send($HTML)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

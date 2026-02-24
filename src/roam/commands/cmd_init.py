@@ -1,5 +1,7 @@
 """Initialize a project for Roam: index, config, CI workflow."""
 
+from __future__ import annotations
+
 import click
 
 from roam.db.connection import db_exists, find_project_root
@@ -84,7 +86,7 @@ def init(ctx, root, yes):
     if not had_index:
         if not json_mode:
             click.echo("No index found. Building...")
-    ensure_index()
+    ensure_index(quiet=json_mode)
 
     # 3. Generate .roam/fitness.yaml
     fitness_path = roam_dir / "fitness.yaml"

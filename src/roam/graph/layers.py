@@ -82,6 +82,8 @@ def find_violations(
                 "layer_distance": distance,
                 "severity": severity,
             })
+    # Sort for deterministic output (severity desc, then by source/target ID)
+    violations.sort(key=lambda v: (-v["severity"], v["source"], v["target"]))
     return violations
 
 

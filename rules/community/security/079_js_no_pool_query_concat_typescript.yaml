@@ -1,0 +1,10 @@
+name: "Security: js no pool query concat (typescript)"
+description: "Disallow SQL query concatenation in pool.query()."
+severity: warning
+type: ast_match
+
+match:
+  ast: "pool.query($SQL + $EXPR)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

@@ -1,0 +1,10 @@
+name: "Security: js no document write (typescript)"
+description: "Disallow document.write due XSS risk."
+severity: warning
+type: ast_match
+
+match:
+  ast: "document.write($HTML)"
+  language: typescript
+  file_glob: "**/*.ts"
+  max_matches: 100

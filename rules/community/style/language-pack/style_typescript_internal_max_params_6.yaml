@@ -1,0 +1,10 @@
+name: "Style: typescript internal max params 6"
+description: "Typescript functions/methods in internal/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**/*.ts"
+  require:
+    max_params: 6

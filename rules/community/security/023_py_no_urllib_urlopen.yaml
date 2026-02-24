@@ -1,0 +1,10 @@
+name: "Security: py no urllib urlopen"
+description: "Review urllib URL fetches for SSRF risk."
+severity: warning
+type: ast_match
+
+match:
+  ast: "urllib.request.urlopen($URL)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

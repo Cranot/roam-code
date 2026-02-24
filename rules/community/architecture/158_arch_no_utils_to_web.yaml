@@ -1,0 +1,13 @@
+name: "Architecture: arch no utils to web"
+description: "Utility layer should stay presentation-agnostic."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/utils/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/web/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -447,6 +447,15 @@ _AUGMENTED_ASSIGN_NODES = {"augmented_assignment"}
 _AUGMENTED_ASSIGN_OPS = {"+=", "-=", "*=", "/=", "%=", "**=", "//=",
                          "&=", "|=", "^=", "<<=", ">>="}
 
+# Math/operator tokens used by algorithm detectors
+_MULTIPLY_OPS = {"*", "*="}
+_MODULO_OPS = {"%", "%="}
+
+# Calls that indicate repeated linear scans when invoked on an invariant
+# receiver with loop-varying arguments (e.g. blacklist.contains(item)).
+_LOOP_LOOKUP_CALLS = {"index", "indexOf", "lastIndexOf", "contains",
+                      "includes", "Contains", "IndexOf"}
+
 
 def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     """Walk a function AST node once and extract algorithmic signals.
@@ -456,13 +465,18 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     max_loop_depth = 0
     has_nested = False
     calls_in_loops: list[str] = []
+    calls_in_loops_qualified: list[str] = []
     subscript_in_loops = False
     has_self_call = False
     self_call_count = 0
     loop_with_compare = False
     loop_with_accumulator = False
+    loop_with_multiplication = False
+    loop_with_modulo = False
     str_concat_in_loop = False
     loop_invariant_calls: list[str] = []
+    loop_lookup_calls: list[str] = []
+    front_ops_in_loop = False
     loop_bound_small = False
 
     symbol_lower = symbol_name.lower() if symbol_name else ""
@@ -476,7 +490,9 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
         nonlocal max_loop_depth, has_nested, subscript_in_loops
         nonlocal has_self_call, self_call_count
         nonlocal loop_with_compare, loop_with_accumulator
-        nonlocal str_concat_in_loop, loop_bound_small
+        nonlocal loop_with_multiplication, loop_with_modulo
+        nonlocal str_concat_in_loop, front_ops_in_loop
+        nonlocal loop_bound_small
 
         ntype = node.type
 
@@ -501,14 +517,37 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             # Call expressions inside loops
             if ntype in ("call_expression", "call"):
                 name = _call_target_name(node, source)
+                qualified = _call_target_qualified(node, source)
                 if name:
                     calls_in_loops.append(name)
                     if symbol_lower and name.lower() == symbol_lower:
                         has_self_call = True
                         self_call_count += 1
-                    # Check if call is loop-invariant (args don't use loop vars)
-                    if loop_vars and not _call_uses_loop_vars(node, source, loop_vars):
-                        loop_invariant_calls.append(name)
+                if qualified:
+                    calls_in_loops_qualified.append(qualified)
+                if name:
+                    receiver_uses_loop = _call_receiver_uses_loop_vars(
+                        node, source, loop_vars
+                    )
+                    args_use_loop = _call_args_use_loop_vars(
+                        node, source, loop_vars
+                    )
+                    # Check if call is loop-invariant (args and receiver do not
+                    # depend on loop variables).
+                    if loop_vars and not (receiver_uses_loop or args_use_loop):
+                        loop_invariant_calls.append(qualified or name)
+                    # Lookup anti-pattern: linear scan on an invariant receiver
+                    # with loop-varying arguments.
+                    if (
+                        name in _LOOP_LOOKUP_CALLS
+                        and loop_vars
+                        and not receiver_uses_loop
+                        and args_use_loop
+                    ):
+                        loop_lookup_calls.append(qualified or name)
+                    # Front insertion/removal anti-pattern.
+                    if _is_front_operation_call(node, source, name):
+                        front_ops_in_loop = True
 
             # Subscript access inside loops
             if ntype in _SUBSCRIPT_NODES:
@@ -522,11 +561,23 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                             "utf-8", errors="replace")
                         if op in _COMPARE_OPS:
                             loop_with_compare = True
-                            break
+                        if op in _MULTIPLY_OPS:
+                            loop_with_multiplication = True
+                        if op in _MODULO_OPS:
+                            loop_with_modulo = True
 
             # Augmented assignment inside loops
             if ntype in _AUGMENTED_ASSIGN_NODES:
                 loop_with_accumulator = True
+                for child in node.children:
+                    if child.is_named:
+                        continue
+                    op = source[child.start_byte:child.end_byte].decode(
+                        "utf-8", errors="replace")
+                    if op in _MULTIPLY_OPS:
+                        loop_with_multiplication = True
+                    if op in _MODULO_OPS:
+                        loop_with_modulo = True
                 # Check for string concatenation: str_var += ...
                 target = _augmented_assign_target(node, source)
                 if target and target in string_vars:
@@ -539,7 +590,10 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                             "utf-8", errors="replace")
                         if op in _AUGMENTED_ASSIGN_OPS:
                             loop_with_accumulator = True
-                            break
+                        if op in _MULTIPLY_OPS:
+                            loop_with_multiplication = True
+                        if op in _MODULO_OPS:
+                            loop_with_modulo = True
 
         # --- Self-call detection outside loops too ---
         if loop_depth == 0 and ntype in ("call_expression", "call"):
@@ -562,6 +616,13 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             seen.add(c)
             unique_calls.append(c)
 
+    seen_q: set[str] = set()
+    unique_calls_qualified: list[str] = []
+    for c in calls_in_loops_qualified:
+        if c not in seen_q:
+            seen_q.add(c)
+            unique_calls_qualified.append(c)
+
     # Deduplicate loop-invariant calls
     seen_inv: set[str] = set()
     unique_inv: list[str] = []
@@ -570,17 +631,29 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
             seen_inv.add(c)
             unique_inv.append(c)
 
+    seen_lookup: set[str] = set()
+    unique_lookup: list[str] = []
+    for c in loop_lookup_calls:
+        if c not in seen_lookup:
+            seen_lookup.add(c)
+            unique_lookup.append(c)
+
     return {
         "loop_depth": max_loop_depth,
         "has_nested_loops": int(has_nested),
         "calls_in_loops": unique_calls,
+        "calls_in_loops_qualified": unique_calls_qualified,
         "subscript_in_loops": int(subscript_in_loops),
         "has_self_call": int(has_self_call),
         "self_call_count": self_call_count,
         "loop_with_compare": int(loop_with_compare),
         "loop_with_accumulator": int(loop_with_accumulator),
+        "loop_with_multiplication": int(loop_with_multiplication),
+        "loop_with_modulo": int(loop_with_modulo),
         "str_concat_in_loop": int(str_concat_in_loop),
         "loop_invariant_calls": unique_inv,
+        "loop_lookup_calls": unique_lookup,
+        "front_ops_in_loop": int(front_ops_in_loop),
         "loop_bound_small": int(loop_bound_small),
     }
 
@@ -599,6 +672,57 @@ def _call_target_name(node, src: bytes) -> str:
                                 "field_identifier"):
                     return src[sub.start_byte:sub.end_byte].decode(
                         "utf-8", errors="replace")
+    return ""
+
+
+def _call_target_qualified(node, src: bytes) -> str:
+    """Best-effort extraction of the call target with receiver path.
+
+    Examples:
+    - ``requests.get(...)`` -> ``requests.get``
+    - ``session.execute(...)`` -> ``session.execute``
+    - ``query(...)`` -> ``query``
+    """
+    callee = _call_callee_node(node)
+    if callee is None:
+        return ""
+    return _qualified_name(callee, src)
+
+
+def _call_callee_node(call_node):
+    """Return the callable node for a call expression."""
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments", "template_string"):
+            break
+        if child.is_named:
+            return child
+    return None
+
+
+def _qualified_name(node, src: bytes) -> str:
+    """Extract a dotted qualified name from an AST node when possible."""
+    ident_types = {
+        "identifier", "property_identifier", "field_identifier",
+        "type_identifier",
+    }
+    member_types = {"member_expression", "attribute", "field_expression"}
+    if node.type in ident_types:
+        return src[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    if node.type in member_types:
+        named = [c for c in node.children if c.is_named]
+        if len(named) >= 2:
+            left = _qualified_name(named[0], src)
+            right = _qualified_name(named[-1], src)
+            if left and right:
+                return f"{left}.{right}"
+            return right or left
+        if named:
+            return _qualified_name(named[-1], src)
+    # Fallback: choose the last identifier-like child.
+    for child in reversed(node.children):
+        if child.type in ident_types:
+            return src[child.start_byte:child.end_byte].decode(
+                "utf-8", errors="replace")
     return ""
 
 
@@ -700,41 +824,92 @@ def _call_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
     loop-dependent even if the argument list is empty or constant.
     """
 
-    def _has_loop_var(node) -> bool:
-        if node.type == "identifier":
-            name = source[node.start_byte:node.end_byte].decode(
-                "utf-8", errors="replace")
-            if name in loop_vars:
-                return True
-        for child in node.children:
-            if _has_loop_var(child):
-                return True
+    if _call_receiver_uses_loop_vars(call_node, source, loop_vars):
+        return True
+    return _call_args_use_loop_vars(call_node, source, loop_vars)
+
+
+def _node_has_loop_var(node, source: bytes, loop_vars: set[str]) -> bool:
+    """Return True when ``node`` references any variable from ``loop_vars``."""
+    if node.type == "identifier":
+        name = source[node.start_byte:node.end_byte].decode(
+            "utf-8", errors="replace")
+        if name in loop_vars:
+            return True
+    for child in node.children:
+        if _node_has_loop_var(child, source, loop_vars):
+            return True
+    return False
+
+
+def _call_receiver_node(call_node):
+    """Return the receiver object node in ``receiver.method(...)`` calls."""
+    for child in call_node.children:
+        if child.type in ("member_expression", "attribute", "field_expression"):
+            named = [c for c in child.children if c.is_named]
+            if len(named) >= 2:
+                return named[0]
+    return None
+
+
+def _call_args_node(call_node):
+    """Return the argument list node for a call expression."""
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments"):
+            return child
+    return None
+
+
+def _call_receiver_uses_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
+    recv = _call_receiver_node(call_node)
+    if recv is None:
         return False
+    return _node_has_loop_var(recv, source, loop_vars)
 
-    # Check the call receiver (object before .method())
-    for child in call_node.children:
-        if child.type in ("member_expression", "attribute",
-                          "field_expression"):
-            # Check the object part (everything except the method name)
-            for sub in child.children:
-                if sub.type not in ("identifier", "property_identifier",
-                                    "field_identifier", "."):
-                    if _has_loop_var(sub):
-                        return True
-            # Also check if the direct object identifier is a loop var
-            for sub in child.children:
-                if sub.type == "identifier":
-                    name = source[sub.start_byte:sub.end_byte].decode(
-                        "utf-8", errors="replace")
-                    if name in loop_vars:
-                        return True
-                break  # only check the first identifier (the object)
 
-    # Check argument list
-    for child in call_node.children:
-        if child.type in ("argument_list", "arguments", "template_string"):
-            if _has_loop_var(child):
-                return True
+def _call_args_use_loop_vars(call_node, source: bytes, loop_vars: set[str]) -> bool:
+    args = _call_args_node(call_node)
+    if args is None:
+        return False
+    return _node_has_loop_var(args, source, loop_vars)
+
+
+def _call_arg_texts(call_node, source: bytes) -> list[str]:
+    """Return argument source snippets for a call expression."""
+    args = _call_args_node(call_node)
+    if args is None:
+        return []
+    out: list[str] = []
+    for child in args.children:
+        if child.is_named:
+            out.append(source[child.start_byte:child.end_byte].decode(
+                "utf-8", errors="replace").strip())
+    return out
+
+
+def _is_zero_literal(text: str) -> bool:
+    t = text.strip().lower()
+    return t in {"0", "0u", "0l", "0ul", "0.0", "0.0f", "0.0d"}
+
+
+def _is_front_operation_call(call_node, source: bytes, call_name: str) -> bool:
+    """Detect front-insert/front-remove operations used inside loops."""
+    # JS/Ruby/PHP-style dedicated front operations.
+    if call_name in {"unshift", "shift", "appendleft", "popleft"}:
+        return True
+
+    arg_texts = _call_arg_texts(call_node, source)
+
+    # Python/Java/C#: insert(0, x), add(0, x), pop(0), removeAt(0)
+    if call_name in {"insert", "add", "Insert", "Add", "pop", "removeAt", "RemoveAt"}:
+        if arg_texts and _is_zero_literal(arg_texts[0]):
+            return True
+
+    # C++ vector::erase(begin())-style front removal.
+    if call_name in {"erase", "Erase"} and arg_texts:
+        first = arg_texts[0].replace(" ", "")
+        if first.startswith("begin(") or first.endswith(".begin()"):
+            return True
 
     return False
 
@@ -835,13 +1010,18 @@ def compute_and_store(
                 msig["loop_depth"],
                 msig["has_nested_loops"],
                 _json_mod.dumps(msig["calls_in_loops"]),
+                _json_mod.dumps(msig["calls_in_loops_qualified"]),
                 msig["subscript_in_loops"],
                 msig["has_self_call"],
                 msig["loop_with_compare"],
                 msig["loop_with_accumulator"],
+                msig["loop_with_multiplication"],
+                msig["loop_with_modulo"],
                 msig["self_call_count"],
                 msig["str_concat_in_loop"],
                 _json_mod.dumps(msig["loop_invariant_calls"]),
+                _json_mod.dumps(msig["loop_lookup_calls"]),
+                msig["front_ops_in_loop"],
                 msig["loop_bound_small"],
             ))
 
@@ -860,9 +1040,11 @@ def compute_and_store(
         conn.executemany(
             """INSERT OR REPLACE INTO math_signals
                (symbol_id, loop_depth, has_nested_loops, calls_in_loops,
-                subscript_in_loops, has_self_call, loop_with_compare,
-                loop_with_accumulator, self_call_count, str_concat_in_loop,
-                loop_invariant_calls, loop_bound_small)
-               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
+                calls_in_loops_qualified, subscript_in_loops, has_self_call,
+                loop_with_compare, loop_with_accumulator,
+                loop_with_multiplication, loop_with_modulo, self_call_count,
+                str_concat_in_loop, loop_invariant_calls, loop_lookup_calls,
+                front_ops_in_loop, loop_bound_small)
+               VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
             math_batch,
         )

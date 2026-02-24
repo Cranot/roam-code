@@ -300,7 +300,8 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
             has_before_snapshot=has_before,
         )))
         if failed > 0:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Text output ---
@@ -345,7 +346,8 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
         click.echo("Note: No snapshot found. Run 'roam snapshot' to create a baseline.")
 
     if failed > 0:
-        ctx.exit(1)
+        from roam.exit_codes import EXIT_GATE_FAILURE
+        ctx.exit(EXIT_GATE_FAILURE)
 
 
 def _find_rule(budgets: list[dict], name: str) -> dict:

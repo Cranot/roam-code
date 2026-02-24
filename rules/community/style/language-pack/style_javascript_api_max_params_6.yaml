@@ -1,0 +1,10 @@
+name: "Style: javascript api max params 6"
+description: "Javascript functions/methods in api/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "api/**/*.js"
+  require:
+    max_params: 6

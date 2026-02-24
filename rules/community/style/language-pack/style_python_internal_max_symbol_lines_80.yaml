@@ -1,0 +1,10 @@
+name: "Style: python internal max symbol lines 80"
+description: "Python functions/methods in internal/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**/*.py"
+  require:
+    max_symbol_lines: 80

@@ -11,27 +11,18 @@ from pathlib import Path
 # Schema
 # ---------------------------------------------------------------------------
 
-VULN_TABLE_SQL = """\
-CREATE TABLE IF NOT EXISTS vulnerabilities (
-    id INTEGER PRIMARY KEY,
-    cve_id TEXT,
-    package_name TEXT NOT NULL,
-    severity TEXT,
-    title TEXT,
-    source TEXT,
-    matched_symbol_id INTEGER REFERENCES symbols(id),
-    matched_file TEXT,
-    reachable INTEGER DEFAULT 0,
-    shortest_path TEXT,
-    hop_count INTEGER,
-    ingested_at TEXT DEFAULT (datetime('now'))
-);
-"""
-
+# The vulnerabilities table is defined in roam.db.schema (SCHEMA_SQL) and is
+# created by ensure_schema() during open_db().  The helper below is kept for
+# callers that operate on standalone connections (e.g. tests, external tools).
 
 def ensure_vuln_table(conn: sqlite3.Connection) -> None:
-    """Create the vulnerabilities table if it does not exist."""
-    conn.executescript(VULN_TABLE_SQL)
+    """Ensure the vulnerabilities table exists.
+
+    Delegates to the canonical schema in roam.db.schema so there is a single
+    source of truth for the table definition.
+    """
+    from roam.db.schema import SCHEMA_SQL
+    conn.executescript(SCHEMA_SQL)
 
 
 # ---------------------------------------------------------------------------

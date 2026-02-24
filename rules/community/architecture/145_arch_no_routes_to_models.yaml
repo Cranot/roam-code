@@ -1,0 +1,13 @@
+name: "Architecture: arch no routes to models"
+description: "Routes should use services, not models directly."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/routes/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  max_distance: 1

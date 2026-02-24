@@ -1,0 +1,10 @@
+name: "Style: python app max params 6"
+description: "Python functions/methods in app/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**/*.py"
+  require:
+    max_params: 6

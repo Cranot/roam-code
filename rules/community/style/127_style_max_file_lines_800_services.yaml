@@ -1,0 +1,10 @@
+name: "Style: max file lines 800 (services)"
+description: "Files should stay below 800 lines for maintainability."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "services/**"
+  require:
+    max_file_lines: 800

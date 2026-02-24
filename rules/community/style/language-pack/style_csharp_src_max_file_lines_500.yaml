@@ -1,0 +1,10 @@
+name: "Style: csharp src max file lines 500"
+description: "Csharp files in src/ should stay under 500 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "src/**/*.cs"
+  require:
+    max_file_lines: 500

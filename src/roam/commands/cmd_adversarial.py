@@ -687,7 +687,8 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                 challenges=challenges,
             )))
             if fail_on_critical and critical > 0:
-                ctx.exit(1)
+                from roam.exit_codes import EXIT_GATE_FAILURE
+                ctx.exit(EXIT_GATE_FAILURE)
             return
 
         if fmt == "markdown":
@@ -698,4 +699,5 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         click.echo(output)
 
         if fail_on_critical and critical > 0:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
