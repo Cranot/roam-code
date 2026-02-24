@@ -1,0 +1,158 @@
+---
+const steps = [
+  {
+    number: 1,
+    title: "Create Your Workspace",
+    description: "Sign up in seconds and create your first project board. Invite your team members and set up your workflow in minutes."
+  },
+  {
+    number: 2,
+    title: "Organize Your Work",
+    description: "Add tasks, assign team members, set deadlines, and organize everything into columns that match your process."
+  },
+  {
+    number: 3,
+    title: "Track Progress",
+    description: "Watch your projects come to life with real-time updates, automated workflows, and powerful analytics to keep everyone aligned."
+  }
+];
+---
+
+<section class="how-it-works section" id="how-it-works">
+  <div class="container">
+    <div class="section-header text-center">
+      <h2 class="section-title">How It Works</h2>
+      <p class="section-subtitle">
+        Get started in three simple steps and transform how your team works
+      </p>
+    </div>
+
+    <div class="steps">
+      {steps.map((step, index) => (
+        <article class="step">
+          <div class="step-number" aria-hidden="true">
+            <span>{step.number}</span>
+          </div>
+          <div class="step-content">
+            <h3 class="step-title">{step.title}</h3>
+            <p class="step-description">{step.description}</p>
+          </div>
+          {index < steps.length - 1 && (
+            <div class="step-connector" aria-hidden="true"></div>
+          )}
+        </article>
+      ))}
+    </div>
+
+    <div class="cta-section text-center">
+      <a href="#pricing" class="btn btn-primary btn-lg">Start Your Free Trial</a>
+      <p class="cta-note">No credit card required. Cancel anytime.</p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .how-it-works {
+    background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+  }
+
+  .steps {
+    max-width: 900px;
+    margin: 0 auto;
+    position: relative;
+  }
+
+  .step {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: var(--space-xl);
+    margin-bottom: var(--space-3xl);
+    position: relative;
+  }
+
+  .step:last-child {
+    margin-bottom: 0;
+  }
+
+  .step-number {
+    width: 64px;
+    height: 64px;
+    flex-shrink: 0;
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+    border-radius: var(--radius-full);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 1.5rem;
+    font-weight: 700;
+    color: white;
+    box-shadow: var(--shadow-lg);
+    position: relative;
+    z-index: 2;
+  }
+
+  .step-content {
+    padding-top: var(--space-sm);
+  }
+
+  .step-title {
+    font-size: 1.5rem;
+    color: var(--color-text);
+    margin-bottom: var(--space-md);
+  }
+
+  .step-description {
+    font-size: 1.125rem;
+    color: var(--color-text-light);
+    line-height: 1.7;
+    margin-bottom: 0;
+  }
+
+  .step-connector {
+    position: absolute;
+    left: 31px;
+    top: 64px;
+    width: 2px;
+    height: calc(100% + var(--space-3xl) - 64px);
+    background: linear-gradient(180deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+    opacity: 0.3;
+    z-index: 1;
+  }
+
+  .cta-section {
+    margin-top: var(--space-4xl);
+  }
+
+  .cta-note {
+    margin-top: var(--space-md);
+    font-size: 0.875rem;
+    color: var(--color-text-lighter);
+    margin-bottom: 0;
+  }
+
+  @media (max-width: 767px) {
+    .step {
+      grid-template-columns: 1fr;
+      gap: var(--space-md);
+      text-align: center;
+    }
+
+    .step-number {
+      margin: 0 auto;
+    }
+
+    .step-connector {
+      display: none;
+    }
+
+    .step {
+      margin-bottom: var(--space-2xl);
+    }
+  }
+
+  @media (min-width: 768px) {
+    .step-title {
+      font-size: 1.75rem;
+    }
+  }
+</style>

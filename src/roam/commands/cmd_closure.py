@@ -8,7 +8,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 
 
 _TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
@@ -195,7 +195,7 @@ def closure(ctx, name, rename, delete_mode):
     with open_db(readonly=True) as conn:
         sym = find_symbol(conn, name)
         if sym is None:
-            click.echo(f"Symbol not found: {name}")
+            click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
 
         changes = _collect_closure(conn, sym, rename=rename, delete=delete_mode)

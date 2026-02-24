@@ -1,0 +1,239 @@
+---
+const faqs = [
+  {
+    id: "faq-1",
+    question: "How does the free plan work?",
+    answer: "The free plan is completely free forever with no credit card required. You get access to core features including up to 5 team members, 3 project boards, and 1GB of storage. You can upgrade to a paid plan at any time as your team grows."
+  },
+  {
+    id: "faq-2",
+    question: "Can I cancel my subscription anytime?",
+    answer: "Yes, absolutely. You can cancel your subscription at any time with no penalties or fees. If you cancel, you'll have access to your paid features until the end of your current billing period."
+  },
+  {
+    id: "faq-3",
+    question: "Do you offer a free trial for paid plans?",
+    answer: "Yes, we offer a 14-day free trial for both Pro and Enterprise plans. No credit card required to start your trial. You can explore all premium features and decide if it's right for your team."
+  },
+  {
+    id: "faq-4",
+    question: "What payment methods do you accept?",
+    answer: "We accept all major credit cards (Visa, MasterCard, American Express, Discover) and PayPal. Enterprise customers can also pay via invoice with annual billing."
+  },
+  {
+    id: "faq-5",
+    question: "Is my data secure?",
+    answer: "Security is our top priority. We use 256-bit SSL encryption, are SOC 2 Type II certified, and comply with GDPR regulations. All data is encrypted at rest and in transit. We also offer SSO and advanced security controls for Enterprise customers."
+  },
+  {
+    id: "faq-6",
+    question: "Can I import data from other project management tools?",
+    answer: "Yes, we provide easy migration tools to import your data from popular platforms like Trello, Asana, Jira, and Monday.com. Our support team can also help with larger migrations for Enterprise customers."
+  }
+];
+---
+
+<section class="faq section" id="faq">
+  <div class="container">
+    <div class="section-header text-center">
+      <h2 class="section-title">Frequently Asked Questions</h2>
+      <p class="section-subtitle">
+        Everything you need to know about FlowBoard
+      </p>
+    </div>
+
+    <div class="faq-container">
+      <div class="faq-list">
+        {faqs.map((faq, index) => (
+          <article class="faq-item">
+            <button
+              class="faq-question"
+              type="button"
+              aria-expanded="false"
+              aria-controls={`${faq.id}-answer`}
+              id={`${faq.id}-question`}
+              data-faq-index={index}
+            >
+              <span class="question-text">{faq.question}</span>
+              <svg
+                class="faq-icon"
+                viewBox="0 0 24 24"
+                fill="none"
+                xmlns="http://www.w3.org/2000/svg"
+                aria-hidden="true"
+              >
+                <path
+                  d="M19 9L12 16L5 9"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </button>
+            <div
+              class="faq-answer"
+              id={`${faq.id}-answer`}
+              role="region"
+              aria-labelledby={`${faq.id}-question`}
+              hidden
+            >
+              <p class="answer-text">{faq.answer}</p>
+            </div>
+          </article>
+        ))}
+      </div>
+
+      <div class="faq-footer text-center">
+        <p class="text-light">Still have questions?</p>
+        <a href="#contact" class="btn btn-primary">Contact Support</a>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq {
+    background-color: var(--color-bg);
+  }
+
+  .faq-container {
+    max-width: 800px;
+    margin: 0 auto;
+  }
+
+  .faq-list {
+    margin-bottom: var(--space-3xl);
+  }
+
+  .faq-item {
+    border-bottom: 1px solid var(--color-border);
+  }
+
+  .faq-item:last-child {
+    border-bottom: none;
+  }
+
+  .faq-question {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-lg) 0;
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    text-align: left;
+    transition: color var(--transition-fast);
+  }
+
+  .faq-question:hover {
+    color: var(--color-primary);
+  }
+
+  .faq-question:focus-visible {
+    outline: 2px solid var(--color-primary);
+    outline-offset: 4px;
+    border-radius: var(--radius-sm);
+  }
+
+  .question-text {
+    font-size: 1.125rem;
+    font-weight: 600;
+    color: var(--color-text);
+    transition: color var(--transition-fast);
+  }
+
+  .faq-question:hover .question-text {
+    color: var(--color-primary);
+  }
+
+  .faq-icon {
+    width: 24px;
+    height: 24px;
+    flex-shrink: 0;
+    color: var(--color-text-light);
+    transition: transform var(--transition-base), color var(--transition-fast);
+  }
+
+  .faq-question[aria-expanded="true"] .faq-icon {
+    transform: rotate(180deg);
+    color: var(--color-primary);
+  }
+
+  .faq-answer {
+    overflow: hidden;
+    transition: all var(--transition-base);
+  }
+
+  .faq-answer[hidden] {
+    display: none;
+  }
+
+  .answer-text {
+    padding: 0 0 var(--space-lg) 0;
+    font-size: 1rem;
+    line-height: 1.7;
+    color: var(--color-text-light);
+    margin-bottom: 0;
+  }
+
+  .faq-footer p {
+    font-size: 1.125rem;
+    margin-bottom: var(--space-lg);
+  }
+
+  @media (min-width: 768px) {
+    .question-text {
+      font-size: 1.25rem;
+    }
+  }
+</style>
+
+<script>
+  // FAQ Accordion functionality
+  const faqButtons = document.querySelectorAll('.faq-question');
+
+  faqButtons.forEach((button) => {
+    button.addEventListener('click', () => {
+      const isExpanded = button.getAttribute('aria-expanded') === 'true';
+      const answerId = button.getAttribute('aria-controls');
+      const answer = document.getElementById(answerId!);
+
+      // Toggle current FAQ
+      button.setAttribute('aria-expanded', (!isExpanded).toString());
+
+      if (answer) {
+        if (isExpanded) {
+          answer.hidden = true;
+        } else {
+          answer.hidden = false;
+        }
+      }
+    });
+
+    // Keyboard navigation
+    button.addEventListener('keydown', (e) => {
+      const key = e.key;
+      const currentIndex = parseInt(button.getAttribute('data-faq-index') || '0');
+      const faqArray = Array.from(faqButtons);
+
+      if (key === 'ArrowDown') {
+        e.preventDefault();
+        const nextIndex = (currentIndex + 1) % faqArray.length;
+        (faqArray[nextIndex] as HTMLElement).focus();
+      } else if (key === 'ArrowUp') {
+        e.preventDefault();
+        const prevIndex = currentIndex === 0 ? faqArray.length - 1 : currentIndex - 1;
+        (faqArray[prevIndex] as HTMLElement).focus();
+      } else if (key === 'Home') {
+        e.preventDefault();
+        (faqArray[0] as HTMLElement).focus();
+      } else if (key === 'End') {
+        e.preventDefault();
+        (faqArray[faqArray.length - 1] as HTMLElement).focus();
+      }
+    });
+  });
+</script>

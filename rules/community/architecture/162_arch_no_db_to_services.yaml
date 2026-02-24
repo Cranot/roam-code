@@ -1,0 +1,13 @@
+name: "Architecture: arch no db to services"
+description: "DB modules should not import services."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  max_distance: 1

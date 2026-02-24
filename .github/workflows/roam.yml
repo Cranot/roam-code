@@ -1,21 +1,43 @@
-name: Roam Code Analysis
+# Example workflow: roam-code analysis on pull requests.
+#
+# PURPOSE: This file is a reference template showing users how to set up
+# roam-code analysis in their own repositories. It is NOT active CI for
+# this repo — use roam-ci.yml for that.
+#
+# TO USE IN YOUR REPO: Copy this file to .github/workflows/roam.yml in
+# your repository. No other changes needed for a basic setup.
+#
+# See docs/ci-integration.md for the full configuration reference.
+
+name: roam-code Analysis (example template)
+
 on:
-  pull_request:
-    branches: [main, master]
+  # Manual trigger only — this is a dormant example template, not active CI.
+  # Actual CI for this repo runs via roam-ci.yml.
+  # To run the active self-analysis, trigger roam-ci.yml instead.
+  workflow_dispatch:
+
 permissions:
   contents: read
   pull-requests: write
+  # Required for SARIF upload to GitHub Code Scanning:
+  security-events: write
+
 jobs:
-  roam:
+  analyze:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
-      - uses: actions/setup-python@v5
+          fetch-depth: 0  # Full history needed for pr-risk and git analysis
+
+      # Uses the published action from PyPI/GitHub, not the local source.
+      # Change to `uses: ./` to test the local action instead.
+      - uses: cosmohac/roam-code@main
         with:
-          python-version: "3.12"
-      - run: pip install roam-code
-      - run: roam index
-      - run: roam fitness
-      - run: roam --json pr-risk
+          commands: 'health pr-risk'
+          sarif: 'true'
+          sarif-commands: 'health'
+          sarif-category: 'roam-code-main'
+          comment: 'true'
+          gate: 'health_score>=60'

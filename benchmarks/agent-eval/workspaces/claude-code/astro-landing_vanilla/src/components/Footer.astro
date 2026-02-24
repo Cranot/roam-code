@@ -1,0 +1,253 @@
+---
+const currentYear = new Date().getFullYear();
+
+const footerLinks = [
+  {
+    title: 'Product',
+    links: [
+      { label: 'Features', href: '#features' },
+      { label: 'Pricing', href: '#pricing' },
+      { label: 'Integrations', href: '#features' },
+      { label: 'Changelog', href: '#' },
+    ],
+  },
+  {
+    title: 'Company',
+    links: [
+      { label: 'About', href: '#' },
+      { label: 'Blog', href: '#' },
+      { label: 'Careers', href: '#' },
+      { label: 'Contact', href: '#contact' },
+    ],
+  },
+  {
+    title: 'Resources',
+    links: [
+      { label: 'Documentation', href: '#' },
+      { label: 'Help Center', href: '#' },
+      { label: 'Community', href: '#' },
+      { label: 'Status', href: '#' },
+    ],
+  },
+  {
+    title: 'Legal',
+    links: [
+      { label: 'Privacy', href: '#' },
+      { label: 'Terms', href: '#' },
+      { label: 'Security', href: '#' },
+      { label: 'GDPR', href: '#' },
+    ],
+  },
+];
+
+const socialLinks = [
+  {
+    label: 'X (Twitter)',
+    href: '#',
+    icon: 'M18.9 1.15h3.68l-8.04 9.2L24 22.85h-7.4l-5.8-7.58-6.63 7.58H.49l8.6-9.83L0 1.15h7.59l5.24 6.93 6.07-6.93zm-1.29 19.5h2.04L6.48 3.24H4.3l13.31 17.41z',
+  },
+  {
+    label: 'GitHub',
+    href: '#',
+    icon: 'M12 0C5.37 0 0 5.37 0 12c0 5.3 3.44 9.8 8.2 11.39.6.11.82-.26.82-.58v-2.23c-3.34.73-4.04-1.41-4.04-1.41-.55-1.39-1.34-1.76-1.34-1.76-1.09-.75.08-.73.08-.73 1.21.08 1.85 1.24 1.85 1.24 1.07 1.84 2.81 1.31 3.5 1 .1-.78.42-1.31.76-1.61-2.67-.3-5.47-1.33-5.47-5.93 0-1.31.47-2.38 1.24-3.22-.13-.3-.54-1.52.12-3.18 0 0 1.01-.32 3.3 1.23A11.5 11.5 0 0112 5.8c1.03 0 2.06.14 3.03.4 2.28-1.55 3.29-1.23 3.29-1.23.66 1.66.25 2.88.12 3.18.77.84 1.24 1.91 1.24 3.22 0 4.61-2.81 5.63-5.49 5.92.43.37.82 1.1.82 2.22v3.29c0 .32.22.7.83.58A12.01 12.01 0 0024 12c0-6.63-5.37-12-12-12z',
+  },
+  {
+    label: 'LinkedIn',
+    href: '#',
+    icon: 'M20.45 20.45h-3.56v-5.57c0-1.33-.02-3.04-1.85-3.04-1.85 0-2.14 1.45-2.14 2.94v5.67H9.34V9h3.41v1.56h.05c.48-.9 1.64-1.85 3.37-1.85 3.6 0 4.27 2.37 4.27 5.46v6.28zM5.34 7.43A2.06 2.06 0 013.28 5.37a2.06 2.06 0 014.12 0 2.06 2.06 0 01-2.06 2.06zM7.12 20.45H3.56V9h3.56v11.45zM22.23 0H1.77A1.75 1.75 0 000 1.73v20.54A1.75 1.75 0 001.77 24h20.46A1.75 1.75 0 0024 22.27V1.73A1.75 1.75 0 0022.23 0z',
+  },
+  {
+    label: 'YouTube',
+    href: '#',
+    icon: 'M23.5 6.2a3.02 3.02 0 00-2.13-2.14C19.5 3.5 12 3.5 12 3.5s-7.5 0-9.37.56A3.02 3.02 0 00.5 6.2 31.67 31.67 0 000 12a31.67 31.67 0 00.5 5.8 3.02 3.02 0 002.13 2.14c1.87.56 9.37.56 9.37.56s7.5 0 9.37-.56a3.02 3.02 0 002.13-2.14A31.67 31.67 0 0024 12a31.67 31.67 0 00-.5-5.8zM9.55 15.57V8.43L15.82 12l-6.27 3.57z',
+  },
+];
+---
+
+<footer class="footer" role="contentinfo">
+  <div class="container">
+    <div class="footer-top">
+      <div class="footer-brand">
+        <a href="/" class="footer-logo" aria-label="FlowBoard home">
+          <svg
+            width="32"
+            height="32"
+            viewBox="0 0 32 32"
+            fill="none"
+            aria-hidden="true"
+          >
+            <rect width="32" height="32" rx="8" fill="#4f46e5" />
+            <path
+              d="M8 10h16M8 16h12M8 22h8"
+              stroke="white"
+              stroke-width="2.5"
+              stroke-linecap="round"
+            />
+          </svg>
+          <span>FlowBoard</span>
+        </a>
+        <p class="footer-tagline">
+          The project management tool teams actually enjoy using.
+        </p>
+        <nav class="footer-social" aria-label="Social media links">
+          {
+            socialLinks.map((social) => (
+              <a
+                href={social.href}
+                class="social-link"
+                aria-label={social.label}
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                <svg
+                  width="20"
+                  height="20"
+                  viewBox="0 0 24 24"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <path d={social.icon} />
+                </svg>
+              </a>
+            ))
+          }
+        </nav>
+      </div>
+      <div class="footer-links-grid">
+        {
+          footerLinks.map((group) => (
+            <nav aria-label={`${group.title} links`}>
+              <h4 class="footer-link-title">{group.title}</h4>
+              <ul role="list">
+                {group.links.map((link) => (
+                  <li>
+                    <a href={link.href} class="footer-link">
+                      {link.label}
+                    </a>
+                  </li>
+                ))}
+              </ul>
+            </nav>
+          ))
+        }
+      </div>
+    </div>
+    <div class="footer-bottom">
+      <p>&copy; {currentYear} FlowBoard, Inc. All rights reserved.</p>
+    </div>
+  </div>
+</footer>
+
+<style>
+  .footer {
+    background-color: var(--color-bg-dark);
+    color: var(--color-text-inverse);
+    padding-block: var(--space-3xl) var(--space-xl);
+  }
+
+  .footer-top {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-3xl);
+    padding-bottom: var(--space-2xl);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+  }
+
+  .footer-brand {
+    max-width: 280px;
+  }
+
+  .footer-logo {
+    display: flex;
+    align-items: center;
+    gap: var(--space-sm);
+    font-size: 1.25rem;
+    font-weight: 800;
+    color: var(--color-text-inverse);
+    margin-bottom: var(--space-md);
+  }
+
+  .footer-logo:hover {
+    color: var(--color-primary-light);
+  }
+
+  .footer-tagline {
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9375rem;
+    line-height: 1.6;
+    margin-bottom: var(--space-lg);
+  }
+
+  .footer-social {
+    display: flex;
+    gap: var(--space-md);
+  }
+
+  .social-link {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    width: 36px;
+    height: 36px;
+    border-radius: var(--radius-md);
+    color: rgba(255, 255, 255, 0.6);
+    transition: color var(--transition-fast), background-color var(--transition-fast);
+  }
+
+  .social-link:hover {
+    color: white;
+    background-color: rgba(255, 255, 255, 0.1);
+  }
+
+  .footer-links-grid {
+    display: grid;
+    grid-template-columns: repeat(2, 1fr);
+    gap: var(--space-xl);
+  }
+
+  .footer-link-title {
+    font-size: 0.875rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: rgba(255, 255, 255, 0.9);
+    margin-bottom: var(--space-md);
+  }
+
+  .footer-link {
+    display: block;
+    color: rgba(255, 255, 255, 0.6);
+    font-size: 0.9375rem;
+    padding-block: var(--space-xs);
+    transition: color var(--transition-fast);
+  }
+
+  .footer-link:hover {
+    color: white;
+  }
+
+  .footer-bottom {
+    padding-top: var(--space-xl);
+    text-align: center;
+    color: rgba(255, 255, 255, 0.4);
+    font-size: 0.875rem;
+  }
+
+  @media (min-width: 640px) {
+    .footer-links-grid {
+      grid-template-columns: repeat(4, 1fr);
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .footer-top {
+      flex-direction: row;
+      justify-content: space-between;
+    }
+
+    .footer-links-grid {
+      flex: 1;
+      max-width: 640px;
+    }
+  }
+</style>

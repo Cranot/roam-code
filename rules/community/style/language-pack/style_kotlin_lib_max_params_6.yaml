@@ -1,0 +1,10 @@
+name: "Style: kotlin lib max params 6"
+description: "Kotlin functions/methods in lib/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "lib/**/*.kt"
+  require:
+    max_params: 6

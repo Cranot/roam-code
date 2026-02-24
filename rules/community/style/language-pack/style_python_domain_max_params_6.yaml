@@ -1,0 +1,10 @@
+name: "Style: python domain max params 6"
+description: "Python functions/methods in domain/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "domain/**/*.py"
+  require:
+    max_params: 6

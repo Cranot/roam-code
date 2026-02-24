@@ -384,6 +384,59 @@ class TestContext:
         assert result.exit_code == 0
         assert "task=refactor" in result.output or "refactor" in result.output.lower()
 
+    def test_context_json_includes_score_rank(self, indexed_project, cli_runner, monkeypatch):
+        """Single-symbol JSON includes deterministic score/rank personalization fields."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "context", "create_user",
+                "--task", "refactor",
+                "--session-hint", "user validation service flow",
+                "--recent-symbol", "User",
+            ],
+            json_mode=True,
+        )
+        data = parse_json_output(result, "context")
+        files = data["files_to_read"]
+        assert len(files) >= 1
+        assert files[0]["reason"] == "definition"
+        assert all("score" in f for f in files)
+        assert all("rank" in f for f in files)
+        ranks = [f["rank"] for f in files]
+        assert ranks == sorted(ranks, reverse=True)
+
+    def test_context_batch_json_includes_score_rank(self, indexed_project, cli_runner, monkeypatch):
+        """Batch JSON files_to_read are scored/ranked in descending order."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "context", "User", "create_user",
+                "--session-hint", "user model service interactions",
+                "--recent-symbol", "User",
+            ],
+            json_mode=True,
+        )
+        data = parse_json_output(result, "context")
+        files = data["files_to_read"]
+        assert len(files) >= 1
+        assert all("score" in f for f in files)
+        assert all("rank" in f for f in files)
+        scores = [f["score"] for f in files]
+        assert scores == sorted(scores, reverse=True)
+
+    def test_context_batch_task_json_is_parseable(self, indexed_project, cli_runner, monkeypatch):
+        """Batch JSON remains valid when --task is provided (warning goes to stderr)."""
+        monkeypatch.chdir(indexed_project)
+        result = invoke_cli(
+            cli_runner,
+            ["context", "User", "create_user", "--task", "debug"],
+            json_mode=True,
+        )
+        data = parse_json_output(result, "context")
+        assert_json_envelope(data, "context")
+
 
 # ============================================================================
 # Affected-tests command
@@ -649,6 +702,8 @@ class TestWorkflowIntegration:
             result = invoke_cli(cli_runner, args, json_mode=True)
             data = parse_json_output(result, cmd_name)
             assert_json_envelope(data, cmd_name)
-            # All envelopes must have version and timestamp
+            # All envelopes must have version and _meta with timestamp
             assert isinstance(data["version"], str)
-            assert isinstance(data["timestamp"], (int, float, str))
+            meta = data.get("_meta", {})
+            ts = meta.get("timestamp") or data.get("timestamp")
+            assert isinstance(ts, (int, float, str))

@@ -1,0 +1,47 @@
+.panel {
+  background: #ffffff;
+  border-radius: 16px;
+  padding: 1rem;
+  box-shadow: 0 8px 18px rgba(15, 23, 42, 0.08);
+}
+
+.panel h2 {
+  margin: 0 0 0.7rem;
+  font-size: 1.05rem;
+}
+
+.controls {
+  display: grid;
+  gap: 0.7rem;
+}
+
+.field {
+  display: grid;
+  gap: 0.3rem;
+}
+
+.field span {
+  font-size: 0.84rem;
+  font-weight: 600;
+  color: #334155;
+}
+
+.field select {
+  width: 100%;
+  border: 1px solid #cbd5e1;
+  border-radius: 10px;
+  padding: 0.58rem 0.62rem;
+  background: #ffffff;
+}
+
+.field select:focus {
+  outline: 2px solid #0e7490;
+  border-color: #0e7490;
+  outline-offset: 1px;
+}
+
+@media (min-width: 720px) {
+  .controls {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}

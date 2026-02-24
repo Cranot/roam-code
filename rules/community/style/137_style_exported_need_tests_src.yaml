@@ -1,0 +1,11 @@
+name: "Quality: exported symbols require tests (src)"
+description: "Exported functions and classes should have test coverage signals."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, class]
+  file_glob: "src/**"
+  exported: true
+  require:
+    has_test: true

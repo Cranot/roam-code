@@ -1,0 +1,10 @@
+name: "Style: go src max symbol lines 80"
+description: "Go functions/methods in src/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**/*.go"
+  require:
+    max_symbol_lines: 80

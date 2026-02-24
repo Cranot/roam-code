@@ -89,13 +89,12 @@ def test_validate_missing_field():
     incomplete = {
         "command": "health",
         "version": "1.0.0",
-        # missing schema, schema_version, timestamp, summary
+        # missing schema, schema_version, summary
     }
     is_valid, errors = validate_envelope(incomplete)
     assert not is_valid, "Expected invalid for missing fields"
     assert any("schema" in e for e in errors), f"Should report missing 'schema': {errors}"
     assert any("schema_version" in e for e in errors), f"Should report missing 'schema_version': {errors}"
-    assert any("timestamp" in e for e in errors), f"Should report missing 'timestamp': {errors}"
     assert any("summary" in e for e in errors), f"Should report missing 'summary': {errors}"
 
 

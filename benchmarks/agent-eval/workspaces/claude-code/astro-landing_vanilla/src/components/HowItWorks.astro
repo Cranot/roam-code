@@ -1,0 +1,121 @@
+---
+const steps = [
+  {
+    number: 1,
+    title: 'Create Your Workspace',
+    description:
+      'Sign up in 30 seconds. Import your existing projects from Jira, Trello, or Asana, or start fresh with our templates.',
+  },
+  {
+    number: 2,
+    title: 'Organize Your Workflow',
+    description:
+      'Set up boards, sprints, and automations that match how your team actually works. Customize everything.',
+  },
+  {
+    number: 3,
+    title: 'Ship with Confidence',
+    description:
+      'Track progress in real time, catch blockers early, and deliver on schedule. Your team stays in sync.',
+  },
+];
+---
+
+<section
+  class="how-it-works section"
+  id="how-it-works"
+  aria-labelledby="hiw-heading"
+>
+  <div class="container">
+    <div class="section-header">
+      <h2 id="hiw-heading">Get started in minutes</h2>
+      <p>Three simple steps to transform how your team delivers projects.</p>
+    </div>
+    <div class="steps">
+      {
+        steps.map((step, index) => (
+          <div class="step">
+            <div class="step-number" aria-hidden="true">
+              {step.number}
+            </div>
+            {index < steps.length - 1 && (
+              <div class="step-connector" aria-hidden="true" />
+            )}
+            <h3>{step.title}</h3>
+            <p>{step.description}</p>
+          </div>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .how-it-works {
+    background-color: var(--color-bg-alt);
+  }
+
+  .steps {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-2xl);
+    position: relative;
+  }
+
+  .step {
+    text-align: center;
+    position: relative;
+  }
+
+  .step-number {
+    width: 64px;
+    height: 64px;
+    border-radius: 50%;
+    background: linear-gradient(135deg, var(--color-primary), var(--color-secondary));
+    color: white;
+    font-size: 1.5rem;
+    font-weight: 800;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin: 0 auto var(--space-lg);
+  }
+
+  .step-connector {
+    display: none;
+  }
+
+  .step h3 {
+    margin-bottom: var(--space-sm);
+  }
+
+  .step p {
+    color: var(--color-text-light);
+    max-width: 320px;
+    margin-inline: auto;
+    font-size: 0.9375rem;
+    line-height: 1.6;
+  }
+
+  @media (min-width: 768px) {
+    .steps {
+      grid-template-columns: repeat(3, 1fr);
+      gap: var(--space-xl);
+    }
+
+    .step-connector {
+      display: block;
+      position: absolute;
+      top: 32px;
+      left: calc(50% + 40px);
+      width: calc(100% - 80px);
+      height: 2px;
+      background: linear-gradient(
+        90deg,
+        var(--color-primary),
+        var(--color-secondary)
+      );
+      opacity: 0.3;
+    }
+  }
+</style>

@@ -1,0 +1,10 @@
+name: "Style: max params 6 (controllers)"
+description: "Functions and methods in controllers should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "controllers/**"
+  require:
+    max_params: 6

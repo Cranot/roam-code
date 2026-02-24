@@ -1,0 +1,10 @@
+name: "Security: py no engine execute concat"
+description: "Disallow SQL query concatenation in engine.execute()."
+severity: warning
+type: ast_match
+
+match:
+  ast: "engine.execute($SQL + $EXPR)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

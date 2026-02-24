@@ -1,0 +1,31 @@
+.summary {
+  display: flex;
+  justify-content: center;
+  align-items: center;
+  gap: 12px;
+  font-size: 0.9rem;
+  color: var(--color-text-muted);
+}
+
+.stat strong {
+  color: var(--color-text);
+}
+
+.completed strong {
+  color: var(--color-success);
+}
+
+.pending strong {
+  color: var(--color-warning);
+}
+
+.divider {
+  color: var(--color-border);
+}
+
+@media (max-width: 480px) {
+  .summary {
+    font-size: 0.8rem;
+    gap: 8px;
+  }
+}

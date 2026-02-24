@@ -1,0 +1,10 @@
+name: "Style: max params 6 (api layer)"
+description: "Functions and methods in api layer should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "api/**"
+  require:
+    max_params: 6

@@ -1,4 +1,4 @@
-"""Tests for TF-IDF semantic search (roam search-semantic)."""
+"""Tests for hybrid semantic search (roam search-semantic)."""
 
 from __future__ import annotations
 
@@ -10,7 +10,15 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 from roam.search.tfidf import tokenize, cosine_similarity, search, build_corpus
-from roam.search.index_embeddings import build_and_store_tfidf, load_tfidf_vectors, search_stored
+from roam.search.index_embeddings import (
+    build_and_store_tfidf,
+    build_fts_index,
+    fts5_available,
+    load_tfidf_vectors,
+    search_stored,
+    _fuse_hybrid_results,
+)
+from roam.search.framework_packs import available_packs, search_pack_symbols
 
 
 # ---------------------------------------------------------------------------
@@ -103,6 +111,124 @@ class TestCosineSimilarity:
 
 
 # ---------------------------------------------------------------------------
+# Unit tests: hybrid fusion
+# ---------------------------------------------------------------------------
+
+class TestHybridFusion:
+    def test_fusion_boosts_cross_signal_overlap(self):
+        """Symbol present in both rankings should win over single-signal hits."""
+        lexical = [
+            {
+                "symbol_id": 1,
+                "score": 8.0,
+                "name": "open_database",
+                "file_path": "db/connection.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 3,
+            },
+            {
+                "symbol_id": 2,
+                "score": 7.5,
+                "name": "close_database",
+                "file_path": "db/connection.py",
+                "kind": "function",
+                "line_start": 5,
+                "line_end": 7,
+            },
+        ]
+        semantic = [
+            {
+                "symbol_id": 2,
+                "score": 0.91,
+                "name": "close_database",
+                "file_path": "db/connection.py",
+                "kind": "function",
+                "line_start": 5,
+                "line_end": 7,
+            },
+            {
+                "symbol_id": 3,
+                "score": 0.88,
+                "name": "authenticate_user",
+                "file_path": "auth/login.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 3,
+            },
+        ]
+
+        fused = _fuse_hybrid_results(lexical, semantic, top_k=3)
+        assert fused
+        assert fused[0]["symbol_id"] == 2
+
+    def test_fusion_is_deterministic_on_ties(self):
+        """Tie-breaking should be deterministic for stable outputs."""
+        lexical = [
+            {
+                "symbol_id": 10,
+                "score": 1.0,
+                "name": "alpha",
+                "file_path": "a.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 1,
+            },
+            {
+                "symbol_id": 11,
+                "score": 1.0,
+                "name": "beta",
+                "file_path": "b.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ]
+        semantic = [
+            {
+                "symbol_id": 10,
+                "score": 1.0,
+                "name": "alpha",
+                "file_path": "a.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 1,
+            },
+            {
+                "symbol_id": 11,
+                "score": 1.0,
+                "name": "beta",
+                "file_path": "b.py",
+                "kind": "function",
+                "line_start": 1,
+                "line_end": 1,
+            },
+        ]
+
+        first = _fuse_hybrid_results(lexical, semantic, top_k=2)
+        second = _fuse_hybrid_results(lexical, semantic, top_k=2)
+        assert first == second
+
+
+# ---------------------------------------------------------------------------
+# Unit tests: framework/library packs
+# ---------------------------------------------------------------------------
+
+class TestFrameworkPacks:
+    def test_available_packs_exposed(self):
+        packs = available_packs()
+        assert "django" in packs
+        assert "react" in packs
+        assert "python-stdlib" in packs
+
+    def test_pack_search_returns_semantic_hits(self):
+        results = search_pack_symbols("django queryset prefetch related", top_k=5)
+        assert results
+        assert any(r["pack"] == "django" for r in results)
+        assert all(r["source"] == "pack" for r in results)
+
+
+# ---------------------------------------------------------------------------
 # Integration tests: search
 # ---------------------------------------------------------------------------
 
@@ -168,6 +294,18 @@ class TestStoredVectors:
             ).fetchone()[0]
             assert count > 0
 
+    def test_build_fts_index_also_persists_tfidf_for_hybrid(self, semantic_project):
+        """When FTS5 exists, build_fts_index should also refresh TF-IDF vectors."""
+        from roam.db.connection import open_db
+
+        with open_db(readonly=False, project_root=semantic_project) as conn:
+            build_fts_index(conn)
+            if fts5_available(conn):
+                tfidf_count = conn.execute(
+                    "SELECT COUNT(*) FROM symbol_tfidf"
+                ).fetchone()[0]
+                assert tfidf_count > 0
+
     def test_search_stored(self, semantic_project):
         """search_stored returns results using pre-computed vectors."""
         from roam.db.connection import open_db
@@ -179,6 +317,23 @@ class TestStoredVectors:
             results = search_stored(conn, "database connection")
             assert len(results) > 0
             assert results[0]["score"] > 0
+            assert all(0 < r["score"] <= 1.0 for r in results)
+
+    def test_search_stored_includes_pack_hits_for_framework_queries(self, semantic_project):
+        """Framework-intent query should return pack-backed results on cold start."""
+        from roam.db.connection import open_db
+        with open_db(readonly=True, project_root=semantic_project) as conn:
+            results = search_stored(conn, "django queryset prefetch related", top_k=10)
+            assert len(results) > 0
+            assert any(r.get("source") == "pack" and r.get("pack") == "django" for r in results)
+
+    def test_search_stored_prefers_code_hits_for_repo_specific_queries(self, semantic_project):
+        """Repo-local code matches should stay ahead for highly specific local terms."""
+        from roam.db.connection import open_db
+        with open_db(readonly=True, project_root=semantic_project) as conn:
+            results = search_stored(conn, "open_database connection", top_k=5)
+            assert len(results) > 0
+            assert results[0].get("source", "code") == "code"
 
 
 # ---------------------------------------------------------------------------
@@ -214,6 +369,21 @@ class TestCLI:
             assert "summary" in data
             assert "results" in data
             assert "verdict" in data["summary"]
+        finally:
+            os.chdir(old_cwd)
+
+    def test_cli_search_semantic_json_includes_pack_source_fields(self, semantic_project):
+        """Framework-pack hits expose source metadata in JSON mode."""
+        runner = CliRunner()
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(semantic_project))
+            result = runner.invoke(cli, [
+                "--json", "search-semantic", "fastapi dependency injection",
+            ], catch_exceptions=False)
+            assert result.exit_code == 0
+            data = json.loads(result.output)
+            assert any(item.get("source") == "pack" for item in data.get("results", []))
         finally:
             os.chdir(old_cwd)
 

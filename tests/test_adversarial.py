@@ -215,7 +215,7 @@ class TestAdversarialJSON:
         data = json.loads(result.output)
         assert "command" in data
         assert "version" in data
-        assert "timestamp" in data
+        assert "timestamp" in data.get("_meta", data)
         assert "summary" in data
         assert data["command"] == "adversarial"
 

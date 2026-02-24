@@ -1,0 +1,10 @@
+name: "Security: js no setinterval dynamic (javascript)"
+description: "Review dynamic setInterval usage."
+severity: warning
+type: ast_match
+
+match:
+  ast: "setInterval($EXPR, $DELAY)"
+  language: javascript
+  file_glob: "**/*.js"
+  max_matches: 100

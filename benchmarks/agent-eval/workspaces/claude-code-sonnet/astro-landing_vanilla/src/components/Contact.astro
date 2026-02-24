@@ -1,0 +1,309 @@
+---
+---
+
+<section class="contact section" id="contact">
+  <div class="container">
+    <div class="section-header text-center">
+      <h2 class="section-title">Get in touch</h2>
+      <p class="section-subtitle">
+        Have questions? We'd love to hear from you. Send us a message and we'll respond as soon as possible.
+      </p>
+    </div>
+
+    <div class="contact-container">
+      <form class="contact-form" id="contact-form" novalidate>
+        <div class="form-group">
+          <label for="contact-name" class="form-label">
+            Name <span class="required" aria-label="required">*</span>
+          </label>
+          <input
+            type="text"
+            id="contact-name"
+            class="form-input"
+            placeholder="Your name"
+            required
+            aria-required="true"
+            aria-describedby="contact-name-error"
+          />
+          <span class="form-error" id="contact-name-error" role="alert"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="contact-email" class="form-label">
+            Email <span class="required" aria-label="required">*</span>
+          </label>
+          <input
+            type="email"
+            id="contact-email"
+            class="form-input"
+            placeholder="your@email.com"
+            required
+            aria-required="true"
+            aria-describedby="contact-email-error"
+          />
+          <span class="form-error" id="contact-email-error" role="alert"></span>
+        </div>
+
+        <div class="form-group">
+          <label for="contact-message" class="form-label">
+            Message <span class="required" aria-label="required">*</span>
+          </label>
+          <textarea
+            id="contact-message"
+            class="form-textarea"
+            placeholder="Tell us how we can help..."
+            required
+            aria-required="true"
+            aria-describedby="contact-message-error"
+          ></textarea>
+          <span class="form-error" id="contact-message-error" role="alert"></span>
+        </div>
+
+        <button type="submit" class="btn btn-primary btn-lg submit-btn">
+          Send Message
+        </button>
+
+        <div class="form-success" id="contact-success" hidden role="status">
+          <svg class="success-icon" viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+            <path d="M8 12L11 15L16 9" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
+          <p class="success-message">Thank you for your message! We'll get back to you soon.</p>
+        </div>
+      </form>
+
+      <div class="contact-info">
+        <div class="info-card">
+          <div class="info-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M3 8L10.89 13.26C11.2187 13.4793 11.6049 13.5963 12 13.5963C12.3951 13.5963 12.7813 13.4793 13.11 13.26L21 8M5 19H19C19.5304 19 20.0391 18.7893 20.4142 18.4142C20.7893 18.0391 21 17.5304 21 17V7C21 6.46957 20.7893 5.96086 20.4142 5.58579C20.0391 5.21071 19.5304 5 19 5H5C4.46957 5 3.96086 5.21071 3.58579 5.58579C3.21071 5.96086 3 6.46957 3 7V17C3 17.5304 3.21071 18.0391 3.58579 18.4142C3.96086 18.7893 4.46957 19 5 19Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+            </svg>
+          </div>
+          <h3 class="info-title">Email</h3>
+          <p class="info-text">support@flowboard.com</p>
+        </div>
+
+        <div class="info-card">
+          <div class="info-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <path d="M17.657 16.657L13.414 20.9C13.039 21.2746 12.5306 21.4851 12.0005 21.4851C11.4704 21.4851 10.962 21.2746 10.587 20.9L6.343 16.657C5.22422 15.5381 4.46234 14.1127 4.15369 12.5608C3.84504 11.009 4.00349 9.40047 4.60901 7.93868C5.21452 6.4769 6.2399 5.22749 7.55548 4.34846C8.87107 3.46943 10.4178 3.00024 12 3.00024C13.5822 3.00024 15.1289 3.46943 16.4445 4.34846C17.7601 5.22749 18.7855 6.4769 19.391 7.93868C19.9965 9.40047 20.155 11.009 19.8463 12.5608C19.5377 14.1127 18.7758 15.5381 17.657 16.657Z" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+              <circle cx="12" cy="11" r="3" stroke="currentColor" stroke-width="2"/>
+            </svg>
+          </div>
+          <h3 class="info-title">Location</h3>
+          <p class="info-text">San Francisco, CA</p>
+        </div>
+
+        <div class="info-card">
+          <div class="info-icon" aria-hidden="true">
+            <svg viewBox="0 0 24 24" fill="none" xmlns="http://www.w3.org/2000/svg">
+              <circle cx="12" cy="12" r="10" stroke="currentColor" stroke-width="2"/>
+              <path d="M12 6V12L16 14" stroke="currentColor" stroke-width="2" stroke-linecap="round"/>
+            </svg>
+          </div>
+          <h3 class="info-title">Business Hours</h3>
+          <p class="info-text">Mon-Fri: 9AM-6PM PST</p>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .contact {
+    background: linear-gradient(180deg, #ffffff 0%, #f9fafb 100%);
+  }
+
+  .contact-container {
+    max-width: 1000px;
+    margin: 0 auto;
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3xl);
+  }
+
+  .contact-form {
+    background: var(--color-bg);
+    padding: var(--space-2xl);
+    border-radius: var(--radius-xl);
+    box-shadow: var(--shadow-md);
+    border: 1px solid var(--color-border);
+  }
+
+  .required {
+    color: var(--color-danger);
+  }
+
+  .submit-btn {
+    width: 100%;
+  }
+
+  .form-success {
+    margin-top: var(--space-xl);
+    padding: var(--space-lg);
+    background-color: rgba(16, 185, 129, 0.1);
+    border: 2px solid var(--color-success);
+    border-radius: var(--radius-lg);
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+  }
+
+  .form-success[hidden] {
+    display: none;
+  }
+
+  .success-icon {
+    width: 32px;
+    height: 32px;
+    flex-shrink: 0;
+    color: var(--color-success);
+  }
+
+  .success-message {
+    color: var(--color-success);
+    font-weight: 600;
+    margin-bottom: 0;
+  }
+
+  .contact-info {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-lg);
+  }
+
+  .info-card {
+    text-align: center;
+    padding: var(--space-xl);
+    background: var(--color-bg);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+  }
+
+  .info-icon {
+    width: 48px;
+    height: 48px;
+    margin: 0 auto var(--space-md);
+    color: var(--color-primary);
+  }
+
+  .info-icon svg {
+    width: 100%;
+    height: 100%;
+  }
+
+  .info-title {
+    font-size: 1.125rem;
+    color: var(--color-text);
+    margin-bottom: var(--space-sm);
+  }
+
+  .info-text {
+    color: var(--color-text-light);
+    margin-bottom: 0;
+  }
+
+  @media (min-width: 768px) {
+    .contact-container {
+      grid-template-columns: 1.5fr 1fr;
+    }
+
+    .contact-info {
+      gap: var(--space-xl);
+    }
+  }
+</style>
+
+<script>
+  const contactForm = document.getElementById('contact-form') as HTMLFormElement;
+  const contactName = document.getElementById('contact-name') as HTMLInputElement;
+  const contactEmail = document.getElementById('contact-email') as HTMLInputElement;
+  const contactMessage = document.getElementById('contact-message') as HTMLTextAreaElement;
+  const contactSuccess = document.getElementById('contact-success') as HTMLElement;
+
+  const nameError = document.getElementById('contact-name-error') as HTMLElement;
+  const emailError = document.getElementById('contact-email-error') as HTMLElement;
+  const messageError = document.getElementById('contact-message-error') as HTMLElement;
+
+  function validateEmail(email: string): boolean {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+  }
+
+  function showError(input: HTMLInputElement | HTMLTextAreaElement, errorElement: HTMLElement, message: string) {
+    input.classList.add('error');
+    errorElement.textContent = message;
+    input.setAttribute('aria-invalid', 'true');
+  }
+
+  function clearError(input: HTMLInputElement | HTMLTextAreaElement, errorElement: HTMLElement) {
+    input.classList.remove('error');
+    errorElement.textContent = '';
+    input.setAttribute('aria-invalid', 'false');
+  }
+
+  // Clear errors on input
+  contactName?.addEventListener('input', () => clearError(contactName, nameError));
+  contactEmail?.addEventListener('input', () => clearError(contactEmail, emailError));
+  contactMessage?.addEventListener('input', () => clearError(contactMessage, messageError));
+
+  contactForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    let hasError = false;
+
+    // Validate name
+    const name = contactName.value.trim();
+    if (!name) {
+      showError(contactName, nameError, 'Name is required');
+      hasError = true;
+    } else if (name.length < 2) {
+      showError(contactName, nameError, 'Name must be at least 2 characters');
+      hasError = true;
+    } else {
+      clearError(contactName, nameError);
+    }
+
+    // Validate email
+    const email = contactEmail.value.trim();
+    if (!email) {
+      showError(contactEmail, emailError, 'Email is required');
+      hasError = true;
+    } else if (!validateEmail(email)) {
+      showError(contactEmail, emailError, 'Please enter a valid email address');
+      hasError = true;
+    } else {
+      clearError(contactEmail, emailError);
+    }
+
+    // Validate message
+    const message = contactMessage.value.trim();
+    if (!message) {
+      showError(contactMessage, messageError, 'Message is required');
+      hasError = true;
+    } else if (message.length < 10) {
+      showError(contactMessage, messageError, 'Message must be at least 10 characters');
+      hasError = true;
+    } else {
+      clearError(contactMessage, messageError);
+    }
+
+    if (hasError) {
+      const firstError = contactForm.querySelector('.error') as HTMLElement;
+      firstError?.focus();
+      return;
+    }
+
+    // Success - in a real app, this would submit to a backend
+    contactForm.reset();
+    contactSuccess.hidden = false;
+
+    // Hide success message after 5 seconds
+    setTimeout(() => {
+      contactSuccess.hidden = true;
+    }, 5000);
+
+    // Scroll to success message
+    contactSuccess.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  });
+</script>

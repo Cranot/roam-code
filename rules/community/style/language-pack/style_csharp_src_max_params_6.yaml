@@ -1,0 +1,10 @@
+name: "Style: csharp src max params 6"
+description: "Csharp functions/methods in src/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**/*.cs"
+  require:
+    max_params: 6

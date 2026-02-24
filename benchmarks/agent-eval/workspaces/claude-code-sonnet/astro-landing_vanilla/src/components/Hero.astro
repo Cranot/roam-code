@@ -1,0 +1,277 @@
+---
+---
+
+<section class="hero" id="hero">
+  <div class="container">
+    <div class="hero-content">
+      <div class="hero-text">
+        <h1 class="hero-title">
+          Manage Projects with<br />
+          <span class="gradient-text">Clarity and Flow</span>
+        </h1>
+        <p class="hero-subtitle">
+          FlowBoard helps high-performing teams stay organized, collaborate seamlessly, and deliver projects on time. No complexity, just results.
+        </p>
+
+        <form class="hero-form" id="hero-form" novalidate>
+          <div class="form-row">
+            <label for="hero-email" class="sr-only">Email address</label>
+            <input
+              type="email"
+              id="hero-email"
+              class="hero-input"
+              placeholder="Enter your email"
+              required
+              aria-required="true"
+              aria-describedby="hero-email-error"
+            />
+            <button type="submit" class="btn btn-primary btn-lg">
+              Get Started Free
+            </button>
+          </div>
+          <span class="form-error" id="hero-email-error" role="alert"></span>
+          <p class="hero-note">Free forever. No credit card required.</p>
+        </form>
+      </div>
+
+      <div class="hero-image">
+        <div class="hero-illustration">
+          <svg viewBox="0 0 500 400" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+            <!-- Background circles -->
+            <circle cx="250" cy="200" r="180" fill="#f0f4ff" opacity="0.5"/>
+            <circle cx="250" cy="200" r="140" fill="#e0e7ff" opacity="0.5"/>
+
+            <!-- Main board -->
+            <rect x="100" y="80" width="300" height="240" rx="12" fill="white" stroke="#4f46e5" stroke-width="3"/>
+
+            <!-- Board columns -->
+            <rect x="115" y="110" width="80" height="180" rx="6" fill="#f9fafb" stroke="#e5e7eb" stroke-width="2"/>
+            <rect x="210" y="110" width="80" height="180" rx="6" fill="#f9fafb" stroke="#e5e7eb" stroke-width="2"/>
+            <rect x="305" y="110" width="80" height="180" rx="6" fill="#f9fafb" stroke="#e5e7eb" stroke-width="2"/>
+
+            <!-- Cards in columns -->
+            <rect x="120" y="120" width="70" height="40" rx="4" fill="#4f46e5"/>
+            <rect x="120" y="170" width="70" height="40" rx="4" fill="#6366f1"/>
+            <rect x="120" y="220" width="70" height="40" rx="4" fill="#818cf8"/>
+
+            <rect x="215" y="120" width="70" height="40" rx="4" fill="#06b6d4"/>
+            <rect x="215" y="170" width="70" height="40" rx="4" fill="#22d3ee"/>
+
+            <rect x="310" y="120" width="70" height="40" rx="4" fill="#10b981"/>
+
+            <!-- Decorative elements -->
+            <circle cx="80" cy="100" r="8" fill="#f59e0b"/>
+            <circle cx="420" cy="280" r="12" fill="#ec4899"/>
+            <circle cx="430" cy="120" r="6" fill="#8b5cf6"/>
+            <circle cx="70" cy="300" r="10" fill="#06b6d4"/>
+          </svg>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<style>
+  .hero {
+    padding-top: calc(70px + var(--space-4xl));
+    padding-bottom: var(--space-4xl);
+    background: linear-gradient(180deg, #f9fafb 0%, #ffffff 100%);
+    min-height: 100vh;
+    display: flex;
+    align-items: center;
+  }
+
+  .hero-content {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-3xl);
+    align-items: center;
+  }
+
+  .hero-text {
+    text-align: center;
+  }
+
+  .hero-title {
+    font-size: 2.5rem;
+    line-height: 1.1;
+    margin-bottom: var(--space-lg);
+    color: var(--color-text);
+  }
+
+  .gradient-text {
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
+
+  .hero-subtitle {
+    font-size: 1.125rem;
+    color: var(--color-text-light);
+    margin-bottom: var(--space-2xl);
+    max-width: 600px;
+    margin-left: auto;
+    margin-right: auto;
+  }
+
+  .hero-form {
+    max-width: 500px;
+    margin: 0 auto;
+  }
+
+  .form-row {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+  }
+
+  .hero-input {
+    width: 100%;
+    padding: 1rem 1.25rem;
+    font-size: 1rem;
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    background-color: var(--color-bg);
+    color: var(--color-text);
+    transition: all var(--transition-fast);
+  }
+
+  .hero-input:focus {
+    outline: none;
+    border-color: var(--color-primary);
+    box-shadow: 0 0 0 3px rgba(79, 70, 229, 0.1);
+  }
+
+  .hero-input.error {
+    border-color: var(--color-danger);
+  }
+
+  .hero-note {
+    margin-top: var(--space-md);
+    font-size: 0.875rem;
+    color: var(--color-text-lighter);
+    margin-bottom: 0;
+  }
+
+  .hero-image {
+    display: flex;
+    justify-content: center;
+    align-items: center;
+  }
+
+  .hero-illustration {
+    width: 100%;
+    max-width: 500px;
+    animation: float 6s ease-in-out infinite;
+  }
+
+  .hero-illustration svg {
+    width: 100%;
+    height: auto;
+    filter: drop-shadow(0 10px 30px rgba(0, 0, 0, 0.1));
+  }
+
+  @keyframes float {
+    0%, 100% {
+      transform: translateY(0);
+    }
+    50% {
+      transform: translateY(-20px);
+    }
+  }
+
+  @media (min-width: 768px) {
+    .hero-title {
+      font-size: 3.5rem;
+    }
+
+    .hero-subtitle {
+      font-size: 1.25rem;
+    }
+
+    .form-row {
+      flex-direction: row;
+    }
+
+    .hero-input {
+      flex: 1;
+    }
+
+    .hero-text {
+      text-align: left;
+    }
+
+    .hero-subtitle {
+      margin-left: 0;
+      margin-right: 0;
+    }
+
+    .hero-form {
+      margin-left: 0;
+      margin-right: 0;
+    }
+  }
+
+  @media (min-width: 1024px) {
+    .hero-content {
+      grid-template-columns: 1fr 1fr;
+      gap: var(--space-4xl);
+    }
+
+    .hero-title {
+      font-size: 4rem;
+    }
+  }
+</style>
+
+<script>
+  const heroForm = document.getElementById('hero-form') as HTMLFormElement;
+  const heroEmail = document.getElementById('hero-email') as HTMLInputElement;
+  const heroEmailError = document.getElementById('hero-email-error') as HTMLElement;
+
+  function validateEmail(email: string): boolean {
+    const re = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+    return re.test(email);
+  }
+
+  function showError(input: HTMLInputElement, errorElement: HTMLElement, message: string) {
+    input.classList.add('error');
+    errorElement.textContent = message;
+    input.setAttribute('aria-invalid', 'true');
+  }
+
+  function clearError(input: HTMLInputElement, errorElement: HTMLElement) {
+    input.classList.remove('error');
+    errorElement.textContent = '';
+    input.setAttribute('aria-invalid', 'false');
+  }
+
+  heroEmail?.addEventListener('input', () => {
+    clearError(heroEmail, heroEmailError);
+  });
+
+  heroForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const email = heroEmail.value.trim();
+
+    if (!email) {
+      showError(heroEmail, heroEmailError, 'Email is required');
+      heroEmail.focus();
+      return;
+    }
+
+    if (!validateEmail(email)) {
+      showError(heroEmail, heroEmailError, 'Please enter a valid email address');
+      heroEmail.focus();
+      return;
+    }
+
+    clearError(heroEmail, heroEmailError);
+
+    // Success - in a real app, this would submit to a backend
+    alert(`Thank you! We'll send updates to ${email}`);
+    heroForm.reset();
+  });
+</script>

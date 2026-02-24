@@ -1,0 +1,13 @@
+name: "Architecture: arch no domain to infra"
+description: "Domain should not depend directly on infrastructure."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/infrastructure/**"
+    kind: [function, method, class]
+  max_distance: 1

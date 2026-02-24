@@ -1,0 +1,13 @@
+name: "Architecture: arch no migrations to runtime"
+description: "Migrations should remain isolated from runtime code."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/migrations/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  max_distance: 1

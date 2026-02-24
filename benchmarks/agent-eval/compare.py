@@ -37,7 +37,8 @@ def load_results(results_dir: Path) -> list[dict]:
     for f in sorted(results_dir.glob("*.json")):
         try:
             data = json.loads(f.read_text(encoding="utf-8"))
-            results.append(data)
+            if all(k in data for k in ("agent", "mode", "task", "scores")):
+                results.append(data)
         except (json.JSONDecodeError, OSError) as e:
             print(f"Warning: skipping {f}: {e}", file=sys.stderr)
     return results

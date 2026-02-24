@@ -65,6 +65,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -165,6 +166,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                     "high_count": high_count,
                     "showing": len(rows),
                 },
+                budget=token_budget,
                 symbols=[
                     {
                         "name": r["qualified_name"] or r["name"],

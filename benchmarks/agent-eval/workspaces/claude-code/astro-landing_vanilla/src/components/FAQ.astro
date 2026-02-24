@@ -1,0 +1,148 @@
+---
+const faqs = [
+  {
+    question: 'How does the free trial work?',
+    answer:
+      'You get full access to all Pro features for 14 days. No credit card required to start. At the end of your trial, you can continue with the Free plan or upgrade to Pro or Enterprise.',
+  },
+  {
+    question: 'Can I import data from other project management tools?',
+    answer:
+      'Yes! FlowBoard supports one-click import from Jira, Trello, Asana, Monday.com, and Linear. Your projects, tasks, and team members are migrated automatically. Custom field mapping is available for Enterprise plans.',
+  },
+  {
+    question: 'Is there a limit on the number of projects?',
+    answer:
+      'The Free plan supports up to 3 projects. Pro and Enterprise plans have no limits on the number of projects, boards, or tasks you can create.',
+  },
+  {
+    question: 'How does billing work for teams?',
+    answer:
+      'You are billed per active user per month. Annual billing gives you 2 months free. You can add or remove team members at any time and your bill adjusts automatically.',
+  },
+  {
+    question: 'What security certifications do you have?',
+    answer:
+      'FlowBoard is SOC 2 Type II certified and GDPR compliant. Enterprise plans include SSO/SAML integration, custom data retention policies, audit logs, and the option for dedicated infrastructure in your preferred region.',
+  },
+  {
+    question: 'Can I cancel my subscription at any time?',
+    answer:
+      'Absolutely. You can cancel anytime from your account settings. If you cancel, you retain access through the end of your billing period. Your data is always exportable in standard formats.',
+  },
+];
+---
+
+<section class="faq section" id="faq" aria-labelledby="faq-heading">
+  <div class="container">
+    <div class="section-header">
+      <h2 id="faq-heading">Frequently asked questions</h2>
+      <p>Everything you need to know about FlowBoard.</p>
+    </div>
+    <div class="faq-list" role="list">
+      {
+        faqs.map((faq, index) => (
+          <details class="faq-item" role="listitem">
+            <summary class="faq-question" aria-expanded="false">
+              <span>{faq.question}</span>
+              <svg
+                class="faq-chevron"
+                width="20"
+                height="20"
+                viewBox="0 0 20 20"
+                fill="none"
+                aria-hidden="true"
+              >
+                <path
+                  d="M5 7.5l5 5 5-5"
+                  stroke="currentColor"
+                  stroke-width="2"
+                  stroke-linecap="round"
+                  stroke-linejoin="round"
+                />
+              </svg>
+            </summary>
+            <div class="faq-answer">
+              <p>{faq.answer}</p>
+            </div>
+          </details>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .faq {
+    background-color: var(--color-bg);
+  }
+
+  .faq-list {
+    max-width: 720px;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-sm);
+  }
+
+  .faq-item {
+    border: 1px solid var(--color-border);
+    border-radius: var(--radius-lg);
+    overflow: hidden;
+    transition: box-shadow var(--transition-base);
+  }
+
+  .faq-item:hover {
+    box-shadow: var(--shadow-sm);
+  }
+
+  .faq-item[open] {
+    box-shadow: var(--shadow-md);
+  }
+
+  .faq-question {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--space-md);
+    padding: var(--space-lg) var(--space-xl);
+    font-weight: 600;
+    font-size: 1rem;
+    cursor: pointer;
+    list-style: none;
+    user-select: none;
+    transition: color var(--transition-fast);
+  }
+
+  .faq-question::-webkit-details-marker {
+    display: none;
+  }
+
+  .faq-question::marker {
+    content: '';
+  }
+
+  .faq-question:hover {
+    color: var(--color-primary);
+  }
+
+  .faq-chevron {
+    flex-shrink: 0;
+    transition: transform var(--transition-base);
+    color: var(--color-text-light);
+  }
+
+  .faq-item[open] .faq-chevron {
+    transform: rotate(180deg);
+  }
+
+  .faq-answer {
+    padding: 0 var(--space-xl) var(--space-lg);
+  }
+
+  .faq-answer p {
+    color: var(--color-text-light);
+    line-height: 1.7;
+    font-size: 0.9375rem;
+  }
+</style>

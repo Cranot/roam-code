@@ -1,0 +1,55 @@
+# Example expressions for the calculator
+# This file demonstrates various features
+
+# Basic arithmetic
+2 + 3
+10 - 4
+3 * 7
+15 / 3
+17 % 5
+
+# Operator precedence
+2 + 3 * 4
+(2 + 3) * 4
+
+# Power operator
+2 ^ 8
+2 ^ 3 ^ 2
+
+# Variables
+x = 10
+y = 20
+x + y
+x * y
+
+# Mathematical functions
+sqrt(16)
+sqrt(x^2 + y^2)
+abs(-42)
+
+# Trigonometric functions
+sin(0)
+cos(0)
+sin(pi / 2)
+cos(pi)
+
+# Logarithms
+log10(100)
+log10(1000)
+
+# Min/Max
+min(1, 2, 3, 4, 5)
+max(10, 20, 15, 25, 5)
+
+# Complex expression
+radius = 5
+area = pi * radius^2
+circumference = 2 * pi * radius
+
+# Quadratic equation solver
+a = 1
+b = -5
+c = 6
+discriminant = b^2 - 4*a*c
+x1 = (-b + sqrt(discriminant)) / (2*a)
+x2 = (-b - sqrt(discriminant)) / (2*a)

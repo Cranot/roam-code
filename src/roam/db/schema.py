@@ -78,7 +78,10 @@ CREATE TABLE IF NOT EXISTS file_stats (
     complexity REAL DEFAULT 0,
     health_score REAL DEFAULT NULL,
     cochange_entropy REAL DEFAULT NULL,
-    cognitive_load REAL DEFAULT NULL
+    cognitive_load REAL DEFAULT NULL,
+    coverage_pct REAL DEFAULT NULL,
+    covered_lines INTEGER DEFAULT NULL,
+    coverable_lines INTEGER DEFAULT NULL
 );
 
 CREATE TABLE IF NOT EXISTS graph_metrics (
@@ -86,7 +89,11 @@ CREATE TABLE IF NOT EXISTS graph_metrics (
     pagerank REAL DEFAULT 0,
     in_degree INTEGER DEFAULT 0,
     out_degree INTEGER DEFAULT 0,
-    betweenness REAL DEFAULT 0
+    betweenness REAL DEFAULT 0,
+    closeness REAL DEFAULT 0,
+    eigenvector REAL DEFAULT 0,
+    clustering_coefficient REAL DEFAULT 0,
+    debt_score REAL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS clusters (
@@ -153,7 +160,10 @@ CREATE TABLE IF NOT EXISTS symbol_metrics (
     halstead_volume REAL DEFAULT 0,
     halstead_difficulty REAL DEFAULT 0,
     halstead_effort REAL DEFAULT 0,
-    halstead_bugs REAL DEFAULT 0
+    halstead_bugs REAL DEFAULT 0,
+    coverage_pct REAL DEFAULT NULL,
+    covered_lines INTEGER DEFAULT NULL,
+    coverable_lines INTEGER DEFAULT NULL
 );
 
 CREATE INDEX IF NOT EXISTS idx_symbol_metrics_complexity
@@ -165,13 +175,18 @@ CREATE TABLE IF NOT EXISTS math_signals (
     loop_depth INTEGER DEFAULT 0,
     has_nested_loops INTEGER DEFAULT 0,
     calls_in_loops TEXT,
+    calls_in_loops_qualified TEXT,
     subscript_in_loops INTEGER DEFAULT 0,
     has_self_call INTEGER DEFAULT 0,
     loop_with_compare INTEGER DEFAULT 0,
     loop_with_accumulator INTEGER DEFAULT 0,
+    loop_with_multiplication INTEGER DEFAULT 0,
+    loop_with_modulo INTEGER DEFAULT 0,
     self_call_count INTEGER DEFAULT 0,
     str_concat_in_loop INTEGER DEFAULT 0,
     loop_invariant_calls TEXT,
+    loop_lookup_calls TEXT,
+    front_ops_in_loop INTEGER DEFAULT 0,
     loop_bound_small INTEGER DEFAULT 0
 );
 
@@ -236,6 +251,9 @@ CREATE TABLE IF NOT EXISTS runtime_stats (
     p99_latency_ms REAL,
     error_rate REAL DEFAULT 0.0,
     last_seen TEXT,
+    otel_db_system TEXT,
+    otel_db_operation TEXT,
+    otel_db_statement_type TEXT,
     ingested_at TEXT DEFAULT (datetime('now'))
 );
 CREATE INDEX IF NOT EXISTS idx_runtime_stats_symbol ON runtime_stats(symbol_id);
@@ -266,4 +284,27 @@ CREATE TABLE IF NOT EXISTS symbol_tfidf (
     terms TEXT NOT NULL,
     updated_at TEXT DEFAULT (datetime('now'))
 );
+
+-- Optional dense vectors for local ONNX semantic search
+CREATE TABLE IF NOT EXISTS symbol_embeddings (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    vector TEXT NOT NULL,
+    dims INTEGER NOT NULL,
+    provider TEXT NOT NULL DEFAULT 'onnx',
+    model_id TEXT,
+    updated_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_symbol_embeddings_provider
+    ON symbol_embeddings(provider);
+
+-- Metric trends: fine-grained metric snapshots for sparkline tracking
+CREATE TABLE IF NOT EXISTS metric_snapshots (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    metric_name TEXT NOT NULL,
+    metric_value REAL NOT NULL,
+    details TEXT
+);
+CREATE INDEX IF NOT EXISTS idx_metric_snapshots_name_ts
+    ON metric_snapshots(metric_name, timestamp);
 """

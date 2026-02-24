@@ -1,6 +1,14 @@
 # CI pipeline for roam-code itself.
-# Runs the test suite across supported Python versions and, on PRs,
-# eats its own dog food by running roam analysis against the repo.
+#
+# Jobs:
+#   test         — pytest across all supported Python versions (3.9–3.13)
+#   lint         — ruff format/lint check (Python 3.12 only, fast gate)
+#   self-analysis — roam analyses its own codebase on PRs using the local
+#                   composite action (uses: ./), posting a sticky comment
+#                   and uploading SARIF to GitHub Code Scanning.
+#
+# For the example template that downstream users copy into their repos,
+# see .github/workflows/roam.yml (dormant, workflow_dispatch only).
 
 name: CI
 
@@ -10,43 +18,78 @@ on:
   pull_request:
     branches: [main]
 
+permissions:
+  contents: read
+  pull-requests: write        # needed for sticky PR comments in self-analysis
+  security-events: write      # needed for SARIF upload in self-analysis
+
 jobs:
   # -- Test suite across all supported Python versions -----------------------
+  # Ubuntu-only: roam-code is pure Python with no compiled extensions; a
+  # single-OS matrix covers correctness without the 3x cost of a full matrix.
+  # Use -m "not slow" to skip timing-sensitive performance tests that are
+  # prone to flaking under CI resource constraints.
   test:
     runs-on: ubuntu-latest
     strategy:
+      fail-fast: false   # let all Python versions report; don't abort early
       matrix:
         python-version: ["3.9", "3.10", "3.11", "3.12", "3.13"]
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # full history needed for git-stats and pr-risk tests
 
       - uses: actions/setup-python@v5
         with:
           python-version: ${{ matrix.python-version }}
 
       - name: Install dependencies
-        run: |
-          pip install -e ".[dev]"
+        run: pip install -e ".[dev]"
 
       - name: Run tests
         run: pytest tests/ -x -q -m "not slow"
 
-  # -- Self-analysis: roam analyses its own codebase on PRs ------------------
+  # -- Lint (ruff) -----------------------------------------------------------
+  # Fast code style / lint gate. Only needs to pass on one Python version.
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: pip install -e ".[dev]"
+
+      - name: Ruff format check
+        run: ruff format --check src/ tests/
+
+      - name: Ruff lint
+        run: ruff check src/ tests/
+
+  # -- Self-analysis: roam eats its own dog food on PRs ----------------------
+  # Runs the local composite action (uses: ./) to analyse this repo on every
+  # pull request. Posts a sticky PR comment with health score and pr-risk,
+  # uploads SARIF findings to GitHub Code Scanning, and enforces a soft
+  # health gate (>=50) so the job fails loudly if quality degrades.
   self-analysis:
     runs-on: ubuntu-latest
     if: github.event_name == 'pull_request'
     steps:
       - uses: actions/checkout@v4
         with:
-          fetch-depth: 0
+          fetch-depth: 0   # full history required for pr-risk and git analysis
 
-      - uses: actions/setup-python@v5
+      - uses: ./            # local composite action — tests action.yml itself
         with:
-          python-version: "3.12"
-
-      - run: pip install -e .
-      - run: roam index
-      - run: roam fitness
-      - run: roam --json health
+          commands: 'health pr-risk'
+          changed-only: 'true'
+          sarif: 'true'
+          sarif-commands: 'health'
+          sarif-category: 'roam-code-self-analysis'
+          comment: 'true'
+          gate: 'health_score>=50'
+          python-version: '3.12'

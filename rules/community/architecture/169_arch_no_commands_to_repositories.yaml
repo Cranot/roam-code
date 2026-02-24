@@ -1,0 +1,13 @@
+name: "Architecture: arch no commands to repositories"
+description: "Command layer should call application services."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/commands/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  max_distance: 1

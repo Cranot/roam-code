@@ -1,0 +1,10 @@
+name: "Style: max params 6 (application)"
+description: "Functions and methods in application should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**"
+  require:
+    max_params: 6

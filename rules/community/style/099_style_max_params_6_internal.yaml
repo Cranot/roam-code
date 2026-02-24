@@ -1,0 +1,10 @@
+name: "Style: max params 6 (internal)"
+description: "Functions and methods in internal should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**"
+  require:
+    max_params: 6

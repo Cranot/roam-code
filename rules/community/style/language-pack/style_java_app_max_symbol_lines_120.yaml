@@ -1,0 +1,10 @@
+name: "Style: java app max symbol lines 120"
+description: "Java functions/methods in app/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "app/**/*.java"
+  require:
+    max_symbol_lines: 120

@@ -1,0 +1,278 @@
+---
+const plans = [
+  {
+    name: "Free",
+    price: 0,
+    period: "forever",
+    description: "Perfect for individuals and small teams getting started",
+    features: [
+      "Up to 5 team members",
+      "3 project boards",
+      "Basic task management",
+      "Mobile apps",
+      "Email support",
+      "1GB storage"
+    ],
+    highlighted: false,
+    cta: "Get Started Free"
+  },
+  {
+    name: "Pro",
+    price: 12,
+    period: "per user/month",
+    description: "For growing teams that need advanced collaboration",
+    features: [
+      "Unlimited team members",
+      "Unlimited project boards",
+      "Advanced automation",
+      "Custom workflows",
+      "Priority support",
+      "100GB storage",
+      "Advanced analytics",
+      "Integration with 100+ apps"
+    ],
+    highlighted: true,
+    cta: "Start Free Trial"
+  },
+  {
+    name: "Enterprise",
+    price: 49,
+    period: "per user/month",
+    description: "For organizations requiring advanced security and control",
+    features: [
+      "Everything in Pro",
+      "SSO & SAML",
+      "Advanced security controls",
+      "Dedicated account manager",
+      "24/7 phone support",
+      "Unlimited storage",
+      "Custom integrations",
+      "SLA guarantee",
+      "Admin training"
+    ],
+    highlighted: false,
+    cta: "Contact Sales"
+  }
+];
+---
+
+<section class="pricing section" id="pricing">
+  <div class="container">
+    <div class="section-header text-center">
+      <h2 class="section-title">Simple, transparent pricing</h2>
+      <p class="section-subtitle">
+        Choose the plan that's right for your team. All plans include a 14-day free trial.
+      </p>
+    </div>
+
+    <div class="pricing-grid grid grid-3">
+      {plans.map((plan) => (
+        <article class={`pricing-card card ${plan.highlighted ? 'highlighted' : ''}`}>
+          {plan.highlighted && (
+            <div class="popular-badge">Most Popular</div>
+          )}
+
+          <div class="pricing-header">
+            <h3 class="plan-name">{plan.name}</h3>
+            <div class="plan-price">
+              <span class="price-amount">
+                {plan.price === 0 ? 'Free' : `$${plan.price}`}
+              </span>
+              {plan.price > 0 && (
+                <span class="price-period">/{plan.period.split('/')[0]}</span>
+              )}
+            </div>
+            {plan.price > 0 && (
+              <p class="price-billing">{plan.period.includes('user') ? 'per user/month' : plan.period}</p>
+            )}
+            <p class="plan-description">{plan.description}</p>
+          </div>
+
+          <ul class="features-list">
+            {plan.features.map((feature) => (
+              <li class="feature-item">
+                <svg class="check-icon" viewBox="0 0 20 20" fill="none" xmlns="http://www.w3.org/2000/svg" aria-hidden="true">
+                  <circle cx="10" cy="10" r="10" fill="currentColor" opacity="0.1"/>
+                  <path d="M6 10L9 13L14 7" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"/>
+                </svg>
+                <span>{feature}</span>
+              </li>
+            ))}
+          </ul>
+
+          <a
+            href={plan.name === 'Enterprise' ? '#contact' : '#hero'}
+            class={`btn ${plan.highlighted ? 'btn-primary' : 'btn-secondary'} btn-lg pricing-cta`}
+          >
+            {plan.cta}
+          </a>
+        </article>
+      ))}
+    </div>
+
+    <div class="pricing-footer text-center">
+      <p class="text-light">
+        All plans include core features. Need a custom plan?
+        <a href="#contact" class="text-primary font-semibold">Contact us</a>
+      </p>
+    </div>
+  </div>
+</section>
+
+<style>
+  .pricing {
+    background-color: var(--color-bg-light);
+  }
+
+  .pricing-grid {
+    align-items: stretch;
+  }
+
+  .pricing-card {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    border: 2px solid var(--color-border);
+    transition: all var(--transition-base);
+  }
+
+  .pricing-card:hover {
+    transform: translateY(-4px);
+    border-color: var(--color-primary-light);
+  }
+
+  .pricing-card.highlighted {
+    border-color: var(--color-primary);
+    box-shadow: var(--shadow-xl);
+    transform: scale(1.05);
+  }
+
+  .pricing-card.highlighted:hover {
+    transform: scale(1.05) translateY(-4px);
+  }
+
+  .popular-badge {
+    position: absolute;
+    top: -12px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: linear-gradient(135deg, var(--color-primary) 0%, var(--color-secondary) 100%);
+    color: white;
+    padding: var(--space-xs) var(--space-md);
+    border-radius: var(--radius-full);
+    font-size: 0.75rem;
+    font-weight: 700;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+  }
+
+  .pricing-header {
+    text-align: center;
+    padding-bottom: var(--space-xl);
+    border-bottom: 1px solid var(--color-border);
+    margin-bottom: var(--space-xl);
+  }
+
+  .plan-name {
+    font-size: 1.5rem;
+    color: var(--color-text);
+    margin-bottom: var(--space-md);
+  }
+
+  .plan-price {
+    display: flex;
+    align-items: baseline;
+    justify-content: center;
+    margin-bottom: var(--space-sm);
+  }
+
+  .price-amount {
+    font-size: 3rem;
+    font-weight: 700;
+    color: var(--color-text);
+  }
+
+  .price-period {
+    font-size: 1rem;
+    color: var(--color-text-light);
+    margin-left: var(--space-xs);
+  }
+
+  .price-billing {
+    font-size: 0.875rem;
+    color: var(--color-text-lighter);
+    margin-bottom: var(--space-md);
+  }
+
+  .plan-description {
+    font-size: 0.875rem;
+    color: var(--color-text-light);
+    margin-bottom: 0;
+  }
+
+  .features-list {
+    list-style: none;
+    padding: 0;
+    margin: 0 0 var(--space-xl) 0;
+    flex-grow: 1;
+  }
+
+  .feature-item {
+    display: flex;
+    align-items: flex-start;
+    gap: var(--space-sm);
+    margin-bottom: var(--space-md);
+    font-size: 0.9375rem;
+    color: var(--color-text);
+  }
+
+  .feature-item:last-child {
+    margin-bottom: 0;
+  }
+
+  .check-icon {
+    width: 20px;
+    height: 20px;
+    flex-shrink: 0;
+    color: var(--color-primary);
+  }
+
+  .pricing-cta {
+    width: 100%;
+    margin-top: auto;
+  }
+
+  .pricing-footer {
+    margin-top: var(--space-3xl);
+  }
+
+  @media (max-width: 767px) {
+    .pricing-card.highlighted {
+      transform: scale(1);
+    }
+
+    .pricing-card.highlighted:hover {
+      transform: translateY(-4px);
+    }
+
+    .pricing-grid {
+      gap: var(--space-2xl);
+    }
+  }
+
+  @media (min-width: 768px) and (max-width: 1023px) {
+    .pricing-grid {
+      grid-template-columns: 1fr;
+      max-width: 500px;
+      margin: 0 auto;
+    }
+
+    .pricing-card.highlighted {
+      transform: scale(1);
+    }
+
+    .pricing-card.highlighted:hover {
+      transform: translateY(-4px);
+    }
+  }
+</style>

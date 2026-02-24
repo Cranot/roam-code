@@ -6,7 +6,8 @@ import os
 import re
 import click
 
-from roam.db.connection import open_db, batched_in
+from roam.coverage_reports import ingest_coverage_reports
+from roam.db.connection import open_db, batched_in, find_project_root
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
 from roam.commands.gate_presets import (
@@ -187,9 +188,14 @@ def _evaluate_gate_rules(conn, rules):
               help="Auto-detect framework preset from project files")
 @click.option("--config", "config_path", default=None,
               help="Path to .roam-gates.yml config file")
+@click.option("--import-report", "import_reports", multiple=True,
+              help="Import coverage report (.info/.xml/.json). Repeat for multiple reports.")
+@click.option("--merge-imported", is_flag=True, default=False,
+              help="Merge imported coverage into existing data (default replaces old imports).")
 @click.pass_context
 def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth,
-                  preset_name, auto_detect, config_path):
+                  preset_name, auto_detect, config_path,
+                  import_reports, merge_imported):
     """Find entry points with no path to a required gate symbol.
 
     Use --gate for exact names or --gate-pattern for regex matching.
@@ -201,6 +207,27 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
     ensure_index()
+
+    import_summary = None
+    if import_reports:
+        try:
+            with open_db(readonly=False) as conn:
+                import_summary = ingest_coverage_reports(
+                    conn,
+                    list(import_reports),
+                    replace_existing=not merge_imported,
+                    project_root=find_project_root(),
+                )
+        except Exception as exc:
+            msg = f"Coverage import failed: {exc}"
+            if json_mode:
+                click.echo(to_json(json_envelope(
+                    "coverage-gaps",
+                    summary={"error": msg},
+                )))
+            else:
+                click.echo(msg)
+            raise SystemExit(1)
 
     # --- Resolve preset / config gate rules ---
     preset_used = None
@@ -245,6 +272,38 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         with open_db(readonly=True) as conn:
             gate_violations = _evaluate_gate_rules(conn, gate_rules)
 
+    # Import-only mode: no gate traversal requested.
+    if import_summary and not gate_names and not gate_pattern and not gate_rules:
+        coverage_pct = import_summary.get("coverage_pct")
+        coverage_str = f"{coverage_pct}%" if coverage_pct is not None else "n/a"
+        verdict = (
+            f"Imported {import_summary['reports']} report(s): "
+            f"{import_summary['matched_files']}/{import_summary['parsed_files']} files matched; "
+            f"coverage={coverage_str}"
+        )
+        if json_mode:
+            click.echo(to_json(json_envelope(
+                "coverage-gaps",
+                summary={
+                    "verdict": verdict,
+                    "imported_reports": import_summary["reports"],
+                    "matched_files": import_summary["matched_files"],
+                    "parsed_files": import_summary["parsed_files"],
+                    "unmatched_files": import_summary["unmatched_count"],
+                    "coverage_pct": import_summary["coverage_pct"],
+                },
+                import_summary=import_summary,
+            )))
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo(
+                f"  Updated: {import_summary['file_rows_updated']} files, "
+                f"{import_summary['symbol_rows_updated']} symbols"
+            )
+            if import_summary["unmatched_count"]:
+                click.echo(f"  Unmatched files: {import_summary['unmatched_count']}")
+        return
+
     # If only preset/config mode (no --gate/--gate-pattern), output just the violations
     if not gate_names and not gate_pattern and gate_rules:
         errors = [v for v in gate_violations if v["severity"] == "error"]
@@ -259,12 +318,22 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                     "total_violations": len(gate_violations),
                     "errors": len(errors),
                     "warnings": len(warnings),
+                    "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
                 },
                 preset=preset_info,
                 gate_violations=gate_violations,
+                import_summary=import_summary,
             )))
         else:
             click.echo(f"=== Coverage Gaps (preset: {preset_info}) ===\n")
+            if import_summary:
+                pct = import_summary.get("coverage_pct")
+                pct_str = f"{pct}%" if pct is not None else "n/a"
+                click.echo(
+                    f"Imported coverage: {import_summary['matched_files']}/"
+                    f"{import_summary['parsed_files']} files, {pct_str}"
+                )
+                click.echo()
             click.echo(f"Violations: {len(gate_violations)}  "
                         f"Errors: {len(errors)}  Warnings: {len(warnings)}")
             click.echo()
@@ -372,6 +441,7 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
                 "uncovered": len(uncovered),
                 "coverage_pct": coverage_pct,
                 "gates_found": sorted(set(gate_info.values())),
+                "imported_coverage_pct": import_summary["coverage_pct"] if import_summary else None,
             }
             extra = dict(
                 gates_found=sorted(set(gate_info.values())),
@@ -384,6 +454,8 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
             if gate_violations:
                 summary["gate_violation_count"] = len(gate_violations)
                 extra["gate_violations"] = gate_violations
+            if import_summary:
+                extra["import_summary"] = import_summary
             click.echo(to_json(json_envelope("coverage-gaps",
                 summary=summary,
                 **extra,
@@ -395,6 +467,14 @@ def coverage_gaps(ctx, gate_names, gate_pattern, scope, entry_pattern, max_depth
         if preset_used:
             header = f"=== Coverage Gaps (preset: {preset_used.name}) ==="
         click.echo(f"{header}\n")
+        if import_summary:
+            pct = import_summary.get("coverage_pct")
+            pct_str = f"{pct}%" if pct is not None else "n/a"
+            click.echo(
+                f"Imported coverage: {import_summary['matched_files']}/"
+                f"{import_summary['parsed_files']} files, {pct_str}"
+            )
+            click.echo()
         click.echo(f"Gates: {', '.join(sorted(set(gate_info.values())))}")
         click.echo(f"Entry points: {total}  Covered: {len(covered)}  "
                     f"Uncovered: {len(uncovered)}  Coverage: {coverage_pct}%")

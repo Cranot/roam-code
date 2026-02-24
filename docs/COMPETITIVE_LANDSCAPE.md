@@ -4,7 +4,9 @@
 
 This document maps the competitive landscape for tools that provide codebase comprehension, static analysis, and structural code intelligence -- particularly those aimed at AI coding agents.
 
-roam-code occupies a unique niche: a **pre-indexing CLI** that builds a semantic graph (symbols, call graphs, dependencies, architecture, git history) into a local SQLite DB, then exposes 94 commands optimized for AI agent consumption. It supports 26 languages, runs 100% locally with zero API keys, and produces token-efficient output designed for LLM context windows.
+Interactive release page: `docs/site/index.html` (GitHub Pages deployment via `.github/workflows/pages.yml`).
+
+roam-code occupies a unique niche: a **pre-indexing CLI** that builds a semantic graph (symbols, call graphs, dependencies, architecture, git history) into a local SQLite DB, then exposes 133 canonical commands (+1 legacy alias = 134 invokable names) optimized for AI agent consumption. It supports 26 languages, runs 100% locally with zero API keys, and produces token-efficient output designed for LLM context windows.
 
 ---
 
@@ -50,7 +52,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - 30-80% quality improvement benchmarks with peer-reviewed methodology
 - **What we have that they don't:**
   - 100% local, zero cloud dependency, zero API keys
-  - 94 CLI commands vs. their MCP-only interface
+  - 121 canonical CLI commands vs. their MCP-only interface
   - Architecture health scoring (0-100 composite score)
   - Algorithm anti-pattern detection (23-pattern catalog)
   - Graph-level code editing, swarm partitioning, multi-agent orchestration
@@ -75,7 +77,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - Architecture health scoring, tangle ratio, god component detection
   - Algorithm anti-pattern detection
   - Git history integration (churn, co-change, blame, entropy)
-  - 94 CLI commands (broad surface area vs. Serena's focused tool set)
+  - 121 canonical CLI commands (broad surface area vs. Serena's focused tool set)
   - Offline/disconnected operation (no LSP server needed)
   - Vulnerability mapping, runtime trace analysis
 - **Ideas to adopt:**
@@ -93,7 +95,7 @@ These tools compete most directly with roam-code by providing structural codebas
 - **What we have that they don't:**
   - Full graph database (not just embeddings) with PageRank, cycles, communities
   - Architecture health scoring, algorithm detection, vulnerability mapping
-  - 94 commands vs. their handful of search tools
+  - 121 canonical commands vs. their handful of search tools
   - Git history analysis, cognitive complexity metrics
   - No dependency on Ollama or any ML runtime
 - **Ideas to adopt:**
@@ -110,7 +112,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - Universal AST abstraction across languages
 - **What we have that they don't:**
   - Python ecosystem (easier contribution, more accessible)
-  - 94 CLI commands (much broader surface area)
+  - 121 canonical CLI commands (much broader surface area)
   - Architecture health scoring, algorithm anti-pattern detection
   - Git history integration, cognitive complexity
   - Proven production use, comprehensive test suite (1847+ tests)
@@ -128,7 +130,7 @@ These tools compete most directly with roam-code by providing structural codebas
 - **What we have that they don't:**
   - Zero external dependencies (no SurrealDB to install)
   - SQLite simplicity and portability
-  - 94 CLI commands, architecture health scoring
+  - 121 canonical CLI commands, architecture health scoring
   - Algorithm anti-pattern detection, vulnerability mapping
   - Mature test suite, broader language coverage
 
@@ -140,7 +142,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - Semantic search by description ("error handling functions")
   - MCP-native design with 10 purpose-built tools
 - **What we have that they don't:**
-  - Much broader command surface (94 commands)
+  - Much broader command surface (121 canonical commands)
   - Architecture health scoring, algorithm detection, vulnerability mapping
   - Git history analysis, cognitive complexity
   - No external AI model dependency
@@ -156,7 +158,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - Natural language to Cypher translation
 - **What we have that they don't:**
   - Zero infrastructure (no graph DB server to run)
-  - 94 CLI commands with opinionated analysis
+  - 121 canonical CLI commands with opinionated analysis
   - Architecture health scoring, algorithm detection
   - Git history integration, vulnerability mapping
 
@@ -172,7 +174,7 @@ These tools compete most directly with roam-code by providing structural codebas
   - Architecture health scoring, algorithm detection
   - Git history, cognitive complexity, vulnerability mapping
   - Reference resolution, call graph construction
-  - 94 CLI commands vs. raw AST exposure
+  - 121 canonical CLI commands vs. raw AST exposure
 
 ---
 
@@ -184,8 +186,8 @@ These tools are AI coding agents that include their own codebase indexing -- the
 
 - **URL:** https://code.claude.com
 - **What it does:** Agentic coding tool with 200K token context window. Reads codebases, edits files, runs commands, manages git. Supports MCP for external tool integration.
-- **Codebase understanding:** Agentic search to understand project structure and dependencies. Relies on CLAUDE.md for project-specific context. Multi-agent coordination for parallel work.
-- **Relationship to roam-code:** Primary integration target. roam-code's `roam understand` generates CLAUDE.md content; `roam context` provides files-to-read with line ranges. Claude Code can use roam-code as an MCP server.
+- **Codebase understanding:** Agentic search to understand project structure and dependencies. Uses repository instruction files (`AGENTS.md` canonical, with provider-specific overlays where supported). Multi-agent coordination for parallel work.
+- **Relationship to roam-code:** Primary integration target. roam-code's `roam agent-export` generates `AGENTS.md` plus provider overlays; `roam context` provides files-to-read with line ranges. Claude Code can use roam-code as an MCP server.
 - **Gap roam-code fills:** Claude Code lacks persistent structural indexing, graph analysis, architecture scoring, and algorithm detection. It re-discovers structure each session.
 
 ### OpenAI Codex CLI
@@ -215,7 +217,7 @@ These tools are AI coding agents that include their own codebase indexing -- the
 - **URL:** https://aider.chat
 - **What it does:** Open-source terminal-based AI pair programmer. Pioneered the "repo map" pattern: tree-sitter AST parsing, dependency graph, PageRank ranking, dynamic token budget fitting.
 - **Codebase understanding:** Repository map using tree-sitter + PageRank. Supports 100+ languages. Automatically lints/tests after changes. Maps entire codebase.
-- **Relationship to roam-code:** Aider's repo map is conceptually similar to roam-code's approach (tree-sitter + PageRank), but aider rebuilds it each session and it serves a single purpose (context for the agent). roam-code's persistent SQLite DB, 94 commands, and architecture analysis go far deeper.
+- **Relationship to roam-code:** Aider's repo map is conceptually similar to roam-code's approach (tree-sitter + PageRank), but aider rebuilds it each session and it serves a single purpose (context for the agent). roam-code's persistent SQLite DB, 121 canonical commands, and architecture analysis go far deeper.
 - **Gap roam-code fills:** Aider's repo map is ephemeral and limited to context generation. No architecture scoring, algorithm detection, vulnerability mapping, or multi-agent orchestration.
 
 ### Cline
@@ -251,7 +253,7 @@ These tools are AI coding agents that include their own codebase indexing -- the
   - 100+ dev-ops integrations via MCP
 - **What we have that they don't:**
   - Open source, fully transparent analysis
-  - 94 CLI commands with fine-grained control
+  - 121 canonical CLI commands with fine-grained control
   - Graph algorithms (PageRank, Tarjan SCC, Louvain communities)
   - Architecture health scoring, algorithm anti-pattern detection
   - 100% local operation
@@ -348,7 +350,7 @@ These tools are AI coding agents that include their own codebase indexing -- the
 |---------|-----------|-----------|--------|--------|-----------|-------|--------|-----------------|
 | Pre-built graph DB | SQLite | Cloud | No | No | In-memory | No | Cloud vectors | Cloud graph |
 | Languages | 26 | Many | 30+ | Many | Multi | 100+ | Many | Many |
-| CLI commands | 94 | MCP only | MCP only | CLI+MCP | MCP only | CLI | IDE only | IDE/API |
+| CLI commands | 121 canonical (122 invokable names) | MCP only | MCP only | CLI+MCP | MCP only | CLI | IDE only | IDE/API |
 | Architecture health score | Yes | No | No | No | No | No | No | No |
 | Algorithm anti-pattern detection | Yes | No | No | No | No | No | No | No |
 | PageRank / centrality | Yes | No | No | No | No | Yes* | No | No |
@@ -378,7 +380,7 @@ roam-code occupies a distinctive position in the landscape:
 
 1. **The only tool that combines graph-theoretic analysis with AI agent optimization.** No other tool offers PageRank + Tarjan SCC + Louvain communities + topological layers + architecture health scoring + algorithm anti-pattern detection, all in a format optimized for LLM consumption.
 
-2. **Broadest CLI command surface.** At 94 commands, roam-code has 4-10x more analytical commands than any competitor. This is not just breadth for breadth's sake -- each command answers a specific question an AI agent or developer might ask.
+2. **Broadest CLI command surface.** At 121 canonical commands (122 invokable names including the legacy `math` alias), roam-code has 4-10x more analytical commands than any competitor. This is not just breadth for breadth's sake -- each command answers a specific question an AI agent or developer might ask.
 
 3. **Zero-dependency local operation.** Unlike Augment (cloud), Cursor (cloud embeddings), Sourcegraph (server), grepai (Ollama), and codegraph-rust (SurrealDB), roam-code requires only Python and SQLite. This makes it the most portable and privacy-preserving option.
 
@@ -388,12 +390,12 @@ roam-code occupies a distinctive position in the landscape:
 
 ### Recommended Positioning Statement
 
-> roam-code: The structural intelligence layer for AI coding agents. Pre-indexes your codebase into a semantic graph with architecture health scoring, algorithm anti-pattern detection, and 94 analytical commands -- all 100% local, zero API keys. Gives your AI agent the architectural awareness it cannot get from reading files.
+> roam-code: The structural intelligence layer for AI coding agents. Pre-indexes your codebase into a semantic graph with architecture health scoring, algorithm anti-pattern detection, and 121 canonical analytical commands -- all 100% local, zero API keys. Gives your AI agent the architectural awareness it cannot get from reading files.
 
 ### Key Differentiators to Emphasize
 
 - **"Architectural awareness"** -- no competitor offers composite health scores, tangle ratios, or layer violation detection
-- **"94 commands"** -- the broadest analytical surface area in the category
+- **"121 canonical commands"** -- the broadest analytical surface area in the category
 - **"Zero API keys"** -- fully local, fully private, fully offline
 - **"Graph-theoretic"** -- real algorithms (PageRank, Tarjan, Louvain) not just embeddings
 - **"Git-aware"** -- temporal signals (churn, co-change, entropy) complement structural signals
@@ -414,7 +416,7 @@ roam-code occupies a distinctive position in the landscape:
 
 ### Medium Priority
 
-5. **Query DSL.** CodeQL's success with a query language suggests that power users want to express custom structural queries. Consider a lightweight query syntax for ad-hoc graph exploration beyond the 94 fixed commands.
+5. **Query DSL.** CodeQL's success with a query language suggests that power users want to express custom structural queries. Consider a lightweight query syntax for ad-hoc graph exploration beyond the 119 fixed commands.
 
 6. **PR-triggered async analysis.** Continue.dev's pivot to running agents on every PR is compelling. roam-code already has `roam pr-risk` and `roam diff`, but a daemon mode that auto-comments on PRs would increase stickiness.
 
@@ -440,7 +442,7 @@ roam-code occupies a distinctive position in the landscape:
 
 2. **Augment Context Engine MCP gains adoption.** With venture backing and a 70% improvement claim, Augment is the most credible direct competitor. Mitigation: roam-code's zero-dependency local operation and open-source model serve a different market segment (privacy-conscious, self-hosted, cost-sensitive).
 
-3. **MCP becomes the standard interface.** If agents converge on MCP as the only interface, roam-code's 94 CLI commands become less relevant than its MCP tools. Mitigation: Continue investing in MCP server, ensure all high-value commands are exposed as MCP tools.
+3. **MCP becomes the standard interface.** If agents converge on MCP as the only interface, roam-code's 121 canonical CLI commands become less relevant than its MCP tools. Mitigation: Continue investing in MCP server, ensure all high-value commands are exposed as MCP tools.
 
 ### Medium-term Threats
 

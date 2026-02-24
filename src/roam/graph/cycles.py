@@ -142,12 +142,15 @@ def _propagation_cost_sampled(
     Picks up to *sample_size* nodes, computes the number of reachable
     nodes from each via BFS (``descendants``), and averages.  This is
     O(sample_size * (V+E)) instead of O(V * (V+E)).
+
+    Uses a fixed seed for deterministic output across runs.
     """
     import random
 
-    nodes = list(G.nodes())
+    nodes = sorted(G.nodes())
     k = min(sample_size, n)
-    sample = random.sample(nodes, k)
+    rng = random.Random(42)
+    sample = rng.sample(nodes, k)
 
     total_reach = sum(len(nx.descendants(G, v)) for v in sample)
     avg_reach = total_reach / k

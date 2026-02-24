@@ -133,7 +133,8 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
             footprint=footprint,
         )))
         if fail_on_degradation and health_degraded:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Markdown output ---
@@ -141,7 +142,8 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
         _emit_markdown(verdict, deltas, deltas_available, edges,
                        sym_changes, footprint, changed)
         if fail_on_degradation and health_degraded:
-            ctx.exit(1)
+            from roam.exit_codes import EXIT_GATE_FAILURE
+            ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Text output ---
@@ -207,7 +209,8 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     )
 
     if fail_on_degradation and health_degraded:
-        ctx.exit(1)
+        from roam.exit_codes import EXIT_GATE_FAILURE
+        ctx.exit(EXIT_GATE_FAILURE)
 
 
 def _emit_markdown(verdict, deltas, deltas_available, edges,

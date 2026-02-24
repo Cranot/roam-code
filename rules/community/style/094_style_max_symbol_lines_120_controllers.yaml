@@ -1,0 +1,10 @@
+name: "Style: max symbol lines 120 (controllers)"
+description: "Functions and methods in controllers should be <= 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "controllers/**"
+  require:
+    max_symbol_lines: 120

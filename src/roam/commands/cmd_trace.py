@@ -4,7 +4,7 @@ import click
 
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import ensure_index, symbol_not_found_hint
 
 
 def _classify_coupling(hops):
@@ -125,12 +125,12 @@ def trace(ctx, source, target, k_paths):
     with open_db(readonly=True) as conn:
         src_ids = find_symbol_id(conn, source)
         if not src_ids:
-            click.echo(f"Source symbol not found: {source}")
+            click.echo(symbol_not_found_hint(source))
             raise SystemExit(1)
 
         tgt_ids = find_symbol_id(conn, target)
         if not tgt_ids:
-            click.echo(f"Target symbol not found: {target}")
+            click.echo(symbol_not_found_hint(target))
             raise SystemExit(1)
 
         G = build_symbol_graph(conn)

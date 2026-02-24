@@ -1,0 +1,10 @@
+name: "Security: js no crypto createdecipher (javascript)"
+description: "Disallow deprecated createDecipher API."
+severity: warning
+type: ast_match
+
+match:
+  ast: "crypto.createDecipher($ALG, $KEY)"
+  language: javascript
+  file_glob: "**/*.js"
+  max_matches: 100

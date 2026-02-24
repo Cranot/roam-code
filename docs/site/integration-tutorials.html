@@ -1,0 +1,155 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roam-code Integration Tutorials</title>
+  <meta name="description" content="End-to-end MCP integration tutorials for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph).">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./docs.css">
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <div class="nav-links">
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./integration-tutorials.html" class="active">Integrations</a>
+        <a href="./command-reference.html">Command Reference</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="./landscape.html">Research</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-head">
+      <p class="page-kicker">Adoption</p>
+      <h1>Integration Tutorials (5 Platforms)</h1>
+      <p class="page-subtitle">
+        End-to-end setup and daily workflow for MCP-enabled coding agents.
+        Goal: make the first successful query fast, then standardize a repeatable loop for structural analysis.
+      </p>
+      <div class="callout">
+        Scope: Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Non-goal: cloud-hosted roam deployment.
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>Quick Setup Matrix</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Platform</th><th>Fast setup command</th><th>Config fallback</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Claude Code</td><td><code>roam mcp-setup claude-code</code></td><td><code>.mcp.json</code> in project root</td></tr>
+            <tr><td>Cursor</td><td><code>roam mcp-setup cursor</code></td><td><code>.cursor/mcp.json</code></td></tr>
+            <tr><td>Gemini CLI</td><td><code>roam mcp-setup gemini-cli</code></td><td><code>~/.gemini/settings.json</code></td></tr>
+            <tr><td>Codex CLI</td><td><code>roam mcp-setup codex-cli</code></td><td><code>~/.codex/config.json</code> or CLI flag</td></tr>
+            <tr><td>Amp (Sourcegraph)</td><td>Manual stdio entry</td><td>Amp MCP settings with command <code>roam mcp</code></td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Claude Code</h2>
+      <h3>1. Register roam MCP server</h3>
+      <pre><code>roam mcp-setup claude-code
+claude mcp add roam-code -- roam mcp</code></pre>
+      <h3>2. Verify tool visibility</h3>
+      <pre><code>roam mcp --list-tools
+roam mcp --preset core</code></pre>
+      <h3>3. First end-to-end workflow</h3>
+      <pre><code>roam init
+roam context PaymentService
+roam impact PaymentService
+roam preflight PaymentService</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Cursor</h2>
+      <h3>1. Generate MCP config snippet</h3>
+      <pre><code>roam mcp-setup cursor</code></pre>
+      <h3>2. Add generated JSON to Cursor MCP config</h3>
+      <p>Place the emitted config at <code>.cursor/mcp.json</code> in your project.</p>
+      <h3>3. Agent workflow loop</h3>
+      <pre><code>roam init
+roam understand
+roam check-rules --severity error
+roam health --gate "score&gt;=70,tangle_ratio&lt;=0.10"</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Gemini CLI</h2>
+      <h3>1. Generate Gemini MCP config</h3>
+      <pre><code>roam mcp-setup gemini-cli</code></pre>
+      <h3>2. Install into Gemini settings</h3>
+      <p>Merge emitted JSON into <code>~/.gemini/settings.json</code>.</p>
+      <h3>3. Recommended first session</h3>
+      <pre><code>roam init
+roam search-semantic "authentication flow"
+roam trace AuthController AuthRepository
+roam test-gaps --staged</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Codex CLI</h2>
+      <h3>1. Configure via command or config file</h3>
+      <pre><code>roam mcp-setup codex-cli
+codex --mcp roam-code="roam mcp"</code></pre>
+      <h3>2. Persist config (optional)</h3>
+      <p>Add emitted JSON to <code>~/.codex/config.json</code> for repeat sessions.</p>
+      <h3>3. Refactor-safe loop</h3>
+      <pre><code>roam init
+roam suggest-refactoring --top 10
+roam plan-refactor PaymentService
+roam debt --roi</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Amp (Sourcegraph)</h2>
+      <h3>1. Add a stdio MCP server entry</h3>
+      <p>
+        In Amp MCP settings, register a server named <code>roam-code</code> with command
+        <code>roam</code> and args <code>["mcp"]</code>.
+      </p>
+      <pre><code>{
+  "mcpServers": {
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"]
+    }
+  }
+}</code></pre>
+      <h3>2. Validate and run a first path</h3>
+      <pre><code>roam init
+roam mcp --list-tools
+roam deps --top 20
+roam layers</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Cross-Platform Validation Checklist</h2>
+      <ul>
+        <li><code>roam mcp --list-tools</code> shows non-empty tool output.</li>
+        <li><code>roam context &lt;symbol&gt;</code> returns ranked files/lines.</li>
+        <li><code>roam check-rules</code> runs without configuration errors.</li>
+        <li><code>roam health --gate "score&gt;=70"</code> returns deterministic gate output.</li>
+      </ul>
+    </section>
+
+    <footer>
+      <p>Next: pair with the <a href="./command-reference.html">command reference</a> and <a href="./architecture.html">architecture guide</a> for deeper operational context.</p>
+      <div class="footer-links">
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./index.html">Home</a>
+        <a href="https://github.com/Cranot/roam-code#integration-with-ai-coding-tools">README Integration Section</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

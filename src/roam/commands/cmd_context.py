@@ -1,5 +1,7 @@
 """Get the minimal context needed to safely modify a symbol."""
 
+from __future__ import annotations
+
 from collections import defaultdict
 
 import click
@@ -7,7 +9,7 @@ import click
 from roam.db.connection import open_db, batched_in
 from roam.db.queries import FILE_BY_PATH
 from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found, file_not_found_hint
 from roam.commands.changed_files import is_test_file
 from roam.commands.context_helpers import (
     get_coupling as _get_coupling,
@@ -16,6 +18,7 @@ from roam.commands.context_helpers import (
     batch_context as _batch_context,
     gather_annotations as _gather_annotations,
 )
+from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
 
 
 _TASK_CHOICES = ["refactor", "debug", "extend", "review", "understand"]
@@ -321,7 +324,7 @@ def _output_task_single_text(c, task, extras):
 # Task-mode output: JSON
 # ---------------------------------------------------------------------------
 
-def _output_task_single_json(c, task, extras):
+def _output_task_single_json(c, task, extras, budget=0):
     """Build and emit JSON output for task-mode single symbol."""
     sym = c["sym"]
     line_start = c["line_start"]
@@ -403,7 +406,8 @@ def _output_task_single_json(c, task, extras):
 
     payload["files_to_read"] = [
         {"path": f["path"], "start": f["start"],
-         "end": f["end"], "reason": f["reason"]}
+         "end": f["end"], "reason": f["reason"],
+         "score": f.get("score"), "rank": f.get("rank")}
         for f in files_to_read
     ]
 
@@ -422,7 +426,7 @@ def _output_task_single_json(c, task, extras):
     if extras.get("coupling"):
         summary["coupling_partners"] = len(extras["coupling"])
 
-    click.echo(to_json(json_envelope("context", summary=summary, **payload)))
+    click.echo(to_json(json_envelope("context", summary=summary, budget=budget, **payload)))
 
 
 # ---------------------------------------------------------------------------
@@ -676,7 +680,7 @@ def _output_file_context_text(data):
         click.echo()
 
 
-def _output_file_context_json(data):
+def _output_file_context_json(data, budget=0):
     """Render --for-file context as JSON."""
     summary = {
         "symbol_count": data["symbol_count"],
@@ -691,6 +695,7 @@ def _output_file_context_json(data):
 
     click.echo(to_json(json_envelope("context",
         summary=summary,
+        budget=budget,
         mode="file",
         file=data["file_path"],
         language=data.get("language"),
@@ -721,8 +726,20 @@ def _output_file_context_json(data):
     '--for-file', 'for_file', type=str, default=None,
     help='Get aggregated context for an entire file instead of a symbol.',
 )
+@click.option(
+    '--session-hint', 'session_hint', type=str, default="",
+    help='Optional conversation hint used to personalize files-to-read ranking.',
+)
+@click.option(
+    '--recent-symbol', 'recent_symbols', multiple=True,
+    help='Recently discussed symbol(s) to bias context ranking (repeatable).',
+)
+@click.option(
+    '--no-propagation', 'no_propagation', is_flag=True, default=False,
+    help='Disable call-graph propagation ranking (use legacy PageRank-only mode).',
+)
 @click.pass_context
-def context(ctx, names, task, for_file):
+def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propagation):
     """Get the minimal context needed to safely modify a symbol.
 
     Returns definition, callers, callees, tests, and the exact files
@@ -734,6 +751,9 @@ def context(ctx, names, task, for_file):
     source file, callees grouped by target file, tests, coupling partners,
     and a complexity summary across all symbols in the file.
 
+    Use --session-hint and --recent-symbol to personalize files-to-read
+    ranking for long conversations.
+
     Use --task to tailor the context to a specific agent intent:
 
     \b
@@ -744,6 +764,7 @@ def context(ctx, names, task, for_file):
       understand - docstring, cluster, architecture role (comprehension)
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
 
     # --- File-level context mode ---
@@ -751,11 +772,11 @@ def context(ctx, names, task, for_file):
         with open_db(readonly=True) as conn:
             frow = _resolve_file(conn, for_file)
             if frow is None:
-                click.echo(f"File not found in index: {for_file}")
+                click.echo(file_not_found_hint(for_file))
                 raise SystemExit(1)
             data = _gather_file_level_context(conn, frow)
             if json_mode:
-                _output_file_context_json(data)
+                _output_file_context_json(data, budget=token_budget)
             else:
                 _output_file_context_text(data)
         return
@@ -771,26 +792,43 @@ def context(ctx, names, task, for_file):
         for name in names:
             sym = find_symbol(conn, name)
             if sym is None:
-                click.echo(f"Symbol not found: {name}")
+                click.echo(symbol_not_found(conn, name, json_mode=json_mode))
                 raise SystemExit(1)
             resolved.append(sym)
 
         # Gather context for each
-        contexts = [_gather_symbol_context(conn, sym) for sym in resolved]
+        use_propagation = not no_propagation
+        contexts = [
+            _gather_symbol_context(
+                conn,
+                sym,
+                task=task,
+                session_hint=session_hint,
+                recent_symbols=recent_symbols,
+                use_propagation=use_propagation,
+            )
+            for sym in resolved
+        ]
 
-        # --- Batch mode (--task is ignored) ---
+        # --- Batch mode (task extras are ignored) ---
         if len(contexts) > 1:
-            if task:
+            if task and not json_mode:
                 click.echo(
-                    "Warning: --task is ignored in batch mode "
-                    "(multiple symbols). Using default context."
+                    "Warning: task-specific extra sections are ignored in batch mode "
+                    "(multiple symbols). Ranking still uses task/session hints.",
+                    err=True,
                 )
             shared_callers, shared_callees, scored_files = _batch_context(
                 conn, contexts,
+                task=task,
+                session_hint=session_hint,
+                recent_symbols=recent_symbols,
+                use_propagation=use_propagation,
             )
 
             if json_mode:
                 click.echo(to_json(json_envelope("context",
+                    budget=token_budget,
                     summary={
                         "symbols": len(contexts),
                         "shared_callers": len(shared_callers),
@@ -886,7 +924,7 @@ def context(ctx, names, task, for_file):
         if task:
             extras = _gather_task_extras(conn, sym, c, task)
             if json_mode:
-                _output_task_single_json(c, task, extras)
+                _output_task_single_json(c, task, extras, budget=token_budget)
             else:
                 _output_task_single_text(c, task, extras)
             return
@@ -907,14 +945,20 @@ def context(ctx, names, task, for_file):
         skipped_callees = c["skipped_callees"]
 
         if json_mode:
+            _sym_name = sym["qualified_name"] or sym["name"]
+            _next_steps = suggest_next_steps("context", {
+                "symbol": _sym_name,
+                "callers": len(non_test_callers),
+            })
             click.echo(to_json(json_envelope("context",
+                budget=token_budget,
                 summary={
                     "callers": len(non_test_callers),
                     "callees": len(callees),
                     "tests": len(test_callers),
                     "files_to_read": len(files_to_read),
                 },
-                symbol=sym["qualified_name"] or sym["name"],
+                symbol=_sym_name,
                 kind=sym["kind"],
                 signature=sym["signature"] or "",
                 location=loc(sym["file_path"], line_start),
@@ -948,9 +992,11 @@ def context(ctx, names, task, for_file):
                 annotations=default_annotations if default_annotations else [],
                 files_to_read=[
                     {"path": f["path"], "start": f["start"],
-                     "end": f["end"], "reason": f["reason"]}
+                     "end": f["end"], "reason": f["reason"],
+                     "score": f.get("score"), "rank": f.get("rank")}
                     for f in files_to_read
                 ],
+                next_steps=_next_steps,
             )))
             return
 
@@ -1038,3 +1084,12 @@ def context(ctx, names, task, for_file):
             click.echo(
                 f"  {f['path']:<50s} {lr:<12s} ({f['reason']})"
             )
+
+        _sym_name = sym["qualified_name"] or sym["name"]
+        _next_steps = suggest_next_steps("context", {
+            "symbol": _sym_name,
+            "callers": len(non_test_callers),
+        })
+        _ns_text = format_next_steps_text(_next_steps)
+        if _ns_text:
+            click.echo(_ns_text)

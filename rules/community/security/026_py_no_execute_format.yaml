@@ -1,0 +1,10 @@
+name: "Security: py no execute format"
+description: "Disallow SQL query string formatting in execute()."
+severity: warning
+type: ast_match
+
+match:
+  ast: "cursor.execute($SQL.format($EXPR))"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

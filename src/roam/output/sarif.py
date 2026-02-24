@@ -14,6 +14,7 @@ Usage::
 
 from __future__ import annotations
 
+import hashlib as _hashlib
 import json as _json
 from pathlib import Path
 
@@ -154,6 +155,8 @@ def _build_rule(rule: dict) -> dict:
         out["helpUri"] = rule["helpUri"]
     if "defaultLevel" in rule:
         out["defaultConfiguration"] = {"level": rule["defaultLevel"]}
+    if "properties" in rule:
+        out["properties"] = rule["properties"]
     return out
 
 
@@ -661,7 +664,199 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
     )
 
 
+# ── Secret scanning ──────────────────────────────────────────────────
+
+def secrets_to_sarif(findings: list[dict]) -> dict:
+    """Convert secret-scanning findings to SARIF.
+
+    Each *finding* dict is expected to carry:
+
+    - ``file`` (str): relative file path
+    - ``line`` (int): line number
+    - ``severity`` (str): ``"high"`` / ``"medium"`` / ``"low"``
+    - ``pattern_name`` (str): human-readable pattern name
+    - ``matched_text`` (str): masked matched text (safe to include)
+    """
+    seen_rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for f in findings:
+        pattern_name = f.get("pattern_name", f.get("pattern", "unknown"))
+        rule_id = f"secrets/{_slugify(pattern_name)}"
+        severity = f.get("severity", "medium")
+
+        if rule_id not in seen_rules:
+            seen_rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": f"Hardcoded secret: {pattern_name}",
+                "helpUri": _HELP_BASE + "secrets",
+                "defaultLevel": _to_level(severity.upper()),
+            }
+
+        fpath = f.get("file", "")
+        line = f.get("line")
+        locations = []
+        if fpath:
+            locations.append(_location(fpath, line))
+
+        matched = f.get("matched_text", "")
+        results.append({
+            "ruleId": rule_id,
+            "level": _to_level(severity.upper()),
+            "message": {
+                "text": (
+                    f"Hardcoded {pattern_name} detected: {matched}"
+                ),
+            },
+            "locations": locations,
+        })
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        list(seen_rules.values()),
+        results,
+    )
+
+
+# ── Algorithmic findings ─────────────────────────────────────────────
+
+def algo_to_sarif(
+    findings: list[dict],
+    detector_metadata: dict[str, dict] | None = None,
+) -> dict:
+    """Convert ``roam algo`` findings to SARIF."""
+    detector_metadata = detector_metadata or {}
+    seen_rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for f in findings:
+        task_id = f.get("task_id", "unknown")
+        rule_id = f"algo/{_slugify(task_id)}"
+
+        dmeta = detector_metadata.get(task_id, {})
+        precision = f.get("precision", dmeta.get("precision", "medium"))
+        impact = f.get("impact", dmeta.get("impact", "medium"))
+        tags = f.get("tags", dmeta.get("tags", []))
+
+        if rule_id not in seen_rules:
+            short_desc = f"Algorithm improvement opportunity: {task_id}"
+            if f.get("suggested_way"):
+                short_desc = f"Prefer {f.get('suggested_way')} over {f.get('detected_way')}"
+            seen_rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": short_desc,
+                "helpUri": _HELP_BASE + "algo",
+                "defaultLevel": _algo_level(f.get("confidence", "medium")),
+                "properties": {
+                    "precision": precision,
+                    "impact": impact,
+                    "tags": tags,
+                },
+            }
+
+        loc_str = f.get("location", "")
+        fpath, line = _parse_loc_string(loc_str)
+        locations = []
+        if fpath:
+            locations.append(_location(fpath, line))
+
+        result = {
+            "ruleId": rule_id,
+            "level": _algo_level(f.get("confidence", "medium")),
+            "message": {"text": _algo_message(f)},
+            "locations": locations,
+            "properties": {
+                "task_id": task_id,
+                "detected_way": f.get("detected_way", ""),
+                "suggested_way": f.get("suggested_way", ""),
+                "confidence": f.get("confidence", ""),
+                "precision": precision,
+                "impact_band": f.get("impact_band", ""),
+                "impact_score": f.get("impact_score", 0.0),
+            },
+            "partialFingerprints": {
+                "primaryLocationLineHash": _primary_location_line_hash(f),
+                "roamFindingFingerprint/v1": _finding_fingerprint(f),
+            },
+        }
+
+        evidence_path = f.get("evidence_path", [])
+        if evidence_path and fpath:
+            flow_locations = [
+                {
+                    "location": _location(fpath, line),
+                    "message": {"text": str(step)},
+                }
+                for step in evidence_path
+            ]
+            result["codeFlows"] = [{
+                "threadFlows": [{"locations": flow_locations}],
+            }]
+
+        fix = f.get("fix", "")
+        if fix and fpath:
+            start_line = line if isinstance(line, int) and line > 0 else 1
+            result["fixes"] = [{
+                "description": {"text": "Suggested refactor template"},
+                "artifactChanges": [{
+                    "artifactLocation": {"uri": fpath.replace("\\", "/")},
+                    "replacements": [{
+                        "deletedRegion": {"startLine": start_line},
+                        "insertedContent": {"text": fix},
+                    }],
+                }],
+            }]
+
+        results.append(result)
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        list(seen_rules.values()),
+        results,
+    )
+
+
 # ── Internal helpers ─────────────────────────────────────────────────
+
+
+def _algo_level(confidence: str) -> str:
+    c = (confidence or "").lower()
+    if c == "high":
+        return "warning"
+    if c == "medium":
+        return "note"
+    return "note"
+
+
+def _algo_message(finding: dict) -> str:
+    msg = finding.get("reason", "Algorithmic improvement opportunity")
+    if finding.get("suggested_way"):
+        msg += (
+            f" Suggestion: use '{finding.get('suggested_way')}' "
+            f"instead of '{finding.get('detected_way')}'."
+        )
+    return msg
+
+
+def _finding_fingerprint(finding: dict) -> str:
+    payload = "|".join([
+        str(finding.get("task_id", "")),
+        str(finding.get("detected_way", "")),
+        str(finding.get("suggested_way", "")),
+        str(finding.get("symbol_name", "")),
+        str(finding.get("location", "")),
+    ])
+    return _hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
+
+def _primary_location_line_hash(finding: dict) -> str:
+    payload = "|".join([
+        str(finding.get("task_id", "")),
+        str(finding.get("location", "")),
+    ])
+    return _hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 def _slugify(text: str) -> str:
     """Turn a human-readable name into a URL/ID-safe slug."""

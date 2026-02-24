@@ -335,7 +335,7 @@ class TestJsonPerformance:
         assert rc == 0
         data = json.loads(out)
         assert "command" in data
-        assert "timestamp" in data
+        assert "timestamp" in data.get("_meta", data)
         assert "summary" in data
 
 
@@ -739,7 +739,8 @@ class TestOutputCorrectness:
         """roam dead should find unreferenced exports."""
         out, _ = roam("dead", cwd=verified_project)
         # Should find some unreferenced symbols (main, compute, etc.)
-        assert "Unreferenced" in out or "No unreferenced" in out
+        # Summary mode outputs "Dead exports: N" instead of "Unreferenced"
+        assert "Unreferenced" in out or "No unreferenced" in out or "Dead exports" in out
 
     def test_map_shows_entry_points(self, verified_project):
         """roam map should identify entry points or high-rank symbols."""

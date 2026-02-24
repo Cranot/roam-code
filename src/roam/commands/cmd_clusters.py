@@ -9,7 +9,8 @@ from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
 from roam.graph.clusters import compare_with_directories, cluster_quality
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import format_table, to_json, json_envelope
+from roam.output.formatter import format_table, to_json, json_envelope, summary_envelope
+from roam.output.mermaid import sanitize_id, node as mnode, edge as medge, subgraph as msubgraph, diagram as mdiagram
 from roam.commands.resolve import ensure_index
 
 
@@ -145,7 +146,69 @@ def _print_coupling_matrix(big_groups, edges):
                         f"some seams visible")
 
 
-def _clusters_json(conn, rows, min_size, quality):
+def _clusters_mermaid(conn, rows, min_size):
+    """Generate a Mermaid left-right diagram for code clusters.
+
+    Shows each visible cluster as a subgraph with its top members,
+    and inter-cluster edges.  Returns the diagram as a string.
+    """
+    visible = [r for r in rows if r["size"] >= min_size]
+    if not visible:
+        return mdiagram("LR", ['    empty["No clusters detected"]'])
+
+    elements: list[str] = []
+    members_per_cluster = 5
+
+    # Build subgraph for each cluster
+    for r in visible[:15]:  # Cap at 15 clusters for readability
+        cid = r["cluster_id"]
+        label = r["cluster_label"] or f"Cluster {cid}"
+        # Fetch top symbols by PageRank for this cluster
+        top_syms = conn.execute(
+            "SELECT s.name, s.kind, f.path, COALESCE(gm.pagerank, 0) as pr "
+            "FROM clusters c "
+            "JOIN symbols s ON c.symbol_id = s.id "
+            "JOIN files f ON s.file_id = f.id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE c.cluster_id = ? "
+            "ORDER BY pr DESC LIMIT ?",
+            (cid, members_per_cluster),
+        ).fetchall()
+        node_lines = []
+        for s in top_syms:
+            node_id = f"c{cid}_{s['name']}"
+            node_lines.append(mnode(node_id, s["name"]))
+        elements.append(msubgraph(f"Cluster {cid}: {label}", node_lines))
+
+    # Add inter-cluster edges
+    _, _, _, inter_pairs = _compute_cohesion(conn)
+    visible_ids = {r["cluster_id"] for r in visible[:15]}
+    visible_pairs = {k: v for k, v in inter_pairs.items()
+                     if k[0] in visible_ids and k[1] in visible_ids}
+    top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
+    cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
+    for (ca, cb), cnt in top_inter:
+        # Use cluster-level node IDs for inter-cluster edges
+        # Pick the first symbol from each cluster as the edge anchor
+        src_sym = conn.execute(
+            "SELECT s.name FROM clusters c JOIN symbols s ON c.symbol_id = s.id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE c.cluster_id = ? ORDER BY COALESCE(gm.pagerank, 0) DESC LIMIT 1",
+            (ca,),
+        ).fetchone()
+        tgt_sym = conn.execute(
+            "SELECT s.name FROM clusters c JOIN symbols s ON c.symbol_id = s.id "
+            "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+            "WHERE c.cluster_id = ? ORDER BY COALESCE(gm.pagerank, 0) DESC LIMIT 1",
+            (cb,),
+        ).fetchone()
+        if src_sym and tgt_sym:
+            elements.append(medge(f"c{ca}_{src_sym['name']}", f"c{cb}_{tgt_sym['name']}"))
+
+    return mdiagram("LR", elements)
+
+
+def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, token_budget=0):
     """Emit JSON output for clusters command."""
     visible = [r for r in rows if r["size"] >= min_size]
     mismatches = compare_with_directories(conn)
@@ -153,13 +216,18 @@ def _clusters_json(conn, rows, min_size, quality):
 
     _, intra, total, _ = _compute_cohesion(conn)
 
-    click.echo(to_json(json_envelope("clusters",
+    extra = {}
+    if mermaid is not None:
+        extra["mermaid"] = mermaid
+
+    envelope = json_envelope("clusters",
         summary={
             "clusters": len(visible),
             "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
             "modularity_q": quality["modularity"],
             "mean_conductance": quality["mean_conductance"],
         },
+        budget=token_budget,
         clusters=[
             {
                 "id": r["cluster_id"],
@@ -180,15 +248,22 @@ def _clusters_json(conn, rows, min_size, quality):
             }
             for m in mismatches if m["cluster_id"] in visible_ids
         ],
-    )))
+        **extra,
+    )
+    if not detail:
+        envelope = summary_envelope(envelope)
+    click.echo(to_json(envelope))
 
 
 @click.command()
 @click.option('--min-size', default=3, show_default=True, help='Hide clusters smaller than this')
+@click.option('--mermaid', 'mermaid_mode', is_flag=True, help='Output Mermaid diagram')
 @click.pass_context
-def clusters(ctx, min_size):
+def clusters(ctx, min_size, mermaid_mode):
     """Show code clusters and directory mismatches."""
     json_mode = ctx.obj.get('json') if ctx.obj else False
+    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(ALL_CLUSTERS).fetchall()
@@ -200,8 +275,16 @@ def clusters(ctx, min_size):
         cluster_map = {r["symbol_id"]: r["cluster_id"] for r in cluster_map_rows}
         quality = cluster_quality(G, cluster_map)
 
+        if mermaid_mode:
+            mermaid_text = _clusters_mermaid(conn, rows, min_size)
+            if json_mode:
+                _clusters_json(conn, rows, min_size, quality, mermaid=mermaid_text, detail=detail, token_budget=token_budget)
+            else:
+                click.echo(mermaid_text)
+            return
+
         if json_mode:
-            _clusters_json(conn, rows, min_size, quality)
+            _clusters_json(conn, rows, min_size, quality, detail=detail, token_budget=token_budget)
             return
 
         click.echo("=== Clusters ===")
@@ -216,6 +299,27 @@ def clusters(ctx, min_size):
         total_symbols = sum(r["size"] for r in rows)
 
         edges, intra_count, total_count, inter_pairs = _compute_cohesion(conn)
+
+        # Compute global cohesion for both summary and detail
+        total_intra = sum(intra_count.values())
+        total_inter = sum(inter_pairs.values())
+        total_all = total_intra + total_inter
+        cohesion_pct = total_intra * 100 / total_all if total_all else 0
+        q_label = "strong" if quality["modularity"] > 0.3 else "weak"
+
+        if not detail:
+            # Summary mode: cluster count + sizes + global metrics only
+            click.echo(f"  {len(visible)} clusters (>= {min_size} symbols)")
+            if hidden_count:
+                click.echo(f"  ({hidden_count} smaller clusters hidden)")
+            click.echo(f"  Cohesion: {cohesion_pct:.0f}%  Modularity Q: {quality['modularity']:.3f} ({q_label})")
+            if visible:
+                click.echo("  Top clusters by size:")
+                for r in visible[:5]:
+                    click.echo(f"    [{r['cluster_id']}] {r['cluster_label']}  size={r['size']}")
+                if len(visible) > 5:
+                    click.echo(f"    (+{len(visible) - 5} more — use --detail for full breakdown)")
+            return
 
         # Main table
         mega_ids = set()
@@ -258,12 +362,7 @@ def clusters(ctx, min_size):
                                intra_count, total_count, median_cohesion, edges)
 
         # Global cohesion summary
-        total_intra = sum(intra_count.values())
-        total_inter = sum(inter_pairs.values())
-        total_all = total_intra + total_inter
-        cohesion_pct = total_intra * 100 / total_all if total_all else 0
         click.echo(f"\n  Cluster cohesion: {cohesion_pct:.0f}% edges are intra-cluster ({total_intra} internal, {total_inter} cross-cluster)")
-        q_label = "strong" if quality["modularity"] > 0.3 else "weak"
         click.echo(f"  Modularity Q: {quality['modularity']:.3f} ({q_label}), mean conductance: {quality['mean_conductance']:.3f}")
 
         # Top inter-cluster coupling pairs

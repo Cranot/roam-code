@@ -1,0 +1,13 @@
+name: "Architecture: arch no jobs to ui"
+description: "Background jobs should not depend on UI layer."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/jobs/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/ui/**"
+    kind: [function, method, class]
+  max_distance: 1

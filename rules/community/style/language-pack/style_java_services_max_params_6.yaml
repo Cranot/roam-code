@@ -1,0 +1,10 @@
+name: "Style: java services max params 6"
+description: "Java functions/methods in services/ should use at most 6 parameters."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "services/**/*.java"
+  require:
+    max_params: 6

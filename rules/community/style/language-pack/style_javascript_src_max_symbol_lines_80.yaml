@@ -1,0 +1,10 @@
+name: "Style: javascript src max symbol lines 80"
+description: "Javascript functions/methods in src/ should stay under 80 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "src/**/*.js"
+  require:
+    max_symbol_lines: 80

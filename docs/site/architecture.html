@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roam-code Architecture Guide</title>
+  <meta name="description" content="Architecture guide for roam-code: index pipeline, graph layer, command layer, outputs, and MCP integration.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./docs.css">
+</head>
+<body>
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <div class="nav-links">
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="./command-reference.html">Command Reference</a>
+        <a href="./architecture.html" class="active">Architecture</a>
+        <a href="./landscape.html">Research</a>
+      </div>
+    </div>
+  </nav>
+
+  <main class="container">
+    <header class="page-head">
+      <p class="page-kicker">System Design</p>
+      <h1>roam-code Architecture</h1>
+      <p class="page-subtitle">
+        roam-code is a local-first analysis system: parse source once, store structural facts in SQLite,
+        and expose deterministic query primitives to CLI and MCP clients.
+      </p>
+      <div class="callout">
+        Design goal: minimize repeated file scanning for agents by turning codebases into a queryable structural index.
+      </div>
+    </header>
+
+    <section class="section">
+      <h2>Architecture Diagram</h2>
+      <div class="diagram">
+        <svg width="980" height="390" viewBox="0 0 980 390" role="img" aria-label="roam-code architecture diagram">
+          <rect x="20" y="30" width="200" height="80" rx="8" fill="#f2f8fc" stroke="#9fc3d6"></rect>
+          <text x="38" y="58" font-size="13" fill="#20455c">Repository Inputs</text>
+          <text x="38" y="78" font-size="11" fill="#355e77">Source files</text>
+          <text x="38" y="94" font-size="11" fill="#355e77">Git history / blame</text>
+
+          <rect x="260" y="30" width="250" height="130" rx="8" fill="#eef7f2" stroke="#9dcbb4"></rect>
+          <text x="278" y="58" font-size="13" fill="#1f5d46">Index Pipeline</text>
+          <text x="278" y="78" font-size="11" fill="#2f6c55">discover -> parse -> symbols</text>
+          <text x="278" y="94" font-size="11" fill="#2f6c55">edges -> complexity -> metrics</text>
+          <text x="278" y="110" font-size="11" fill="#2f6c55">incremental O(changed)</text>
+
+          <rect x="550" y="30" width="240" height="130" rx="8" fill="#fff7ed" stroke="#e0b589"></rect>
+          <text x="568" y="58" font-size="13" fill="#80511d">Storage Layer</text>
+          <text x="568" y="78" font-size="11" fill="#8d6230">.roam/index.db (SQLite)</text>
+          <text x="568" y="94" font-size="11" fill="#8d6230">files, symbols, edges</text>
+          <text x="568" y="110" font-size="11" fill="#8d6230">metrics, snapshots, vulns</text>
+
+          <rect x="20" y="210" width="240" height="140" rx="8" fill="#f7f1fb" stroke="#c2a8dc"></rect>
+          <text x="38" y="236" font-size="13" fill="#5f3a83">Analysis Engines</text>
+          <text x="38" y="256" font-size="11" fill="#6c4a8e">Graph analytics (PageRank, SCC, Louvain)</text>
+          <text x="38" y="272" font-size="11" fill="#6c4a8e">Rules engine (built-in + YAML packs)</text>
+          <text x="38" y="288" font-size="11" fill="#6c4a8e">Security, smells, trends, traces</text>
+
+          <rect x="300" y="210" width="260" height="140" rx="8" fill="#f2f8fc" stroke="#9fc3d6"></rect>
+          <text x="318" y="236" font-size="13" fill="#20455c">Interfaces</text>
+          <text x="318" y="256" font-size="11" fill="#355e77">CLI commands (136 canonical)</text>
+          <text x="318" y="272" font-size="11" fill="#355e77">MCP tools/resources/prompts</text>
+          <text x="318" y="288" font-size="11" fill="#355e77">JSON/SARIF/text envelopes</text>
+
+          <rect x="600" y="210" width="340" height="140" rx="8" fill="#eef7f2" stroke="#9dcbb4"></rect>
+          <text x="618" y="236" font-size="13" fill="#1f5d46">Consumers</text>
+          <text x="618" y="256" font-size="11" fill="#2f6c55">Developers (terminal + CI)</text>
+          <text x="618" y="272" font-size="11" fill="#2f6c55">AI agents via MCP (Claude, Cursor, Codex CLI)</text>
+          <text x="618" y="288" font-size="11" fill="#2f6c55">Automation (hooks, workflows, dashboards)</text>
+
+          <line x1="220" y1="70" x2="260" y2="70" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="260,70 250,64 250,76" fill="#43637a"></polygon>
+
+          <line x1="510" y1="95" x2="550" y2="95" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="550,95 540,89 540,101" fill="#43637a"></polygon>
+
+          <line x1="670" y1="160" x2="670" y2="210" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="670,210 664,200 676,200" fill="#43637a"></polygon>
+
+          <line x1="550" y1="280" x2="600" y2="280" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="600,280 590,274 590,286" fill="#43637a"></polygon>
+
+          <line x1="300" y1="280" x2="260" y2="280" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="260,280 270,274 270,286" fill="#43637a"></polygon>
+
+          <line x1="420" y1="210" x2="420" y2="160" stroke="#43637a" stroke-width="2"></line>
+          <polygon points="420,160 414,170 426,170" fill="#43637a"></polygon>
+        </svg>
+      </div>
+      <p><span class="badge ok">Key property</span> Query-time latency stays low because expensive parsing happens during index builds, not every command call.</p>
+    </section>
+
+    <section class="section">
+      <h2>Subsystem Responsibilities</h2>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr><th>Subsystem</th><th>Main modules</th><th>Responsibility</th></tr>
+          </thead>
+          <tbody>
+            <tr><td>Index Pipeline</td><td><code>index/indexer.py</code>, <code>index/parser.py</code>, <code>index/symbols.py</code></td><td>Build and refresh the structural index from source + git.</td></tr>
+            <tr><td>Storage</td><td><code>db/schema.py</code>, <code>db/connection.py</code></td><td>SQLite schema, migrations, batched query helpers.</td></tr>
+            <tr><td>Graph Intelligence</td><td><code>graph/builder.py</code>, <code>graph/layers.py</code>, <code>graph/clusters.py</code></td><td>Centrality, layering, communities, cycle analysis.</td></tr>
+            <tr><td>Rule Engine</td><td><code>rules/builtin.py</code>, <code>rules/engine.py</code>, <code>rules/community/*</code></td><td>Built-in rules plus custom YAML packs (path/symbol/AST).</td></tr>
+            <tr><td>Interfaces</td><td><code>commands/cmd_*.py</code>, <code>mcp_server.py</code></td><td>Expose deterministic queries to CLI and MCP clients.</td></tr>
+            <tr><td>Output Contracts</td><td><code>output/formatter.py</code>, <code>output/sarif.py</code></td><td>Stable text/JSON/SARIF envelopes for agents and CI.</td></tr>
+          </tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="section">
+      <h2>Index Pipeline Stages</h2>
+      <ol>
+        <li>Discovery: collect tracked files and classify file roles.</li>
+        <li>Parsing: tree-sitter parse per file with language routing.</li>
+        <li>Extraction: symbols, signatures, docstrings, references.</li>
+        <li>Resolution: convert references into graph edges.</li>
+        <li>Metrics: complexity, centrality, churn, co-change, snapshots.</li>
+        <li>Persistence: upsert into SQLite with incremental diffing.</li>
+      </ol>
+      <pre><code>discover -> parse -> extract -> resolve -> metrics -> persist
+                 (incremental path executes only changed files)</code></pre>
+    </section>
+
+    <section class="section">
+      <h2>Command to Data Flow</h2>
+      <h3>Example: <code>roam preflight AuthService</code></h3>
+      <pre><code>CLI cmd_preflight
+  -> ensure_index()
+  -> query symbols/edges/metrics
+  -> run health/rule checks
+  -> aggregate verdict + risk factors
+  -> render text or JSON envelope</code></pre>
+      <p><span class="badge warn">Tradeoff</span> Static structure gives speed and determinism, but cannot model fully dynamic runtime behavior without trace ingestion.</p>
+    </section>
+
+    <footer>
+      <p>Pair this with the <a href="./command-reference.html">command reference</a> for operational usage, and <a href="./integration-tutorials.html">integration tutorials</a> for client-specific setup.</p>
+      <div class="footer-links">
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./index.html">Home</a>
+        <a href="https://github.com/Cranot/roam-code#readme">Repository README</a>
+      </div>
+    </footer>
+  </main>
+</body>
+</html>

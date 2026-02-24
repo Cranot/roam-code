@@ -1,0 +1,10 @@
+name: "Security: py no subprocess call"
+description: "Disallow subprocess.call with dynamic input."
+severity: warning
+type: ast_match
+
+match:
+  ast: "subprocess.call($CMD)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

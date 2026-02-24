@@ -1,0 +1,13 @@
+name: "Architecture: arch no handlers to repositories"
+description: "Handlers should call services, not repositories directly."
+severity: warning
+type: path_match
+
+match:
+  from:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  max_distance: 1

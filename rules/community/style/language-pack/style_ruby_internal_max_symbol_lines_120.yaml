@@ -1,0 +1,10 @@
+name: "Style: ruby internal max symbol lines 120"
+description: "Ruby functions/methods in internal/ should stay under 120 lines."
+severity: info
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "internal/**/*.rb"
+  require:
+    max_symbol_lines: 120

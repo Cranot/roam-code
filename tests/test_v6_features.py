@@ -147,7 +147,7 @@ class TestUnderstand:
         assert "tech_stack" in data, f"Missing 'tech_stack' key in JSON: {data.keys()}"
         assert "architecture" in data, f"Missing 'architecture' key in JSON: {data.keys()}"
         assert "summary" in data
-        assert "timestamp" in data
+        assert "timestamp" in data.get("_meta", data)
 
 
 # ============================================================================
@@ -172,7 +172,7 @@ class TestDeadEnhanced:
 
     def test_dead_clusters(self, indexed_project):
         """roam dead --clusters should attempt cluster detection."""
-        out, rc = roam("dead", "--clusters", cwd=indexed_project)
+        out, rc = roam("--detail", "dead", "--clusters", cwd=indexed_project)
         assert rc == 0, f"dead --clusters failed: {out}"
         # Output should mention clusters or at least run without error.
         # If no clusters exist, the basic dead output still appears.
@@ -279,6 +279,7 @@ class TestReport:
         assert "security" in out, f"Missing 'security' preset in: {out}"
         assert "pre-pr" in out, f"Missing 'pre-pr' preset in: {out}"
         assert "refactor" in out, f"Missing 'refactor' preset in: {out}"
+        assert "guardian" in out, f"Missing 'guardian' preset in: {out}"
 
     @pytest.mark.slow
     def test_report_run(self, indexed_project):
@@ -305,7 +306,7 @@ class TestJsonEnvelope:
         assert "command" in data, f"Missing 'command' in JSON: {list(data.keys())}"
         assert data["command"] == expected_command, \
             f"Expected command={expected_command}, got {data['command']}"
-        assert "timestamp" in data, f"Missing 'timestamp' in JSON: {list(data.keys())}"
+        assert "timestamp" in data.get("_meta", data), f"Missing 'timestamp' in _meta or JSON: {list(data.keys())}"
         assert "summary" in data, f"Missing 'summary' in JSON: {list(data.keys())}"
         return data
 

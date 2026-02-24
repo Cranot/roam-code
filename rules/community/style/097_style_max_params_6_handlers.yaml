@@ -1,0 +1,10 @@
+name: "Style: max params 6 (handlers)"
+description: "Functions and methods in handlers should have <= 6 parameters."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method]
+  file_glob: "handlers/**"
+  require:
+    max_params: 6

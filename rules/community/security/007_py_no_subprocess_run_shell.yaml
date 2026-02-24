@@ -1,0 +1,10 @@
+name: "Security: py no subprocess run shell"
+description: "Disallow subprocess.run(..., shell=True)."
+severity: warning
+type: ast_match
+
+match:
+  ast: "subprocess.run($CMD, shell=True)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

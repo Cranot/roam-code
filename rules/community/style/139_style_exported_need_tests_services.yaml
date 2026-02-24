@@ -1,0 +1,11 @@
+name: "Quality: exported symbols require tests (services)"
+description: "Exported functions and classes should have test coverage signals."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, class]
+  file_glob: "services/**"
+  exported: true
+  require:
+    has_test: true

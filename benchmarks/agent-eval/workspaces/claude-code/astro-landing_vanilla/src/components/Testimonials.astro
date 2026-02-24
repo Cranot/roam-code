@@ -1,0 +1,160 @@
+---
+const testimonials = [
+  {
+    quote:
+      'FlowBoard replaced three different tools for us. Our sprint planning went from a full day to under an hour. The automation rules alone saved us 10 hours a week.',
+    name: 'Sarah Chen',
+    role: 'VP of Engineering',
+    company: 'Nexus Technologies',
+    initials: 'SC',
+    color: '#818cf8',
+  },
+  {
+    quote:
+      "We tried every project management tool out there. FlowBoard is the first one our entire team actually enjoys using. The learning curve was basically zero.",
+    name: 'Marcus Rodriguez',
+    role: 'Product Manager',
+    company: 'Craft Studio',
+    initials: 'MR',
+    color: '#06b6d4',
+  },
+  {
+    quote:
+      'The analytics dashboard gave us visibility we never had before. We cut our average cycle time by 40% in the first quarter. Enterprise security features sealed the deal.',
+    name: 'Aisha Patel',
+    role: 'CTO',
+    company: 'Meridian Health',
+    initials: 'AP',
+    color: '#f59e0b',
+  },
+];
+---
+
+<section
+  class="testimonials section"
+  id="testimonials"
+  aria-labelledby="testimonials-heading"
+>
+  <div class="container">
+    <div class="section-header">
+      <h2 id="testimonials-heading">Loved by teams everywhere</h2>
+      <p>See what our customers have to say about FlowBoard.</p>
+    </div>
+    <div class="testimonials-grid" role="list">
+      {
+        testimonials.map((testimonial) => (
+          <blockquote class="testimonial-card" role="listitem">
+            <div class="testimonial-stars" aria-label="5 out of 5 stars">
+              {[...Array(5)].map(() => (
+                <svg
+                  width="18"
+                  height="18"
+                  viewBox="0 0 18 18"
+                  fill="#f59e0b"
+                  aria-hidden="true"
+                >
+                  <path d="M9 1l2.47 5.01L17 6.87l-4 3.9.94 5.5L9 13.77l-4.94 2.5.94-5.5-4-3.9 5.53-.86L9 1z" />
+                </svg>
+              ))}
+            </div>
+            <p class="testimonial-quote">{testimonial.quote}</p>
+            <footer class="testimonial-author">
+              <div
+                class="testimonial-avatar"
+                style={`background-color: ${testimonial.color}`}
+                aria-hidden="true"
+              >
+                {testimonial.initials}
+              </div>
+              <div>
+                <cite class="testimonial-name">{testimonial.name}</cite>
+                <p class="testimonial-role">
+                  {testimonial.role}, {testimonial.company}
+                </p>
+              </div>
+            </footer>
+          </blockquote>
+        ))
+      }
+    </div>
+  </div>
+</section>
+
+<style>
+  .testimonials {
+    background-color: var(--color-bg-alt);
+  }
+
+  .testimonials-grid {
+    display: grid;
+    grid-template-columns: 1fr;
+    gap: var(--space-xl);
+  }
+
+  .testimonial-card {
+    background: var(--color-bg);
+    padding: var(--space-xl);
+    border-radius: var(--radius-lg);
+    border: 1px solid var(--color-border);
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-md);
+    transition: transform var(--transition-base), box-shadow var(--transition-base);
+  }
+
+  .testimonial-card:hover {
+    transform: translateY(-4px);
+    box-shadow: var(--shadow-lg);
+  }
+
+  .testimonial-stars {
+    display: flex;
+    gap: 2px;
+  }
+
+  .testimonial-quote {
+    font-size: 1rem;
+    line-height: 1.7;
+    color: var(--color-text);
+    flex: 1;
+  }
+
+  .testimonial-author {
+    display: flex;
+    align-items: center;
+    gap: var(--space-md);
+    padding-top: var(--space-md);
+    border-top: 1px solid var(--color-border);
+  }
+
+  .testimonial-avatar {
+    width: 44px;
+    height: 44px;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 0.875rem;
+    font-weight: 700;
+    color: white;
+    flex-shrink: 0;
+  }
+
+  .testimonial-name {
+    font-style: normal;
+    font-weight: 600;
+    display: block;
+  }
+
+  .testimonial-role {
+    color: var(--color-text-light);
+    font-size: 0.8125rem;
+    margin-top: 2px;
+  }
+
+  @media (min-width: 768px) {
+    .testimonials-grid {
+      grid-template-columns: repeat(3, 1fr);
+    }
+  }
+</style>

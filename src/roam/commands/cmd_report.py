@@ -52,6 +52,19 @@ PRESETS = {
             {"title": "Health", "command": ["health"]},
         ],
     },
+    "guardian": {
+        "description": (
+            "Continuous architecture guardian baseline — snapshot, gates, trends, "
+            "ownership drift"
+        ),
+        "sections": [
+            {"title": "Snapshot", "command": ["snapshot", "--tag", "guardian"]},
+            {"title": "Health Gate", "command": ["health", "--gate"]},
+            {"title": "Trend Analysis", "command": ["trend", "--analyze", "--range", "20"]},
+            {"title": "Metric Trends", "command": ["trends", "--days", "30"]},
+            {"title": "Ownership Drift", "command": ["drift", "--threshold", "0.5", "--limit", "20"]},
+        ],
+    },
 }
 
 
@@ -164,7 +177,7 @@ def _format_markdown(preset_name, results):
 def report(ctx, preset, list_presets, strict, markdown, config_path):
     """Run a compound report preset — multiple commands in one shot.
 
-    Built-in presets: first-contact, security, pre-pr, refactor.
+    Built-in presets: first-contact, security, pre-pr, refactor, guardian.
     """
     json_mode = ctx.obj.get('json') if ctx.obj else False
 

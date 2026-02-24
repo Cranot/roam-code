@@ -1,0 +1,10 @@
+name: "Style: max file lines 500 (src)"
+description: "Critical files should stay below 500 lines."
+severity: warning
+type: symbol_match
+
+match:
+  kind: [function, method, class]
+  file_glob: "src/**"
+  require:
+    max_file_lines: 500

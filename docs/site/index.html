@@ -1,0 +1,482 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>roam -- Instant codebase intelligence for AI coding agents</title>
+  <meta name="description" content="Pre-indexed semantic graph for AI coding agents. One query replaces eight tool calls. 100% local, zero API keys.">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="./landing.css">
+</head>
+<body>
+
+  <!-- Nav -->
+  <nav class="site-nav">
+    <div class="nav-inner">
+      <a href="./" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="./getting-started.html">Getting Started</a></li>
+        <li><a href="./integration-tutorials.html">Integrations</a></li>
+        <li><a href="./command-reference.html">Command Reference</a></li>
+        <li><a href="./architecture.html">Architecture</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+        <li><a href="./landscape.html">Research</a></li>
+        <li><a href="https://pypi.org/project/roam-code/">PyPI</a></li>
+      </ul>
+      <a class="nav-cta" href="./getting-started.html">Get Started</a>
+    </div>
+  </nav>
+
+  <!-- Hero -->
+  <header class="hero">
+    <div class="hero-bg" aria-hidden="true">
+      <div class="hero-glow hero-glow-1"></div>
+      <div class="hero-glow hero-glow-2"></div>
+    </div>
+    <div class="container">
+      <p class="hero-badge">Open Source &middot; 100% Local &middot; MIT License</p>
+      <h1>Your AI agent doesn't know<br>your codebase.</h1>
+      <p class="subtitle">
+        roam pre-indexes symbols, call graphs, dependencies, and git history
+        into a local SQLite database. One query replaces eight tool calls.
+      </p>
+      <div class="hero-actions">
+        <button class="install-block" data-copy="pip install roam-code" title="Click to copy">
+          <span class="install-prompt">$</span>
+          <span class="install-text">pip install roam-code</span>
+          <span class="copy-icon">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><rect x="5" y="5" width="9" height="9" rx="1.5" stroke="currentColor" stroke-width="1.5"/><path d="M11 5V3.5A1.5 1.5 0 009.5 2h-6A1.5 1.5 0 002 3.5v6A1.5 1.5 0 003.5 11H5" stroke="currentColor" stroke-width="1.5"/></svg>
+            <span class="copy-label">copy</span>
+          </span>
+        </button>
+        <div class="hero-ctas">
+          <a class="btn primary" href="https://github.com/Cranot/roam-code">
+            <svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+            View on GitHub
+          </a>
+          <a class="btn" href="./getting-started.html">Read the Docs</a>
+        </div>
+      </div>
+      <div class="hero-facts">
+        <span class="hero-fact">Zero API keys</span>
+        <span class="hero-fact-dot"></span>
+        <span class="hero-fact">26 languages</span>
+        <span class="hero-fact-dot"></span>
+        <span class="hero-fact">Works air-gapped</span>
+      </div>
+    </div>
+  </header>
+
+  <main>
+    <div class="container">
+
+      <!-- Before / After -->
+      <section class="before-after-section">
+        <p class="section-label">The Problem</p>
+        <h2>Agents explore the same codebase, blind, every session</h2>
+        <div class="before-after">
+          <div class="ba-card ba-before">
+            <div class="ba-tag ba-tag-before">Without roam</div>
+            <div class="terminal">
+              <div class="terminal-bar">
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-title">agent-session.log</span>
+              </div>
+              <div class="terminal-body"><span class="t-muted"># Agent explores blindly...</span>
+<span class="t-tool">Tool: grep</span> "Flask" src/ --recursive
+<span class="t-tool">Tool: read</span> src/flask/app.py  <span class="t-muted"># 963 lines</span>
+<span class="t-tool">Tool: grep</span> "import Flask" tests/
+<span class="t-tool">Tool: read</span> src/flask/__init__.py
+<span class="t-tool">Tool: grep</span> "FlaskClient" src/
+<span class="t-tool">Tool: read</span> src/flask/testing.py
+<span class="t-tool">Tool: read</span> tests/test_basic.py
+<span class="t-tool">Tool: grep</span> "def test_" tests/test_basic.py
+
+<span class="t-dim">8 tool calls, ~11s, ~15,000 tokens
+Incomplete picture of the codebase</span></div>
+            </div>
+          </div>
+          <div class="ba-card ba-after">
+            <div class="ba-tag ba-tag-after">With roam</div>
+            <div class="terminal">
+              <div class="terminal-bar">
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-dot"></span>
+                <span class="terminal-title">agent-session.log</span>
+              </div>
+              <div class="terminal-body"><span class="t-muted"># Agent queries the index</span>
+<span class="t-cmd">$ roam context Flask</span>
+
+<span class="t-key">Callers:</span> 47  <span class="t-key">Callees:</span> 3
+<span class="t-key">Affected tests:</span> 31
+
+<span class="t-key">Files to read:</span>
+  src/flask/app.py:<span class="t-hi">76-963</span>         <span class="t-muted"># definition</span>
+  src/flask/__init__.py:<span class="t-hi">1-15</span>     <span class="t-muted"># re-export</span>
+  src/flask/testing.py:<span class="t-hi">22-45</span>     <span class="t-muted"># FlaskClient.__init__</span>
+  tests/test_basic.py:<span class="t-hi">12-30</span>     <span class="t-muted"># test_app_factory</span>
+  <span class="t-dim">...12 more files</span>
+
+<span class="t-good">1 call, &lt;0.5s, ~3,000 tokens
+Complete blast radius</span></div>
+            </div>
+          </div>
+        </div>
+        <p class="benchmark-note">Measured on a 200-file Python project. Results vary by codebase size and structure.</p>
+      </section>
+
+      <!-- The Insight — dark band for contrast -->
+      </div><!-- close container -->
+      <section class="insight-band">
+        <div class="container">
+          <div class="insight-layout">
+            <div class="insight-left">
+              <p class="insight-lead">
+                When an AI agent opens your repository, it sees files.<br>
+                <span class="insight-emphasis">Not structure.</span>
+              </p>
+            </div>
+            <div class="insight-right">
+              <p>
+                It doesn't know that <code>auth_service.py</code> is load-bearing and <code>utils.py</code> is mostly dead code.
+                It doesn't know which symbols are imported by 40 other files and which are imported by none.
+                It doesn't know that the last three bugs all touched the same module.
+              </p>
+              <p>
+                It finds out by reading. Session after session. That's expensive -- in tokens,
+                in time, and in mistakes made before the picture comes into focus.
+              </p>
+              <p class="insight-resolution">
+                roam pre-computes the picture. One index, one query, complete structural understanding.
+              </p>
+            </div>
+          </div>
+        </div>
+      </section>
+      <div class="container">
+
+      <!-- Two cards: what it knows + how it's safe -->
+      <section>
+        <div class="two-cards">
+          <div class="card-deep card-knows">
+
+            <div class="card-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><circle cx="4" cy="6" r="2"/><circle cx="20" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="20" cy="18" r="2"/><line x1="6" y1="6" x2="9.5" y2="10"/><line x1="18" y1="6" x2="14.5" y2="10"/><line x1="6" y1="18" x2="9.5" y2="14"/><line x1="18" y1="18" x2="14.5" y2="14"/></svg>
+            </div>
+            <h3>What it knows</h3>
+            <p>
+              roam models your codebase as a graph -- not text, but a network of what calls what,
+              what changes together, and what breaks what.
+            </p>
+            <dl class="card-details">
+              <dt>Structural graph</dt>
+              <dd>Symbols, call edges, inheritance, dependency layers. PageRank identifies the most important code. Tarjan SCC finds circular dependency clusters. Louvain detects natural module boundaries.</dd>
+              <dt>Git archaeology</dt>
+              <dd>Churn rates, co-change coupling, bus factor, authorship entropy. Which files change together? Which developer owns what? Where are the hidden couplings?</dd>
+              <dt>Architecture metrics</dt>
+              <dd>Health scores (0-100), cognitive complexity per function, tangle ratios, god component detection. CI quality gates with SARIF output for GitHub Code Scanning.</dd>
+            </dl>
+          </div>
+          <div class="card-deep card-safe">
+
+            <div class="card-icon">
+              <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0110 0v4"/></svg>
+            </div>
+            <h3>How it stays safe</h3>
+            <p>
+              Deliberately local. No cloud. No API keys. No telemetry. No network calls.
+              Everything runs on your machine in a SQLite database.
+            </p>
+            <dl class="card-details">
+              <dt>Read-only by default</dt>
+              <dd>The index is a queryable snapshot of your codebase structure. Your source code is never modified unless you explicitly run <code>roam mutate --apply</code>.</dd>
+              <dt>Works air-gapped</dt>
+              <dd>Once installed, no internet access is required. Safe for proprietary codebases, security-sensitive environments, and offline development.</dd>
+              <dt>MIT licensed</dt>
+              <dd>Open source, no vendor lock-in, no data leaving your machine. Inspect the code yourself.</dd>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <!-- Honest edges — two-column split -->
+      <section class="honest-section">
+        <h2>What it does and doesn't do</h2>
+        <div class="honest-split">
+          <div class="honest-col honest-col-does">
+            <div class="honest-col-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+              <span>What it does</span>
+            </div>
+            <ul class="honest-list">
+              <li>Maps code structure: symbols, call graphs, dependency layers, git history, architecture metrics</li>
+              <li>Resolves cross-file references using name-based heuristics -- works well for most codebases</li>
+              <li>Supports 26 languages via tree-sitter with full extraction for 11 Tier 1 languages</li>
+              <li>Detects 23 algorithm anti-patterns with Big-O improvements and language-aware fix suggestions</li>
+            </ul>
+          </div>
+          <div class="honest-divider"></div>
+          <div class="honest-col honest-col-doesnt">
+            <div class="honest-col-header">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+              <span>What it doesn't</span>
+            </div>
+            <ul class="honest-list">
+              <li>Trace runtime behavior, dynamic dispatch, reflection, or eval'd code -- for that, use a profiler</li>
+              <li>Run a full type system -- a small percentage of call edges may be imprecise in dynamic languages</li>
+              <li>Replace your linter or security scanner -- roam understands architecture; SonarQube finds bugs; use both</li>
+              <li>Work magic on tiny projects -- below 10 files, just read them directly</li>
+            </ul>
+          </div>
+        </div>
+      </section>
+
+      <!-- Five commands in context -->
+      <section>
+        <p class="section-label">In Practice</p>
+        <h2>Five questions, five commands</h2>
+        <p class="section-desc">Most developers use about 10 commands regularly. Here are the five that matter most.</p>
+
+        <div class="scenario">
+          <div class="scenario-question">"What files should I read before changing this?"</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body"><span class="t-cmd">$ roam context Flask</span>
+
+<span class="t-key">Files to read</span> (ranked by relevance):
+  src/flask/app.py:<span class="t-hi">76-963</span>             <span class="t-muted"># definition</span>
+  src/flask/__init__.py:<span class="t-hi">1-15</span>           <span class="t-muted"># re-export</span>
+  src/flask/testing.py:<span class="t-hi">22-45</span>           <span class="t-muted"># FlaskClient.__init__</span>
+  tests/test_basic.py:<span class="t-hi">12-30</span>           <span class="t-muted"># test_app_factory</span>
+  <span class="t-dim">...12 more files, PageRank-ranked</span>
+
+<span class="t-key">Callers:</span> 47  <span class="t-key">Callees:</span> 3  <span class="t-key">Affected tests:</span> 31</div>
+          </div>
+        </div>
+
+        <div class="scenario">
+          <div class="scenario-question">"What breaks if I rename this?"</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body"><span class="t-cmd">$ roam impact Flask</span>
+
+<span class="t-key">Direct callers:</span> 47
+<span class="t-key">Transitive reach:</span> 89 symbols across 34 files
+<span class="t-key">Affected tests:</span> 31
+
+<span class="t-key">Highest-risk callers</span> (PageRank-weighted):
+  <span class="t-hi">FlaskClient.__init__</span>   src/flask/testing.py:22    PR=0.0124
+  <span class="t-hi">create_app</span>             src/flask/factory.py:8     PR=0.0098
+  <span class="t-hi">test_app_factory</span>       tests/test_basic.py:12     PR=0.0065</div>
+          </div>
+        </div>
+
+        <div class="scenario">
+          <div class="scenario-question">"Are there algorithm anti-patterns in this codebase?"</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body"><span class="t-cmd">$ roam algo</span>
+
+<span class="t-key">VERDICT:</span> 8 algorithmic improvements found (3 high, 4 medium, 1 low)
+
+<span class="t-hi">Nested loop lookup</span> (2):
+  fn   resolve_permissions          src/auth/rbac.py:112     <span class="t-tool">[high, impact=86.4]</span>
+        Current: Nested iteration -- O(n*m)
+        Better:  Hash-map join -- O(n+m)
+        <span class="t-muted">Tip: Build a dict/set from one collection, iterate the other</span>
+
+<span class="t-hi">String building</span> (1):
+  meth build_query                  src/db/query.py:88       <span class="t-tool">[high, impact=74.0]</span>
+        Current: Loop concatenation -- O(n^2)
+        Better:  Join / StringBuilder -- O(n)
+        <span class="t-muted">Tip: Collect parts in a list, join once at the end</span>
+
+<span class="t-dim">23 pattern catalog. Language-aware tips for Python, JS, Go, Rust, Java.</span></div>
+          </div>
+        </div>
+
+        <div class="scenario">
+          <div class="scenario-question">"Is this codebase healthy?"</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body"><span class="t-cmd">$ roam health</span>
+
+<span class="t-key">Health:</span> <span class="t-good">78/100</span>
+  Tangle ratio: 0.0% (no circular dependencies)
+  God components: 1 (<span class="t-hi">Flask</span>, degree 47)
+  Bottlenecks: 0
+  Layer violations: 0
+
+<span class="t-dim">Use --gate score>=70 in CI to enforce thresholds</span></div>
+          </div>
+        </div>
+
+        <div class="scenario">
+          <div class="scenario-question">"Is it safe to change this function?"</div>
+          <div class="terminal">
+            <div class="terminal-bar">
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+              <span class="terminal-dot"></span>
+            </div>
+            <div class="terminal-body"><span class="t-cmd">$ roam preflight Flask</span>
+
+<span class="t-key">=== Preflight: Flask ===</span>
+<span class="t-key">Blast radius:</span> 47 callers, 89 transitive
+<span class="t-key">Affected tests:</span> 31 (DIRECT: 12, TRANSITIVE: 19)
+<span class="t-key">Complexity:</span> cc=40 (critical), nesting=6
+<span class="t-key">Coupling:</span> 3 hidden co-change partners
+<span class="t-key">Fitness:</span> 1 violation (max-complexity exceeded)
+
+<span class="t-tool">VERDICT: HIGH RISK</span> <span class="t-muted">-- consider splitting before modifying</span></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Quick Start -->
+      <section>
+        <p class="section-label">Quick Start</p>
+        <h2>Working in under a minute</h2>
+        <div class="steps">
+          <div class="step">
+            <div class="step-num">1</div>
+            <h4>Install</h4>
+            <div class="step-code">
+              <code>pip install roam-code</code>
+            </div>
+            <p>Python 3.9+. Also works with <code>pipx</code> and <code>uv tool install</code>.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">2</div>
+            <h4>Index</h4>
+            <div class="step-code">
+              <code>cd your-project && roam init</code>
+            </div>
+            <p>Creates a local SQLite database. ~5s for 200 files. Incremental after that.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">3</div>
+            <h4>Query</h4>
+            <div class="step-code">
+              <code>roam understand</code>
+            </div>
+            <p>Full architectural briefing: tech stack, key abstractions, health score, entry points.</p>
+          </div>
+          <div class="step">
+            <div class="step-num">4</div>
+            <h4>Connect your agent</h4>
+            <div class="step-code">
+              <code>roam mcp-setup claude-code</code>
+            </div>
+            <p>Generates MCP config for Claude Code, Cursor, Windsurf, VS Code, Gemini CLI, and more. For full client workflows, see <a href="./integration-tutorials.html">integration tutorials</a>.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- When NOT to use -->
+      <section class="when-not-section">
+        <h2>When not to use roam</h2>
+        <p class="section-desc">The right tool for the job. roam earns its weight at scale -- not everywhere.</p>
+        <div class="when-not-grid">
+          <div class="when-not-item">
+            <strong>Small scripts (&lt;10 files)</strong>
+            <p>Just read the files directly. roam adds overhead without value at this scale.</p>
+          </div>
+          <div class="when-not-item">
+            <strong>Pure text search</strong>
+            <p>ripgrep is faster for raw string matching. roam is structural, not textual.</p>
+          </div>
+          <div class="when-not-item">
+            <strong>Real-time type checking</strong>
+            <p>Use an LSP (pyright, gopls, tsserver). roam is static and offline.</p>
+          </div>
+        </div>
+      </section>
+
+      <!-- Works with -->
+      <section class="works-with-section">
+        <h2>Works with your tools</h2>
+        <p>
+          Via <strong>MCP</strong>: Claude Code, Cursor, Windsurf, VS Code + Copilot, Cline, Continue.dev, Gemini CLI.
+          Via <strong>CLI</strong>: any agent that can run a shell command -- Aider, Codex CLI, custom scripts.
+          Via <strong>CI</strong>: GitHub Actions, GitLab CI, Azure DevOps. JSON + SARIF output.
+        </p>
+        <p>
+          26 languages via tree-sitter: Python, TypeScript, JavaScript, Java, Go, Rust, C/C++, C#, PHP, Ruby, and 16 more.
+          11 Tier 1 languages have full symbol extraction. The rest get core coverage.
+        </p>
+      </section>
+
+      <!-- Scope -->
+      <section class="scope-section">
+        <h2>The full surface</h2>
+        <p class="section-desc">
+          roam has 137 invokable CLI commands and 101 MCP tools. That's a lot for a human to memorize.
+          It's not designed for that. It's designed for AI agents, which use commands as a vocabulary -- calling
+          whatever they need, when they need it.
+        </p>
+        <p class="section-desc">
+          Most developers use about 10 commands directly. The rest are there for your agent.
+          <a href="https://github.com/Cranot/roam-code#readme">See the full command reference.</a>
+        </p>
+      </section>
+
+    </div>
+  </main>
+
+  <!-- Footer -->
+  <footer class="site-footer">
+    <div class="container">
+      <div class="footer-inner">
+        <div class="footer-brand">
+          <span class="site-logo">roam<span class="logo-dot">.</span></span>
+          <p>Codebase intelligence for AI agents</p>
+        </div>
+        <div class="footer-links">
+          <div class="footer-col">
+            <h5>Project</h5>
+            <a href="https://github.com/Cranot/roam-code">GitHub</a>
+            <a href="https://pypi.org/project/roam-code/">PyPI</a>
+            <a href="https://github.com/Cranot/roam-code/blob/main/LICENSE">MIT License</a>
+          </div>
+          <div class="footer-col">
+            <h5>Resources</h5>
+            <a href="./getting-started.html">Getting Started</a>
+            <a href="./integration-tutorials.html">Integration Tutorials</a>
+            <a href="./command-reference.html">Command Reference</a>
+            <a href="./architecture.html">Architecture</a>
+            <a href="./landscape.html">Competitive Research</a>
+            <a href="https://github.com/Cranot/roam-code/blob/main/CONTRIBUTING.md">Contributing</a>
+          </div>
+        </div>
+      </div>
+      <div class="footer-bottom">
+        <p>Actively maintained &middot; tree-sitter + NetworkX &middot; <a href="https://github.com/Cranot/roam-code">View source</a></p>
+      </div>
+    </div>
+  </footer>
+
+  <script src="./landing.js"></script>
+</body>
+</html>

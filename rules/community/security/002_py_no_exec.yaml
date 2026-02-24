@@ -1,0 +1,10 @@
+name: "Security: py no exec"
+description: "Disallow exec() execution in Python code."
+severity: warning
+type: ast_match
+
+match:
+  ast: "exec($EXPR)"
+  language: python
+  file_glob: "**/*.py"
+  max_matches: 100

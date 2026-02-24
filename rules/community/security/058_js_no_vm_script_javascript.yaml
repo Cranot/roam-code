@@ -1,0 +1,10 @@
+name: "Security: js no vm script (javascript)"
+description: "Review dynamic vm.Script compilation."
+severity: warning
+type: ast_match
+
+match:
+  ast: "new vm.Script($CODE)"
+  language: javascript
+  file_glob: "**/*.js"
+  max_matches: 100

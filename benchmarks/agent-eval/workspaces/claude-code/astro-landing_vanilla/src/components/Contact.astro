@@ -1,0 +1,239 @@
+---
+
+---
+
+<section class="contact section" id="contact" aria-labelledby="contact-heading">
+  <div class="container">
+    <div class="section-header">
+      <h2 id="contact-heading">Get in touch</h2>
+      <p>Have a question or want a demo? We'd love to hear from you.</p>
+    </div>
+    <form
+      class="contact-form"
+      id="contact-form"
+      novalidate
+      aria-label="Contact form"
+    >
+      <div class="form-group">
+        <label for="contact-name">Full Name <span aria-hidden="true">*</span></label>
+        <input
+          type="text"
+          id="contact-name"
+          name="name"
+          required
+          minlength="2"
+          autocomplete="name"
+          placeholder="Jane Smith"
+          aria-describedby="name-error"
+        />
+        <p class="form-error" id="name-error" role="alert" aria-live="polite"></p>
+      </div>
+      <div class="form-group">
+        <label for="contact-email"
+          >Email Address <span aria-hidden="true">*</span></label
+        >
+        <input
+          type="email"
+          id="contact-email"
+          name="email"
+          required
+          autocomplete="email"
+          placeholder="jane@company.com"
+          aria-describedby="email-error"
+        />
+        <p class="form-error" id="email-error" role="alert" aria-live="polite"></p>
+      </div>
+      <div class="form-group">
+        <label for="contact-message"
+          >Message <span aria-hidden="true">*</span></label
+        >
+        <textarea
+          id="contact-message"
+          name="message"
+          required
+          minlength="10"
+          rows="5"
+          placeholder="Tell us how we can help..."
+          aria-describedby="message-error"></textarea>
+        <p class="form-error" id="message-error" role="alert" aria-live="polite">
+        </p>
+      </div>
+      <button type="submit" class="btn btn-primary contact-submit">
+        Send Message
+      </button>
+      <p
+        class="form-success"
+        id="form-success"
+        role="status"
+        aria-live="polite"
+        hidden
+      >
+        Thanks for reaching out! We'll get back to you within 24 hours.
+      </p>
+    </form>
+  </div>
+</section>
+
+<style>
+  .contact {
+    background-color: var(--color-bg-alt);
+  }
+
+  .contact-form {
+    max-width: 600px;
+    margin-inline: auto;
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-lg);
+  }
+
+  .form-group {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  .form-group label {
+    font-weight: 600;
+    font-size: 0.9375rem;
+  }
+
+  .form-group label span {
+    color: var(--color-error);
+  }
+
+  .form-group input,
+  .form-group textarea {
+    padding: 0.75rem 1rem;
+    font-size: 1rem;
+    font-family: var(--font-sans);
+    border: 2px solid var(--color-border);
+    border-radius: var(--radius-md);
+    transition: border-color var(--transition-fast);
+    resize: vertical;
+  }
+
+  .form-group input:focus,
+  .form-group textarea:focus {
+    outline: none;
+    border-color: var(--color-primary);
+  }
+
+  .form-group input.invalid,
+  .form-group textarea.invalid {
+    border-color: var(--color-error);
+  }
+
+  .form-group input.valid,
+  .form-group textarea.valid {
+    border-color: var(--color-success);
+  }
+
+  .form-error {
+    color: var(--color-error);
+    font-size: 0.8125rem;
+    min-height: 1.2em;
+  }
+
+  .contact-submit {
+    align-self: flex-start;
+    padding: 0.875rem 2rem;
+  }
+
+  .form-success {
+    padding: var(--space-md);
+    background-color: rgba(34, 197, 94, 0.1);
+    color: #166534;
+    border-radius: var(--radius-md);
+    font-weight: 500;
+    text-align: center;
+  }
+</style>
+
+<script>
+  const contactForm = document.getElementById('contact-form') as HTMLFormElement;
+
+  const validators: Record<string, (value: string) => string> = {
+    name: (value) => {
+      if (!value.trim()) return 'Name is required.';
+      if (value.trim().length < 2)
+        return 'Name must be at least 2 characters.';
+      return '';
+    },
+    email: (value) => {
+      if (!value.trim()) return 'Email is required.';
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(value))
+        return 'Please enter a valid email address.';
+      return '';
+    },
+    message: (value) => {
+      if (!value.trim()) return 'Message is required.';
+      if (value.trim().length < 10)
+        return 'Message must be at least 10 characters.';
+      return '';
+    },
+  };
+
+  function validateField(field: HTMLInputElement | HTMLTextAreaElement): boolean {
+    const name = field.name;
+    const validator = validators[name];
+    if (!validator) return true;
+
+    const error = validator(field.value);
+    const errorEl = document.getElementById(`${name}-error`);
+
+    if (error) {
+      field.classList.add('invalid');
+      field.classList.remove('valid');
+      if (errorEl) errorEl.textContent = error;
+      return false;
+    } else {
+      field.classList.remove('invalid');
+      field.classList.add('valid');
+      if (errorEl) errorEl.textContent = '';
+      return true;
+    }
+  }
+
+  // Validate on blur
+  contactForm?.querySelectorAll('input, textarea').forEach((field) => {
+    field.addEventListener('blur', () => {
+      validateField(field as HTMLInputElement | HTMLTextAreaElement);
+    });
+    field.addEventListener('input', () => {
+      const el = field as HTMLInputElement | HTMLTextAreaElement;
+      if (el.classList.contains('invalid')) {
+        validateField(el);
+      }
+    });
+  });
+
+  contactForm?.addEventListener('submit', (e) => {
+    e.preventDefault();
+
+    const fields = contactForm.querySelectorAll(
+      'input, textarea'
+    ) as NodeListOf<HTMLInputElement | HTMLTextAreaElement>;
+    let allValid = true;
+
+    fields.forEach((field) => {
+      if (!validateField(field)) allValid = false;
+    });
+
+    if (allValid) {
+      const success = document.getElementById('form-success');
+      if (success) success.hidden = false;
+
+      // Reset form
+      contactForm.reset();
+      fields.forEach((field) => {
+        field.classList.remove('valid', 'invalid');
+      });
+
+      // Hide success message after 5 seconds
+      setTimeout(() => {
+        if (success) success.hidden = true;
+      }, 5000);
+    }
+  });
+</script>

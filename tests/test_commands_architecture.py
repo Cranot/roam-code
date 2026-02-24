@@ -148,7 +148,7 @@ class TestLayers:
     def test_layers_json_has_layer_data(self, cli_runner, indexed_project, monkeypatch):
         """JSON envelope includes layers array and violation count."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["layers"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "layers"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "layers")
         assert "layers" in data
         assert isinstance(data["layers"], list)
@@ -240,7 +240,7 @@ class TestClusters:
     def test_clusters_json_has_clusters_array(self, cli_runner, indexed_project, monkeypatch):
         """JSON envelope includes clusters array."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["clusters"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["--detail", "clusters"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "clusters")
         assert "clusters" in data
         assert isinstance(data["clusters"], list)
