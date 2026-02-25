@@ -1,0 +1,8 @@
+name: ts-hardcoded-apikey
+description: "Hardcoded API key in TypeScript code."
+severity: error
+type: ast_match
+match:
+  ast: "const apiKey = \"$VALUE\""
+  language: typescript
+  file_glob: "**/*.ts"

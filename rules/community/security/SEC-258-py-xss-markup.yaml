@@ -1,0 +1,8 @@
+name: py-xss-markup
+description: "Markup() with user input bypasses Jinja2 auto-escaping."
+severity: error
+type: ast_match
+match:
+  ast: "Markup($USER_INPUT)"
+  language: python
+  file_glob: "**/*.py"

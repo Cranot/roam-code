@@ -1,0 +1,8 @@
+name: js-async-foreach
+description: "forEach does not await async callbacks. Use for...of instead."
+severity: error
+type: ast_match
+match:
+  ast: "$ARR.forEach(async ($ITEM) => { $BODY })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

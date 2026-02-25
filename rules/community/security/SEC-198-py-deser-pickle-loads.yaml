@@ -1,0 +1,8 @@
+name: py-deser-pickle-loads
+description: "pickle.loads with untrusted data risks arbitrary code execution."
+severity: error
+type: ast_match
+match:
+  ast: "pickle.loads($DATA)"
+  language: python
+  file_glob: "**/*.py"

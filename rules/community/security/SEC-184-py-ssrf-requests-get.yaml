@@ -1,0 +1,8 @@
+name: py-ssrf-requests-get
+description: "HTTP GET with user-supplied URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "requests.get(request.args[$KEY])"
+  language: python
+  file_glob: "**/*.py"

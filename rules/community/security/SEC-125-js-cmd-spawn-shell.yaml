@@ -1,0 +1,8 @@
+name: js-cmd-spawn-shell
+description: "child_process.spawn with shell option risks injection."
+severity: error
+type: ast_match
+match:
+  ast: "spawn($CMD, { shell: true })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

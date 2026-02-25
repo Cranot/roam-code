@@ -1,0 +1,11 @@
+name: js-cross-fn-xss
+description: "Cross-function XSS: request input flows to response HTML."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["req.body", "req.query", "req.params"]
+  sinks: ["res.send(", "res.write(", "innerHTML"]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.{js,mjs}"

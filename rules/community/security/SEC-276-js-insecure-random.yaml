@@ -1,0 +1,8 @@
+name: js-insecure-random
+description: "Math.random is not cryptographically secure."
+severity: warning
+type: ast_match
+match:
+  ast: "Math.random()"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: ruby-empty-rescue
+description: "Empty rescue block silently swallows exceptions."
+severity: warning
+type: ast_match
+match:
+  ast: "rescue => e"
+  language: ruby
+  file_glob: "**/*.rb"

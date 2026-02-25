@@ -1,0 +1,8 @@
+name: rust-path-read-to-string
+description: "fs::read_to_string with user path risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "fs::read_to_string($USER_PATH)"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: py-insecure-random
+description: "random module is not cryptographically secure. Use secrets."
+severity: warning
+type: ast_match
+match:
+  ast: "random.randint($A, $B)"
+  language: python
+  file_glob: "**/*.py"

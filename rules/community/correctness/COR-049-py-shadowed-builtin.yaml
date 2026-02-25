@@ -1,0 +1,8 @@
+name: py-shadowed-builtin
+description: "Variable shadows Python builtin name."
+severity: warning
+type: ast_match
+match:
+  ast: "list = $VALUE"
+  language: python
+  file_glob: "**/*.py"

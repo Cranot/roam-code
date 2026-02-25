@@ -1,0 +1,9 @@
+name: circular-repositories-to-services
+description: "Repositories must not import services (circular dependency)."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/repositories/**"
+  to:
+    file_glob: "**/services/**"

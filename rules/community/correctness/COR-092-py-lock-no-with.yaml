@@ -1,0 +1,8 @@
+name: py-lock-no-with
+description: "Lock acquire should use 'with' statement for safety."
+severity: warning
+type: ast_match
+match:
+  ast: "$LOCK.acquire()"
+  language: python
+  file_glob: "**/*.py"

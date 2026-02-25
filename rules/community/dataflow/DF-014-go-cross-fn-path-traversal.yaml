@@ -1,0 +1,11 @@
+name: go-cross-fn-path-traversal
+description: "Cross-function path traversal: request input flows to file."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["r.FormValue(", "r.URL.Query().Get("]
+  sinks: ["os.Open(", "os.ReadFile(", "filepath.Join("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

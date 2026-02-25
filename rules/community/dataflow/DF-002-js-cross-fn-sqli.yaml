@@ -1,0 +1,11 @@
+name: js-cross-fn-sqli
+description: "Cross-function SQL injection: request input flows to DB query."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["req.body", "req.query", "req.params"]
+  sinks: ["connection.query(", "pool.query(", "knex.raw("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.{js,mjs}"

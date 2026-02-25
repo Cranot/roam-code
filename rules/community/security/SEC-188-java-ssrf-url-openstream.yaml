@@ -1,0 +1,8 @@
+name: java-ssrf-url-openstream
+description: "URL.openStream with user input risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "new URL(request.getParameter($P)).openStream()"
+  language: java
+  file_glob: "**/*.java"

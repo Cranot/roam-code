@@ -1,0 +1,9 @@
+name: circular-models-to-views
+description: "Models must not import from views (circular dependency)."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/models/**"
+  to:
+    file_glob: "**/views/**"

@@ -1,0 +1,8 @@
+name: java-cors-allow-all
+description: "CORS allowedOrigins * is overly permissive."
+severity: warning
+type: ast_match
+match:
+  ast: "allowedOrigins(\"*\")"
+  language: java
+  file_glob: "**/*.java"

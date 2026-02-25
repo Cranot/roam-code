@@ -1,0 +1,8 @@
+name: rust-panic-production
+description: "panic! in production code should use Result instead."
+severity: warning
+type: ast_match
+match:
+  ast: "panic!($MSG)"
+  language: rust
+  file_glob: "**/src/**/*.rs"

@@ -1,0 +1,8 @@
+name: ruby-all-no-limit
+description: "Model.all without limit loads entire table."
+severity: warning
+type: ast_match
+match:
+  ast: "$MODEL.all"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: csharp-hardcoded-connectionstring
+description: "Hardcoded connection string with credentials."
+severity: error
+type: ast_match
+match:
+  ast: "string connectionString = \"$VALUE\""
+  language: c_sharp
+  file_glob: "**/*.cs"

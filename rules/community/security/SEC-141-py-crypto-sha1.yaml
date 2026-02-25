@@ -1,0 +1,8 @@
+name: py-crypto-sha1
+description: "SHA-1 is cryptographically weak, use SHA-256 or better."
+severity: warning
+type: ast_match
+match:
+  ast: "hashlib.sha1($DATA)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: ruby-ssrf-open-uri
+description: "open() with user URL risks SSRF via open-uri."
+severity: error
+type: ast_match
+match:
+  ast: "URI.open(params[$KEY])"
+  language: ruby
+  file_glob: "**/*.rb"

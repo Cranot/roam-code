@@ -1,0 +1,8 @@
+name: py-file-no-with
+description: "File opened without context manager may not be closed."
+severity: warning
+type: ast_match
+match:
+  ast: "$F = open($PATH)"
+  language: python
+  file_glob: "**/*.py"

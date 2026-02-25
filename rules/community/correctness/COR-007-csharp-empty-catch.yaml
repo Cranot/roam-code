@@ -1,0 +1,8 @@
+name: csharp-empty-catch
+description: "Empty catch block silently swallows exceptions."
+severity: warning
+type: ast_match
+match:
+  ast: "catch (Exception ex) {}"
+  language: c_sharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: py-cmd-subprocess-shell
+description: "subprocess with shell=True risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "subprocess.Popen($CMD, shell=True)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: py-debug-mode
+description: "Flask debug mode exposes stack traces and debugger."
+severity: error
+type: ast_match
+match:
+  ast: "app.run(debug=True)"
+  language: python
+  file_glob: "**/*.py"

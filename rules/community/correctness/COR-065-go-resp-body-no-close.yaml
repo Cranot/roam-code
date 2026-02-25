@@ -1,0 +1,8 @@
+name: go-resp-body-no-close
+description: "HTTP response body must be closed to avoid leaks."
+severity: warning
+type: ast_match
+match:
+  ast: "$RESP, $ERR := http.Get($URL)"
+  language: go
+  file_glob: "**/*.go"

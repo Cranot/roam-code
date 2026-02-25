@@ -1,0 +1,8 @@
+name: java-tls-trustall
+description: "TrustAllCerts bypasses certificate validation."
+severity: error
+type: ast_match
+match:
+  ast: "new X509TrustManager()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: py-tls-no-cert-check
+description: "SSL context with no certificate check risks MITM."
+severity: error
+type: ast_match
+match:
+  ast: "ssl._create_unverified_context()"
+  language: python
+  file_glob: "**/*.py"

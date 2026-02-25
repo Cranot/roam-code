@@ -1,0 +1,8 @@
+name: java-sql-statement-concat
+description: "String concatenation in Statement.execute risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "stmt.execute($A + $B)"
+  language: java
+  file_glob: "**/*.java"

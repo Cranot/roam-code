@@ -1,0 +1,8 @@
+name: ts-empty-catch
+description: "Empty catch block silently swallows errors in TypeScript."
+severity: warning
+type: ast_match
+match:
+  ast: "catch (e) {}"
+  language: typescript
+  file_glob: "**/*.ts"

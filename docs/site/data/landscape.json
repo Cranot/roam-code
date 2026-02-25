@@ -12,18 +12,18 @@
       "local": true,
       "cli_commands": "136 canonical (+1 alias)",
       "graph": "PageRank + Tarjan + Louvain + layers",
-      "arch": 85,
+      "arch": 92,
       "agent": 92,
       "scores": {
-        "total": 84,
+        "total": 88,
         "max_total": 100,
         "map_x": 92,
-        "map_y": 85,
+        "map_y": 92,
         "categories": [
           {
             "id": "static_analysis",
             "label": "Static Analysis Depth",
-            "score": 14,
+            "score": 17,
             "max": 20,
             "criteria": [
               {
@@ -69,16 +69,16 @@
               {
                 "id": "dead_code",
                 "label": "Dead code detection",
-                "value": "reference",
-                "points": 1,
+                "value": "dataflow",
+                "points": 2,
                 "max": 2,
                 "type": "tiered"
               },
               {
                 "id": "dataflow_taint",
                 "label": "Dataflow/taint analysis",
-                "value": "intra",
-                "points": 1,
+                "value": "inter",
+                "points": 3,
                 "max": 4,
                 "type": "tiered"
               },
@@ -255,7 +255,7 @@
           {
             "id": "security_governance",
             "label": "Security & Governance",
-            "score": 13,
+            "score": 14,
             "max": 15,
             "criteria": [
               {
@@ -293,8 +293,8 @@
               {
                 "id": "rule_count",
                 "label": "Rule count",
-                "value": 602,
-                "points": 1,
+                "value": 1049,
+                "points": 2,
                 "max": 3,
                 "type": "tiered"
               }

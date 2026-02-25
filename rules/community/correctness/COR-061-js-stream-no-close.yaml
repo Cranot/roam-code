@@ -1,0 +1,8 @@
+name: js-stream-no-close
+description: "Stream created without close or destroy may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "fs.createReadStream($PATH)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

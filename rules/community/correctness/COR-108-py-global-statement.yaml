@@ -1,0 +1,8 @@
+name: py-global-statement
+description: "Global statement makes function depend on mutable global state."
+severity: info
+type: ast_match
+match:
+  ast: "global $VAR"
+  language: python
+  file_glob: "**/*.py"

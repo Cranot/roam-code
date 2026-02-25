@@ -1,0 +1,8 @@
+name: py-cmd-check-call-shell
+description: "subprocess.check_call with shell=True risks injection."
+severity: error
+type: ast_match
+match:
+  ast: "subprocess.check_call($CMD, shell=True)"
+  language: python
+  file_glob: "**/*.py"

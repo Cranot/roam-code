@@ -1,0 +1,8 @@
+name: php-sql-concat
+description: "String concatenation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "mysqli_query($CONN, $A . $B)"
+  language: php
+  file_glob: "**/*.php"

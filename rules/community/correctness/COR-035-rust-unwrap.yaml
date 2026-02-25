@@ -1,0 +1,8 @@
+name: rust-unwrap
+description: "unwrap() panics on None/Err, use expect or match."
+severity: warning
+type: ast_match
+match:
+  ast: "$EXPR.unwrap()"
+  language: rust
+  file_glob: "**/*.rs"

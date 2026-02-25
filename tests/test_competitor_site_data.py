@@ -117,9 +117,9 @@ def test_map_coordinates_in_range():
         assert 0 <= scores["map_y"] <= 100, f"{entry['name']} map_y={scores['map_y']}"
 
 
-def test_roam_dataflow_taint_is_intra():
-    """Self-assessment check: roam ships basic intra-procedural dataflow."""
-    assert CRITERIA_DATA["roam-code"]["dataflow_taint"] == "intra"
+def test_roam_dataflow_taint_is_inter():
+    """Self-assessment check: roam ships inter-procedural dataflow."""
+    assert CRITERIA_DATA["roam-code"]["dataflow_taint"] == "inter"
 
 
 def test_backward_compat_arch_and_agent_fields():

@@ -1,0 +1,8 @@
+name: java-static-large-collection
+description: "Static collection at class level wastes memory."
+severity: info
+type: ast_match
+match:
+  ast: "static final List<$T> $NAME = Arrays.asList($ITEMS)"
+  language: java
+  file_glob: "**/*.java"

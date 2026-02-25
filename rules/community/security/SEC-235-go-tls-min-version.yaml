@@ -1,0 +1,8 @@
+name: go-tls-min-version
+description: "TLS MinVersion below 1.2 is insecure."
+severity: warning
+type: ast_match
+match:
+  ast: "MinVersion: tls.VersionTLS10"
+  language: go
+  file_glob: "**/*.go"

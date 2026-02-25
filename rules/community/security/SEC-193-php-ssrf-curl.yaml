@@ -1,0 +1,8 @@
+name: php-ssrf-curl
+description: "cURL with user-supplied URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "curl_setopt($CH, CURLOPT_URL, $_GET[$KEY])"
+  language: php
+  file_glob: "**/*.php"

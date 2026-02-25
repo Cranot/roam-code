@@ -1,0 +1,11 @@
+name: py-cross-fn-cmdi
+description: "Cross-function command injection: user input flows to shell."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["request.args", "request.form"]
+  sinks: ["os.system(", "subprocess.run(", "subprocess.Popen("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.py"

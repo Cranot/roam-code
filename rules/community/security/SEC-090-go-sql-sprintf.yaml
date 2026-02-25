@@ -1,0 +1,8 @@
+name: go-sql-sprintf
+description: "Using fmt.Sprintf in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "db.Query(fmt.Sprintf($FMT, $ARGS))"
+  language: go
+  file_glob: "**/*.go"

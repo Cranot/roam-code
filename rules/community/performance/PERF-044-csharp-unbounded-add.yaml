@@ -1,0 +1,8 @@
+name: csharp-unbounded-add
+description: "List Add in loop without size check may exhaust memory."
+severity: warning
+type: ast_match
+match:
+  ast: "$LIST.Add($ITEM)"
+  language: c_sharp
+  file_glob: "**/*.cs"

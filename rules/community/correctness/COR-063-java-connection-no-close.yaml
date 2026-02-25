@@ -1,0 +1,8 @@
+name: java-connection-no-close
+description: "JDBC connection not in try-with-resources may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "DriverManager.getConnection($URL)"
+  language: java
+  file_glob: "**/*.java"

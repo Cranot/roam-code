@@ -1,0 +1,8 @@
+name: py-hardcoded-token
+description: "Hardcoded access token in Python code."
+severity: error
+type: ast_match
+match:
+  ast: "token = \"$VALUE\""
+  language: python
+  file_glob: "**/*.py"

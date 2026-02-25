@@ -1,0 +1,8 @@
+name: js-find-all-no-limit
+description: "find({}) without limit loads entire collection."
+severity: warning
+type: ast_match
+match:
+  ast: "$COLLECTION.find({})"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

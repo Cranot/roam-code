@@ -1,0 +1,8 @@
+name: ruby-unused-require
+description: "Required library is never used in this file."
+severity: info
+type: ast_match
+match:
+  ast: "require '$LIB'"
+  language: ruby
+  file_glob: "**/*.rb"

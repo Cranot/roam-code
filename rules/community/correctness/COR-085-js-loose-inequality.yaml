@@ -1,0 +1,8 @@
+name: js-loose-inequality
+description: "Use !== instead of != to avoid type coercion."
+severity: warning
+type: ast_match
+match:
+  ast: "$A != $B"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

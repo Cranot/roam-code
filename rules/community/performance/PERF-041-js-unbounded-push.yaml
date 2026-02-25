@@ -1,0 +1,8 @@
+name: js-unbounded-push
+description: "Array push in loop without size check may exhaust memory."
+severity: warning
+type: ast_match
+match:
+  ast: "$ARR.push($ITEM)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

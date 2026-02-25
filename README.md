@@ -1471,7 +1471,7 @@ roam-code/
 │   │   ├── engine.py                  # YAML rule parser + graph query evaluator
 │   │   ├── builtin.py                 # 10 built-in governance rules
 │   │   ├── ast_match.py               # AST pattern matching with $METAVAR captures
-│   │   └── dataflow.py                # Intra-procedural dataflow analysis
+│   │   └── dataflow.py                # Inter-procedural dataflow analysis
 │   ├── runtime/
 │   │   ├── trace_ingest.py            # OpenTelemetry/Jaeger/Zipkin ingestion
 │   │   └── hotspots.py                # Runtime hotspot analysis

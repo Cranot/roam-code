@@ -1,0 +1,8 @@
+name: rust-raw-pointer-deref
+description: "Raw pointer dereference in unsafe block risks memory safety."
+severity: warning
+type: ast_match
+match:
+  ast: "*$PTR"
+  language: rust
+  file_glob: "**/*.rs"

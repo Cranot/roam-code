@@ -1,0 +1,8 @@
+name: js-string-concat-loop
+description: "String concatenation in loop is slow. Use array join or template."
+severity: warning
+type: ast_match
+match:
+  ast: "$STR = $STR + $PART"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

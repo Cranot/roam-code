@@ -1,0 +1,8 @@
+name: ruby-crypto-sha1
+description: "Digest::SHA1 is cryptographically weak."
+severity: warning
+type: ast_match
+match:
+  ast: "Digest::SHA1.hexdigest($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

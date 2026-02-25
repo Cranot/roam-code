@@ -1,0 +1,8 @@
+name: rust-file-no-drop
+description: "File handle should be properly scoped for auto-drop."
+severity: info
+type: ast_match
+match:
+  ast: "let $F = File::open($PATH)"
+  language: rust
+  file_glob: "**/*.rs"

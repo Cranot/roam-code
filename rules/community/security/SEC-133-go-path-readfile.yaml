@@ -1,0 +1,8 @@
+name: go-path-readfile
+description: "os.ReadFile with user path risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "os.ReadFile($USER_PATH)"
+  language: go
+  file_glob: "**/*.go"

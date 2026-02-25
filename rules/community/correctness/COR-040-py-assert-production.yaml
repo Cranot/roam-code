@@ -1,0 +1,8 @@
+name: py-assert-production
+description: "Assert statements are removed with -O flag in production."
+severity: warning
+type: ast_match
+match:
+  ast: "assert $CONDITION"
+  language: python
+  file_glob: "**/src/**/*.py"

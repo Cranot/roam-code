@@ -1,0 +1,8 @@
+name: go-redirect-http
+description: "http.Redirect with user URL risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "http.Redirect(w, r, r.FormValue($KEY), $CODE)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: py-empty-except
+description: "Empty except block silently swallows errors."
+severity: warning
+type: ast_match
+match:
+  ast: "except: pass"
+  language: python
+  file_glob: "**/*.py"

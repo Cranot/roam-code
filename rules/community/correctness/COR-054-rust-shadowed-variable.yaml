@@ -1,0 +1,8 @@
+name: rust-shadowed-variable
+description: "Let binding shadows variable from outer scope."
+severity: info
+type: ast_match
+match:
+  ast: "let $NAME = $VALUE"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: go-unbounded-append
+description: "Slice append in loop without cap check may reallocate often."
+severity: info
+type: ast_match
+match:
+  ast: "$SLICE = append($SLICE, $ITEM)"
+  language: go
+  file_glob: "**/*.go"

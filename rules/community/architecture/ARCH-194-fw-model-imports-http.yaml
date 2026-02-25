@@ -1,0 +1,9 @@
+name: fw-model-imports-http
+description: "Model layer must not import HTTP request/response types."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/models/**"
+  to:
+    file_glob: "**/http/**"

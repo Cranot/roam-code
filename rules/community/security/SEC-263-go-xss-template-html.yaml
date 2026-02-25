@@ -1,0 +1,8 @@
+name: go-xss-template-html
+description: "template.HTML bypasses Go template auto-escaping."
+severity: warning
+type: ast_match
+match:
+  ast: "template.HTML($INPUT)"
+  language: go
+  file_glob: "**/*.go"

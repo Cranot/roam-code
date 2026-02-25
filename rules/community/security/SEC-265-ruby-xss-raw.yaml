@@ -1,0 +1,8 @@
+name: ruby-xss-raw
+description: "raw() helper bypasses Rails HTML escaping."
+severity: warning
+type: ast_match
+match:
+  ast: "raw($INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

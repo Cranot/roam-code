@@ -1,0 +1,8 @@
+name: csharp-ssrf-httpclient
+description: "HttpClient.GetAsync with user URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "client.GetAsync(Request.Query[$KEY])"
+  language: c_sharp
+  file_glob: "**/*.cs"

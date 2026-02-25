@@ -1,0 +1,8 @@
+name: csharp-disposable-no-using
+description: "IDisposable not in using statement may leak resources."
+severity: warning
+type: ast_match
+match:
+  ast: "new SqlConnection($CONNSTR)"
+  language: c_sharp
+  file_glob: "**/*.cs"

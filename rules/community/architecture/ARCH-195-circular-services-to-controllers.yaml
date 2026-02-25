@@ -1,0 +1,9 @@
+name: circular-services-to-controllers
+description: "Services must not import from controllers (circular dependency)."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+  to:
+    file_glob: "**/controllers/**"

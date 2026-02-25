@@ -1,0 +1,8 @@
+name: js-hardcoded-token
+description: "Hardcoded access token in JavaScript code."
+severity: error
+type: ast_match
+match:
+  ast: "const token = \"$VALUE\""
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

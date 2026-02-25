@@ -1,0 +1,8 @@
+name: js-cors-allow-all
+description: "CORS origin wildcard is overly permissive."
+severity: warning
+type: ast_match
+match:
+  ast: "cors({ origin: '*' })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

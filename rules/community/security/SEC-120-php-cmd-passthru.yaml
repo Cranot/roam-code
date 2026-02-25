@@ -1,0 +1,8 @@
+name: php-cmd-passthru
+description: "passthru() with variable input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "passthru($CMD)"
+  language: php
+  file_glob: "**/*.php"

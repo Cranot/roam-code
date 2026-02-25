@@ -1,0 +1,8 @@
+name: go-defer-in-loop
+description: "defer in loop delays cleanup until function return."
+severity: warning
+type: ast_match
+match:
+  ast: "defer $FUNC($ARGS)"
+  language: go
+  file_glob: "**/*.go"

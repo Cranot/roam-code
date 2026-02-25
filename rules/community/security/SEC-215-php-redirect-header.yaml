@@ -1,0 +1,8 @@
+name: php-redirect-header
+description: "header Location with user input risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "header(\"Location: \" . $_GET[$KEY])"
+  language: php
+  file_glob: "**/*.php"
