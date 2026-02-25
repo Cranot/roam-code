@@ -41,7 +41,7 @@ except Exception:
 
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
-# Default: "core" (16 tools + meta-tool).
+# Default: "core" (23 tools + meta-tool = 24 total).
 # Override: ROAM_MCP_PRESET=review|refactor|debug|architecture|full
 # Legacy: ROAM_MCP_LITE=0 maps to "full" preset.
 # ---------------------------------------------------------------------------
