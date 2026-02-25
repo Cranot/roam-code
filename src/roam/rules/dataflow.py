@@ -300,8 +300,9 @@ def _collect_inter_findings(
                                 "line": row["line_start"],
                                 "variable": pname,
                                 "reason": (
-                                    "parameter '{}' in {} has no dataflow effect "
-                                    "(not in return, not in sink)".format(pname, row["qname"])
+                                    "parameter '{}' in {} has no dataflow effect (not in return, not in sink)".format(
+                                        pname, row["qname"]
+                                    )
                                 ),
                             }
                         )
@@ -342,9 +343,7 @@ def _collect_inter_findings(
                             "file": fp,
                             "line": row["line_start"],
                             "reason": (
-                                "return value of {} is computed but may not be used by callers".format(
-                                    row["qname"]
-                                )
+                                "return value of {} is computed but may not be used by callers".format(row["qname"])
                             ),
                         }
                     )
