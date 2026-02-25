@@ -9,17 +9,13 @@ Covers:
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
 
-from roam.commands.cmd_dead import _decay_score, _estimate_removal_minutes, _decay_tier
-
+from roam.commands.cmd_dead import _decay_score, _decay_tier, _estimate_removal_minutes
 
 # ============================================================================
 # Unit tests for internal functions
@@ -65,36 +61,60 @@ class TestDecayScore:
     def test_inactive_author_adds_points(self):
         """Inactive author should increase the decay score vs. active author."""
         score_active = _decay_score(
-            age_days=100, cognitive_complexity=5, cluster_size=1,
-            importing_files=0, author_active=True, dead_loc=10,
+            age_days=100,
+            cognitive_complexity=5,
+            cluster_size=1,
+            importing_files=0,
+            author_active=True,
+            dead_loc=10,
         )
         score_inactive = _decay_score(
-            age_days=100, cognitive_complexity=5, cluster_size=1,
-            importing_files=0, author_active=False, dead_loc=10,
+            age_days=100,
+            cognitive_complexity=5,
+            cluster_size=1,
+            importing_files=0,
+            author_active=False,
+            dead_loc=10,
         )
         assert score_inactive > score_active
 
     def test_higher_complexity_increases_score(self):
         """Higher cognitive complexity should increase the decay score."""
         score_low_cc = _decay_score(
-            age_days=100, cognitive_complexity=0, cluster_size=1,
-            importing_files=0, author_active=True, dead_loc=10,
+            age_days=100,
+            cognitive_complexity=0,
+            cluster_size=1,
+            importing_files=0,
+            author_active=True,
+            dead_loc=10,
         )
         score_high_cc = _decay_score(
-            age_days=100, cognitive_complexity=20, cluster_size=1,
-            importing_files=0, author_active=True, dead_loc=10,
+            age_days=100,
+            cognitive_complexity=20,
+            cluster_size=1,
+            importing_files=0,
+            author_active=True,
+            dead_loc=10,
         )
         assert score_high_cc > score_low_cc
 
     def test_older_code_increases_score(self):
         """Older code should have a higher decay score than newer code."""
         score_new = _decay_score(
-            age_days=1, cognitive_complexity=5, cluster_size=1,
-            importing_files=0, author_active=True, dead_loc=10,
+            age_days=1,
+            cognitive_complexity=5,
+            cluster_size=1,
+            importing_files=0,
+            author_active=True,
+            dead_loc=10,
         )
         score_old = _decay_score(
-            age_days=1000, cognitive_complexity=5, cluster_size=1,
-            importing_files=0, author_active=True, dead_loc=10,
+            age_days=1000,
+            cognitive_complexity=5,
+            cluster_size=1,
+            importing_files=0,
+            author_active=True,
+            dead_loc=10,
         )
         assert score_old > score_new
 
@@ -143,64 +163,104 @@ class TestEstimateRemovalMinutes:
     def test_returns_positive(self):
         """Removal estimate should always be positive."""
         result = _estimate_removal_minutes(
-            dead_loc=5, cognitive_complexity=0, importing_files=0,
-            cluster_size=1, age_years=0, author_active=True,
+            dead_loc=5,
+            cognitive_complexity=0,
+            importing_files=0,
+            cluster_size=1,
+            age_years=0,
+            author_active=True,
         )
         assert result > 0
 
     def test_increases_with_complexity(self):
         """Higher cognitive complexity should increase removal time."""
         low = _estimate_removal_minutes(
-            dead_loc=10, cognitive_complexity=0, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=10,
+            cognitive_complexity=0,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         high = _estimate_removal_minutes(
-            dead_loc=10, cognitive_complexity=20, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=10,
+            cognitive_complexity=20,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         assert high > low
 
     def test_increases_with_loc(self):
         """More lines of dead code should increase removal time."""
         small = _estimate_removal_minutes(
-            dead_loc=5, cognitive_complexity=5, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=5,
+            cognitive_complexity=5,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         large = _estimate_removal_minutes(
-            dead_loc=100, cognitive_complexity=5, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=100,
+            cognitive_complexity=5,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         assert large > small
 
     def test_active_author_reduces_effort(self):
         """Active author should reduce the removal effort."""
         active = _estimate_removal_minutes(
-            dead_loc=20, cognitive_complexity=5, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=20,
+            cognitive_complexity=5,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         inactive = _estimate_removal_minutes(
-            dead_loc=20, cognitive_complexity=5, importing_files=0,
-            cluster_size=1, age_years=1, author_active=False,
+            dead_loc=20,
+            cognitive_complexity=5,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=False,
         )
         assert active < inactive
 
     def test_increases_with_importing_files(self):
         """More importing files should increase removal time."""
         isolated = _estimate_removal_minutes(
-            dead_loc=20, cognitive_complexity=5, importing_files=0,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=20,
+            cognitive_complexity=5,
+            importing_files=0,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         coupled = _estimate_removal_minutes(
-            dead_loc=20, cognitive_complexity=5, importing_files=10,
-            cluster_size=1, age_years=1, author_active=True,
+            dead_loc=20,
+            cognitive_complexity=5,
+            importing_files=10,
+            cluster_size=1,
+            age_years=1,
+            author_active=True,
         )
         assert coupled > isolated
 
     def test_returns_float(self):
         """_estimate_removal_minutes should return a numeric value."""
         result = _estimate_removal_minutes(
-            dead_loc=10, cognitive_complexity=5, importing_files=2,
-            cluster_size=3, age_years=2, author_active=False,
+            dead_loc=10,
+            cognitive_complexity=5,
+            importing_files=2,
+            cluster_size=3,
+            age_years=2,
+            author_active=False,
         )
         assert isinstance(result, (int, float))
 
@@ -268,9 +328,14 @@ class TestDeadAgingCLI:
         out = result.output
         if "Unreferenced" in out and "none" not in out.lower():
             # Should show decay distribution or tier
-            assert ("Decay" in out or "decay" in out.lower()
-                    or "Fresh" in out or "Stale" in out
-                    or "Decayed" in out or "Fossilized" in out)
+            assert (
+                "Decay" in out
+                or "decay" in out.lower()
+                or "Fresh" in out
+                or "Stale" in out
+                or "Decayed" in out
+                or "Fossilized" in out
+            )
 
     def test_dead_combined_flags(self, cli_runner, indexed_project, monkeypatch):
         """roam dead --aging --effort --decay all combined should work."""
@@ -290,7 +355,10 @@ class TestDeadAgingJSON:
         """roam --json dead --aging includes aging data in symbol dicts."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--aging"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--aging"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --aging")
         # Check the envelope
@@ -309,13 +377,14 @@ class TestDeadAgingJSON:
         """roam --json dead --decay includes decay_distribution in summary."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--decay"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--decay"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --decay")
         summary = data.get("summary", {})
-        assert "decay_distribution" in summary, (
-            f"Missing 'decay_distribution' in summary: {list(summary.keys())}"
-        )
+        assert "decay_distribution" in summary, f"Missing 'decay_distribution' in summary: {list(summary.keys())}"
         dist = summary["decay_distribution"]
         for tier in ["fresh", "stale", "decayed", "fossilized"]:
             assert tier in dist, f"Missing '{tier}' in decay_distribution"
@@ -324,20 +393,24 @@ class TestDeadAgingJSON:
         """roam --json dead --effort includes total_effort_hours in summary."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--effort"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--effort"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --effort")
         summary = data.get("summary", {})
-        assert "total_effort_hours" in summary, (
-            f"Missing 'total_effort_hours' in summary: {list(summary.keys())}"
-        )
+        assert "total_effort_hours" in summary, f"Missing 'total_effort_hours' in summary: {list(summary.keys())}"
         assert isinstance(summary["total_effort_hours"], (int, float))
 
     def test_json_dead_effort_symbols_have_effort_data(self, cli_runner, indexed_project, monkeypatch):
         """roam --json dead --effort individual symbols include effort fields."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--effort"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--effort"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --effort")
         all_syms = data.get("high_confidence", []) + data.get("low_confidence", [])
@@ -352,7 +425,10 @@ class TestDeadAgingJSON:
         """roam --json dead --decay individual symbols include decay_score."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--decay"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--decay"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --decay")
         all_syms = data.get("high_confidence", []) + data.get("low_confidence", [])
@@ -365,12 +441,13 @@ class TestDeadAgingJSON:
         """roam --json dead --aging summary includes median_age_days."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["dead", "--aging"], cwd=indexed_project, json_mode=True,
+            cli_runner,
+            ["dead", "--aging"],
+            cwd=indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "dead --aging")
         summary = data.get("summary", {})
-        assert "median_age_days" in summary, (
-            f"Missing 'median_age_days' in summary: {list(summary.keys())}"
-        )
+        assert "median_age_days" in summary, f"Missing 'median_age_days' in summary: {list(summary.keys())}"
         assert isinstance(summary["median_age_days"], (int, float))
         assert summary["median_age_days"] >= 0

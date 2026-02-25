@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _resolve_symbols_from_files(conn, file_paths):
@@ -16,8 +16,7 @@ def _resolve_symbols_from_files(conn, file_paths):
         # Normalize path separators
         fp_norm = fp.replace("\\", "/")
         rows = conn.execute(
-            "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE f.path LIKE ?",
+            "SELECT s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE f.path LIKE ?",
             (f"%{fp_norm}%",),
         ).fetchall()
         for r in rows:
@@ -28,9 +27,7 @@ def _resolve_symbols_from_files(conn, file_paths):
 def _get_symbol_info(conn, node_id):
     """Get name, kind, file_path for a symbol node ID."""
     row = conn.execute(
-        "SELECT s.name, s.kind, f.path AS file_path "
-        "FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.id = ?",
+        "SELECT s.name, s.kind, f.path AS file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
         (node_id,),
     ).fetchone()
     if row:
@@ -147,12 +144,14 @@ def _detect_conflicts(G, input_ids, shared_deps, conn):
         if len(modifiers) >= 2:
             dep_info = _get_symbol_info(conn, dep_id)
             if dep_info:
-                conflicts.append({
-                    "symbol": dep_info["name"],
-                    "symbol_id": dep_id,
-                    "modified_by": list(modifiers),
-                    "recommendation": "coordinate changes to avoid race conditions",
-                })
+                conflicts.append(
+                    {
+                        "symbol": dep_info["name"],
+                        "symbol_id": dep_id,
+                        "modified_by": list(modifiers),
+                        "recommendation": "coordinate changes to avoid race conditions",
+                    }
+                )
     return conflicts
 
 
@@ -268,42 +267,50 @@ def relate(ctx, symbols, files, depth):
                 else:
                     kind = "NO PATH"
 
-                relationships.append({
-                    "source": src_name,
-                    "target": tgt_name,
-                    "kind": kind,
-                    "distance": dist,
-                    "via": via,
-                })
+                relationships.append(
+                    {
+                        "source": src_name,
+                        "target": tgt_name,
+                        "kind": kind,
+                        "distance": dist,
+                        "via": via,
+                    }
+                )
 
         # Build shared_deps output
         shared_deps_out = []
         for dep_id, callers in shared_deps.items():
             dep_info = _get_symbol_info(conn, dep_id)
             if dep_info:
-                shared_deps_out.append({
-                    "name": dep_info["name"],
-                    "used_by": [input_names[c] for c in callers if c in input_names],
-                })
+                shared_deps_out.append(
+                    {
+                        "name": dep_info["name"],
+                        "used_by": [input_names[c] for c in callers if c in input_names],
+                    }
+                )
 
         # Build shared_callers output
         shared_callers_out = []
         for caller_id, callees in shared_callers.items():
             caller_info = _get_symbol_info(conn, caller_id)
             if caller_info:
-                shared_callers_out.append({
-                    "name": caller_info["name"],
-                    "calls": [input_names[c] for c in callees if c in input_names],
-                })
+                shared_callers_out.append(
+                    {
+                        "name": caller_info["name"],
+                        "calls": [input_names[c] for c in callees if c in input_names],
+                    }
+                )
 
         # Build conflicts output
         conflicts_out = []
         for c in conflicts:
-            conflicts_out.append({
-                "symbol": c["symbol"],
-                "modified_by": [input_names[m] for m in c["modified_by"] if m in input_names],
-                "recommendation": c["recommendation"],
-            })
+            conflicts_out.append(
+                {
+                    "symbol": c["symbol"],
+                    "modified_by": [input_names[m] for m in c["modified_by"] if m in input_names],
+                    "recommendation": c["recommendation"],
+                }
+            )
 
         # Build distance matrix output
         dist_matrix_out = {}
@@ -327,20 +334,25 @@ def relate(ctx, symbols, files, depth):
         )
 
         if json_mode:
-            click.echo(to_json(json_envelope("relate",
-                summary={
-                    "verdict": verdict,
-                    "symbol_count": len(input_ids),
-                    "cohesion": round(cohesion, 2),
-                    "direct_edges": len(direct_edges),
-                    "conflict_risks": len(conflicts_out),
-                },
-                relationships=relationships,
-                shared_deps=shared_deps_out,
-                shared_callers=shared_callers_out,
-                conflicts=conflicts_out,
-                distance_matrix=dist_matrix_out,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "relate",
+                        summary={
+                            "verdict": verdict,
+                            "symbol_count": len(input_ids),
+                            "cohesion": round(cohesion, 2),
+                            "direct_edges": len(direct_edges),
+                            "conflict_risks": len(conflicts_out),
+                        },
+                        relationships=relationships,
+                        shared_deps=shared_deps_out,
+                        shared_callers=shared_callers_out,
+                        conflicts=conflicts_out,
+                        distance_matrix=dist_matrix_out,
+                    )
+                )
+            )
             return
 
         # Text output

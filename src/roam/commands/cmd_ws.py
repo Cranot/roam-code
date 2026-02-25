@@ -8,12 +8,12 @@ from pathlib import Path
 
 import click
 
-from roam.output.formatter import to_json, json_envelope, format_table
-
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
+
 
 @click.group("ws")
 @click.pass_context
@@ -25,6 +25,7 @@ def ws(ctx):
 # ---------------------------------------------------------------------------
 # ws init
 # ---------------------------------------------------------------------------
+
 
 @ws.command("init")
 @click.argument("repos", nargs=-1, required=True)
@@ -38,7 +39,7 @@ def ws_init(ctx, repos, name):
     Example:
       roam ws init ../frontend ../backend --name my-platform
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     from roam.workspace.config import (
         save_workspace_config,
@@ -64,13 +65,15 @@ def ws_init(ctx, repos, name):
         db_path = repo_path / ".roam" / "index.db"
         indexed = db_path.exists() and db_path.stat().st_size > 0
 
-        resolved.append({
-            "path": repo_path_str,
-            "abs_path": repo_path,
-            "name": repo_path.name,
-            "db_path": db_path,
-            "indexed": indexed,
-        })
+        resolved.append(
+            {
+                "path": repo_path_str,
+                "abs_path": repo_path,
+                "name": repo_path.name,
+                "db_path": db_path,
+                "indexed": indexed,
+            }
+        )
 
     if errors:
         for err in errors:
@@ -113,11 +116,13 @@ def ws_init(ctx, repos, name):
     backend_repos = [r for r in resolved if r["role"] == "backend"]
     for fe in frontend_repos:
         for be in backend_repos:
-            config["connections"].append({
-                "type": "rest-api",
-                "frontend": fe["name"],
-                "backend": be["name"],
-            })
+            config["connections"].append(
+                {
+                    "type": "rest-api",
+                    "frontend": fe["name"],
+                    "backend": be["name"],
+                }
+            )
 
     # Write config
     config_path = save_workspace_config(ws_root, config)
@@ -138,23 +143,28 @@ def ws_init(ctx, repos, name):
             )
 
     if json_mode:
-        click.echo(to_json(json_envelope("ws-init",
-            summary={
-                "workspace": ws_name,
-                "repos": len(resolved),
-                "config_path": str(config_path),
-            },
-            repos=[
-                {
-                    "name": r["name"],
-                    "path": r["path"],
-                    "role": r["role"],
-                    "indexed": r["indexed"],
-                }
-                for r in resolved
-            ],
-            errors=errors,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-init",
+                    summary={
+                        "workspace": ws_name,
+                        "repos": len(resolved),
+                        "config_path": str(config_path),
+                    },
+                    repos=[
+                        {
+                            "name": r["name"],
+                            "path": r["path"],
+                            "role": r["role"],
+                            "indexed": r["indexed"],
+                        }
+                        for r in resolved
+                    ],
+                    errors=errors,
+                )
+            )
+        )
         return
 
     # Text output
@@ -183,16 +193,17 @@ def ws_init(ctx, repos, name):
 # ws status
 # ---------------------------------------------------------------------------
 
+
 @ws.command("status")
 @click.pass_context
 def ws_status(ctx):
     """Show workspace status: repos, index ages, cross-repo edges."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
     from roam.workspace.config import get_repo_paths
-    from roam.workspace.db import open_workspace_db, get_cross_edges
+    from roam.workspace.db import get_cross_edges, open_workspace_db
 
     repo_infos = get_repo_paths(config, ws_root)
 
@@ -206,16 +217,21 @@ def ws_status(ctx):
         repo_stats.append(stat)
 
     if json_mode:
-        click.echo(to_json(json_envelope("ws-status",
-            summary={
-                "workspace": config["workspace"],
-                "repos": len(repo_stats),
-                "cross_repo_edges": len(cross_edges),
-                "verdict": f"{len(repo_stats)} repos, {len(cross_edges)} cross-repo edges",
-            },
-            repos=repo_stats,
-            cross_repo_edges=len(cross_edges),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-status",
+                    summary={
+                        "workspace": config["workspace"],
+                        "repos": len(repo_stats),
+                        "cross_repo_edges": len(cross_edges),
+                        "verdict": f"{len(repo_stats)} repos, {len(cross_edges)} cross-repo edges",
+                    },
+                    repos=repo_stats,
+                    cross_repo_edges=len(cross_edges),
+                )
+            )
+        )
         return
 
     click.echo(f"WORKSPACE: {config['workspace']} ({len(repo_stats)} repos)")
@@ -223,8 +239,7 @@ def ws_status(ctx):
     rows = []
     for s in repo_stats:
         age = _format_age(s.get("index_age_s"))
-        rows.append([s["name"], s.get("role", ""), str(s["files"]),
-                      str(s["symbols"]), age])
+        rows.append([s["name"], s.get("role", ""), str(s["files"]), str(s["symbols"]), age])
     click.echo(format_table(headers, rows))
     click.echo(f"  Cross-repo edges: {len(cross_edges)}", nl=False)
     if not cross_edges:
@@ -237,21 +252,26 @@ def ws_status(ctx):
 # ws resolve
 # ---------------------------------------------------------------------------
 
+
 @ws.command("resolve")
 @click.pass_context
 def ws_resolve(ctx):
     """Detect cross-repo API connections between frontend and backend repos."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
+    from roam.workspace.api_scanner import (
+        build_cross_repo_edges,
+        match_api_endpoints,
+        scan_backend_routes,
+        scan_frontend_api_calls,
+    )
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import (
-        open_workspace_db, clear_cross_edges, upsert_repo,
-    )
-    from roam.workspace.api_scanner import (
-        scan_frontend_api_calls, scan_backend_routes,
-        match_api_endpoints, build_cross_repo_edges,
+        clear_cross_edges,
+        open_workspace_db,
+        upsert_repo,
     )
 
     repo_infos = get_repo_paths(config, ws_root)
@@ -327,34 +347,33 @@ def ws_resolve(ctx):
             all_matches.extend(matched)
 
     if json_mode:
-        match_pct = (
-            round(100 * total_matched / total_fe_calls)
-            if total_fe_calls else 0
+        match_pct = round(100 * total_matched / total_fe_calls) if total_fe_calls else 0
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-resolve",
+                    summary={
+                        "frontend_calls": total_fe_calls,
+                        "backend_routes": total_be_routes,
+                        "matched": total_matched,
+                        "match_pct": match_pct,
+                        "verdict": (f"{total_matched}/{total_fe_calls} frontend calls matched ({match_pct}%)"),
+                    },
+                    matches=[
+                        {
+                            "url": m["url_pattern"],
+                            "method": m.get("http_method", ""),
+                            "frontend_file": m["frontend"]["file_path"],
+                            "frontend_symbol": m["frontend"].get("symbol_name", ""),
+                            "backend_file": m["backend"]["file_path"],
+                            "backend_symbol": m["backend"].get("symbol_name", ""),
+                            "score": round(m["score"], 2),
+                        }
+                        for m in all_matches[:50]
+                    ],
+                )
+            )
         )
-        click.echo(to_json(json_envelope("ws-resolve",
-            summary={
-                "frontend_calls": total_fe_calls,
-                "backend_routes": total_be_routes,
-                "matched": total_matched,
-                "match_pct": match_pct,
-                "verdict": (
-                    f"{total_matched}/{total_fe_calls} frontend calls matched "
-                    f"({match_pct}%)"
-                ),
-            },
-            matches=[
-                {
-                    "url": m["url_pattern"],
-                    "method": m.get("http_method", ""),
-                    "frontend_file": m["frontend"]["file_path"],
-                    "frontend_symbol": m["frontend"].get("symbol_name", ""),
-                    "backend_file": m["backend"]["file_path"],
-                    "backend_symbol": m["backend"].get("symbol_name", ""),
-                    "score": round(m["score"], 2),
-                }
-                for m in all_matches[:50]
-            ],
-        )))
         return
 
     click.echo()
@@ -374,17 +393,18 @@ def ws_resolve(ctx):
 # ws understand
 # ---------------------------------------------------------------------------
 
+
 @ws.command("understand")
 @click.pass_context
 def ws_understand(ctx):
     """Full workspace overview: repos, stats, cross-repo connections."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
+    from roam.workspace.aggregator import aggregate_understand
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import open_workspace_db
-    from roam.workspace.aggregator import aggregate_understand
 
     repo_infos = get_repo_paths(config, ws_root)
 
@@ -392,21 +412,26 @@ def ws_understand(ctx):
         data = aggregate_understand(ws_conn, repo_infos)
 
     if json_mode:
-        click.echo(to_json(json_envelope("ws-understand",
-            summary={
-                "workspace": config["workspace"],
-                "repos": len(data["repos"]),
-                "total_files": data["total_files"],
-                "total_symbols": data["total_symbols"],
-                "cross_repo_edges": data["cross_repo_edges"],
-                "verdict": (
-                    f"{len(data['repos'])} repos, {data['total_files']} files, "
-                    f"{data['total_symbols']} symbols, "
-                    f"{data['cross_repo_edges']} cross-repo edges"
-                ),
-            },
-            **data,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-understand",
+                    summary={
+                        "workspace": config["workspace"],
+                        "repos": len(data["repos"]),
+                        "total_files": data["total_files"],
+                        "total_symbols": data["total_symbols"],
+                        "cross_repo_edges": data["cross_repo_edges"],
+                        "verdict": (
+                            f"{len(data['repos'])} repos, {data['total_files']} files, "
+                            f"{data['total_symbols']} symbols, "
+                            f"{data['cross_repo_edges']} cross-repo edges"
+                        ),
+                    },
+                    **data,
+                )
+            )
+        )
         return
 
     click.echo(
@@ -417,14 +442,9 @@ def ws_understand(ctx):
     click.echo()
 
     for repo in data["repos"]:
-        langs = ", ".join(
-            f"{l['language']}" for l in repo.get("languages", [])[:3]
-        )
+        langs = ", ".join(f"{l['language']}" for l in repo.get("languages", [])[:3])
         click.echo(f"=== {repo['name']} ({langs}) ===")
-        click.echo(
-            f"  {repo['files']} files, {repo['symbols']} symbols, "
-            f"{repo['edges']} edges"
-        )
+        click.echo(f"  {repo['files']} files, {repo['symbols']} symbols, {repo['edges']} edges")
         if repo.get("key_symbols"):
             keys = ", ".join(s["name"] for s in repo["key_symbols"][:5])
             click.echo(f"  Key: {keys}")
@@ -433,32 +453,27 @@ def ws_understand(ctx):
     if data["cross_repo_connections"]:
         click.echo(f"=== Cross-Repo Connections ({data['cross_repo_edges']} edges) ===")
         for conn_info in data["cross_repo_connections"]:
-            click.echo(
-                f"  {conn_info['source_repo']} -> {conn_info['target_repo']} "
-                f"({conn_info['edge_count']} edges)"
-            )
+            click.echo(f"  {conn_info['source_repo']} -> {conn_info['target_repo']} ({conn_info['edge_count']} edges)")
             for sample in conn_info.get("samples", [])[:3]:
-                click.echo(
-                    f"    {sample.get('http_method', ''):6s} "
-                    f"{sample.get('url_pattern', '')}"
-                )
+                click.echo(f"    {sample.get('http_method', ''):6s} {sample.get('url_pattern', '')}")
 
 
 # ---------------------------------------------------------------------------
 # ws health
 # ---------------------------------------------------------------------------
 
+
 @ws.command("health")
 @click.pass_context
 def ws_health(ctx):
     """Workspace-wide health report."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
+    from roam.workspace.aggregator import aggregate_health
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import open_workspace_db
-    from roam.workspace.aggregator import aggregate_health
 
     repo_infos = get_repo_paths(config, ws_root)
 
@@ -466,30 +481,32 @@ def ws_health(ctx):
         data = aggregate_health(ws_conn, repo_infos)
 
     if json_mode:
-        click.echo(to_json(json_envelope("ws-health",
-            summary={
-                "workspace": config["workspace"],
-                "workspace_health": data["workspace_health"],
-                "cross_repo_edges": data["cross_repo_edges"],
-                "coupling_verdict": data["coupling_verdict"],
-                "verdict": (
-                    f"Health: {data['workspace_health']}/100, "
-                    f"coupling: {data['coupling_verdict']}"
-                ),
-            },
-            **data,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-health",
+                    summary={
+                        "workspace": config["workspace"],
+                        "workspace_health": data["workspace_health"],
+                        "cross_repo_edges": data["cross_repo_edges"],
+                        "coupling_verdict": data["coupling_verdict"],
+                        "verdict": (f"Health: {data['workspace_health']}/100, coupling: {data['coupling_verdict']}"),
+                    },
+                    **data,
+                )
+            )
+        )
         return
 
-    click.echo(f"VERDICT: Workspace health {data['workspace_health']}/100, "
-               f"cross-repo coupling: {data['coupling_verdict']}")
+    click.echo(
+        f"VERDICT: Workspace health {data['workspace_health']}/100, cross-repo coupling: {data['coupling_verdict']}"
+    )
     click.echo()
     headers = ["Repo", "Health", "Files", "Symbols", "Cycles"]
     rows = []
     for r in data["repos"]:
         score = str(r["health_score"]) if r["health_score"] is not None else "?"
-        rows.append([r["name"], score, str(r["files"]),
-                      str(r["symbols"]), str(r["cycles"])])
+        rows.append([r["name"], score, str(r["files"]), str(r["symbols"]), str(r["cycles"])])
     click.echo(format_table(headers, rows))
     click.echo(f"\n  Cross-repo edges: {data['cross_repo_edges']}")
 
@@ -497,6 +514,7 @@ def ws_health(ctx):
 # ---------------------------------------------------------------------------
 # ws context
 # ---------------------------------------------------------------------------
+
 
 @ws.command("context")
 @click.argument("symbol")
@@ -506,13 +524,13 @@ def ws_context(ctx, symbol):
 
     Searches all repos in the workspace and shows cross-repo callers/callees.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
+    from roam.workspace.aggregator import cross_repo_context
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import open_workspace_db
-    from roam.workspace.aggregator import cross_repo_context
 
     repo_infos = get_repo_paths(config, ws_root)
 
@@ -521,18 +539,22 @@ def ws_context(ctx, symbol):
 
     if json_mode:
         found_repos = [f["repo"] for f in data["found_in"]]
-        click.echo(to_json(json_envelope("ws-context",
-            summary={
-                "symbol": symbol,
-                "found_in_repos": found_repos,
-                "cross_repo_edges": len(data["cross_repo_edges"]),
-                "verdict": (
-                    f"Found in {len(found_repos)} repo(s), "
-                    f"{len(data['cross_repo_edges'])} cross-repo edges"
-                ),
-            },
-            **data,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-context",
+                    summary={
+                        "symbol": symbol,
+                        "found_in_repos": found_repos,
+                        "cross_repo_edges": len(data["cross_repo_edges"]),
+                        "verdict": (
+                            f"Found in {len(found_repos)} repo(s), {len(data['cross_repo_edges'])} cross-repo edges"
+                        ),
+                    },
+                    **data,
+                )
+            )
+        )
         return
 
     if not data["found_in"]:
@@ -541,8 +563,7 @@ def ws_context(ctx, symbol):
 
     for entry in data["found_in"]:
         click.echo(
-            f"[{entry['repo']}] {entry['kind']} {entry['name']}  "
-            f"{entry['file_path']}:{entry.get('line_start', '?')}"
+            f"[{entry['repo']}] {entry['kind']} {entry['name']}  {entry['file_path']}:{entry.get('line_start', '?')}"
         )
         if entry.get("signature"):
             click.echo(f"  {entry['signature']}")
@@ -570,6 +591,7 @@ def ws_context(ctx, symbol):
 # ws trace
 # ---------------------------------------------------------------------------
 
+
 @ws.command("trace")
 @click.argument("source")
 @click.argument("target")
@@ -579,13 +601,13 @@ def ws_trace(ctx, source, target):
 
     Shows how SOURCE connects to TARGET, including cross-repo API edges.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     ws_root, config = _require_workspace()
 
+    from roam.workspace.aggregator import cross_repo_trace
     from roam.workspace.config import get_repo_paths
     from roam.workspace.db import open_workspace_db
-    from roam.workspace.aggregator import cross_repo_trace
 
     repo_infos = get_repo_paths(config, ws_root)
 
@@ -593,16 +615,21 @@ def ws_trace(ctx, source, target):
         data = cross_repo_trace(ws_conn, source, target, repo_infos)
 
     if json_mode:
-        click.echo(to_json(json_envelope("ws-trace",
-            summary={
-                "source": source,
-                "target": target,
-                "bridge_edges": len(data["bridge_edges"]),
-                "same_repo": data["same_repo"],
-                "verdict": data["verdict"],
-            },
-            **data,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ws-trace",
+                    summary={
+                        "source": source,
+                        "target": target,
+                        "bridge_edges": len(data["bridge_edges"]),
+                        "same_repo": data["same_repo"],
+                        "verdict": data["verdict"],
+                    },
+                    **data,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {data['verdict']}")
@@ -632,6 +659,7 @@ def ws_trace(ctx, source, target):
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _require_workspace():
     """Find and load workspace config, or exit with error.

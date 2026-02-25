@@ -30,10 +30,7 @@ def test_load_rules_recurses_subdirectories(tmp_path):
         encoding="utf-8",
     )
     (rules_dir / "style" / "b.yml").write_text(
-        'name: "B"\n'
-        "severity: info\n"
-        "match:\n"
-        "  kind: [function]\n",
+        'name: "B"\nseverity: info\nmatch:\n  kind: [function]\n',
         encoding="utf-8",
     )
 

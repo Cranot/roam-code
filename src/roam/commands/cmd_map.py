@@ -5,15 +5,21 @@ from collections import Counter
 
 import click
 
+from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import (
-    ALL_FILES, TOP_SYMBOLS_BY_PAGERANK,
+    ALL_FILES,
+    TOP_SYMBOLS_BY_PAGERANK,
 )
 from roam.output.formatter import (
-    abbrev_kind, loc, format_signature, format_table, section, to_json,
+    abbrev_kind,
+    format_signature,
+    format_table,
     json_envelope,
+    loc,
+    section,
+    to_json,
 )
-from roam.commands.resolve import ensure_index
 
 
 def _estimate_tokens(text: str) -> int:
@@ -32,14 +38,13 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
 
 
 @click.command("map")
-@click.option('-n', 'count', default=20, help='Number of top symbols to show')
-@click.option('--full', is_flag=True, help='Show all results without truncation')
-@click.option('--budget', type=int, default=None,
-              help='Approximate token limit for output')
+@click.option("-n", "count", default=20, help="Number of top symbols to show")
+@click.option("--full", is_flag=True, help="Show all results without truncation")
+@click.option("--budget", type=int, default=None, help="Approximate token limit for output")
 @click.pass_context
 def map_cmd(ctx, count, full, budget):
     """Show project skeleton with entry points and key symbols."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -52,9 +57,7 @@ def map_cmd(ctx, count, full, budget):
         lang_counts = Counter(f["language"] for f in files if f["language"])
 
         # Edge kind distribution
-        edge_kinds = conn.execute(
-            "SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC"
-        ).fetchall()
+        edge_kinds = conn.execute("SELECT kind, COUNT(*) as cnt FROM edges GROUP BY kind ORDER BY cnt DESC").fetchall()
 
         # --- Top directories ---
         dir_rows_raw = conn.execute("""
@@ -69,12 +72,22 @@ def map_cmd(ctx, count, full, budget):
 
         # --- Entry points ---
         entry_names = {
-            "main.py", "__main__.py", "__init__.py", "index.js", "index.ts",
-            "main.go", "main.rs", "app.py", "app.js", "app.ts",
-            "mod.rs", "lib.rs", "setup.py", "manage.py",
+            "main.py",
+            "__main__.py",
+            "__init__.py",
+            "index.js",
+            "index.ts",
+            "main.go",
+            "main.rs",
+            "app.py",
+            "app.js",
+            "app.ts",
+            "mod.rs",
+            "lib.rs",
+            "setup.py",
+            "manage.py",
         }
-        entries = [f["path"] for f in files
-                   if os.path.basename(f["path"]) in entry_names]
+        entries = [f["path"] for f in files if os.path.basename(f["path"]) in entry_names]
 
         # Filter barrel files: index files with few own definitions (re-export only)
         barrel_paths = set()
@@ -82,8 +95,7 @@ def map_cmd(ctx, count, full, budget):
             bn = os.path.basename(f["path"])
             if bn.startswith("index.") and f["path"] in entries:
                 own_defs = conn.execute(
-                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? "
-                    "AND kind IN ('function', 'class', 'method')",
+                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind IN ('function', 'class', 'method')",
                     (f["id"],),
                 ).fetchone()[0]
                 if own_defs <= 2:
@@ -110,21 +122,14 @@ def map_cmd(ctx, count, full, budget):
         # When budget is active, fetch all ranked symbols to allow greedy
         # filling up to the token limit.  Otherwise honour the -n count.
         fetch_limit = count if budget is None else 10_000
-        all_ranked = conn.execute(
-            TOP_SYMBOLS_BY_PAGERANK, (fetch_limit,)
-        ).fetchall()
+        all_ranked = conn.execute(TOP_SYMBOLS_BY_PAGERANK, (fetch_limit,)).fetchall()
 
         # ---- Budget-aware symbol selection ----
         if budget is not None:
             # Pre-compute the preamble (stats, dirs, entries) to account
             # for its token cost when filling the budget.
-            lang_str = ", ".join(
-                f"{lang}={n}" for lang, n in lang_counts.most_common(8)
-            )
-            edge_str = (
-                ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds)
-                if edge_kinds else "none"
-            )
+            lang_str = ", ".join(f"{lang}={n}" for lang, n in lang_counts.most_common(8))
+            edge_str = ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds) if edge_kinds else "none"
 
             preamble_lines = [
                 f"Files: {total_files}  Symbols: {sym_count}  Edges: {edge_count}",
@@ -133,14 +138,12 @@ def map_cmd(ctx, count, full, budget):
                 "",
             ]
             # Directories section
-            dir_rows_budget = [
-                [d, str(c)]
-                for d, c in (dir_items if full else dir_items[:15])
-            ]
+            dir_rows_budget = [[d, str(c)] for d, c in (dir_items if full else dir_items[:15])]
             preamble_lines.append("Directories:")
             preamble_lines.append(
                 format_table(
-                    ["dir", "files"], dir_rows_budget,
+                    ["dir", "files"],
+                    dir_rows_budget,
                     budget=0 if full else 15,
                 )
             )
@@ -149,7 +152,7 @@ def map_cmd(ctx, count, full, budget):
             # Entry points section
             if entries:
                 preamble_lines.append("Entry points:")
-                for e in (entries if full else entries[:20]):
+                for e in entries if full else entries[:20]:
                     preamble_lines.append(f"  {e}")
                 if not full and len(entries) > 20:
                     preamble_lines.append(f"  (+{len(entries) - 20} more)")
@@ -201,10 +204,15 @@ def map_cmd(ctx, count, full, budget):
                 summary["tokens_used"] = tokens_used
                 data["token_budget"] = budget
                 data["tokens_used"] = tokens_used
-            click.echo(to_json(json_envelope("map",
-                summary=summary,
-                **data,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "map",
+                        summary=summary,
+                        **data,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -212,31 +220,28 @@ def map_cmd(ctx, count, full, budget):
             # Preamble already built above; emit it directly
             click.echo(preamble_text, nl=False)
         else:
-            lang_str = ", ".join(
-                f"{lang}={n}" for lang, n in lang_counts.most_common(8)
-            )
-            edge_str = (
-                ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds)
-                if edge_kinds else "none"
-            )
+            lang_str = ", ".join(f"{lang}={n}" for lang, n in lang_counts.most_common(8))
+            edge_str = ", ".join(f"{r['kind']}={r['cnt']}" for r in edge_kinds) if edge_kinds else "none"
 
             click.echo(f"Files: {total_files}  Symbols: {sym_count}  Edges: {edge_count}")
             click.echo(f"Languages: {lang_str}")
             click.echo(f"Edge kinds: {edge_str}")
             click.echo()
 
-            dir_rows = [
-                [d, str(c)] for d, c in (dir_items if full else dir_items[:15])
-            ]
+            dir_rows = [[d, str(c)] for d, c in (dir_items if full else dir_items[:15])]
             click.echo(section("Directories:", []))
-            click.echo(format_table(
-                ["dir", "files"], dir_rows, budget=0 if full else 15,
-            ))
+            click.echo(
+                format_table(
+                    ["dir", "files"],
+                    dir_rows,
+                    budget=0 if full else 15,
+                )
+            )
             click.echo()
 
             if entries:
                 click.echo("Entry points:")
-                for e in (entries if full else entries[:20]):
+                for e in entries if full else entries[:20]:
                     click.echo(f"  {e}")
                 if not full and len(entries) > 20:
                     click.echo(f"  (+{len(entries) - 20} more)")
@@ -246,18 +251,22 @@ def map_cmd(ctx, count, full, budget):
             rows = []
             for s in top:
                 sig = format_signature(s["signature"], max_len=50)
-                rows.append([
-                    abbrev_kind(s["kind"]),
-                    s["name"],
-                    sig,
-                    loc(s["file_path"], s["line_start"]),
-                    f"{(s['pagerank'] or 0):.4f}",
-                ])
+                rows.append(
+                    [
+                        abbrev_kind(s["kind"]),
+                        s["name"],
+                        sig,
+                        loc(s["file_path"], s["line_start"]),
+                        f"{(s['pagerank'] or 0):.4f}",
+                    ]
+                )
             click.echo("Top symbols (PageRank):")
-            click.echo(format_table(
-                ["kind", "name", "signature", "location", "PR"],
-                rows,
-            ))
+            click.echo(
+                format_table(
+                    ["kind", "name", "signature", "location", "PR"],
+                    rows,
+                )
+            )
         else:
             click.echo("No graph metrics available. Run `roam index` first.")
 

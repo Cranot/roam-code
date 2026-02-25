@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 
 @click.command("x-lang")
@@ -18,7 +18,7 @@ def xlang(ctx):
     - Protobuf .proto -> generated Go/Java/Python stubs
     - Salesforce Apex -> Aura/LWC/Visualforce templates
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -28,24 +28,35 @@ def xlang(ctx):
 
         if not file_paths:
             if json_mode:
-                click.echo(to_json(json_envelope("x-lang",
-                    summary={"bridges": 0, "links": 0},
-                    bridges=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "x-lang",
+                            summary={"bridges": 0, "links": 0},
+                            bridges=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No files indexed.")
             return
 
         # Detect active bridges
         from roam.bridges.registry import detect_bridges
+
         active = detect_bridges(file_paths)
 
         if not active:
             if json_mode:
-                click.echo(to_json(json_envelope("x-lang",
-                    summary={"bridges": 0, "links": 0},
-                    bridges=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "x-lang",
+                            summary={"bridges": 0, "links": 0},
+                            bridges=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No cross-language bridges detected.")
             return
@@ -56,15 +67,9 @@ def xlang(ctx):
 
         for bridge in active:
             # Find source files for this bridge
-            source_files = [
-                p for p in file_paths
-                if any(p.endswith(ext) for ext in bridge.source_extensions)
-            ]
+            source_files = [p for p in file_paths if any(p.endswith(ext) for ext in bridge.source_extensions)]
             # Find target files for this bridge
-            target_files_paths = [
-                p for p in file_paths
-                if any(p.endswith(ext) for ext in bridge.target_extensions)
-            ]
+            target_files_paths = [p for p in file_paths if any(p.endswith(ext) for ext in bridge.target_extensions)]
 
             if not source_files or not target_files_paths:
                 continue
@@ -90,24 +95,31 @@ def xlang(ctx):
                 links_for_bridge.extend(edges)
 
             all_links.extend(links_for_bridge)
-            bridge_summaries.append({
-                "name": bridge.name,
-                "source_files": len(source_files),
-                "target_files": len(target_files_paths),
-                "links": len(links_for_bridge),
-                "source_extensions": sorted(bridge.source_extensions),
-                "target_extensions": sorted(bridge.target_extensions),
-            })
+            bridge_summaries.append(
+                {
+                    "name": bridge.name,
+                    "source_files": len(source_files),
+                    "target_files": len(target_files_paths),
+                    "links": len(links_for_bridge),
+                    "source_extensions": sorted(bridge.source_extensions),
+                    "target_extensions": sorted(bridge.target_extensions),
+                }
+            )
 
         if json_mode:
-            click.echo(to_json(json_envelope("x-lang",
-                summary={
-                    "bridges": len(bridge_summaries),
-                    "links": len(all_links),
-                },
-                bridges=bridge_summaries,
-                links=all_links[:200],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "x-lang",
+                        summary={
+                            "bridges": len(bridge_summaries),
+                            "links": len(all_links),
+                        },
+                        bridges=bridge_summaries,
+                        links=all_links[:200],
+                    )
+                )
+            )
             return
 
         # Text output
@@ -118,18 +130,22 @@ def xlang(ctx):
             for bs in bridge_summaries:
                 src_ext = ", ".join(bs["source_extensions"])
                 tgt_ext = ", ".join(bs["target_extensions"])
-                table_rows.append([
-                    bs["name"],
-                    src_ext,
-                    tgt_ext,
-                    str(bs["source_files"]),
-                    str(bs["target_files"]),
-                    str(bs["links"]),
-                ])
-            click.echo(format_table(
-                ["Bridge", "Source Ext", "Target Ext", "Src Files", "Tgt Files", "Links"],
-                table_rows,
-            ))
+                table_rows.append(
+                    [
+                        bs["name"],
+                        src_ext,
+                        tgt_ext,
+                        str(bs["source_files"]),
+                        str(bs["target_files"]),
+                        str(bs["links"]),
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Bridge", "Source Ext", "Target Ext", "Src Files", "Tgt Files", "Links"],
+                    table_rows,
+                )
+            )
         else:
             click.echo("  (no bridges active)")
 

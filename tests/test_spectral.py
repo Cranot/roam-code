@@ -13,8 +13,8 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import git_init, index_in_process
 
-
 # Graph helpers
+
 
 def _two_cluster_graph():
     G = nx.Graph()
@@ -45,8 +45,10 @@ def _disconnected_graph():
 
 # CLI helpers
 
+
 def _invoke_spectral(args, cwd, json_mode=False):
     from roam.commands.cmd_spectral import spectral
+
     runner = CliRunner()
     old_cwd = os.getcwd()
     try:
@@ -127,9 +129,9 @@ def empty_project(tmp_path, monkeypatch):
 
 
 class TestFiedlerPartition:
-
     def test_two_clusters_produces_partitions(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _two_cluster_graph()
         result = fiedler_partition(G, max_depth=3)
         assert isinstance(result, dict)
@@ -138,6 +140,7 @@ class TestFiedlerPartition:
 
     def test_two_clusters_correct_assignment(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _two_cluster_graph()
         result = fiedler_partition(G, max_depth=1)
         assert len(set(result.values())) == 2
@@ -149,22 +152,26 @@ class TestFiedlerPartition:
 
     def test_empty_graph_returns_empty_dict(self):
         from roam.graph.spectral import fiedler_partition
+
         assert fiedler_partition(nx.Graph()) == {}
 
     def test_single_node_graph(self):
         from roam.graph.spectral import fiedler_partition
+
         G = nx.Graph()
         G.add_node(0)
         assert fiedler_partition(G) == {0: 0}
 
     def test_small_graph_stops_at_min_size(self):
         from roam.graph.spectral import fiedler_partition
+
         G = nx.path_graph(4)
         result = fiedler_partition(G, max_depth=5)
         assert len(set(result.values())) == 1
 
     def test_disconnected_graph_each_component_handled(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _disconnected_graph()
         result = fiedler_partition(G)
         assert len(result) == 10
@@ -174,6 +181,7 @@ class TestFiedlerPartition:
 
     def test_depth_limit_controls_partitions(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _two_cluster_graph()
         r1 = fiedler_partition(G, max_depth=1)
         r3 = fiedler_partition(G, max_depth=3)
@@ -181,6 +189,7 @@ class TestFiedlerPartition:
 
     def test_directed_graph_uses_undirected_projection(self):
         from roam.graph.spectral import fiedler_partition
+
         DG = _two_cluster_graph().to_directed()
         result = fiedler_partition(DG, max_depth=1)
         assert len(result) == 12
@@ -188,18 +197,21 @@ class TestFiedlerPartition:
 
     def test_all_nodes_assigned(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _path_graph(20)
         result = fiedler_partition(G, max_depth=3)
         assert set(result.keys()) == set(G.nodes())
 
     def test_dense_graph_handled(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _dense_graph(10)
         result = fiedler_partition(G, max_depth=2)
         assert len(result) == 10
 
     def test_partition_ids_are_dense_integers(self):
         from roam.graph.spectral import fiedler_partition
+
         G = _two_cluster_graph()
         result = fiedler_partition(G, max_depth=2)
         ids = sorted(set(result.values()))
@@ -207,13 +219,14 @@ class TestFiedlerPartition:
 
 
 class TestSpectralGap:
-
     def test_empty_graph_returns_zero(self):
         from roam.graph.spectral import spectral_gap
+
         assert spectral_gap(nx.Graph()) == 0.0
 
     def test_two_cluster_graph_has_low_gap(self):
         from roam.graph.spectral import spectral_gap
+
         G = _two_cluster_graph()
         gap = spectral_gap(G)
         assert isinstance(gap, float)
@@ -222,16 +235,19 @@ class TestSpectralGap:
 
     def test_complete_graph_high_gap(self):
         from roam.graph.spectral import spectral_gap
+
         G = nx.complete_graph(10)
         gap = spectral_gap(G)
         assert gap > 1.0
 
     def test_path_graph_gap_is_positive(self):
         from roam.graph.spectral import spectral_gap
+
         assert spectral_gap(_path_graph(10)) > 0.0
 
     def test_disconnected_graph_minimum_gap(self):
         from roam.graph.spectral import spectral_gap
+
         G = _disconnected_graph()
         gap = spectral_gap(G)
         assert isinstance(gap, float)
@@ -239,20 +255,22 @@ class TestSpectralGap:
 
     def test_single_node_graph(self):
         from roam.graph.spectral import spectral_gap
+
         G = nx.Graph()
         G.add_node(0)
         assert spectral_gap(G) == 0.0
 
     def test_directed_graph_accepted(self):
         from roam.graph.spectral import spectral_gap
+
         G = _two_cluster_graph().to_directed()
         assert isinstance(spectral_gap(G), float)
 
 
 class TestSpectralCommunities:
-
     def test_explicit_k_two(self):
         from roam.graph.spectral import spectral_communities
+
         G = _two_cluster_graph()
         result = spectral_communities(G, k=2)
         assert len(set(result.values())) == 2
@@ -260,6 +278,7 @@ class TestSpectralCommunities:
 
     def test_explicit_k_three(self):
         from roam.graph.spectral import spectral_communities
+
         G = _path_graph(20)
         result = spectral_communities(G, k=3)
         assert len(set(result.values())) <= 3
@@ -267,6 +286,7 @@ class TestSpectralCommunities:
 
     def test_auto_k_returns_sensible_count(self):
         from roam.graph.spectral import spectral_communities
+
         G = _two_cluster_graph()
         result = spectral_communities(G, k=None)
         assert len(set(result.values())) >= 2
@@ -274,16 +294,19 @@ class TestSpectralCommunities:
 
     def test_empty_graph_returns_empty(self):
         from roam.graph.spectral import spectral_communities
+
         assert spectral_communities(nx.Graph()) == {}
 
     def test_small_graph_uses_fallback(self):
         from roam.graph.spectral import spectral_communities
+
         G = nx.path_graph(3)
         result = spectral_communities(G, k=2)
         assert len(result) == 3
 
     def test_k_larger_than_natural_partitions(self):
         from roam.graph.spectral import spectral_communities
+
         G = _two_cluster_graph()
         result = spectral_communities(G, k=10)
         assert len(set(result.values())) >= 1
@@ -291,47 +314,54 @@ class TestSpectralCommunities:
 
     def test_all_nodes_returned(self):
         from roam.graph.spectral import spectral_communities
+
         G = _path_graph(15)
         result = spectral_communities(G, k=3)
         assert set(result.keys()) == set(G.nodes())
 
 
 class TestVerdictFromGap:
-
     def test_high_gap_well_modularized(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.6) == "Well-modularized"
 
     def test_medium_gap_moderately_modular(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.3) == "Moderately modular"
 
     def test_low_gap_poorly_modularized(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.05) == "Poorly modularized"
 
     def test_exact_boundary_high(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.5) == "Moderately modular"
 
     def test_exact_boundary_med(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.1) == "Poorly modularized"
 
     def test_zero_gap(self):
         from roam.graph.spectral import verdict_from_gap
+
         assert verdict_from_gap(0.0) == "Poorly modularized"
 
 
 class TestAdjustedRandIndex:
-
     def test_perfect_agreement(self):
         from roam.graph.spectral import adjusted_rand_index
+
         labels = [0, 0, 1, 1, 2, 2]
         assert adjusted_rand_index(labels, labels) == 1.0
 
     def test_completely_different(self):
         from roam.graph.spectral import adjusted_rand_index
+
         true_labels = [0, 0, 1, 1]
         pred_labels = [0, 1, 0, 1]
         ari = adjusted_rand_index(true_labels, pred_labels)
@@ -340,24 +370,29 @@ class TestAdjustedRandIndex:
 
     def test_empty_lists(self):
         from roam.graph.spectral import adjusted_rand_index
+
         assert adjusted_rand_index([], []) == 1.0
 
     def test_single_element(self):
         from roam.graph.spectral import adjusted_rand_index
+
         assert adjusted_rand_index([0], [0]) == 1.0
 
     def test_mismatched_length_raises(self):
         from roam.graph.spectral import adjusted_rand_index
+
         with pytest.raises(ValueError):
             adjusted_rand_index([0, 1], [0])
 
     def test_all_same_cluster_both(self):
         from roam.graph.spectral import adjusted_rand_index
+
         labels = [0, 0, 0, 0]
         assert adjusted_rand_index(labels, labels) == 1.0
 
     def test_two_cluster_agreement(self):
         from roam.graph.spectral import adjusted_rand_index
+
         true_labels = [0, 0, 0, 1, 1, 1]
         pred_labels = [1, 1, 1, 0, 0, 0]
         ari = adjusted_rand_index(true_labels, pred_labels)
@@ -370,7 +405,6 @@ class TestAdjustedRandIndex:
 
 
 class TestSpectralCommand:
-
     def test_basic_invocation(self, spectral_project):
         result = _invoke_spectral([], spectral_project)
         assert result.exit_code == 0, f"exit {result.exit_code}: {result.output}"
@@ -507,9 +541,9 @@ class TestSpectralCommand:
 
 
 class TestInternalHelpers:
-
     def test_fiedler_split_two_nodes(self):
         from roam.graph.spectral import _fiedler_split
+
         G = nx.Graph()
         G.add_edge(0, 1)
         result = _fiedler_split(G)
@@ -519,12 +553,14 @@ class TestInternalHelpers:
 
     def test_fiedler_split_single_node_returns_none(self):
         from roam.graph.spectral import _fiedler_split
+
         G = nx.Graph()
         G.add_node(0)
         assert _fiedler_split(G) is None
 
     def test_fiedler_split_disconnected_returns_none(self):
         from roam.graph.spectral import _fiedler_split
+
         G = nx.Graph()
         G.add_edge(0, 1)
         G.add_edge(2, 3)
@@ -532,6 +568,7 @@ class TestInternalHelpers:
 
     def test_louvain_fallback_returns_all_nodes(self):
         from roam.graph.spectral import _louvain_fallback
+
         G = nx.path_graph(5)
         result = _louvain_fallback(G)
         assert set(result.keys()) == set(G.nodes())
@@ -540,16 +577,19 @@ class TestInternalHelpers:
 
     def test_louvain_fallback_empty_graph(self):
         from roam.graph.spectral import _louvain_fallback
+
         assert _louvain_fallback(nx.Graph()) == {}
 
     def test_compute_algebraic_connectivity_trivial(self):
         from roam.graph.spectral import _compute_algebraic_connectivity
+
         G = nx.Graph()
         G.add_node(0)
         assert _compute_algebraic_connectivity(G) == 0.0
 
     def test_compute_algebraic_connectivity_disconnected(self):
         from roam.graph.spectral import _compute_algebraic_connectivity
+
         G = _disconnected_graph()
         assert _compute_algebraic_connectivity(G) == 0.0
 
@@ -560,11 +600,11 @@ class TestInternalHelpers:
 
 
 class TestSpectralMCP:
-
     def test_mcp_tool_callable(self, spectral_project, monkeypatch):
         monkeypatch.chdir(spectral_project)
         try:
             from roam.mcp_server import roam_spectral
+
             result = roam_spectral(root=str(spectral_project))
             assert isinstance(result, dict)
         except ImportError:
@@ -574,6 +614,7 @@ class TestSpectralMCP:
         monkeypatch.chdir(spectral_project)
         try:
             from roam.mcp_server import roam_spectral
+
             result = roam_spectral(gap_only=True, root=str(spectral_project))
             assert isinstance(result, dict)
         except ImportError:

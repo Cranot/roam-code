@@ -11,53 +11,85 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import index_in_process, git_init, invoke_cli, parse_json_output, assert_json_envelope
-
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def runtime_project(project_factory):
-    return project_factory({
-        "api.py": "from service import process\ndef handle(): return process()\n",
-        "service.py": "from utils import helper\ndef process(): return helper()\n",
-        "utils.py": "def helper(): return 42\n",
-    })
+    return project_factory(
+        {
+            "api.py": "from service import process\ndef handle(): return process()\n",
+            "service.py": "from utils import helper\ndef process(): return helper()\n",
+            "utils.py": "def helper(): return 42\n",
+        }
+    )
 
 
 @pytest.fixture
 def security_hotspots_project(project_factory):
-    return project_factory({
-        "app.py": (
-            "import os\n"
-            "\n"
-            "def public_handler(user_input):\n"
-            "    return run_eval(user_input)\n"
-            "\n"
-            "def run_eval(user_input):\n"
-            "    return eval(user_input)\n"
-            "\n"
-            "def _unsafe_shell(cmd):\n"
-            "    return os.system(cmd)\n"
-        ),
-        "ui.js": (
-            "export function renderUnsafe(input) {\n"
-            "  const out = document.getElementById('out');\n"
-            "  out.innerHTML = input;\n"
-            "}\n"
-        ),
-    })
+    return project_factory(
+        {
+            "app.py": (
+                "import os\n"
+                "\n"
+                "def public_handler(user_input):\n"
+                "    return run_eval(user_input)\n"
+                "\n"
+                "def run_eval(user_input):\n"
+                "    return eval(user_input)\n"
+                "\n"
+                "def _unsafe_shell(cmd):\n"
+                "    return os.system(cmd)\n"
+            ),
+            "ui.js": (
+                "export function renderUnsafe(input) {\n"
+                "  const out = document.getElementById('out');\n"
+                "  out.innerHTML = input;\n"
+                "}\n"
+            ),
+        }
+    )
 
 
 @pytest.fixture
 def generic_trace(tmp_path):
     trace = [
-        {"function": "handle", "file": "api.py", "call_count": 1000, "p50_ms": 10, "p99_ms": 100, "error_rate": 0.01},
-        {"function": "process", "file": "service.py", "call_count": 950, "p50_ms": 8, "p99_ms": 80, "error_rate": 0.0},
-        {"function": "helper", "file": "utils.py", "call_count": 900, "p50_ms": 2, "p99_ms": 5, "error_rate": 0.0},
-        {"function": "unknown_fn", "file": "nowhere.py", "call_count": 500, "p50_ms": 50, "p99_ms": 500, "error_rate": 0.1},
+        {
+            "function": "handle",
+            "file": "api.py",
+            "call_count": 1000,
+            "p50_ms": 10,
+            "p99_ms": 100,
+            "error_rate": 0.01,
+        },
+        {
+            "function": "process",
+            "file": "service.py",
+            "call_count": 950,
+            "p50_ms": 8,
+            "p99_ms": 80,
+            "error_rate": 0.0,
+        },
+        {
+            "function": "helper",
+            "file": "utils.py",
+            "call_count": 900,
+            "p50_ms": 2,
+            "p99_ms": 5,
+            "error_rate": 0.0,
+        },
+        {
+            "function": "unknown_fn",
+            "file": "nowhere.py",
+            "call_count": 500,
+            "p50_ms": 50,
+            "p99_ms": 500,
+            "error_rate": 0.1,
+        },
     ]
     p = tmp_path / "trace.json"
     p.write_text(json.dumps(trace))
@@ -79,8 +111,14 @@ def otel_trace_with_db_attrs(tmp_path):
                                 "attributes": [
                                     {"key": "db.system", "value": {"stringValue": "postgresql"}},
                                     {"key": "db.operation", "value": {"stringValue": "SELECT"}},
-                                    {"key": "db.statement", "value": {"stringValue": "SELECT * FROM users"}},
-                                    {"key": "code.filepath", "value": {"stringValue": "service.py"}},
+                                    {
+                                        "key": "db.statement",
+                                        "value": {"stringValue": "SELECT * FROM users"},
+                                    },
+                                    {
+                                        "key": "code.filepath",
+                                        "value": {"stringValue": "service.py"},
+                                    },
                                 ],
                             },
                             {
@@ -90,8 +128,14 @@ def otel_trace_with_db_attrs(tmp_path):
                                 "attributes": [
                                     {"key": "db.system", "value": {"stringValue": "postgresql"}},
                                     {"key": "db.operation", "value": {"stringValue": "SELECT"}},
-                                    {"key": "db.statement", "value": {"stringValue": "SELECT id FROM users"}},
-                                    {"key": "code.filepath", "value": {"stringValue": "service.py"}},
+                                    {
+                                        "key": "db.statement",
+                                        "value": {"stringValue": "SELECT id FROM users"},
+                                    },
+                                    {
+                                        "key": "code.filepath",
+                                        "value": {"stringValue": "service.py"},
+                                    },
                                 ],
                             },
                         ]
@@ -114,10 +158,12 @@ def cli_runner():
 # Unit tests: runtime_stats table
 # ---------------------------------------------------------------------------
 
+
 class TestRuntimeStatsTable:
     def test_runtime_stats_table_exists(self, runtime_project):
         """Table created after migration via ensure_schema."""
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -135,11 +181,13 @@ class TestRuntimeStatsTable:
 # Unit tests: trace ingestion
 # ---------------------------------------------------------------------------
 
+
 class TestIngestGenericTrace:
     def test_ingest_generic_trace(self, runtime_project, generic_trace):
         """Stats inserted correctly from generic trace."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -161,7 +209,8 @@ class TestIngestGenericTrace:
     def test_ingest_matches_symbols(self, runtime_project, generic_trace):
         """Matched symbol_id populated for known functions."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -179,7 +228,8 @@ class TestIngestGenericTrace:
     def test_ingest_unmatched_spans(self, runtime_project, generic_trace):
         """Unmatched spans still recorded."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -197,7 +247,8 @@ class TestIngestGenericTrace:
     def test_ingest_updates_existing(self, runtime_project, generic_trace, tmp_path):
         """Re-ingestion updates stats rather than duplicating."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -209,7 +260,14 @@ class TestIngestGenericTrace:
 
             # Second ingest with updated values
             trace2 = [
-                {"function": "handle", "file": "api.py", "call_count": 2000, "p50_ms": 15, "p99_ms": 150, "error_rate": 0.05},
+                {
+                    "function": "handle",
+                    "file": "api.py",
+                    "call_count": 2000,
+                    "p50_ms": 15,
+                    "p99_ms": 150,
+                    "error_rate": 0.05,
+                },
             ]
             p2 = tmp_path / "trace2.json"
             p2.write_text(json.dumps(trace2))
@@ -231,12 +289,10 @@ class TestIngestGenericTrace:
 
 
 class TestIngestOtelTrace:
-    def test_ingest_otel_captures_db_semantics(
-        self, runtime_project, otel_trace_with_db_attrs
-    ):
+    def test_ingest_otel_captures_db_semantics(self, runtime_project, otel_trace_with_db_attrs):
         """OTel ingestion should persist DB semantic attributes."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_otel_trace, ensure_runtime_table
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_otel_trace
 
         old_cwd = os.getcwd()
         try:
@@ -265,11 +321,13 @@ class TestIngestOtelTrace:
 # Unit tests: symbol matching
 # ---------------------------------------------------------------------------
 
+
 class TestMatchTraceToSymbol:
     def test_match_trace_to_symbol_exact(self, runtime_project):
         """Exact name+file match works."""
         from roam.db.connection import open_db
         from roam.runtime.trace_ingest import match_trace_to_symbol
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -283,6 +341,7 @@ class TestMatchTraceToSymbol:
         """Name-only match works when unique."""
         from roam.db.connection import open_db
         from roam.runtime.trace_ingest import match_trace_to_symbol
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -297,12 +356,14 @@ class TestMatchTraceToSymbol:
 # Unit tests: hotspots
 # ---------------------------------------------------------------------------
 
+
 class TestHotspots:
     def test_hotspots_returns_list(self, runtime_project, generic_trace):
         """Hotspots analysis returns results after ingestion."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
         from roam.runtime.hotspots import compute_hotspots
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -321,8 +382,9 @@ class TestHotspots:
     def test_hotspot_classification(self, runtime_project, generic_trace):
         """UPGRADE/CONFIRMED/DOWNGRADE categories are assigned."""
         from roam.db.connection import open_db
-        from roam.runtime.trace_ingest import ingest_generic_trace, ensure_runtime_table
         from roam.runtime.hotspots import compute_hotspots
+        from roam.runtime.trace_ingest import ensure_runtime_table, ingest_generic_trace
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(runtime_project))
@@ -345,6 +407,7 @@ class TestHotspots:
 # CLI tests: ingest-trace
 # ---------------------------------------------------------------------------
 
+
 class TestCliIngestTrace:
     def test_cli_ingest_trace_runs(self, runtime_project, generic_trace, cli_runner):
         """Exit code 0."""
@@ -354,8 +417,7 @@ class TestCliIngestTrace:
 
     def test_cli_ingest_trace_json(self, runtime_project, generic_trace, cli_runner):
         """Valid JSON envelope."""
-        result = invoke_cli(cli_runner, ["ingest-trace", generic_trace],
-                           cwd=runtime_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["ingest-trace", generic_trace], cwd=runtime_project, json_mode=True)
         data = parse_json_output(result, "ingest-trace")
         assert_json_envelope(data, "ingest-trace")
         assert "total" in data["summary"]
@@ -365,6 +427,7 @@ class TestCliIngestTrace:
     def test_cli_ingest_trace_help(self, cli_runner):
         """--help works."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["ingest-trace", "--help"])
         assert result.exit_code == 0
         assert "ingest" in result.output.lower() or "trace" in result.output.lower()
@@ -373,6 +436,7 @@ class TestCliIngestTrace:
 # ---------------------------------------------------------------------------
 # CLI tests: hotspots
 # ---------------------------------------------------------------------------
+
 
 class TestCliHotspots:
     def test_cli_hotspots_runs(self, runtime_project, generic_trace, cli_runner):
@@ -402,6 +466,7 @@ class TestCliHotspots:
     def test_cli_hotspots_help(self, cli_runner):
         """--help works."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["hotspots", "--help"])
         assert result.exit_code == 0
         assert "hotspot" in result.output.lower() or "runtime" in result.output.lower()
@@ -445,9 +510,7 @@ class TestCliSecurityHotspots:
         assert required.issubset(set(data["hotspots"][0].keys()))
         assert any(h.get("reachable_from_entrypoint") for h in data["hotspots"])
 
-    def test_cli_hotspots_security_conflict_flags(
-        self, security_hotspots_project, cli_runner
-    ):
+    def test_cli_hotspots_security_conflict_flags(self, security_hotspots_project, cli_runner):
         """Runtime-only flags should conflict with security mode."""
         result = invoke_cli(
             cli_runner,

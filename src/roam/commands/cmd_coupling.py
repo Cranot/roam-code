@@ -4,15 +4,15 @@ import math
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Surprise score: Jaccard similarity against hypergraph patterns
 # ---------------------------------------------------------------------------
+
 
 def _npmi(p_ab, p_a, p_b):
     """Normalized Pointwise Mutual Information.
@@ -103,6 +103,7 @@ def _compute_surprise(conn, change_fids):
 # Against mode: check coupling for a change set
 # ---------------------------------------------------------------------------
 
+
 def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
     """Check which co-change partners are missing from the change set."""
     path_to_id = {}
@@ -176,15 +177,30 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option('-n', 'count', default=20, help='Number of pairs to show')
-@click.option('--staged', is_flag=True, help='Check coupling for staged changes')
-@click.option('--against', 'commit_range', default=None,
-              help='Check coupling for a commit range (e.g. HEAD~3..HEAD)')
-@click.option('--min-strength', default=0.3, type=float, show_default=True,
-              help='Minimum coupling strength for against mode')
-@click.option('--min-cochanges', default=2, type=int, show_default=True,
-              help='Minimum co-change count for against mode')
+@click.option("-n", "count", default=20, help="Number of pairs to show")
+@click.option("--staged", is_flag=True, help="Check coupling for staged changes")
+@click.option(
+    "--against",
+    "commit_range",
+    default=None,
+    help="Check coupling for a commit range (e.g. HEAD~3..HEAD)",
+)
+@click.option(
+    "--min-strength",
+    default=0.3,
+    type=float,
+    show_default=True,
+    help="Minimum coupling strength for against mode",
+)
+@click.option(
+    "--min-cochanges",
+    default=2,
+    type=int,
+    show_default=True,
+    help="Minimum co-change count for against mode",
+)
 @click.pass_context
 def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
     """Show temporal coupling: file pairs that change together.
@@ -192,7 +208,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
     Default: show top co-change pairs.
     With --staged or --against: show missing co-change partners for your changes.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -203,9 +219,14 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
             if not changed:
                 label = commit_range or "staged"
                 if json_mode:
-                    click.echo(to_json(json_envelope("coupling",
-                        summary={"error": f"No changes for {label}"},
-                    )))
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "coupling",
+                                summary={"error": f"No changes for {label}"},
+                            )
+                        )
+                    )
                 else:
                     click.echo(f"No changes found for {label}.")
                 return
@@ -213,21 +234,31 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
             file_map = resolve_changed_to_db(conn, changed)
             if not file_map:
                 if json_mode:
-                    click.echo(to_json(json_envelope("coupling",
-                        summary={"error": "Changed files not in index"},
-                    )))
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "coupling",
+                                summary={"error": "Changed files not in index"},
+                            )
+                        )
+                    )
                 else:
                     click.echo("Changed files not found in index.")
                 return
 
             change_fids = list(file_map.values())
             missing, included = _against_mode(
-                conn, change_fids, file_map, min_strength, min_cochanges,
+                conn,
+                change_fids,
+                file_map,
+                min_strength,
+                min_cochanges,
             )
             surprise, best_pattern, similarity = _compute_surprise(conn, change_fids)
 
             if json_mode:
-                envelope = json_envelope("coupling",
+                envelope = json_envelope(
+                    "coupling",
                     summary={
                         "change_set": len(file_map),
                         "missing": len(missing),
@@ -246,8 +277,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
 
             label = commit_range or "staged"
             click.echo(f"=== Coupling Check ({label}, {len(file_map)} files) ===\n")
-            click.echo(f"Surprise score: {surprise:.0%}"
-                        f"{'  (unfamiliar combination!)' if surprise > 0.7 else ''}")
+            click.echo(f"Surprise score: {surprise:.0%}{'  (unfamiliar combination!)' if surprise > 0.7 else ''}")
             click.echo()
 
             if missing:
@@ -255,16 +285,21 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 click.echo("(files you usually change together but are not in this diff)")
                 rows = []
                 for m in missing[:20]:
-                    rows.append([
-                        "MISSING", m["path"],
-                        f"{m['strength']:.0%}",
-                        str(m["cochanges"]),
-                        m["partner_of"],
-                    ])
-                click.echo(format_table(
-                    ["Status", "File", "Strength", "Co-changes", "Partner of"],
-                    rows,
-                ))
+                    rows.append(
+                        [
+                            "MISSING",
+                            m["path"],
+                            f"{m['strength']:.0%}",
+                            str(m["cochanges"]),
+                            m["partner_of"],
+                        ]
+                    )
+                click.echo(
+                    format_table(
+                        ["Status", "File", "Strength", "Co-changes", "Partner of"],
+                        rows,
+                    )
+                )
             else:
                 click.echo("No missing co-change partners.")
 
@@ -272,18 +307,25 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 click.echo(f"\nIncluded partners ({len(included)}):")
                 rows = []
                 for i in included[:10]:
-                    rows.append([
-                        "OK", i["path"], f"{i['strength']:.0%}",
-                        str(i["cochanges"]),
-                    ])
-                click.echo(format_table(
-                    ["Status", "File", "Strength", "Co-changes"],
-                    rows,
-                ))
+                    rows.append(
+                        [
+                            "OK",
+                            i["path"],
+                            f"{i['strength']:.0%}",
+                            str(i["cochanges"]),
+                        ]
+                    )
+                click.echo(
+                    format_table(
+                        ["Status", "File", "Strength", "Co-changes"],
+                        rows,
+                    )
+                )
             return
 
         # --- Default mode: top co-change pairs ---
-        rows = conn.execute("""
+        rows = conn.execute(
+            """
             SELECT fa.path as path_a, fb.path as path_b,
                    gc.cochange_count
             FROM git_cochange gc
@@ -291,14 +333,21 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
             JOIN files fb ON gc.file_id_b = fb.id
             ORDER BY gc.cochange_count DESC
             LIMIT ?
-        """, (count,)).fetchall()
+        """,
+            (count,),
+        ).fetchall()
 
         if not rows:
             if json_mode:
-                click.echo(to_json(json_envelope("coupling",
-                    summary={"pairs": 0},
-                    pairs=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "coupling",
+                            summary={"pairs": 0},
+                            pairs=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No co-change data available. Run `roam index` on a git repository.")
             return
@@ -363,9 +412,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     # Lift: P(A,B) / (P(A)*P(B)); lift > 1 → statistically significant
                     ca = file_commits.get(fid_a, 1)
                     cb = file_commits.get(fid_b, 1)
-                    lift_val = round(
-                        (r["cochange_count"] * total_commits) / max(ca * cb, 1), 2
-                    )
+                    lift_val = round((r["cochange_count"] * total_commits) / max(ca * cb, 1), 2)
                     # NPMI: information-theoretic coupling strength [-1, +1]
                     # Per Bouma (2009), superior to Jaccard for accounting for
                     # marginal frequencies.
@@ -375,29 +422,41 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     npmi_val = round(_npmi(p_ab, p_a, p_b), 3)
                 else:
                     npmi_val = None
-                pairs.append({
-                    "file_a": pa, "file_b": pb,
-                    "cochange_count": r["cochange_count"],
-                    "strength": strength_val,
-                    "lift": lift_val,
-                    "npmi": npmi_val,
-                    "has_structural_edge": has_struct,
-                })
+                pairs.append(
+                    {
+                        "file_a": pa,
+                        "file_b": pb,
+                        "cochange_count": r["cochange_count"],
+                        "strength": strength_val,
+                        "lift": lift_val,
+                        "npmi": npmi_val,
+                        "has_structural_edge": has_struct,
+                    }
+                )
             hidden_pairs = sum(1 for p in pairs if not p["has_structural_edge"])
-            click.echo(to_json(json_envelope("coupling",
-                summary={"pairs": len(pairs), "hidden_coupling": hidden_pairs},
-                pairs=pairs,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "coupling",
+                        summary={"pairs": len(pairs), "hidden_coupling": hidden_pairs},
+                        pairs=pairs,
+                    )
+                )
+            )
             return
 
         click.echo("=== Temporal coupling (co-change frequency) ===")
-        click.echo(format_table(
-            ["co-changes", "strength", "structural?", "file A", "file B"],
-            table_rows,
-        ))
+        click.echo(
+            format_table(
+                ["co-changes", "strength", "structural?", "file A", "file B"],
+                table_rows,
+            )
+        )
 
         hidden_count = sum(1 for r in table_rows if r[2] == "HIDDEN")
         total_pairs = len(table_rows)
         if hidden_count:
             pct = hidden_count * 100 / total_pairs if total_pairs else 0
-            click.echo(f"\n{hidden_count}/{total_pairs} pairs ({pct:.0f}%) have NO import edge but co-change frequently (hidden coupling).")
+            click.echo(
+                f"\n{hidden_count}/{total_pairs} pairs ({pct:.0f}%) have NO import edge but co-change frequently (hidden coupling)."
+            )

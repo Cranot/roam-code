@@ -17,41 +17,31 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import index_in_process, git_init, invoke_cli
-
+from conftest import invoke_cli
 
 # ---------------------------------------------------------------------------
 # Fixture: small project with clusters
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def fp_project(project_factory):
-    return project_factory({
-        "api/routes.py": (
-            "from service import handle\n"
-            "def get_users(): return handle()\n"
-            "def get_orders(): pass\n"
-        ),
-        "service.py": (
-            "from models import User\n"
-            "def handle(): return User()\n"
-        ),
-        "models.py": (
-            "class User:\n"
-            "    def save(self): pass\n"
-        ),
-        "utils.py": (
-            "def format_name(n): return n.title()\n"
-        ),
-    })
+    return project_factory(
+        {
+            "api/routes.py": ("from service import handle\ndef get_users(): return handle()\ndef get_orders(): pass\n"),
+            "service.py": ("from models import User\ndef handle(): return User()\n"),
+            "models.py": ("class User:\n    def save(self): pass\n"),
+            "utils.py": ("def format_name(n): return n.title()\n"),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Unit tests: compute_fingerprint
 # ---------------------------------------------------------------------------
 
-class TestComputeFingerprint:
 
+class TestComputeFingerprint:
     def test_compute_fingerprint_returns_dict(self, fp_project, monkeypatch):
         monkeypatch.chdir(fp_project)
         from roam.db.connection import open_db
@@ -130,14 +120,14 @@ class TestComputeFingerprint:
 # Unit tests: compare_fingerprints
 # ---------------------------------------------------------------------------
 
-class TestCompareFingerprints:
 
+class TestCompareFingerprints:
     def test_compare_fingerprints_same(self, fp_project, monkeypatch):
         """Comparing identical fingerprints should give similarity close to 1.0."""
         monkeypatch.chdir(fp_project)
         from roam.db.connection import open_db
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.fingerprint import compute_fingerprint, compare_fingerprints
+        from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
 
         with open_db(readonly=True) as conn:
             G = build_symbol_graph(conn)
@@ -185,8 +175,8 @@ class TestCompareFingerprints:
 # CLI tests
 # ---------------------------------------------------------------------------
 
-class TestCLIFingerprint:
 
+class TestCLIFingerprint:
     def test_cli_fingerprint_runs(self, fp_project, monkeypatch):
         monkeypatch.chdir(fp_project)
         runner = CliRunner()
@@ -246,6 +236,7 @@ class TestCLIFingerprint:
     def test_fingerprint_help(self):
         runner = CliRunner()
         from roam.cli import cli
+
         result = runner.invoke(cli, ["fingerprint", "--help"])
         assert result.exit_code == 0
         assert "fingerprint" in result.output.lower() or "topology" in result.output.lower()

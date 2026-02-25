@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import stat
 import subprocess
 import sys
@@ -10,7 +9,7 @@ from pathlib import Path
 
 import click
 
-from roam.output.formatter import to_json, json_envelope
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -77,7 +76,7 @@ def _find_git_hooks_dir() -> Path | None:
             try:
                 content = candidate.read_text(encoding="utf-8").strip()
                 if content.startswith("gitdir:"):
-                    real_git = Path(content[len("gitdir:"):].strip())
+                    real_git = Path(content[len("gitdir:") :].strip())
                     if not real_git.is_absolute():
                         real_git = parent / real_git
                     return real_git / "hooks"
@@ -242,10 +241,15 @@ def install(ctx, force):
     if hooks_dir is None:
         msg = "No git repository found. Run `git init` first."
         if json_mode:
-            click.echo(to_json(json_envelope("hooks",
-                summary={"verdict": msg, "installed": [], "skipped": [], "errors": []},
-                hooks_dir=None,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "hooks",
+                        summary={"verdict": msg, "installed": [], "skipped": [], "errors": []},
+                        hooks_dir=None,
+                    )
+                )
+            )
         else:
             click.echo(f"VERDICT: {msg}")
         ctx.exit(1)
@@ -277,16 +281,21 @@ def install(ctx, force):
         verdict = f"All hooks already installed ({len(skipped)} skipped). Use --force to refresh."
 
     if json_mode:
-        click.echo(to_json(json_envelope("hooks",
-            summary={
-                "verdict": verdict,
-                "installed": installed,
-                "skipped": skipped,
-                "errors": errors,
-            },
-            hooks_dir=str(hooks_dir),
-            results=results,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "hooks",
+                    summary={
+                        "verdict": verdict,
+                        "installed": installed,
+                        "skipped": skipped,
+                        "errors": errors,
+                    },
+                    hooks_dir=str(hooks_dir),
+                    results=results,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -313,10 +322,15 @@ def uninstall(ctx):
     if hooks_dir is None:
         msg = "No git repository found."
         if json_mode:
-            click.echo(to_json(json_envelope("hooks",
-                summary={"verdict": msg, "removed": [], "not_installed": [], "errors": []},
-                hooks_dir=None,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "hooks",
+                        summary={"verdict": msg, "removed": [], "not_installed": [], "errors": []},
+                        hooks_dir=None,
+                    )
+                )
+            )
         else:
             click.echo(f"VERDICT: {msg}")
         ctx.exit(1)
@@ -344,16 +358,21 @@ def uninstall(ctx):
         verdict = "No roam hooks found to remove."
 
     if json_mode:
-        click.echo(to_json(json_envelope("hooks",
-            summary={
-                "verdict": verdict,
-                "removed": removed,
-                "not_installed": not_installed,
-                "errors": errors,
-            },
-            hooks_dir=str(hooks_dir),
-            results=results,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "hooks",
+                    summary={
+                        "verdict": verdict,
+                        "removed": removed,
+                        "not_installed": not_installed,
+                        "errors": errors,
+                    },
+                    hooks_dir=str(hooks_dir),
+                    results=results,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -385,20 +404,24 @@ def status(ctx):
             exists = hook_path.exists()
             if present:
                 installed_count += 1
-            hook_statuses.append({
-                "hook": hook_name,
-                "installed": present,
-                "file_exists": exists,
-                "path": str(hook_path) if exists else None,
-            })
+            hook_statuses.append(
+                {
+                    "hook": hook_name,
+                    "installed": present,
+                    "file_exists": exists,
+                    "path": str(hook_path) if exists else None,
+                }
+            )
     else:
         for hook_name in _HOOK_NAMES:
-            hook_statuses.append({
-                "hook": hook_name,
-                "installed": False,
-                "file_exists": False,
-                "path": None,
-            })
+            hook_statuses.append(
+                {
+                    "hook": hook_name,
+                    "installed": False,
+                    "file_exists": False,
+                    "path": None,
+                }
+            )
 
     if hooks_dir is None:
         verdict = "Not in a git repository."
@@ -410,16 +433,21 @@ def status(ctx):
         verdict = f"{installed_count}/{len(_HOOK_NAMES)} roam hooks installed."
 
     if json_mode:
-        click.echo(to_json(json_envelope("hooks",
-            summary={
-                "verdict": verdict,
-                "installed_count": installed_count,
-                "total_hooks": len(_HOOK_NAMES),
-                "all_installed": installed_count == len(_HOOK_NAMES),
-            },
-            hooks_dir=str(hooks_dir) if hooks_dir else None,
-            hooks=hook_statuses,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "hooks",
+                    summary={
+                        "verdict": verdict,
+                        "installed_count": installed_count,
+                        "total_hooks": len(_HOOK_NAMES),
+                        "all_installed": installed_count == len(_HOOK_NAMES),
+                    },
+                    hooks_dir=str(hooks_dir) if hooks_dir else None,
+                    hooks=hook_statuses,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")

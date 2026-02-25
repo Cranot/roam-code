@@ -57,33 +57,43 @@ _RE_BLOCK1 = re.compile(
 )
 # Block opener without quotes: keyword {  (e.g. `terraform {`, `build {`)
 _RE_BLOCK0 = re.compile(
-    r'^([a-z_]+)\s*\{',
+    r"^([a-z_]+)\s*\{",
 )
 
 # locals { … } contents — key = value  inside a locals block
-_RE_LOCAL_KEY = re.compile(r'^\s+([a-z_][a-zA-Z0-9_]*)\s*=')
+_RE_LOCAL_KEY = re.compile(r"^\s+([a-z_][a-zA-Z0-9_]*)\s*=")
 
 # Reference patterns (applied to every line)
-_RE_VAR_REF = re.compile(r'\bvar\.([a-z_][a-zA-Z0-9_-]*)\b')
-_RE_MODULE_REF = re.compile(r'\bmodule\.([a-z_][a-zA-Z0-9_-]*)(?:\.([a-z_][a-zA-Z0-9_-]*))?\b')
-_RE_DATA_REF = re.compile(r'\bdata\.([a-z_][a-zA-Z0-9_-]*)\.([a-z_][a-zA-Z0-9_-]*)\b')
-_RE_LOCAL_REF = re.compile(r'\blocal\.([a-z_][a-zA-Z0-9_-]*)\b')
+_RE_VAR_REF = re.compile(r"\bvar\.([a-z_][a-zA-Z0-9_-]*)\b")
+_RE_MODULE_REF = re.compile(r"\bmodule\.([a-z_][a-zA-Z0-9_-]*)(?:\.([a-z_][a-zA-Z0-9_-]*))?\b")
+_RE_DATA_REF = re.compile(r"\bdata\.([a-z_][a-zA-Z0-9_-]*)\.([a-z_][a-zA-Z0-9_-]*)\b")
+_RE_LOCAL_REF = re.compile(r"\blocal\.([a-z_][a-zA-Z0-9_-]*)\b")
 
 # Resource self-references: aws_vpc.main, google_compute_instance.vm etc.
 # Must look like <provider_resource_type>.<name> where type contains "_"
-_RE_RESOURCE_REF = re.compile(r'\b([a-z][a-z0-9]*_[a-z][a-zA-Z0-9_]*)\.([a-z_][a-zA-Z0-9_-]*)\b')
+_RE_RESOURCE_REF = re.compile(r"\b([a-z][a-z0-9]*_[a-z][a-zA-Z0-9_]*)\.([a-z_][a-zA-Z0-9_-]*)\b")
 
 # Built-in namespaces to skip when scanning resource refs
-_BUILTIN_NAMESPACES = frozenset({
-    "var", "module", "data", "local", "each", "count",
-    "path", "terraform", "self", "null",
-})
+_BUILTIN_NAMESPACES = frozenset(
+    {
+        "var",
+        "module",
+        "data",
+        "local",
+        "each",
+        "count",
+        "path",
+        "terraform",
+        "self",
+        "null",
+    }
+)
 
 # HCL comment markers
-_RE_COMMENT = re.compile(r'^\s*(?:#|//)')
+_RE_COMMENT = re.compile(r"^\s*(?:#|//)")
 
 # Detect .tfvars files (key = value only, no block declarations)
-_RE_TFVARS_ASSIGNMENT = re.compile(r'^([a-zA-Z_][a-zA-Z0-9_]*)\s*=')
+_RE_TFVARS_ASSIGNMENT = re.compile(r"^([a-zA-Z_][a-zA-Z0-9_]*)\s*=")
 
 
 def _line_number(idx: int) -> int:
@@ -139,15 +149,17 @@ class HclExtractor(LanguageExtractor):
                 continue
             m = _RE_TFVARS_ASSIGNMENT.match(line)
             if m:
-                symbols.append(self._make_symbol(
-                    name=m.group(1),
-                    kind="variable",
-                    line_start=_line_number(idx),
-                    line_end=_line_number(idx),
-                    signature=f"{m.group(1)} = ...",
-                    visibility="public",
-                    is_exported=True,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=m.group(1),
+                        kind="variable",
+                        line_start=_line_number(idx),
+                        line_end=_line_number(idx),
+                        signature=f"{m.group(1)} = ...",
+                        visibility="public",
+                        is_exported=True,
+                    )
+                )
         return symbols
 
     # ------------------------------------------------------------------
@@ -179,16 +191,18 @@ class HclExtractor(LanguageExtractor):
                     m = _RE_LOCAL_KEY.match(line)
                     if m:
                         key = m.group(1)
-                        symbols.append(self._make_symbol(
-                            name=key,
-                            kind="variable",
-                            line_start=ln,
-                            line_end=ln,
-                            qualified_name=f"local.{key}",
-                            signature=f"local.{key}",
-                            visibility="private",
-                            is_exported=False,
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=key,
+                                kind="variable",
+                                line_start=ln,
+                                line_end=ln,
+                                qualified_name=f"local.{key}",
+                                signature=f"local.{key}",
+                                visibility="private",
+                                is_exported=False,
+                            )
+                        )
                 continue
 
             # Two-label block: resource "type" "name" {
@@ -196,27 +210,31 @@ class HclExtractor(LanguageExtractor):
             if m:
                 kw, label1, label2 = m.group(1), m.group(2), m.group(3)
                 if kw in ("resource", "source"):
-                    symbols.append(self._make_symbol(
-                        name=label2,
-                        kind="class",
-                        line_start=ln,
-                        line_end=ln,
-                        qualified_name=f"{label1}.{label2}",
-                        signature=f'{kw} "{label1}" "{label2}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label2,
+                            kind="class",
+                            line_start=ln,
+                            line_end=ln,
+                            qualified_name=f"{label1}.{label2}",
+                            signature=f'{kw} "{label1}" "{label2}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 elif kw == "data":
-                    symbols.append(self._make_symbol(
-                        name=label2,
-                        kind="class",
-                        line_start=ln,
-                        line_end=ln,
-                        qualified_name=f"data.{label1}.{label2}",
-                        signature=f'data "{label1}" "{label2}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label2,
+                            kind="class",
+                            line_start=ln,
+                            line_end=ln,
+                            qualified_name=f"data.{label1}.{label2}",
+                            signature=f'data "{label1}" "{label2}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 continue
 
             # One-label block: variable/output/module/provider/job/task/group
@@ -224,56 +242,66 @@ class HclExtractor(LanguageExtractor):
             if m:
                 kw, label = m.group(1), m.group(2)
                 if kw in ("variable",):
-                    symbols.append(self._make_symbol(
-                        name=label,
-                        kind="variable",
-                        line_start=ln,
-                        line_end=ln,
-                        qualified_name=f"var.{label}",
-                        signature=f'variable "{label}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label,
+                            kind="variable",
+                            line_start=ln,
+                            line_end=ln,
+                            qualified_name=f"var.{label}",
+                            signature=f'variable "{label}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 elif kw in ("output",):
-                    symbols.append(self._make_symbol(
-                        name=label,
-                        kind="function",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f'output "{label}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label,
+                            kind="function",
+                            line_start=ln,
+                            line_end=ln,
+                            signature=f'output "{label}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 elif kw in ("module",):
-                    symbols.append(self._make_symbol(
-                        name=label,
-                        kind="module",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f'module "{label}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label,
+                            kind="module",
+                            line_start=ln,
+                            line_end=ln,
+                            signature=f'module "{label}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 elif kw in ("provider",):
-                    symbols.append(self._make_symbol(
-                        name=label,
-                        kind="module",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f'provider "{label}"',
-                        visibility="public",
-                        is_exported=False,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label,
+                            kind="module",
+                            line_start=ln,
+                            line_end=ln,
+                            signature=f'provider "{label}"',
+                            visibility="public",
+                            is_exported=False,
+                        )
+                    )
                 elif kw in ("job", "task", "group", "build"):
-                    symbols.append(self._make_symbol(
-                        name=label,
-                        kind="function",
-                        line_start=ln,
-                        line_end=ln,
-                        signature=f'{kw} "{label}"',
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=label,
+                            kind="function",
+                            line_start=ln,
+                            line_end=ln,
+                            signature=f'{kw} "{label}"',
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 continue
 
             # No-label block: terraform {, locals {, build {
@@ -283,25 +311,29 @@ class HclExtractor(LanguageExtractor):
                 if kw == "locals":
                     in_locals = True
                 elif kw == "terraform":
-                    symbols.append(self._make_symbol(
-                        name="terraform",
-                        kind="module",
-                        line_start=ln,
-                        line_end=ln,
-                        signature="terraform {}",
-                        visibility="public",
-                        is_exported=False,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name="terraform",
+                            kind="module",
+                            line_start=ln,
+                            line_end=ln,
+                            signature="terraform {}",
+                            visibility="public",
+                            is_exported=False,
+                        )
+                    )
                 elif kw == "build":
-                    symbols.append(self._make_symbol(
-                        name="build",
-                        kind="function",
-                        line_start=ln,
-                        line_end=ln,
-                        signature="build {}",
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name="build",
+                            kind="function",
+                            line_start=ln,
+                            line_end=ln,
+                            signature="build {}",
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
 
         return symbols
 
@@ -331,12 +363,14 @@ class HclExtractor(LanguageExtractor):
                 key = (target, str(ln))
                 if key not in seen:
                     seen.add(key)
-                    refs.append(self._make_reference(
-                        target_name=target,
-                        kind="call",
-                        line=ln,
-                        source_name=current_block,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=target,
+                            kind="call",
+                            line=ln,
+                            source_name=current_block,
+                        )
+                    )
 
             # var.name
             for m in _RE_VAR_REF.finditer(line):

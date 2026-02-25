@@ -19,21 +19,21 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit, index_in_process
+from conftest import git_commit, git_init, index_in_process, roam
 
 from roam.graph.anomaly import (
-    modified_z_score,
-    theil_sen_slope,
-    mann_kendall_test,
-    western_electric_rules,
     cusum,
     forecast,
+    mann_kendall_test,
+    modified_z_score,
+    theil_sen_slope,
+    western_electric_rules,
 )
-
 
 # ============================================================================
 # modified_z_score
 # ============================================================================
+
 
 class TestModifiedZScore:
     """Tests for modified_z_score point anomaly detection."""
@@ -115,6 +115,7 @@ class TestModifiedZScore:
 # theil_sen_slope
 # ============================================================================
 
+
 class TestTheilSenSlope:
     """Tests for Theil-Sen robust trend estimator."""
 
@@ -173,6 +174,7 @@ class TestTheilSenSlope:
 # ============================================================================
 # mann_kendall_test
 # ============================================================================
+
 
 class TestMannKendallTest:
     """Tests for Mann-Kendall trend significance test."""
@@ -235,6 +237,7 @@ class TestMannKendallTest:
 # western_electric_rules
 # ============================================================================
 
+
 class TestWesternElectricRules:
     """Tests for Western Electric control chart rules."""
 
@@ -245,8 +248,7 @@ class TestWesternElectricRules:
         results = western_electric_rules(values)
         rule1_violations = [v for v in results if v["rule"] == 1]
         assert len(rule1_violations) >= 1, (
-            f"Expected Rule 1 violation for extreme point, got rules: "
-            f"{[v['rule'] for v in results]}"
+            f"Expected Rule 1 violation for extreme point, got rules: {[v['rule'] for v in results]}"
         )
 
     def test_rule4_eight_consecutive_same_side(self):
@@ -260,8 +262,7 @@ class TestWesternElectricRules:
         results = western_electric_rules(values)
         rule4_violations = [v for v in results if v["rule"] == 4]
         assert len(rule4_violations) >= 1, (
-            f"Expected Rule 4 violation for 8+ same-side run, got rules: "
-            f"{[v['rule'] for v in results]}"
+            f"Expected Rule 4 violation for 8+ same-side run, got rules: {[v['rule'] for v in results]}"
         )
 
     def test_rule5_six_consecutive_increasing(self):
@@ -270,8 +271,7 @@ class TestWesternElectricRules:
         results = western_electric_rules(values)
         rule5_violations = [v for v in results if v["rule"] == 5]
         assert len(rule5_violations) >= 1, (
-            f"Expected Rule 5 violation for 6+ consecutive increases, got rules: "
-            f"{[v['rule'] for v in results]}"
+            f"Expected Rule 5 violation for 6+ consecutive increases, got rules: {[v['rule'] for v in results]}"
         )
 
     def test_no_violations_for_stable_data(self):
@@ -300,6 +300,7 @@ class TestWesternElectricRules:
 # ============================================================================
 # cusum
 # ============================================================================
+
 
 class TestCusum:
     """Tests for CUSUM change detection."""
@@ -366,6 +367,7 @@ class TestCusum:
 # forecast
 # ============================================================================
 
+
 class TestForecast:
     """Tests for trend forecasting."""
 
@@ -428,6 +430,7 @@ class TestForecast:
 # Integration tests: trend command with anomaly flags
 # ============================================================================
 
+
 class TestTrendCommandAnomalies:
     """Integration tests for trend command anomaly detection flags.
 
@@ -440,11 +443,7 @@ class TestTrendCommandAnomalies:
         proj = tmp_path_factory.mktemp("trend_anomaly")
 
         (proj / ".gitignore").write_text(".roam/\n")
-        (proj / "app.py").write_text(
-            'def main():\n'
-            '    """Main entry point."""\n'
-            '    return 0\n'
-        )
+        (proj / "app.py").write_text('def main():\n    """Main entry point."""\n    return 0\n')
         git_init(proj)
 
         # Index and create initial snapshot
@@ -454,13 +453,13 @@ class TestTrendCommandAnomalies:
         # Create additional snapshots with file growth
         for i in range(2, 7):
             (proj / f"module_{i}.py").write_text(
-                f'def func_{i}():\n'
+                f"def func_{i}():\n"
                 f'    """Function {i}."""\n'
-                f'    return {i}\n'
-                f'\n'
-                f'def helper_{i}():\n'
+                f"    return {i}\n"
+                f"\n"
+                f"def helper_{i}():\n"
                 f'    """Helper {i}."""\n'
-                f'    return func_{i}() + 1\n'
+                f"    return func_{i}() + 1\n"
             )
             git_commit(proj, f"add module_{i}")
             out, rc = index_in_process(proj)
@@ -476,9 +475,9 @@ class TestTrendCommandAnomalies:
         assert rc == 0, f"trend --analyze failed (exit {rc}):\n{out}"
         # Should contain analysis-related text (verdict, trends, etc.)
         out_lower = out.lower()
-        assert any(word in out_lower for word in [
-            "verdict", "trend", "anomal", "pattern", "score", "date"
-        ]), f"Expected analysis-related output, got:\n{out}"
+        assert any(word in out_lower for word in ["verdict", "trend", "anomal", "pattern", "score", "date"]), (
+            f"Expected analysis-related output, got:\n{out}"
+        )
 
     def test_trend_json_anomalies_has_array(self, trend_project):
         """roam --json trend --anomalies should have anomalies array in JSON."""
@@ -486,9 +485,7 @@ class TestTrendCommandAnomalies:
         assert rc == 0, f"trend --anomalies JSON failed (exit {rc}):\n{out}"
         # Parse the JSON output
         data = json.loads(out)
-        assert "anomalies" in data, (
-            f"Expected 'anomalies' key in JSON output, got keys: {list(data.keys())}"
-        )
+        assert "anomalies" in data, f"Expected 'anomalies' key in JSON output, got keys: {list(data.keys())}"
         assert isinstance(data["anomalies"], list)
 
     def test_trend_json_forecast_has_arrays(self, trend_project):
@@ -496,13 +493,9 @@ class TestTrendCommandAnomalies:
         out, rc = roam("--json", "trend", "--forecast", cwd=trend_project)
         assert rc == 0, f"trend --forecast JSON failed (exit {rc}):\n{out}"
         data = json.loads(out)
-        assert "trends" in data, (
-            f"Expected 'trends' key in JSON output, got keys: {list(data.keys())}"
-        )
+        assert "trends" in data, f"Expected 'trends' key in JSON output, got keys: {list(data.keys())}"
         assert isinstance(data["trends"], list)
-        assert "forecasts" in data, (
-            f"Expected 'forecasts' key in JSON output, got keys: {list(data.keys())}"
-        )
+        assert "forecasts" in data, f"Expected 'forecasts' key in JSON output, got keys: {list(data.keys())}"
         assert isinstance(data["forecasts"], list)
 
     def test_trend_json_analyze_has_all_fields(self, trend_project):
@@ -522,11 +515,17 @@ class TestTrendCommandAnomalies:
     def test_trend_sensitivity_high_vs_low(self, trend_project):
         """Higher sensitivity should detect >= anomalies compared to lower."""
         out_high, rc_high = roam(
-            "--json", "trend", "--analyze", "--sensitivity=high",
+            "--json",
+            "trend",
+            "--analyze",
+            "--sensitivity=high",
             cwd=trend_project,
         )
         out_low, rc_low = roam(
-            "--json", "trend", "--analyze", "--sensitivity=low",
+            "--json",
+            "trend",
+            "--analyze",
+            "--sensitivity=low",
             cwd=trend_project,
         )
         assert rc_high == 0, f"trend --sensitivity=high failed:\n{out_high}"
@@ -536,6 +535,5 @@ class TestTrendCommandAnomalies:
         anomalies_high = len(data_high.get("anomalies", []))
         anomalies_low = len(data_low.get("anomalies", []))
         assert anomalies_high >= anomalies_low, (
-            f"High sensitivity ({anomalies_high}) should detect >= anomalies "
-            f"than low ({anomalies_low})"
+            f"High sensitivity ({anomalies_high}) should detect >= anomalies than low ({anomalies_low})"
         )

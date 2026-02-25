@@ -8,15 +8,15 @@ import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-from roam.output.formatter import summary_envelope, json_envelope
+from roam.output.formatter import json_envelope, summary_envelope
 
 # Import helpers from conftest
 from tests.conftest import invoke_cli
 
-
 # ---------------------------------------------------------------------------
 # Helper: build a minimal JSON envelope for testing summary_envelope
 # ---------------------------------------------------------------------------
+
 
 def _make_envelope(command="test", **extra):
     return json_envelope(command, summary={"verdict": "ok", "score": 80}, **extra)
@@ -25,6 +25,7 @@ def _make_envelope(command="test", **extra):
 # ---------------------------------------------------------------------------
 # Unit tests for summary_envelope helper
 # ---------------------------------------------------------------------------
+
 
 class TestSummaryEnvelope:
     def test_strips_list_payloads(self):
@@ -103,6 +104,7 @@ class TestSummaryEnvelope:
 # Fixtures & helpers for CLI runner tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def runner():
     return CliRunner()
@@ -111,6 +113,7 @@ def runner():
 # ---------------------------------------------------------------------------
 # CLI group tests: --detail flag is accepted and stored in ctx.obj
 # ---------------------------------------------------------------------------
+
 
 class TestDetailFlagParsing:
     def test_detail_flag_accepted_without_error(self, runner):
@@ -134,6 +137,7 @@ class TestDetailFlagParsing:
 # ---------------------------------------------------------------------------
 # Formatter-level tests (no real index needed)
 # ---------------------------------------------------------------------------
+
 
 class TestSummaryEnvelopeOutput:
     """Test that summary_envelope JSON output is valid and compact."""
@@ -183,6 +187,7 @@ class TestSummaryEnvelopeOutput:
 # ---------------------------------------------------------------------------
 # Integration tests using the indexed_project fixture from conftest
 # ---------------------------------------------------------------------------
+
 
 class TestHealthProgressiveDisclosure:
     def test_health_summary_mode_has_verdict(self, indexed_project, monkeypatch):
@@ -245,11 +250,7 @@ class TestDeadProgressiveDisclosure:
         assert result.exit_code == 0
         output = result.output
         # Should show either "Dead exports:" count, empty result, or a dead code section
-        assert (
-            "Dead exports:" in output
-            or "none" in output.lower()
-            or "=== Unreferenced" in output
-        )
+        assert "Dead exports:" in output or "none" in output.lower() or "=== Unreferenced" in output
 
     def test_dead_json_summary_has_detail_available_when_dead(self, indexed_project, monkeypatch):
         """When dead symbols exist, summary mode should flag detail_available."""
@@ -259,9 +260,7 @@ class TestDeadProgressiveDisclosure:
         assert result.exit_code == 0
         data = json.loads(result.output)
         total = (
-            data["summary"].get("safe", 0)
-            + data["summary"].get("review", 0)
-            + data["summary"].get("intentional", 0)
+            data["summary"].get("safe", 0) + data["summary"].get("review", 0) + data["summary"].get("intentional", 0)
         )
         if total > 0:
             assert data["summary"].get("detail_available") is True
@@ -281,8 +280,7 @@ class TestDeadProgressiveDisclosure:
         runner = CliRunner()
         result_summary = invoke_cli(runner, ["dead"], cwd=indexed_project)
         result_detail = invoke_cli(runner, ["--detail", "dead"], cwd=indexed_project)
-        assert result_detail.output >= result_summary.output or \
-            len(result_detail.output) >= len(result_summary.output)
+        assert result_detail.output >= result_summary.output or len(result_detail.output) >= len(result_summary.output)
 
 
 class TestDepsProgressiveDisclosure:
@@ -469,6 +467,7 @@ class TestHotspotsProgressiveDisclosure:
 # Cross-command consistency tests
 # ---------------------------------------------------------------------------
 
+
 class TestProgressiveDisclosureConsistency:
     """Verify consistent behavior across all --detail-aware commands."""
 
@@ -489,8 +488,7 @@ class TestProgressiveDisclosureConsistency:
         assert result.exit_code == 0, f"{cmd} --detail failed: {result.output}"
         data = json.loads(result.output)
         # detail mode should NOT have truncated=True
-        assert data["summary"].get("truncated") is not True, \
-            f"{cmd} in --detail mode should not have truncated=True"
+        assert data["summary"].get("truncated") is not True, f"{cmd} in --detail mode should not have truncated=True"
 
     @pytest.mark.parametrize("cmd", ["health", "dead", "layers", "clusters"])
     def test_summary_json_shorter_than_detail_json(self, indexed_project, monkeypatch, cmd):
@@ -504,8 +502,9 @@ class TestProgressiveDisclosureConsistency:
         # Summary strips all list fields and detail_available adds ~30 chars to summary.
         # Detail keeps all list fields (even empty ones like "cycles": []).
         # The detail fields stripped in summary should outweigh the metadata added.
-        assert len(result_summary.output) <= len(result_detail.output), \
+        assert len(result_summary.output) <= len(result_detail.output), (
             f"{cmd}: summary output ({len(result_summary.output)}) longer than detail ({len(result_detail.output)})"
+        )
 
     @pytest.mark.parametrize("cmd", ["health", "dead", "layers", "clusters"])
     def test_summary_text_shorter_than_detail_text(self, indexed_project, monkeypatch, cmd):
@@ -515,8 +514,9 @@ class TestProgressiveDisclosureConsistency:
         result_detail = invoke_cli(runner, ["--detail", cmd], cwd=indexed_project)
         assert result_summary.exit_code == 0, f"{cmd} summary failed: {result_summary.output}"
         assert result_detail.exit_code == 0, f"{cmd} detail failed: {result_detail.output}"
-        assert len(result_summary.output) <= len(result_detail.output), \
+        assert len(result_summary.output) <= len(result_detail.output), (
             f"{cmd}: summary text ({len(result_summary.output)}) longer than detail ({len(result_detail.output)})"
+        )
 
     @pytest.mark.parametrize("cmd", ["health", "dead", "layers", "clusters"])
     def test_non_detail_json_has_detail_available(self, indexed_project, monkeypatch, cmd):
@@ -526,5 +526,6 @@ class TestProgressiveDisclosureConsistency:
         result = invoke_cli(runner, [cmd], cwd=indexed_project, json_mode=True)
         assert result.exit_code == 0, f"{cmd} failed: {result.output}"
         data = json.loads(result.output)
-        assert data["summary"].get("detail_available") is True, \
+        assert data["summary"].get("detail_available") is True, (
             f"{cmd}: summary mode should have detail_available=True in JSON"
+        )

@@ -7,24 +7,31 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Common auto-added fields to skip when comparing (not meaningful drift)
 # ---------------------------------------------------------------------------
 
-_SKIP_FIELDS = frozenset({
-    "id", "createdAt", "updatedAt", "deletedAt",
-    "created_at", "updated_at", "deleted_at",
-})
+_SKIP_FIELDS = frozenset(
+    {
+        "id",
+        "createdAt",
+        "updatedAt",
+        "deletedAt",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    }
+)
 
 
 # ---------------------------------------------------------------------------
 # snake_case → camelCase conversion (mirrors Laravel's API auto-convert)
 # ---------------------------------------------------------------------------
+
 
 def _snake_to_camel(name: str) -> str:
     """Convert snake_case to camelCase.
@@ -48,9 +55,9 @@ def _camel_to_snake(name: str) -> str:
         userAPIToken  → user_api_token
     """
     # Insert underscore before uppercase letters that follow lowercase or digits
-    s = re.sub(r'([a-z0-9])([A-Z])', r'\1_\2', name)
+    s = re.sub(r"([a-z0-9])([A-Z])", r"\1_\2", name)
     # Handle sequences like "userAPI" → "user_API" → "user_api"
-    s = re.sub(r'([A-Z]+)([A-Z][a-z])', r'\1_\2', s)
+    s = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1_\2", s)
     return s.lower()
 
 
@@ -66,15 +73,15 @@ def _normalize_field(name: str) -> str:
 # ---------------------------------------------------------------------------
 
 _FILLABLE_RE = re.compile(
-    r'\$fillable\s*=\s*\[([^\]]*)\]',
+    r"\$fillable\s*=\s*\[([^\]]*)\]",
     re.DOTALL,
 )
 _HIDDEN_RE = re.compile(
-    r'\$hidden\s*=\s*\[([^\]]*)\]',
+    r"\$hidden\s*=\s*\[([^\]]*)\]",
     re.DOTALL,
 )
 _APPENDS_RE = re.compile(
-    r'\$appends\s*=\s*\[([^\]]*)\]',
+    r"\$appends\s*=\s*\[([^\]]*)\]",
     re.DOTALL,
 )
 _STRING_RE = re.compile(r"'([^']+)'|\"([^\"]+)\"")
@@ -132,13 +139,13 @@ def _infer_model_name(file_path: str) -> str:
 #   type FooBar = { ... }              (requires '=' before the brace)
 # A single regex with [={] fails because 'interface X {' does not have '='.
 _TS_INTERFACE_RE = re.compile(
-    r'(?:export\s+)?interface\s+(\w+)\s*(?:extends[^{]*)?\s*\{([^}]*)\}'
-    r'|(?:export\s+)?type\s+(\w+)\s*=\s*\{([^}]*)\}',
+    r"(?:export\s+)?interface\s+(\w+)\s*(?:extends[^{]*)?\s*\{([^}]*)\}"
+    r"|(?:export\s+)?type\s+(\w+)\s*=\s*\{([^}]*)\}",
     re.DOTALL,
 )
 # Matches: fieldName?: type; or fieldName: type;  (optional and required)
 _TS_FIELD_RE = re.compile(
-    r'^\s*(?:readonly\s+)?(\w+)\??:\s*[^;/\n]+[;,]?\s*(?://.*)?$',
+    r"^\s*(?:readonly\s+)?(\w+)\??:\s*[^;/\n]+[;,]?\s*(?://.*)?$",
     re.MULTILINE,
 )
 
@@ -162,8 +169,7 @@ def _parse_ts_interfaces(source: str) -> dict[str, list[str]]:
         fields = [
             fm.group(1)
             for fm in _TS_FIELD_RE.finditer(body)
-            if fm.group(1) and not fm.group(1).startswith("//")
-            and fm.group(1) not in ("readonly", "export", "import")
+            if fm.group(1) and not fm.group(1).startswith("//") and fm.group(1) not in ("readonly", "export", "import")
         ]
         if fields:
             result[iface_name] = fields
@@ -187,6 +193,7 @@ def _infer_ts_model_name(file_path: str) -> str:
 # Model ↔ Interface matching
 # ---------------------------------------------------------------------------
 
+
 def _name_similarity(a: str, b: str) -> float:
     """Compute a simple name similarity score between two strings.
 
@@ -202,8 +209,19 @@ def _name_similarity(a: str, b: str) -> float:
         return 1.0
 
     # Strip common suffixes for matching (OrderResponse → Order)
-    _SUFFIXES = ("response", "data", "dto", "model", "entity", "resource",
-                 "request", "payload", "form", "item", "record")
+    _SUFFIXES = (
+        "response",
+        "data",
+        "dto",
+        "model",
+        "entity",
+        "resource",
+        "request",
+        "payload",
+        "form",
+        "item",
+        "record",
+    )
 
     def strip_suffixes(name: str) -> str:
         n = name.lower()
@@ -256,13 +274,15 @@ def _match_models_to_interfaces(
 
         if best_ts_name and best_sim >= min_similarity and best_ts_name not in used_ts:
             used_ts.add(best_ts_name)
-            matches.append({
-                "php_model": php_name,
-                "php_file": php_info["file"],
-                "ts_interface": best_ts_name,
-                "ts_file": frontend_interfaces[best_ts_name]["file"],
-                "similarity": best_sim,
-            })
+            matches.append(
+                {
+                    "php_model": php_name,
+                    "php_file": php_info["file"],
+                    "ts_interface": best_ts_name,
+                    "ts_file": frontend_interfaces[best_ts_name]["file"],
+                    "similarity": best_sim,
+                }
+            )
 
     return matches
 
@@ -270,6 +290,7 @@ def _match_models_to_interfaces(
 # ---------------------------------------------------------------------------
 # Field comparison
 # ---------------------------------------------------------------------------
+
 
 def _compare_fields(
     php_name: str,
@@ -295,10 +316,7 @@ def _compare_fields(
     # Build the set of fields the backend sends in API responses:
     # $fillable fields (minus $hidden) + $appends (computed properties)
     hidden_set = set(php_info["hidden"])
-    backend_raw = [
-        f for f in php_info["fillable"]
-        if f not in hidden_set
-    ] + php_info["appends"]
+    backend_raw = [f for f in php_info["fillable"] if f not in hidden_set] + php_info["appends"]
 
     # Normalize backend fields to camelCase for comparison
     backend_camel: dict[str, str] = {}  # camelCase → original snake_case
@@ -310,14 +328,8 @@ def _compare_fields(
     frontend_fields: set[str] = set(ts_info["fields"])
 
     # Filter out common auto-added fields from both sides
-    backend_comparable = {
-        k: v for k, v in backend_camel.items()
-        if k not in _SKIP_FIELDS
-    }
-    frontend_comparable = {
-        f for f in frontend_fields
-        if f not in _SKIP_FIELDS
-    }
+    backend_comparable = {k: v for k, v in backend_camel.items() if k not in _SKIP_FIELDS}
+    frontend_comparable = {f for f in frontend_fields if f not in _SKIP_FIELDS}
 
     backend_set = set(backend_comparable.keys())
 
@@ -334,46 +346,50 @@ def _compare_fields(
                 break
 
         if fuzzy_match:
-            findings.append({
-                "confidence": "low",
-                "kind": "name_mismatch",
-                "message": (
-                    f"Frontend has '{ts_field}' but backend has similar '{fuzzy_match}' "
-                    f"— possible naming mismatch"
-                ),
-                "php_field": backend_comparable.get(fuzzy_match),
-                "ts_field": ts_field,
-                "php_file": php_info["file"],
-                "ts_file": ts_info["file"],
-            })
+            findings.append(
+                {
+                    "confidence": "low",
+                    "kind": "name_mismatch",
+                    "message": (
+                        f"Frontend has '{ts_field}' but backend has similar '{fuzzy_match}' — possible naming mismatch"
+                    ),
+                    "php_field": backend_comparable.get(fuzzy_match),
+                    "ts_field": ts_field,
+                    "php_file": php_info["file"],
+                    "ts_file": ts_info["file"],
+                }
+            )
         else:
-            findings.append({
-                "confidence": "high",
-                "kind": "missing_in_backend",
-                "message": (
-                    f"Frontend expects '{ts_field}' but backend has no such field "
-                    f"(will be undefined at runtime)"
-                ),
-                "php_field": None,
-                "ts_field": ts_field,
-                "php_file": php_info["file"],
-                "ts_file": ts_info["file"],
-            })
+            findings.append(
+                {
+                    "confidence": "high",
+                    "kind": "missing_in_backend",
+                    "message": (
+                        f"Frontend expects '{ts_field}' but backend has no such field (will be undefined at runtime)"
+                    ),
+                    "php_field": None,
+                    "ts_field": ts_field,
+                    "php_file": php_info["file"],
+                    "ts_file": ts_info["file"],
+                }
+            )
 
     # Fields in backend but NOT in frontend (medium confidence — over-sending)
     for be_camel in sorted(backend_set - frontend_comparable):
-        findings.append({
-            "confidence": "medium",
-            "kind": "missing_in_frontend",
-            "message": (
-                f"Backend sends '{be_camel}' (raw: '{backend_comparable[be_camel]}') "
-                f"but frontend interface doesn't define it (wasted bandwidth)"
-            ),
-            "php_field": backend_comparable[be_camel],
-            "ts_field": None,
-            "php_file": php_info["file"],
-            "ts_file": ts_info["file"],
-        })
+        findings.append(
+            {
+                "confidence": "medium",
+                "kind": "missing_in_frontend",
+                "message": (
+                    f"Backend sends '{be_camel}' (raw: '{backend_comparable[be_camel]}') "
+                    f"but frontend interface doesn't define it (wasted bandwidth)"
+                ),
+                "php_field": backend_comparable[be_camel],
+                "ts_field": None,
+                "php_file": php_info["file"],
+                "ts_file": ts_info["file"],
+            }
+        )
 
     return findings
 
@@ -382,6 +398,7 @@ def _compare_fields(
 # File collection helpers
 # ---------------------------------------------------------------------------
 
+
 def _is_php_model_path(path: str) -> bool:
     """Return True if the path looks like a PHP model file."""
     normalized = path.replace("\\", "/")
@@ -389,11 +406,7 @@ def _is_php_model_path(path: str) -> bool:
     if not normalized.endswith(".php"):
         return False
     # Accept App/Models, app/Models, Models/ patterns
-    return (
-        "/Models/" in normalized
-        or "/models/" in normalized
-        or normalized.endswith("Model.php")
-    )
+    return "/Models/" in normalized or "/models/" in normalized or normalized.endswith("Model.php")
 
 
 def _is_ts_type_path(path: str) -> bool:
@@ -403,16 +416,16 @@ def _is_ts_type_path(path: str) -> bool:
         return False
     # Must be in a types or models directory, not a test file
     return (
-        "/types/" in normalized
-        or "/models/" in normalized
-        or "/interfaces/" in normalized
-        or "/api/" in normalized
-    ) and "test" not in normalized.lower() and "spec" not in normalized.lower()
+        ("/types/" in normalized or "/models/" in normalized or "/interfaces/" in normalized or "/api/" in normalized)
+        and "test" not in normalized.lower()
+        and "spec" not in normalized.lower()
+    )
 
 
 # ---------------------------------------------------------------------------
 # Main command
 # ---------------------------------------------------------------------------
+
 
 @click.command("api-drift")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
@@ -458,9 +471,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
         # ----------------------------------------------------------------
         # Step 1: Collect all indexed file paths by language/path pattern
         # ----------------------------------------------------------------
-        all_files = conn.execute(
-            "SELECT path, language FROM files"
-        ).fetchall()
+        all_files = conn.execute("SELECT path, language FROM files").fetchall()
 
         php_model_paths: list[str] = []
         ts_type_paths: list[str] = []
@@ -564,12 +575,16 @@ def api_drift_cmd(ctx, limit, confidence, model):
                 "(in src/types/ or similar)."
             )
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "api-drift",
-                    summary={"error": msg, "findings": 0},
-                    matches=[],
-                    findings=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "api-drift",
+                            summary={"error": msg, "findings": 0},
+                            matches=[],
+                            findings=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"api-drift: {msg}")
             return
@@ -580,12 +595,16 @@ def api_drift_cmd(ctx, limit, confidence, model):
                 "Cross-repo drift detection is planned for 'roam ws api-drift'."
             )
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "api-drift",
-                    summary={"error": msg, "findings": 0},
-                    matches=[],
-                    findings=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "api-drift",
+                            summary={"error": msg, "findings": 0},
+                            matches=[],
+                            findings=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"api-drift: {msg}")
             return
@@ -596,12 +615,16 @@ def api_drift_cmd(ctx, limit, confidence, model):
                 "directories). Cross-repo drift detection is planned for 'roam ws api-drift'."
             )
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "api-drift",
-                    summary={"error": msg, "findings": 0},
-                    matches=[],
-                    findings=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "api-drift",
+                            summary={"error": msg, "findings": 0},
+                            matches=[],
+                            findings=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"api-drift: {msg}")
             return
@@ -614,12 +637,8 @@ def api_drift_cmd(ctx, limit, confidence, model):
         matched_php_names = {m["php_model"] for m in matches}
         matched_ts_names = {m["ts_interface"] for m in matches}
 
-        unmatched_backend = sorted(
-            n for n in backend_models if n not in matched_php_names
-        )
-        unmatched_frontend = sorted(
-            n for n in frontend_interfaces if n not in matched_ts_names
-        )
+        unmatched_backend = sorted(n for n in backend_models if n not in matched_php_names)
+        unmatched_frontend = sorted(n for n in frontend_interfaces if n not in matched_ts_names)
 
         # ----------------------------------------------------------------
         # Step 5: Compare fields for each matched pair
@@ -633,16 +652,15 @@ def api_drift_cmd(ctx, limit, confidence, model):
             ts_info = frontend_interfaces[match["ts_interface"]]
 
             pair_findings = _compare_fields(
-                match["php_model"], php_info,
-                match["ts_interface"], ts_info,
+                match["php_model"],
+                php_info,
+                match["ts_interface"],
+                ts_info,
             )
 
             # Apply confidence filter
             if confidence != "all":
-                pair_findings = [
-                    f for f in pair_findings
-                    if f["confidence"] == confidence
-                ]
+                pair_findings = [f for f in pair_findings if f["confidence"] == confidence]
 
             findings_by_pair.append((match, pair_findings))
             all_findings.extend(pair_findings)
@@ -659,32 +677,38 @@ def api_drift_cmd(ctx, limit, confidence, model):
         if json_mode:
             json_matches = []
             for match, pair_findings in findings_by_pair:
-                json_matches.append({
-                    "php_model": match["php_model"],
-                    "php_file": match["php_file"],
-                    "ts_interface": match["ts_interface"],
-                    "ts_file": match["ts_file"],
-                    "similarity": round(match["similarity"], 2),
-                    "findings": pair_findings,
-                })
+                json_matches.append(
+                    {
+                        "php_model": match["php_model"],
+                        "php_file": match["php_file"],
+                        "ts_interface": match["ts_interface"],
+                        "ts_file": match["ts_file"],
+                        "similarity": round(match["similarity"], 2),
+                        "findings": pair_findings,
+                    }
+                )
 
-            click.echo(to_json(json_envelope(
-                "api-drift",
-                summary={
-                    "findings": n_total,
-                    "high": n_high,
-                    "medium": n_medium,
-                    "low": n_low,
-                    "models_matched": len(matches),
-                    "models_total_backend": len(backend_models),
-                    "interfaces_total_frontend": len(frontend_interfaces),
-                },
-                matches=json_matches,
-                unmatched={
-                    "backend_only": unmatched_backend,
-                    "frontend_only": unmatched_frontend,
-                },
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "api-drift",
+                        summary={
+                            "findings": n_total,
+                            "high": n_high,
+                            "medium": n_medium,
+                            "low": n_low,
+                            "models_matched": len(matches),
+                            "models_total_backend": len(backend_models),
+                            "interfaces_total_frontend": len(frontend_interfaces),
+                        },
+                        matches=json_matches,
+                        unmatched={
+                            "backend_only": unmatched_backend,
+                            "frontend_only": unmatched_frontend,
+                        },
+                    )
+                )
+            )
             return
 
         # ----------------------------------------------------------------
@@ -699,13 +723,8 @@ def api_drift_cmd(ctx, limit, confidence, model):
             verdict_parts.append(f"{n_low} low")
         verdict_suffix = f" ({', '.join(verdict_parts)})" if verdict_parts else ""
 
-        click.echo(
-            f"VERDICT: {n_total} API drift issue{'s' if n_total != 1 else ''} found"
-            f"{verdict_suffix}"
-        )
-        click.echo(
-            f"Models matched: {len(matches)} of {len(backend_models)}"
-        )
+        click.echo(f"VERDICT: {n_total} API drift issue{'s' if n_total != 1 else ''} found{verdict_suffix}")
+        click.echo(f"Models matched: {len(matches)} of {len(backend_models)}")
 
         if not all_findings:
             click.echo("\nNo drift detected in matched model/interface pairs.")
@@ -714,9 +733,9 @@ def api_drift_cmd(ctx, limit, confidence, model):
 
         # Confidence label formatting
         _CONF_LABEL = {
-            "high":   "[high]  ",
+            "high": "[high]  ",
             "medium": "[medium]",
-            "low":    "[low]   ",
+            "low": "[low]   ",
         }
 
         shown = 0
@@ -724,9 +743,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
             if not pair_findings:
                 continue
 
-            click.echo(
-                f"{match['php_model']} (PHP) <-> {match['ts_interface']} (TS):"
-            )
+            click.echo(f"{match['php_model']} (PHP) <-> {match['ts_interface']} (TS):")
 
             for finding in pair_findings:
                 if shown >= limit:

@@ -22,8 +22,7 @@ from roam.index.parser import (
     detect_language,
     read_source,
 )
-from roam.output.formatter import to_json, json_envelope
-
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Core logic
@@ -60,7 +59,7 @@ def _extract_error_context(source: bytes, node) -> str:
     if start_line < len(lines):
         first_line = lines[start_line].rstrip()
         n_lines = end_line - start_line + 1
-        snippet = first_line[node.start_point[1]:]
+        snippet = first_line[node.start_point[1] :]
         if len(snippet) > 100:
             snippet = snippet[:97] + "..."
         return f"{snippet} (+{n_lines - 1} more lines)"
@@ -82,14 +81,16 @@ def check_syntax(file_path: str, source: bytes, tree) -> list[dict]:
         if node.type == "ERROR" or node.is_missing:
             line = node.start_point[0] + 1
             col = node.start_point[1] + 1
-            errors.append({
-                "line": line,
-                "column": col,
-                "end_line": node.end_point[0] + 1,
-                "end_col": node.end_point[1] + 1,
-                "node_type": "MISSING" if node.is_missing else "ERROR",
-                "text": _extract_error_context(source, node),
-            })
+            errors.append(
+                {
+                    "line": line,
+                    "column": col,
+                    "end_line": node.end_point[0] + 1,
+                    "end_col": node.end_point[1] + 1,
+                    "node_type": "MISSING" if node.is_missing else "ERROR",
+                    "text": _extract_error_context(source, node),
+                }
+            )
         for child in node.children:
             _visit(child)
 
@@ -121,6 +122,7 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
 
     try:
         from tree_sitter_language_pack import get_parser
+
         parser = get_parser(grammar)
     except Exception:
         return None
@@ -144,20 +146,29 @@ def _get_changed_files() -> list[str]:
         # Unstaged changes
         r1 = subprocess.run(
             ["git", "diff", "--name-only"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         # Staged changes
         r2 = subprocess.run(
             ["git", "diff", "--name-only", "--cached"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         # Untracked new files
         r3 = subprocess.run(
             ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         files: set[str] = set()
         for r in (r1, r2, r3):
@@ -178,8 +189,7 @@ def _get_changed_files() -> list[str]:
 
 @click.command("syntax-check")
 @click.argument("paths", nargs=-1)
-@click.option("--changed", is_flag=True,
-              help="Check only git-changed files (unstaged + staged + untracked).")
+@click.option("--changed", is_flag=True, help="Check only git-changed files (unstaged + staged + untracked).")
 @click.pass_context
 def syntax_check(ctx, paths, changed):
     """Check files for syntax errors using tree-sitter AST parsing.
@@ -215,16 +225,21 @@ def syntax_check(ctx, paths, changed):
 
     if not file_list:
         if json_mode:
-            click.echo(to_json(json_envelope("syntax-check",
-                summary={
-                    "verdict": "No files to check",
-                    "total_files": 0,
-                    "files_with_errors": 0,
-                    "total_errors": 0,
-                    "clean": True,
-                },
-                files=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "syntax-check",
+                        summary={
+                            "verdict": "No files to check",
+                            "total_files": 0,
+                            "files_with_errors": 0,
+                            "total_errors": 0,
+                            "clean": True,
+                        },
+                        files=[],
+                    )
+                )
+            )
         else:
             click.echo("VERDICT: No files to check")
         return
@@ -254,16 +269,21 @@ def syntax_check(ctx, paths, changed):
         )
 
     if json_mode:
-        click.echo(to_json(json_envelope("syntax-check",
-            summary={
-                "verdict": verdict,
-                "total_files": total_files,
-                "files_with_errors": len(files_with_errors),
-                "total_errors": total_errors,
-                "clean": clean,
-            },
-            files=[r for r in results if r["errors"]],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "syntax-check",
+                    summary={
+                        "verdict": verdict,
+                        "total_files": total_files,
+                        "files_with_errors": len(files_with_errors),
+                        "total_errors": total_errors,
+                        "clean": clean,
+                    },
+                    files=[r for r in results if r["errors"]],
+                )
+            )
+        )
     else:
         click.echo(f"VERDICT: {verdict}")
         if files_with_errors:
@@ -271,17 +291,11 @@ def syntax_check(ctx, paths, changed):
             for r in files_with_errors:
                 for err in r["errors"]:
                     node_label = err["node_type"]
-                    click.echo(
-                        f"  {r['path']}:{err['line']}:{err['column']}  "
-                        f"{node_label}  {err['text']}"
-                    )
+                    click.echo(f"  {r['path']}:{err['line']}:{err['column']}  {node_label}  {err['text']}")
             click.echo("")
-            click.echo(
-                f"{total_errors} errors, "
-                f"{len(files_with_errors)} files affected, "
-                f"{total_files} files checked"
-            )
+            click.echo(f"{total_errors} errors, {len(files_with_errors)} files affected, {total_files} files checked")
 
     if not clean:
         from roam.exit_codes import EXIT_GATE_FAILURE
+
         ctx.exit(EXIT_GATE_FAILURE)

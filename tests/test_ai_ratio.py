@@ -24,21 +24,20 @@ import sys
 import time
 from pathlib import Path
 
-import pytest
 import click
+import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
     git_init,
-    git_commit,
     index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local CLI shim
 # ---------------------------------------------------------------------------
+
 
 def _make_local_cli():
     """Return a Click group containing only the ai-ratio command."""
@@ -80,17 +79,14 @@ def _invoke(args, cwd=None, json_mode=False):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_json(result, cmd="ai-ratio"):
     """Parse JSON from a CliRunner result."""
-    assert result.exit_code == 0, (
-        f"{cmd} exited {result.exit_code}:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"{cmd} exited {result.exit_code}:\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}"
-        )
+        pytest.fail(f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}")
 
 
 def _assert_envelope(data, cmd="ai-ratio"):
@@ -107,9 +103,9 @@ def _git_commit_with_msg(path, msg, author_name="Test", author_email="t@t.com"):
     """Stage all and commit with a specific message."""
     subprocess.run(["git", "add", "."], cwd=path, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", msg,
-         "--author", f"{author_name} <{author_email}>"],
-        cwd=path, capture_output=True,
+        ["git", "commit", "-m", msg, "--author", f"{author_name} <{author_email}>"],
+        cwd=path,
+        capture_output=True,
     )
 
 
@@ -117,39 +113,47 @@ def _git_commit_with_msg(path, msg, author_name="Test", author_email="t@t.com"):
 # Unit tests for compute_gini
 # ---------------------------------------------------------------------------
 
+
 class TestGiniCoefficient:
     """Unit tests for the Gini coefficient calculation."""
 
     def test_empty_list(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         assert compute_gini([]) == 0.0
 
     def test_single_value(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         assert compute_gini([42.0]) == 0.0
 
     def test_equal_values(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         result = compute_gini([10.0, 10.0, 10.0, 10.0])
         assert result == pytest.approx(0.0, abs=0.01)
 
     def test_extreme_inequality(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         # One value dominates
         result = compute_gini([0.0, 0.0, 0.0, 1000.0])
         assert result > 0.7, f"Expected high Gini, got {result}"
 
     def test_moderate_inequality(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         result = compute_gini([1.0, 2.0, 3.0, 4.0, 100.0])
         assert 0.3 < result < 0.9
 
     def test_all_zeros(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         assert compute_gini([0.0, 0.0, 0.0]) == 0.0
 
     def test_two_values_unequal(self):
         from roam.commands.cmd_ai_ratio import compute_gini
+
         result = compute_gini([1.0, 99.0])
         assert result > 0.4
 
@@ -158,35 +162,43 @@ class TestGiniCoefficient:
 # Unit tests for burst detection
 # ---------------------------------------------------------------------------
 
+
 class TestBurstDetection:
     """Unit tests for burst addition detection."""
 
     def test_not_burst_small_add(self):
         from roam.commands.cmd_ai_ratio import _is_burst_add
+
         commit = {"files": [{"lines_added": 10, "lines_removed": 2, "path": "a.py"}]}
         assert not _is_burst_add(commit)
 
     def test_burst_large_add(self):
         from roam.commands.cmd_ai_ratio import _is_burst_add
+
         commit = {"files": [{"lines_added": 200, "lines_removed": 5, "path": "a.py"}]}
         assert _is_burst_add(commit)
 
     def test_not_burst_balanced(self):
         from roam.commands.cmd_ai_ratio import _is_burst_add
+
         # Large change but balanced adds/removes
         commit = {"files": [{"lines_added": 100, "lines_removed": 100, "path": "a.py"}]}
         assert not _is_burst_add(commit)
 
     def test_burst_multi_file(self):
         from roam.commands.cmd_ai_ratio import _is_burst_add
-        commit = {"files": [
-            {"lines_added": 80, "lines_removed": 2, "path": "a.py"},
-            {"lines_added": 60, "lines_removed": 3, "path": "b.py"},
-        ]}
+
+        commit = {
+            "files": [
+                {"lines_added": 80, "lines_removed": 2, "path": "a.py"},
+                {"lines_added": 60, "lines_removed": 3, "path": "b.py"},
+            ]
+        }
         assert _is_burst_add(commit)
 
     def test_empty_commit(self):
         from roam.commands.cmd_ai_ratio import _is_burst_add
+
         commit = {"files": []}
         assert not _is_burst_add(commit)
 
@@ -195,60 +207,73 @@ class TestBurstDetection:
 # Unit tests for commit message pattern detection
 # ---------------------------------------------------------------------------
 
+
 class TestCommitPatterns:
     """Unit tests for commit message pattern detection."""
 
     def test_co_author_claude(self):
         from roam.commands.cmd_ai_ratio import _has_co_author_tag
+
         msg = "feat: add feature\n\nCo-Authored-By: Claude <noreply@anthropic.com>"
         assert _has_co_author_tag(msg)
 
     def test_co_author_copilot(self):
         from roam.commands.cmd_ai_ratio import _has_co_author_tag
+
         msg = "fix bug\n\nCo-Authored-By: GitHub Copilot <noreply@github.com>"
         assert _has_co_author_tag(msg)
 
     def test_co_author_cursor(self):
         from roam.commands.cmd_ai_ratio import _has_co_author_tag
+
         msg = "update code\n\nCo-authored-by: Cursor AI <cursor@example.com>"
         assert _has_co_author_tag(msg)
 
     def test_no_co_author(self):
         from roam.commands.cmd_ai_ratio import _has_co_author_tag
+
         msg = "fix: resolve login issue"
         assert not _has_co_author_tag(msg)
 
     def test_human_co_author(self):
         from roam.commands.cmd_ai_ratio import _has_co_author_tag
+
         msg = "update: feature\n\nCo-Authored-By: John Smith <john@example.com>"
         assert not _has_co_author_tag(msg)
 
     def test_ai_message_feat(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert _has_ai_message_pattern("feat: add new endpoint")
 
     def test_ai_message_fix(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert _has_ai_message_pattern("fix(auth): resolve token issue")
 
     def test_ai_message_implement(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert _has_ai_message_pattern("Implement user authentication")
 
     def test_ai_message_add(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert _has_ai_message_pattern("Add error handling for edge cases")
 
     def test_normal_message(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert not _has_ai_message_pattern("WIP checkpoint")
 
     def test_normal_message_lowercase(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert not _has_ai_message_pattern("fixed that pesky bug")
 
     def test_auto_generated(self):
         from roam.commands.cmd_ai_ratio import _has_ai_message_pattern
+
         assert _has_ai_message_pattern("Generated migration for users table")
 
 
@@ -256,22 +281,26 @@ class TestCommitPatterns:
 # Unit tests for confidence levels
 # ---------------------------------------------------------------------------
 
+
 class TestConfidence:
     """Unit tests for confidence level mapping."""
 
     def test_low_confidence(self):
         from roam.commands.cmd_ai_ratio import _confidence_label
+
         assert _confidence_label(10) == "LOW"
         assert _confidence_label(49) == "LOW"
 
     def test_medium_confidence(self):
         from roam.commands.cmd_ai_ratio import _confidence_label
+
         assert _confidence_label(50) == "MEDIUM"
         assert _confidence_label(100) == "MEDIUM"
         assert _confidence_label(200) == "MEDIUM"
 
     def test_high_confidence(self):
         from roam.commands.cmd_ai_ratio import _confidence_label
+
         assert _confidence_label(201) == "HIGH"
         assert _confidence_label(500) == "HIGH"
 
@@ -280,11 +309,13 @@ class TestConfidence:
 # Unit tests for temporal signal
 # ---------------------------------------------------------------------------
 
+
 class TestTemporalSignal:
     """Unit tests for temporal pattern detection."""
 
     def test_too_few_commits(self):
         from roam.commands.cmd_ai_ratio import _temporal_signal
+
         commits = [{"timestamp": 1000}, {"timestamp": 2000}]
         score, sessions = _temporal_signal(commits)
         assert score == 0.0
@@ -292,6 +323,7 @@ class TestTemporalSignal:
 
     def test_burst_session_detected(self):
         from roam.commands.cmd_ai_ratio import _temporal_signal
+
         now = int(time.time())
         # 5 commits within 5 minutes = burst session
         commits = [
@@ -306,12 +338,10 @@ class TestTemporalSignal:
 
     def test_spread_commits_no_burst(self):
         from roam.commands.cmd_ai_ratio import _temporal_signal
+
         now = int(time.time())
         # Commits spread over days
-        commits = [
-            {"timestamp": now - 86400 * i}
-            for i in range(10)
-        ]
+        commits = [{"timestamp": now - 86400 * i} for i in range(10)]
         score, sessions = _temporal_signal(commits)
         assert sessions == 0
 
@@ -319,6 +349,7 @@ class TestTemporalSignal:
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def ai_ratio_project(tmp_path, monkeypatch):
@@ -328,26 +359,15 @@ def ai_ratio_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
 
     # Initial file
-    (proj / "app.py").write_text(
-        'def main():\n'
-        '    print("hello")\n'
-    )
+    (proj / "app.py").write_text('def main():\n    print("hello")\n')
     git_init(proj)
 
     # Human-style small commits
-    (proj / "utils.py").write_text(
-        'def helper():\n'
-        '    return 42\n'
-    )
+    (proj / "utils.py").write_text("def helper():\n    return 42\n")
     _git_commit_with_msg(proj, "WIP checkpoint", "Alice", "alice@example.com")
 
     (proj / "utils.py").write_text(
-        'def helper():\n'
-        '    """A helper function."""\n'
-        '    return 42\n'
-        '\n'
-        'def another():\n'
-        '    pass\n'
+        'def helper():\n    """A helper function."""\n    return 42\n\ndef another():\n    pass\n'
     )
     _git_commit_with_msg(proj, "added docstring", "Alice", "alice@example.com")
 
@@ -357,7 +377,8 @@ def ai_ratio_project(tmp_path, monkeypatch):
     _git_commit_with_msg(
         proj,
         "feat: add generated functions\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
-        "Bob", "bob@example.com",
+        "Bob",
+        "bob@example.com",
     )
 
     # Another AI-style commit
@@ -366,7 +387,8 @@ def ai_ratio_project(tmp_path, monkeypatch):
     _git_commit_with_msg(
         proj,
         "Implement data models for API",
-        "Bob", "bob@example.com",
+        "Bob",
+        "bob@example.com",
     )
 
     # Index the project
@@ -395,6 +417,7 @@ def empty_project(tmp_path, monkeypatch):
 # ---------------------------------------------------------------------------
 # Integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestAIRatioCommand:
     """Integration tests for the ai-ratio command."""
@@ -455,8 +478,7 @@ class TestAIRatioCommand:
         assert "temporal" in signals
 
         # Each signal has score and weight
-        for key in ["gini", "burst_additions", "commit_patterns",
-                     "comment_density", "temporal"]:
+        for key in ["gini", "burst_additions", "commit_patterns", "comment_density", "temporal"]:
             sig = signals[key]
             assert "score" in sig
             assert "weight" in sig
@@ -465,9 +487,7 @@ class TestAIRatioCommand:
         result = _invoke(["ai-ratio"], cwd=ai_ratio_project, json_mode=True)
         data = _parse_json(result)
         co_author_count = data["signals"]["commit_patterns"]["co_author_count"]
-        assert co_author_count >= 1, (
-            f"Expected at least 1 co-author tag, got {co_author_count}"
-        )
+        assert co_author_count >= 1, f"Expected at least 1 co-author tag, got {co_author_count}"
 
     def test_json_top_files_have_probability(self, ai_ratio_project):
         result = _invoke(["ai-ratio"], cwd=ai_ratio_project, json_mode=True)
@@ -534,12 +554,14 @@ class TestAIRatioCommand:
 # Unit tests for analyse_ai_ratio
 # ---------------------------------------------------------------------------
 
+
 class TestAnalyseFunction:
     """Tests for the analyse_ai_ratio function directly."""
 
     def test_analyse_with_no_commits(self, empty_project):
         from roam.commands.cmd_ai_ratio import analyse_ai_ratio
         from roam.db.connection import open_db
+
         with open_db(readonly=False) as conn:
             # Delete all commits from DB to simulate no commits
             conn.execute("DELETE FROM git_file_changes")
@@ -553,6 +575,7 @@ class TestAnalyseFunction:
     def test_analyse_returns_all_keys(self, ai_ratio_project):
         from roam.commands.cmd_ai_ratio import analyse_ai_ratio
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             result = analyse_ai_ratio(conn, since_days=365)
             assert "ai_ratio" in result
@@ -567,6 +590,7 @@ class TestAnalyseFunction:
 # Edge case: project with only AI commits
 # ---------------------------------------------------------------------------
 
+
 class TestHighAIRatio:
     """Test with a project that has predominantly AI-style commits."""
 
@@ -580,12 +604,13 @@ class TestHighAIRatio:
 
         # Create several AI-style commits
         for i in range(5):
-            lines = [f'def auto_func_{i}_{j}():\n    return {j}\n\n' for j in range(30)]
+            lines = [f"def auto_func_{i}_{j}():\n    return {j}\n\n" for j in range(30)]
             (proj / f"module_{i}.py").write_text("".join(lines))
             _git_commit_with_msg(
                 proj,
                 f"feat: implement module {i}\n\nCo-Authored-By: Claude <noreply@anthropic.com>",
-                "Dev", "dev@example.com",
+                "Dev",
+                "dev@example.com",
             )
 
         monkeypatch.chdir(proj)
@@ -597,9 +622,7 @@ class TestHighAIRatio:
         result = _invoke(["ai-ratio"], cwd=ai_heavy_project, json_mode=True)
         data = _parse_json(result)
         # With mostly AI commits, ratio should be substantial
-        assert data["ai_ratio"] > 0.1, (
-            f"Expected high AI ratio, got {data['ai_ratio']}"
-        )
+        assert data["ai_ratio"] > 0.1, f"Expected high AI ratio, got {data['ai_ratio']}"
         assert data["signals"]["commit_patterns"]["co_author_count"] >= 3
 
     def test_top_files_populated(self, ai_heavy_project):
@@ -617,11 +640,13 @@ class TestHighAIRatio:
 # Test pattern signal function in isolation
 # ---------------------------------------------------------------------------
 
+
 class TestPatternSignal:
     """Test _pattern_signal with controlled commit data."""
 
     def test_all_co_authored(self):
         from roam.commands.cmd_ai_ratio import _pattern_signal
+
         commits = [
             {"message": "feat: add X\n\nCo-Authored-By: Claude <c@a.com>", "files": []},
             {"message": "fix: bug\n\nCo-Authored-By: Copilot <c@g.com>", "files": []},
@@ -633,6 +658,7 @@ class TestPatternSignal:
 
     def test_no_ai_patterns(self):
         from roam.commands.cmd_ai_ratio import _pattern_signal
+
         commits = [
             {"message": "WIP", "files": []},
             {"message": "checkpoint", "files": []},
@@ -645,6 +671,7 @@ class TestPatternSignal:
 
     def test_mixed_patterns(self):
         from roam.commands.cmd_ai_ratio import _pattern_signal
+
         commits = [
             {"message": "feat: add feature\n\nCo-Authored-By: Claude <c@a.com>", "files": []},
             {"message": "WIP", "files": []},
@@ -660,11 +687,13 @@ class TestPatternSignal:
 # Test burst signal function in isolation
 # ---------------------------------------------------------------------------
 
+
 class TestBurstSignal:
     """Test _burst_signal with controlled commit data."""
 
     def test_no_burst_commits(self):
         from roam.commands.cmd_ai_ratio import _burst_signal
+
         commits = [
             {"files": [{"lines_added": 5, "lines_removed": 3, "path": "a.py"}]},
             {"files": [{"lines_added": 10, "lines_removed": 8, "path": "b.py"}]},
@@ -675,6 +704,7 @@ class TestBurstSignal:
 
     def test_all_burst_commits(self):
         from roam.commands.cmd_ai_ratio import _burst_signal
+
         commits = [
             {"files": [{"lines_added": 200, "lines_removed": 2, "path": "a.py"}]},
             {"files": [{"lines_added": 300, "lines_removed": 5, "path": "b.py"}]},
@@ -686,6 +716,7 @@ class TestBurstSignal:
 
     def test_empty_commits(self):
         from roam.commands.cmd_ai_ratio import _burst_signal
+
         score, count = _burst_signal([])
         assert score == 0.0
         assert count == 0

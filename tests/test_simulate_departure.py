@@ -2,21 +2,16 @@
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 
 import pytest
 
 from tests.conftest import (
-    git_init,
-    git_commit,
+    assert_json_envelope,
     index_in_process,
     invoke_cli,
     parse_json_output,
-    assert_json_envelope,
 )
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -27,11 +22,13 @@ def _git_config_author(path, name, email):
     """Set the git author for a repo."""
     subprocess.run(
         ["git", "config", "user.name", name],
-        cwd=path, capture_output=True,
+        cwd=path,
+        capture_output=True,
     )
     subprocess.run(
         ["git", "config", "user.email", email],
-        cwd=path, capture_output=True,
+        cwd=path,
+        capture_output=True,
     )
 
 
@@ -40,7 +37,8 @@ def _git_add_commit(path, msg):
     subprocess.run(["git", "add", "."], cwd=path, capture_output=True)
     subprocess.run(
         ["git", "commit", "-m", msg, "--allow-empty"],
-        cwd=path, capture_output=True,
+        cwd=path,
+        capture_output=True,
     )
 
 
@@ -71,25 +69,25 @@ def departure_project(tmp_path):
     auth.mkdir()
     _git_config_author(proj, "Alice Smith", "alice@example.com")
     (auth / "login.py").write_text(
-        'def authenticate(user, password):\n'
+        "def authenticate(user, password):\n"
         '    """Authenticate a user."""\n'
-        '    if not _verify_password(password):\n'
-        '        return None\n'
-        '    return user\n'
-        '\n'
-        'def _verify_password(password):\n'
+        "    if not _verify_password(password):\n"
+        "        return None\n"
+        "    return user\n"
+        "\n"
+        "def _verify_password(password):\n"
         '    """Check password strength."""\n'
-        '    return len(password) >= 8\n'
+        "    return len(password) >= 8\n"
     )
     (auth / "tokens.py").write_text(
-        'from auth.login import authenticate\n'
-        '\n'
-        'def create_token(user, password):\n'
+        "from auth.login import authenticate\n"
+        "\n"
+        "def create_token(user, password):\n"
         '    """Create an auth token."""\n'
-        '    auth_user = authenticate(user, password)\n'
-        '    if auth_user:\n'
+        "    auth_user = authenticate(user, password)\n"
+        "    if auth_user:\n"
         '        return {"token": "abc123", "user": auth_user}\n'
-        '    return None\n'
+        "    return None\n"
     )
     _git_add_commit(proj, "Alice adds auth module")
 
@@ -98,19 +96,19 @@ def departure_project(tmp_path):
     billing = proj / "billing"
     billing.mkdir()
     (billing / "charge.py").write_text(
-        'def process_charge(amount):\n'
+        "def process_charge(amount):\n"
         '    """Process a billing charge."""\n'
-        '    if amount <= 0:\n'
+        "    if amount <= 0:\n"
         '        raise ValueError("invalid amount")\n'
         '    return {"charged": amount, "status": "ok"}\n'
     )
     (billing / "invoice.py").write_text(
-        'def create_invoice(items):\n'
+        "def create_invoice(items):\n"
         '    """Create an invoice from items."""\n'
-        '    total = _calculate_total(items)\n'
+        "    total = _calculate_total(items)\n"
         '    return {"items": items, "total": total}\n'
-        '\n'
-        'def _calculate_total(items):\n'
+        "\n"
+        "def _calculate_total(items):\n"
         '    """Sum up item prices."""\n'
         '    return sum(item["price"] for item in items)\n'
     )
@@ -119,38 +117,36 @@ def departure_project(tmp_path):
     # Alice writes the api layer (so Alice has more files)
     _git_config_author(proj, "Alice Smith", "alice@example.com")
     (proj / "api.py").write_text(
-        'from auth.tokens import create_token\n'
-        'from billing.charge import process_charge\n'
-        '\n'
-        'def handle_purchase(user, password, amount):\n'
+        "from auth.tokens import create_token\n"
+        "from billing.charge import process_charge\n"
+        "\n"
+        "def handle_purchase(user, password, amount):\n"
         '    """Handle a purchase request."""\n'
-        '    token = create_token(user, password)\n'
-        '    if not token:\n'
-        '        return None\n'
-        '    result = process_charge(amount)\n'
-        '    return result\n'
+        "    token = create_token(user, password)\n"
+        "    if not token:\n"
+        "        return None\n"
+        "    result = process_charge(amount)\n"
+        "    return result\n"
     )
     _git_add_commit(proj, "Alice adds api layer")
 
     # Both contribute to utils
     _git_config_author(proj, "Alice Smith", "alice@example.com")
     (proj / "utils.py").write_text(
-        'def format_name(first, last):\n'
-        '    """Format a full name."""\n'
-        '    return f"{first} {last}"\n'
+        'def format_name(first, last):\n    """Format a full name."""\n    return f"{first} {last}"\n'
     )
     _git_add_commit(proj, "Alice adds utils")
 
     _git_config_author(proj, "Bob Jones", "bob@example.com")
     (proj / "utils.py").write_text(
-        'def format_name(first, last):\n'
+        "def format_name(first, last):\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        'def parse_email(raw):\n'
+        "\n"
+        "def parse_email(raw):\n"
         '    """Parse an email address."""\n'
         '    if "@" not in raw:\n'
-        '        return None\n'
+        "        return None\n"
         '    parts = raw.split("@")\n'
         '    return {"user": parts[0], "domain": parts[1]}\n'
     )
@@ -172,12 +168,7 @@ def departure_project_with_codeowners(departure_project):
     gh_dir = proj / ".github"
     gh_dir.mkdir(exist_ok=True)
 
-    (gh_dir / "CODEOWNERS").write_text(
-        "# CODEOWNERS\n"
-        "auth/ @alice\n"
-        "billing/ @bob\n"
-        "api.py @alice @bob\n"
-    )
+    (gh_dir / "CODEOWNERS").write_text("# CODEOWNERS\nauth/ @alice\nbilling/ @bob\napi.py @alice @bob\n")
     _git_config_author(proj, "Setup", "setup@test.com")
     _git_add_commit(proj, "add CODEOWNERS")
 
@@ -196,15 +187,8 @@ def single_author_project(tmp_path):
 
     subprocess.run(["git", "init"], cwd=proj, capture_output=True)
     _git_config_author(proj, "Solo Dev", "solo@example.com")
-    (proj / "app.py").write_text(
-        'def main():\n'
-        '    """Entry point."""\n'
-        '    print("hello")\n'
-    )
-    (proj / "lib.py").write_text(
-        'def helper():\n'
-        '    return 42\n'
-    )
+    (proj / "app.py").write_text('def main():\n    """Entry point."""\n    print("hello")\n')
+    (proj / "lib.py").write_text("def helper():\n    return 42\n")
     _git_add_commit(proj, "init with all files")
 
     out, rc = index_in_process(proj)
@@ -439,11 +423,7 @@ class TestCodeownersIntegration:
 
         # Alice is sole CODEOWNER of auth/ AND has high ownership
         # Check if any critical files exist with codeowners info
-        all_files = (
-            data["critical_files"]
-            + data["high_risk_files"]
-            + data["medium_risk_files"]
-        )
+        all_files = data["critical_files"] + data["high_risk_files"] + data["medium_risk_files"]
         assert len(all_files) > 0, "Should find at-risk files for alice"
 
     def test_no_codeowners_file(self, departure_project, cli_runner):
@@ -508,11 +488,13 @@ class TestEdgeCases:
         subprocess.run(["git", "init"], cwd=proj, capture_output=True)
         subprocess.run(
             ["git", "config", "user.email", "t@t.com"],
-            cwd=proj, capture_output=True,
+            cwd=proj,
+            capture_output=True,
         )
         subprocess.run(
             ["git", "config", "user.name", "Test"],
-            cwd=proj, capture_output=True,
+            cwd=proj,
+            capture_output=True,
         )
         (proj / "empty.py").write_text("")
         _git_add_commit(proj, "init")
@@ -586,13 +568,7 @@ class TestInternalFunctions:
         """parse_codeowners should parse standard CODEOWNERS format."""
         from roam.commands.cmd_simulate_departure import parse_codeowners
 
-        (tmp_path / "CODEOWNERS").write_text(
-            "# Comment line\n"
-            "*.py @alice @bob\n"
-            "docs/ @carol\n"
-            "\n"
-            "/src/core/ @alice\n"
-        )
+        (tmp_path / "CODEOWNERS").write_text("# Comment line\n*.py @alice @bob\ndocs/ @carol\n\n/src/core/ @alice\n")
         rules = parse_codeowners(tmp_path)
         assert len(rules) == 3
         assert rules[0] == ("*.py", ["@alice", "@bob"])
@@ -606,10 +582,7 @@ class TestInternalFunctions:
             resolve_codeowner,
         )
 
-        (tmp_path / "CODEOWNERS").write_text(
-            "* @default\n"
-            "src/ @alice\n"
-        )
+        (tmp_path / "CODEOWNERS").write_text("* @default\nsrc/ @alice\n")
         rules = parse_codeowners(tmp_path)
         # src/app.py should match the src/ rule
         owners = resolve_codeowner("src/app.py", rules)
@@ -629,10 +602,11 @@ class TestInternalFunctions:
 
     def test_compute_file_ownership_empty(self):
         """compute_file_ownership should handle empty file list."""
-        from roam.commands.cmd_simulate_departure import compute_file_ownership
-
         # Mock a minimal connection
         import sqlite3
+
+        from roam.commands.cmd_simulate_departure import compute_file_ownership
+
         conn = sqlite3.connect(":memory:")
         conn.row_factory = sqlite3.Row
         result = compute_file_ownership(conn, [])
@@ -641,7 +615,7 @@ class TestInternalFunctions:
 
     def test_verdict_levels(self):
         """Test _verdict function returns correct severity strings."""
-        from roam.commands.cmd_simulate_departure import _verdict, _severity_label
+        from roam.commands.cmd_simulate_departure import _severity_label, _verdict
 
         assert "CRITICAL" in _verdict(2, 5, 3, 10)
         assert "HIGH RISK" in _verdict(0, 5, 3, 8)

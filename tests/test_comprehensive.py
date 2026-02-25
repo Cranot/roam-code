@@ -19,12 +19,12 @@ import pytest
 # Import helpers from conftest (pytest auto-loads conftest.py,
 # but we need explicit import for non-fixture helpers)
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit, index_in_process
-
+from conftest import git_commit, git_init, index_in_process, roam
 
 # ============================================================================
 # Polyglot project fixture (indexed ONCE, shared across many tests)
 # ============================================================================
+
 
 @pytest.fixture(scope="module")
 def polyglot(tmp_path_factory):
@@ -35,86 +35,86 @@ def polyglot(tmp_path_factory):
     py_dir = proj / "python"
     py_dir.mkdir()
     (py_dir / "base.py").write_text(
-        'class Animal:\n'
+        "class Animal:\n"
         '    """Base animal class."""\n'
         '    species = "unknown"\n'
-        '    count = 0\n'
-        '\n'
-        '    def __init__(self, name: str):\n'
-        '        self.name = name\n'
-        '\n'
-        '    def speak(self):\n'
+        "    count = 0\n"
+        "\n"
+        "    def __init__(self, name: str):\n"
+        "        self.name = name\n"
+        "\n"
+        "    def speak(self):\n"
         '        return "..."\n'
-        '\n'
-        '    def _internal(self):\n'
-        '        pass\n'
+        "\n"
+        "    def _internal(self):\n"
+        "        pass\n"
     )
     (py_dir / "dog.py").write_text(
-        'from base import Animal\n'
-        '\n'
-        'class Dog(Animal):\n'
+        "from base import Animal\n"
+        "\n"
+        "class Dog(Animal):\n"
         '    """A dog."""\n'
-        '    legs = 4\n'
-        '    \n'
-        '    def speak(self):\n'
+        "    legs = 4\n"
+        "    \n"
+        "    def speak(self):\n"
         '        return "Woof"\n'
-        '\n'
-        '    def fetch(self, item):\n'
+        "\n"
+        "    def fetch(self, item):\n"
         '        return f"Fetched {item}"\n'
     )
     (py_dir / "cat.py").write_text(
-        'from base import Animal\n'
-        '\n'
-        'class Cat(Animal):\n'
-        '    lives = 9\n'
-        '    indoor = True\n'
-        '\n'
-        '    def speak(self):\n'
+        "from base import Animal\n"
+        "\n"
+        "class Cat(Animal):\n"
+        "    lives = 9\n"
+        "    indoor = True\n"
+        "\n"
+        "    def speak(self):\n"
         '        return "Meow"\n'
     )
     (py_dir / "multi.py").write_text(
-        'class Flyable:\n'
-        '    def fly(self):\n'
+        "class Flyable:\n"
+        "    def fly(self):\n"
         '        return "flying"\n'
-        '\n'
-        'class Swimmable:\n'
-        '    def swim(self):\n'
+        "\n"
+        "class Swimmable:\n"
+        "    def swim(self):\n"
         '        return "swimming"\n'
-        '\n'
-        'class Duck(Flyable, Swimmable):\n'
-        '    def speak(self):\n'
+        "\n"
+        "class Duck(Flyable, Swimmable):\n"
+        "    def speak(self):\n"
         '        return "Quack"\n'
     )
     (py_dir / "decorators.py").write_text(
-        'def my_decorator(func):\n'
-        '    def wrapper(*args, **kwargs):\n'
-        '        return func(*args, **kwargs)\n'
-        '    return wrapper\n'
-        '\n'
-        '@my_decorator\n'
-        'def decorated_function():\n'
-        '    pass\n'
-        '\n'
-        'class WithStatic:\n'
-        '    @staticmethod\n'
-        '    def static_method():\n'
-        '        pass\n'
-        '\n'
-        '    @classmethod\n'
-        '    def class_method(cls):\n'
-        '        pass\n'
+        "def my_decorator(func):\n"
+        "    def wrapper(*args, **kwargs):\n"
+        "        return func(*args, **kwargs)\n"
+        "    return wrapper\n"
+        "\n"
+        "@my_decorator\n"
+        "def decorated_function():\n"
+        "    pass\n"
+        "\n"
+        "class WithStatic:\n"
+        "    @staticmethod\n"
+        "    def static_method():\n"
+        "        pass\n"
+        "\n"
+        "    @classmethod\n"
+        "    def class_method(cls):\n"
+        "        pass\n"
     )
     (py_dir / "utils.py").write_text(
         '__all__ = ["public_func"]\n'
-        '\n'
-        'TIMEOUT = 30\n'
-        'MAX_RETRIES = 3\n'
-        '\n'
-        'def public_func(x):\n'
-        '    return x + 1\n'
-        '\n'
-        'def _private_func(y):\n'
-        '    return y - 1\n'
+        "\n"
+        "TIMEOUT = 30\n"
+        "MAX_RETRIES = 3\n"
+        "\n"
+        "def public_func(x):\n"
+        "    return x + 1\n"
+        "\n"
+        "def _private_func(y):\n"
+        "    return y - 1\n"
     )
 
     # ---- JavaScript ----
@@ -122,123 +122,123 @@ def polyglot(tmp_path_factory):
     js_dir.mkdir()
     (js_dir / "app.js").write_text(
         'const express = require("express");\n'
-        '\n'
-        'class Router {\n'
-        '    constructor(prefix) {\n'
-        '        this.prefix = prefix;\n'
-        '        this.routes = [];\n'
-        '    }\n'
-        '\n'
-        '    get(path, handler) {\n'
+        "\n"
+        "class Router {\n"
+        "    constructor(prefix) {\n"
+        "        this.prefix = prefix;\n"
+        "        this.routes = [];\n"
+        "    }\n"
+        "\n"
+        "    get(path, handler) {\n"
         '        this.routes.push({ method: "GET", path, handler });\n'
-        '    }\n'
-        '\n'
-        '    post(path, handler) {\n'
+        "    }\n"
+        "\n"
+        "    post(path, handler) {\n"
         '        this.routes.push({ method: "POST", path, handler });\n'
-        '    }\n'
-        '}\n'
-        '\n'
-        'const createApp = () => {\n'
+        "    }\n"
+        "}\n"
+        "\n"
+        "const createApp = () => {\n"
         '    return new Router("/api");\n'
-        '};\n'
-        '\n'
-        'function startServer(port) {\n'
-        '    const app = createApp();\n'
-        '    console.log(`Server on ${port}`);\n'
-        '}\n'
-        '\n'
-        'module.exports = Router;\n'
+        "};\n"
+        "\n"
+        "function startServer(port) {\n"
+        "    const app = createApp();\n"
+        "    console.log(`Server on ${port}`);\n"
+        "}\n"
+        "\n"
+        "module.exports = Router;\n"
     )
     (js_dir / "middleware.js").write_text(
-        'const logger = (req, res, next) => {\n'
-        '    console.log(req.method);\n'
-        '    next();\n'
-        '};\n'
-        '\n'
-        'function* idGenerator() {\n'
-        '    let id = 0;\n'
-        '    while (true) yield id++;\n'
-        '}\n'
-        '\n'
+        "const logger = (req, res, next) => {\n"
+        "    console.log(req.method);\n"
+        "    next();\n"
+        "};\n"
+        "\n"
+        "function* idGenerator() {\n"
+        "    let id = 0;\n"
+        "    while (true) yield id++;\n"
+        "}\n"
+        "\n"
         'const API_VERSION = "v1";\n'
-        'let requestCount = 0;\n'
+        "let requestCount = 0;\n"
     )
 
     # ---- TypeScript ----
     ts_dir = proj / "typescript"
     ts_dir.mkdir()
     (ts_dir / "interfaces.ts").write_text(
-        'export interface Serializable {\n'
-        '    serialize(): string;\n'
-        '}\n'
-        '\n'
-        'export interface Identifiable {\n'
-        '    id: number;\n'
-        '    getId(): number;\n'
-        '}\n'
-        '\n'
-        'export interface Timestamped {\n'
-        '    createdAt: Date;\n'
-        '    updatedAt: Date;\n'
-        '}\n'
+        "export interface Serializable {\n"
+        "    serialize(): string;\n"
+        "}\n"
+        "\n"
+        "export interface Identifiable {\n"
+        "    id: number;\n"
+        "    getId(): number;\n"
+        "}\n"
+        "\n"
+        "export interface Timestamped {\n"
+        "    createdAt: Date;\n"
+        "    updatedAt: Date;\n"
+        "}\n"
     )
     (ts_dir / "base.ts").write_text(
         'import { Identifiable, Timestamped } from "./interfaces";\n'
-        '\n'
-        'export abstract class BaseEntity implements Identifiable, Timestamped {\n'
-        '    id: number = 0;\n'
-        '    createdAt: Date = new Date();\n'
-        '    updatedAt: Date = new Date();\n'
-        '\n'
-        '    getId(): number {\n'
-        '        return this.id;\n'
-        '    }\n'
-        '\n'
-        '    abstract validate(): boolean;\n'
-        '}\n'
+        "\n"
+        "export abstract class BaseEntity implements Identifiable, Timestamped {\n"
+        "    id: number = 0;\n"
+        "    createdAt: Date = new Date();\n"
+        "    updatedAt: Date = new Date();\n"
+        "\n"
+        "    getId(): number {\n"
+        "        return this.id;\n"
+        "    }\n"
+        "\n"
+        "    abstract validate(): boolean;\n"
+        "}\n"
     )
     (ts_dir / "user.ts").write_text(
         'import { BaseEntity } from "./base";\n'
         'import { Serializable } from "./interfaces";\n'
-        '\n'
-        'export class User extends BaseEntity implements Serializable {\n'
+        "\n"
+        "export class User extends BaseEntity implements Serializable {\n"
         '    name: string = "";\n'
         '    email: string = "";\n'
-        '\n'
-        '    validate(): boolean {\n'
-        '        return this.name.length > 0;\n'
-        '    }\n'
-        '\n'
-        '    serialize(): string {\n'
-        '        return JSON.stringify({ name: this.name, email: this.email });\n'
-        '    }\n'
-        '}\n'
+        "\n"
+        "    validate(): boolean {\n"
+        "        return this.name.length > 0;\n"
+        "    }\n"
+        "\n"
+        "    serialize(): string {\n"
+        "        return JSON.stringify({ name: this.name, email: this.email });\n"
+        "    }\n"
+        "}\n"
     )
     (ts_dir / "admin.ts").write_text(
         'import { User } from "./user";\n'
-        '\n'
-        'export class AdminUser extends User {\n'
+        "\n"
+        "export class AdminUser extends User {\n"
         '    role: string = "admin";\n'
-        '    permissions: string[] = [];\n'
-        '\n'
-        '    validate(): boolean {\n'
-        '        return super.validate() && this.role.length > 0;\n'
-        '    }\n'
-        '}\n'
+        "    permissions: string[] = [];\n"
+        "\n"
+        "    validate(): boolean {\n"
+        "        return super.validate() && this.role.length > 0;\n"
+        "    }\n"
+        "}\n"
     )
     (ts_dir / "generics.ts").write_text(
-        'export class Repository<T> {\n'
-        '    private items: T[] = [];\n'
-        '\n'
-        '    add(item: T): void {\n'
-        '        this.items.push(item);\n'
-        '    }\n'
-        '\n'
-        '    findById(id: number): T | undefined {\n'
-        '        return this.items[id];\n'
-        '    }\n'
-        '}\n'
-        '\n'
+        "export class Repository<T> {\n"
+        "    private items: T[] = [];\n"
+        "\n"
+        "    add(item: T): void {\n"
+        "        this.items.push(item);\n"
+        "    }\n"
+        "\n"
+        "    findById(id: number): T | undefined {\n"
+        "        return this.items[id];\n"
+        "    }\n"
+        "}\n"
+        "\n"
         'type UserRole = "admin" | "user" | "guest";\n'
     )
 
@@ -246,554 +246,545 @@ def polyglot(tmp_path_factory):
     java_dir = proj / "java"
     java_dir.mkdir()
     (java_dir / "Animal.java").write_text(
-        '/**\n'
-        ' * Base animal class.\n'
-        ' */\n'
-        'public class Animal {\n'
-        '    protected String name;\n'
-        '    private int age;\n'
-        '\n'
-        '    public Animal(String name, int age) {\n'
-        '        this.name = name;\n'
-        '        this.age = age;\n'
-        '    }\n'
-        '\n'
-        '    public String speak() {\n'
+        "/**\n"
+        " * Base animal class.\n"
+        " */\n"
+        "public class Animal {\n"
+        "    protected String name;\n"
+        "    private int age;\n"
+        "\n"
+        "    public Animal(String name, int age) {\n"
+        "        this.name = name;\n"
+        "        this.age = age;\n"
+        "    }\n"
+        "\n"
+        "    public String speak() {\n"
         '        return "...";\n'
-        '    }\n'
-        '\n'
-        '    public int getAge() {\n'
-        '        return age;\n'
-        '    }\n'
-        '}\n'
+        "    }\n"
+        "\n"
+        "    public int getAge() {\n"
+        "        return age;\n"
+        "    }\n"
+        "}\n"
     )
-    (java_dir / "Pet.java").write_text(
-        'public interface Pet {\n'
-        '    String speak();\n'
-        '    String getName();\n'
-        '}\n'
-    )
-    (java_dir / "Trainable.java").write_text(
-        'public interface Trainable {\n'
-        '    boolean train(String command);\n'
-        '}\n'
-    )
+    (java_dir / "Pet.java").write_text("public interface Pet {\n    String speak();\n    String getName();\n}\n")
+    (java_dir / "Trainable.java").write_text("public interface Trainable {\n    boolean train(String command);\n}\n")
     (java_dir / "Dog.java").write_text(
-        'public class Dog extends Animal implements Pet, Trainable {\n'
-        '    private String breed;\n'
-        '    public static final int MAX_AGE = 20;\n'
-        '\n'
-        '    public Dog(String name, int age, String breed) {\n'
-        '        super(name, age);\n'
-        '        this.breed = breed;\n'
-        '    }\n'
-        '\n'
-        '    @Override\n'
-        '    public String speak() {\n'
+        "public class Dog extends Animal implements Pet, Trainable {\n"
+        "    private String breed;\n"
+        "    public static final int MAX_AGE = 20;\n"
+        "\n"
+        "    public Dog(String name, int age, String breed) {\n"
+        "        super(name, age);\n"
+        "        this.breed = breed;\n"
+        "    }\n"
+        "\n"
+        "    @Override\n"
+        "    public String speak() {\n"
         '        return "Woof";\n'
-        '    }\n'
-        '\n'
-        '    @Override\n'
-        '    public String getName() {\n'
-        '        return name;\n'
-        '    }\n'
-        '\n'
-        '    @Override\n'
-        '    public boolean train(String command) {\n'
-        '        return true;\n'
-        '    }\n'
-        '\n'
-        '    public String getBreed() {\n'
-        '        return breed;\n'
-        '    }\n'
-        '}\n'
+        "    }\n"
+        "\n"
+        "    @Override\n"
+        "    public String getName() {\n"
+        "        return name;\n"
+        "    }\n"
+        "\n"
+        "    @Override\n"
+        "    public boolean train(String command) {\n"
+        "        return true;\n"
+        "    }\n"
+        "\n"
+        "    public String getBreed() {\n"
+        "        return breed;\n"
+        "    }\n"
+        "}\n"
     )
     (java_dir / "Cat.java").write_text(
-        'public class Cat extends Animal implements Pet {\n'
-        '    private int lives = 9;\n'
-        '\n'
-        '    public Cat(String name, int age) {\n'
-        '        super(name, age);\n'
-        '    }\n'
-        '\n'
-        '    @Override\n'
-        '    public String speak() {\n'
+        "public class Cat extends Animal implements Pet {\n"
+        "    private int lives = 9;\n"
+        "\n"
+        "    public Cat(String name, int age) {\n"
+        "        super(name, age);\n"
+        "    }\n"
+        "\n"
+        "    @Override\n"
+        "    public String speak() {\n"
         '        return "Meow";\n'
-        '    }\n'
-        '\n'
-        '    @Override\n'
-        '    public String getName() {\n'
-        '        return name;\n'
-        '    }\n'
-        '}\n'
+        "    }\n"
+        "\n"
+        "    @Override\n"
+        "    public String getName() {\n"
+        "        return name;\n"
+        "    }\n"
+        "}\n"
     )
     (java_dir / "Color.java").write_text(
-        'public enum Color {\n'
-        '    RED,\n'
-        '    GREEN,\n'
-        '    BLUE;\n'
-        '\n'
-        '    public String lower() {\n'
-        '        return name().toLowerCase();\n'
-        '    }\n'
-        '}\n'
+        "public enum Color {\n"
+        "    RED,\n"
+        "    GREEN,\n"
+        "    BLUE;\n"
+        "\n"
+        "    public String lower() {\n"
+        "        return name().toLowerCase();\n"
+        "    }\n"
+        "}\n"
     )
     (java_dir / "GuideDog.java").write_text(
-        'public class GuideDog extends Dog {\n'
-        '    private String handler;\n'
-        '\n'
-        '    public GuideDog(String name, int age, String breed, String handler) {\n'
-        '        super(name, age, breed);\n'
-        '        this.handler = handler;\n'
-        '    }\n'
-        '}\n'
+        "public class GuideDog extends Dog {\n"
+        "    private String handler;\n"
+        "\n"
+        "    public GuideDog(String name, int age, String breed, String handler) {\n"
+        "        super(name, age, breed);\n"
+        "        this.handler = handler;\n"
+        "    }\n"
+        "}\n"
     )
 
     # ---- Go ----
     go_dir = proj / "golang"
     go_dir.mkdir()
     (go_dir / "config.go").write_text(
-        'package store\n'
-        '\n'
-        '// Config holds store configuration.\n'
-        'type Config struct {\n'
-        '    MaxSize int\n'
-        '    Timeout int\n'
-        '}\n'
-        '\n'
-        '// Reader defines the read interface.\n'
-        'type Reader interface {\n'
-        '    Get(key string) (string, error)\n'
-        '    Has(key string) bool\n'
-        '}\n'
-        '\n'
-        '// Writer defines the write interface.\n'
-        'type Writer interface {\n'
-        '    Set(key string, value string) error\n'
-        '    Delete(key string) error\n'
-        '}\n'
-        '\n'
-        '// Store combines Reader and Writer.\n'
-        'type Store interface {\n'
-        '    Reader\n'
-        '    Writer\n'
-        '}\n'
-        '\n'
-        'var DefaultTimeout = 30\n'
-        'const MaxRetries = 5\n'
+        "package store\n"
+        "\n"
+        "// Config holds store configuration.\n"
+        "type Config struct {\n"
+        "    MaxSize int\n"
+        "    Timeout int\n"
+        "}\n"
+        "\n"
+        "// Reader defines the read interface.\n"
+        "type Reader interface {\n"
+        "    Get(key string) (string, error)\n"
+        "    Has(key string) bool\n"
+        "}\n"
+        "\n"
+        "// Writer defines the write interface.\n"
+        "type Writer interface {\n"
+        "    Set(key string, value string) error\n"
+        "    Delete(key string) error\n"
+        "}\n"
+        "\n"
+        "// Store combines Reader and Writer.\n"
+        "type Store interface {\n"
+        "    Reader\n"
+        "    Writer\n"
+        "}\n"
+        "\n"
+        "var DefaultTimeout = 30\n"
+        "const MaxRetries = 5\n"
     )
     (go_dir / "memory.go").write_text(
-        'package store\n'
-        '\n'
+        "package store\n"
+        "\n"
         'import "sync"\n'
-        '\n'
-        '// MemoryStore is an in-memory store.\n'
-        'type MemoryStore struct {\n'
-        '    Config\n'
-        '    mu   sync.RWMutex\n'
-        '    data map[string]string\n'
-        '}\n'
-        '\n'
-        'func NewMemoryStore(cfg Config) *MemoryStore {\n'
-        '    return &MemoryStore{\n'
-        '        Config: cfg,\n'
-        '        data:   make(map[string]string),\n'
-        '    }\n'
-        '}\n'
-        '\n'
-        'func (s *MemoryStore) Get(key string) (string, error) {\n'
-        '    s.mu.RLock()\n'
-        '    defer s.mu.RUnlock()\n'
-        '    v, ok := s.data[key]\n'
-        '    if !ok {\n'
+        "\n"
+        "// MemoryStore is an in-memory store.\n"
+        "type MemoryStore struct {\n"
+        "    Config\n"
+        "    mu   sync.RWMutex\n"
+        "    data map[string]string\n"
+        "}\n"
+        "\n"
+        "func NewMemoryStore(cfg Config) *MemoryStore {\n"
+        "    return &MemoryStore{\n"
+        "        Config: cfg,\n"
+        "        data:   make(map[string]string),\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "func (s *MemoryStore) Get(key string) (string, error) {\n"
+        "    s.mu.RLock()\n"
+        "    defer s.mu.RUnlock()\n"
+        "    v, ok := s.data[key]\n"
+        "    if !ok {\n"
         '        return "", nil\n'
-        '    }\n'
-        '    return v, nil\n'
-        '}\n'
-        '\n'
-        'func (s *MemoryStore) Set(key string, value string) error {\n'
-        '    s.mu.Lock()\n'
-        '    defer s.mu.Unlock()\n'
-        '    s.data[key] = value\n'
-        '    return nil\n'
-        '}\n'
+        "    }\n"
+        "    return v, nil\n"
+        "}\n"
+        "\n"
+        "func (s *MemoryStore) Set(key string, value string) error {\n"
+        "    s.mu.Lock()\n"
+        "    defer s.mu.Unlock()\n"
+        "    s.data[key] = value\n"
+        "    return nil\n"
+        "}\n"
     )
     (go_dir / "redis.go").write_text(
-        'package store\n'
-        '\n'
-        '// RedisStore wraps a Redis client.\n'
-        'type RedisStore struct {\n'
-        '    Config\n'
-        '    addr string\n'
-        '    pool int\n'
-        '}\n'
-        '\n'
-        'func NewRedisStore(cfg Config, addr string) *RedisStore {\n'
-        '    return &RedisStore{Config: cfg, addr: addr, pool: 10}\n'
-        '}\n'
+        "package store\n"
+        "\n"
+        "// RedisStore wraps a Redis client.\n"
+        "type RedisStore struct {\n"
+        "    Config\n"
+        "    addr string\n"
+        "    pool int\n"
+        "}\n"
+        "\n"
+        "func NewRedisStore(cfg Config, addr string) *RedisStore {\n"
+        "    return &RedisStore{Config: cfg, addr: addr, pool: 10}\n"
+        "}\n"
     )
 
     # ---- Rust ----
     rust_dir = proj / "rust"
     rust_dir.mkdir()
     (rust_dir / "traits.rs").write_text(
-        '/// A shape that can compute area.\n'
-        'pub trait Shape {\n'
-        '    fn area(&self) -> f64;\n'
-        '    fn perimeter(&self) -> f64;\n'
-        '}\n'
-        '\n'
-        '/// Display trait for pretty printing.\n'
-        'pub trait Display {\n'
-        '    fn display(&self) -> String;\n'
-        '}\n'
+        "/// A shape that can compute area.\n"
+        "pub trait Shape {\n"
+        "    fn area(&self) -> f64;\n"
+        "    fn perimeter(&self) -> f64;\n"
+        "}\n"
+        "\n"
+        "/// Display trait for pretty printing.\n"
+        "pub trait Display {\n"
+        "    fn display(&self) -> String;\n"
+        "}\n"
     )
     (rust_dir / "shapes.rs").write_text(
-        'use crate::traits::{Shape, Display};\n'
-        '\n'
-        '/// A circle.\n'
-        'pub struct Circle {\n'
-        '    pub radius: f64,\n'
-        '}\n'
-        '\n'
-        '/// A rectangle.\n'
-        'pub struct Rectangle {\n'
-        '    pub width: f64,\n'
-        '    pub height: f64,\n'
-        '}\n'
-        '\n'
-        'impl Shape for Circle {\n'
-        '    fn area(&self) -> f64 {\n'
-        '        std::f64::consts::PI * self.radius * self.radius\n'
-        '    }\n'
-        '    fn perimeter(&self) -> f64 {\n'
-        '        2.0 * std::f64::consts::PI * self.radius\n'
-        '    }\n'
-        '}\n'
-        '\n'
-        'impl Shape for Rectangle {\n'
-        '    fn area(&self) -> f64 {\n'
-        '        self.width * self.height\n'
-        '    }\n'
-        '    fn perimeter(&self) -> f64 {\n'
-        '        2.0 * (self.width + self.height)\n'
-        '    }\n'
-        '}\n'
-        '\n'
-        'impl Display for Circle {\n'
-        '    fn display(&self) -> String {\n'
+        "use crate::traits::{Shape, Display};\n"
+        "\n"
+        "/// A circle.\n"
+        "pub struct Circle {\n"
+        "    pub radius: f64,\n"
+        "}\n"
+        "\n"
+        "/// A rectangle.\n"
+        "pub struct Rectangle {\n"
+        "    pub width: f64,\n"
+        "    pub height: f64,\n"
+        "}\n"
+        "\n"
+        "impl Shape for Circle {\n"
+        "    fn area(&self) -> f64 {\n"
+        "        std::f64::consts::PI * self.radius * self.radius\n"
+        "    }\n"
+        "    fn perimeter(&self) -> f64 {\n"
+        "        2.0 * std::f64::consts::PI * self.radius\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "impl Shape for Rectangle {\n"
+        "    fn area(&self) -> f64 {\n"
+        "        self.width * self.height\n"
+        "    }\n"
+        "    fn perimeter(&self) -> f64 {\n"
+        "        2.0 * (self.width + self.height)\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "impl Display for Circle {\n"
+        "    fn display(&self) -> String {\n"
         '        format!("Circle(r={})", self.radius)\n'
-        '    }\n'
-        '}\n'
-        '\n'
-        'pub enum ShapeKind {\n'
-        '    Circle(Circle),\n'
-        '    Rectangle(Rectangle),\n'
-        '}\n'
+        "    }\n"
+        "}\n"
+        "\n"
+        "pub enum ShapeKind {\n"
+        "    Circle(Circle),\n"
+        "    Rectangle(Rectangle),\n"
+        "}\n"
     )
 
     # ---- C ----
     c_dir = proj / "clang"
     c_dir.mkdir()
     (c_dir / "list.h").write_text(
-        '#ifndef LIST_H\n'
-        '#define LIST_H\n'
-        '\n'
-        'typedef struct Node {\n'
-        '    int value;\n'
-        '    struct Node* next;\n'
-        '} Node;\n'
-        '\n'
-        'typedef struct {\n'
-        '    Node* head;\n'
-        '    int size;\n'
-        '} LinkedList;\n'
-        '\n'
-        'LinkedList* list_create(void);\n'
-        'void list_push(LinkedList* list, int value);\n'
-        'int list_pop(LinkedList* list);\n'
-        'void list_free(LinkedList* list);\n'
-        '\n'
-        '#endif\n'
+        "#ifndef LIST_H\n"
+        "#define LIST_H\n"
+        "\n"
+        "typedef struct Node {\n"
+        "    int value;\n"
+        "    struct Node* next;\n"
+        "} Node;\n"
+        "\n"
+        "typedef struct {\n"
+        "    Node* head;\n"
+        "    int size;\n"
+        "} LinkedList;\n"
+        "\n"
+        "LinkedList* list_create(void);\n"
+        "void list_push(LinkedList* list, int value);\n"
+        "int list_pop(LinkedList* list);\n"
+        "void list_free(LinkedList* list);\n"
+        "\n"
+        "#endif\n"
     )
     (c_dir / "list.c").write_text(
-        '#include <stdlib.h>\n'
+        "#include <stdlib.h>\n"
         '#include "list.h"\n'
-        '\n'
-        'LinkedList* list_create(void) {\n'
-        '    LinkedList* list = malloc(sizeof(LinkedList));\n'
-        '    list->head = NULL;\n'
-        '    list->size = 0;\n'
-        '    return list;\n'
-        '}\n'
-        '\n'
-        'void list_push(LinkedList* list, int value) {\n'
-        '    Node* node = malloc(sizeof(Node));\n'
-        '    node->value = value;\n'
-        '    node->next = list->head;\n'
-        '    list->head = node;\n'
-        '    list->size++;\n'
-        '}\n'
+        "\n"
+        "LinkedList* list_create(void) {\n"
+        "    LinkedList* list = malloc(sizeof(LinkedList));\n"
+        "    list->head = NULL;\n"
+        "    list->size = 0;\n"
+        "    return list;\n"
+        "}\n"
+        "\n"
+        "void list_push(LinkedList* list, int value) {\n"
+        "    Node* node = malloc(sizeof(Node));\n"
+        "    node->value = value;\n"
+        "    node->next = list->head;\n"
+        "    list->head = node;\n"
+        "    list->size++;\n"
+        "}\n"
     )
 
     # ---- PHP ----
     php_dir = proj / "php"
     php_dir.mkdir()
     (php_dir / "Model.php").write_text(
-        '<?php\n'
-        'abstract class Model {\n'
-        '    protected $table;\n'
+        "<?php\n"
+        "abstract class Model {\n"
+        "    protected $table;\n"
         '    protected $primaryKey = "id";\n'
-        '\n'
-        '    public function find($id) {\n'
-        '        return null;\n'
-        '    }\n'
-        '}\n'
+        "\n"
+        "    public function find($id) {\n"
+        "        return null;\n"
+        "    }\n"
+        "}\n"
     )
     (php_dir / "HasTimestamps.php").write_text(
-        '<?php\n'
-        'trait HasTimestamps {\n'
-        '    public $created_at;\n'
-        '    public $updated_at;\n'
-        '\n'
-        '    public function touch() {\n'
-        '        $this->updated_at = time();\n'
-        '    }\n'
-        '}\n'
+        "<?php\n"
+        "trait HasTimestamps {\n"
+        "    public $created_at;\n"
+        "    public $updated_at;\n"
+        "\n"
+        "    public function touch() {\n"
+        "        $this->updated_at = time();\n"
+        "    }\n"
+        "}\n"
     )
     (php_dir / "SoftDeletes.php").write_text(
-        '<?php\n'
-        'trait SoftDeletes {\n'
-        '    public $deleted_at;\n'
-        '\n'
-        '    public function delete() {\n'
-        '        $this->deleted_at = time();\n'
-        '    }\n'
-        '\n'
-        '    public function restore() {\n'
-        '        $this->deleted_at = null;\n'
-        '    }\n'
-        '}\n'
+        "<?php\n"
+        "trait SoftDeletes {\n"
+        "    public $deleted_at;\n"
+        "\n"
+        "    public function delete() {\n"
+        "        $this->deleted_at = time();\n"
+        "    }\n"
+        "\n"
+        "    public function restore() {\n"
+        "        $this->deleted_at = null;\n"
+        "    }\n"
+        "}\n"
     )
     (php_dir / "User.php").write_text(
-        '<?php\n'
-        'class User extends Model {\n'
-        '    use HasTimestamps;\n'
-        '    use SoftDeletes;\n'
-        '\n'
+        "<?php\n"
+        "class User extends Model {\n"
+        "    use HasTimestamps;\n"
+        "    use SoftDeletes;\n"
+        "\n"
         '    protected $table = "users";\n'
-        '    public $name;\n'
-        '    public $email;\n'
-        '    private $password;\n'
-        '\n'
-        '    public function __construct($name, $email) {\n'
-        '        $this->name = $name;\n'
-        '        $this->email = $email;\n'
-        '    }\n'
-        '\n'
-        '    public function greet() {\n'
+        "    public $name;\n"
+        "    public $email;\n"
+        "    private $password;\n"
+        "\n"
+        "    public function __construct($name, $email) {\n"
+        "        $this->name = $name;\n"
+        "        $this->email = $email;\n"
+        "    }\n"
+        "\n"
+        "    public function greet() {\n"
         '        return "Hello, " . $this->name;\n'
-        '    }\n'
-        '\n'
-        '    public function safeGreet() {\n'
-        '        return $this?->greet();\n'
-        '    }\n'
-        '}\n'
+        "    }\n"
+        "\n"
+        "    public function safeGreet() {\n"
+        "        return $this?->greet();\n"
+        "    }\n"
+        "}\n"
     )
 
     # ---- Ruby ----
     ruby_dir = proj / "ruby"
     ruby_dir.mkdir()
     (ruby_dir / "vehicle.rb").write_text(
-        'class Vehicle\n'
-        '  def initialize(make, model)\n'
-        '    @make = make\n'
-        '    @model = model\n'
-        '  end\n'
-        '\n'
-        '  def description\n'
+        "class Vehicle\n"
+        "  def initialize(make, model)\n"
+        "    @make = make\n"
+        "    @model = model\n"
+        "  end\n"
+        "\n"
+        "  def description\n"
         '    "#{@make} #{@model}"\n'
-        '  end\n'
-        'end\n'
-        '\n'
-        'class Car < Vehicle\n'
-        '  def initialize(make, model, doors)\n'
-        '    super(make, model)\n'
-        '    @doors = doors\n'
-        '  end\n'
-        'end\n'
-        '\n'
-        'module Loggable\n'
-        '  def log(msg)\n'
-        '    puts msg\n'
-        '  end\n'
-        'end\n'
+        "  end\n"
+        "end\n"
+        "\n"
+        "class Car < Vehicle\n"
+        "  def initialize(make, model, doors)\n"
+        "    super(make, model)\n"
+        "    @doors = doors\n"
+        "  end\n"
+        "end\n"
+        "\n"
+        "module Loggable\n"
+        "  def log(msg)\n"
+        "    puts msg\n"
+        "  end\n"
+        "end\n"
     )
 
     # ---- C# ----
     cs_dir = proj / "csharp"
     cs_dir.mkdir()
     (cs_dir / "Models.cs").write_text(
-        'namespace App.Models\n'
-        '{\n'
-        '    public interface IEntity\n'
-        '    {\n'
-        '        int Id { get; set; }\n'
-        '    }\n'
-        '\n'
-        '    public class BaseEntity : IEntity\n'
-        '    {\n'
-        '        public int Id { get; set; }\n'
-        '        public DateTime CreatedAt { get; set; }\n'
-        '    }\n'
-        '\n'
-        '    public class UserEntity : BaseEntity\n'
-        '    {\n'
-        '        public string Name { get; set; }\n'
-        '        public string Email { get; set; }\n'
-        '    }\n'
-        '}\n'
+        "namespace App.Models\n"
+        "{\n"
+        "    public interface IEntity\n"
+        "    {\n"
+        "        int Id { get; set; }\n"
+        "    }\n"
+        "\n"
+        "    public class BaseEntity : IEntity\n"
+        "    {\n"
+        "        public int Id { get; set; }\n"
+        "        public DateTime CreatedAt { get; set; }\n"
+        "    }\n"
+        "\n"
+        "    public class UserEntity : BaseEntity\n"
+        "    {\n"
+        "        public string Name { get; set; }\n"
+        "        public string Email { get; set; }\n"
+        "    }\n"
+        "}\n"
     )
 
     # ---- Kotlin ----
     kt_dir = proj / "kotlin"
     kt_dir.mkdir()
     (kt_dir / "models.kt").write_text(
-        'interface Printable {\n'
-        '    fun print()\n'
-        '}\n'
-        '\n'
-        'open class Shape {\n'
-        '    open fun area(): Double = 0.0\n'
-        '}\n'
-        '\n'
-        'class Circle(val radius: Double) : Shape(), Printable {\n'
-        '    override fun area(): Double = Math.PI * radius * radius\n'
+        "interface Printable {\n"
+        "    fun print()\n"
+        "}\n"
+        "\n"
+        "open class Shape {\n"
+        "    open fun area(): Double = 0.0\n"
+        "}\n"
+        "\n"
+        "class Circle(val radius: Double) : Shape(), Printable {\n"
+        "    override fun area(): Double = Math.PI * radius * radius\n"
         '    override fun print() = println("Circle($radius)")\n'
-        '}\n'
-        '\n'
-        'data class Point(val x: Double, val y: Double)\n'
+        "}\n"
+        "\n"
+        "data class Point(val x: Double, val y: Double)\n"
     )
 
     # ---- JavaScript CJS exports ----
     (js_dir / "cjs_exports.js").write_text(
-        'exports.normalizeType = function(type) {\n'
-        '    return type;\n'
-        '};\n'
-        'exports.compileETag = function compileETag(val) {\n'
-        '    return val;\n'
-        '};\n'
+        "exports.normalizeType = function(type) {\n"
+        "    return type;\n"
+        "};\n"
+        "exports.compileETag = function compileETag(val) {\n"
+        "    return val;\n"
+        "};\n"
         'exports.version = "1.0";\n'
-        'var app = module.exports = {};\n'
-        'app.init = function init() {\n'
-        '    return true;\n'
-        '};\n'
-        'app.handle = function handle(req, res) {\n'
-        '    return req;\n'
-        '};\n'
+        "var app = module.exports = {};\n"
+        "app.init = function init() {\n"
+        "    return true;\n"
+        "};\n"
+        "app.handle = function handle(req, res) {\n"
+        "    return req;\n"
+        "};\n"
     )
 
     # ---- JavaScript object exports ----
     (js_dir / "obj_exports.js").write_text(
-        'module.exports = {\n'
-        '    handle(req) { return req; },\n'
-        '    query: function() { return []; },\n'
+        "module.exports = {\n"
+        "    handle(req) { return req; },\n"
+        "    query: function() { return []; },\n"
         '    VERSION: "2.0"\n'
-        '};\n'
+        "};\n"
     )
 
     # ---- Vue SFC ----
     vue_dir = proj / "vue"
     vue_dir.mkdir()
     (vue_dir / "UserCard.vue").write_text(
-        '<template>\n'
+        "<template>\n"
         '  <div class="user-card">{{ user.name }}</div>\n'
-        '</template>\n'
-        '\n'
+        "</template>\n"
+        "\n"
         '<script lang="ts">\n'
         'import { defineComponent } from "vue";\n'
-        '\n'
-        'interface UserData {\n'
-        '  name: string;\n'
-        '  email: string;\n'
-        '}\n'
-        '\n'
-        'export default defineComponent({\n'
+        "\n"
+        "interface UserData {\n"
+        "  name: string;\n"
+        "  email: string;\n"
+        "}\n"
+        "\n"
+        "export default defineComponent({\n"
         '  name: "UserCard",\n'
-        '  props: {\n'
-        '    user: { type: Object as () => UserData, required: true },\n'
-        '  },\n'
-        '});\n'
-        '</script>\n'
-        '\n'
-        '<style scoped>\n'
-        '.user-card { padding: 8px; }\n'
-        '</style>\n'
+        "  props: {\n"
+        "    user: { type: Object as () => UserData, required: true },\n"
+        "  },\n"
+        "});\n"
+        "</script>\n"
+        "\n"
+        "<style scoped>\n"
+        ".user-card { padding: 8px; }\n"
+        "</style>\n"
     )
     (vue_dir / "Counter.vue").write_text(
-        '<template>\n'
+        "<template>\n"
         '  <button @click="increment">{{ count }}</button>\n'
-        '</template>\n'
-        '\n'
+        "</template>\n"
+        "\n"
         '<script setup lang="ts">\n'
         'import { ref } from "vue";\n'
-        '\n'
-        'const count = ref(0);\n'
-        '\n'
-        'function increment(): void {\n'
-        '  count.value++;\n'
-        '}\n'
-        '</script>\n'
+        "\n"
+        "const count = ref(0);\n"
+        "\n"
+        "function increment(): void {\n"
+        "  count.value++;\n"
+        "}\n"
+        "</script>\n"
     )
     (vue_dir / "Legacy.vue").write_text(
-        '<template>\n'
-        '  <div>{{ message }}</div>\n'
-        '</template>\n'
-        '\n'
-        '<script>\n'
-        'export default {\n'
-        '  data() {\n'
+        "<template>\n"
+        "  <div>{{ message }}</div>\n"
+        "</template>\n"
+        "\n"
+        "<script>\n"
+        "export default {\n"
+        "  data() {\n"
         '    return { message: "hello" };\n'
-        '  },\n'
-        '  methods: {\n'
-        '    greet() {\n'
-        '      return this.message;\n'
-        '    },\n'
-        '  },\n'
-        '};\n'
-        '</script>\n'
+        "  },\n"
+        "  methods: {\n"
+        "    greet() {\n"
+        "      return this.message;\n"
+        "    },\n"
+        "  },\n"
+        "};\n"
+        "</script>\n"
     )
     # TS composable used by Vue files — tests cross-file import resolution
     (vue_dir / "useCounter.ts").write_text(
-        'export function useCounter(initial: number) {\n'
-        '  let count = initial;\n'
-        '  return { count, increment: () => count++ };\n'
-        '}\n'
+        "export function useCounter(initial: number) {\n"
+        "  let count = initial;\n"
+        "  return { count, increment: () => count++ };\n"
+        "}\n"
     )
     (vue_dir / "App.vue").write_text(
-        '<template>\n'
-        '  <div>{{ counter.count }}</div>\n'
-        '</template>\n'
-        '\n'
+        "<template>\n"
+        "  <div>{{ counter.count }}</div>\n"
+        "</template>\n"
+        "\n"
         '<script setup lang="ts">\n'
         'import { useCounter } from "./useCounter";\n'
-        '\n'
-        'const counter = useCounter(0);\n'
-        '</script>\n'
+        "\n"
+        "const counter = useCounter(0);\n"
+        "</script>\n"
     )
 
     # ---- Test files (for test-map command) ----
     test_dir = proj / "tests"
     test_dir.mkdir()
     (test_dir / "test_animals.py").write_text(
-        'from python.base import Animal\n'
-        'from python.dog import Dog\n'
-        '\n'
-        'def test_animal_speak():\n'
+        "from python.base import Animal\n"
+        "from python.dog import Dog\n"
+        "\n"
+        "def test_animal_speak():\n"
         '    a = Animal("test")\n'
         '    assert a.speak() == "..."\n'
-        '\n'
-        'def test_dog_speak():\n'
+        "\n"
+        "def test_dog_speak():\n"
         '    d = Dog("Rex")\n'
         '    assert d.speak() == "Woof"\n'
     )
@@ -807,6 +798,7 @@ def polyglot(tmp_path_factory):
 # ============================================================================
 # PYTHON TESTS
 # ============================================================================
+
 
 class TestPython:
     def test_class_extracted(self, polyglot):
@@ -852,6 +844,7 @@ class TestPython:
 # ============================================================================
 # JAVASCRIPT TESTS
 # ============================================================================
+
 
 class TestJavaScript:
     def test_class_extracted(self, polyglot):
@@ -915,6 +908,7 @@ class TestJavaScript:
 # TYPESCRIPT TESTS
 # ============================================================================
 
+
 class TestTypeScript:
     def test_interface_extracted(self, polyglot):
         out, _ = roam("search", "Serializable", cwd=polyglot)
@@ -948,6 +942,7 @@ class TestTypeScript:
 # ============================================================================
 # JAVA TESTS
 # ============================================================================
+
 
 class TestJava:
     def test_class_extracted(self, polyglot):
@@ -1010,6 +1005,7 @@ class TestJava:
 # GO TESTS
 # ============================================================================
 
+
 class TestGo:
     def test_struct_extracted(self, polyglot):
         out, _ = roam("search", "Config", cwd=polyglot)
@@ -1053,6 +1049,7 @@ class TestGo:
 # RUST TESTS
 # ============================================================================
 
+
 class TestRust:
     def test_trait_extracted(self, polyglot):
         out, _ = roam("search", "Shape", cwd=polyglot)
@@ -1079,6 +1076,7 @@ class TestRust:
 # C TESTS
 # ============================================================================
 
+
 class TestC:
     def test_struct_extracted(self, polyglot):
         out, _ = roam("search", "Node", cwd=polyglot)
@@ -1102,6 +1100,7 @@ class TestC:
 # ============================================================================
 # PHP TESTS
 # ============================================================================
+
 
 class TestPHP:
     def test_class_extracted(self, polyglot):
@@ -1138,6 +1137,7 @@ class TestPHP:
 # RUBY TESTS
 # ============================================================================
 
+
 class TestRuby:
     def test_class_extracted(self, polyglot):
         out, _ = roam("search", "Vehicle", cwd=polyglot)
@@ -1159,6 +1159,7 @@ class TestRuby:
 # ============================================================================
 # C# TESTS
 # ============================================================================
+
 
 class TestCSharp:
     def test_class_extracted(self, polyglot):
@@ -1192,6 +1193,7 @@ class TestCSharp:
 # KOTLIN TESTS
 # ============================================================================
 
+
 class TestKotlin:
     def test_class_extracted(self, polyglot):
         out, _ = roam("search", "Circle", cwd=polyglot)
@@ -1209,6 +1211,7 @@ class TestKotlin:
 # ============================================================================
 # VUE SFC TESTS
 # ============================================================================
+
 
 class TestVueSFC:
     def test_vue_file_indexed(self, polyglot):
@@ -1252,6 +1255,7 @@ class TestVueSFC:
 # ============================================================================
 # ALL 18 COMMANDS
 # ============================================================================
+
 
 class TestCommands:
     """Test every CLI command produces valid output on the polyglot project."""
@@ -1341,6 +1345,7 @@ class TestCommands:
 # EDGE COUNTS (verify the index has edges, not just symbols)
 # ============================================================================
 
+
 class TestEdgeCounts:
     def test_nonzero_edges(self, polyglot):
         """The polyglot project should have many edges."""
@@ -1362,28 +1367,18 @@ class TestEdgeCounts:
 # INCREMENTAL INDEXING
 # ============================================================================
 
+
 class TestIncremental:
     @pytest.fixture
     def incr_project(self, tmp_path):
         """A Python project for incremental tests."""
         proj = tmp_path / "incr"
         proj.mkdir()
-        (proj / "base.py").write_text(
-            'class Base:\n'
-            '    def hello(self):\n'
-            '        return "hi"\n'
-        )
+        (proj / "base.py").write_text('class Base:\n    def hello(self):\n        return "hi"\n')
         (proj / "child.py").write_text(
-            'from base import Base\n'
-            '\n'
-            'class Child(Base):\n'
-            '    def greet(self):\n'
-            '        return self.hello()\n'
+            "from base import Base\n\nclass Child(Base):\n    def greet(self):\n        return self.hello()\n"
         )
-        (proj / "standalone.py").write_text(
-            'def standalone():\n'
-            '    return 42\n'
-        )
+        (proj / "standalone.py").write_text("def standalone():\n    return 42\n")
         git_init(proj)
         index_in_process(proj, "--force")
         return proj
@@ -1396,10 +1391,7 @@ class TestIncremental:
 
     def test_add_file(self, incr_project):
         """Adding a new file should be detected."""
-        (incr_project / "new_file.py").write_text(
-            'def new_function():\n'
-            '    return "new"\n'
-        )
+        (incr_project / "new_file.py").write_text('def new_function():\n    return "new"\n')
         git_commit(incr_project, "add file")
         out, rc = index_in_process(incr_project)
         assert rc == 0
@@ -1416,10 +1408,10 @@ class TestIncremental:
 
         # Modify the target file
         (incr_project / "base.py").write_text(
-            'class Base:\n'
-            '    def hello(self):\n'
+            "class Base:\n"
+            "    def hello(self):\n"
             '        return "hello world"\n'
-            '    def goodbye(self):\n'
+            "    def goodbye(self):\n"
             '        return "bye"\n'
         )
         git_commit(incr_project, "modify base")
@@ -1435,17 +1427,13 @@ class TestIncremental:
         """TS inheritance edges should survive incremental re-indexing."""
         proj = tmp_path / "ts_incr"
         proj.mkdir()
-        (proj / "base.ts").write_text(
-            'export class Base {\n'
-            '    hello(): string { return "hi"; }\n'
-            '}\n'
-        )
+        (proj / "base.ts").write_text('export class Base {\n    hello(): string { return "hi"; }\n}\n')
         (proj / "child.ts").write_text(
             'import { Base } from "./base";\n'
-            '\n'
-            'export class Child extends Base {\n'
-            '    greet(): string { return this.hello(); }\n'
-            '}\n'
+            "\n"
+            "export class Child extends Base {\n"
+            "    greet(): string { return this.hello(); }\n"
+            "}\n"
         )
         git_init(proj)
         index_in_process(proj, "--force")
@@ -1456,11 +1444,12 @@ class TestIncremental:
 
         # Modify base.ts
         (proj / "base.ts").write_text(
-            'export class Base {\n'
+            "export class Base {\n"
             '    hello(): string { return "hello world"; }\n'
             '    goodbye(): string { return "bye"; }\n'
-            '}\n'
-        , encoding="utf-8")
+            "}\n",
+            encoding="utf-8",
+        )
         git_commit(proj, "modify base")
 
         # Incremental re-index
@@ -1474,6 +1463,7 @@ class TestIncremental:
     def test_remove_file(self, incr_project):
         """Removing a file should clean up its symbols."""
         import os
+
         os.remove(incr_project / "standalone.py")
         git_commit(incr_project, "remove file")
         out, rc = index_in_process(incr_project)
@@ -1488,12 +1478,13 @@ class TestIncremental:
 # ERROR HANDLING
 # ============================================================================
 
+
 class TestErrorHandling:
     @pytest.fixture
     def err_project(self, tmp_path):
         proj = tmp_path / "err"
         proj.mkdir()
-        (proj / "valid.py").write_text('def valid(): pass\n')
+        (proj / "valid.py").write_text("def valid(): pass\n")
         git_init(proj)
         index_in_process(proj, "--force")
         return proj
@@ -1517,15 +1508,39 @@ class TestErrorHandling:
     def test_help_all_commands(self):
         """Every command should have --help (in-process for speed)."""
         from click.testing import CliRunner
+
         from roam.cli import cli
 
         commands = [
-            "index", "map", "module", "file", "symbol", "trace",
-            "deps", "health", "clusters", "layers", "weather",
-            "dead", "search", "grep", "uses", "impact", "owner",
-            "coupling", "fan", "diff", "describe", "test-map",
-            "sketch", "context", "safe-delete", "pr-risk", "split",
-            "risk", "why",
+            "index",
+            "map",
+            "module",
+            "file",
+            "symbol",
+            "trace",
+            "deps",
+            "health",
+            "clusters",
+            "layers",
+            "weather",
+            "dead",
+            "search",
+            "grep",
+            "uses",
+            "impact",
+            "owner",
+            "coupling",
+            "fan",
+            "diff",
+            "describe",
+            "test-map",
+            "sketch",
+            "context",
+            "safe-delete",
+            "pr-risk",
+            "split",
+            "risk",
+            "why",
         ]
         runner = CliRunner()
         for cmd in commands:
@@ -1536,6 +1551,7 @@ class TestErrorHandling:
 # ============================================================================
 # EDGE CASES
 # ============================================================================
+
 
 class TestEdgeCases:
     @pytest.fixture
@@ -1554,14 +1570,8 @@ class TestEdgeCases:
 
     def test_syntax_error_file(self, edge_project):
         """Files with syntax errors should be handled gracefully."""
-        (edge_project / "bad.py").write_text(
-            'def broken(\n'
-            '    this is not valid python\n'
-        )
-        (edge_project / "good.py").write_text(
-            'def good():\n'
-            '    return 42\n'
-        )
+        (edge_project / "bad.py").write_text("def broken(\n    this is not valid python\n")
+        (edge_project / "good.py").write_text("def good():\n    return 42\n")
         git_init(edge_project)
         out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
@@ -1572,13 +1582,13 @@ class TestEdgeCases:
     def test_deeply_nested_classes(self, edge_project):
         """Deeply nested class structures should work."""
         (edge_project / "nested.java").write_text(
-            'public class Outer {\n'
-            '    public class Middle {\n'
-            '        public class Inner {\n'
-            '            public void deepMethod() {}\n'
-            '        }\n'
-            '    }\n'
-            '}\n'
+            "public class Outer {\n"
+            "    public class Middle {\n"
+            "        public class Inner {\n"
+            "            public void deepMethod() {}\n"
+            "        }\n"
+            "    }\n"
+            "}\n"
         )
         git_init(edge_project)
         index_in_process(edge_project, "--force")
@@ -1588,12 +1598,9 @@ class TestEdgeCases:
     def test_unicode_identifiers(self, edge_project):
         """Unicode in file content should not crash."""
         (edge_project / "unicode.py").write_text(
-            '# Comments with unicode: eeeee\n'
-            'greeting = "Hello World"\n'
-            '\n'
-            'def process():\n'
-            '    return greeting\n'
-        , encoding="utf-8")
+            '# Comments with unicode: eeeee\ngreeting = "Hello World"\n\ndef process():\n    return greeting\n',
+            encoding="utf-8",
+        )
         git_init(edge_project)
         out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
@@ -1602,8 +1609,8 @@ class TestEdgeCases:
 
     def test_very_long_file(self, edge_project):
         """Large files should be handled."""
-        lines = ['def func_{i}():\n    return {i}\n'.format(i=i) for i in range(200)]
-        (edge_project / "big.py").write_text('\n'.join(lines))
+        lines = ["def func_{i}():\n    return {i}\n".format(i=i) for i in range(200)]
+        (edge_project / "big.py").write_text("\n".join(lines))
         git_init(edge_project)
         out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
@@ -1612,11 +1619,11 @@ class TestEdgeCases:
 
     def test_roam_dir_excluded(self, edge_project):
         """Files in .roam/ should not be indexed."""
-        (edge_project / "real.py").write_text('def real(): pass\n')
+        (edge_project / "real.py").write_text("def real(): pass\n")
         roam_dir = edge_project / ".roam"
         roam_dir.mkdir()
         (roam_dir / "index.db").write_bytes(b"fake")
-        (roam_dir / "hidden.py").write_text('def hidden(): pass\n')
+        (roam_dir / "hidden.py").write_text("def hidden(): pass\n")
         git_init(edge_project)
         index_in_process(edge_project, "--force")
         out, _ = roam("search", "hidden", cwd=edge_project)
@@ -1624,9 +1631,7 @@ class TestEdgeCases:
 
     def test_mixed_line_endings(self, edge_project):
         """Files with CRLF/mixed endings should work."""
-        (edge_project / "crlf.py").write_bytes(
-            b'def crlf_func():\r\n    return True\r\n'
-        )
+        (edge_project / "crlf.py").write_bytes(b"def crlf_func():\r\n    return True\r\n")
         git_init(edge_project)
         out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
@@ -1637,7 +1642,7 @@ class TestEdgeCases:
         """Project without git should fall back to os.walk."""
         proj = tmp_path / "nogit"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         # No git init!
         out, rc = index_in_process(proj, "--force")
         assert rc == 0
@@ -1646,9 +1651,9 @@ class TestEdgeCases:
 
     def test_binary_files_skipped(self, edge_project):
         """Binary files should be skipped without error."""
-        (edge_project / "code.py").write_text('x = 1\n')
-        (edge_project / "image.png").write_bytes(b'\x89PNG\r\n\x1a\n' + b'\x00' * 100)
-        (edge_project / "data.bin").write_bytes(b'\x00' * 1000)
+        (edge_project / "code.py").write_text("x = 1\n")
+        (edge_project / "image.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
+        (edge_project / "data.bin").write_bytes(b"\x00" * 1000)
         git_init(edge_project)
         out, rc = index_in_process(edge_project, "--force")
         assert rc == 0
@@ -1657,6 +1662,7 @@ class TestEdgeCases:
 # ============================================================================
 # CROSS-LANGUAGE SUMMARY
 # ============================================================================
+
 
 class TestCrossLanguage:
     def test_map_shows_all_languages(self, polyglot):
@@ -1681,6 +1687,7 @@ class TestCrossLanguage:
 # ============================================================================
 # NEW v3.6 COMMANDS
 # ============================================================================
+
 
 class TestDescribe:
     def test_describe_runs(self, polyglot):
@@ -1767,6 +1774,7 @@ class TestSketch:
 # CONTEXT COMMAND (v4.1)
 # ============================================================================
 
+
 class TestContext:
     def test_context_basic(self, polyglot):
         """roam context should show callers, callees, and files to read."""
@@ -1786,6 +1794,7 @@ class TestContext:
     def test_context_json(self, polyglot):
         """roam --json context should produce valid JSON with all fields."""
         import json
+
         out, rc = roam("--json", "context", "Animal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1816,6 +1825,7 @@ class TestContext:
 # SAFE-DELETE COMMAND (v4.1)
 # ============================================================================
 
+
 class TestSafeDelete:
     def test_safe_delete_unused(self, polyglot):
         """roam safe-delete on an unused symbol should show SAFE."""
@@ -1840,6 +1850,7 @@ class TestSafeDelete:
     def test_safe_delete_json(self, polyglot):
         """roam --json safe-delete should produce valid JSON with verdict."""
         import json
+
         out, rc = roam("--json", "safe-delete", "Animal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1851,6 +1862,7 @@ class TestSafeDelete:
     def test_safe_delete_json_unused(self, polyglot):
         """roam --json safe-delete on unused symbol should return SAFE verdict."""
         import json
+
         out, rc = roam("--json", "safe-delete", "_internal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1873,6 +1885,7 @@ class TestSafeDelete:
 # SPLIT COMMAND (v4.4)
 # ============================================================================
 
+
 class TestSplit:
     def test_split_basic(self, polyglot):
         """roam split should analyze file internal structure."""
@@ -1890,6 +1903,7 @@ class TestSplit:
     def test_split_json(self, polyglot):
         """roam --json split should produce valid JSON."""
         import json
+
         out, rc = roam("--json", "split", "javascript/app.js", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1907,8 +1921,7 @@ class TestSplit:
 
     def test_split_min_group(self, polyglot):
         """roam split --min-group should filter small groups."""
-        out, rc = roam("split", "javascript/app.js", "--min-group", "1",
-                        cwd=polyglot)
+        out, rc = roam("split", "javascript/app.js", "--min-group", "1", cwd=polyglot)
         assert rc == 0
 
     def test_split_not_found(self, polyglot):
@@ -1927,6 +1940,7 @@ class TestSplit:
 # RISK COMMAND (v4.4)
 # ============================================================================
 
+
 class TestRisk:
     def test_risk_basic(self, polyglot):
         """roam risk should show domain-weighted risk ranking."""
@@ -1938,6 +1952,7 @@ class TestRisk:
     def test_risk_json(self, polyglot):
         """roam --json risk should produce valid JSON."""
         import json
+
         out, rc = roam("--json", "risk", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1957,6 +1972,7 @@ class TestRisk:
     def test_risk_json_with_domain(self, polyglot):
         """roam --json risk --domain should include domain match info."""
         import json
+
         out, rc = roam("--json", "risk", "--domain", "animal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -1972,27 +1988,19 @@ class TestRisk:
 # PR-RISK COMMAND (v4.1)
 # ============================================================================
 
+
 class TestPrRisk:
     @pytest.fixture
     def pr_project(self, tmp_path):
         """A project with pending git changes for pr-risk testing."""
         proj = tmp_path / "pr_risk_test"
         proj.mkdir()
-        (proj / "main.py").write_text(
-            'from helper import process\n\n'
-            'def main():\n    return process(42)\n'
-        )
-        (proj / "helper.py").write_text(
-            'def process(x):\n    return x + 1\n\n'
-            'def validate(y):\n    return y > 0\n'
-        )
+        (proj / "main.py").write_text("from helper import process\n\ndef main():\n    return process(42)\n")
+        (proj / "helper.py").write_text("def process(x):\n    return x + 1\n\ndef validate(y):\n    return y > 0\n")
         git_init(proj)
         index_in_process(proj, "--force")
         # Create unstaged changes
-        (proj / "helper.py").write_text(
-            'def process(x):\n    return x * 2\n\n'
-            'def validate(y):\n    return y > 0\n'
-        )
+        (proj / "helper.py").write_text("def process(x):\n    return x * 2\n\ndef validate(y):\n    return y > 0\n")
         return proj
 
     def test_pr_risk_unstaged(self, pr_project):
@@ -2004,6 +2012,7 @@ class TestPrRisk:
     def test_pr_risk_json(self, pr_project):
         """roam --json pr-risk should produce valid JSON with risk score."""
         import json
+
         out, rc = roam("--json", "pr-risk", cwd=pr_project)
         assert rc == 0
         data = json.loads(out)
@@ -2013,7 +2022,7 @@ class TestPrRisk:
 
     def test_pr_risk_staged(self, pr_project):
         """roam pr-risk --staged should analyze staged changes."""
-        import subprocess
+
         subprocess.run(["git", "add", "."], cwd=pr_project, capture_output=True)
         out, rc = roam("pr-risk", "--staged", cwd=pr_project)
         assert rc == 0
@@ -2033,11 +2042,10 @@ class TestPrRisk:
 
     def test_pr_risk_commit_range(self, pr_project):
         """roam pr-risk with commit range should work."""
-        import subprocess
+
         # Commit the change so we can use a commit range
         subprocess.run(["git", "add", "."], cwd=pr_project, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "change"],
-                        cwd=pr_project, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "change"], cwd=pr_project, capture_output=True)
         out, rc = roam("pr-risk", "HEAD~1..HEAD", cwd=pr_project)
         assert rc == 0
 
@@ -2068,6 +2076,7 @@ class TestWhy:
     def test_why_json(self, polyglot):
         """roam why --json should return valid JSON with expected fields."""
         import json
+
         out, rc = roam("--json", "why", "Animal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -2092,6 +2101,7 @@ class TestWhy:
     def test_why_batch_json(self, polyglot):
         """roam why --json with multiple symbols should return all."""
         import json
+
         out, rc = roam("--json", "why", "Animal", "speak", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)
@@ -2105,6 +2115,7 @@ class TestWhy:
     def test_why_role_classification(self, polyglot):
         """roam why should classify roles correctly."""
         import json
+
         out, rc = roam("--json", "why", "_internal", cwd=polyglot)
         assert rc == 0
         data = json.loads(out)

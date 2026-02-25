@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -19,15 +18,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
     git_init,
     index_in_process,
-    invoke_cli,
-    parse_json_output,
-    assert_json_envelope,
 )
-
 
 # ---------------------------------------------------------------------------
 # Shared project fixture
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def basic_project(tmp_path, monkeypatch):
@@ -46,9 +42,7 @@ def basic_project(tmp_path, monkeypatch):
         "def alpha_three():\n    return alpha_two()\n"
     )
     (src / "beta.py").write_text(
-        "from src.alpha import alpha_one\n\n"
-        "def beta_one():\n    return alpha_one()\n\n"
-        "def beta_two():\n    pass\n"
+        "from src.alpha import alpha_one\n\ndef beta_one():\n    return alpha_one()\n\ndef beta_two():\n    pass\n"
     )
     (src / "gamma.py").write_text(
         "from src.beta import beta_one\n\n"
@@ -103,6 +97,7 @@ def _invoke_no_budget(runner, args, cwd=None):
 # Unit tests for budget_truncate_json (baseline for phase 2)
 # ---------------------------------------------------------------------------
 
+
 class TestBudgetTruncateJsonUnit:
     """Verify the core truncation utility still works (regression guard)."""
 
@@ -147,6 +142,7 @@ class TestBudgetTruncateJsonUnit:
 # Already-supported commands (regression tests)
 # ---------------------------------------------------------------------------
 
+
 class TestAlreadySupportedCommands:
     """Commands that had budget support in Phase 1 — verify still working."""
 
@@ -175,6 +171,7 @@ class TestAlreadySupportedCommands:
 # ---------------------------------------------------------------------------
 # Phase 2 commands — JSON output tests
 # ---------------------------------------------------------------------------
+
 
 class TestSearchBudget:
     """roam search -- Phase 2 budget support."""
@@ -535,6 +532,7 @@ class TestEndpointsBudget:
 # Previously-supported commands: codeowners, drift, secrets
 # ---------------------------------------------------------------------------
 
+
 class TestAlreadySupportedCommandsRegression:
     """Verify Phase 1 commands still work correctly."""
 
@@ -557,6 +555,7 @@ class TestAlreadySupportedCommandsRegression:
 # ---------------------------------------------------------------------------
 # Budget=0 means no limit
 # ---------------------------------------------------------------------------
+
 
 class TestBudgetZeroMeansNoLimit:
     """Budget=0 (the default) must never truncate output."""
@@ -590,6 +589,7 @@ class TestBudgetZeroMeansNoLimit:
 # Truncation metadata present when truncation occurs
 # ---------------------------------------------------------------------------
 
+
 class TestTruncationMetadata:
     """Verify truncation metadata is present in summary when truncation occurs."""
 
@@ -602,12 +602,15 @@ class TestTruncationMetadata:
             "command": "search",
             "summary": {"total": 100, "pattern": "x"},
             "results": [
-                {"name": f"symbol_{i}", "kind": "function",
-                 "location": f"src/file_{i}.py:{i}",
-                 "signature": "def symbol_{i}():",
-                 "refs": i,
-                 "pagerank": round(i / 1000, 6),
-                 "data": "x" * 200}
+                {
+                    "name": f"symbol_{i}",
+                    "kind": "function",
+                    "location": f"src/file_{i}.py:{i}",
+                    "signature": "def symbol_{i}():",
+                    "refs": i,
+                    "pagerank": round(i / 1000, 6),
+                    "data": "x" * 200,
+                }
                 for i in range(100)
             ],
         }
@@ -629,10 +632,14 @@ class TestTruncationMetadata:
             "command": "dead",
             "summary": {"safe": 50, "review": 10, "intentional": 5},
             "high_confidence": [
-                {"name": f"func_{i}", "kind": "function",
-                 "location": f"src/module_{i}.py:{i * 10}",
-                 "action": "SAFE", "confidence": 90,
-                 "data": "y" * 150}
+                {
+                    "name": f"func_{i}",
+                    "kind": "function",
+                    "location": f"src/module_{i}.py:{i * 10}",
+                    "action": "SAFE",
+                    "confidence": 90,
+                    "data": "y" * 150,
+                }
                 for i in range(50)
             ],
             "low_confidence": [],
@@ -666,6 +673,7 @@ class TestTruncationMetadata:
 # ---------------------------------------------------------------------------
 # json_envelope budget parameter integration
 # ---------------------------------------------------------------------------
+
 
 class TestJsonEnvelopeBudgetParameter:
     """Verify json_envelope correctly passes budget to budget_truncate_json."""
@@ -744,12 +752,14 @@ class TestJsonEnvelopeBudgetParameter:
 # ctx.obj['budget'] plumbing verification
 # ---------------------------------------------------------------------------
 
+
 class TestBudgetContextPlumbing:
     """Verify that ctx.obj['budget'] is correctly populated by the CLI."""
 
     def test_budget_stored_in_ctx_obj(self):
         """--budget N stores the value in ctx.obj['budget']."""
         import click
+
         from roam.cli import cli
 
         captured = {}

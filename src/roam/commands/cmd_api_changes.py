@@ -14,15 +14,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
     format_signature,
     json_envelope,
     to_json,
 )
-from roam.commands.resolve import ensure_index
-
 
 # ---------------------------------------------------------------------------
 # Severity levels
@@ -67,11 +66,7 @@ def _git_changed_files(root: Path, ref: str) -> list[str]:
         )
         if result.returncode != 0:
             return []
-        return [
-            p.replace("\\", "/")
-            for p in result.stdout.strip().splitlines()
-            if p.strip()
-        ]
+        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
@@ -123,6 +118,7 @@ def _parse_source_bytes(source: bytes, language: str):
 
     try:
         from tree_sitter_language_pack import get_parser
+
         parser = get_parser(grammar)
     except Exception:
         return None, None, None
@@ -137,8 +133,8 @@ def _parse_source_bytes(source: bytes, language: str):
 
 def _extract_symbols_from_source(source: bytes, file_path: str) -> list[dict]:
     """Parse *source* bytes and extract symbols for *file_path*."""
-    from roam.languages.registry import get_language_for_file, get_extractor_for_file
     from roam.index.symbols import extract_symbols
+    from roam.languages.registry import get_extractor_for_file, get_language_for_file
 
     language = get_language_for_file(file_path)
     if language is None:
@@ -162,9 +158,7 @@ def _extract_symbols_from_source(source: bytes, file_path: str) -> list[dict]:
 
 def _get_current_symbols(conn, file_path: str) -> list[dict]:
     """Fetch current symbols for *file_path* from the index DB."""
-    row = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if not row:
         row = conn.execute(
             "SELECT id FROM files WHERE path LIKE ? LIMIT 1",
@@ -239,7 +233,7 @@ def _extract_params(sig: str | None) -> list[str]:
     if not sig:
         return []
     # Try to find params between parentheses
-    match = re.search(r'\(([^)]*)\)', sig)
+    match = re.search(r"\(([^)]*)\)", sig)
     if not match:
         return []
     params_str = match.group(1)
@@ -268,7 +262,7 @@ def _extract_params_with_defaults(sig: str | None) -> list[tuple[str, bool]]:
     """Extract parameter (name, has_default) tuples from a function signature."""
     if not sig:
         return []
-    match = re.search(r'\(([^)]*)\)', sig)
+    match = re.search(r"\(([^)]*)\)", sig)
     if not match:
         return []
     params_str = match.group(1)
@@ -293,7 +287,7 @@ def _extract_return_type(sig: str | None) -> str:
     if not sig:
         return ""
     # Look for -> annotation
-    match = re.search(r'->\s*(.+?)(?:\s*:|$)', sig)
+    match = re.search(r"->\s*(.+?)(?:\s*:|$)", sig)
     if match:
         return match.group(1).strip().rstrip(":")
     return ""
@@ -314,8 +308,13 @@ def _exported_only(symbols: list[dict]) -> list[dict]:
 
 # API-relevant kinds whose signatures represent a contract
 _API_KINDS = {
-    "function", "method", "class", "constructor",
-    "interface", "trait", "struct",
+    "function",
+    "method",
+    "class",
+    "constructor",
+    "interface",
+    "trait",
+    "struct",
 }
 
 
@@ -365,53 +364,61 @@ def _compare_file_api(
                 # Check if only new optional params were added
                 if (
                     len(new_params) > len(old_params)
-                    and new_names[:len(old_names)] == old_names
-                    and all(has_def for _, has_def in new_params[len(old_params):])
+                    and new_names[: len(old_names)] == old_names
+                    and all(has_def for _, has_def in new_params[len(old_params) :])
                 ):
                     # Non-breaking: only added optional params
-                    added_param_names = [p[0] for p in new_params[len(old_params):]]
-                    changes.append(_make_change(
-                        category="PARAM_ADDED_OPTIONAL",
-                        sym=new_sym,
-                        file_path=file_path,
-                        old_sig=old_sym.get("signature"),
-                        new_sig=new_sym.get("signature"),
-                        description=f"Added optional param(s): {', '.join(added_param_names)}",
-                    ))
+                    added_param_names = [p[0] for p in new_params[len(old_params) :]]
+                    changes.append(
+                        _make_change(
+                            category="PARAM_ADDED_OPTIONAL",
+                            sym=new_sym,
+                            file_path=file_path,
+                            old_sig=old_sym.get("signature"),
+                            new_sig=new_sym.get("signature"),
+                            description=f"Added optional param(s): {', '.join(added_param_names)}",
+                        )
+                    )
                 else:
                     # Check for return type changes
                     old_ret = _extract_return_type(old_sig)
                     new_ret = _extract_return_type(new_sig)
                     if old_ret and new_ret and old_ret != new_ret and old_names == new_names:
-                        changes.append(_make_change(
-                            category="TYPE_CHANGED",
-                            sym=new_sym,
-                            file_path=file_path,
-                            old_sig=old_sym.get("signature"),
-                            new_sig=new_sym.get("signature"),
-                            description=f"Return type: {old_ret} -> {new_ret}",
-                        ))
+                        changes.append(
+                            _make_change(
+                                category="TYPE_CHANGED",
+                                sym=new_sym,
+                                file_path=file_path,
+                                old_sig=old_sym.get("signature"),
+                                new_sig=new_sym.get("signature"),
+                                description=f"Return type: {old_ret} -> {new_ret}",
+                            )
+                        )
                     else:
                         # General signature change (breaking)
-                        changes.append(_make_change(
-                            category="SIGNATURE_CHANGED",
-                            sym=new_sym,
-                            file_path=file_path,
-                            old_sig=old_sym.get("signature"),
-                            new_sig=new_sym.get("signature"),
-                            description="Signature changed",
-                        ))
+                        changes.append(
+                            _make_change(
+                                category="SIGNATURE_CHANGED",
+                                sym=new_sym,
+                                file_path=file_path,
+                                old_sig=old_sym.get("signature"),
+                                new_sig=new_sym.get("signature"),
+                                description="Signature changed",
+                            )
+                        )
 
         # Deprecation detection
         if not _is_deprecated(old_sym) and _is_deprecated(new_sym):
-            changes.append(_make_change(
-                category="DEPRECATED",
-                sym=new_sym,
-                file_path=file_path,
-                old_sig=old_sym.get("signature"),
-                new_sig=new_sym.get("signature"),
-                description="Symbol marked as deprecated",
-            ))
+            changes.append(
+                _make_change(
+                    category="DEPRECATED",
+                    sym=new_sym,
+                    file_path=file_path,
+                    old_sig=old_sym.get("signature"),
+                    new_sig=new_sym.get("signature"),
+                    description="Symbol marked as deprecated",
+                )
+            )
 
     # 2. Missing keys: symbol was in old but not in new exported set
     missing_keys = old_keys - new_keys
@@ -427,14 +434,16 @@ def _compare_file_api(
         # Check if it became private (visibility reduced)
         new_all = all_new_by_key.get(mk)
         if new_all is not None and not new_all.get("is_exported"):
-            changes.append(_make_change(
-                category="VISIBILITY_REDUCED",
-                sym=old_sym,
-                file_path=file_path,
-                old_sig=old_sym.get("signature"),
-                new_sig=new_all.get("signature"),
-                description=f"Was {old_sym.get('visibility', 'public')}, now {new_all.get('visibility', 'private')}",
-            ))
+            changes.append(
+                _make_change(
+                    category="VISIBILITY_REDUCED",
+                    sym=old_sym,
+                    file_path=file_path,
+                    old_sig=old_sym.get("signature"),
+                    new_sig=new_all.get("signature"),
+                    description=f"Was {old_sym.get('visibility', 'public')}, now {new_all.get('visibility', 'private')}",
+                )
+            )
             continue
 
         # Also detect visibility by naming convention change
@@ -446,14 +455,16 @@ def _compare_file_api(
                 private_match = ns
                 break
         if private_match is not None:
-            changes.append(_make_change(
-                category="VISIBILITY_REDUCED",
-                sym=old_sym,
-                file_path=file_path,
-                old_sig=old_sym.get("signature"),
-                new_sig=private_match.get("signature"),
-                description=f"Renamed to _{old_sym['name']} (now private)",
-            ))
+            changes.append(
+                _make_change(
+                    category="VISIBILITY_REDUCED",
+                    sym=old_sym,
+                    file_path=file_path,
+                    old_sig=old_sym.get("signature"),
+                    new_sig=private_match.get("signature"),
+                    description=f"Renamed to _{old_sym['name']} (now private)",
+                )
+            )
             rename_used_added.add(_key(private_match))
             continue
 
@@ -486,38 +497,44 @@ def _compare_file_api(
         if best_match is not None and best_score >= 0.6:
             new_sym = added_map[best_match]
             rename_used_added.add(best_match)
-            changes.append(_make_change(
-                category="RENAMED",
-                sym=old_sym,
-                file_path=file_path,
-                old_sig=old_sym.get("signature"),
-                new_sig=new_sym.get("signature"),
-                description=f"{old_sym['name']} -> {new_sym['name']}",
-            ))
+            changes.append(
+                _make_change(
+                    category="RENAMED",
+                    sym=old_sym,
+                    file_path=file_path,
+                    old_sig=old_sym.get("signature"),
+                    new_sig=new_sym.get("signature"),
+                    description=f"{old_sym['name']} -> {new_sym['name']}",
+                )
+            )
         else:
             # Truly removed
-            changes.append(_make_change(
-                category="REMOVED",
-                sym=old_sym,
-                file_path=file_path,
-                old_sig=old_sym.get("signature"),
-                new_sig=None,
-                description=f"Public {old_sym['kind']} removed",
-            ))
+            changes.append(
+                _make_change(
+                    category="REMOVED",
+                    sym=old_sym,
+                    file_path=file_path,
+                    old_sig=old_sym.get("signature"),
+                    new_sig=None,
+                    description=f"Public {old_sym['kind']} removed",
+                )
+            )
 
     # 3. Added symbols (new exports not matched to renames)
     for ak in sorted(added_keys):
         if ak in rename_used_added:
             continue
         new_sym = new_by_key[ak]
-        changes.append(_make_change(
-            category="ADDED",
-            sym=new_sym,
-            file_path=file_path,
-            old_sig=None,
-            new_sig=new_sym.get("signature"),
-            description=f"New public {new_sym['kind']}",
-        ))
+        changes.append(
+            _make_change(
+                category="ADDED",
+                sym=new_sym,
+                file_path=file_path,
+                old_sig=None,
+                new_sig=new_sym.get("signature"),
+                description=f"New public {new_sym['kind']}",
+            )
+        )
 
     return changes
 
@@ -635,18 +652,22 @@ def api_changes(ctx, base, severity, changed_only):
     if not changed:
         verdict = f"No changed files vs {base}."
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "api-changes",
-                summary={
-                    "verdict": verdict,
-                    "breaking_count": 0,
-                    "warning_count": 0,
-                    "info_count": 0,
-                    "base_ref": base,
-                },
-                base_ref=base,
-                changes=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "api-changes",
+                        summary={
+                            "verdict": verdict,
+                            "breaking_count": 0,
+                            "warning_count": 0,
+                            "info_count": 0,
+                            "base_ref": base,
+                        },
+                        base_ref=base,
+                        changes=[],
+                    )
+                )
+            )
         else:
             click.echo(f"VERDICT: {verdict}")
         return
@@ -662,14 +683,16 @@ def api_changes(ctx, base, severity, changed_only):
                 # File is new — extract new symbols as ADDED
                 new_symbols = _get_current_symbols(conn, fpath)
                 for sym in _exported_only(new_symbols):
-                    all_changes.append(_make_change(
-                        category="ADDED",
-                        sym=sym,
-                        file_path=fpath,
-                        old_sig=None,
-                        new_sig=sym.get("signature"),
-                        description=f"New public {sym['kind']} (new file)",
-                    ))
+                    all_changes.append(
+                        _make_change(
+                            category="ADDED",
+                            sym=sym,
+                            file_path=fpath,
+                            old_sig=None,
+                            new_sig=sym.get("signature"),
+                            description=f"New public {sym['kind']} (new file)",
+                        )
+                    )
                 continue
 
             old_symbols = _extract_symbols_from_source(old_source, fpath)
@@ -689,17 +712,16 @@ def api_changes(ctx, base, severity, changed_only):
             all_changes.extend(file_changes)
 
     # 3. Filter by severity
-    filtered = [
-        c for c in all_changes
-        if _SEVERITY_ORDER[c["severity"]] <= min_severity
-    ]
+    filtered = [c for c in all_changes if _SEVERITY_ORDER[c["severity"]] <= min_severity]
 
     # Sort: breaking first, then warning, then info; within each, by file+line
-    filtered.sort(key=lambda c: (
-        _SEVERITY_ORDER[c["severity"]],
-        c["file"],
-        c.get("line") or 0,
-    ))
+    filtered.sort(
+        key=lambda c: (
+            _SEVERITY_ORDER[c["severity"]],
+            c["file"],
+            c.get("line") or 0,
+        )
+    )
 
     # Count by severity (from all changes, not filtered)
     breaking_count = sum(1 for c in all_changes if c["severity"] == SEVERITY_BREAKING)
@@ -723,19 +745,23 @@ def api_changes(ctx, base, severity, changed_only):
         verdict = f"No API changes vs {base}."
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "api-changes",
-            summary={
-                "verdict": verdict,
-                "breaking_count": breaking_count,
-                "warning_count": warning_count,
-                "info_count": info_count,
-                "base_ref": base,
-            },
-            budget=token_budget,
-            base_ref=base,
-            changes=filtered,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "api-changes",
+                    summary={
+                        "verdict": verdict,
+                        "breaking_count": breaking_count,
+                        "warning_count": warning_count,
+                        "info_count": info_count,
+                        "base_ref": base,
+                    },
+                    budget=token_budget,
+                    base_ref=base,
+                    changes=filtered,
+                )
+            )
+        )
         return
 
     # --- Text output ---

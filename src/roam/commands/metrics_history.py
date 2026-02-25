@@ -7,7 +7,7 @@ import subprocess
 import time
 
 from roam.db.connection import find_project_root
-from roam.db.queries import UNREFERENCED_EXPORTS, TOP_BY_DEGREE, TOP_BY_BETWEENNESS
+from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE, UNREFERENCED_EXPORTS
 
 
 def _is_test_path(file_path):
@@ -16,8 +16,17 @@ def _is_test_path(file_path):
     return base.startswith("test_") or base.endswith("_test.py")
 
 
-def _compute_health_score(conn, G, symbols, god_items, bn_items, bn_p90,
-                          layer_violations, find_cycles_fn, is_utility_path_fn):
+def _compute_health_score(
+    conn,
+    G,
+    symbols,
+    god_items,
+    bn_items,
+    bn_p90,
+    layer_violations,
+    find_cycles_fn,
+    is_utility_path_fn,
+):
     """Compute the weighted geometric mean health score (0-100)."""
     import math
 
@@ -35,12 +44,10 @@ def _compute_health_score(conn, G, symbols, god_items, bn_items, bn_p90,
             pass
 
     god_critical = sum(
-        1 for g in god_items
-        if (g["degree"] > 150 if is_utility_path_fn(g["file"]) else g["degree"] > 50)
+        1 for g in god_items if (g["degree"] > 150 if is_utility_path_fn(g["file"]) else g["degree"] > 50)
     )
     bn_critical = sum(
-        1 for b in bn_items
-        if b["betweenness"] > bn_p90 * (1.5 if is_utility_path_fn(b["file"]) else 1.0)
+        1 for b in bn_items if b["betweenness"] > bn_p90 * (1.5 if is_utility_path_fn(b["file"]) else 1.0)
     )
 
     god_signal = god_critical * 3 + len(god_items) * 0.5
@@ -53,9 +60,7 @@ def _compute_health_score(conn, G, symbols, god_items, bn_items, bn_p90,
         (_hf(layer_violations, 5), 0.15),
     ]
     try:
-        avg_fh = conn.execute(
-            "SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL"
-        ).fetchone()[0]
+        avg_fh = conn.execute("SELECT AVG(health_score) FROM file_stats WHERE health_score IS NOT NULL").fetchone()[0]
         factors.append((min(1.0, (avg_fh or 10) / 10.0), 0.20))
     except Exception:
         factors.append((1.0, 0.20))
@@ -81,6 +86,7 @@ def collect_metrics(conn):
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
+
         G = build_symbol_graph(conn)
         cycles = len(find_cycles(G))
     except Exception:
@@ -93,17 +99,17 @@ def collect_metrics(conn):
     for r in degree_rows:
         total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
         if total > 20:
-            god_items.append({
-                "degree": total,
-                "file": r["file_path"],
-            })
+            god_items.append(
+                {
+                    "degree": total,
+                    "file": r["file_path"],
+                }
+            )
     god_components = len(god_items)
 
     # Bottlenecks (same query + thresholds as cmd_health.py)
     all_bw = sorted(
-        r[0] for r in conn.execute(
-            "SELECT betweenness FROM graph_metrics WHERE betweenness > 0"
-        ).fetchall()
+        r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
     )
     bn_p90 = _percentile(all_bw, 90)
 
@@ -118,8 +124,7 @@ def collect_metrics(conn):
 
     # Dead exports (filter test files — they're discovered by pytest, not imported)
     dead_rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
-    dead_rows = [r for r in dead_rows
-                 if not _is_test_path(r["file_path"])]
+    dead_rows = [r for r in dead_rows if not _is_test_path(r["file_path"])]
     dead_exports = len(dead_rows)
 
     # Layer violations
@@ -127,6 +132,7 @@ def collect_metrics(conn):
     if G is not None:
         try:
             from roam.graph.layers import detect_layers, find_violations
+
             layer_map = detect_layers(G)
             if layer_map:
                 layer_violations = len(find_violations(G, layer_map))
@@ -134,8 +140,15 @@ def collect_metrics(conn):
             pass
 
     health_score = _compute_health_score(
-        conn, G, symbols, god_items, bn_items, bn_p90,
-        layer_violations, find_cycles, _is_utility_path,
+        conn,
+        G,
+        symbols,
+        god_items,
+        bn_items,
+        bn_p90,
+        layer_violations,
+        find_cycles,
+        _is_utility_path,
     )
 
     # Tangle ratio: percentage of symbols in cycles
@@ -143,6 +156,7 @@ def collect_metrics(conn):
     if G is not None and symbols > 0:
         try:
             from roam.graph.cycles import find_cycles as _find_cycles
+
             cycle_list = _find_cycles(G)
             cycle_sym_ids = set()
             for scc in cycle_list:
@@ -154,9 +168,7 @@ def collect_metrics(conn):
     # Average complexity from symbol_metrics
     avg_complexity = 0.0
     try:
-        row = conn.execute(
-            "SELECT AVG(cognitive_complexity) FROM symbol_metrics"
-        ).fetchone()
+        row = conn.execute("SELECT AVG(cognitive_complexity) FROM symbol_metrics").fetchone()
         if row and row[0] is not None:
             avg_complexity = round(row[0], 1)
     except Exception:
@@ -166,8 +178,7 @@ def collect_metrics(conn):
     brain_methods = 0
     try:
         row = conn.execute(
-            "SELECT COUNT(*) FROM symbol_metrics "
-            "WHERE cognitive_complexity >= 25 AND line_count >= 50"
+            "SELECT COUNT(*) FROM symbol_metrics WHERE cognitive_complexity >= 25 AND line_count >= 50"
         ).fetchone()
         if row:
             brain_methods = row[0]
@@ -197,7 +208,10 @@ def _git_info(root):
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-            cwd=str(root), capture_output=True, text=True, timeout=5,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             branch = r.stdout.strip()
@@ -206,7 +220,10 @@ def _git_info(root):
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
-            cwd=str(root), capture_output=True, text=True, timeout=5,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
         )
         if r.returncode == 0:
             commit = r.stdout.strip()
@@ -232,11 +249,20 @@ def append_snapshot(conn, tag=None, source="snapshot"):
             tangle_ratio, avg_complexity, brain_methods)
            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
         (
-            int(time.time()), tag, source, branch, commit,
-            metrics["files"], metrics["symbols"], metrics["edges"],
-            metrics["cycles"], metrics["god_components"],
-            metrics["bottlenecks"], metrics["dead_exports"],
-            metrics["layer_violations"], metrics["health_score"],
+            int(time.time()),
+            tag,
+            source,
+            branch,
+            commit,
+            metrics["files"],
+            metrics["symbols"],
+            metrics["edges"],
+            metrics["cycles"],
+            metrics["god_components"],
+            metrics["bottlenecks"],
+            metrics["dead_exports"],
+            metrics["layer_violations"],
+            metrics["health_score"],
             metrics.get("tangle_ratio", 0),
             metrics.get("avg_complexity", 0),
             metrics.get("brain_methods", 0),

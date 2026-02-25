@@ -8,8 +8,6 @@ Covers:
 - Corrupted index recovery
 """
 
-import os
-import subprocess
 import sys
 import time
 from pathlib import Path
@@ -23,15 +21,14 @@ pytestmark = [
 ]
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
-
+from conftest import git_commit, git_init, roam
 
 # ============================================================================
 # PERFORMANCE THRESHOLDS
 # ============================================================================
 
 INDEX_TIME_PER_FILE_MS = 75  # max ms per file for indexing
-QUERY_TIME_MS = 3000         # max ms for any single query command
+QUERY_TIME_MS = 3000  # max ms for any single query command
 
 
 def timed_roam(*args, **kwargs):
@@ -46,6 +43,7 @@ def timed_roam(*args, **kwargs):
 # MEDIUM PROJECT FIXTURE (200 files)
 # ============================================================================
 
+
 @pytest.fixture(scope="module")
 def medium_project(tmp_path_factory):
     """Create a project with 200 Python files, each with a class and methods."""
@@ -55,39 +53,35 @@ def medium_project(tmp_path_factory):
     for pkg_idx in range(10):
         pkg_dir = proj / f"pkg_{pkg_idx}"
         pkg_dir.mkdir()
-        (pkg_dir / "__init__.py").write_text(
-            f'"""Package {pkg_idx}."""\n'
-        )
+        (pkg_dir / "__init__.py").write_text(f'"""Package {pkg_idx}."""\n')
         for file_idx in range(20):
             cls_name = f"Service{pkg_idx}_{file_idx}"
             methods = []
             for m in range(5):
                 methods.append(
-                    f'    def method_{m}(self, arg{m}: str) -> str:\n'
-                    f'        return f"{{arg{m}}} processed"\n'
+                    f'    def method_{m}(self, arg{m}: str) -> str:\n        return f"{{arg{m}}} processed"\n'
                 )
             imports = ""
             if file_idx > 0:
                 prev_cls = f"Service{pkg_idx}_{file_idx - 1}"
-                imports = f'from .file_{file_idx - 1} import {prev_cls}\n\n'
+                imports = f"from .file_{file_idx - 1} import {prev_cls}\n\n"
 
             (pkg_dir / f"file_{file_idx}.py").write_text(
-                f'{imports}'
-                f'class {cls_name}:\n'
+                f"{imports}"
+                f"class {cls_name}:\n"
                 f'    """Service class {cls_name}."""\n'
                 f'    VERSION = "{pkg_idx}.{file_idx}"\n'
-                f'\n'
-                f'    def __init__(self, name: str):\n'
-                f'        self.name = name\n'
-                f'\n'
-                + '\n'.join(methods)
+                f"\n"
+                f"    def __init__(self, name: str):\n"
+                f"        self.name = name\n"
+                f"\n" + "\n".join(methods)
             )
 
     # Add a main entry point
     (proj / "main.py").write_text(
-        'from pkg_0.file_0 import Service0_0\n'
-        '\n'
-        'def main():\n'
+        "from pkg_0.file_0 import Service0_0\n"
+        "\n"
+        "def main():\n"
         '    svc = Service0_0("test")\n'
         '    return svc.method_0("hello")\n'
     )
@@ -99,6 +93,7 @@ def medium_project(tmp_path_factory):
 # ============================================================================
 # INDEXING PERFORMANCE
 # ============================================================================
+
 
 class TestIndexingPerformance:
     def test_index_medium_project(self, medium_project):
@@ -112,7 +107,7 @@ class TestIndexingPerformance:
 
         assert elapsed < max_time, (
             f"Index took {elapsed:.0f}ms for {file_count} files "
-            f"({elapsed/file_count:.0f}ms/file, limit {INDEX_TIME_PER_FILE_MS}ms/file)"
+            f"({elapsed / file_count:.0f}ms/file, limit {INDEX_TIME_PER_FILE_MS}ms/file)"
         )
 
     def test_incremental_index_fast(self, medium_project):
@@ -130,7 +125,7 @@ class TestIndexingPerformance:
         # Modify one file
         target = medium_project / "pkg_0" / "file_0.py"
         content = target.read_text()
-        target.write_text(content + '\ndef new_func(): pass\n')
+        target.write_text(content + "\ndef new_func(): pass\n")
         git_commit(medium_project, "modify one file")
 
         out, rc, elapsed = timed_roam("index", cwd=medium_project)
@@ -142,6 +137,7 @@ class TestIndexingPerformance:
 # ============================================================================
 # QUERY PERFORMANCE
 # ============================================================================
+
 
 class TestQueryPerformance:
     @pytest.fixture(autouse=True)
@@ -230,6 +226,7 @@ class TestQueryPerformance:
 # NEW v5 COMMAND PERFORMANCE
 # ============================================================================
 
+
 class TestNewCommandPerformance:
     """Benchmarks for commands added in v5 (understand, coverage-gaps, report, etc.)."""
 
@@ -262,7 +259,9 @@ class TestNewCommandPerformance:
 
     def test_coverage_gaps_speed(self):
         out, rc, elapsed = timed_roam(
-            "coverage-gaps", "--gate-pattern", "auth|permission",
+            "coverage-gaps",
+            "--gate-pattern",
+            "auth|permission",
             cwd=self.proj,
         )
         assert rc == 0
@@ -295,6 +294,7 @@ class TestNewCommandPerformance:
 # ============================================================================
 # JSON OUTPUT PERFORMANCE
 # ============================================================================
+
 
 class TestJsonPerformance:
     """Verify --json flag doesn't add significant overhead."""
@@ -331,6 +331,7 @@ class TestJsonPerformance:
     def test_json_envelope_structure(self):
         """Verify JSON envelope has required fields."""
         import json
+
         out, rc, _ = timed_roam("--json", "health", cwd=self.proj)
         assert rc == 0
         data = json.loads(out)
@@ -342,6 +343,7 @@ class TestJsonPerformance:
 # ============================================================================
 # SELF-BENCHMARK (roam-code on itself)
 # ============================================================================
+
 
 class TestSelfBenchmark:
     """Benchmark roam commands against the roam-code project itself.
@@ -400,6 +402,7 @@ class TestSelfBenchmark:
 # STRESS TESTS
 # ============================================================================
 
+
 class TestStress:
     def test_large_file(self, tmp_path):
         """A file with 500 functions should index without issues."""
@@ -407,12 +410,8 @@ class TestStress:
         proj.mkdir()
         functions = []
         for i in range(500):
-            functions.append(
-                f'def func_{i}(x):\n'
-                f'    """Function {i}."""\n'
-                f'    return x + {i}\n'
-            )
-        (proj / "big.py").write_text('\n'.join(functions))
+            functions.append(f'def func_{i}(x):\n    """Function {i}."""\n    return x + {i}\n')
+        (proj / "big.py").write_text("\n".join(functions))
         git_init(proj)
 
         out, rc, elapsed = timed_roam("index", "--force", cwd=proj)
@@ -431,10 +430,7 @@ class TestStress:
         for i in range(15):
             current = current / f"level_{i}"
         current.mkdir(parents=True)
-        (current / "deep.py").write_text(
-            'def deep_function():\n'
-            '    return "I am deep"\n'
-        )
+        (current / "deep.py").write_text('def deep_function():\n    return "I am deep"\n')
         git_init(proj)
         out, rc = roam("index", "--force", cwd=proj)
         assert rc == 0
@@ -447,7 +443,7 @@ class TestStress:
         proj = tmp_path / "many"
         proj.mkdir()
         for i in range(500):
-            (proj / f"f_{i}.py").write_text(f'x_{i} = {i}\n')
+            (proj / f"f_{i}.py").write_text(f"x_{i} = {i}\n")
         git_init(proj)
 
         out, rc, elapsed = timed_roam("index", "--force", cwd=proj)
@@ -460,14 +456,11 @@ class TestStress:
         """Deep inheritance chain should be handled."""
         proj = tmp_path / "chain"
         proj.mkdir()
-        classes = ['class Base:\n    def base_method(self): pass\n']
+        classes = ["class Base:\n    def base_method(self): pass\n"]
         for i in range(20):
-            parent = "Base" if i == 0 else f"Child{i-1}"
-            classes.append(
-                f'class Child{i}({parent}):\n'
-                f'    def method_{i}(self): pass\n'
-            )
-        (proj / "chain.py").write_text('\n'.join(classes))
+            parent = "Base" if i == 0 else f"Child{i - 1}"
+            classes.append(f"class Child{i}({parent}):\n    def method_{i}(self): pass\n")
+        (proj / "chain.py").write_text("\n".join(classes))
         git_init(proj)
 
         out, rc = roam("index", "--force", cwd=proj)
@@ -480,16 +473,8 @@ class TestStress:
         """Circular imports should not crash the indexer."""
         proj = tmp_path / "circular"
         proj.mkdir()
-        (proj / "a.py").write_text(
-            'from b import func_b\n\n'
-            'def func_a():\n'
-            '    return func_b()\n'
-        )
-        (proj / "b.py").write_text(
-            'from a import func_a\n\n'
-            'def func_b():\n'
-            '    return func_a()\n'
-        )
+        (proj / "a.py").write_text("from b import func_b\n\ndef func_a():\n    return func_b()\n")
+        (proj / "b.py").write_text("from a import func_a\n\ndef func_b():\n    return func_a()\n")
         git_init(proj)
         out, rc = roam("index", "--force", cwd=proj)
         assert rc == 0
@@ -504,17 +489,11 @@ class TestStress:
         proj.mkdir()
 
         for i in range(50):
-            (proj / f"mod_{i}.py").write_text(
-                f'def helper_{i}():\n    return {i}\n'
-            )
+            (proj / f"mod_{i}.py").write_text(f"def helper_{i}():\n    return {i}\n")
 
-        imports = '\n'.join(f'from mod_{i} import helper_{i}' for i in range(50))
-        calls = '\n'.join(f'    helper_{i}()' for i in range(50))
-        (proj / "hub.py").write_text(
-            f'{imports}\n\n'
-            f'def hub_func():\n'
-            f'{calls}\n'
-        )
+        imports = "\n".join(f"from mod_{i} import helper_{i}" for i in range(50))
+        calls = "\n".join(f"    helper_{i}()" for i in range(50))
+        (proj / "hub.py").write_text(f"{imports}\n\ndef hub_func():\n{calls}\n")
         git_init(proj)
 
         out, rc = roam("index", "--force", cwd=proj)
@@ -528,12 +507,13 @@ class TestStress:
 # CORRUPTED / UNUSUAL INDEX STATES
 # ============================================================================
 
+
 class TestResilience:
     def test_corrupted_index_recovery(self, tmp_path):
         """A corrupted index.db should be recoverable with --force."""
         proj = tmp_path / "corrupt"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         git_init(proj)
 
         # Build a valid index first
@@ -555,7 +535,7 @@ class TestResilience:
         """Empty .roam dir without index.db should auto-create."""
         proj = tmp_path / "emptyidx"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         (proj / ".roam").mkdir()
         git_init(proj)
 
@@ -566,7 +546,7 @@ class TestResilience:
         """Files that can't be read should be skipped gracefully."""
         proj = tmp_path / "readonly"
         proj.mkdir()
-        (proj / "good.py").write_text('def good(): pass\n')
+        (proj / "good.py").write_text("def good(): pass\n")
         git_init(proj)
 
         out, rc = roam("index", "--force", cwd=proj)
@@ -579,10 +559,10 @@ class TestResilience:
         proj = tmp_path / "special"
         proj.mkdir()
         (proj / "special.py").write_text(
-            'class _Private:\n    pass\n\n'
-            'class __DunderClass:\n    pass\n\n'
-            'def _____many_underscores():\n    pass\n\n'
-            'CONSTANT_WITH_NUMBERS_123 = 42\n'
+            "class _Private:\n    pass\n\n"
+            "class __DunderClass:\n    pass\n\n"
+            "def _____many_underscores():\n    pass\n\n"
+            "CONSTANT_WITH_NUMBERS_123 = 42\n"
         )
         git_init(proj)
         out, rc = roam("index", "--force", cwd=proj)
@@ -595,7 +575,7 @@ class TestResilience:
         """Running index twice should produce identical results."""
         proj = tmp_path / "idempotent"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): return 42\n')
+        (proj / "main.py").write_text("def main(): return 42\n")
         git_init(proj)
 
         roam("index", "--force", cwd=proj)
@@ -611,12 +591,13 @@ class TestResilience:
 # VERBOSE AND ELAPSED TIME
 # ============================================================================
 
+
 class TestVerboseFlag:
     def test_verbose_shows_warnings(self, tmp_path):
         """roam index --verbose should display warnings."""
         proj = tmp_path / "verbose_test"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         git_init(proj)
         out, rc = roam("index", "--force", "--verbose", cwd=proj)
         assert rc == 0
@@ -627,7 +608,7 @@ class TestVerboseFlag:
         """roam index without --verbose should suppress 'Warning:' lines."""
         proj = tmp_path / "quiet_test"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         git_init(proj)
         out, rc = roam("index", "--force", cwd=proj)
         assert rc == 0
@@ -637,19 +618,21 @@ class TestVerboseFlag:
         """roam index should show elapsed time."""
         proj = tmp_path / "elapsed_test"
         proj.mkdir()
-        (proj / "main.py").write_text('def main(): pass\n')
+        (proj / "main.py").write_text("def main(): pass\n")
         git_init(proj)
         out, rc = roam("index", "--force", cwd=proj)
         assert rc == 0
         assert "Index complete." in out
         # Should contain elapsed time in parentheses like "(0.5s)"
         import re
-        assert re.search(r'\(\d+\.\d+s\)', out), f"No elapsed time found in: {out}"
+
+        assert re.search(r"\(\d+\.\d+s\)", out), f"No elapsed time found in: {out}"
 
 
 # ============================================================================
 # OUTPUT CORRECTNESS
 # ============================================================================
+
 
 class TestOutputCorrectness:
     @pytest.fixture
@@ -658,38 +641,38 @@ class TestOutputCorrectness:
         proj = tmp_path / "verify"
         proj.mkdir()
         (proj / "math_utils.py").write_text(
-            'def add(a: int, b: int) -> int:\n'
+            "def add(a: int, b: int) -> int:\n"
             '    """Add two numbers."""\n'
-            '    return a + b\n'
-            '\n'
-            'def multiply(x: int, y: int) -> int:\n'
+            "    return a + b\n"
+            "\n"
+            "def multiply(x: int, y: int) -> int:\n"
             '    """Multiply two numbers."""\n'
-            '    return x * y\n'
-            '\n'
-            'PI = 3.14159\n'
+            "    return x * y\n"
+            "\n"
+            "PI = 3.14159\n"
         )
         (proj / "calculator.py").write_text(
-            'from math_utils import add, multiply\n'
-            '\n'
-            'class Calculator:\n'
+            "from math_utils import add, multiply\n"
+            "\n"
+            "class Calculator:\n"
             '    """A simple calculator."""\n'
-            '    \n'
-            '    def __init__(self):\n'
-            '        self.history = []\n'
-            '\n'
-            '    def compute(self, op: str, a: int, b: int) -> int:\n'
+            "    \n"
+            "    def __init__(self):\n"
+            "        self.history = []\n"
+            "\n"
+            "    def compute(self, op: str, a: int, b: int) -> int:\n"
             '        if op == "add":\n'
-            '            result = add(a, b)\n'
-            '        else:\n'
-            '            result = multiply(a, b)\n'
-            '        self.history.append(result)\n'
-            '        return result\n'
+            "            result = add(a, b)\n"
+            "        else:\n"
+            "            result = multiply(a, b)\n"
+            "        self.history.append(result)\n"
+            "        return result\n"
         )
         (proj / "app.py").write_text(
-            'from calculator import Calculator\n'
-            '\n'
-            'def main():\n'
-            '    calc = Calculator()\n'
+            "from calculator import Calculator\n"
+            "\n"
+            "def main():\n"
+            "    calc = Calculator()\n"
             '    print(calc.compute("add", 1, 2))\n'
         )
         git_init(proj)
@@ -817,6 +800,7 @@ class TestOutputCorrectness:
 # v6.0 COMMAND BENCHMARKS
 # ============================================================================
 
+
 class TestV6CommandPerformance:
     """Benchmarks for v6.0 intelligence commands."""
 
@@ -911,6 +895,7 @@ class TestV6JsonPerformance:
         assert rc == 0
         assert elapsed < 3000
         import json
+
         data = json.loads(out)
         assert data["command"] == "complexity"
 
@@ -919,6 +904,7 @@ class TestV6JsonPerformance:
         assert rc == 0
         assert elapsed < 3000
         import json
+
         data = json.loads(out)
         assert data["command"] == "debt"
 
@@ -928,6 +914,7 @@ class TestV6JsonPerformance:
         assert rc == 0, f"preflight --json failed (rc={rc}): {out[-500:]}"
         assert elapsed < 5000
         import json
+
         data = json.loads(out)
         assert data["command"] == "preflight"
         assert "risk_level" in data["summary"]
@@ -937,6 +924,7 @@ class TestV6JsonPerformance:
         assert rc == 0
         assert elapsed < 3000
         import json
+
         data = json.loads(out)
         assert data["command"] == "conventions"
 
@@ -945,6 +933,7 @@ class TestV6JsonPerformance:
         assert rc == 0
         assert elapsed < 5000
         import json
+
         data = json.loads(out)
         assert "conventions" in data
         assert "complexity" in data or "complexity" in str(data)

@@ -10,8 +10,6 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
 
 
@@ -19,14 +17,16 @@ sys.path.insert(0, str(Path(__file__).parent))
 # Helper: parse source text using tree-sitter + Ruby extractor
 # ---------------------------------------------------------------------------
 
+
 def _parse_and_extract(source_text: str, file_path: str = "test.rb"):
     """Parse Ruby source and extract symbols + references.
 
     Returns (symbols, references) lists.
     """
+    from tree_sitter_language_pack import get_parser
+
     from roam.index.parser import GRAMMAR_ALIASES
     from roam.languages.registry import get_extractor
-    from tree_sitter_language_pack import get_parser
 
     language = "ruby"
     grammar = GRAMMAR_ALIASES.get(language, language)
@@ -44,17 +44,13 @@ def _parse_and_extract(source_text: str, file_path: str = "test.rb"):
 # SYMBOL EXTRACTION TESTS
 # ===========================================================================
 
+
 class TestRubySymbolExtraction:
     """Tests for Ruby symbol extraction."""
 
     def test_extract_class(self):
         """Class definition should be extracted with kind='class'."""
-        source = (
-            "class MyClass\n"
-            "  def initialize\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class MyClass\n  def initialize\n  end\nend\n"
         symbols, _ = _parse_and_extract(source)
         class_syms = [s for s in symbols if s["kind"] == "class"]
         assert len(class_syms) == 1
@@ -64,13 +60,7 @@ class TestRubySymbolExtraction:
 
     def test_extract_module(self):
         """Module definition should be extracted with kind='module'."""
-        source = (
-            "module Utilities\n"
-            "  def self.helper\n"
-            "    42\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "module Utilities\n  def self.helper\n    42\n  end\nend\n"
         symbols, _ = _parse_and_extract(source)
         mod_syms = [s for s in symbols if s["kind"] == "module"]
         assert len(mod_syms) == 1
@@ -79,13 +69,7 @@ class TestRubySymbolExtraction:
 
     def test_extract_method(self):
         """Instance method inside a class should be extracted with kind='method'."""
-        source = (
-            "class Dog\n"
-            "  def bark\n"
-            "    puts 'Woof!'\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class Dog\n  def bark\n    puts 'Woof!'\n  end\nend\n"
         symbols, _ = _parse_and_extract(source)
         methods = [s for s in symbols if s["kind"] == "method"]
         assert len(methods) == 1
@@ -94,13 +78,7 @@ class TestRubySymbolExtraction:
 
     def test_extract_singleton_method(self):
         """Singleton method (def self.xxx) should be extracted as method."""
-        source = (
-            "class Factory\n"
-            "  def self.create(name)\n"
-            "    new(name)\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class Factory\n  def self.create(name)\n    new(name)\n  end\nend\n"
         symbols, _ = _parse_and_extract(source)
         methods = [s for s in symbols if s["kind"] == "method"]
         assert len(methods) == 1
@@ -110,11 +88,7 @@ class TestRubySymbolExtraction:
 
     def test_extract_top_level_function(self):
         """Top-level def (no enclosing class/module) should be kind='function'."""
-        source = (
-            "def greet(name)\n"
-            "  puts \"Hello, #{name}\"\n"
-            "end\n"
-        )
+        source = 'def greet(name)\n  puts "Hello, #{name}"\nend\n'
         symbols, _ = _parse_and_extract(source)
         funcs = [s for s in symbols if s["kind"] == "function"]
         assert len(funcs) == 1
@@ -123,12 +97,7 @@ class TestRubySymbolExtraction:
 
     def test_extract_constant(self):
         """CONSTANT = value assignment should be extracted as kind='constant'."""
-        source = (
-            "class Config\n"
-            "  MAX_RETRIES = 5\n"
-            "  TIMEOUT = 30\n"
-            "end\n"
-        )
+        source = "class Config\n  MAX_RETRIES = 5\n  TIMEOUT = 30\nend\n"
         symbols, _ = _parse_and_extract(source)
         consts = [s for s in symbols if s["kind"] == "constant"]
         names = [c["name"] for c in consts]
@@ -137,17 +106,7 @@ class TestRubySymbolExtraction:
 
     def test_method_has_parent(self):
         """Methods inside a class should have parent_name set to the class."""
-        source = (
-            "class Calculator\n"
-            "  def add(a, b)\n"
-            "    a + b\n"
-            "  end\n"
-            "\n"
-            "  def subtract(a, b)\n"
-            "    a - b\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class Calculator\n  def add(a, b)\n    a + b\n  end\n\n  def subtract(a, b)\n    a - b\n  end\nend\n"
         symbols, _ = _parse_and_extract(source)
         methods = [s for s in symbols if s["kind"] == "method"]
         assert len(methods) == 2
@@ -157,15 +116,7 @@ class TestRubySymbolExtraction:
     def test_exported_detection(self):
         """Public methods should be marked as exported."""
         source = (
-            "class Service\n"
-            "  def process(data)\n"
-            "    transform(data)\n"
-            "  end\n"
-            "\n"
-            "  def self.build\n"
-            "    new\n"
-            "  end\n"
-            "end\n"
+            "class Service\n  def process(data)\n    transform(data)\n  end\n\n  def self.build\n    new\n  end\nend\n"
         )
         symbols, _ = _parse_and_extract(source)
         methods = [s for s in symbols if s["kind"] == "method"]
@@ -225,19 +176,13 @@ class TestRubySymbolExtraction:
 # REFERENCE EXTRACTION TESTS
 # ===========================================================================
 
+
 class TestRubyReferenceExtraction:
     """Tests for Ruby reference extraction."""
 
     def test_reference_method_call(self):
         """obj.method_name should be detected as a call reference."""
-        source = (
-            "class Runner\n"
-            "  def run\n"
-            "    data = fetch_data\n"
-            "    data.process\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class Runner\n  def run\n    data = fetch_data\n    data.process\n  end\nend\n"
         _, refs = _parse_and_extract(source)
         call_refs = [r for r in refs if r["kind"] == "call"]
         targets = [r["target_name"] for r in call_refs]
@@ -245,10 +190,7 @@ class TestRubyReferenceExtraction:
 
     def test_reference_require(self):
         """require 'lib' should be detected as an import reference."""
-        source = (
-            "require 'json'\n"
-            "require 'net/http'\n"
-        )
+        source = "require 'json'\nrequire 'net/http'\n"
         _, refs = _parse_and_extract(source)
         import_refs = [r for r in refs if r["kind"] == "import"]
         targets = [r["target_name"] for r in import_refs]
@@ -257,9 +199,7 @@ class TestRubyReferenceExtraction:
 
     def test_reference_require_relative(self):
         """require_relative 'path' should be detected as an import reference."""
-        source = (
-            "require_relative 'helpers/string_utils'\n"
-        )
+        source = "require_relative 'helpers/string_utils'\n"
         _, refs = _parse_and_extract(source)
         import_refs = [r for r in refs if r["kind"] == "import"]
         assert len(import_refs) >= 1
@@ -269,12 +209,7 @@ class TestRubyReferenceExtraction:
 
     def test_reference_include(self):
         """include ModuleName should be detected as an import reference."""
-        source = (
-            "class MyClass\n"
-            "  include Enumerable\n"
-            "  include Comparable\n"
-            "end\n"
-        )
+        source = "class MyClass\n  include Enumerable\n  include Comparable\nend\n"
         _, refs = _parse_and_extract(source)
         import_refs = [r for r in refs if r["kind"] == "import"]
         targets = [r["target_name"] for r in import_refs]
@@ -283,13 +218,7 @@ class TestRubyReferenceExtraction:
 
     def test_reference_class_new(self):
         """ClassName.new should be detected as a call to the class."""
-        source = (
-            "class Builder\n"
-            "  def build\n"
-            "    Widget.new('large')\n"
-            "  end\n"
-            "end\n"
-        )
+        source = "class Builder\n  def build\n    Widget.new('large')\n  end\nend\n"
         _, refs = _parse_and_extract(source)
         call_refs = [r for r in refs if r["kind"] == "call"]
         targets = [r["target_name"] for r in call_refs]

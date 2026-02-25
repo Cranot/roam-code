@@ -8,8 +8,8 @@ This enables Claude Code's Tool Search feature for context reduction.
 from __future__ import annotations
 
 import asyncio
-import os
 import importlib
+import os
 
 import pytest
 
@@ -22,6 +22,7 @@ def full_preset_tools():
     os.environ["ROAM_MCP_PRESET"] = "full"
     try:
         import roam.mcp_server as ms
+
         importlib.reload(ms)
 
         if ms.mcp is None:
@@ -62,9 +63,7 @@ class TestDeferLoading:
 
         for tool in core_tools:
             defer = _get_defer_loading(tool)
-            assert defer is None or defer is False, (
-                f"Core tool {tool.name} should NOT have deferLoading=True"
-            )
+            assert defer is None or defer is False, f"Core tool {tool.name} should NOT have deferLoading=True"
 
     def test_meta_tool_not_deferred(self, full_preset_tools):
         """The meta-tool (roam_expand_toolset) must NOT have deferLoading."""
@@ -73,9 +72,7 @@ class TestDeferLoading:
 
         assert len(meta_tools) == 1, f"Expected 1 meta-tool, got {len(meta_tools)}"
         defer = _get_defer_loading(meta_tools[0])
-        assert defer is None or defer is False, (
-            f"Meta-tool {meta_name} should NOT have deferLoading=True"
-        )
+        assert defer is None or defer is False, f"Meta-tool {meta_name} should NOT have deferLoading=True"
 
     def test_non_core_tools_deferred(self, full_preset_tools):
         """All non-core, non-meta tools MUST have deferLoading=True."""
@@ -91,9 +88,7 @@ class TestDeferLoading:
             if defer is not True:
                 missing_defer.append(tool.name)
 
-        assert missing_defer == [], (
-            f"Non-core tools missing deferLoading=True: {missing_defer}"
-        )
+        assert missing_defer == [], f"Non-core tools missing deferLoading=True: {missing_defer}"
 
     def test_deferred_count(self, full_preset_tools):
         """Verify the exact split: 23 always-loaded, rest deferred."""
@@ -108,8 +103,7 @@ class TestDeferLoading:
             f"{sorted(t.name for t in not_deferred)}"
         )
         assert len(deferred) == len(tools) - len(always_loaded), (
-            f"Expected {len(tools) - len(always_loaded)} deferred tools, "
-            f"got {len(deferred)}"
+            f"Expected {len(tools) - len(always_loaded)} deferred tools, got {len(deferred)}"
         )
 
     def test_deferred_tools_have_annotations_object(self, full_preset_tools):
@@ -119,43 +113,49 @@ class TestDeferLoading:
         non_core = [t for t in tools if t.name not in always_loaded]
 
         for tool in non_core:
-            assert tool.annotations is not None, (
-                f"Non-core tool {tool.name} has no annotations object"
-            )
+            assert tool.annotations is not None, f"Non-core tool {tool.name} has no annotations object"
 
     def test_all_tool_names_unique(self, full_preset_tools):
         """Sanity check: all tool names should be unique."""
         tools, _, _ = full_preset_tools
         names = [t.name for t in tools]
-        assert len(names) == len(set(names)), (
-            f"Duplicate tool names found: "
-            f"{[n for n in names if names.count(n) > 1]}"
-        )
+        assert len(names) == len(set(names)), f"Duplicate tool names found: {[n for n in names if names.count(n) > 1]}"
 
     def test_core_tools_match_preset(self, full_preset_tools):
         """Verify the _CORE_TOOLS set matches what we expect."""
         _, core_names, _ = full_preset_tools
         expected_core = {
             # compound operations (4)
-            "roam_explore", "roam_prepare_change",
-            "roam_review_change", "roam_diagnose_issue",
+            "roam_explore",
+            "roam_prepare_change",
+            "roam_review_change",
+            "roam_diagnose_issue",
             # comprehension (5)
-            "roam_understand", "roam_search_symbol",
-            "roam_context", "roam_file_info", "roam_deps",
+            "roam_understand",
+            "roam_search_symbol",
+            "roam_context",
+            "roam_file_info",
+            "roam_deps",
             # daily workflow (7)
-            "roam_preflight", "roam_diff", "roam_pr_risk",
-            "roam_affected_tests", "roam_impact", "roam_uses",
+            "roam_preflight",
+            "roam_diff",
+            "roam_pr_risk",
+            "roam_affected_tests",
+            "roam_impact",
+            "roam_uses",
             "roam_syntax_check",
             # code quality (5)
-            "roam_health", "roam_dead_code",
-            "roam_complexity_report", "roam_diagnose", "roam_trace",
+            "roam_health",
+            "roam_dead_code",
+            "roam_complexity_report",
+            "roam_diagnose",
+            "roam_trace",
             # batch operations (2)
-            "roam_batch_search", "roam_batch_get",
+            "roam_batch_search",
+            "roam_batch_get",
         }
         assert core_names == expected_core, (
-            f"Core tools mismatch.\n"
-            f"  Extra: {core_names - expected_core}\n"
-            f"  Missing: {expected_core - core_names}"
+            f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"
         )
 
     def test_annotations_include_policy_hints(self, full_preset_tools):

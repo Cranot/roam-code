@@ -29,7 +29,6 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -111,9 +110,7 @@ class TestHookContent:
         hooks_dir = repo / ".git" / "hooks"
         for name in _HOOK_NAMES:
             content = (hooks_dir / name).read_text(encoding="utf-8")
-            assert _ROAM_MARKER in content, (
-                f"Hook {name} does not contain roam marker"
-            )
+            assert _ROAM_MARKER in content, f"Hook {name} does not contain roam marker"
 
     def test_hooks_have_shebang(self, tmp_path):
         repo = _make_git_repo(tmp_path)
@@ -122,9 +119,7 @@ class TestHookContent:
         hooks_dir = repo / ".git" / "hooks"
         for name in _HOOK_NAMES:
             content = (hooks_dir / name).read_text(encoding="utf-8")
-            assert content.startswith("#!/bin/sh"), (
-                f"Hook {name} does not start with #!/bin/sh"
-            )
+            assert content.startswith("#!/bin/sh"), f"Hook {name} does not start with #!/bin/sh"
 
     def test_hooks_run_in_background(self, tmp_path):
         """Hook command should be backgrounded (ends with &) so git isn't blocked."""
@@ -134,9 +129,7 @@ class TestHookContent:
         hooks_dir = repo / ".git" / "hooks"
         for name in _HOOK_NAMES:
             content = (hooks_dir / name).read_text(encoding="utf-8")
-            assert "&" in content, (
-                f"Hook {name} does not background the roam command"
-            )
+            assert "&" in content, f"Hook {name} does not background the roam command"
 
     def test_hooks_check_roam_available(self, tmp_path):
         """Hook should guard with 'command -v roam' for graceful degradation."""
@@ -146,9 +139,7 @@ class TestHookContent:
         hooks_dir = repo / ".git" / "hooks"
         for name in _HOOK_NAMES:
             content = (hooks_dir / name).read_text(encoding="utf-8")
-            assert "command -v roam" in content, (
-                f"Hook {name} does not check for roam availability"
-            )
+            assert "command -v roam" in content, f"Hook {name} does not check for roam availability"
 
 
 # ---------------------------------------------------------------------------
@@ -166,9 +157,7 @@ class TestHookExecutable:
         for name in _HOOK_NAMES:
             hook_path = hooks_dir / name
             mode = hook_path.stat().st_mode
-            assert mode & stat.S_IXUSR, (
-                f"Hook {name} is not executable by owner"
-            )
+            assert mode & stat.S_IXUSR, f"Hook {name} is not executable by owner"
 
 
 # ---------------------------------------------------------------------------
@@ -190,9 +179,7 @@ class TestUninstall:
             # Either the file was deleted, or if it still exists, the marker is gone
             if hook_path.exists():
                 content = hook_path.read_text(encoding="utf-8")
-                assert _ROAM_MARKER not in content, (
-                    f"Roam marker still present in {name} after uninstall"
-                )
+                assert _ROAM_MARKER not in content, f"Roam marker still present in {name} after uninstall"
 
     def test_uninstall_removes_roam_section_from_shared_hook(self, tmp_path):
         """When a hook already existed, uninstall only strips the roam section."""
@@ -257,11 +244,7 @@ class TestStatus:
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
         # All installed
-        assert (
-            "3/3" in result.output
-            or "All 3" in result.output
-            or "installed" in result.output.lower()
-        )
+        assert "3/3" in result.output or "All 3" in result.output or "installed" in result.output.lower()
 
     def test_status_shows_hook_names(self, tmp_path):
         repo = _make_git_repo(tmp_path)
@@ -525,7 +508,7 @@ class TestNoGitRepo:
 
 class TestInternalHelpers:
     def test_roam_section_present_true(self):
-        from roam.commands.cmd_hooks import _roam_section_present, _MARKER_BEGIN, _MARKER_END
+        from roam.commands.cmd_hooks import _MARKER_BEGIN, _MARKER_END, _roam_section_present
 
         content = f"#!/bin/sh\n{_MARKER_BEGIN}\nroam index\n{_MARKER_END}\n"
         assert _roam_section_present(content) is True
@@ -538,14 +521,13 @@ class TestInternalHelpers:
 
     def test_remove_roam_section_removes_block(self):
         from roam.commands.cmd_hooks import (
-            _remove_roam_section, _MARKER_BEGIN, _MARKER_END, _ROAM_HOOK_BODY
+            _MARKER_BEGIN,
+            _MARKER_END,
+            _ROAM_HOOK_BODY,
+            _remove_roam_section,
         )
 
-        original = (
-            "#!/bin/sh\n"
-            "# my custom hook\n"
-            f"\n{_MARKER_BEGIN}\n{_ROAM_HOOK_BODY}\n{_MARKER_END}\n"
-        )
+        original = f"#!/bin/sh\n# my custom hook\n\n{_MARKER_BEGIN}\n{_ROAM_HOOK_BODY}\n{_MARKER_END}\n"
         result = _remove_roam_section(original)
         assert _MARKER_BEGIN not in result
         assert _MARKER_END not in result
@@ -559,9 +541,7 @@ class TestInternalHelpers:
         assert result == content
 
     def test_insert_roam_section_adds_markers(self):
-        from roam.commands.cmd_hooks import (
-            _insert_roam_section, _MARKER_BEGIN, _MARKER_END
-        )
+        from roam.commands.cmd_hooks import _MARKER_BEGIN, _MARKER_END, _insert_roam_section
 
         content = "#!/bin/sh\necho 'existing'\n"
         result = _insert_roam_section(content)
@@ -582,7 +562,7 @@ class TestInternalHelpers:
         assert "echo 'hi'" in restored
 
     def test_install_hook_creates_file(self, tmp_path):
-        from roam.commands.cmd_hooks import _install_hook, _MARKER_BEGIN
+        from roam.commands.cmd_hooks import _MARKER_BEGIN, _install_hook
 
         hook_path = tmp_path / "post-merge"
         action, error = _install_hook(hook_path, force=False)
@@ -593,7 +573,7 @@ class TestInternalHelpers:
         assert _MARKER_BEGIN in content
 
     def test_install_hook_appends_to_existing(self, tmp_path):
-        from roam.commands.cmd_hooks import _install_hook, _MARKER_BEGIN
+        from roam.commands.cmd_hooks import _MARKER_BEGIN, _install_hook
 
         hook_path = tmp_path / "post-merge"
         hook_path.write_text("#!/bin/sh\necho 'custom'\n", encoding="utf-8")
@@ -640,7 +620,7 @@ class TestInternalHelpers:
         assert action == "not-installed"
 
     def test_uninstall_hook_preserves_other_content(self, tmp_path):
-        from roam.commands.cmd_hooks import _install_hook, _uninstall_hook, _MARKER_BEGIN
+        from roam.commands.cmd_hooks import _MARKER_BEGIN, _install_hook, _uninstall_hook
 
         hook_path = tmp_path / "post-merge"
         hook_path.write_text("#!/bin/sh\n# keep me\necho 'preserve'\n", encoding="utf-8")

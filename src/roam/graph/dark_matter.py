@@ -42,9 +42,7 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
 
     # Bidirectional structural edge set (any edge = not dark matter)
     structural: set[tuple[int, int]] = set()
-    for fe in conn.execute(
-        "SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 1"
-    ).fetchall():
+    for fe in conn.execute("SELECT source_file_id, target_file_id FROM file_edges WHERE symbol_count >= 1").fetchall():
         structural.add((fe["source_file_id"], fe["target_file_id"]))
         structural.add((fe["target_file_id"], fe["source_file_id"]))
 
@@ -75,16 +73,18 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
         strength = cochanges / avg if avg > 0 else 0
         lift = (cochanges * total_commits) / max(ca * cb, 1)
 
-        results.append({
-            "file_id_a": fid_a,
-            "file_id_b": fid_b,
-            "path_a": id_to_path.get(fid_a, f"file_id={fid_a}"),
-            "path_b": id_to_path.get(fid_b, f"file_id={fid_b}"),
-            "npmi": round(npmi, 3),
-            "lift": round(lift, 2),
-            "strength": round(strength, 2),
-            "cochange_count": cochanges,
-        })
+        results.append(
+            {
+                "file_id_a": fid_a,
+                "file_id_b": fid_b,
+                "path_a": id_to_path.get(fid_a, f"file_id={fid_a}"),
+                "path_b": id_to_path.get(fid_b, f"file_id={fid_b}"),
+                "npmi": round(npmi, 3),
+                "lift": round(lift, 2),
+                "strength": round(strength, 2),
+                "cochange_count": cochanges,
+            }
+        )
 
     results.sort(key=lambda x: -x["npmi"])
     return results
@@ -124,9 +124,7 @@ class HypothesisEngine:
         if rel_path in self._file_cache:
             return self._file_cache[rel_path]
         try:
-            text = (self._root / rel_path).read_text(
-                encoding="utf-8", errors="replace"
-            )[:5000]
+            text = (self._root / rel_path).read_text(encoding="utf-8", errors="replace")[:5000]
         except (OSError, UnicodeDecodeError):
             text = ""
         self._file_cache[rel_path] = text

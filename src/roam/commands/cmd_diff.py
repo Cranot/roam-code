@@ -4,15 +4,15 @@ import fnmatch
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Affected tests helper
 # ---------------------------------------------------------------------------
+
 
 def _collect_affected_tests(conn, sym_by_file):
     """Gather affected tests for all symbols across changed files.
@@ -49,6 +49,7 @@ def _collect_affected_tests(conn, sym_by_file):
 # Coupling warnings helper
 # ---------------------------------------------------------------------------
 
+
 def _collect_coupling_warnings(conn, file_map, min_cochanges=3):
     """Find temporally-coupled files that are NOT in the changeset.
 
@@ -61,9 +62,7 @@ def _collect_coupling_warnings(conn, file_map, min_cochanges=3):
     file_commits = {}
     for f in conn.execute("SELECT id, path FROM files").fetchall():
         id_to_path[f["id"]] = f["path"]
-    for fs in conn.execute(
-        "SELECT file_id, commit_count FROM file_stats"
-    ).fetchall():
+    for fs in conn.execute("SELECT file_id, commit_count FROM file_stats").fetchall():
         file_commits[fs["file_id"]] = fs["commit_count"] or 1
 
     warnings = {}  # keyed by path, keep highest cochange
@@ -78,23 +77,16 @@ def _collect_coupling_warnings(conn, file_map, min_cochanges=3):
         ).fetchall()
 
         for r in rows:
-            partner_fid = (
-                r["file_id_b"] if r["file_id_a"] == fid else r["file_id_a"]
-            )
+            partner_fid = r["file_id_b"] if r["file_id_a"] == fid else r["file_id_a"]
             if partner_fid in change_fids:
                 continue  # already in the diff, no warning needed
 
             cochanges = r["cochange_count"]
-            avg = (
-                file_commits.get(fid, 1) + file_commits.get(partner_fid, 1)
-            ) / 2
+            avg = (file_commits.get(fid, 1) + file_commits.get(partner_fid, 1)) / 2
             strength = cochanges / avg if avg > 0 else 0
 
             partner_path = id_to_path.get(partner_fid, f"file_id={partner_fid}")
-            if (
-                partner_path not in warnings
-                or cochanges > warnings[partner_path]["cochanges"]
-            ):
+            if partner_path not in warnings or cochanges > warnings[partner_path]["cochanges"]:
                 warnings[partner_path] = {
                     "path": partner_path,
                     "cochanges": cochanges,
@@ -108,6 +100,7 @@ def _collect_coupling_warnings(conn, file_map, min_cochanges=3):
 # ---------------------------------------------------------------------------
 # Fitness check helper (scoped to changed files)
 # ---------------------------------------------------------------------------
+
 
 def _collect_fitness_violations(conn, file_map, root):
     """Run fitness rules scoped to the changed files.
@@ -143,12 +136,14 @@ def _collect_fitness_violations(conn, file_map, root):
             violations = _check_naming_rule_scoped(rule, conn, changed_fids)
 
         status = "PASS" if not violations else "FAIL"
-        rule_results.append({
-            "name": rule.get("name", "unnamed"),
-            "type": rtype,
-            "status": status,
-            "violations": len(violations),
-        })
+        rule_results.append(
+            {
+                "name": rule.get("name", "unnamed"),
+                "type": rtype,
+                "status": status,
+                "violations": len(violations),
+            }
+        )
         all_violations.extend(violations)
 
     return rule_results, all_violations
@@ -180,14 +175,16 @@ def _check_dep_rule_scoped(rule, conn, changed_paths):
         tgt_match = fnmatch.fnmatch(r["target_path"], to_pattern)
 
         if src_match and tgt_match and not allow:
-            violations.append({
-                "rule": rule["name"],
-                "type": "dependency",
-                "message": f"{r['source_name']} -> {r['target_name']}",
-                "source": f"{r['source_path']}:{r['line'] or '?'}",
-                "target": r["target_path"],
-                "edge_kind": r["kind"],
-            })
+            violations.append(
+                {
+                    "rule": rule["name"],
+                    "type": "dependency",
+                    "message": f"{r['source_name']} -> {r['target_name']}",
+                    "source": f"{r['source_path']}:{r['line'] or '?'}",
+                    "target": r["target_path"],
+                    "edge_kind": r["kind"],
+                }
+            )
 
     return violations
 
@@ -215,25 +212,26 @@ def _check_metric_rule_scoped(rule, conn, changed_fids):
             list(changed_fids) + [threshold],
         ).fetchall()
         for r in rows:
-            violations.append({
-                "rule": rule["name"],
-                "type": "metric",
-                "message": (
-                    f"{r['name']} complexity={r['cognitive_complexity']:.0f} "
-                    f"(max={threshold})"
-                ),
-                "source": loc(r["path"], r["line_start"]),
-                "metric": "cognitive_complexity",
-                "value": r["cognitive_complexity"],
-                "threshold": threshold,
-            })
+            violations.append(
+                {
+                    "rule": rule["name"],
+                    "type": "metric",
+                    "message": (f"{r['name']} complexity={r['cognitive_complexity']:.0f} (max={threshold})"),
+                    "source": loc(r["path"], r["line_start"]),
+                    "metric": "cognitive_complexity",
+                    "value": r["cognitive_complexity"],
+                    "threshold": threshold,
+                }
+            )
     elif metric in ("cycles", "health_score"):
         # Global metrics -- delegate to full checker
         from roam.commands.cmd_fitness import _check_metric_rule
+
         violations = _check_metric_rule(rule, conn)
     # Other count-based metrics run globally too
     elif metric in ("god_components", "bottlenecks", "dead_exports"):
         from roam.commands.cmd_fitness import _check_metric_rule
+
         violations = _check_metric_rule(rule, conn)
 
     return violations
@@ -242,6 +240,7 @@ def _check_metric_rule_scoped(rule, conn, changed_fids):
 def _check_naming_rule_scoped(rule, conn, changed_fids):
     """Check naming rules scoped to changed files."""
     import re
+
     from roam.output.formatter import loc
 
     kind = rule.get("kind", "function")
@@ -269,12 +268,14 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
         if exclude_re and exclude_re.match(name):
             continue
         if not regex.match(name):
-            violations.append({
-                "rule": rule["name"],
-                "type": "naming",
-                "message": f"{name} does not match {pattern}",
-                "source": loc(r["path"], r["line_start"]),
-            })
+            violations.append(
+                {
+                    "rule": rule["name"],
+                    "type": "naming",
+                    "message": f"{name} does not match {pattern}",
+                    "source": loc(r["path"], r["line_start"]),
+                }
+            )
 
     return violations
 
@@ -283,14 +284,18 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("diff")
-@click.argument('commit_range', required=False, default=None)
-@click.option('--staged', is_flag=True, help='Analyze staged changes instead of unstaged')
-@click.option('--full', is_flag=True,
-              help='Show all results without truncation and enable --tests --coupling --fitness')
-@click.option('--tests', is_flag=True, help='Show affected test files')
-@click.option('--coupling', is_flag=True, help='Warn about missing co-change partners')
-@click.option('--fitness', is_flag=True, help='Check fitness rules against changed files')
+@click.argument("commit_range", required=False, default=None)
+@click.option("--staged", is_flag=True, help="Analyze staged changes instead of unstaged")
+@click.option(
+    "--full",
+    is_flag=True,
+    help="Show all results without truncation and enable --tests --coupling --fitness",
+)
+@click.option("--tests", is_flag=True, help="Show affected test files")
+@click.option("--coupling", is_flag=True, help="Warn about missing co-change partners")
+@click.option("--fitness", is_flag=True, help="Check fitness rules against changed files")
 @click.pass_context
 def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
     """Show blast radius: what code is affected by your changes.
@@ -301,7 +306,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
     Use --tests, --coupling, --fitness to add extra analysis sections,
     or --full to enable all three plus untruncated output.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
 
@@ -329,17 +334,16 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
         # Get symbols in changed files
         sym_by_file = {}
         for path, fid in file_map.items():
-            syms = conn.execute(
-                "SELECT id, name, kind FROM symbols WHERE file_id = ?", (fid,)
-            ).fetchall()
+            syms = conn.execute("SELECT id, name, kind FROM symbols WHERE file_id = ?", (fid,)).fetchall()
             sym_by_file[path] = syms
 
         total_syms = sum(len(s) for s in sym_by_file.values())
 
         # Build graph and compute impact
         try:
-            from roam.graph.builder import build_symbol_graph
             import networkx as nx
+
+            from roam.graph.builder import build_symbol_graph
         except ImportError:
             click.echo("Graph module not available.")
             return
@@ -369,12 +373,14 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
             all_affected_syms.update(file_dependents)
             all_affected_files.update(file_affected_files)
 
-            file_impacts.append({
-                "path": path,
-                "symbols": len(syms),
-                "affected_syms": len(file_dependents),
-                "affected_files": len(file_affected_files),
-            })
+            file_impacts.append(
+                {
+                    "path": path,
+                    "symbols": len(syms),
+                    "affected_syms": len(file_dependents),
+                    "affected_files": len(file_affected_files),
+                }
+            )
 
         # Sort by blast radius
         file_impacts.sort(key=lambda x: x["affected_syms"], reverse=True)
@@ -400,9 +406,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
         fitness_violations = []
         if fitness:
             try:
-                fitness_rule_results, fitness_violations = (
-                    _collect_fitness_violations(conn, file_map, root)
-                )
+                fitness_rule_results, fitness_violations = _collect_fitness_violations(conn, file_map, root)
             except Exception:
                 pass  # fitness.yaml may not exist
 
@@ -427,12 +431,8 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
 
             if tests:
                 direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
-                transitive = sum(
-                    1 for t in test_results if t["kind"] == "TRANSITIVE"
-                )
-                colocated = sum(
-                    1 for t in test_results if t["kind"] == "COLOCATED"
-                )
+                transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
+                colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
                 test_files = []
                 seen = set()
                 for t in test_results:
@@ -465,9 +465,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
                 envelope_data["coupling_warnings"] = coupling_warnings
 
             if fitness:
-                failed_count = sum(
-                    1 for r in fitness_rule_results if r["status"] == "FAIL"
-                )
+                failed_count = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
                 summary["fitness_violations"] = len(fitness_violations)
                 summary["fitness_rules_failed"] = failed_count
                 envelope_data["fitness_violations"] = {
@@ -475,9 +473,15 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
                     "violations": fitness_violations[:100],
                 }
 
-            click.echo(to_json(json_envelope(
-                "diff", summary=summary, **envelope_data,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "diff",
+                        summary=summary,
+                        **envelope_data,
+                    )
+                )
+            )
             return
 
         # ── Text output ──────────────────────────────────────────────
@@ -495,16 +499,20 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
         rows = []
         display = file_impacts if full else file_impacts[:15]
         for fi in display:
-            rows.append([
-                fi["path"],
-                str(fi["symbols"]),
-                str(fi["affected_syms"]),
-                str(fi["affected_files"]),
-            ])
-        click.echo(format_table(
-            ["Changed file", "Symbols", "Affected syms", "Affected files"],
-            rows,
-        ))
+            rows.append(
+                [
+                    fi["path"],
+                    str(fi["symbols"]),
+                    str(fi["affected_syms"]),
+                    str(fi["affected_files"]),
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Changed file", "Symbols", "Affected syms", "Affected files"],
+                rows,
+            )
+        )
         if not full and len(file_impacts) > 15:
             click.echo(f"\n(+{len(file_impacts) - 15} more files)")
 
@@ -527,21 +535,15 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
                 click.echo("No affected tests found.")
             else:
                 direct = sum(1 for t in test_results if t["kind"] == "DIRECT")
-                transitive = sum(
-                    1 for t in test_results if t["kind"] == "TRANSITIVE"
-                )
-                colocated = sum(
-                    1 for t in test_results if t["kind"] == "COLOCATED"
-                )
+                transitive = sum(1 for t in test_results if t["kind"] == "TRANSITIVE")
+                colocated = sum(1 for t in test_results if t["kind"] == "COLOCATED")
                 click.echo(
                     f"=== Affected Tests ({len(test_results)}: "
                     f"{direct} direct, {transitive} transitive, "
                     f"{colocated} colocated) ===\n"
                 )
 
-                display_tests = (
-                    test_results if full else test_results[:20]
-                )
+                display_tests = test_results if full else test_results[:20]
                 for t in display_tests:
                     kind_tag = f"{t['kind']:<12s}"
                     if t["symbol"]:
@@ -573,36 +575,32 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
             if not coupling_warnings:
                 click.echo("No missing co-change partners.")
             else:
-                click.echo(
-                    f"Missing co-change partners ({len(coupling_warnings)}):"
-                )
-                click.echo(
-                    "(files you usually change together but are not in this diff)"
-                )
+                click.echo(f"Missing co-change partners ({len(coupling_warnings)}):")
+                click.echo("(files you usually change together but are not in this diff)")
                 cpl_rows = []
-                display_cpl = (
-                    coupling_warnings if full else coupling_warnings[:10]
-                )
+                display_cpl = coupling_warnings if full else coupling_warnings[:10]
                 for w in display_cpl:
-                    cpl_rows.append([
-                        w["path"],
-                        str(w["cochanges"]),
-                        f"{w['strength']:.0%}",
-                        w["partner_of"],
-                    ])
-                click.echo(format_table(
-                    [
-                        "Usually changes with",
-                        "Co-changed",
-                        "Strength",
-                        "Partner of",
-                    ],
-                    cpl_rows,
-                ))
-                if not full and len(coupling_warnings) > 10:
-                    click.echo(
-                        f"\n(+{len(coupling_warnings) - 10} more warnings)"
+                    cpl_rows.append(
+                        [
+                            w["path"],
+                            str(w["cochanges"]),
+                            f"{w['strength']:.0%}",
+                            w["partner_of"],
+                        ]
                     )
+                click.echo(
+                    format_table(
+                        [
+                            "Usually changes with",
+                            "Co-changed",
+                            "Strength",
+                            "Partner of",
+                        ],
+                        cpl_rows,
+                    )
+                )
+                if not full and len(coupling_warnings) > 10:
+                    click.echo(f"\n(+{len(coupling_warnings) - 10} more warnings)")
 
         # ── Fitness violations section ───────────────────────────────
 
@@ -610,46 +608,26 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
             click.echo()
             if not fitness_rule_results:
                 click.echo("=== Fitness Check ===\n")
-                click.echo(
-                    "No fitness rules found. Create .roam/fitness.yaml "
-                    "or run: roam fitness --init"
-                )
+                click.echo("No fitness rules found. Create .roam/fitness.yaml or run: roam fitness --init")
             else:
-                failed = sum(
-                    1 for r in fitness_rule_results if r["status"] == "FAIL"
-                )
-                passed = sum(
-                    1 for r in fitness_rule_results if r["status"] == "PASS"
-                )
+                failed = sum(1 for r in fitness_rule_results if r["status"] == "FAIL")
+                passed = sum(1 for r in fitness_rule_results if r["status"] == "PASS")
                 click.echo(
-                    f"=== Fitness Check ({len(fitness_rule_results)} rules, "
-                    f"{passed} passed, {failed} failed) ===\n"
+                    f"=== Fitness Check ({len(fitness_rule_results)} rules, {passed} passed, {failed} failed) ===\n"
                 )
 
                 for rr in fitness_rule_results:
                     icon = "PASS" if rr["status"] == "PASS" else "FAIL"
-                    detail = (
-                        f" ({rr['violations']} violations)"
-                        if rr["violations"]
-                        else ""
-                    )
+                    detail = f" ({rr['violations']} violations)" if rr["violations"] else ""
                     click.echo(f"  [{icon}] {rr['name']}{detail}")
 
                 if fitness_violations:
-                    click.echo(
-                        f"\nViolations in changed files "
-                        f"({len(fitness_violations)}):\n"
-                    )
-                    display_v = (
-                        fitness_violations if full
-                        else fitness_violations[:15]
-                    )
+                    click.echo(f"\nViolations in changed files ({len(fitness_violations)}):\n")
+                    display_v = fitness_violations if full else fitness_violations[:15]
                     for v in display_v:
                         src = v.get("source", "")
                         click.echo(f"  {v['rule']}: {v['message']}")
                         if src:
                             click.echo(f"    at {src}")
                     if not full and len(fitness_violations) > 15:
-                        click.echo(
-                            f"\n  (+{len(fitness_violations) - 15} more)"
-                        )
+                        click.echo(f"\n  (+{len(fitness_violations) - 15} more)")

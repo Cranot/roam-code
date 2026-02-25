@@ -16,21 +16,17 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
-import time
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope, git_commit
-
+from conftest import assert_json_envelope, invoke_cli
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def _make_multi_author_project(tmp_path):
     """Create a project with multiple authors contributing to files.
@@ -49,76 +45,52 @@ def _make_multi_author_project(tmp_path):
 
     # Initial files
     (src / "auth.py").write_text(
-        'def login(user, password):\n'
-        '    """Authenticate a user."""\n'
-        '    return user == "admin"\n'
+        'def login(user, password):\n    """Authenticate a user."""\n    return user == "admin"\n'
     )
-    (src / "models.py").write_text(
-        'class User:\n'
-        '    def __init__(self, name):\n'
-        '        self.name = name\n'
-    )
-    (lib / "utils.py").write_text(
-        'def helper():\n'
-        '    return 42\n'
-    )
+    (src / "models.py").write_text("class User:\n    def __init__(self, name):\n        self.name = name\n")
+    (lib / "utils.py").write_text("def helper():\n    return 42\n")
 
     # Init with alice
     subprocess.run(["git", "init"], cwd=proj, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "alice@company.com"],
-                   cwd=proj, capture_output=True)
-    subprocess.run(["git", "config", "user.name", "alice"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "alice@company.com"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "alice"], cwd=proj, capture_output=True)
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "init by alice"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "init by alice"], cwd=proj, capture_output=True)
 
     # Bob modifies auth.py
-    subprocess.run(["git", "config", "user.name", "bob"],
-                   cwd=proj, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "bob@company.com"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "bob"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "bob@company.com"], cwd=proj, capture_output=True)
     (src / "auth.py").write_text(
-        'def login(user, password):\n'
+        "def login(user, password):\n"
         '    """Authenticate a user (improved by bob)."""\n'
-        '    if not user:\n'
-        '        return False\n'
+        "    if not user:\n"
+        "        return False\n"
         '    return user == "admin" and password == "secret"\n'
-        '\n'
-        'def logout(user):\n'
+        "\n"
+        "def logout(user):\n"
         '    """Log out a user."""\n'
-        '    pass\n'
+        "    pass\n"
     )
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "bob improves auth"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "bob improves auth"], cwd=proj, capture_output=True)
 
     # Carol modifies models.py and lib/utils.py
-    subprocess.run(["git", "config", "user.name", "carol"],
-                   cwd=proj, capture_output=True)
-    subprocess.run(["git", "config", "user.email", "carol@company.com"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.name", "carol"], cwd=proj, capture_output=True)
+    subprocess.run(["git", "config", "user.email", "carol@company.com"], cwd=proj, capture_output=True)
     (src / "models.py").write_text(
-        'class User:\n'
-        '    def __init__(self, name, email):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        'class Admin(User):\n'
-        '    def __init__(self, name, email):\n'
-        '        super().__init__(name, email)\n'
-        '        self.is_admin = True\n'
+        "class User:\n"
+        "    def __init__(self, name, email):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "class Admin(User):\n"
+        "    def __init__(self, name, email):\n"
+        "        super().__init__(name, email)\n"
+        "        self.is_admin = True\n"
     )
-    (lib / "utils.py").write_text(
-        'def helper():\n'
-        '    return 42\n'
-        '\n'
-        'def format_name(name):\n'
-        '    return name.title()\n'
-    )
+    (lib / "utils.py").write_text("def helper():\n    return 42\n\ndef format_name(name):\n    return name.title()\n")
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
-    subprocess.run(["git", "commit", "-m", "carol expands models and utils"],
-                   cwd=proj, capture_output=True)
+    subprocess.run(["git", "commit", "-m", "carol expands models and utils"], cwd=proj, capture_output=True)
 
     return proj
 
@@ -126,6 +98,7 @@ def _make_multi_author_project(tmp_path):
 def _index_project(proj, monkeypatch):
     """Index a project using CliRunner."""
     from conftest import index_in_process
+
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj)
     assert rc == 0, f"roam index failed:\n{out}"
@@ -166,11 +139,7 @@ class TestSuggestReviewersBasic:
         """suggest-reviewers runs on unstaged changes."""
         monkeypatch.chdir(indexed_project)
         # Make a change
-        (indexed_project / "src" / "models.py").write_text(
-            'class User:\n'
-            '    """Modified."""\n'
-            '    pass\n'
-        )
+        (indexed_project / "src" / "models.py").write_text('class User:\n    """Modified."""\n    pass\n')
         result = invoke_cli(cli_runner, ["suggest-reviewers"])
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
@@ -179,9 +148,7 @@ class TestSuggestReviewersBasic:
         """--changed flag uses git diff HEAD."""
         monkeypatch.chdir(indexed_project)
         (indexed_project / "src" / "models.py").write_text(
-            'class User:\n'
-            '    """Modified with --changed."""\n'
-            '    pass\n'
+            'class User:\n    """Modified with --changed."""\n    pass\n'
         )
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
         assert result.exit_code == 0
@@ -208,10 +175,10 @@ class TestSuggestReviewersScoring:
         _index_project(proj, monkeypatch)
 
         # Make a change to auth.py (bob and alice have ownership)
-        _make_unstaged_change(proj, "src/auth.py",
-            'def login(user, password):\n'
-            '    """Modified for review test."""\n'
-            '    return True\n'
+        _make_unstaged_change(
+            proj,
+            "src/auth.py",
+            'def login(user, password):\n    """Modified for review test."""\n    return True\n',
         )
 
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
@@ -225,14 +192,13 @@ class TestSuggestReviewersScoring:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py",
-            'def login(user, password):\n'
-            '    """Modified."""\n'
-            '    return True\n'
+        _make_unstaged_change(
+            proj,
+            "src/auth.py",
+            'def login(user, password):\n    """Modified."""\n    return True\n',
         )
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert_json_envelope(data, command="suggest-reviewers")
@@ -250,11 +216,10 @@ class TestSuggestReviewersScoring:
         _index_project(proj, monkeypatch)
 
         # Change multiple files to get multiple candidate reviewers
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
-        _make_unstaged_change(proj, "src/models.py", 'class User: pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
+        _make_unstaged_change(proj, "src/models.py", "class User: pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed",
-                                         "--top", "1"], json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed", "--top", "1"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data.get("reviewers", [])) <= 1
@@ -264,11 +229,10 @@ class TestSuggestReviewersScoring:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
-        _make_unstaged_change(proj, "src/models.py", 'class User: pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
+        _make_unstaged_change(proj, "src/models.py", "class User: pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert len(data.get("reviewers", [])) <= 3
@@ -287,17 +251,15 @@ class TestSuggestReviewersExclude:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
         # Get all reviewers first
-        result_all = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                               json_mode=True)
+        result_all = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data_all = json.loads(result_all.output)
         all_names = {r["name"] for r in data_all.get("reviewers", [])}
 
         # Now exclude bob
-        result_ex = invoke_cli(cli_runner, ["suggest-reviewers", "--changed",
-                                            "--exclude", "bob"], json_mode=True)
+        result_ex = invoke_cli(cli_runner, ["suggest-reviewers", "--changed", "--exclude", "bob"], json_mode=True)
         data_ex = json.loads(result_ex.output)
         ex_names = {r["name"] for r in data_ex.get("reviewers", [])}
 
@@ -308,12 +270,13 @@ class TestSuggestReviewersExclude:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner,
-                           ["suggest-reviewers", "--changed",
-                            "--exclude", "bob", "--exclude", "alice"],
-                           json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["suggest-reviewers", "--changed", "--exclude", "bob", "--exclude", "alice"],
+            json_mode=True,
+        )
         data = json.loads(result.output)
         names = {r["name"] for r in data.get("reviewers", [])}
         assert "bob" not in names
@@ -333,10 +296,9 @@ class TestSuggestReviewersJSON:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert_json_envelope(data, command="suggest-reviewers")
@@ -346,10 +308,9 @@ class TestSuggestReviewersJSON:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         assert "reviewers" in data
@@ -368,10 +329,9 @@ class TestSuggestReviewersJSON:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         for reviewer in data.get("reviewers", []):
@@ -390,10 +350,9 @@ class TestSuggestReviewersJSON:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
         assert "verdict" in data["summary"]
         assert isinstance(data["summary"]["verdict"], str)
@@ -412,10 +371,9 @@ class TestSuggestReviewersCoverage:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
         cov = data["coverage"]
         assert cov["total"] >= 1
@@ -427,7 +385,7 @@ class TestSuggestReviewersCoverage:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
         assert result.exit_code == 0
@@ -449,15 +407,13 @@ class TestSuggestReviewersCODEOWNERS:
         # Add CODEOWNERS file declaring alice as owner of src/
         (proj / "CODEOWNERS").write_text("src/ @alice\n")
         subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add CODEOWNERS"],
-                       cwd=proj, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add CODEOWNERS"], cwd=proj, capture_output=True)
 
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         # Find alice's codeowners signal
@@ -474,15 +430,13 @@ class TestSuggestReviewersCODEOWNERS:
         gh_dir.mkdir()
         (gh_dir / "CODEOWNERS").write_text("*.py @alice\n")
         subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
-        subprocess.run(["git", "commit", "-m", "add .github/CODEOWNERS"],
-                       cwd=proj, capture_output=True)
+        subprocess.run(["git", "commit", "-m", "add .github/CODEOWNERS"], cwd=proj, capture_output=True)
 
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         # Should find reviewers (CODEOWNERS parsed correctly)
@@ -502,14 +456,7 @@ class TestCODEOWNERSParser:
         from roam.commands.cmd_suggest_reviewers import _parse_codeowners
 
         co = tmp_path / "CODEOWNERS"
-        co.write_text(
-            "# This is a comment\n"
-            "*.py @alice @bob\n"
-            "src/ @carol\n"
-            "\n"
-            "# Another comment\n"
-            "lib/*.js @dave\n"
-        )
+        co.write_text("# This is a comment\n*.py @alice @bob\nsrc/ @carol\n\n# Another comment\nlib/*.js @dave\n")
         entries = _parse_codeowners(co)
         assert len(entries) == 3
         assert entries[0] == ("*.py", ["alice", "bob"])
@@ -573,6 +520,7 @@ class TestOwnershipComputation:
 def open_db_helper():
     """Helper to open the DB for unit tests."""
     from roam.db.connection import open_db
+
     return open_db(readonly=True)
 
 
@@ -589,29 +537,24 @@ class TestScoringBehavior:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         for reviewer in data.get("reviewers", []):
             signals = reviewer["signals"]
             for signal_name, value in signals.items():
-                assert 0.0 <= value <= 1.0, (
-                    f"Signal {signal_name} for {reviewer['name']} "
-                    f"is {value}, expected [0, 1]"
-                )
+                assert 0.0 <= value <= 1.0, f"Signal {signal_name} for {reviewer['name']} is {value}, expected [0, 1]"
 
     def test_total_score_non_negative(self, tmp_path, cli_runner, monkeypatch):
         """Total score is non-negative."""
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         for reviewer in data.get("reviewers", []):
@@ -622,11 +565,10 @@ class TestScoringBehavior:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
-        _make_unstaged_change(proj, "src/models.py", 'class User: pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
+        _make_unstaged_change(proj, "src/models.py", "class User: pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         reviewers = data.get("reviewers", [])
@@ -638,11 +580,10 @@ class TestScoringBehavior:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
-        _make_unstaged_change(proj, "src/models.py", 'class User: pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
+        _make_unstaged_change(proj, "src/models.py", "class User: pass\n")
 
-        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"],
-                           json_mode=True)
+        result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
         data = json.loads(result.output)
 
         n_changed = len(data.get("changed_files", []))
@@ -663,7 +604,7 @@ class TestSuggestReviewersTextOutput:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
         assert result.exit_code == 0
@@ -675,7 +616,7 @@ class TestSuggestReviewersTextOutput:
         proj = _make_multi_author_project(tmp_path)
         _index_project(proj, monkeypatch)
 
-        _make_unstaged_change(proj, "src/auth.py", 'def login(): pass\n')
+        _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
         result = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"])
         assert result.exit_code == 0

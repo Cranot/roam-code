@@ -7,16 +7,15 @@ from collections import Counter, defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Name tokenization
 # ---------------------------------------------------------------------------
 
-_SPLIT_RE = re.compile(r'[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
+_SPLIT_RE = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
 
 
 def _name_tokens(name: str) -> set[str]:
@@ -44,6 +43,7 @@ def _jaccard(a: set, b: set) -> float:
 # ---------------------------------------------------------------------------
 # Structural similarity
 # ---------------------------------------------------------------------------
+
 
 def _body_structure_vector(row) -> dict:
     """Extract a structural fingerprint from symbol_metrics + math_signals."""
@@ -129,17 +129,13 @@ def _compute_similarity(row_a, row_b) -> float:
         _safe_get(row_b, "signature"),
     )
 
-    return (
-        0.40 * body_sim
-        + 0.25 * param_sim
-        + 0.20 * name_sim
-        + 0.15 * sig_sim
-    )
+    return 0.40 * body_sim + 0.25 * param_sim + 0.20 * name_sim + 0.15 * sig_sim
 
 
 # ---------------------------------------------------------------------------
 # Union-Find for clustering
 # ---------------------------------------------------------------------------
+
 
 class _UnionFind:
     """Disjoint-set / Union-Find data structure."""
@@ -179,8 +175,24 @@ class _UnionFind:
 # ---------------------------------------------------------------------------
 
 _STOP_WORDS = {
-    "get", "set", "use", "handle", "on", "is", "has", "can", "do",
-    "the", "for", "with", "from", "init", "new", "run", "to", "a",
+    "get",
+    "set",
+    "use",
+    "handle",
+    "on",
+    "is",
+    "has",
+    "can",
+    "do",
+    "the",
+    "for",
+    "with",
+    "from",
+    "init",
+    "new",
+    "run",
+    "to",
+    "a",
 }
 
 
@@ -242,14 +254,17 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option('--threshold', default=0.75, show_default=True,
-              type=click.FloatRange(0.0, 1.0),
-              help='Similarity threshold (0.0-1.0)')
-@click.option('--min-lines', default=5, show_default=True, type=int,
-              help='Minimum function size to consider')
-@click.option('--scope', default=None, type=str,
-              help='Limit analysis to files under this path')
+@click.option(
+    "--threshold",
+    default=0.75,
+    show_default=True,
+    type=click.FloatRange(0.0, 1.0),
+    help="Similarity threshold (0.0-1.0)",
+)
+@click.option("--min-lines", default=5, show_default=True, type=int, help="Minimum function size to consider")
+@click.option("--scope", default=None, type=str, help="Limit analysis to files under this path")
 @click.pass_context
 def duplicates(ctx, threshold, min_lines, scope):
     """Detect semantically duplicate functions via structural similarity.
@@ -258,8 +273,8 @@ def duplicates(ctx, threshold, min_lines, scope):
     parameter shape, naming pattern) but not textual clones.  Uses
     AST-derived metrics from the index for comparison.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -291,20 +306,27 @@ def duplicates(ctx, threshold, min_lines, scope):
             "LEFT JOIN math_signals ms ON s.id = ms.symbol_id "
             "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
             "WHERE s.kind IN ('function', 'method') "
-            "  AND COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) >= ? "
-            + scope_clause,
+            "  AND COALESCE(sm.line_count, s.line_end - s.line_start + 1, 0) >= ? " + scope_clause,
             [min_lines] + params,
         ).fetchall()
 
         if len(candidates) < 2:
             verdict = "No duplicate candidates found"
             if json_mode:
-                click.echo(to_json(json_envelope("duplicates",
-                    summary={"verdict": verdict, "total_clusters": 0,
-                             "total_functions": 0,
-                             "estimated_reducible_lines": 0},
-                    clusters=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "duplicates",
+                            summary={
+                                "verdict": verdict,
+                                "total_clusters": 0,
+                                "total_functions": 0,
+                                "estimated_reducible_lines": 0,
+                            },
+                            clusters=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -357,8 +379,7 @@ def duplicates(ctx, threshold, min_lines, scope):
                 if adj_key in by_bucket:
                     for a in members:
                         for b in by_bucket[adj_key]:
-                            pair_key = (min(a["id"], b["id"]),
-                                        max(a["id"], b["id"]))
+                            pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
                             if pair_key not in seen_pairs:
                                 pa = a["param_count"] or 0
                                 pb = b["param_count"] or 0
@@ -376,8 +397,7 @@ def duplicates(ctx, threshold, min_lines, scope):
                 if adj_key in by_bucket:
                     for a in members:
                         for b in by_bucket[adj_key]:
-                            pair_key = (min(a["id"], b["id"]),
-                                        max(a["id"], b["id"]))
+                            pair_key = (min(a["id"], b["id"]), max(a["id"], b["id"]))
                             if pair_key not in seen_pairs:
                                 pa = a["param_count"] or 0
                                 pb = b["param_count"] or 0
@@ -417,8 +437,10 @@ def duplicates(ctx, threshold, min_lines, scope):
             sims = []
             for i in range(len(member_rows)):
                 for j in range(i + 1, len(member_rows)):
-                    pk = (min(member_rows[i]["id"], member_rows[j]["id"]),
-                          max(member_rows[i]["id"], member_rows[j]["id"]))
+                    pk = (
+                        min(member_rows[i]["id"], member_rows[j]["id"]),
+                        max(member_rows[i]["id"], member_rows[j]["id"]),
+                    )
                     if pk in pair_scores:
                         sims.append(pair_scores[pk])
                     else:
@@ -437,19 +459,20 @@ def duplicates(ctx, threshold, min_lines, scope):
             # Sort members by line_start for consistent output
             member_rows.sort(key=lambda r: (r["file_path"], r["line_start"] or 0))
 
-            cluster_list.append({
-                "similarity": round(avg_sim, 2),
-                "size": len(member_rows),
-                "functions": member_rows,
-                "pattern": pattern,
-                "suggestion": suggestion,
-                "total_pagerank": total_pr,
-            })
+            cluster_list.append(
+                {
+                    "similarity": round(avg_sim, 2),
+                    "size": len(member_rows),
+                    "functions": member_rows,
+                    "pattern": pattern,
+                    "suggestion": suggestion,
+                    "total_pagerank": total_pr,
+                }
+            )
 
         # ── 5. Rank clusters ────────────────────────────────────────
         # Sort by: size desc, similarity desc, pagerank desc
-        cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"],
-                                         -c["total_pagerank"]))
+        cluster_list.sort(key=lambda c: (-c["size"], -c["similarity"], -c["total_pagerank"]))
 
         # ── 6. Compute summary stats ────────────────────────────────
         total_functions = sum(c["size"] for c in cluster_list)
@@ -471,36 +494,43 @@ def duplicates(ctx, threshold, min_lines, scope):
         if json_mode:
             clusters_json = []
             for i, c in enumerate(cluster_list):
-                clusters_json.append({
-                    "id": i + 1,
-                    "similarity": c["similarity"],
-                    "size": c["size"],
-                    "functions": [
-                        {
-                            "name": r["name"],
-                            "qualified_name": r["qualified_name"],
-                            "kind": r["kind"],
-                            "file": r["file_path"],
-                            "line": r["line_start"],
-                            "lines": r["line_count"] or 0,
-                            "pagerank": round(r["pagerank"] or 0, 4),
-                        }
-                        for r in c["functions"]
-                    ],
-                    "pattern": c["pattern"],
-                    "suggestion": c["suggestion"],
-                })
+                clusters_json.append(
+                    {
+                        "id": i + 1,
+                        "similarity": c["similarity"],
+                        "size": c["size"],
+                        "functions": [
+                            {
+                                "name": r["name"],
+                                "qualified_name": r["qualified_name"],
+                                "kind": r["kind"],
+                                "file": r["file_path"],
+                                "line": r["line_start"],
+                                "lines": r["line_count"] or 0,
+                                "pagerank": round(r["pagerank"] or 0, 4),
+                            }
+                            for r in c["functions"]
+                        ],
+                        "pattern": c["pattern"],
+                        "suggestion": c["suggestion"],
+                    }
+                )
 
-            click.echo(to_json(json_envelope("duplicates",
-                summary={
-                    "verdict": verdict,
-                    "total_clusters": len(cluster_list),
-                    "total_functions": total_functions,
-                    "estimated_reducible_lines": estimated_lines,
-                },
-                budget=token_budget,
-                clusters=clusters_json,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "duplicates",
+                        summary={
+                            "verdict": verdict,
+                            "total_clusters": len(cluster_list),
+                            "total_functions": total_functions,
+                            "estimated_reducible_lines": estimated_lines,
+                        },
+                        budget=token_budget,
+                        clusters=clusters_json,
+                    )
+                )
+            )
             return
 
         # ── Text output ──────────────────────────────────────────────
@@ -510,17 +540,20 @@ def duplicates(ctx, threshold, min_lines, scope):
 
         click.echo()
         for i, c in enumerate(cluster_list):
-            click.echo(f"CLUSTER {i + 1} (similarity {c['similarity']:.2f}, "
-                        f"{c['size']} functions):")
+            click.echo(f"CLUSTER {i + 1} (similarity {c['similarity']:.2f}, {c['size']} functions):")
             for r in c["functions"]:
                 kind_str = abbrev_kind(r["kind"])
-                click.echo(f"  {kind_str} {r['name']:<35s} "
-                            f"at {loc(r['file_path'], r['line_start'])}"
-                            f"    ({r['line_count'] or 0} lines)")
+                click.echo(
+                    f"  {kind_str} {r['name']:<35s} "
+                    f"at {loc(r['file_path'], r['line_start'])}"
+                    f"    ({r['line_count'] or 0} lines)"
+                )
             click.echo(f"  Shared pattern: {c['pattern']}")
             click.echo(f"  Suggestion: {c['suggestion']}")
             click.echo()
 
-        click.echo(f"SUMMARY: {len(cluster_list)} clusters, "
-                    f"{total_functions} functions, "
-                    f"estimated {estimated_lines} lines of reducible duplication")
+        click.echo(
+            f"SUMMARY: {len(cluster_list)} clusters, "
+            f"{total_functions} functions, "
+            f"estimated {estimated_lines} lines of reducible duplication"
+        )

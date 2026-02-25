@@ -4,18 +4,18 @@ from __future__ import annotations
 
 import click
 
+from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.clusters import detect_clusters
 from roam.graph.spectral import (
-    fiedler_partition,
-    spectral_gap,
-    spectral_communities,
-    verdict_from_gap,
     adjusted_rand_index,
+    fiedler_partition,
+    spectral_communities,
+    spectral_gap,
+    verdict_from_gap,
 )
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
+from roam.output.formatter import format_table, json_envelope, to_json
 
 
 def _partition_tree(partition_map, G):
@@ -24,6 +24,7 @@ def _partition_tree(partition_map, G):
     Returns a list of dicts with partition metadata.
     """
     from collections import defaultdict
+
     groups = defaultdict(list)
     for node, pid in partition_map.items():
         groups[pid].append(node)
@@ -34,11 +35,13 @@ def _partition_tree(partition_map, G):
         for n in members[:5]:
             attr = G.nodes.get(n, {})
             names.append(attr.get("name", str(n)))
-        result.append({
-            "partition_id": pid,
-            "size": len(members),
-            "sample_members": names,
-        })
+        result.append(
+            {
+                "partition_id": pid,
+                "size": len(members),
+                "sample_members": names,
+            }
+        )
     return result
 
 
@@ -83,14 +86,18 @@ def spectral(ctx, depth, compare, gap_only, k):
 
         if gap_only:
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "spectral",
-                    summary={
-                        "verdict": verdict,
-                        "spectral_gap": round(gap, 6),
-                    },
-                    budget=token_budget,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "spectral",
+                            summary={
+                                "verdict": verdict,
+                                "spectral_gap": round(gap, 6),
+                            },
+                            budget=token_budget,
+                        )
+                    )
+                )
                 return
             click.echo(f"VERDICT: {verdict}")
             click.echo(f"Spectral gap: {gap:.6f}")
@@ -115,18 +122,22 @@ def spectral(ctx, depth, compare, gap_only, k):
             extra = {}
             if comparison is not None:
                 extra["comparison"] = comparison
-            click.echo(to_json(json_envelope(
-                "spectral",
-                summary={
-                    "verdict": verdict,
-                    "spectral_gap": round(gap, 6),
-                    "partitions": n_partitions,
-                    "depth": depth,
-                },
-                budget=token_budget,
-                partitions=tree,
-                **extra,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "spectral",
+                        summary={
+                            "verdict": verdict,
+                            "spectral_gap": round(gap, 6),
+                            "partitions": n_partitions,
+                            "depth": depth,
+                        },
+                        budget=token_budget,
+                        partitions=tree,
+                        **extra,
+                    )
+                )
+            )
             return
 
         # Text output
@@ -144,16 +155,20 @@ def spectral(ctx, depth, compare, gap_only, k):
             if pt["size"] > 5:
                 extra_count = pt["size"] - 5
                 members_str += f" (+{extra_count} more)"
-            table_rows.append([
-                str(pt["partition_id"]),
-                str(pt["size"]),
-                members_str,
-            ])
-        click.echo(format_table(
-            ["Partition", "Size", "Sample Members"],
-            table_rows,
-            budget=token_budget or 30,
-        ))
+            table_rows.append(
+                [
+                    str(pt["partition_id"]),
+                    str(pt["size"]),
+                    members_str,
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Partition", "Size", "Sample Members"],
+                table_rows,
+                budget=token_budget or 30,
+            )
+        )
 
         if comparison is not None:
             click.echo("")

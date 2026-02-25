@@ -6,10 +6,10 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.cmd_partition import compute_partition_manifest
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _dependency_maps(dependencies: list[dict]) -> tuple[dict[int, set[int]], dict[int, set[int]]]:
@@ -18,7 +18,7 @@ def _dependency_maps(dependencies: list[dict]) -> tuple[dict[int, set[int]], dic
     downstream: dict[int, set[int]] = defaultdict(set)
 
     for dep in dependencies:
-        src = int(dep["from"])   # source partition depends on target partition
+        src = int(dep["from"])  # source partition depends on target partition
         tgt = int(dep["to"])
         prereqs[src].add(tgt)
         downstream[tgt].add(src)
@@ -65,13 +65,9 @@ def _build_contracts(
     incoming = [d for d in dependencies if int(d["to"]) == partition_id]
 
     for dep in outgoing:
-        contracts.append(
-            f"Consumes partition {dep['to']} interfaces ({dep['edge_count']} edges)"
-        )
+        contracts.append(f"Consumes partition {dep['to']} interfaces ({dep['edge_count']} edges)")
     for dep in incoming:
-        contracts.append(
-            f"Publishes interfaces to partition {dep['from']} ({dep['edge_count']} edges)"
-        )
+        contracts.append(f"Publishes interfaces to partition {dep['from']} ({dep['edge_count']} edges)")
 
     # Keep compact and deterministic.
     uniq = []
@@ -96,12 +92,14 @@ def _build_handoffs(dependencies: list[dict], merge_rank: dict[int, int]) -> lis
             int(d["to"]),
         ),
     ):
-        handoffs.append({
-            "from_partition": int(dep["to"]),
-            "to_partition": int(dep["from"]),
-            "reason": f"{dep['edge_count']} cross-partition edges",
-            "sample_edges": list(dep.get("sample_edges", []))[:3],
-        })
+        handoffs.append(
+            {
+                "from_partition": int(dep["to"]),
+                "to_partition": int(dep["from"]),
+                "reason": f"{dep['edge_count']} cross-partition edges",
+                "sample_edges": list(dep.get("sample_edges", []))[:3],
+            }
+        )
     return handoffs
 
 
@@ -149,60 +147,62 @@ def build_agent_plan(
         for dep_pid in dep_partitions:
             read_only_files.extend(part_by_id.get(dep_pid, {}).get("files", []))
         # Unique + deterministic
-        read_only_files = sorted({
-            fp for fp in read_only_files
-            if fp not in set(p["files"])
-        })
+        read_only_files = sorted({fp for fp in read_only_files if fp not in set(p["files"])})
 
-        tasks.append({
-            "task_id": _task_id(pid),
-            "partition_id": pid,
-            "agent_id": p.get("agent", f"Worker-{pid}"),
-            "phase": phases.get(pid, 1),
-            "merge_rank": merge_rank.get(pid, 999),
-            "objective": (
-                f"Deliver partition {pid} ({p['role']}) with isolated writes "
-                f"and stable cross-partition interfaces."
-            ),
-            "write_files": list(p["files"]),
-            "read_only_dependencies": read_only_files,
-            "depends_on_partitions": dep_partitions,
-            "downstream_partitions": downstream_partitions,
-            "interface_contracts": _build_contracts(pid, dependencies),
-            "key_symbols": list(p.get("key_symbols", []))[:5],
-            "difficulty_score": p.get("difficulty_score"),
-            "difficulty_label": p.get("difficulty_label"),
-            "conflict_risk": p.get("conflict_risk"),
-        })
+        tasks.append(
+            {
+                "task_id": _task_id(pid),
+                "partition_id": pid,
+                "agent_id": p.get("agent", f"Worker-{pid}"),
+                "phase": phases.get(pid, 1),
+                "merge_rank": merge_rank.get(pid, 999),
+                "objective": (
+                    f"Deliver partition {pid} ({p['role']}) with isolated writes and stable cross-partition interfaces."
+                ),
+                "write_files": list(p["files"]),
+                "read_only_dependencies": read_only_files,
+                "depends_on_partitions": dep_partitions,
+                "downstream_partitions": downstream_partitions,
+                "interface_contracts": _build_contracts(pid, dependencies),
+                "key_symbols": list(p.get("key_symbols", []))[:5],
+                "difficulty_score": p.get("difficulty_score"),
+                "difficulty_label": p.get("difficulty_label"),
+                "conflict_risk": p.get("conflict_risk"),
+            }
+        )
 
     # Claude Agent Teams-compatible projection.
     claude_agents = []
     for task in tasks:
-        claude_agents.append({
-            "agent_id": task["agent_id"],
-            "role": part_by_id[task["partition_id"]]["role"],
-            "scope": {
-                "write_files": task["write_files"],
-                "read_only_deps": task["read_only_dependencies"],
-            },
-            "depends_on": [
-                part_by_id[pid].get("agent", f"Worker-{pid}")
-                for pid in task["depends_on_partitions"]
-                if pid in part_by_id
-            ],
-            "constraints": {
-                "conflict_risk": task["conflict_risk"],
-                "difficulty_label": task["difficulty_label"],
-                "difficulty_score": task["difficulty_score"],
-                "test_coverage": part_by_id[task["partition_id"]].get("test_coverage"),
-            },
-        })
+        claude_agents.append(
+            {
+                "agent_id": task["agent_id"],
+                "role": part_by_id[task["partition_id"]]["role"],
+                "scope": {
+                    "write_files": task["write_files"],
+                    "read_only_deps": task["read_only_dependencies"],
+                },
+                "depends_on": [
+                    part_by_id[pid].get("agent", f"Worker-{pid}")
+                    for pid in task["depends_on_partitions"]
+                    if pid in part_by_id
+                ],
+                "constraints": {
+                    "conflict_risk": task["conflict_risk"],
+                    "difficulty_label": task["difficulty_label"],
+                    "difficulty_score": task["difficulty_score"],
+                    "test_coverage": part_by_id[task["partition_id"]].get("test_coverage"),
+                },
+            }
+        )
 
     handoffs = _build_handoffs(dependencies, merge_rank)
     claude_teams = {
         "agents": claude_agents,
         "coordination": {
-            "merge_order": [part_by_id[pid].get("agent", f"Worker-{pid}") for pid in merge_sequence if pid in part_by_id],
+            "merge_order": [
+                part_by_id[pid].get("agent", f"Worker-{pid}") for pid in merge_sequence if pid in part_by_id
+            ],
             "merge_partitions": merge_sequence,
             "handoffs": handoffs,
             "overall_conflict_probability": manifest["overall_conflict_probability"],
@@ -227,11 +227,16 @@ def build_agent_plan(
 
 @click.command("agent-plan")
 @click.option(
-    "--agents", "n_agents", required=True, type=click.IntRange(1, None),
+    "--agents",
+    "n_agents",
+    required=True,
+    type=click.IntRange(1, None),
     help="Number of agents/tasks to generate.",
 )
 @click.option(
-    "--format", "output_format", type=click.Choice(["plain", "json", "claude-teams"]),
+    "--format",
+    "output_format",
+    type=click.Choice(["plain", "json", "claude-teams"]),
     default="plain",
     help="Output format.",
 )
@@ -246,37 +251,45 @@ def agent_plan(ctx, n_agents, output_format):
 
     if output_format == "claude-teams":
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "agent-plan",
-                summary={
-                    "verdict": plan["verdict"],
-                    "n_agents": plan["n_agents"],
-                    "tasks": len(plan["tasks"]),
-                    "handoffs": len(plan["handoffs"]),
-                    "conflict_probability": plan["conflict_probability"],
-                },
-                format="claude-teams",
-                **plan["claude_teams"],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "agent-plan",
+                        summary={
+                            "verdict": plan["verdict"],
+                            "n_agents": plan["n_agents"],
+                            "tasks": len(plan["tasks"]),
+                            "handoffs": len(plan["handoffs"]),
+                            "conflict_probability": plan["conflict_probability"],
+                        },
+                        format="claude-teams",
+                        **plan["claude_teams"],
+                    )
+                )
+            )
         else:
             click.echo(to_json(plan["claude_teams"]))
         return
 
     if json_mode or output_format == "json":
-        click.echo(to_json(json_envelope(
-            "agent-plan",
-            summary={
-                "verdict": plan["verdict"],
-                "n_agents": plan["n_agents"],
-                "tasks": len(plan["tasks"]),
-                "handoffs": len(plan["handoffs"]),
-                "conflict_probability": plan["conflict_probability"],
-            },
-            tasks=plan["tasks"],
-            merge_sequence=plan["merge_sequence"],
-            handoffs=plan["handoffs"],
-            claude_teams=plan["claude_teams"],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "agent-plan",
+                    summary={
+                        "verdict": plan["verdict"],
+                        "n_agents": plan["n_agents"],
+                        "tasks": len(plan["tasks"]),
+                        "handoffs": len(plan["handoffs"]),
+                        "conflict_probability": plan["conflict_probability"],
+                    },
+                    tasks=plan["tasks"],
+                    merge_sequence=plan["merge_sequence"],
+                    handoffs=plan["handoffs"],
+                    claude_teams=plan["claude_teams"],
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {plan['verdict']}")

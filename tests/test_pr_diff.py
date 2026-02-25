@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -11,15 +9,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
+    assert_json_envelope,
+    git_commit,
+    git_init,
+    index_in_process,
     invoke_cli,
     parse_json_output,
-    assert_json_envelope,
-    git_init,
-    git_commit,
-    index_in_process,
-    roam,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,6 +25,7 @@ from conftest import (
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -43,28 +40,25 @@ def pr_diff_project(tmp_path, monkeypatch):
     src.mkdir()
 
     (src / "models.py").write_text(
-        'class User:\n'
-        '    def __init__(self, name):\n'
-        '        self.name = name\n'
-        '\n'
-        '    def display_name(self):\n'
-        '        return self.name.title()\n'
+        "class User:\n"
+        "    def __init__(self, name):\n"
+        "        self.name = name\n"
+        "\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
     )
 
     (src / "service.py").write_text(
-        'from models import User\n'
-        '\n'
-        'def create_user(name):\n'
-        '    return User(name)\n'
-        '\n'
-        'def get_display(user):\n'
-        '    return user.display_name()\n'
+        "from models import User\n"
+        "\n"
+        "def create_user(name):\n"
+        "    return User(name)\n"
+        "\n"
+        "def get_display(user):\n"
+        "    return user.display_name()\n"
     )
 
-    (src / "utils.py").write_text(
-        'def format_name(first, last):\n'
-        '    return f"{first} {last}"\n'
-    )
+    (src / "utils.py").write_text('def format_name(first, last):\n    return f"{first} {last}"\n')
 
     git_init(proj)
 
@@ -74,27 +68,28 @@ def pr_diff_project(tmp_path, monkeypatch):
     assert rc == 0, f"index failed: {out}"
 
     # Create a snapshot for baseline
-    from roam.cli import cli
     from click.testing import CliRunner
+
+    from roam.cli import cli
+
     runner = CliRunner()
-    result = runner.invoke(cli, ["snapshot", "--tag", "baseline"],
-                           catch_exceptions=False)
+    result = runner.invoke(cli, ["snapshot", "--tag", "baseline"], catch_exceptions=False)
     assert result.exit_code == 0, f"snapshot failed: {result.output}"
 
     # Modify files but do NOT commit — leave as dirty working tree
     # so that `git diff` (default pr-diff mode) finds them
     (src / "service.py").write_text(
-        'from models import User\n'
-        '\n'
-        'def create_user(name, email=None):\n'
-        '    return User(name)\n'
-        '\n'
-        'def get_display(user):\n'
-        '    return user.display_name()\n'
-        '\n'
-        'def new_helper():\n'
+        "from models import User\n"
+        "\n"
+        "def create_user(name, email=None):\n"
+        "    return User(name)\n"
+        "\n"
+        "def get_display(user):\n"
+        "    return user.display_name()\n"
+        "\n"
+        "def new_helper():\n"
         '    """A new function."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
     # Re-index picks up disk state (includes new_helper)
@@ -113,10 +108,7 @@ def pr_diff_no_snapshot(tmp_path, monkeypatch):
 
     src = proj / "src"
     src.mkdir()
-    (src / "app.py").write_text(
-        'def main():\n'
-        '    print("hello")\n'
-    )
+    (src / "app.py").write_text('def main():\n    print("hello")\n')
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -125,18 +117,13 @@ def pr_diff_no_snapshot(tmp_path, monkeypatch):
 
     # Remove any auto-created snapshots
     from roam.db.connection import open_db
+
     with open_db() as conn:
         conn.execute("DELETE FROM snapshots")
         conn.commit()
 
     # Modify to have uncommitted changes
-    (src / "app.py").write_text(
-        'def main():\n'
-        '    print("hello world")\n'
-        '\n'
-        'def extra():\n'
-        '    return 1\n'
-    )
+    (src / "app.py").write_text('def main():\n    print("hello world")\n\ndef extra():\n    return 1\n')
 
     return proj
 
@@ -205,6 +192,7 @@ class TestFindBeforeSnapshot:
         assert rc == 0
 
         from roam.db.connection import open_db
+
         # Delete any auto-created snapshots (need writable DB)
         with open_db() as conn:
             conn.execute("DELETE FROM snapshots")
@@ -232,8 +220,7 @@ class TestPrDiff:
     def test_pr_diff_json_envelope(self, cli_runner, pr_diff_project, monkeypatch):
         """Valid JSON envelope with command='pr-diff'."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         assert_json_envelope(data, "pr-diff")
 
@@ -252,8 +239,7 @@ class TestPrDiff:
     def test_pr_diff_has_metric_deltas(self, cli_runner, pr_diff_project, monkeypatch):
         """When snapshot exists, deltas appear in JSON."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         assert data["summary"]["metric_deltas_available"] is True
         assert "metric_deltas" in data
@@ -269,8 +255,7 @@ class TestPrDiff:
     def test_pr_diff_symbol_added(self, cli_runner, pr_diff_project, monkeypatch):
         """Adding a function appears in symbol_changes.added."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         sym = data.get("symbol_changes", {})
         added_names = [s["name"] for s in sym.get("added", [])]
@@ -279,8 +264,7 @@ class TestPrDiff:
     def test_pr_diff_footprint(self, cli_runner, pr_diff_project, monkeypatch):
         """files_pct and symbols_pct are present and numeric."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         fp = data.get("footprint", {})
         assert "files_pct" in fp
@@ -298,8 +282,7 @@ class TestPrDiff:
     def test_pr_diff_markdown_format(self, cli_runner, pr_diff_project, monkeypatch):
         """--format markdown produces markdown tables."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff", "--format", "markdown"],
-                            cwd=pr_diff_project)
+        result = invoke_cli(cli_runner, ["pr-diff", "--format", "markdown"], cwd=pr_diff_project)
         assert result.exit_code == 0
         assert "##" in result.output
         assert "Verdict" in result.output or "verdict" in result.output.lower()
@@ -307,8 +290,7 @@ class TestPrDiff:
     def test_pr_diff_fail_on_degradation_pass(self, cli_runner, pr_diff_project, monkeypatch):
         """Exit 0 when health not degraded (or unchanged)."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff", "--fail-on-degradation"],
-                            cwd=pr_diff_project)
+        result = invoke_cli(cli_runner, ["pr-diff", "--fail-on-degradation"], cwd=pr_diff_project)
         # Should be 0 since this small change likely doesn't degrade health
         # (or if it does, exit code 1 is also valid behavior)
         assert result.exit_code in (0, 1)
@@ -316,8 +298,7 @@ class TestPrDiff:
     def test_pr_diff_edge_analysis(self, cli_runner, pr_diff_project, monkeypatch):
         """Edge detail appears in JSON."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         ea = data.get("edge_analysis", {})
         assert "total_from_changed" in ea
@@ -327,12 +308,17 @@ class TestPrDiff:
     def test_pr_diff_json_footprint_keys(self, cli_runner, pr_diff_project, monkeypatch):
         """JSON footprint has all expected keys."""
         monkeypatch.chdir(pr_diff_project)
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         fp = data.get("footprint", {})
-        for key in ["files_changed", "files_total", "files_pct",
-                     "symbols_changed", "symbols_total", "symbols_pct"]:
+        for key in [
+            "files_changed",
+            "files_total",
+            "files_pct",
+            "symbols_changed",
+            "symbols_total",
+            "symbols_pct",
+        ]:
             assert key in fp, f"Missing footprint key: {key}"
 
     def test_pr_diff_no_changes_json(self, cli_runner, pr_diff_project, monkeypatch):
@@ -342,8 +328,7 @@ class TestPrDiff:
         out, rc = index_in_process(pr_diff_project)
         assert rc == 0
 
-        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["pr-diff"], cwd=pr_diff_project, json_mode=True)
         data = parse_json_output(result, "pr-diff")
         assert_json_envelope(data, "pr-diff")
         assert "no change" in data["summary"]["verdict"].lower()

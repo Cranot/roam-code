@@ -13,8 +13,6 @@ Covers ~50 tests for:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -22,12 +20,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
-
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -41,6 +39,7 @@ def cli_runner():
 # ============================================================================
 # map command
 # ============================================================================
+
 
 class TestMap:
     """Tests for `roam map` -- project skeleton overview."""
@@ -121,6 +120,7 @@ class TestMap:
 # layers command
 # ============================================================================
 
+
 class TestLayers:
     """Tests for `roam layers` -- topological layer detection."""
 
@@ -169,19 +169,12 @@ class TestLayers:
         Higher layers = deeper callees.
         create_user calls User, so create_user is layer 0, User is layer 1+.
         """
-        proj = project_factory({
-            "models.py": (
-                "class User:\n"
-                "    def __init__(self, name):\n"
-                "        self.name = name\n"
-            ),
-            "service.py": (
-                "from models import User\n"
-                "\n"
-                "def create_user(name):\n"
-                "    return User(name)\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "models.py": ("class User:\n    def __init__(self, name):\n        self.name = name\n"),
+                "service.py": ("from models import User\n\ndef create_user(name):\n    return User(name)\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["layers"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "layers")
@@ -212,6 +205,7 @@ class TestLayers:
 # ============================================================================
 # clusters command
 # ============================================================================
+
 
 class TestClusters:
     """Tests for `roam clusters` -- community detection."""
@@ -273,6 +267,7 @@ class TestClusters:
 # coupling command
 # ============================================================================
 
+
 class TestCoupling:
     """Tests for `roam coupling` -- temporal coupling analysis."""
 
@@ -315,17 +310,8 @@ class TestCoupling:
         """In a project with co-change history, models and service appear coupled."""
         proj = project_factory(
             {
-                "models.py": (
-                    "class User:\n"
-                    "    def __init__(self, name):\n"
-                    "        self.name = name\n"
-                ),
-                "service.py": (
-                    "from models import User\n"
-                    "\n"
-                    "def create_user(name):\n"
-                    "    return User(name)\n"
-                ),
+                "models.py": ("class User:\n    def __init__(self, name):\n        self.name = name\n"),
+                "service.py": ("from models import User\n\ndef create_user(name):\n    return User(name)\n"),
             },
             extra_commits=[
                 (
@@ -337,10 +323,7 @@ class TestCoupling:
                             "        self.email = email\n"
                         ),
                         "service.py": (
-                            "from models import User\n"
-                            "\n"
-                            "def create_user(name, email):\n"
-                            "    return User(name, email)\n"
+                            "from models import User\n\ndef create_user(name, email):\n    return User(name, email)\n"
                         ),
                     },
                     "add email field",
@@ -377,6 +360,7 @@ class TestCoupling:
 # ============================================================================
 # entry-points command
 # ============================================================================
+
 
 class TestEntryPoints:
     """Tests for `roam entry-points` -- exported API surface."""
@@ -444,6 +428,7 @@ class TestEntryPoints:
 # patterns command
 # ============================================================================
 
+
 class TestPatterns:
     """Tests for `roam patterns` -- architectural pattern detection."""
 
@@ -484,22 +469,20 @@ class TestPatterns:
 
     def test_patterns_detects_factory(self, project_factory, cli_runner, monkeypatch):
         """A project with factory naming should detect factory pattern."""
-        proj = project_factory({
-            "models.py": (
-                "class Widget:\n"
-                "    def __init__(self, kind):\n"
-                "        self.kind = kind\n"
-            ),
-            "factory.py": (
-                "from models import Widget\n"
-                "\n"
-                "def create_widget(kind):\n"
-                "    return Widget(kind)\n"
-                "\n"
-                "def create_special_widget():\n"
-                "    return Widget('special')\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "models.py": ("class Widget:\n    def __init__(self, kind):\n        self.kind = kind\n"),
+                "factory.py": (
+                    "from models import Widget\n"
+                    "\n"
+                    "def create_widget(kind):\n"
+                    "    return Widget(kind)\n"
+                    "\n"
+                    "def create_special_widget():\n"
+                    "    return Widget('special')\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["patterns"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "patterns")
@@ -511,6 +494,7 @@ class TestPatterns:
 # ============================================================================
 # safe-zones command
 # ============================================================================
+
 
 class TestSafeZones:
     """Tests for `roam safe-zones` -- safe refactoring boundaries."""
@@ -585,6 +569,7 @@ class TestSafeZones:
 # visualize command
 # ============================================================================
 
+
 class TestVisualize:
     """Tests for `roam visualize` -- graph visualization."""
 
@@ -620,26 +605,19 @@ class TestVisualize:
 # Multi-file architecture tests using project_factory
 # ============================================================================
 
+
 class TestArchitectureMultiFile:
     """Tests that verify architecture commands on custom project layouts."""
 
     def test_layers_three_tier(self, project_factory, cli_runner, monkeypatch):
         """A three-tier project should produce at least 2 layers."""
-        proj = project_factory({
-            "base.py": "class Base:\n    pass\n",
-            "mid.py": (
-                "from base import Base\n"
-                "\n"
-                "class Mid(Base):\n"
-                "    pass\n"
-            ),
-            "top.py": (
-                "from mid import Mid\n"
-                "\n"
-                "def run():\n"
-                "    return Mid()\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "base.py": "class Base:\n    pass\n",
+                "mid.py": ("from base import Base\n\nclass Mid(Base):\n    pass\n"),
+                "top.py": ("from mid import Mid\n\ndef run():\n    return Mid()\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["layers"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "layers")
@@ -647,28 +625,14 @@ class TestArchitectureMultiFile:
 
     def test_clusters_separate_groups(self, project_factory, cli_runner, monkeypatch):
         """Two disconnected groups should be detected as separate clusters."""
-        proj = project_factory({
-            "group_a1.py": (
-                "def func_a1():\n"
-                "    return 1\n"
-            ),
-            "group_a2.py": (
-                "from group_a1 import func_a1\n"
-                "\n"
-                "def func_a2():\n"
-                "    return func_a1() + 1\n"
-            ),
-            "group_b1.py": (
-                "def func_b1():\n"
-                "    return 10\n"
-            ),
-            "group_b2.py": (
-                "from group_b1 import func_b1\n"
-                "\n"
-                "def func_b2():\n"
-                "    return func_b1() + 10\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "group_a1.py": ("def func_a1():\n    return 1\n"),
+                "group_a2.py": ("from group_a1 import func_a1\n\ndef func_a2():\n    return func_a1() + 1\n"),
+                "group_b1.py": ("def func_b1():\n    return 10\n"),
+                "group_b2.py": ("from group_b1 import func_b1\n\ndef func_b2():\n    return func_b1() + 10\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["clusters", "--min-size", "1"], cwd=proj)
         assert result.exit_code == 0
@@ -677,17 +641,10 @@ class TestArchitectureMultiFile:
         """map handles a project with many files."""
         files = {}
         for i in range(10):
-            files[f"mod_{i}.py"] = (
-                f"def func_{i}():\n"
-                f"    return {i}\n"
-            )
+            files[f"mod_{i}.py"] = f"def func_{i}():\n    return {i}\n"
         # Add some imports between them
         files["main.py"] = (
-            "from mod_0 import func_0\n"
-            "from mod_1 import func_1\n"
-            "\n"
-            "def main():\n"
-            "    return func_0() + func_1()\n"
+            "from mod_0 import func_0\nfrom mod_1 import func_1\n\ndef main():\n    return func_0() + func_1()\n"
         )
         proj = project_factory(files)
         monkeypatch.chdir(proj)
@@ -697,18 +654,12 @@ class TestArchitectureMultiFile:
 
     def test_entry_points_main_detected(self, project_factory, cli_runner, monkeypatch):
         """A main() function should be classified as a Main entry point."""
-        proj = project_factory({
-            "helper.py": (
-                "def compute():\n"
-                "    return 42\n"
-            ),
-            "app.py": (
-                "from helper import compute\n"
-                "\n"
-                "def main():\n"
-                "    print(compute())\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "helper.py": ("def compute():\n    return 42\n"),
+                "app.py": ("from helper import compute\n\ndef main():\n    print(compute())\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["entry-points"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "entry-points")
@@ -722,12 +673,11 @@ class TestArchitectureMultiFile:
 
     def test_safe_zones_isolated_function(self, project_factory, cli_runner, monkeypatch):
         """An isolated function with no callers should be ISOLATED or CONTAINED."""
-        proj = project_factory({
-            "standalone.py": (
-                "def lonely_func():\n"
-                "    return 'alone'\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "standalone.py": ("def lonely_func():\n    return 'alone'\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["safe-zones", "lonely_func"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "safe-zones")
@@ -736,27 +686,25 @@ class TestArchitectureMultiFile:
 
     def test_patterns_strategy_detection(self, project_factory, cli_runner, monkeypatch):
         """Multiple classes inheriting from a base should detect strategy pattern."""
-        proj = project_factory({
-            "base.py": (
-                "class Processor:\n"
-                "    def process(self, data):\n"
-                "        raise NotImplementedError\n"
-            ),
-            "impl_a.py": (
-                "from base import Processor\n"
-                "\n"
-                "class FastProcessor(Processor):\n"
-                "    def process(self, data):\n"
-                "        return data * 2\n"
-            ),
-            "impl_b.py": (
-                "from base import Processor\n"
-                "\n"
-                "class SlowProcessor(Processor):\n"
-                "    def process(self, data):\n"
-                "        return data + 1\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "base.py": ("class Processor:\n    def process(self, data):\n        raise NotImplementedError\n"),
+                "impl_a.py": (
+                    "from base import Processor\n"
+                    "\n"
+                    "class FastProcessor(Processor):\n"
+                    "    def process(self, data):\n"
+                    "        return data * 2\n"
+                ),
+                "impl_b.py": (
+                    "from base import Processor\n"
+                    "\n"
+                    "class SlowProcessor(Processor):\n"
+                    "    def process(self, data):\n"
+                    "        return data + 1\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["patterns"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "patterns")

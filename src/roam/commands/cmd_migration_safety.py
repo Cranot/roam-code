@@ -43,10 +43,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Regex patterns
@@ -139,6 +138,7 @@ _RE_CREATE_INDEX_IF_NOT_EXISTS = re.compile(
 # Source reading helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_source(abs_path: Path) -> list[str]:
     """Read file lines (1-indexed by position in list)."""
     try:
@@ -193,13 +193,14 @@ def _extract_up_block(lines: list[str]) -> tuple[int, int]:
 # Individual detectors
 # ---------------------------------------------------------------------------
 
+
 def _check_schema_create(lines: list[str], up_start: int, up_end: int) -> list[dict]:
     """Detect Schema::create() without a hasTable guard."""
     findings = []
     if up_start == 0:
         return findings
 
-    up_lines = lines[up_start - 1: up_end]
+    up_lines = lines[up_start - 1 : up_end]
 
     for rel_i, line in enumerate(up_lines):
         if not _RE_SCHEMA_CREATE.search(line):
@@ -210,7 +211,7 @@ def _check_schema_create(lines: list[str], up_start: int, up_end: int) -> list[d
         # Look backwards within the up() block for a hasTable guard.
         # We look up to 30 lines back (covers wrapping if/function calls).
         context_start = max(0, rel_i - 30)
-        context_snippet = "".join(up_lines[context_start:rel_i + 1])
+        context_snippet = "".join(up_lines[context_start : rel_i + 1])
 
         if _RE_HAS_TABLE.search(context_snippet):
             continue  # guarded — OK
@@ -218,17 +219,19 @@ def _check_schema_create(lines: list[str], up_start: int, up_end: int) -> list[d
         # Extract table name for better messaging
         table_name = _extract_arg(line)
 
-        findings.append({
-            "line": abs_line,
-            "confidence": "high",
-            "issue": f"Schema::create({table_name!r}) without hasTable guard",
-            "fix": (
-                f"Wrap with: if (!Schema::hasTable({table_name!r})) {{ ... }}"
-                if table_name else
-                "Wrap Schema::create() with an if (!Schema::hasTable(...)) check"
-            ),
-            "category": "create_without_check",
-        })
+        findings.append(
+            {
+                "line": abs_line,
+                "confidence": "high",
+                "issue": f"Schema::create({table_name!r}) without hasTable guard",
+                "fix": (
+                    f"Wrap with: if (!Schema::hasTable({table_name!r})) {{ ... }}"
+                    if table_name
+                    else "Wrap Schema::create() with an if (!Schema::hasTable(...)) check"
+                ),
+                "category": "create_without_check",
+            }
+        )
 
     return findings
 
@@ -239,7 +242,7 @@ def _check_schema_drop(lines: list[str], up_start: int, up_end: int) -> list[dic
     if up_start == 0:
         return findings
 
-    up_lines = lines[up_start - 1: up_end]
+    up_lines = lines[up_start - 1 : up_end]
 
     for rel_i, line in enumerate(up_lines):
         # Skip lines that contain dropIfExists — they're safe
@@ -251,13 +254,15 @@ def _check_schema_drop(lines: list[str], up_start: int, up_end: int) -> list[dic
         abs_line = up_start + rel_i
         table_name = _extract_arg(line)
 
-        findings.append({
-            "line": abs_line,
-            "confidence": "high",
-            "issue": f"Schema::drop({table_name!r}) — unsafe bare drop",
-            "fix": f"Use Schema::dropIfExists({table_name!r}) instead",
-            "category": "unsafe_drop",
-        })
+        findings.append(
+            {
+                "line": abs_line,
+                "confidence": "high",
+                "issue": f"Schema::drop({table_name!r}) — unsafe bare drop",
+                "fix": f"Use Schema::dropIfExists({table_name!r}) instead",
+                "category": "unsafe_drop",
+            }
+        )
 
     return findings
 
@@ -268,7 +273,7 @@ def _check_drop_column(lines: list[str], up_start: int, up_end: int) -> list[dic
     if up_start == 0:
         return findings
 
-    up_lines = lines[up_start - 1: up_end]
+    up_lines = lines[up_start - 1 : up_end]
 
     for rel_i, line in enumerate(up_lines):
         if not _RE_DROP_COLUMN.search(line):
@@ -278,7 +283,7 @@ def _check_drop_column(lines: list[str], up_start: int, up_end: int) -> list[dic
 
         # Look backwards up to 30 lines for a hasColumn guard
         context_start = max(0, rel_i - 30)
-        context_snippet = "".join(up_lines[context_start:rel_i + 1])
+        context_snippet = "".join(up_lines[context_start : rel_i + 1])
 
         if _RE_HAS_COLUMN.search(context_snippet):
             continue
@@ -289,17 +294,19 @@ def _check_drop_column(lines: list[str], up_start: int, up_end: int) -> list[dic
 
         col_name = _extract_arg(line)
 
-        findings.append({
-            "line": abs_line,
-            "confidence": "medium",
-            "issue": f"dropColumn({col_name!r}) without hasColumn guard",
-            "fix": (
-                f"Wrap with: if (Schema::hasColumn($table, {col_name!r})) {{ ... }}"
-                if col_name else
-                "Wrap dropColumn() with an if (Schema::hasColumn(...)) check"
-            ),
-            "category": "drop_column_without_check",
-        })
+        findings.append(
+            {
+                "line": abs_line,
+                "confidence": "medium",
+                "issue": f"dropColumn({col_name!r}) without hasColumn guard",
+                "fix": (
+                    f"Wrap with: if (Schema::hasColumn($table, {col_name!r})) {{ ... }}"
+                    if col_name
+                    else "Wrap dropColumn() with an if (Schema::hasColumn(...)) check"
+                ),
+                "category": "drop_column_without_check",
+            }
+        )
 
     return findings
 
@@ -315,7 +322,7 @@ def _check_add_column(lines: list[str], up_start: int, up_end: int) -> list[dict
     if up_start == 0:
         return findings
 
-    up_lines = lines[up_start - 1: up_end]
+    up_lines = lines[up_start - 1 : up_end]
 
     # Find Schema::table() calls; each opens a closure for altering a table.
     # We detect the surrounding if-block or direct call and see if hasColumn
@@ -331,7 +338,7 @@ def _check_add_column(lines: list[str], up_start: int, up_end: int) -> list[dict
         # a Schema::create() block (adding columns to a brand-new table is
         # always safe — the table didn't exist before).
         context_start = max(0, rel_i - 60)
-        pre_context = "".join(up_lines[context_start:rel_i + 1])
+        pre_context = "".join(up_lines[context_start : rel_i + 1])
 
         if _RE_SCHEMA_CREATE.search(pre_context) and not _RE_SCHEMA_TABLE.search(pre_context):
             continue  # Inside Schema::create() — new table, no guard needed
@@ -349,17 +356,19 @@ def _check_add_column(lines: list[str], up_start: int, up_end: int) -> list[dict
 
         col_name = _extract_arg(line)
 
-        findings.append({
-            "line": abs_line,
-            "confidence": "medium",
-            "issue": f"->column({col_name!r}) without hasColumn guard in Schema::table() block",
-            "fix": (
-                f"Wrap with: if (!Schema::hasColumn($table, {col_name!r})) {{ ... }}"
-                if col_name else
-                "Wrap column addition with an if (!Schema::hasColumn(...)) check"
-            ),
-            "category": "add_column_without_check",
-        })
+        findings.append(
+            {
+                "line": abs_line,
+                "confidence": "medium",
+                "issue": f"->column({col_name!r}) without hasColumn guard in Schema::table() block",
+                "fix": (
+                    f"Wrap with: if (!Schema::hasColumn($table, {col_name!r})) {{ ... }}"
+                    if col_name
+                    else "Wrap column addition with an if (!Schema::hasColumn(...)) check"
+                ),
+                "category": "add_column_without_check",
+            }
+        )
 
     return findings
 
@@ -370,7 +379,7 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
     if up_start == 0:
         return findings
 
-    up_lines = lines[up_start - 1: up_end]
+    up_lines = lines[up_start - 1 : up_end]
 
     for rel_i, line in enumerate(up_lines):
         abs_line = up_start + rel_i
@@ -379,21 +388,22 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
         if _RE_CREATE_INDEX_RAW.search(line) and not _RE_CREATE_INDEX_IF_NOT_EXISTS.search(line):
             # Check if the surrounding context has a pg_indexes existence check
             context_start = max(0, rel_i - 40)
-            context_snippet = "".join(up_lines[context_start:rel_i + 1])
-            if (not _RE_PG_INDEXES.search(context_snippet)
-                    and not _RE_INDEX_EXISTS.search(context_snippet)
-                    and not _RE_INFO_SCHEMA_GUARD.search(context_snippet)
-                    and not _RE_HAS_TABLE.search(context_snippet)):
-                findings.append({
-                    "line": abs_line,
-                    "confidence": "high",
-                    "issue": "CREATE INDEX without IF NOT EXISTS",
-                    "fix": (
-                        "Use 'CREATE INDEX IF NOT EXISTS ...' or check pg_indexes "
-                        "before creating the index"
-                    ),
-                    "category": "index_without_check",
-                })
+            context_snippet = "".join(up_lines[context_start : rel_i + 1])
+            if (
+                not _RE_PG_INDEXES.search(context_snippet)
+                and not _RE_INDEX_EXISTS.search(context_snippet)
+                and not _RE_INFO_SCHEMA_GUARD.search(context_snippet)
+                and not _RE_HAS_TABLE.search(context_snippet)
+            ):
+                findings.append(
+                    {
+                        "line": abs_line,
+                        "confidence": "high",
+                        "issue": "CREATE INDEX without IF NOT EXISTS",
+                        "fix": ("Use 'CREATE INDEX IF NOT EXISTS ...' or check pg_indexes before creating the index"),
+                        "category": "index_without_check",
+                    }
+                )
             continue
 
         # --- Blueprint $table->index() / ->unique() ---
@@ -402,7 +412,7 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
 
         # These are inside Schema::create() — safe, table is brand new
         context_start = max(0, rel_i - 60)
-        pre_context = "".join(up_lines[context_start:rel_i + 1])
+        pre_context = "".join(up_lines[context_start : rel_i + 1])
 
         if _RE_SCHEMA_CREATE.search(pre_context) and not _RE_SCHEMA_TABLE.search(pre_context):
             continue  # Brand-new table — no guard needed
@@ -411,22 +421,27 @@ def _check_index_creation(lines: list[str], up_start: int, up_end: int) -> list[
         if not _RE_SCHEMA_TABLE.search(pre_context):
             continue  # Not an alter-table context — skip
 
-        if (_RE_PG_INDEXES.search(pre_context) or _RE_INDEX_EXISTS.search(pre_context)
-                or _RE_INFO_SCHEMA_GUARD.search(pre_context)
-                or _RE_HAS_TABLE.search(pre_context)):
+        if (
+            _RE_PG_INDEXES.search(pre_context)
+            or _RE_INDEX_EXISTS.search(pre_context)
+            or _RE_INFO_SCHEMA_GUARD.search(pre_context)
+            or _RE_HAS_TABLE.search(pre_context)
+        ):
             continue  # Has an existence check — OK
 
-        findings.append({
-            "line": abs_line,
-            "confidence": "medium",
-            "issue": "->index() / ->unique() inside Schema::table() without index existence check",
-            "fix": (
-                "Check pg_indexes before adding: "
-                "SELECT indexname FROM pg_indexes WHERE indexname = '...' "
-                "and only create if result is empty"
-            ),
-            "category": "index_without_check",
-        })
+        findings.append(
+            {
+                "line": abs_line,
+                "confidence": "medium",
+                "issue": "->index() / ->unique() inside Schema::table() without index existence check",
+                "fix": (
+                    "Check pg_indexes before adding: "
+                    "SELECT indexname FROM pg_indexes WHERE indexname = '...' "
+                    "and only create if result is empty"
+                ),
+                "category": "index_without_check",
+            }
+        )
 
     return findings
 
@@ -444,19 +459,22 @@ def _check_missing_down(lines: list[str]) -> list[dict]:
             if _RE_UP_METHOD.search(line):
                 up_line = i
                 break
-        return [{
-            "line": up_line,
-            "confidence": "low",
-            "issue": "Migration has up() but no down() method — cannot rollback",
-            "fix": "Add a down() method that reverses the up() operations",
-            "category": "missing_down",
-        }]
+        return [
+            {
+                "line": up_line,
+                "confidence": "low",
+                "issue": "Migration has up() but no down() method — cannot rollback",
+                "fix": "Add a down() method that reverses the up() operations",
+                "category": "missing_down",
+            }
+        ]
     return []
 
 
 # ---------------------------------------------------------------------------
 # Argument extractor (best-effort — not a PHP parser)
 # ---------------------------------------------------------------------------
+
 
 def _extract_arg(line: str) -> str:
     """Extract the first string argument from a PHP call on this line.
@@ -472,6 +490,7 @@ def _extract_arg(line: str) -> str:
 # ---------------------------------------------------------------------------
 # Main analysis
 # ---------------------------------------------------------------------------
+
 
 def _analyze_file(abs_path: Path, rel_path: str) -> list[dict]:
     """Run all detectors on a single migration file.
@@ -545,11 +564,13 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
 
     # Sort: high → medium → low, then by file path, then by line number
     _conf_order = {"high": 0, "medium": 1, "low": 2}
-    findings.sort(key=lambda f: (
-        _conf_order.get(f["confidence"], 9),
-        f["file"],
-        f["line"],
-    ))
+    findings.sort(
+        key=lambda f: (
+            _conf_order.get(f["confidence"], 9),
+            f["file"],
+            f["line"],
+        )
+    )
 
     return findings[:limit]
 
@@ -557,6 +578,7 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
 
 @click.command("migration-safety")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
@@ -567,8 +589,13 @@ def analyze_migration_safety(conn, limit: int = 50, include_archive: bool = Fals
     type=click.Choice(["high", "medium", "low"], case_sensitive=False),
     help="Filter by confidence level",
 )
-@click.option("--include-archive", "include_archive", is_flag=True, default=False,
-              help="Include archive/ migrations (skipped by default)")
+@click.option(
+    "--include-archive",
+    "include_archive",
+    is_flag=True,
+    default=False,
+    help="Include archive/ migrations (skipped by default)",
+)
 @click.pass_context
 def migration_safety_cmd(ctx, limit, confidence_filter, include_archive):
     """Check migration files for non-idempotent (unsafe if run twice) operations.
@@ -621,32 +648,36 @@ def migration_safety_cmd(ctx, limit, confidence_filter, include_archive):
     verdict = (
         f"{total} migration safety issue{'s' if total != 1 else ''} found "
         f"({n_high} high, {n_medium} medium, {n_low} low)"
-        if total else
-        "No migration safety issues found — all migrations appear idempotent"
+        if total
+        else "No migration safety issues found — all migrations appear idempotent"
     )
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "migration-safety",
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "by_confidence": {"high": n_high, "medium": n_medium, "low": n_low},
-                "truncated": truncated,
-            },
-            findings=[
-                {
-                    "file": f["file"],
-                    "line": f["line"],
-                    "confidence": f["confidence"],
-                    "issue": f["issue"],
-                    "fix": f["fix"],
-                    "category": f["category"],
-                }
-                for f in findings
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "migration-safety",
+                    summary={
+                        "verdict": verdict,
+                        "total": total,
+                        "by_confidence": {"high": n_high, "medium": n_medium, "low": n_low},
+                        "truncated": truncated,
+                    },
+                    findings=[
+                        {
+                            "file": f["file"],
+                            "line": f["line"],
+                            "confidence": f["confidence"],
+                            "issue": f["issue"],
+                            "fix": f["fix"],
+                            "category": f["category"],
+                        }
+                        for f in findings
+                    ],
+                )
+            )
+        )
         return
 
     # --- Text output ---

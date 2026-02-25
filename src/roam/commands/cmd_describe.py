@@ -8,9 +8,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _section_overview(conn):
@@ -69,13 +69,23 @@ def _section_entry_points(conn):
     """Entry points: conventional names + main() functions."""
     lines = ["", "## Entry Points", ""]
     entry_names = {
-        "main.py", "__main__.py", "__init__.py", "index.js", "index.ts",
-        "main.go", "main.rs", "app.py", "app.js", "app.ts",
-        "mod.rs", "lib.rs", "setup.py", "manage.py",
+        "main.py",
+        "__main__.py",
+        "__init__.py",
+        "index.js",
+        "index.ts",
+        "main.go",
+        "main.rs",
+        "app.py",
+        "app.js",
+        "app.ts",
+        "mod.rs",
+        "lib.rs",
+        "setup.py",
+        "manage.py",
     }
     files = conn.execute("SELECT path FROM files").fetchall()
-    entries = [f["path"] for f in files
-               if os.path.basename(f["path"]) in entry_names]
+    entries = [f["path"] for f in files if os.path.basename(f["path"]) in entry_names]
 
     main_files = conn.execute(
         "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
@@ -135,8 +145,8 @@ def _section_architecture(conn):
     lines = ["", "## Architecture", ""]
     try:
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.layers import detect_layers
         from roam.graph.cycles import find_cycles
+        from roam.graph.layers import detect_layers
 
         G = build_symbol_graph(conn)
         if len(G) == 0:
@@ -152,8 +162,10 @@ def _section_architecture(conn):
 
         if layers:
             layer_counts = Counter(layers.values())
-            lines.append("- **Layer distribution:** " +
-                         ", ".join(f"L{k}: {v} symbols" for k, v in sorted(layer_counts.items())[:5]))
+            lines.append(
+                "- **Layer distribution:** "
+                + ", ".join(f"L{k}: {v} symbols" for k, v in sorted(layer_counts.items())[:5])
+            )
     except Exception:
         lines.append("Architecture analysis not available (graph module not loaded).")
     return lines
@@ -169,8 +181,9 @@ def _section_testing(conn):
     source_files = []
     for p in all_paths:
         basename = os.path.basename(p)
-        is_test = any(pat in basename for pat in ["test_", "_test.", ".test.", ".spec."]) or \
-                  any(d in p for d in ["tests/", "test/", "__tests__/", "spec/"])
+        is_test = any(pat in basename for pat in ["test_", "_test.", ".test.", ".spec."]) or any(
+            d in p for d in ["tests/", "test/", "__tests__/", "spec/"]
+        )
         if is_test:
             test_files.append(p)
         else:
@@ -182,7 +195,7 @@ def _section_testing(conn):
         parts = tf.split("/")
         for i, part in enumerate(parts):
             if part in ("tests", "test", "__tests__", "spec"):
-                test_dirs.add("/".join(parts[:i + 1]))
+                test_dirs.add("/".join(parts[: i + 1]))
 
     if test_dirs:
         lines.append("**Test directories:** " + ", ".join(f"`{d}/`" for d in sorted(test_dirs)))
@@ -199,6 +212,7 @@ def _read_manifest_info(project_root):
     if not project_root:
         return []
     import json
+
     lines = []
     for manifest in ("package.json", "composer.json"):
         mpath = project_root / manifest
@@ -233,53 +247,221 @@ def _read_manifest_info(project_root):
     return lines
 
 
-_DOMAIN_STOP_WORDS = frozenset({
-    # Generic programming
-    "get", "set", "new", "init", "create", "make", "build", "run", "test",
-    "handle", "process", "parse", "format", "check", "has", "the",
-    "from", "with", "for", "add", "remove", "delete", "update", "find",
-    "load", "save", "read", "write", "send", "resolve", "validate", "setup",
-    "use", "can", "should", "will", "not", "all", "any", "map", "list",
-    "item", "data", "type", "name", "value", "key", "index", "count",
-    "result", "response", "request", "error", "node", "path", "base",
-    "util", "utils", "helper", "helpers", "model", "models",
-    # UI / framework
-    "props", "emit", "emits", "ref", "computed", "watch", "reactive",
-    "component", "view", "render", "mount", "unmount", "click",
-    "submit", "change", "input", "select", "close", "open", "show",
-    "hide", "toggle", "modal", "form", "field", "row", "col",
-    "icon", "btn", "wrapper", "slot", "class", "style",
-    "define", "expose", "provide", "inject",
-    # Vue/React/Angular
-    "state", "store", "action", "dispatch", "reducer",
-    "effect", "callback", "memo", "context", "hook",
-    # DOM events / UI interactions
-    "click", "focus", "blur", "hover", "scroll", "resize",
-    "keydown", "keyup", "keypress", "mousedown", "mouseup", "mouseover",
-    "mouseenter", "mouseleave", "touchstart", "touchend", "touchmove",
-    "drag", "drop", "dropdown", "popover", "tooltip", "overlay",
-    "collapse", "expand", "visible", "disabled", "active", "selected",
-    "loading", "loaded", "pending", "ready", "mounted", "updated",
-    "before", "after", "enter", "leave", "transition", "animate",
-    "width", "height", "size", "offset", "position", "layout",
-    "container", "content", "header", "footer", "sidebar", "panel",
-    "tab", "tabs", "menu", "nav", "link", "button", "label", "text",
-    "image", "avatar", "badge", "card", "dialog", "drawer", "divider",
-    # Generic code patterns
-    "fetch", "query", "execute", "apply", "call", "bind",
-    "start", "stop", "reset", "clear", "filter", "sort",
-    "default", "config", "options", "params", "args",
-})
+_DOMAIN_STOP_WORDS = frozenset(
+    {
+        # Generic programming
+        "get",
+        "set",
+        "new",
+        "init",
+        "create",
+        "make",
+        "build",
+        "run",
+        "test",
+        "handle",
+        "process",
+        "parse",
+        "format",
+        "check",
+        "has",
+        "the",
+        "from",
+        "with",
+        "for",
+        "add",
+        "remove",
+        "delete",
+        "update",
+        "find",
+        "load",
+        "save",
+        "read",
+        "write",
+        "send",
+        "resolve",
+        "validate",
+        "setup",
+        "use",
+        "can",
+        "should",
+        "will",
+        "not",
+        "all",
+        "any",
+        "map",
+        "list",
+        "item",
+        "data",
+        "type",
+        "name",
+        "value",
+        "key",
+        "index",
+        "count",
+        "result",
+        "response",
+        "request",
+        "error",
+        "node",
+        "path",
+        "base",
+        "util",
+        "utils",
+        "helper",
+        "helpers",
+        "model",
+        "models",
+        # UI / framework
+        "props",
+        "emit",
+        "emits",
+        "ref",
+        "computed",
+        "watch",
+        "reactive",
+        "component",
+        "view",
+        "render",
+        "mount",
+        "unmount",
+        "click",
+        "submit",
+        "change",
+        "input",
+        "select",
+        "close",
+        "open",
+        "show",
+        "hide",
+        "toggle",
+        "modal",
+        "form",
+        "field",
+        "row",
+        "col",
+        "icon",
+        "btn",
+        "wrapper",
+        "slot",
+        "class",
+        "style",
+        "define",
+        "expose",
+        "provide",
+        "inject",
+        # Vue/React/Angular
+        "state",
+        "store",
+        "action",
+        "dispatch",
+        "reducer",
+        "effect",
+        "callback",
+        "memo",
+        "context",
+        "hook",
+        # DOM events / UI interactions
+        "click",
+        "focus",
+        "blur",
+        "hover",
+        "scroll",
+        "resize",
+        "keydown",
+        "keyup",
+        "keypress",
+        "mousedown",
+        "mouseup",
+        "mouseover",
+        "mouseenter",
+        "mouseleave",
+        "touchstart",
+        "touchend",
+        "touchmove",
+        "drag",
+        "drop",
+        "dropdown",
+        "popover",
+        "tooltip",
+        "overlay",
+        "collapse",
+        "expand",
+        "visible",
+        "disabled",
+        "active",
+        "selected",
+        "loading",
+        "loaded",
+        "pending",
+        "ready",
+        "mounted",
+        "updated",
+        "before",
+        "after",
+        "enter",
+        "leave",
+        "transition",
+        "animate",
+        "width",
+        "height",
+        "size",
+        "offset",
+        "position",
+        "layout",
+        "container",
+        "content",
+        "header",
+        "footer",
+        "sidebar",
+        "panel",
+        "tab",
+        "tabs",
+        "menu",
+        "nav",
+        "link",
+        "button",
+        "label",
+        "text",
+        "image",
+        "avatar",
+        "badge",
+        "card",
+        "dialog",
+        "drawer",
+        "divider",
+        # Generic code patterns
+        "fetch",
+        "query",
+        "execute",
+        "apply",
+        "call",
+        "bind",
+        "start",
+        "stop",
+        "reset",
+        "clear",
+        "filter",
+        "sort",
+        "default",
+        "config",
+        "options",
+        "params",
+        "args",
+    }
+)
 
 
 def _section_domain(conn):
     """Infer project domain from symbol names and manifest files."""
     import re
+
     lines = ["", "## Domain Keywords", ""]
 
     project_root = None
     try:
         from roam.db.connection import find_project_root
+
         project_root = find_project_root()
     except Exception:
         pass
@@ -291,7 +473,7 @@ def _section_domain(conn):
     ).fetchall()
 
     word_counts: dict[str, int] = {}
-    _split_re = re.compile(r'[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
+    _split_re = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
     for s in symbols:
         for p in _split_re.findall(s["name"]):
             w = p.lower()
@@ -311,13 +493,14 @@ def _section_domain(conn):
 def _section_conventions(conn):
     """Document detected coding conventions for agents to follow."""
     import re
+
     lines = ["", "## Coding Conventions", ""]
     lines.append("Follow these conventions when writing code in this project:")
     lines.append("")
 
-    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
-    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
-    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
+    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
+    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
 
     for kind, label in [("function", "Functions"), ("class", "Classes"), ("method", "Methods")]:
         rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
@@ -353,14 +536,12 @@ def _section_conventions(conn):
             if pct > 60:
                 lines.append(f"- **Imports:** Prefer absolute imports ({pct}% are cross-directory)")
             else:
-                lines.append(f"- **Imports:** Relative imports common ({100-pct}% same-directory)")
+                lines.append(f"- **Imports:** Relative imports common ({100 - pct}% same-directory)")
     except Exception:
         pass
 
     # Test patterns
-    test_files = conn.execute(
-        "SELECT path FROM files WHERE path LIKE '%test%'"
-    ).fetchall()
+    test_files = conn.execute("SELECT path FROM files WHERE path LIKE '%test%'").fetchall()
     if test_files:
         patterns = set()
         for r in test_files:
@@ -385,16 +566,12 @@ def _section_complexity_guide(conn):
 
     try:
         row = conn.execute(
-            "SELECT COUNT(*) as total, AVG(cognitive_complexity) as avg_cc "
-            "FROM symbol_metrics"
+            "SELECT COUNT(*) as total, AVG(cognitive_complexity) as avg_cc FROM symbol_metrics"
         ).fetchone()
         if not row or row["total"] == 0:
             return lines
 
-        lines.append(
-            f"Average function complexity: {row['avg_cc']:.1f} "
-            f"({row['total']} functions analyzed)"
-        )
+        lines.append(f"Average function complexity: {row['avg_cc']:.1f} ({row['total']} functions analyzed)")
         lines.append("")
 
         critical = conn.execute(
@@ -412,10 +589,7 @@ def _section_complexity_guide(conn):
             lines.append("| Function | Complexity | Location |")
             lines.append("|----------|-----------|----------|")
             for r in critical:
-                lines.append(
-                    f"| `{r['name']}` | {r['cognitive_complexity']:.0f} "
-                    f"| `{r['path']}:{r['line_start']}` |"
-                )
+                lines.append(f"| `{r['name']}` | {r['cognitive_complexity']:.0f} | `{r['path']}:{r['line_start']}` |")
     except Exception:
         pass
 
@@ -505,9 +679,9 @@ def _agent_prompt_data(conn):
         data["stack"] = ""
 
     # ── Conventions ──────────────────────────────────────────────────
-    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
-    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
-    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
+    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
+    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
 
     conventions = []
     for kind, label in [("function", "functions"), ("class", "classes"), ("method", "methods")]:
@@ -574,8 +748,7 @@ def _agent_prompt_data(conn):
         """).fetchall()
         for r in rows:
             hotspots.append(
-                f"{r['name']} (complexity={r['cognitive_complexity']:.0f}, "
-                f"churn={r['churn']}, {r['path']})"
+                f"{r['name']} (complexity={r['cognitive_complexity']:.0f}, churn={r['churn']}, {r['path']})"
             )
     except Exception:
         pass
@@ -587,6 +760,7 @@ def _agent_prompt_data(conn):
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
+
         G = build_symbol_graph(conn)
         total_syms = len(G)
         if total_syms > 0:
@@ -600,9 +774,7 @@ def _agent_prompt_data(conn):
         pass
 
     # ── Test command guess ───────────────────────────────────────────
-    test_files = conn.execute(
-        "SELECT path FROM files WHERE path LIKE '%test%' LIMIT 1"
-    ).fetchall()
+    test_files = conn.execute("SELECT path FROM files WHERE path LIKE '%test%' LIMIT 1").fetchall()
     if test_files:
         p = test_files[0]["path"].replace("\\", "/")
         if "tests/" in p:
@@ -622,10 +794,7 @@ def _agent_prompt_data(conn):
 def _format_agent_prompt(data: dict) -> str:
     """Format agent-prompt data as compact plain text."""
     lines = []
-    lines.append(
-        f"Project: {data['project']} "
-        f"({data['files']} files, {data['symbols']} symbols, {data['languages']})"
-    )
+    lines.append(f"Project: {data['project']} ({data['files']} files, {data['symbols']} symbols, {data['languages']})")
     if data.get("stack"):
         lines.append(f"Stack: {data['stack']}")
     lines.append(f"Conventions: {data['conventions']}")
@@ -676,14 +845,14 @@ Run `roam --help` for all commands. Use `roam --json <cmd>` for structured outpu
 # Agent config file detection order — first existing file wins.
 # If none exist, fall back to CLAUDE.md (most common).
 _AGENT_CONFIG_FILES = [
-    "CLAUDE.md",                          # Claude Code
-    "AGENTS.md",                          # OpenAI Codex CLI
-    "GEMINI.md",                          # Gemini CLI
-    ".cursor/rules/roam.mdc",            # Cursor
-    ".windsurf/rules/roam.md",           # Windsurf
-    ".github/copilot-instructions.md",   # GitHub Copilot
-    "CONVENTIONS.md",                     # Aider / generic
-    ".clinerules/roam.md",               # Cline
+    "CLAUDE.md",  # Claude Code
+    "AGENTS.md",  # OpenAI Codex CLI
+    "GEMINI.md",  # Gemini CLI
+    ".cursor/rules/roam.mdc",  # Cursor
+    ".windsurf/rules/roam.md",  # Windsurf
+    ".github/copilot-instructions.md",  # GitHub Copilot
+    "CONVENTIONS.md",  # Aider / generic
+    ".clinerules/roam.md",  # Cline
 ]
 
 
@@ -702,11 +871,16 @@ def _detect_agent_config(root: "Path") -> "Path":
 
 
 @click.command()
-@click.option('--write', is_flag=True, help='Write output to the detected agent config file')
-@click.option('--force', is_flag=True, help='Overwrite existing file without confirmation')
-@click.option('--agent-prompt', is_flag=True, help='Compact agent-oriented prompt (under 500 tokens)')
-@click.option('-o', '--output', 'out_file', default=None,
-              help='Explicit output path (overrides auto-detection)')
+@click.option("--write", is_flag=True, help="Write output to the detected agent config file")
+@click.option("--force", is_flag=True, help="Overwrite existing file without confirmation")
+@click.option("--agent-prompt", is_flag=True, help="Compact agent-oriented prompt (under 500 tokens)")
+@click.option(
+    "-o",
+    "--output",
+    "out_file",
+    default=None,
+    help="Explicit output path (overrides auto-detection)",
+)
 @click.pass_context
 def describe(ctx, write, force, agent_prompt, out_file):
     """Auto-generate a project description for AI coding agents.
@@ -715,7 +889,7 @@ def describe(ctx, write, force, agent_prompt, out_file):
     config file (auto-detected: CLAUDE.md, AGENTS.md, .cursor/rules, etc.)
     or ``-o PATH`` to specify an explicit output path.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     if agent_prompt:
@@ -723,10 +897,15 @@ def describe(ctx, write, force, agent_prompt, out_file):
             data = _agent_prompt_data(conn)
 
         if json_mode:
-            click.echo(to_json(json_envelope("describe",
-                summary={"mode": "agent-prompt"},
-                **data,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "describe",
+                        summary={"mode": "agent-prompt"},
+                        **data,
+                    )
+                )
+            )
         else:
             click.echo(_format_agent_prompt(data))
         return
@@ -748,14 +927,20 @@ def describe(ctx, write, force, agent_prompt, out_file):
         output = "\n".join(line for sec in sections for line in sec)
 
     if json_mode:
-        click.echo(to_json(json_envelope("describe",
-            summary={"length": len(output)},
-            markdown=output,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "describe",
+                    summary={"length": len(output)},
+                    markdown=output,
+                )
+            )
+        )
         return
 
     if write or out_file:
         from pathlib import Path
+
         root = find_project_root()
         if out_file:
             out_path = Path(out_file)

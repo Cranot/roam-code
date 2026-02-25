@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _extract(source: str, file_path: str):
     """Direct extractor call (no tree-sitter needed — regex-only languages)."""
     from roam.languages.registry import get_extractor
+
     lang = "yaml" if file_path.endswith((".yml", ".yaml")) else "hcl"
     extractor = get_extractor(lang)
     src = source.encode("utf-8")
@@ -432,48 +431,61 @@ enable_logging = true
 # Registry integration
 # ===========================================================================
 
+
 class TestRegistryIntegration:
     def test_yaml_in_supported_languages(self):
         from roam.languages.registry import get_supported_languages
+
         assert "yaml" in get_supported_languages()
 
     def test_hcl_in_supported_languages(self):
         from roam.languages.registry import get_supported_languages
+
         assert "hcl" in get_supported_languages()
 
     def test_yml_extension_detected(self):
         from roam.languages.registry import get_language_for_file
+
         assert get_language_for_file("ci.yml") == "yaml"
 
     def test_yaml_extension_detected(self):
         from roam.languages.registry import get_language_for_file
+
         assert get_language_for_file("config.yaml") == "yaml"
 
     def test_tf_extension_detected(self):
         from roam.languages.registry import get_language_for_file
+
         assert get_language_for_file("main.tf") == "hcl"
 
     def test_hcl_extension_detected(self):
         from roam.languages.registry import get_language_for_file
+
         assert get_language_for_file("nomad.hcl") == "hcl"
 
     def test_tfvars_extension_detected(self):
         from roam.languages.registry import get_language_for_file
+
         assert get_language_for_file("vars.tfvars") == "hcl"
 
     def test_yaml_is_regex_only(self):
         from roam.index.parser import REGEX_ONLY_LANGUAGES
+
         assert "yaml" in REGEX_ONLY_LANGUAGES
 
     def test_hcl_is_regex_only(self):
         from roam.index.parser import REGEX_ONLY_LANGUAGES
+
         assert "hcl" in REGEX_ONLY_LANGUAGES
 
     def test_parse_file_yaml_returns_source(self):
         """parse_file() should return (None, source, 'yaml') for YAML files."""
-        import tempfile, os
-        from roam.index.parser import parse_file
+        import os
+        import tempfile
         from pathlib import Path
+
+        from roam.index.parser import parse_file
+
         src = b"stages:\n  - test\n"
         with tempfile.NamedTemporaryFile(suffix=".yml", delete=False) as f:
             f.write(src)
@@ -488,9 +500,12 @@ class TestRegistryIntegration:
 
     def test_parse_file_hcl_returns_source(self):
         """parse_file() should return (None, source, 'hcl') for .tf files."""
-        import tempfile, os
-        from roam.index.parser import parse_file
+        import os
+        import tempfile
         from pathlib import Path
+
+        from roam.index.parser import parse_file
+
         src = b'resource "aws_vpc" "main" {\n  cidr_block = "10.0.0.0/16"\n}\n'
         with tempfile.NamedTemporaryFile(suffix=".tf", delete=False) as f:
             f.write(src)

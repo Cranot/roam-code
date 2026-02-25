@@ -5,6 +5,7 @@ BFS outward through callee edges (downstream) and caller edges (upstream) with
 exponentially decaying weights.  Results are merged with existing PageRank
 scores to produce a blended context ranking.
 """
+
 from __future__ import annotations
 
 from collections import deque
@@ -64,16 +65,14 @@ def propagate_context(
     # Queue entries: (node_id, depth)
     # visited_callee tracks the minimum depth at which we reached each node
     visited_callee: Dict[int, int] = {s: 0 for s in seeds if s in G}
-    callee_queue: deque[Tuple[int, int]] = deque(
-        (s, 0) for s in seeds if s in G
-    )
+    callee_queue: deque[Tuple[int, int]] = deque((s, 0) for s in seeds if s in G)
 
     while callee_queue:
         node, depth = callee_queue.popleft()
         if depth >= max_depth:
             continue
         next_depth = depth + 1
-        callee_score = decay ** next_depth
+        callee_score = decay**next_depth
         for neighbor in G.successors(node):
             if neighbor in seeds:
                 continue  # Seeds keep score 1.0
@@ -87,16 +86,14 @@ def propagate_context(
     # Callers carry lower weight: decay * 0.5
     caller_decay = decay * 0.5
     visited_caller: Dict[int, int] = {s: 0 for s in seeds if s in G}
-    caller_queue: deque[Tuple[int, int]] = deque(
-        (s, 0) for s in seeds if s in G
-    )
+    caller_queue: deque[Tuple[int, int]] = deque((s, 0) for s in seeds if s in G)
 
     while caller_queue:
         node, depth = caller_queue.popleft()
         if depth >= max_depth:
             continue
         next_depth = depth + 1
-        caller_score = caller_decay ** next_depth
+        caller_score = caller_decay**next_depth
         for neighbor in G.predecessors(node):
             if neighbor in seeds:
                 continue
@@ -143,9 +140,7 @@ def merge_rankings(
     # Normalise pagerank
     max_pr = max(pagerank_scores.values(), default=0.0)
     norm_pr: Dict[int, float] = (
-        {k: v / max_pr for k, v in pagerank_scores.items()}
-        if max_pr > 0
-        else {k: 0.0 for k in pagerank_scores}
+        {k: v / max_pr for k, v in pagerank_scores.items()} if max_pr > 0 else {k: 0.0 for k in pagerank_scores}
     )
 
     # Propagation scores are already in [0, 1] (decay-based)

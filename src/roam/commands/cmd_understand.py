@@ -5,11 +5,10 @@ import re
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import is_test_file
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Framework / build-tool detection
@@ -68,25 +67,20 @@ def _detect_frameworks(conn):
     """Detect frameworks by scanning edge targets, file names, and source content."""
     # collect unique edge target names from resolved references
     import_targets = set()
-    for r in conn.execute(
-        "SELECT DISTINCT s.name FROM symbols s "
-        "JOIN edges e ON e.target_id = s.id"
-    ).fetchall():
+    for r in conn.execute("SELECT DISTINCT s.name FROM symbols s JOIN edges e ON e.target_id = s.id").fetchall():
         import_targets.add(r["name"].lower())
 
     # scan a sample of source files for import/using statements that reference
     # external packages (these won't appear in resolved edges since the
     # framework symbols aren't in the local codebase)
     _IMPORT_RE = re.compile(
-        r'\busing\s+([\w.]+)'       # C#: using Microsoft.AspNetCore.Mvc;
+        r"\busing\s+([\w.]+)"  # C#: using Microsoft.AspNetCore.Mvc;
         r'|\bfrom\s+[\'"]([^"\']+)[\'"]'  # JS/TS: from 'next/router'
-        r'|\bimport\s+([\w.]+)'     # Python/Go: import x
-        r'|\bfrom\s+([\w.]+)\s+import'    # Python: from x import y
+        r"|\bimport\s+([\w.]+)"  # Python/Go: import x
+        r"|\bfrom\s+([\w.]+)\s+import"  # Python: from x import y
     )
     root = find_project_root()
-    for r in conn.execute(
-        "SELECT path FROM files WHERE language IS NOT NULL LIMIT 200"
-    ).fetchall():
+    for r in conn.execute("SELECT path FROM files WHERE language IS NOT NULL LIMIT 200").fetchall():
         file_path = root / r["path"]
         if not file_path.exists():
             continue
@@ -162,6 +156,7 @@ def _detect_build(conn):
 # Key abstractions: top symbols by PageRank + fan analysis
 # ---------------------------------------------------------------------------
 
+
 def _key_abstractions(conn, limit=15):
     """Find the most important symbols by PageRank with fan analysis."""
     rows = conn.execute(
@@ -191,15 +186,17 @@ def _key_abstractions(conn, limit=15):
         else:
             why = "high PageRank"
 
-        results.append({
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "pagerank": round(r["pagerank"] or 0, 4),
-            "fan_in": fan_in,
-            "fan_out": fan_out,
-            "why": why,
-        })
+        results.append(
+            {
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "pagerank": round(r["pagerank"] or 0, 4),
+                "fan_in": fan_in,
+                "fan_out": fan_out,
+                "why": why,
+            }
+        )
 
     return results
 
@@ -207,6 +204,7 @@ def _key_abstractions(conn, limit=15):
 # ---------------------------------------------------------------------------
 # Entry points: files with no importers + high PageRank
 # ---------------------------------------------------------------------------
+
 
 def _find_entry_points(conn, limit=10):
     """Find likely entry point files (no importers + have symbols)."""
@@ -229,6 +227,7 @@ def _find_entry_points(conn, limit=10):
 # Hotspots: churn * coupling
 # ---------------------------------------------------------------------------
 
+
 def _find_hotspots(conn, limit=10):
     """Find files with highest churn, annotated with coupling info."""
     rows = conn.execute(
@@ -248,18 +247,19 @@ def _find_hotspots(conn, limit=10):
             continue
         # Count coupling partners
         partners = conn.execute(
-            "SELECT COUNT(*) FROM git_cochange "
-            "WHERE file_id_a = ? OR file_id_b = ?",
+            "SELECT COUNT(*) FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
             (r["file_id"], r["file_id"]),
         ).fetchone()[0]
 
-        results.append({
-            "path": r["path"],
-            "churn": r["total_churn"],
-            "commits": r["commit_count"],
-            "authors": r["distinct_authors"],
-            "coupling_partners": partners,
-        })
+        results.append(
+            {
+                "path": r["path"],
+                "churn": r["total_churn"],
+                "commits": r["commit_count"],
+                "authors": r["distinct_authors"],
+                "coupling_partners": partners,
+            }
+        )
 
     return results[:limit]
 
@@ -267,6 +267,7 @@ def _find_hotspots(conn, limit=10):
 # ---------------------------------------------------------------------------
 # Suggested reading order for AI agents
 # ---------------------------------------------------------------------------
+
 
 def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
     """Build a prioritized reading order for an AI agent exploring the codebase."""
@@ -278,11 +279,13 @@ def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
     for ep in entry_points[:3]:
         if ep["path"] not in seen:
             seen.add(ep["path"])
-            order.append({
-                "path": ep["path"],
-                "reason": "entry point",
-                "priority": priority,
-            })
+            order.append(
+                {
+                    "path": ep["path"],
+                    "reason": "entry point",
+                    "priority": priority,
+                }
+            )
             priority += 1
 
     # 2. Files with key abstractions
@@ -290,22 +293,26 @@ def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
         path = ka["location"].rsplit(":", 1)[0]
         if path not in seen:
             seen.add(path)
-            order.append({
-                "path": path,
-                "reason": f"key abstraction ({ka['name']})",
-                "priority": priority,
-            })
+            order.append(
+                {
+                    "path": path,
+                    "reason": f"key abstraction ({ka['name']})",
+                    "priority": priority,
+                }
+            )
             priority += 1
 
     # 3. Hotspots
     for hs in hotspots[:3]:
         if hs["path"] not in seen:
             seen.add(hs["path"])
-            order.append({
-                "path": hs["path"],
-                "reason": "active hotspot",
-                "priority": priority,
-            })
+            order.append(
+                {
+                    "path": hs["path"],
+                    "reason": "active hotspot",
+                    "priority": priority,
+                }
+            )
             priority += 1
 
     return order
@@ -315,18 +322,17 @@ def _suggest_reading_order(conn, entry_points, key_abstractions, hotspots):
 # Conventions summary (lightweight inline detection)
 # ---------------------------------------------------------------------------
 
+
 def _detect_conventions(conn):
     """Detect dominant naming conventions per symbol kind."""
-    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
-    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
-    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
-    _UPPER = re.compile(r'^[A-Z_][A-Z0-9_]*$')
+    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
+    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
+    _UPPER = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
     result = {}
     for kind in ("function", "class", "method", "variable"):
-        rows = conn.execute(
-            "SELECT name FROM symbols WHERE kind = ?", (kind,)
-        ).fetchall()
+        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
         if not rows:
             continue
         names = [r["name"] for r in rows]
@@ -354,6 +360,7 @@ def _detect_conventions(conn):
 # Complexity overview
 # ---------------------------------------------------------------------------
 
+
 def _complexity_overview(conn):
     """Get aggregate complexity stats from symbol_metrics."""
     try:
@@ -366,9 +373,7 @@ def _complexity_overview(conn):
         if not row or row["total"] == 0:
             return None
 
-        critical = conn.execute(
-            "SELECT COUNT(*) FROM symbol_metrics WHERE cognitive_complexity >= 25"
-        ).fetchone()[0]
+        critical = conn.execute("SELECT COUNT(*) FROM symbol_metrics WHERE cognitive_complexity >= 25").fetchone()[0]
         high = conn.execute(
             "SELECT COUNT(*) FROM symbol_metrics WHERE cognitive_complexity >= 15 AND cognitive_complexity < 25"
         ).fetchone()[0]
@@ -388,10 +393,7 @@ def _complexity_overview(conn):
             "max": round(row["max_cc"] or 0, 0),
             "critical": critical,
             "high": high,
-            "worst": [
-                {"name": w["name"], "cc": round(w["cognitive_complexity"]), "file": w["path"]}
-                for w in worst
-            ],
+            "worst": [{"name": w["name"], "cc": round(w["cognitive_complexity"]), "file": w["path"]} for w in worst],
         }
     except Exception:
         return None
@@ -400,6 +402,7 @@ def _complexity_overview(conn):
 # ---------------------------------------------------------------------------
 # Pattern summary
 # ---------------------------------------------------------------------------
+
 
 def _detect_patterns_summary(conn):
     """Quick lightweight pattern detection (strategy, factory)."""
@@ -418,11 +421,13 @@ def _detect_patterns_summary(conn):
             "ORDER BY COUNT(*) DESC LIMIT 5"
         ).fetchall()
         for r in rows:
-            patterns.append({
-                "type": "strategy/hierarchy",
-                "name": r["parent"],
-                "count": r["impl_count"],
-            })
+            patterns.append(
+                {
+                    "type": "strategy/hierarchy",
+                    "name": r["parent"],
+                    "count": r["impl_count"],
+                }
+            )
     except Exception:
         pass
 
@@ -444,6 +449,7 @@ def _detect_patterns_summary(conn):
 # ---------------------------------------------------------------------------
 # Debt hotspots
 # ---------------------------------------------------------------------------
+
 
 def _top_debt(conn, limit=5):
     """Compute top debt files (simplified hotspot-weighted)."""
@@ -474,6 +480,7 @@ def _top_debt(conn, limit=5):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 @click.command()
 @click.option("--full", is_flag=True, help="Show all clusters and hotspots, not just top-N")
 @click.pass_context
@@ -483,7 +490,7 @@ def understand(ctx, full):
     Returns project structure, tech stack, architecture, health, hotspots,
     and a suggested reading order. Designed for AI agents.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     root = find_project_root()
 
@@ -495,18 +502,18 @@ def understand(ctx, full):
 
         # --- Languages ---
         lang_rows = conn.execute(
-            "SELECT language, COUNT(*) as cnt FROM files "
-            "WHERE language IS NOT NULL "
-            "GROUP BY language ORDER BY cnt DESC"
+            "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
         ).fetchall()
         languages = []
         for r in lang_rows:
             pct = round(r["cnt"] * 100 / file_count, 1) if file_count else 0
-            languages.append({
-                "name": r["language"],
-                "files": r["cnt"],
-                "pct": pct,
-            })
+            languages.append(
+                {
+                    "name": r["language"],
+                    "files": r["cnt"],
+                    "pct": pct,
+                }
+            )
 
         # --- Tech stack ---
         frameworks = _detect_frameworks(conn)
@@ -516,6 +523,7 @@ def understand(ctx, full):
         try:
             from roam.graph.builder import build_symbol_graph
             from roam.graph.layers import detect_layers
+
             G = build_symbol_graph(conn)
             layer_map = detect_layers(G)
             layers = sorted(set(layer_map.values())) if layer_map else []
@@ -527,11 +535,10 @@ def understand(ctx, full):
 
         # Clusters
         cluster_rows = conn.execute(
-            "SELECT cluster_id, cluster_label, COUNT(*) as size "
-            "FROM clusters GROUP BY cluster_id ORDER BY size DESC"
+            "SELECT cluster_id, cluster_label, COUNT(*) as size FROM clusters GROUP BY cluster_id ORDER BY size DESC"
         ).fetchall()
         clusters_data = []
-        for cr in cluster_rows[:20 if full else 8]:
+        for cr in cluster_rows[: 20 if full else 8]:
             top_syms = conn.execute(
                 "SELECT s.name, s.kind FROM clusters c "
                 "JOIN symbols s ON c.symbol_id = s.id "
@@ -539,15 +546,18 @@ def understand(ctx, full):
                 "ORDER BY s.name LIMIT 5",
                 (cr["cluster_id"],),
             ).fetchall()
-            clusters_data.append({
-                "id": cr["cluster_id"],
-                "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
-                "size": cr["size"],
-                "top_symbols": [s["name"] for s in top_syms],
-            })
+            clusters_data.append(
+                {
+                    "id": cr["cluster_id"],
+                    "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
+                    "size": cr["size"],
+                    "top_symbols": [s["name"] for s in top_syms],
+                }
+            )
 
         # --- Health ---
         from roam.commands.metrics_history import collect_metrics
+
         health = collect_metrics(conn)
 
         # Worst issues
@@ -579,63 +589,98 @@ def understand(ctx, full):
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope("understand",
-                summary={
-                    "files": file_count,
-                    "symbols": sym_count,
-                    "health_score": health["health_score"],
-                    "languages": len(languages),
-                },
-                project={
-                    "name": root.name,
-                    "root": str(root),
-                    "files": file_count,
-                    "symbols": sym_count,
-                    "edges": edge_count,
-                },
-                tech_stack={
-                    "languages": languages,
-                    "frameworks": frameworks,
-                    "build": build_tool,
-                },
-                architecture={
-                    "layers": layers,
-                    "layer_count": len(layers),
-                    "entry_points": entry_points,
-                    "key_abstractions": key_abs,
-                    "clusters": clusters_data,
-                },
-                health_summary={
-                    "score": health["health_score"],
-                    "cycles": health["cycles"],
-                    "god_components": health["god_components"],
-                    "bottlenecks": health["bottlenecks"],
-                    "dead_exports": health["dead_exports"],
-                    "layer_violations": health["layer_violations"],
-                    "worst_issues": worst,
-                },
-                conventions=conventions_summary,
-                complexity=complexity_summary,
-                patterns=patterns_detected,
-                debt_hotspots=debt_hotspots,
-                hotspots=hotspots,
-                suggested_reading_order=reading_order,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "understand",
+                        summary={
+                            "files": file_count,
+                            "symbols": sym_count,
+                            "health_score": health["health_score"],
+                            "languages": len(languages),
+                        },
+                        project={
+                            "name": root.name,
+                            "root": str(root),
+                            "files": file_count,
+                            "symbols": sym_count,
+                            "edges": edge_count,
+                        },
+                        tech_stack={
+                            "languages": languages,
+                            "frameworks": frameworks,
+                            "build": build_tool,
+                        },
+                        architecture={
+                            "layers": layers,
+                            "layer_count": len(layers),
+                            "entry_points": entry_points,
+                            "key_abstractions": key_abs,
+                            "clusters": clusters_data,
+                        },
+                        health_summary={
+                            "score": health["health_score"],
+                            "cycles": health["cycles"],
+                            "god_components": health["god_components"],
+                            "bottlenecks": health["bottlenecks"],
+                            "dead_exports": health["dead_exports"],
+                            "layer_violations": health["layer_violations"],
+                            "worst_issues": worst,
+                        },
+                        conventions=conventions_summary,
+                        complexity=complexity_summary,
+                        patterns=patterns_detected,
+                        debt_hotspots=debt_hotspots,
+                        hotspots=hotspots,
+                        suggested_reading_order=reading_order,
+                    )
+                )
+            )
             return
 
         _understand_text(
-            root, file_count, sym_count, edge_count, languages,
-            frameworks, build_tool, layers, clusters_data, health,
-            worst, key_abs, entry_points, hotspots, conventions_summary,
-            complexity_summary, patterns_detected, debt_hotspots, reading_order,
+            root,
+            file_count,
+            sym_count,
+            edge_count,
+            languages,
+            frameworks,
+            build_tool,
+            layers,
+            clusters_data,
+            health,
+            worst,
+            key_abs,
+            entry_points,
+            hotspots,
+            conventions_summary,
+            complexity_summary,
+            patterns_detected,
+            debt_hotspots,
+            reading_order,
         )
 
 
 def _understand_text(
-    root, file_count, sym_count, edge_count, languages,
-    frameworks, build_tool, layers, clusters_data, health,
-    worst, key_abs, entry_points, hotspots, conventions_summary,
-    complexity_summary, patterns_detected, debt_hotspots, reading_order,
+    root,
+    file_count,
+    sym_count,
+    edge_count,
+    languages,
+    frameworks,
+    build_tool,
+    layers,
+    clusters_data,
+    health,
+    worst,
+    key_abs,
+    entry_points,
+    hotspots,
+    conventions_summary,
+    complexity_summary,
+    patterns_detected,
+    debt_hotspots,
+    reading_order,
 ):
     """Emit compact text output for the understand command."""
     lang_str = ", ".join(f"{l['name']} ({l['files']})" for l in languages[:5])
@@ -650,14 +695,12 @@ def _understand_text(
     click.echo(f"Languages: {lang_str}")
     click.echo(f"Stack: {fw_str} | Build: {build_str}")
     click.echo(f"Architecture: {len(layers)} layers, {len(clusters_data)} clusters")
-    click.echo(f"Health: {health['health_score']}/100"
-                f" — {', '.join(worst) if worst else 'no critical issues'}")
+    click.echo(f"Health: {health['health_score']}/100 — {', '.join(worst) if worst else 'no critical issues'}")
     click.echo()
 
     click.echo(f"Key abstractions ({len(key_abs)}):")
     for ka in key_abs[:10]:
-        click.echo(f"  {abbrev_kind(ka['kind'])}  {ka['name']:<40s}  "
-                    f"fan_in={ka['fan_in']:<3d}  {ka['location']}")
+        click.echo(f"  {abbrev_kind(ka['kind'])}  {ka['name']:<40s}  fan_in={ka['fan_in']:<3d}  {ka['location']}")
     if len(key_abs) > 10:
         click.echo(f"  (+{len(key_abs) - 10} more)")
     click.echo()
@@ -681,13 +724,14 @@ def _understand_text(
     if hotspots:
         click.echo(f"Hotspots ({len(hotspots)}):")
         for hs in hotspots[:5]:
-            click.echo(f"  {hs['path']:<50s}  churn={hs['churn']:<5d}  "
-                        f"authors={hs['authors']}  coupling={hs['coupling_partners']}")
+            click.echo(
+                f"  {hs['path']:<50s}  churn={hs['churn']:<5d}  "
+                f"authors={hs['authors']}  coupling={hs['coupling_partners']}"
+            )
         click.echo()
 
     if conventions_summary:
-        parts = [f"{kind}: {info['style']} ({info['pct']:.0f}%)"
-                 for kind, info in conventions_summary.items()]
+        parts = [f"{kind}: {info['style']} ({info['pct']:.0f}%)" for kind, info in conventions_summary.items()]
         click.echo(f"Conventions: {', '.join(parts)}")
         click.echo()
 
@@ -699,26 +743,19 @@ def _understand_text(
             f"{complexity_summary['high']} high"
         )
         if complexity_summary["worst"]:
-            worst_names = ", ".join(
-                f"{w['name']}({w['cc']})" for w in complexity_summary["worst"][:3]
-            )
+            worst_names = ", ".join(f"{w['name']}({w['cc']})" for w in complexity_summary["worst"][:3])
             click.echo(f"  Worst: {worst_names}")
         click.echo()
 
     if patterns_detected:
-        pat_str = ", ".join(
-            f"{p['type']}: {p['name']} ({p['count']})" for p in patterns_detected
-        )
+        pat_str = ", ".join(f"{p['type']}: {p['name']} ({p['count']})" for p in patterns_detected)
         click.echo(f"Patterns: {pat_str}")
         click.echo()
 
     if debt_hotspots:
         click.echo("Debt hotspots:")
         for d in debt_hotspots:
-            click.echo(
-                f"  {d['path']:<50s}  "
-                f"complexity={d['complexity']:<6}  churn={d['churn']}"
-            )
+            click.echo(f"  {d['path']:<50s}  complexity={d['complexity']:<6}  churn={d['churn']}")
         click.echo()
 
     click.echo("Suggested reading order:")

@@ -1,15 +1,10 @@
 """Tests for the shared symbol resolution module and line_start fix."""
 
-import sqlite3
-import subprocess
-import sys
-from pathlib import Path
-
 import pytest
 
-from tests.conftest import roam, git_init, index_in_process
-from roam.index.relations import _closest_symbol, _match_import_path
 from roam.index.parser import extract_vue_template, scan_template_references
+from roam.index.relations import _closest_symbol, _match_import_path
+from tests.conftest import git_init, index_in_process, roam
 
 
 @pytest.fixture(scope="module")
@@ -18,11 +13,7 @@ def resolve_project(tmp_path_factory):
     root = tmp_path_factory.mktemp("resolve_project")
 
     # Two files with the same function name 'deleteRow'
-    (root / "file_a.py").write_text(
-        "def deleteRow(table, idx):\n"
-        "    '''Delete a row from a table.'''\n"
-        "    pass\n"
-    )
+    (root / "file_a.py").write_text("def deleteRow(table, idx):\n    '''Delete a row from a table.'''\n    pass\n")
     (root / "file_b.py").write_text(
         "from file_a import deleteRow\n\n"
         "def deleteRow(grid, row_id):\n"
@@ -34,17 +25,11 @@ def resolve_project(tmp_path_factory):
 
     # A file that calls file_a's deleteRow multiple times (gives it more edges)
     (root / "file_c.py").write_text(
-        "from file_a import deleteRow\n\n"
-        "def cleanup():\n"
-        "    deleteRow('users', 0)\n"
-        "    deleteRow('posts', 1)\n"
+        "from file_a import deleteRow\n\ndef cleanup():\n    deleteRow('users', 0)\n    deleteRow('posts', 1)\n"
     )
 
     # Unique symbol for basic lookup
-    (root / "utils.py").write_text(
-        "def uniqueHelper():\n"
-        "    return 42\n"
-    )
+    (root / "utils.py").write_text("def uniqueHelper():\n    return 42\n")
 
     git_init(root)
 
@@ -120,42 +105,48 @@ def test_context_command_uses_resolve(resolve_project):
 
 # ---- Unit tests for _closest_symbol with line_start data ----
 
+
 class TestClosestSymbol:
     """Verify _closest_symbol uses line_end containment for correct attribution."""
 
     def _make_file_symbols(self, symbols_data):
         """Build file_symbols dict from list of (name, line_start, line_end) tuples."""
-        syms = [{"name": n, "line_start": ls, "line_end": le, "id": i}
-                for i, (n, ls, le) in enumerate(symbols_data)]
+        syms = [{"name": n, "line_start": ls, "line_end": le, "id": i} for i, (n, ls, le) in enumerate(symbols_data)]
         return {"test.vue": syms}
 
     def test_picks_enclosing_function(self):
         """Reference at line 25 should resolve to funcB (line 20-35), not funcA (line 5-15)."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 20, 35),
-            ("funcC", 40, 60),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 20, 35),
+                ("funcC", 40, 60),
+            ]
+        )
         result = _closest_symbol("test.vue", 25, file_symbols)
         assert result is not None
         assert result["name"] == "funcB"
 
     def test_picks_first_when_before_all(self):
         """Reference at line 1 should resolve to the first symbol (no containment)."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 20, 35),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 20, 35),
+            ]
+        )
         result = _closest_symbol("test.vue", 1, file_symbols)
         assert result is not None
         assert result["name"] == "funcA"
 
     def test_after_all_functions_returns_first(self):
         """Reference after all function bodies → module scope → returns first symbol."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 20, 35),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 20, 35),
+            ]
+        )
         result = _closest_symbol("test.vue", 100, file_symbols)
         assert result is not None
         # No function contains line 100 → module scope → returns syms[0]
@@ -168,21 +159,25 @@ class TestClosestSymbol:
 
     def test_exact_line_match(self):
         """Reference at exact function start line should match that function."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 20, 35),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 20, 35),
+            ]
+        )
         result = _closest_symbol("test.vue", 20, file_symbols)
         assert result is not None
         assert result["name"] == "funcB"
 
     def test_with_zero_line_end_falls_to_first(self):
         """Symbols with line_end=0 (no data) → no containment → returns first symbol."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 0, 0),
-            ("funcB", 0, 0),
-            ("funcC", 0, 0),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 0, 0),
+                ("funcB", 0, 0),
+                ("funcC", 0, 0),
+            ]
+        )
         # With all line_end=0, no containment match → returns syms[0]
         result = _closest_symbol("test.vue", 25, file_symbols)
         assert result is not None
@@ -197,10 +192,10 @@ class TestIndexerLineStart:
         root = tmp_path / "linestart_project"
         root.mkdir()
         (root / "example.py").write_text(
-            "def first_func():\n"     # line 1
+            "def first_func():\n"  # line 1
             "    pass\n"
             "\n"
-            "def second_func():\n"    # line 4
+            "def second_func():\n"  # line 4
             "    first_func()\n"
         )
         git_init(root)
@@ -222,14 +217,14 @@ class TestIndexerLineStart:
         root.mkdir()
         # Vue file where template calls handleClick defined in script
         (root / "App.vue").write_text(
-            '<template>\n'
+            "<template>\n"
             '  <button @click="handleClick">Click</button>\n'
-            '</template>\n'
+            "</template>\n"
             '<script setup lang="ts">\n'
-            'function handleClick() {\n'
+            "function handleClick() {\n"
             '  console.log("clicked")\n'
-            '}\n'
-            '</script>\n'
+            "}\n"
+            "</script>\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -245,12 +240,13 @@ class TestIndexerLineStart:
 
 # ---- Bug 1: Nested <template> extraction tests ----
 
+
 class TestExtractVueTemplate:
     """Verify extract_vue_template handles nested <template #slot> tags."""
 
     def test_simple_template_unchanged(self):
         """No nesting — same result as before."""
-        source = b'<template>\n  <div>Hello</div>\n</template>\n<script></script>'
+        source = b"<template>\n  <div>Hello</div>\n</template>\n<script></script>"
         result = extract_vue_template(source)
         assert result is not None
         content, start_line = result
@@ -261,18 +257,18 @@ class TestExtractVueTemplate:
     def test_nested_template_returns_full_content(self):
         """Source with <template #slot> nested tag — content after inner </template> is captured."""
         source = (
-            b'<template>\n'           # L1: outer open
-            b'  <div>\n'              # L2
-            b'    <template #header>\n'  # L3: nested open
-            b'      <h1>Title</h1>\n' # L4
-            b'    </template>\n'      # L5: nested close (old regex stopped here!)
-            b'    <p>After nested</p>\n'  # L6: must be captured
+            b"<template>\n"  # L1: outer open
+            b"  <div>\n"  # L2
+            b"    <template #header>\n"  # L3: nested open
+            b"      <h1>Title</h1>\n"  # L4
+            b"    </template>\n"  # L5: nested close (old regex stopped here!)
+            b"    <p>After nested</p>\n"  # L6: must be captured
             b'    <button @click="handleClick">Go</button>\n'  # L7
-            b'  </div>\n'             # L8
-            b'</template>\n'          # L9: outer close
+            b"  </div>\n"  # L8
+            b"</template>\n"  # L9: outer close
             b'<script setup lang="ts">\n'
-            b'function handleClick() {}\n'
-            b'</script>\n'
+            b"function handleClick() {}\n"
+            b"</script>\n"
         )
         result = extract_vue_template(source)
         assert result is not None
@@ -286,14 +282,14 @@ class TestExtractVueTemplate:
     def test_deeply_nested_templates(self):
         """3 levels of nesting."""
         source = (
-            b'<template>\n'
-            b'  <template #outer>\n'
-            b'    <template #inner>\n'
-            b'      <span>Deep</span>\n'
-            b'    </template>\n'
-            b'  </template>\n'
-            b'  <div>After all nesting</div>\n'
-            b'</template>\n'
+            b"<template>\n"
+            b"  <template #outer>\n"
+            b"    <template #inner>\n"
+            b"      <span>Deep</span>\n"
+            b"    </template>\n"
+            b"  </template>\n"
+            b"  <div>After all nesting</div>\n"
+            b"</template>\n"
         )
         result = extract_vue_template(source)
         assert result is not None
@@ -303,24 +299,19 @@ class TestExtractVueTemplate:
 
     def test_no_template_returns_none(self):
         """File without <template> returns None."""
-        source = b'<script setup>\nconst x = 1\n</script>\n'
+        source = b"<script setup>\nconst x = 1\n</script>\n"
         result = extract_vue_template(source)
         assert result is None
 
     def test_malformed_no_closing_returns_none(self):
         """Malformed file with no matching </template> returns None."""
-        source = b'<template>\n  <div>Open forever\n'
+        source = b"<template>\n  <div>Open forever\n"
         result = extract_vue_template(source)
         assert result is None
 
     def test_self_closing_template_ignored(self):
         """Self-closing <template /> shouldn't affect depth counting."""
-        source = (
-            b'<template>\n'
-            b'  <template />\n'
-            b'  <div>Still here</div>\n'
-            b'</template>\n'
-        )
+        source = b"<template>\n  <template />\n  <div>Still here</div>\n</template>\n"
         result = extract_vue_template(source)
         assert result is not None
         content, _ = result
@@ -331,19 +322,19 @@ class TestExtractVueTemplate:
         root = tmp_path / "nested_template"
         root.mkdir()
         (root / "Modal.vue").write_text(
-            '<template>\n'
-            '  <div>\n'
-            '    <template #header>\n'
-            '      <h1>Title</h1>\n'
-            '    </template>\n'
+            "<template>\n"
+            "  <div>\n"
+            "    <template #header>\n"
+            "      <h1>Title</h1>\n"
+            "    </template>\n"
             '    <button @click="handleSubmit">Submit</button>\n'
-            '  </div>\n'
-            '</template>\n'
+            "  </div>\n"
+            "</template>\n"
             '<script setup lang="ts">\n'
-            'function handleSubmit() {\n'
+            "function handleSubmit() {\n"
             '  console.log("submitted")\n'
-            '}\n'
-            '</script>\n'
+            "}\n"
+            "</script>\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -355,6 +346,7 @@ class TestExtractVueTemplate:
 
 
 # ---- Bug 2: Import-aware resolution tests ----
+
 
 class TestMatchImportPath:
     """Verify _match_import_path filters candidates by import path."""
@@ -424,24 +416,14 @@ class TestImportAwareResolution:
         composables.mkdir()
 
         # Definition A: the "correct" one (exported from composables)
-        (composables / "helpers.py").write_text(
-            "def formatValue(x):\n"
-            "    '''Format a value.'''\n"
-            "    return str(x)\n"
-        )
+        (composables / "helpers.py").write_text("def formatValue(x):\n    '''Format a value.'''\n    return str(x)\n")
 
         # Definition B: a different file also defines formatValue
-        (src / "utils.py").write_text(
-            "def formatValue(x):\n"
-            "    '''Different formatValue.'''\n"
-            "    return repr(x)\n"
-        )
+        (src / "utils.py").write_text("def formatValue(x):\n    '''Different formatValue.'''\n    return repr(x)\n")
 
         # Consumer: imports from composables
         (src / "consumer.py").write_text(
-            "from composables.helpers import formatValue\n\n"
-            "def process():\n"
-            "    formatValue(42)\n"
+            "from composables.helpers import formatValue\n\ndef process():\n    formatValue(42)\n"
         )
 
         git_init(root)
@@ -457,19 +439,9 @@ class TestImportAwareResolution:
         root = tmp_path / "py_import"
         root.mkdir()
 
-        (root / "module_a.py").write_text(
-            "def sharedFunc():\n"
-            "    return 'A'\n"
-        )
-        (root / "module_b.py").write_text(
-            "def sharedFunc():\n"
-            "    return 'B'\n"
-        )
-        (root / "main.py").write_text(
-            "from module_a import sharedFunc\n\n"
-            "def run():\n"
-            "    sharedFunc()\n"
-        )
+        (root / "module_a.py").write_text("def sharedFunc():\n    return 'A'\n")
+        (root / "module_b.py").write_text("def sharedFunc():\n    return 'B'\n")
+        (root / "main.py").write_text("from module_a import sharedFunc\n\ndef run():\n    sharedFunc()\n")
 
         git_init(root)
         out, rc = index_in_process(root)
@@ -483,19 +455,13 @@ class TestImportAwareResolution:
 
 # ---- Bug 1 (v4.3.1): Multi-line template attribute tests ----
 
+
 class TestMultilineTemplateAttributes:
     """Verify scan_template_references handles multi-line attribute values."""
 
     def test_multiline_class_binding(self):
         """:class="cn(\n  isRowFocused(row)\n)" → isRowFocused detected."""
-        template = (
-            '<div\n'
-            '  :class="cn(\n'
-            '    isRowFocused(row) && \'font-semibold\'\n'
-            '  )"\n'
-            '>\n'
-            '</div>'
-        )
+        template = "<div\n  :class=\"cn(\n    isRowFocused(row) && 'font-semibold'\n  )\"\n>\n</div>"
         known = {"cn", "isRowFocused"}
         refs = scan_template_references(template, 1, known, "Test.vue")
         names = {r["target_name"] for r in refs}
@@ -503,13 +469,7 @@ class TestMultilineTemplateAttributes:
 
     def test_multiline_vif(self):
         """v-if="condition &&\n  otherCondition" → both detected."""
-        template = (
-            '<div\n'
-            '  v-if="condition &&\n'
-            '    otherCondition"\n'
-            '>\n'
-            '</div>'
-        )
+        template = '<div\n  v-if="condition &&\n    otherCondition"\n>\n</div>'
         known = {"condition", "otherCondition"}
         refs = scan_template_references(template, 1, known, "Test.vue")
         names = {r["target_name"] for r in refs}
@@ -527,10 +487,10 @@ class TestMultilineTemplateAttributes:
     def test_multiline_line_number_correct(self):
         """Line number computed from match position in full content."""
         template = (
-            '<div>line1</div>\n'       # line 10 (start_line=10), offset 0
-            '<span\n'                   # line 11, offset 1
-            '  :class="myFunc(x)"\n'   # line 12, offset 2 — :class starts here
-            '></span>\n'
+            "<div>line1</div>\n"  # line 10 (start_line=10), offset 0
+            "<span\n"  # line 11, offset 1
+            '  :class="myFunc(x)"\n'  # line 12, offset 2 — :class starts here
+            "></span>\n"
         )
         known = {"myFunc"}
         refs = scan_template_references(template, 10, known, "Test.vue")
@@ -543,21 +503,21 @@ class TestMultilineTemplateAttributes:
         root = tmp_path / "multiline_vue"
         root.mkdir()
         (root / "App.vue").write_text(
-            '<template>\n'
-            '  <div\n'
+            "<template>\n"
+            "  <div\n"
             '    :class="cn(\n'
-            '      isActive(item) && \'font-bold\',\n'
-            '      \'p-2\'\n'
+            "      isActive(item) && 'font-bold',\n"
+            "      'p-2'\n"
             '    )"\n'
-            '  >\n'
-            '    {{ label }}\n'
-            '  </div>\n'
-            '</template>\n'
+            "  >\n"
+            "    {{ label }}\n"
+            "  </div>\n"
+            "</template>\n"
             '<script setup lang="ts">\n'
             'function cn(...args: any[]) { return args.filter(Boolean).join(" ") }\n'
-            'function isActive(item: any) { return item.active }\n'
+            "function isActive(item: any) { return item.active }\n"
             'const label = "hello"\n'
-            '</script>\n'
+            "</script>\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -570,6 +530,7 @@ class TestMultilineTemplateAttributes:
 
 # ---- Bug 2 (v4.3.1): Identifier in arguments tests ----
 
+
 class TestIdentifierInArguments:
     """Verify identifiers passed as function arguments are extracted as references."""
 
@@ -578,13 +539,13 @@ class TestIdentifierInArguments:
         root = tmp_path / "callback_ref"
         root.mkdir()
         (root / "app.js").write_text(
-            'function handler() {\n'
+            "function handler() {\n"
             '  console.log("handled")\n'
-            '}\n'
-            '\n'
-            'function setup() {\n'
+            "}\n"
+            "\n"
+            "function setup() {\n"
             '  document.addEventListener("click", handler)\n'
-            '}\n'
+            "}\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -600,13 +561,7 @@ class TestIdentifierInArguments:
         root = tmp_path / "nested_cb"
         root.mkdir()
         (root / "app.js").write_text(
-            'function doWork() {\n'
-            '  return 42\n'
-            '}\n'
-            '\n'
-            'function init() {\n'
-            '  setTimeout(doWork, 100)\n'
-            '}\n'
+            "function doWork() {\n  return 42\n}\n\nfunction init() {\n  setTimeout(doWork, 100)\n}\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -619,6 +574,7 @@ class TestIdentifierInArguments:
 
 # ---- Bug 3 (v4.3.1): Shorthand property identifier tests ----
 
+
 class TestShorthandPropertyIdentifier:
     """Verify shorthand properties in objects are extracted as references."""
 
@@ -627,14 +583,14 @@ class TestShorthandPropertyIdentifier:
         root = tmp_path / "shorthand_prop"
         root.mkdir()
         (root / "Component.vue").write_text(
-            '<template>\n'
-            '  <div>Test</div>\n'
-            '</template>\n'
+            "<template>\n"
+            "  <div>Test</div>\n"
+            "</template>\n"
             '<script setup lang="ts">\n'
-            'function fn1() { return 1 }\n'
-            'function fn2() { return 2 }\n'
-            'defineExpose({ fn1, fn2 })\n'
-            '</script>\n'
+            "function fn1() { return 1 }\n"
+            "function fn2() { return 2 }\n"
+            "defineExpose({ fn1, fn2 })\n"
+            "</script>\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -651,13 +607,13 @@ class TestShorthandPropertyIdentifier:
         root = tmp_path / "shorthand_vs_pair"
         root.mkdir()
         (root / "app.js").write_text(
-            'function fn1() { return 1 }\n'
-            'function fn2() { return 2 }\n'
-            '\n'
-            'function setup() {\n'
-            '  const obj = { fn1, key: fn2() }\n'
-            '  return obj\n'
-            '}\n'
+            "function fn1() { return 1 }\n"
+            "function fn2() { return 2 }\n"
+            "\n"
+            "function setup() {\n"
+            "  const obj = { fn1, key: fn2() }\n"
+            "  return obj\n"
+            "}\n"
         )
         git_init(root)
         out, rc = index_in_process(root)
@@ -669,21 +625,23 @@ class TestShorthandPropertyIdentifier:
 
 # ---- Bug 4 (v4.3.1): _closest_symbol with line_end tests ----
 
+
 class TestClosestSymbolLineEnd:
     """Verify _closest_symbol uses line_end for containment checks."""
 
     def _make_file_symbols(self, symbols_data):
         """Build file_symbols dict from list of (name, line_start, line_end) tuples."""
-        syms = [{"name": n, "line_start": ls, "line_end": le, "id": i}
-                for i, (n, ls, le) in enumerate(symbols_data)]
+        syms = [{"name": n, "line_start": ls, "line_end": le, "id": i} for i, (n, ls, le) in enumerate(symbols_data)]
         return {"test.vue": syms}
 
     def test_ref_after_function_end_not_self(self):
         """Ref at L100, function ends at L80 → should NOT return that function."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 10, 30),
-            ("funcB", 50, 80),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 10, 30),
+                ("funcB", 50, 80),
+            ]
+        )
         # Ref at line 100 is after funcB ends — module scope
         result = _closest_symbol("test.vue", 100, file_symbols)
         assert result is not None
@@ -692,21 +650,25 @@ class TestClosestSymbolLineEnd:
 
     def test_ref_inside_function_body(self):
         """Ref at L25, function L20-50 → returns that function."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 20, 50),
-            ("funcC", 60, 90),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 20, 50),
+                ("funcC", 60, 90),
+            ]
+        )
         result = _closest_symbol("test.vue", 25, file_symbols)
         assert result is not None
         assert result["name"] == "funcB"
 
     def test_module_scope_ref_returns_first(self):
         """Ref at module scope (between functions) → returns first symbol."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 15),
-            ("funcB", 30, 50),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 15),
+                ("funcB", 30, 50),
+            ]
+        )
         # Line 20 is between funcA (ends 15) and funcB (starts 30) — module scope
         result = _closest_symbol("test.vue", 20, file_symbols)
         assert result is not None
@@ -714,10 +676,12 @@ class TestClosestSymbolLineEnd:
 
     def test_nested_functions_picks_innermost(self):
         """Nested functions: picks the innermost (last matching) containing symbol."""
-        file_symbols = self._make_file_symbols([
-            ("outer", 1, 100),
-            ("inner", 20, 80),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("outer", 1, 100),
+                ("inner", 20, 80),
+            ]
+        )
         result = _closest_symbol("test.vue", 50, file_symbols)
         assert result is not None
         # Both contain line 50, but inner is last → most nested wins
@@ -725,10 +689,12 @@ class TestClosestSymbolLineEnd:
 
     def test_backward_compat_no_line_end(self):
         """Symbols without line_end (le=0) fall through to first-symbol fallback."""
-        file_symbols = self._make_file_symbols([
-            ("funcA", 5, 0),
-            ("funcB", 20, 0),
-        ])
+        file_symbols = self._make_file_symbols(
+            [
+                ("funcA", 5, 0),
+                ("funcB", 20, 0),
+            ]
+        )
         # No symbol has valid line_end, so no containment match → returns syms[0]
         result = _closest_symbol("test.vue", 25, file_symbols)
         assert result is not None
@@ -736,6 +702,7 @@ class TestClosestSymbolLineEnd:
 
 
 # ---- Integration: callback argument creates edge ----
+
 
 class TestCallbackArgumentEdge:
     """Integration test: callback passed by reference creates a graph edge."""
@@ -745,23 +712,23 @@ class TestCallbackArgumentEdge:
         root = tmp_path / "callback_edge"
         root.mkdir()
         (root / "Component.vue").write_text(
-            '<template>\n'
-            '  <div>Test</div>\n'
-            '</template>\n'
+            "<template>\n"
+            "  <div>Test</div>\n"
+            "</template>\n"
             '<script setup lang="ts">\n'
             'import { onMounted, onUnmounted } from "vue"\n'
-            '\n'
-            'function handleKeyboard(e: KeyboardEvent) {\n'
-            '  console.log(e.key)\n'
-            '}\n'
-            '\n'
-            'onMounted(() => {\n'
+            "\n"
+            "function handleKeyboard(e: KeyboardEvent) {\n"
+            "  console.log(e.key)\n"
+            "}\n"
+            "\n"
+            "onMounted(() => {\n"
             '  document.addEventListener("keydown", handleKeyboard)\n'
-            '})\n'
-            'onUnmounted(() => {\n'
+            "})\n"
+            "onUnmounted(() => {\n"
             '  document.removeEventListener("keydown", handleKeyboard)\n'
-            '})\n'
-            '</script>\n'
+            "})\n"
+            "</script>\n"
         )
         git_init(root)
         out, rc = index_in_process(root)

@@ -6,58 +6,44 @@ import json
 import os
 
 import pytest
-from click.testing import CliRunner
 
-from tests.conftest import index_in_process, invoke_cli, parse_json_output, assert_json_envelope
-
+from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Shared fixture: a multi-module project with clear architectural layers
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def partition_project(project_factory):
     """A project with distinct modules suitable for partitioning."""
-    return project_factory({
-        "auth/login.py": (
-            "from auth.tokens import create_token\n"
-            "def authenticate(u, p): return create_token(u)\n"
-        ),
-        "auth/tokens.py": (
-            "def create_token(user): return 'tok'\n"
-            "def verify_token(t): return True\n"
-        ),
-        "billing/invoice.py": (
-            "from billing.tax import calc_tax\n"
-            "def create_invoice(order): return calc_tax(order)\n"
-        ),
-        "billing/tax.py": (
-            "def calc_tax(order): return order * 0.1\n"
-        ),
-        "api/routes.py": (
-            "from auth.login import authenticate\n"
-            "from billing.invoice import create_invoice\n"
-            "def handle(r): authenticate(r, r); return create_invoice(r)\n"
-        ),
-        "models.py": (
-            "class User:\n"
-            "    pass\n"
-            "class Order:\n"
-            "    pass\n"
-        ),
-        "tests/test_auth.py": (
-            "def test_authenticate(): pass\n"
-            "def test_create_token(): pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "auth/login.py": ("from auth.tokens import create_token\ndef authenticate(u, p): return create_token(u)\n"),
+            "auth/tokens.py": ("def create_token(user): return 'tok'\ndef verify_token(t): return True\n"),
+            "billing/invoice.py": (
+                "from billing.tax import calc_tax\ndef create_invoice(order): return calc_tax(order)\n"
+            ),
+            "billing/tax.py": ("def calc_tax(order): return order * 0.1\n"),
+            "api/routes.py": (
+                "from auth.login import authenticate\n"
+                "from billing.invoice import create_invoice\n"
+                "def handle(r): authenticate(r, r); return create_invoice(r)\n"
+            ),
+            "models.py": ("class User:\n    pass\nclass Order:\n    pass\n"),
+            "tests/test_auth.py": ("def test_authenticate(): pass\ndef test_create_token(): pass\n"),
+        }
+    )
 
 
 @pytest.fixture
 def minimal_project(project_factory):
     """A tiny single-file project."""
-    return project_factory({
-        "app.py": "def main(): pass\n",
-    })
+    return project_factory(
+        {
+            "app.py": "def main(): pass\n",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -70,8 +56,8 @@ class TestPartitionManifest:
 
     def test_manifest_returns_partitions(self, partition_project):
         """Result has a 'partitions' list."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -86,8 +72,8 @@ class TestPartitionManifest:
 
     def test_manifest_auto_agents(self, partition_project):
         """n_agents=None auto-detects from cluster count."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -101,8 +87,8 @@ class TestPartitionManifest:
 
     def test_manifest_has_verdict(self, partition_project):
         """Manifest includes a verdict string."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -117,8 +103,8 @@ class TestPartitionManifest:
 
     def test_manifest_conflict_probability_in_range(self, partition_project):
         """overall_conflict_probability is between 0 and 1."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -132,14 +118,26 @@ class TestPartitionManifest:
 
     def test_partition_has_required_fields(self, partition_project):
         """Each partition has all required fields."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         required = {
-            "id", "label", "role", "files", "file_count", "symbol_count",
-            "key_symbols", "complexity", "churn", "test_coverage",
-            "conflict_risk", "cross_partition_edges", "cochange_score",
-            "agent", "difficulty_score", "difficulty_label",
+            "id",
+            "label",
+            "role",
+            "files",
+            "file_count",
+            "symbol_count",
+            "key_symbols",
+            "complexity",
+            "churn",
+            "test_coverage",
+            "conflict_risk",
+            "cross_partition_edges",
+            "cochange_score",
+            "agent",
+            "difficulty_score",
+            "difficulty_label",
         }
 
         old_cwd = os.getcwd()
@@ -149,16 +147,14 @@ class TestPartitionManifest:
                 result = compute_partition_manifest(conn, n_agents=2)
                 for p in result["partitions"]:
                     missing = required - set(p.keys())
-                    assert not missing, (
-                        f"Partition {p.get('id')} missing fields: {missing}"
-                    )
+                    assert not missing, f"Partition {p.get('id')} missing fields: {missing}"
         finally:
             os.chdir(old_cwd)
 
     def test_partition_test_coverage_in_range(self, partition_project):
         """test_coverage is between 0.0 and 1.0."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -167,16 +163,14 @@ class TestPartitionManifest:
                 result = compute_partition_manifest(conn, n_agents=2)
                 for p in result["partitions"]:
                     tc = p["test_coverage"]
-                    assert 0.0 <= tc <= 1.0, (
-                        f"Partition {p['id']} test_coverage {tc} out of range"
-                    )
+                    assert 0.0 <= tc <= 1.0, f"Partition {p['id']} test_coverage {tc} out of range"
         finally:
             os.chdir(old_cwd)
 
     def test_partition_complexity_non_negative(self, partition_project):
         """complexity is non-negative."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -184,16 +178,14 @@ class TestPartitionManifest:
             with open_db(readonly=True) as conn:
                 result = compute_partition_manifest(conn, n_agents=2)
                 for p in result["partitions"]:
-                    assert p["complexity"] >= 0, (
-                        f"Partition {p['id']} has negative complexity"
-                    )
+                    assert p["complexity"] >= 0, f"Partition {p['id']} has negative complexity"
         finally:
             os.chdir(old_cwd)
 
     def test_partition_conflict_risk_valid_label(self, partition_project):
         """conflict_risk is LOW, MEDIUM, or HIGH."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -209,8 +201,8 @@ class TestPartitionManifest:
 
     def test_partition_key_symbols_have_pagerank(self, partition_project):
         """key_symbols entries have name, kind, pagerank, file."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -229,8 +221,8 @@ class TestPartitionManifest:
 
     def test_dependencies_structure(self, partition_project):
         """dependencies list has proper structure."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -248,8 +240,8 @@ class TestPartitionManifest:
 
     def test_conflict_hotspots_structure(self, partition_project):
         """conflict_hotspots entries reference multiple partitions."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -267,8 +259,8 @@ class TestPartitionManifest:
 
     def test_merge_order_valid(self, partition_project):
         """merge_order is a list of valid partition IDs."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -284,11 +276,13 @@ class TestPartitionManifest:
 
     def test_empty_graph(self, project_factory):
         """Empty project produces an empty manifest."""
-        proj = project_factory({
-            "empty.txt": "# nothing\n",
-        })
-        from roam.db.connection import open_db
+        proj = project_factory(
+            {
+                "empty.txt": "# nothing\n",
+            }
+        )
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -302,8 +296,8 @@ class TestPartitionManifest:
 
     def test_agents_assigned_to_all_partitions(self, partition_project):
         """Every partition has an agent assignment."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -318,8 +312,8 @@ class TestPartitionManifest:
 
     def test_minimal_project(self, minimal_project):
         """Single-file project is handled correctly."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_partition import compute_partition_manifest
+        from roam.db.connection import open_db
 
         old_cwd = os.getcwd()
         try:
@@ -342,8 +336,8 @@ class TestClaudeTeamsFormat:
 
     def test_claude_teams_structure(self, partition_project):
         """claude-teams format has agents and coordination."""
+        from roam.commands.cmd_partition import _to_claude_teams, compute_partition_manifest
         from roam.db.connection import open_db
-        from roam.commands.cmd_partition import compute_partition_manifest, _to_claude_teams
 
         old_cwd = os.getcwd()
         try:
@@ -359,8 +353,8 @@ class TestClaudeTeamsFormat:
 
     def test_claude_teams_agent_has_scope(self, partition_project):
         """Each agent has scope with write_files and read_only_deps."""
+        from roam.commands.cmd_partition import _to_claude_teams, compute_partition_manifest
         from roam.db.connection import open_db
-        from roam.commands.cmd_partition import compute_partition_manifest, _to_claude_teams
 
         old_cwd = os.getcwd()
         try:
@@ -379,8 +373,8 @@ class TestClaudeTeamsFormat:
 
     def test_claude_teams_coordination_has_merge_order(self, partition_project):
         """Coordination section includes merge_order and hotspots."""
+        from roam.commands.cmd_partition import _to_claude_teams, compute_partition_manifest
         from roam.db.connection import open_db
-        from roam.commands.cmd_partition import compute_partition_manifest, _to_claude_teams
 
         old_cwd = os.getcwd()
         try:
@@ -405,32 +399,42 @@ class TestRoleSuggestion:
     """Tests for the _suggest_role helper."""
 
     def test_api_role(self):
-        from roam.commands.cmd_partition import _suggest_role
         from collections import Counter
+
+        from roam.commands.cmd_partition import _suggest_role
+
         role = _suggest_role(["api/routes.py", "api/middleware.py"], Counter())
         assert role == "API Layer"
 
     def test_auth_role(self):
-        from roam.commands.cmd_partition import _suggest_role
         from collections import Counter
+
+        from roam.commands.cmd_partition import _suggest_role
+
         role = _suggest_role(["auth/login.py", "auth/tokens.py"], Counter())
         assert role == "Auth Layer"
 
     def test_test_role(self):
-        from roam.commands.cmd_partition import _suggest_role
         from collections import Counter
+
+        from roam.commands.cmd_partition import _suggest_role
+
         role = _suggest_role(["tests/test_foo.py"], Counter())
         assert role == "Test Layer"
 
     def test_language_fallback(self):
-        from roam.commands.cmd_partition import _suggest_role
         from collections import Counter
+
+        from roam.commands.cmd_partition import _suggest_role
+
         role = _suggest_role(["foo/bar.py"], Counter({"Python": 5}))
         assert role == "Python Module"
 
     def test_general_fallback(self):
-        from roam.commands.cmd_partition import _suggest_role
         from collections import Counter
+
+        from roam.commands.cmd_partition import _suggest_role
+
         role = _suggest_role([], Counter())
         assert role == "General Module"
 
@@ -445,24 +449,22 @@ class TestPartitionCommand:
 
     def test_cli_partition_runs(self, partition_project, cli_runner):
         """Command exits with code 0."""
-        result = invoke_cli(
-            cli_runner, ["partition", "--agents", "3"], cwd=partition_project
-        )
+        result = invoke_cli(cli_runner, ["partition", "--agents", "3"], cwd=partition_project)
         assert result.exit_code == 0, f"Failed:\n{result.output}"
 
     def test_cli_partition_verdict_first(self, partition_project, cli_runner):
         """Text output starts with VERDICT."""
-        result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2"], cwd=partition_project
-        )
+        result = invoke_cli(cli_runner, ["partition", "--agents", "2"], cwd=partition_project)
         assert result.exit_code == 0
         assert result.output.strip().startswith("VERDICT:")
 
     def test_cli_partition_json(self, partition_project, cli_runner):
         """JSON output is a valid envelope with command='partition'."""
         result = invoke_cli(
-            cli_runner, ["partition", "--agents", "3"],
-            cwd=partition_project, json_mode=True,
+            cli_runner,
+            ["partition", "--agents", "3"],
+            cwd=partition_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="partition")
         assert_json_envelope(data, command="partition")
@@ -474,8 +476,10 @@ class TestPartitionCommand:
     def test_cli_partition_json_summary(self, partition_project, cli_runner):
         """JSON summary has required fields."""
         result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2"],
-            cwd=partition_project, json_mode=True,
+            cli_runner,
+            ["partition", "--agents", "2"],
+            cwd=partition_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="partition")
         summary = data["summary"]
@@ -486,8 +490,10 @@ class TestPartitionCommand:
     def test_cli_partition_auto_agents(self, partition_project, cli_runner):
         """Without --agents, auto-detects cluster count."""
         result = invoke_cli(
-            cli_runner, ["partition"],
-            cwd=partition_project, json_mode=True,
+            cli_runner,
+            ["partition"],
+            cwd=partition_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="partition")
         assert data["summary"]["total_partitions"] >= 2
@@ -495,7 +501,8 @@ class TestPartitionCommand:
     def test_cli_partition_format_json(self, partition_project, cli_runner):
         """--format json outputs valid JSON even without --json flag."""
         result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2", "--format", "json"],
+            cli_runner,
+            ["partition", "--agents", "2", "--format", "json"],
             cwd=partition_project,
         )
         assert result.exit_code == 0
@@ -505,7 +512,8 @@ class TestPartitionCommand:
     def test_cli_partition_format_claude_teams(self, partition_project, cli_runner):
         """--format claude-teams outputs the teams structure."""
         result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2", "--format", "claude-teams"],
+            cli_runner,
+            ["partition", "--agents", "2", "--format", "claude-teams"],
             cwd=partition_project,
         )
         assert result.exit_code == 0
@@ -516,8 +524,10 @@ class TestPartitionCommand:
     def test_cli_partition_format_claude_teams_json(self, partition_project, cli_runner):
         """--json --format claude-teams wraps in envelope."""
         result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2", "--format", "claude-teams"],
-            cwd=partition_project, json_mode=True,
+            cli_runner,
+            ["partition", "--agents", "2", "--format", "claude-teams"],
+            cwd=partition_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="partition")
         assert_json_envelope(data, command="partition")
@@ -527,24 +537,21 @@ class TestPartitionCommand:
 
     def test_cli_partition_text_contains_partition_sections(self, partition_project, cli_runner):
         """Text output has PARTITION sections."""
-        result = invoke_cli(
-            cli_runner, ["partition", "--agents", "2"], cwd=partition_project
-        )
+        result = invoke_cli(cli_runner, ["partition", "--agents", "2"], cwd=partition_project)
         assert result.exit_code == 0
         assert "PARTITION 1" in result.output
         assert "PARTITION 2" in result.output
 
     def test_cli_partition_text_contains_conflict_info(self, partition_project, cli_runner):
         """Text output shows conflict risk per partition."""
-        result = invoke_cli(
-            cli_runner, ["partition", "--agents", "3"], cwd=partition_project
-        )
+        result = invoke_cli(cli_runner, ["partition", "--agents", "3"], cwd=partition_project)
         assert result.exit_code == 0
         assert "Conflict risk:" in result.output
 
     def test_cli_partition_help(self, cli_runner):
         """--help works."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["partition", "--help"])
         assert result.exit_code == 0
         assert "--agents" in result.output

@@ -17,7 +17,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import sqlite3
 import sys
 from pathlib import Path
 
@@ -25,7 +24,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import assert_json_envelope, index_in_process, git_init
+from conftest import assert_json_envelope, git_init, index_in_process
 
 
 def _make_project(tmp_path_factory, files=None):
@@ -48,13 +47,7 @@ def _make_project(tmp_path_factory, files=None):
             "def get_user_by_email(email):\n"
             "    return None\n"
         ),
-        "search.py": (
-            "def search_users(query):\n"
-            "    pass\n"
-            "\n"
-            "def search_documents(query, limit=10):\n"
-            "    return []\n"
-        ),
+        "search.py": ("def search_users(query):\n    pass\n\ndef search_documents(query, limit=10):\n    return []\n"),
         "utils.py": (
             "def validate_email(email):\n"
             "    return chr(64) in email\n"
@@ -66,7 +59,7 @@ def _make_project(tmp_path_factory, files=None):
     if files:
         py_files.update(files)
     for fname, content in py_files.items():
-        (proj / fname).write_text(content, encoding='utf-8')
+        (proj / fname).write_text(content, encoding="utf-8")
     git_init(proj)
     index_in_process(proj)
     return proj
@@ -76,16 +69,19 @@ def _make_project(tmp_path_factory, files=None):
 # Unit tests: _format_explanation_text
 # ===========================================================================
 
+
 class TestFormatExplanationText:
     """Tests for _format_explanation_text()."""
 
     def test_empty_explanation(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         result = _format_explanation_text({})
         assert result == []
 
     def test_bm25_score_formatted(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         result = _format_explanation_text({"bm25_score": 3.14})
         assert len(result) == 1
         assert "BM25=3.1400" in result[0]
@@ -93,11 +89,13 @@ class TestFormatExplanationText:
 
     def test_bm25_zero_shown(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         result = _format_explanation_text({"bm25_score": 0.0})
         assert any("BM25=0.0000" in l for l in result)
 
     def test_matched_fields_shown(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         expl = {"matched_fields": ["name", "qualified_name"]}
         result = _format_explanation_text(expl)
         assert any("fields:" in l for l in result)
@@ -107,11 +105,13 @@ class TestFormatExplanationText:
 
     def test_empty_matched_fields_not_shown(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         result = _format_explanation_text({"matched_fields": []})
         assert not any("fields:" in l for l in result)
 
     def test_highlights_shown_with_markers(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         expl = {"highlights": {"name": "<<user>>Manager"}}
         result = _format_explanation_text(expl)
         assert any("match:" in l for l in result)
@@ -119,6 +119,7 @@ class TestFormatExplanationText:
 
     def test_highlight_truncated_at_80(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         long_hl = "<<x>>" + "a" * 100
         expl = {"highlights": {"name": long_hl}}
         result = _format_explanation_text(expl)
@@ -127,6 +128,7 @@ class TestFormatExplanationText:
 
     def test_term_counts_shown(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         expl = {"term_counts": {"name": 2, "signature": 1}}
         result = _format_explanation_text(expl)
         assert any("terms:" in l for l in result)
@@ -135,11 +137,13 @@ class TestFormatExplanationText:
 
     def test_empty_term_counts_not_shown(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         result = _format_explanation_text({"term_counts": {}})
         assert not any("terms:" in l for l in result)
 
     def test_full_explanation_all_sections(self):
         from roam.commands.cmd_search import _format_explanation_text
+
         expl = {
             "bm25_score": 5.5,
             "matched_fields": ["name"],
@@ -159,16 +163,20 @@ class TestFts5Available:
     """Tests for _fts5_available()."""
 
     def test_false_on_empty_db(self):
-        from roam.commands.cmd_search import _fts5_available
         import sqlite3 as _sq3
+
+        from roam.commands.cmd_search import _fts5_available
+
         conn = _sq3.connect(":memory:")
         conn.row_factory = _sq3.Row
         assert _fts5_available(conn) is False
         conn.close()
 
     def test_true_when_symbol_fts_exists(self):
-        from roam.commands.cmd_search import _fts5_available
         import sqlite3 as _sq3
+
+        from roam.commands.cmd_search import _fts5_available
+
         conn = _sq3.connect(":memory:")
         conn.row_factory = _sq3.Row
         try:
@@ -185,19 +193,23 @@ class TestBuildFtsQuery:
 
     def test_simple_pattern_not_empty(self):
         from roam.commands.cmd_search import _build_fts_query
+
         assert _build_fts_query("user") != ""
 
     def test_empty_pattern_returns_empty(self):
         from roam.commands.cmd_search import _build_fts_query
+
         assert _build_fts_query("") == ""
 
     def test_multi_word_pattern(self):
         from roam.commands.cmd_search import _build_fts_query
+
         result = _build_fts_query("auth manager")
         assert result != ""
 
     def test_camelcase_pattern(self):
         from roam.commands.cmd_search import _build_fts_query
+
         result = _build_fts_query("AuthManager")
         assert result != ""
 
@@ -207,22 +219,27 @@ class TestFts5ColumnLayout:
 
     def test_fts_columns_has_five_entries(self):
         from roam.commands.cmd_search import _FTS_COLUMNS
+
         assert len(_FTS_COLUMNS) == 5
 
     def test_fts_columns_order(self):
         from roam.commands.cmd_search import _FTS_COLUMNS
+
         assert _FTS_COLUMNS == ["name", "qualified_name", "signature", "kind", "file_path"]
 
     def test_bm25_weights_constant(self):
         from roam.commands.cmd_search import _BM25_WEIGHTS
+
         assert _BM25_WEIGHTS == "10.0, 5.0, 2.0, 1.0, 3.0"
 
     def test_name_is_column_zero(self):
         from roam.commands.cmd_search import _FTS_COLUMNS
+
         assert _FTS_COLUMNS[0] == "name"
 
     def test_file_path_is_column_four(self):
         from roam.commands.cmd_search import _FTS_COLUMNS
+
         assert _FTS_COLUMNS[4] == "file_path"
 
 
@@ -242,6 +259,7 @@ class TestSearchExplainText:
 
     def _run(self, *args):
         from roam.cli import cli
+
         return self.runner.invoke(cli, list(args), catch_exceptions=False)
 
     def test_explain_help_shows_option(self):
@@ -316,6 +334,7 @@ class TestSearchExplainJson:
 
     def _run_json(self, *args):
         from roam.cli import cli
+
         result = self.runner.invoke(cli, ["--json", "search"] + list(args), catch_exceptions=False)
         assert result.exit_code == 0, f"CLI failed: {result.output}"
         return json.loads(result.output)
@@ -405,6 +424,7 @@ class TestSearchExplainFieldMatching:
 
     def _run_json(self, *args):
         from roam.cli import cli
+
         result = self.runner.invoke(cli, ["--json", "search"] + list(args), catch_exceptions=False)
         assert result.exit_code == 0
         return json.loads(result.output)
@@ -454,13 +474,19 @@ class TestSearchExplainBudget:
 
     def test_budget_with_explain_json(self):
         from roam.cli import cli
-        result = self.runner.invoke(cli, ["--json", "--budget", "500", "search", "--explain", "user"], catch_exceptions=False)
+
+        result = self.runner.invoke(
+            cli,
+            ["--json", "--budget", "500", "search", "--explain", "user"],
+            catch_exceptions=False,
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert_json_envelope(data, command="search")
 
     def test_budget_with_explain_text(self):
         from roam.cli import cli
+
         result = self.runner.invoke(cli, ["--budget", "500", "search", "--explain", "user"], catch_exceptions=False)
         assert result.exit_code == 0
 
@@ -481,10 +507,12 @@ class TestSearchExplainEdgeCases:
 
     def _run(self, *args):
         from roam.cli import cli
+
         return self.runner.invoke(cli, list(args), catch_exceptions=False)
 
     def _run_json(self, *args):
         from roam.cli import cli
+
         result = self.runner.invoke(cli, ["--json", "search"] + list(args), catch_exceptions=False)
         assert result.exit_code == 0
         return json.loads(result.output)
@@ -533,10 +561,12 @@ class TestSearchBackwardCompat:
 
     def _run(self, *args):
         from roam.cli import cli
+
         return self.runner.invoke(cli, list(args), catch_exceptions=False)
 
     def _run_json(self, *args):
         from roam.cli import cli
+
         result = self.runner.invoke(cli, ["--json", "search"] + list(args), catch_exceptions=False)
         assert result.exit_code == 0
         return json.loads(result.output)
@@ -566,4 +596,3 @@ class TestSearchBackwardCompat:
 # ===========================================================================
 # Integration: text output with --explain
 # ===========================================================================
-

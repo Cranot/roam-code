@@ -21,31 +21,32 @@ class _StubEmbedder:
         vectors = []
         for text in texts:
             lower = (text or "").lower()
-            vectors.append([
-                1.0 if "database" in lower else 0.0,
-                1.0 if "connection" in lower else 0.0,
-                1.0 if "auth" in lower else 0.0,
-                1.0,
-            ])
+            vectors.append(
+                [
+                    1.0 if "database" in lower else 0.0,
+                    1.0 if "connection" in lower else 0.0,
+                    1.0 if "auth" in lower else 0.0,
+                    1.0,
+                ]
+            )
         return vectors
 
 
 @pytest.fixture
 def onnx_project(project_factory):
-    return project_factory({
-        "db/connection.py": (
-            "def open_database():\n"
-            "    '''Open a database connection.'''\n"
-            "    pass\n"
-            "def close_database():\n"
-            "    '''Close a database connection.'''\n"
-            "    pass\n"
-        ),
-        "auth/login.py": (
-            "def authenticate_user(username, password):\n"
-            "    pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "db/connection.py": (
+                "def open_database():\n"
+                "    '''Open a database connection.'''\n"
+                "    pass\n"
+                "def close_database():\n"
+                "    '''Close a database connection.'''\n"
+                "    pass\n"
+            ),
+            "auth/login.py": ("def authenticate_user(username, password):\n    pass\n"),
+        }
+    )
 
 
 def _patch_stub_backend(monkeypatch):
@@ -81,9 +82,7 @@ def test_build_and_store_onnx_embeddings(monkeypatch, onnx_project):
 
     with open_db(readonly=False, project_root=onnx_project) as conn:
         stats = build_and_store_onnx_embeddings(conn, project_root=onnx_project)
-        count = conn.execute(
-            "SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()[0]
 
     assert stats.get("enabled") is True
     assert stats.get("stored", 0) > 0
@@ -117,8 +116,8 @@ def test_search_stored_with_onnx_backend(monkeypatch, onnx_project):
 
 def test_search_stored_auto_falls_back_to_tfidf(monkeypatch, onnx_project):
     """When ONNX is unavailable, auto backend should still use TF-IDF."""
-    from roam.db.connection import open_db
     import roam.search.index_embeddings as ie
+    from roam.db.connection import open_db
 
     monkeypatch.setattr(
         ie,

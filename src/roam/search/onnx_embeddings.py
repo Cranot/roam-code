@@ -231,4 +231,3 @@ def get_onnx_embedder(
     )
     _EMBEDDER_CACHE[key] = embedder
     return embedder
-

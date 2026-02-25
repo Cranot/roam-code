@@ -6,12 +6,14 @@ from collections import Counter
 
 import click
 
+from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import (
-    format_table, to_json, json_envelope, summary_envelope,
+    format_table,
+    json_envelope,
+    summary_envelope,
+    to_json,
 )
-from roam.commands.resolve import ensure_index
-
 
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
@@ -19,20 +21,24 @@ _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
 
 @click.command()
 @click.option(
-    '--file', 'file_path', default=None, type=click.Path(),
-    help='Filter smells to a specific file path',
+    "--file",
+    "file_path",
+    default=None,
+    type=click.Path(),
+    help="Filter smells to a specific file path",
 )
 @click.option(
-    '--min-severity', default=None,
-    type=click.Choice(['critical', 'warning', 'info'], case_sensitive=False),
-    help='Minimum severity to include (critical > warning > info)',
+    "--min-severity",
+    default=None,
+    type=click.Choice(["critical", "warning", "info"], case_sensitive=False),
+    help="Minimum severity to include (critical > warning > info)",
 )
 @click.pass_context
 def smells(ctx, file_path, min_severity):
     """Detect code smells: brain methods, god classes, deep nesting, and more."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
-    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
 
     from roam.catalog.smells import run_all_detectors
@@ -43,29 +49,19 @@ def smells(ctx, file_path, min_severity):
         # Filter by file
         if file_path:
             norm = file_path.replace("\\", "/")
-            findings = [
-                f for f in findings
-                if norm in f.get("location", "").replace("\\", "/")
-            ]
+            findings = [f for f in findings if norm in f.get("location", "").replace("\\", "/")]
 
         # Filter by minimum severity
         if min_severity:
             min_sev = min_severity.lower()
             max_order = _SEVERITY_ORDER.get(min_sev, 2)
-            findings = [
-                f for f in findings
-                if _SEVERITY_ORDER.get(f.get("severity", "info"), 2) <= max_order
-            ]
+            findings = [f for f in findings if _SEVERITY_ORDER.get(f.get("severity", "info"), 2) <= max_order]
 
         # Compute summary stats
         total_smells = len(findings)
         severity_counts = Counter(f.get("severity", "info") for f in findings)
         smell_types = Counter(f.get("smell_id", "unknown") for f in findings)
-        files_affected = len(set(
-            f.get("location", "").split(":")[0]
-            for f in findings
-            if f.get("location")
-        ))
+        files_affected = len(set(f.get("location", "").split(":")[0] for f in findings if f.get("location")))
 
         # Verdict
         critical = severity_counts.get("critical", 0)
@@ -152,9 +148,12 @@ def smells(ctx, file_path, min_severity):
                     ]
                     for f in top
                 ]
-                click.echo(format_table(
-                    ["Sev", "Smell", "Symbol", "Description"], rows,
-                ))
+                click.echo(
+                    format_table(
+                        ["Sev", "Smell", "Symbol", "Description"],
+                        rows,
+                    )
+                )
                 if total_smells > 5:
                     click.echo(f"\n(+{total_smells - 5} more, use --detail for full list)")
             return
@@ -172,7 +171,9 @@ def smells(ctx, file_path, min_severity):
             ]
             for f in findings
         ]
-        click.echo(format_table(
-            ["Sev", "Smell", "Symbol", "Value", "Threshold", "Location", "Description"],
-            rows,
-        ))
+        click.echo(
+            format_table(
+                ["Sev", "Smell", "Symbol", "Value", "Threshold", "Location", "Description"],
+                rows,
+            )
+        )

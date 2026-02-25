@@ -5,7 +5,7 @@ from __future__ import annotations
 import click
 
 from roam.db.connection import db_exists
-from roam.db.queries import SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED, SEARCH_SYMBOLS
+from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
 
 # Maximum suggestions returned by fts_suggestions()
 _MAX_FTS_SUGGESTIONS = 5
@@ -25,6 +25,7 @@ def ensure_index(quiet: bool = False):
                 "       outside the project root. cd into the project root and retry."
             )
         from roam.index.indexer import Indexer
+
         Indexer().run(quiet=quiet)
 
 
@@ -36,6 +37,7 @@ def require_index() -> None:
     """
     if not db_exists():
         from roam.exit_codes import IndexMissingError
+
         raise IndexMissingError()
 
 
@@ -95,8 +97,7 @@ def pick_best(conn, rows):
     ids = [r["id"] for r in rows]
     ph = ",".join("?" for _ in ids)
     counts = conn.execute(
-        f"SELECT target_id, COUNT(*) as cnt FROM edges "
-        f"WHERE target_id IN ({ph}) GROUP BY target_id",
+        f"SELECT target_id, COUNT(*) as cnt FROM edges WHERE target_id IN ({ph}) GROUP BY target_id",
         ids,
     ).fetchall()
     ref_map = {c["target_id"]: c["cnt"] for c in counts}
@@ -262,7 +263,7 @@ def symbol_not_found(conn, name: str, *, json_mode: bool = False) -> str:
 
     Callers should ``click.echo`` the result and then ``raise SystemExit(1)``.
     """
-    from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
+    from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
     suggestions = fts_suggestions(conn, name)
 
@@ -276,16 +277,18 @@ def symbol_not_found(conn, name: str, *, json_mode: bool = False) -> str:
             }
             for s in suggestions
         ]
-        return to_json(json_envelope(
-            "error",
-            summary={
-                "error": f"Symbol not found: {name}",
-                "suggestions_count": len(suggestion_dicts),
-            },
-            error=f"Symbol not found: {name}",
-            query=name,
-            suggestions=suggestion_dicts,
-        ))
+        return to_json(
+            json_envelope(
+                "error",
+                summary={
+                    "error": f"Symbol not found: {name}",
+                    "suggestions_count": len(suggestion_dicts),
+                },
+                error=f"Symbol not found: {name}",
+                query=name,
+                suggestions=suggestion_dicts,
+            )
+        )
 
     # Text mode
     lines = [f"Symbol '{name}' not found."]

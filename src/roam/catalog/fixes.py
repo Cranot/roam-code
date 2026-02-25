@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-
 _LANG_ALIASES = {
     "js": "javascript",
     "ts": "typescript",
@@ -54,54 +53,19 @@ _TEMPLATES = {
         "const rows = await repo.findMany({ where: { id: { in: ids } } });\n"
         "const byId = new Map(rows.map(r => [r.id, r]));"
     ),
-    ("io-in-loop", "ruby"): (
-        "users = User.where(id: ids).includes(:profile)\n"
-        "by_id = users.index_by(&:id)"
-    ),
-    ("io-in-loop", "php"): (
-        "$rows = User::whereIn('id', $ids)->get()->keyBy('id');"
-    ),
+    ("io-in-loop", "ruby"): ("users = User.where(id: ids).includes(:profile)\nby_id = users.index_by(&:id)"),
+    ("io-in-loop", "php"): ("$rows = User::whereIn('id', $ids)->get()->keyBy('id');"),
     ("io-in-loop", "java"): (
         "Map<Long, User> byId = repository.findAllById(ids).stream()\n"
         "    .collect(Collectors.toMap(User::getId, u -> u));"
     ),
-    ("loop-lookup", "python"): (
-        "lookup = set(blacklist)\n"
-        "for item in items:\n"
-        "    if item in lookup:\n"
-        "        ..."
-    ),
-    ("sort-to-select", "python"): (
-        "best = min(items)\n"
-        "top_k = heapq.nsmallest(k, items)"
-    ),
-    ("list-prepend", "python"): (
-        "from collections import deque\n"
-        "out = deque()\n"
-        "for v in vals:\n"
-        "    out.appendleft(v)"
-    ),
-    ("regex-in-loop", "python"): (
-        "pat = re.compile(pattern)\n"
-        "for line in lines:\n"
-        "    m = pat.search(line)"
-    ),
-    ("branching-recursion", "python"): (
-        "@functools.lru_cache(maxsize=None)\n"
-        "def solve(n):\n"
-        "    ..."
-    ),
-    ("quadratic-string", "python"): (
-        "parts = []\n"
-        "for x in values:\n"
-        "    parts.append(render(x))\n"
-        "out = ''.join(parts)"
-    ),
-    ("loop-invariant-call", "python"): (
-        "cfg = get_config()\n"
-        "for item in items:\n"
-        "    use(item, cfg)"
-    ),
+    ("loop-lookup", "python"): ("lookup = set(blacklist)\nfor item in items:\n    if item in lookup:\n        ..."),
+    ("sort-to-select", "python"): ("best = min(items)\ntop_k = heapq.nsmallest(k, items)"),
+    ("list-prepend", "python"): ("from collections import deque\nout = deque()\nfor v in vals:\n    out.appendleft(v)"),
+    ("regex-in-loop", "python"): ("pat = re.compile(pattern)\nfor line in lines:\n    m = pat.search(line)"),
+    ("branching-recursion", "python"): ("@functools.lru_cache(maxsize=None)\ndef solve(n):\n    ..."),
+    ("quadratic-string", "python"): ("parts = []\nfor x in values:\n    parts.append(render(x))\nout = ''.join(parts)"),
+    ("loop-invariant-call", "python"): ("cfg = get_config()\nfor item in items:\n    use(item, cfg)"),
 }
 
 
@@ -120,4 +84,3 @@ def get_fix(task_id: str, language: str | None = None) -> str:
         if tpl:
             return tpl
     return _TASK_GENERIC_FIX.get(task_id, "")
-

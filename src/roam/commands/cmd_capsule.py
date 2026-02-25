@@ -9,14 +9,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Path redaction helper
 # ---------------------------------------------------------------------------
+
 
 def _redact_path(path: str) -> str:
     """Hash each path component to anonymize file paths.
@@ -31,6 +31,7 @@ def _redact_path(path: str) -> str:
 # ---------------------------------------------------------------------------
 # Data-gathering helpers
 # ---------------------------------------------------------------------------
+
 
 def _gather_topology(conn) -> dict:
     """Return counts and language list for the topology section."""
@@ -61,20 +62,14 @@ def _gather_symbols(conn, redact_paths: bool, no_signatures: bool) -> list[dict]
     ).fetchall()
 
     # Build fan-in / fan-out lookup in one pass each to avoid N+1 queries
-    fan_in_rows = conn.execute(
-        "SELECT target_id, COUNT(*) as cnt FROM edges GROUP BY target_id"
-    ).fetchall()
+    fan_in_rows = conn.execute("SELECT target_id, COUNT(*) as cnt FROM edges GROUP BY target_id").fetchall()
     fan_in = {r[0]: r[1] for r in fan_in_rows}
 
-    fan_out_rows = conn.execute(
-        "SELECT source_id, COUNT(*) as cnt FROM edges GROUP BY source_id"
-    ).fetchall()
+    fan_out_rows = conn.execute("SELECT source_id, COUNT(*) as cnt FROM edges GROUP BY source_id").fetchall()
     fan_out = {r[0]: r[1] for r in fan_out_rows}
 
     # Build complexity lookup
-    metric_rows = conn.execute(
-        "SELECT symbol_id, cognitive_complexity, halstead_volume FROM symbol_metrics"
-    ).fetchall()
+    metric_rows = conn.execute("SELECT symbol_id, cognitive_complexity, halstead_volume FROM symbol_metrics").fetchall()
     metrics_map = {r[0]: r for r in metric_rows}
 
     result = []
@@ -102,10 +97,10 @@ def _gather_symbols(conn, redact_paths: bool, no_signatures: bool) -> list[dict]
 
         entry: dict = {
             "id": sid,
-            "name": r[1],          # s.name
-            "kind": r[3],          # s.kind
+            "name": r[1],  # s.name
+            "kind": r[3],  # s.kind
             "file": file_path,
-            "line": r[5],          # s.line_start
+            "line": r[5],  # s.line_start
             "metrics": metrics_dict,
         }
         if sig is not None:
@@ -118,9 +113,7 @@ def _gather_symbols(conn, redact_paths: bool, no_signatures: bool) -> list[dict]
 
 def _gather_edges(conn) -> list[dict]:
     """Return all symbol-level edges."""
-    rows = conn.execute(
-        "SELECT source_id, target_id, kind FROM edges ORDER BY source_id"
-    ).fetchall()
+    rows = conn.execute("SELECT source_id, target_id, kind FROM edges ORDER BY source_id").fetchall()
     return [{"source": r[0], "target": r[1], "kind": r[2]} for r in rows]
 
 
@@ -137,6 +130,7 @@ def _gather_clusters(conn) -> list[dict]:
 def _gather_health(conn) -> dict:
     """Collect health metrics via metrics_history.collect_metrics."""
     from roam.commands.metrics_history import collect_metrics
+
     m = collect_metrics(conn)
     return {
         "score": m.get("health_score", 0),
@@ -154,16 +148,12 @@ def _gather_health(conn) -> dict:
 # Capsule builder
 # ---------------------------------------------------------------------------
 
+
 def _build_capsule(conn, redact_paths: bool, no_signatures: bool) -> dict:
     """Assemble the full capsule dict from DB data."""
     from roam import __version__
 
-    ts = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     topology = _gather_topology(conn)
     symbols = _gather_symbols(conn, redact_paths=redact_paths, no_signatures=no_signatures)
@@ -191,13 +181,26 @@ def _build_capsule(conn, redact_paths: bool, no_signatures: bool) -> dict:
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("capsule")
-@click.option("--redact-paths", is_flag=True, default=False,
-              help="Anonymize file paths by hashing each path component.")
-@click.option("--no-signatures", is_flag=True, default=False,
-              help="Omit parameter signatures from symbol entries.")
-@click.option("--output", default=None, metavar="FILE",
-              help="Write the full JSON capsule to FILE instead of stdout.")
+@click.option(
+    "--redact-paths",
+    is_flag=True,
+    default=False,
+    help="Anonymize file paths by hashing each path component.",
+)
+@click.option(
+    "--no-signatures",
+    is_flag=True,
+    default=False,
+    help="Omit parameter signatures from symbol entries.",
+)
+@click.option(
+    "--output",
+    default=None,
+    metavar="FILE",
+    help="Write the full JSON capsule to FILE instead of stdout.",
+)
 @click.pass_context
 def capsule(ctx, redact_paths, no_signatures, output):
     """Export the structural graph as a portable JSON capsule.
@@ -213,8 +216,7 @@ def capsule(ctx, redact_paths, no_signatures, output):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        capsule_data = _build_capsule(conn, redact_paths=redact_paths,
-                                      no_signatures=no_signatures)
+        capsule_data = _build_capsule(conn, redact_paths=redact_paths, no_signatures=no_signatures)
 
     topology = capsule_data["topology"]
     health = capsule_data["health"]
@@ -228,29 +230,30 @@ def capsule(ctx, redact_paths, no_signatures, output):
     langs = topology["languages"]
     langs_str = ", ".join(langs) if langs else "(none)"
 
-    verdict = (
-        f"capsule exported ({files_n} files, {symbols_n} symbols, {edges_n} edges)"
-    )
+    verdict = f"capsule exported ({files_n} files, {symbols_n} symbols, {edges_n} edges)"
 
     # Write to file if requested
     if output:
         out_path = Path(output)
-        out_path.write_text(_json.dumps(capsule_data, indent=2, default=str),
-                            encoding="utf-8")
+        out_path.write_text(_json.dumps(capsule_data, indent=2, default=str), encoding="utf-8")
 
     # JSON mode without --output: emit full capsule in envelope
     if json_mode and not output:
-        click.echo(to_json(json_envelope(
-            "capsule",
-            summary={
-                "verdict": verdict,
-                "files": files_n,
-                "symbols": symbols_n,
-                "edges": edges_n,
-                "health_score": score,
-            },
-            **capsule_data,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "capsule",
+                    summary={
+                        "verdict": verdict,
+                        "files": files_n,
+                        "symbols": symbols_n,
+                        "edges": edges_n,
+                        "health_score": score,
+                    },
+                    **capsule_data,
+                )
+            )
+        )
         return
 
     # Text summary (always shown when --output is used; default mode otherwise)

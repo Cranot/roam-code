@@ -7,11 +7,10 @@ from datetime import datetime, timezone
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.metrics_history import get_snapshots
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Sparkline rendering
@@ -26,10 +25,7 @@ def _sparkline(values):
         return ""
     mn, mx = min(values), max(values)
     rng = mx - mn or 1
-    return "".join(
-        _SPARKS[min(len(_SPARKS) - 1, int((v - mn) / rng * (len(_SPARKS) - 1)))]
-        for v in values
-    )
+    return "".join(_SPARKS[min(len(_SPARKS) - 1, int((v - mn) / rng * (len(_SPARKS) - 1)))] for v in values)
 
 
 # ---------------------------------------------------------------------------
@@ -42,8 +38,8 @@ _OPS = {
     ">=": lambda a, b: a >= b,
     "==": lambda a, b: a == b,
     "!=": lambda a, b: a != b,
-    "<":  lambda a, b: a < b,
-    ">":  lambda a, b: a > b,
+    "<": lambda a, b: a < b,
+    ">": lambda a, b: a > b,
 }
 
 
@@ -91,8 +87,11 @@ def _analyze_trends(chrono, sensitivity="medium"):
     Returns dict with anomalies, trends, forecasts, patterns.
     """
     from roam.graph.anomaly import (
-        modified_z_score, theil_sen_slope, mann_kendall_test,
-        western_electric_rules, forecast,
+        forecast,
+        mann_kendall_test,
+        modified_z_score,
+        theil_sen_slope,
+        western_electric_rules,
     )
 
     z_thresh, _ = _SENSITIVITY.get(sensitivity, _SENSITIVITY["medium"])
@@ -112,13 +111,15 @@ def _analyze_trends(chrono, sensitivity="medium"):
         z_results = modified_z_score(values, threshold=z_thresh)
         for r in z_results:
             if r["is_anomaly"]:
-                anomalies.append({
-                    "metric": metric,
-                    "index": r["index"],
-                    "value": r["value"],
-                    "z_score": round(r["z_score"], 2),
-                    "typical": f"{r.get('median', 0):.0f}",
-                })
+                anomalies.append(
+                    {
+                        "metric": metric,
+                        "index": r["index"],
+                        "value": r["value"],
+                        "z_score": round(r["z_score"], 2),
+                        "typical": f"{r.get('median', 0):.0f}",
+                    }
+                )
 
         # Trend estimation
         ts = theil_sen_slope(values)
@@ -143,23 +144,27 @@ def _analyze_trends(chrono, sensitivity="medium"):
                 target = max(current * 2, current + 10)
                 fc = forecast(values, target=target)
                 if fc and fc.get("steps_until"):
-                    forecasts.append({
-                        "metric": metric,
-                        "current": current,
-                        "target": target,
-                        "slope": round(fc["slope"], 2),
-                        "snapshots_until": fc["steps_until"],
-                    })
+                    forecasts.append(
+                        {
+                            "metric": metric,
+                            "current": current,
+                            "target": target,
+                            "slope": round(fc["slope"], 2),
+                            "snapshots_until": fc["steps_until"],
+                        }
+                    )
 
         # Pattern detection
         we_results = western_electric_rules(values)
         for r in we_results:
-            patterns.append({
-                "metric": metric,
-                "rule": r["rule"],
-                "description": r["description"],
-                "indices": r.get("indices", []),
-            })
+            patterns.append(
+                {
+                    "metric": metric,
+                    "rule": r["rule"],
+                    "description": r["description"],
+                    "indices": r.get("indices", []),
+                }
+            )
 
     return {
         "anomalies": anomalies,
@@ -176,16 +181,14 @@ def _trend_verdict(analysis):
 
     # Check for degrading quality trends
     degrading = [
-        t for t in analysis["trends"]
-        if t["metric"] in _QUALITY_METRICS
-        and t["direction"] == "increasing"
-        and t.get("significant", True)
+        t
+        for t in analysis["trends"]
+        if t["metric"] in _QUALITY_METRICS and t["direction"] == "increasing" and t.get("significant", True)
     ]
     improving = [
-        t for t in analysis["trends"]
-        if t["metric"] in _COMPOSITE_METRICS
-        and t["direction"] == "increasing"
-        and t.get("significant", True)
+        t
+        for t in analysis["trends"]
+        if t["metric"] in _COMPOSITE_METRICS and t["direction"] == "increasing" and t.get("significant", True)
     ]
 
     if n_anomalies > 2 or len(degrading) > 2:
@@ -201,26 +204,54 @@ def _trend_verdict(analysis):
 # CLI
 # ---------------------------------------------------------------------------
 
+
 @click.command()
 @click.option("--range", "count", default=10, help="Number of snapshots to show")
-@click.option("--since", "since_date", default=None,
-              help="Only show snapshots after this date (YYYY-MM-DD)")
-@click.option("--assert", "assertions", default=None,
-              help="CI gate: comma-separated expressions (e.g. 'cycles<=5,dead_exports<=20')")
-@click.option("--anomalies", is_flag=True, default=False,
-              help="Flag anomalous metric values using Modified Z-Score")
-@click.option("--forecast", "do_forecast", is_flag=True, default=False,
-              help="Show trend slopes and forecasts using Theil-Sen regression")
-@click.option("--analyze", is_flag=True, default=False,
-              help="Full analysis: anomalies + trends + patterns + forecasts")
-@click.option("--fail-on-anomaly", is_flag=True, default=False,
-              help="CI: exit 1 if any anomaly detected")
-@click.option("--sensitivity", default="medium",
-              type=click.Choice(["low", "medium", "high"]),
-              help="Anomaly sensitivity (low=4sigma, medium=3.5sigma, high=3sigma)")
+@click.option("--since", "since_date", default=None, help="Only show snapshots after this date (YYYY-MM-DD)")
+@click.option(
+    "--assert",
+    "assertions",
+    default=None,
+    help="CI gate: comma-separated expressions (e.g. 'cycles<=5,dead_exports<=20')",
+)
+@click.option(
+    "--anomalies",
+    is_flag=True,
+    default=False,
+    help="Flag anomalous metric values using Modified Z-Score",
+)
+@click.option(
+    "--forecast",
+    "do_forecast",
+    is_flag=True,
+    default=False,
+    help="Show trend slopes and forecasts using Theil-Sen regression",
+)
+@click.option(
+    "--analyze",
+    is_flag=True,
+    default=False,
+    help="Full analysis: anomalies + trends + patterns + forecasts",
+)
+@click.option("--fail-on-anomaly", is_flag=True, default=False, help="CI: exit 1 if any anomaly detected")
+@click.option(
+    "--sensitivity",
+    default="medium",
+    type=click.Choice(["low", "medium", "high"]),
+    help="Anomaly sensitivity (low=4sigma, medium=3.5sigma, high=3sigma)",
+)
 @click.pass_context
-def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
-          analyze, fail_on_anomaly, sensitivity):
+def trend(
+    ctx,
+    count,
+    since_date,
+    assertions,
+    anomalies,
+    do_forecast,
+    analyze,
+    fail_on_anomaly,
+    sensitivity,
+):
     """Display health trend with sparklines, anomaly detection, and CI gates.
 
     Shows historical snapshots from `roam index` and `roam snapshot`.
@@ -228,7 +259,7 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
     trend estimation (Theil-Sen), and pattern alerts (Western Electric rules).
     Use --assert or --fail-on-anomaly for CI pipelines.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     do_analysis = analyze or anomalies or do_forecast or fail_on_anomaly
     ensure_index()
 
@@ -246,10 +277,15 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
 
         if not snaps:
             if json_mode:
-                click.echo(to_json(json_envelope("trend",
-                    summary={"snapshots": 0},
-                    snapshots=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "trend",
+                            summary={"snapshots": 0},
+                            snapshots=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No snapshots found. Run `roam index` or `roam snapshot` first.")
             return
@@ -257,22 +293,24 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
         # Convert to dicts for easier access
         snap_dicts = []
         for s in snaps:
-            snap_dicts.append({
-                "timestamp": s["timestamp"],
-                "tag": s["tag"],
-                "source": s["source"],
-                "git_branch": s["git_branch"],
-                "git_commit": s["git_commit"],
-                "files": s["files"],
-                "symbols": s["symbols"],
-                "edges": s["edges"],
-                "cycles": s["cycles"],
-                "god_components": s["god_components"],
-                "bottlenecks": s["bottlenecks"],
-                "dead_exports": s["dead_exports"],
-                "layer_violations": s["layer_violations"],
-                "health_score": s["health_score"],
-            })
+            snap_dicts.append(
+                {
+                    "timestamp": s["timestamp"],
+                    "tag": s["tag"],
+                    "source": s["source"],
+                    "git_branch": s["git_branch"],
+                    "git_commit": s["git_commit"],
+                    "files": s["files"],
+                    "symbols": s["symbols"],
+                    "edges": s["edges"],
+                    "cycles": s["cycles"],
+                    "god_components": s["god_components"],
+                    "bottlenecks": s["bottlenecks"],
+                    "dead_exports": s["dead_exports"],
+                    "layer_violations": s["layer_violations"],
+                    "health_score": s["health_score"],
+                }
+            )
 
         # Reverse for chronological order (oldest first for sparklines)
         chrono = list(reversed(snap_dicts))
@@ -299,7 +337,8 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
                 summary["anomaly_count"] = len(analysis["anomalies"])
                 summary["trend_direction"] = verdict
 
-            envelope = json_envelope("trend",
+            envelope = json_envelope(
+                "trend",
                 summary=summary,
                 snapshots=snap_dicts,
             )
@@ -333,19 +372,24 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
             dt = datetime.fromtimestamp(s["timestamp"], tz=timezone.utc)
             date_str = dt.strftime("%Y-%m-%d %H:%M")
             tag = s["tag"] or f"({s['source']})"
-            rows.append([
-                date_str, tag,
-                str(s["health_score"]),
-                str(s["cycles"]),
-                str(s["god_components"]),
-                str(s["bottlenecks"]),
-                str(s["dead_exports"]),
-                str(s["layer_violations"]),
-            ])
-        click.echo(format_table(
-            ["Date", "Tag", "Score", "Cycles", "Gods", "BN", "Dead", "Violations"],
-            rows,
-        ))
+            rows.append(
+                [
+                    date_str,
+                    tag,
+                    str(s["health_score"]),
+                    str(s["cycles"]),
+                    str(s["god_components"]),
+                    str(s["bottlenecks"]),
+                    str(s["dead_exports"]),
+                    str(s["layer_violations"]),
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Date", "Tag", "Score", "Cycles", "Gods", "BN", "Dead", "Violations"],
+                rows,
+            )
+        )
 
         # Sparklines (chronological order)
         if len(chrono) >= 2:
@@ -368,24 +412,18 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
             if analysis["anomalies"]:
                 click.echo(f"\nAnomalies ({len(analysis['anomalies'])}):")
                 for a in analysis["anomalies"]:
-                    click.echo(
-                        f"  ANOMALY: {a['metric']}={a['value']} "
-                        f"(z={a['z_score']}, typical ~{a['typical']})"
-                    )
+                    click.echo(f"  ANOMALY: {a['metric']}={a['value']} (z={a['z_score']}, typical ~{a['typical']})")
 
             # Trends
-            sig_trends = [t for t in analysis["trends"]
-                          if t["direction"] != "stable"
-                          and t.get("significant", t["slope"] != 0)]
+            sig_trends = [
+                t for t in analysis["trends"] if t["direction"] != "stable" and t.get("significant", t["slope"] != 0)
+            ]
             if sig_trends:
                 click.echo(f"\nTrends ({len(sig_trends)} significant):")
                 for t in sig_trends:
                     p_str = f" (p={t['p_value']:.3f})" if "p_value" in t else ""
                     sign = "+" if t["slope"] > 0 else ""
-                    click.echo(
-                        f"  TREND: {t['metric']} {t['direction']} "
-                        f"{sign}{t['slope']:.2f}/snapshot{p_str}"
-                    )
+                    click.echo(f"  TREND: {t['metric']} {t['direction']} {sign}{t['slope']:.2f}/snapshot{p_str}")
 
             # Forecasts
             if analysis["forecasts"]:
@@ -401,10 +439,7 @@ def trend(ctx, count, since_date, assertions, anomalies, do_forecast,
             if analysis["patterns"]:
                 click.echo(f"\nPatterns ({len(analysis['patterns'])}):")
                 for p in analysis["patterns"]:
-                    click.echo(
-                        f"  WARNING: {p['metric']} -- {p['description']} "
-                        f"(Rule {p['rule']})"
-                    )
+                    click.echo(f"  WARNING: {p['metric']} -- {p['description']} (Rule {p['rule']})")
 
             # Verdict
             verdict = _trend_verdict(analysis)

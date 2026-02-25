@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .javascript_lang import JavaScriptExtractor
 
 
@@ -60,17 +60,19 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 break
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="interface",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="interface",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
         # Extract interface members
         body = node.child_by_field_name("body")
@@ -92,29 +94,33 @@ class TypeScriptExtractor(JavaScriptExtractor):
                     ret = child.child_by_field_name("return_type")
                     if ret:
                         sig += f": {self.node_text(ret, source)}"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="method",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        parent_name=interface_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="method",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            parent_name=interface_name,
+                        )
+                    )
                 else:
                     type_ann = child.child_by_field_name("type")
                     sig = name
                     if type_ann:
                         sig += f": {self.node_text(type_ann, source)}"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="property",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        parent_name=interface_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="property",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            parent_name=interface_name,
+                        )
+                    )
 
     def _extract_type_alias(self, node, source, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
@@ -134,17 +140,19 @@ class TypeScriptExtractor(JavaScriptExtractor):
                 sig += f" = {val_text}"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="type_alias",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="type_alias",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_enum(self, node, source, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
@@ -161,17 +169,19 @@ class TypeScriptExtractor(JavaScriptExtractor):
         sig = f"{'const ' if is_const else ''}enum {name}"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="enum",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="enum",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
         # Extract enum members
         body = node.child_by_field_name("body")
@@ -186,14 +196,16 @@ class TypeScriptExtractor(JavaScriptExtractor):
                         if n:
                             mem_name = self.node_text(n, source)
                     if mem_name:
-                        symbols.append(self._make_symbol(
-                            name=mem_name,
-                            kind="field",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{qualified}.{mem_name}",
-                            parent_name=qualified,
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=mem_name,
+                                kind="field",
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{qualified}.{mem_name}",
+                                parent_name=qualified,
+                            )
+                        )
 
     def _extract_function(self, node, source, symbols, parent_name, is_exported, generator=False):
         """Override to include type annotations."""
@@ -221,17 +233,19 @@ class TypeScriptExtractor(JavaScriptExtractor):
             sig = "\n".join(decorators) + "\n" + sig
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
     def _get_ts_decorators(self, node, source) -> list[str]:
         decorators = []
@@ -243,8 +257,13 @@ class TypeScriptExtractor(JavaScriptExtractor):
     def _extract_class_members(self, body_node, source, symbols, class_name):
         """Override to handle TS-specific class members."""
         for child in body_node.children:
-            if child.type in ("method_definition", "public_field_definition", "field_definition",
-                              "method_signature", "property_signature"):
+            if child.type in (
+                "method_definition",
+                "public_field_definition",
+                "field_definition",
+                "method_signature",
+                "property_signature",
+            ):
                 name_node = child.child_by_field_name("name")
                 if name_node is None:
                     continue
@@ -272,29 +291,33 @@ class TypeScriptExtractor(JavaScriptExtractor):
                         sig = "\n".join(decorators) + "\n" + sig
 
                     kind = "constructor" if name == "constructor" else "method"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind=kind,
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        docstring=self.get_docstring(child, source),
-                        visibility=visibility,
-                        parent_name=class_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind=kind,
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            docstring=self.get_docstring(child, source),
+                            visibility=visibility,
+                            parent_name=class_name,
+                        )
+                    )
                 else:
                     type_ann = child.child_by_field_name("type")
                     sig = name
                     if type_ann:
                         sig += f": {self.node_text(type_ann, source)}"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="property",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        visibility=visibility,
-                        parent_name=class_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="property",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            visibility=visibility,
+                            parent_name=class_name,
+                        )
+                    )

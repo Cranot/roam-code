@@ -4,10 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import db_exists, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import db_exists, find_project_root
+from roam.output.formatter import json_envelope, to_json
 
 _FITNESS_YAML = """\
 rules:
@@ -71,7 +70,7 @@ Run `roam --help` for all commands."""
 @click.pass_context
 def init(ctx, root, yes):
     """Initialize Roam for this project: index, config, CI workflow."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     project_root = find_project_root(root)
 
     created = []
@@ -109,8 +108,9 @@ def init(ctx, root, yes):
     # 5. Quick health summary
     health_summary = {}
     try:
-        from roam.db.connection import open_db
         from roam.commands.metrics_history import collect_metrics
+        from roam.db.connection import open_db
+
         with open_db(readonly=True, project_root=project_root) as conn:
             health_summary = collect_metrics(conn)
     except Exception:
@@ -118,18 +118,23 @@ def init(ctx, root, yes):
 
     # 6. Output
     if json_mode:
-        click.echo(to_json(json_envelope("init",
-            summary={
-                "created": created,
-                "skipped": skipped,
-                "had_index": had_index,
-                "health_score": health_summary.get("health_score"),
-            },
-            created=created,
-            skipped=skipped,
-            had_index=had_index,
-            health=health_summary,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "init",
+                    summary={
+                        "created": created,
+                        "skipped": skipped,
+                        "had_index": had_index,
+                        "health_score": health_summary.get("health_score"),
+                    },
+                    created=created,
+                    skipped=skipped,
+                    had_index=had_index,
+                    health=health_summary,
+                )
+            )
+        )
         return
 
     # Text output
@@ -153,7 +158,9 @@ def init(ctx, root, yes):
     click.echo(welcome)
 
     if health_summary:
-        click.echo(f"\nHealth: {health_summary.get('health_score', '?')}/100  "
-                    f"({health_summary.get('files', 0)} files, "
-                    f"{health_summary.get('symbols', 0)} symbols, "
-                    f"{health_summary.get('cycles', 0)} cycles)")
+        click.echo(
+            f"\nHealth: {health_summary.get('health_score', '?')}/100  "
+            f"({health_summary.get('files', 0)} files, "
+            f"{health_summary.get('symbols', 0)} symbols, "
+            f"{health_summary.get('cycles', 0)} cycles)"
+        )

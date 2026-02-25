@@ -7,22 +7,18 @@ alerts, trend, fitness, snapshot. Uses CliRunner for in-process testing.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
-import pytest
-from click.testing import CliRunner
-
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 from roam.cli import cli
-
 
 # ============================================================================
 # TestHealth
 # ============================================================================
+
 
 class TestHealth:
     """Tests for `roam health` -- overall health score (0-100)."""
@@ -39,9 +35,7 @@ class TestHealth:
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["health"], cwd=indexed_project)
         assert result.exit_code == 0, f"health failed: {result.output}"
-        assert "VERDICT:" in result.output, (
-            f"Missing VERDICT line in output:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Missing VERDICT line in output:\n{result.output}"
 
     def test_health_json(self, cli_runner, indexed_project, monkeypatch):
         """roam --json health should return a valid envelope with health_score and verdict."""
@@ -111,6 +105,7 @@ class TestHealth:
 # TestWeather
 # ============================================================================
 
+
 class TestWeather:
     """Tests for `roam weather` -- churn x complexity hotspot ranking."""
 
@@ -135,8 +130,7 @@ class TestWeather:
         assert result.exit_code == 0
         out = result.output
         # Either shows hotspot table or "No churn data" message
-        assert ("Hotspots" in out or "Score" in out
-                or "No churn data" in out), (
+        assert "Hotspots" in out or "Score" in out or "No churn data" in out, (
             f"Missing expected output in weather:\n{out}"
         )
 
@@ -158,6 +152,7 @@ class TestWeather:
 # ============================================================================
 # TestDebt
 # ============================================================================
+
 
 class TestDebt:
     """Tests for `roam debt` -- technical debt overview."""
@@ -183,8 +178,7 @@ class TestDebt:
         assert result.exit_code == 0
         out = result.output
         # Should show either the debt table or "No file stats" message
-        assert ("Debt" in out or "debt" in out.lower()
-                or "No file stats" in out), (
+        assert "Debt" in out or "debt" in out.lower() or "No file stats" in out, (
             f"Missing debt categories in output:\n{out}"
         )
 
@@ -194,9 +188,7 @@ class TestDebt:
         result = invoke_cli(cli_runner, ["debt"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "debt")
         summary = data.get("summary", {})
-        assert "total_files" in summary or "total_debt" in summary, (
-            f"Missing debt stats in summary: {summary}"
-        )
+        assert "total_files" in summary or "total_debt" in summary, f"Missing debt stats in summary: {summary}"
 
     def test_debt_by_kind(self, cli_runner, indexed_project, monkeypatch):
         """roam debt --by-kind should group by directory."""
@@ -215,9 +207,7 @@ class TestDebt:
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["debt"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "debt")
-        assert "items" in data or "groups" in data, (
-            f"Missing items/groups in debt JSON: {list(data.keys())}"
-        )
+        assert "items" in data or "groups" in data, f"Missing items/groups in debt JSON: {list(data.keys())}"
 
     def test_debt_roi_text(self, cli_runner, indexed_project, monkeypatch):
         """roam debt --roi should print ROI estimate summary."""
@@ -248,6 +238,7 @@ class TestDebt:
 # TestComplexity
 # ============================================================================
 
+
 class TestComplexity:
     """Tests for `roam complexity` -- complexity ranking."""
 
@@ -271,8 +262,7 @@ class TestComplexity:
         assert result.exit_code == 0
         out = result.output
         # Should show complexity data or "No matching symbols" or analysis stats
-        assert ("complexity" in out.lower() or "analyzed" in out.lower()
-                or "No matching" in out), (
+        assert "complexity" in out.lower() or "analyzed" in out.lower() or "No matching" in out, (
             f"Missing complexity ranking in output:\n{out}"
         )
 
@@ -281,9 +271,7 @@ class TestComplexity:
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(cli_runner, ["complexity"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "complexity")
-        assert "symbols" in data or "files" in data, (
-            f"Missing symbols/files in complexity JSON: {list(data.keys())}"
-        )
+        assert "symbols" in data or "files" in data, f"Missing symbols/files in complexity JSON: {list(data.keys())}"
 
     def test_complexity_threshold(self, cli_runner, indexed_project, monkeypatch):
         """roam complexity --threshold 0 should include all symbols."""
@@ -318,6 +306,7 @@ class TestComplexity:
 # TestAlerts
 # ============================================================================
 
+
 class TestAlerts:
     """Tests for `roam alerts` -- quality alerts."""
 
@@ -341,8 +330,7 @@ class TestAlerts:
         assert result.exit_code == 0
         out = result.output
         # Should show alerts or "No health alerts" message
-        assert ("alert" in out.lower() or "no health" in out.lower()
-                or "normal" in out.lower()), (
+        assert "alert" in out.lower() or "no health" in out.lower() or "normal" in out.lower(), (
             f"Missing alerts/all-clear in output:\n{out}"
         )
 
@@ -376,6 +364,7 @@ class TestAlerts:
 # TestTrend
 # ============================================================================
 
+
 class TestTrend:
     """Tests for `roam trend` -- health history sparklines."""
 
@@ -391,10 +380,9 @@ class TestTrend:
         assert result.exit_code == 0, f"trend failed: {result.output}"
         out = result.output
         # Either shows snapshot table or 'No snapshots' message
-        assert ("Trend" in out or "Score" in out or "Date" in out
-                or "No snapshots" in out or "snapshot" in out.lower()), (
-            f"Unexpected trend output:\n{out}"
-        )
+        assert (
+            "Trend" in out or "Score" in out or "Date" in out or "No snapshots" in out or "snapshot" in out.lower()
+        ), f"Unexpected trend output:\n{out}"
 
     def test_trend_with_snapshots(self, cli_runner, project_with_snapshots, monkeypatch):
         """roam trend with multiple snapshots should show sparklines."""
@@ -402,9 +390,7 @@ class TestTrend:
         result = invoke_cli(cli_runner, ["trend"], cwd=project_with_snapshots)
         assert result.exit_code == 0, f"trend failed: {result.output}"
         out = result.output
-        assert "Trend" in out or "Score" in out or "Date" in out, (
-            f"Missing trend table in output:\n{out}"
-        )
+        assert "Trend" in out or "Score" in out or "Date" in out, f"Missing trend table in output:\n{out}"
 
     def test_trend_json(self, cli_runner, project_with_snapshots, monkeypatch):
         """roam --json trend should return an envelope with snapshots array."""
@@ -432,9 +418,7 @@ class TestTrend:
             ["trend", "--assert", "health_score>=0"],
             cwd=project_with_snapshots,
         )
-        assert result.exit_code == 0, (
-            f"trend --assert health_score>=0 should pass but failed: {result.output}"
-        )
+        assert result.exit_code == 0, f"trend --assert health_score>=0 should pass but failed: {result.output}"
 
     def test_trend_assert_fail(self, cli_runner, project_with_snapshots, monkeypatch):
         """roam trend --assert 'health_score>=999' should fail with exit 1."""
@@ -446,8 +430,7 @@ class TestTrend:
         )
         # SystemExit(1) is caught by CliRunner as exit_code=1
         assert result.exit_code != 0, (
-            f"Expected assertion failure (exit != 0), got exit_code={result.exit_code}: "
-            f"{result.output}"
+            f"Expected assertion failure (exit != 0), got exit_code={result.exit_code}: {result.output}"
         )
 
     def test_trend_range(self, cli_runner, project_with_snapshots, monkeypatch):
@@ -461,9 +444,7 @@ class TestTrend:
         )
         data = parse_json_output(result, "trend")
         snapshots = data.get("snapshots", [])
-        assert len(snapshots) <= 3, (
-            f"Expected at most 3 snapshots with --range 3, got {len(snapshots)}"
-        )
+        assert len(snapshots) <= 3, f"Expected at most 3 snapshots with --range 3, got {len(snapshots)}"
 
     def test_trend_json_snapshots_have_health_score(self, cli_runner, project_with_snapshots, monkeypatch):
         """Each snapshot in trend JSON should have a health_score field."""
@@ -473,14 +454,13 @@ class TestTrend:
         snapshots = data.get("snapshots", [])
         assert len(snapshots) > 0, "Expected at least one snapshot"
         for i, snap in enumerate(snapshots):
-            assert "health_score" in snap, (
-                f"Snapshot {i} missing 'health_score': {snap}"
-            )
+            assert "health_score" in snap, f"Snapshot {i} missing 'health_score': {snap}"
 
 
 # ============================================================================
 # TestFitness
 # ============================================================================
+
 
 class TestFitness:
     """Tests for `roam fitness` -- architectural fitness functions."""
@@ -490,9 +470,7 @@ class TestFitness:
         monkeypatch.chdir(indexed_project)
         result = cli_runner.invoke(cli, ["fitness"], catch_exceptions=True)
         # May exit 0 (no rules or all pass) or 1 (rules fail), but should not crash
-        assert result.exit_code in (0, 1), (
-            f"fitness crashed with exit_code={result.exit_code}: {result.output}"
-        )
+        assert result.exit_code in (0, 1), f"fitness crashed with exit_code={result.exit_code}: {result.output}"
 
     def test_fitness_json(self, cli_runner, indexed_project, monkeypatch):
         """roam --json fitness should return a valid envelope."""
@@ -528,11 +506,13 @@ class TestFitness:
         result = cli_runner.invoke(cli, ["fitness"], catch_exceptions=True)
         out = result.output
         # Should mention rule evaluation
-        assert ("Fitness check" in out or "rules" in out.lower()
-                or "PASS" in out or "FAIL" in out
-                or "No fitness rules" in out), (
-            f"Missing fitness output:\n{out}"
-        )
+        assert (
+            "Fitness check" in out
+            or "rules" in out.lower()
+            or "PASS" in out
+            or "FAIL" in out
+            or "No fitness rules" in out
+        ), f"Missing fitness output:\n{out}"
 
     def test_fitness_json_with_rules(self, cli_runner, indexed_project, monkeypatch):
         """roam --json fitness with rules should return rules array."""
@@ -560,9 +540,7 @@ class TestFitness:
             config_yml.unlink()
         result = invoke_cli(cli_runner, ["fitness"], cwd=indexed_project)
         assert result.exit_code == 0
-        assert ("No fitness rules" in result.output
-                or "fitness.yaml" in result.output
-                or "--init" in result.output), (
+        assert "No fitness rules" in result.output or "fitness.yaml" in result.output or "--init" in result.output, (
             f"Missing no-config instructions:\n{result.output}"
         )
 
@@ -570,6 +548,7 @@ class TestFitness:
 # ============================================================================
 # TestSnapshot
 # ============================================================================
+
 
 class TestSnapshot:
     """Tests for `roam snapshot` -- create a health snapshot."""
@@ -648,9 +627,7 @@ class TestSnapshot:
         assert result.exit_code == 0
         out = result.output
         # Should mention Health score, Files, Symbols
-        assert ("Health:" in out or "health" in out.lower()), (
-            f"Missing health info in snapshot output:\n{out}"
-        )
+        assert "Health:" in out or "health" in out.lower(), f"Missing health info in snapshot output:\n{out}"
 
     def test_snapshot_json_has_detail_fields(self, cli_runner, indexed_project, monkeypatch):
         """roam --json snapshot should include structural detail fields."""
@@ -678,6 +655,4 @@ class TestSnapshot:
                 ["snapshot", "--tag", f"multi-{i}"],
                 cwd=indexed_project,
             )
-            assert result.exit_code == 0, (
-                f"snapshot {i} failed: {result.output}"
-            )
+            assert result.exit_code == 0, f"snapshot {i} failed: {result.output}"

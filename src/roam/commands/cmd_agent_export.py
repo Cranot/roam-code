@@ -20,10 +20,9 @@ import os
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Marker for auto-generated sections
@@ -101,11 +100,11 @@ def _resolve_target_formats(
 # Data gathering (single DB connection, minimal graph computation)
 # ---------------------------------------------------------------------------
 
+
 def _gather_languages(conn):
     """Language distribution sorted by file count descending."""
     rows = conn.execute(
-        "SELECT language, COUNT(*) as cnt FROM files "
-        "WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
+        "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
     ).fetchall()
     total = sum(r["cnt"] for r in rows)
     results = []
@@ -124,9 +123,7 @@ def _gather_stats(conn):
     # LOC estimate from symbol_metrics
     loc_estimate = 0
     try:
-        row = conn.execute(
-            "SELECT SUM(line_count) FROM symbol_metrics"
-        ).fetchone()
+        row = conn.execute("SELECT SUM(line_count) FROM symbol_metrics").fetchone()
         if row and row[0]:
             loc_estimate = row[0]
     except Exception:
@@ -142,9 +139,7 @@ def _gather_stats(conn):
 
 def _gather_directory_layout(conn):
     """Top-level directory structure with file counts and roles."""
-    rows = conn.execute(
-        "SELECT path, file_role FROM files"
-    ).fetchall()
+    rows = conn.execute("SELECT path, file_role FROM files").fetchall()
 
     dirs = {}
     for r in rows:
@@ -162,11 +157,13 @@ def _gather_directory_layout(conn):
     results = []
     for name, info in sorted_dirs:
         dominant_role = max(info["roles"], key=info["roles"].get) if info["roles"] else "source"
-        results.append({
-            "name": name,
-            "files": info["count"],
-            "role": dominant_role,
-        })
+        results.append(
+            {
+                "name": name,
+                "files": info["count"],
+                "role": dominant_role,
+            }
+        )
     return results
 
 
@@ -188,12 +185,14 @@ def _gather_key_files(conn, limit=15):
 
     results = []
     for r in rows:
-        results.append({
-            "path": r["path"],
-            "pagerank": round(r["max_pr"] or 0, 4),
-            "fan_in": r["max_in"] or 0,
-            "symbols": r["sym_count"],
-        })
+        results.append(
+            {
+                "path": r["path"],
+                "pagerank": round(r["max_pr"] or 0, 4),
+                "fan_in": r["max_in"] or 0,
+                "symbols": r["sym_count"],
+            }
+        )
     return results
 
 
@@ -232,13 +231,15 @@ def _gather_hotspots(conn, limit=10):
         ).fetchall()
         results = []
         for r in rows:
-            results.append({
-                "path": r["path"],
-                "churn": r["total_churn"] or 0,
-                "commits": r["commit_count"] or 0,
-                "authors": r["distinct_authors"] or 0,
-                "complexity": round(r["complexity"] or 0, 1),
-            })
+            results.append(
+                {
+                    "path": r["path"],
+                    "churn": r["total_churn"] or 0,
+                    "commits": r["commit_count"] or 0,
+                    "authors": r["distinct_authors"] or 0,
+                    "complexity": round(r["complexity"] or 0, 1),
+                }
+            )
         return results
     except Exception:
         return []
@@ -249,12 +250,8 @@ def _gather_test_info(conn):
     # Count test files vs source files
     try:
         total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        test_files = conn.execute(
-            "SELECT COUNT(*) FROM files WHERE file_role = 'test'"
-        ).fetchone()[0]
-        source_files = conn.execute(
-            "SELECT COUNT(*) FROM files WHERE file_role = 'source'"
-        ).fetchone()[0]
+        test_files = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'test'").fetchone()[0]
+        source_files = conn.execute("SELECT COUNT(*) FROM files WHERE file_role = 'source'").fetchone()[0]
     except Exception:
         total_files = 0
         test_files = 0
@@ -263,9 +260,7 @@ def _gather_test_info(conn):
     # Detect test directory structure
     test_dirs = set()
     try:
-        rows = conn.execute(
-            "SELECT path FROM files WHERE file_role = 'test' LIMIT 50"
-        ).fetchall()
+        rows = conn.execute("SELECT path FROM files WHERE file_role = 'test' LIMIT 50").fetchall()
         for r in rows:
             p = r["path"].replace("\\", "/")
             parts = p.split("/")
@@ -277,9 +272,7 @@ def _gather_test_info(conn):
     # Detect test naming convention
     test_patterns = set()
     try:
-        rows = conn.execute(
-            "SELECT path FROM files WHERE file_role = 'test' LIMIT 50"
-        ).fetchall()
+        rows = conn.execute("SELECT path FROM files WHERE file_role = 'test' LIMIT 50").fetchall()
         for r in rows:
             basename = os.path.basename(r["path"])
             if basename.startswith("test_"):
@@ -313,6 +306,7 @@ def _gather_test_info(conn):
 def _gather_health(conn):
     """Lightweight health summary without full graph computation."""
     from roam.commands.metrics_history import collect_metrics
+
     try:
         return collect_metrics(conn)
     except Exception:
@@ -363,11 +357,13 @@ def _gather_layers(conn):
                 d = r["dir"]
                 dirs[d] = dirs.get(d, 0) + 1
             top_dirs = sorted(dirs.items(), key=lambda x: -x[1])[:3]
-            results.append({
-                "layer": layer_num,
-                "size": len(sym_ids),
-                "dirs": [d for d, _ in top_dirs],
-            })
+            results.append(
+                {
+                    "layer": layer_num,
+                    "size": len(sym_ids),
+                    "dirs": [d for d, _ in top_dirs],
+                }
+            )
         return results
     except Exception:
         return []
@@ -441,7 +437,8 @@ def _detect_build_command(conn):
 def _detect_frameworks(conn):
     """Lightweight framework detection reusing cmd_understand logic."""
     try:
-        from roam.commands.cmd_understand import _detect_frameworks, _detect_build
+        from roam.commands.cmd_understand import _detect_build, _detect_frameworks
+
         frameworks = _detect_frameworks(conn)
         build_tool = _detect_build(conn)
         return frameworks, build_tool
@@ -453,10 +450,25 @@ def _detect_frameworks(conn):
 # Markdown generation
 # ---------------------------------------------------------------------------
 
-def _generate_markdown(project_name, fmt, languages, stats, layout,
-                       key_files, entry_points, hotspots, test_info,
-                       health, layers, clusters, build_cmd, test_cmd,
-                       frameworks, build_tool):
+
+def _generate_markdown(
+    project_name,
+    fmt,
+    languages,
+    stats,
+    layout,
+    key_files,
+    entry_points,
+    hotspots,
+    test_info,
+    health,
+    layers,
+    clusters,
+    build_cmd,
+    test_cmd,
+    frameworks,
+    build_tool,
+):
     """Generate the complete markdown document."""
     lines = []
 
@@ -468,17 +480,16 @@ def _generate_markdown(project_name, fmt, languages, stats, layout,
     # -- Project Overview --
     lines.append("## What this project is")
     lines.append("")
-    lang_str = ", ".join(
-        f"{l['name']} ({l['pct']:.0f}%)" for l in languages[:5]
-    )
+    lang_str = ", ".join(f"{l['name']} ({l['pct']:.0f}%)" for l in languages[:5])
     if len(languages) > 5:
         lang_str += f", +{len(languages) - 5} more"
     lines.append(f"**Languages:** {lang_str}")
-    lines.append(f"**Size:** {stats['files']} files, {stats['symbols']} symbols"
-                 + (f", ~{stats['loc']:,} LOC" if stats['loc'] else ""))
+    lines.append(
+        f"**Size:** {stats['files']} files, {stats['symbols']} symbols"
+        + (f", ~{stats['loc']:,} LOC" if stats["loc"] else "")
+    )
     if frameworks:
-        lines.append(f"**Stack:** {', '.join(frameworks)}"
-                     + (f" | Build: {build_tool}" if build_tool else ""))
+        lines.append(f"**Stack:** {', '.join(frameworks)}" + (f" | Build: {build_tool}" if build_tool else ""))
     lines.append("")
 
     # -- Architecture --
@@ -519,10 +530,7 @@ def _generate_markdown(project_name, fmt, languages, stats, layout,
         lines.append("## Key Files (by importance)")
         lines.append("")
         for kf in key_files:
-            lines.append(
-                f"- `{kf['path']}` -- {kf['symbols']} symbols, "
-                f"PageRank {kf['pagerank']}"
-            )
+            lines.append(f"- `{kf['path']}` -- {kf['symbols']} symbols, PageRank {kf['pagerank']}")
         lines.append("")
 
     # -- Entry Points --
@@ -553,10 +561,7 @@ def _generate_markdown(project_name, fmt, languages, stats, layout,
         lines.append(f"**Test directories:** {', '.join(d + '/' for d in test_info['test_dirs'])}")
     if test_info["test_patterns"]:
         lines.append(f"**Naming convention:** {', '.join(test_info['test_patterns'])}")
-    lines.append(
-        f"**Coverage:** {test_info['test_files']} test files, "
-        f"{test_info['source_files']} source files"
-    )
+    lines.append(f"**Coverage:** {test_info['test_files']} test files, {test_info['source_files']} source files")
     lines.append("")
 
     # -- Common Tasks --
@@ -564,11 +569,11 @@ def _generate_markdown(project_name, fmt, languages, stats, layout,
     lines.append("")
     lines.append("```bash")
     if build_cmd:
-        lines.append(f"# Build / install")
+        lines.append("# Build / install")
         lines.append(build_cmd)
         lines.append("")
     if test_cmd:
-        lines.append(f"# Run tests")
+        lines.append("# Run tests")
         lines.append(test_cmd)
         lines.append("")
     # Cursor format is more concise -- skip roam commands
@@ -634,7 +639,7 @@ def _write_with_preserve(filepath, content):
                 # Check if there's a markdown heading right before the marker
                 prev_newline = existing.rfind("\n", 0, header_start)
                 if prev_newline >= 0:
-                    between = existing[prev_newline + 1:header_start + 1].strip()
+                    between = existing[prev_newline + 1 : header_start + 1].strip()
                     if between.startswith("#"):
                         header_start = prev_newline
             if header_start < 0:
@@ -670,20 +675,29 @@ def _write_with_preserve(filepath, content):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("agent-export")
-@click.option("--output", "-o", default=None, type=click.Path(),
-              help="Output file path (default: stdout)")
-@click.option("--format", "fmt",
-              type=click.Choice(["claude", "agents", "cursor", "codex", "gemini"]),
-              default=None, help="Output format variant")
-@click.option("--profile",
-              type=click.Choice(["generic", "claude", "codex", "gemini", "cursor", "copilot"]),
-              default=None,
-              help="Client profile mapping (used with default format selection and bundles)")
-@click.option("--bundle", is_flag=True,
-              help="Write canonical AGENTS.md plus profile-specific overlay(s)")
-@click.option("--write", "write_flag", is_flag=True,
-              help="Write directly to project root (CLAUDE/AGENTS/CODEX/GEMINI/.cursorrules)")
+@click.option("--output", "-o", default=None, type=click.Path(), help="Output file path (default: stdout)")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["claude", "agents", "cursor", "codex", "gemini"]),
+    default=None,
+    help="Output format variant",
+)
+@click.option(
+    "--profile",
+    type=click.Choice(["generic", "claude", "codex", "gemini", "cursor", "copilot"]),
+    default=None,
+    help="Client profile mapping (used with default format selection and bundles)",
+)
+@click.option("--bundle", is_flag=True, help="Write canonical AGENTS.md plus profile-specific overlay(s)")
+@click.option(
+    "--write",
+    "write_flag",
+    is_flag=True,
+    help="Write directly to project root (CLAUDE/AGENTS/CODEX/GEMINI/.cursorrules)",
+)
 @click.pass_context
 def agent_export(ctx, output, fmt, profile, bundle, write_flag):
     """Generate an AI agent context file from the roam index.
@@ -728,12 +742,21 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
         frameworks, build_tool = _detect_frameworks(conn)
 
     # Count sections for the verdict
-    section_count = sum(1 for x in [
-        languages, layout, key_files, entry_points,
-        hotspots, True,  # test_info always present
-        health.get("health_score") is not None if health else False,
-        layers, clusters,
-    ] if x)
+    section_count = sum(
+        1
+        for x in [
+            languages,
+            layout,
+            key_files,
+            entry_points,
+            hotspots,
+            True,  # test_info always present
+            health.get("health_score") is not None if health else False,
+            layers,
+            clusters,
+        ]
+        if x
+    )
 
     targets = ", ".join(_OUTPUT_FILENAMES[f] for f in formats)
     if len(formats) == 1:
@@ -743,38 +766,45 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
 
     # JSON output
     if json_mode:
-        click.echo(to_json(json_envelope("agent-export",
-            summary={
-                "verdict": verdict,
-                "format": formats[0],
-                "formats": formats,
-                "profile": profile,
-                "bundle": bundle,
-                "sections": section_count,
-                "files": stats["files"],
-                "symbols": stats["symbols"],
-            },
-            format=formats[0],
-            formats=formats,
-            profile=profile,
-            bundle=bundle,
-            project_name=project_name,
-            languages=languages,
-            stats=stats,
-            directory_layout=layout,
-            key_files=key_files,
-            entry_points=entry_points,
-            hotspots=hotspots,
-            test_info=test_info,
-            health_summary={
-                "score": health.get("health_score"),
-                "cycles": health.get("cycles", 0),
-                "god_components": health.get("god_components", 0),
-                "dead_exports": health.get("dead_exports", 0),
-            } if health else None,
-            layers=layers,
-            clusters=clusters,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "agent-export",
+                    summary={
+                        "verdict": verdict,
+                        "format": formats[0],
+                        "formats": formats,
+                        "profile": profile,
+                        "bundle": bundle,
+                        "sections": section_count,
+                        "files": stats["files"],
+                        "symbols": stats["symbols"],
+                    },
+                    format=formats[0],
+                    formats=formats,
+                    profile=profile,
+                    bundle=bundle,
+                    project_name=project_name,
+                    languages=languages,
+                    stats=stats,
+                    directory_layout=layout,
+                    key_files=key_files,
+                    entry_points=entry_points,
+                    hotspots=hotspots,
+                    test_info=test_info,
+                    health_summary={
+                        "score": health.get("health_score"),
+                        "cycles": health.get("cycles", 0),
+                        "god_components": health.get("god_components", 0),
+                        "dead_exports": health.get("dead_exports", 0),
+                    }
+                    if health
+                    else None,
+                    layers=layers,
+                    clusters=clusters,
+                )
+            )
+        )
         return
 
     # Determine where to write
@@ -783,10 +813,22 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
         total_bytes = 0
         for target_fmt in formats:
             content = _generate_markdown(
-                project_name, target_fmt, languages, stats, layout,
-                key_files, entry_points, hotspots, test_info,
-                health, layers, clusters, build_cmd, test_cmd,
-                frameworks, build_tool,
+                project_name,
+                target_fmt,
+                languages,
+                stats,
+                layout,
+                key_files,
+                entry_points,
+                hotspots,
+                test_info,
+                health,
+                layers,
+                clusters,
+                build_cmd,
+                test_cmd,
+                frameworks,
+                build_tool,
             )
             filename = _OUTPUT_FILENAMES[target_fmt]
             filepath = str(root / filename)
@@ -803,10 +845,22 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
     elif output:
         target_fmt = formats[0]
         content = _generate_markdown(
-            project_name, target_fmt, languages, stats, layout,
-            key_files, entry_points, hotspots, test_info,
-            health, layers, clusters, build_cmd, test_cmd,
-            frameworks, build_tool,
+            project_name,
+            target_fmt,
+            languages,
+            stats,
+            layout,
+            key_files,
+            entry_points,
+            hotspots,
+            test_info,
+            health,
+            layers,
+            clusters,
+            build_cmd,
+            test_cmd,
+            frameworks,
+            build_tool,
         )
         _write_with_preserve(output, content)
         size_kb = round(len(content.encode("utf-8")) / 1024, 1)
@@ -815,10 +869,22 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
     else:
         target_fmt = formats[0]
         content = _generate_markdown(
-            project_name, target_fmt, languages, stats, layout,
-            key_files, entry_points, hotspots, test_info,
-            health, layers, clusters, build_cmd, test_cmd,
-            frameworks, build_tool,
+            project_name,
+            target_fmt,
+            languages,
+            stats,
+            layout,
+            key_files,
+            entry_points,
+            hotspots,
+            test_info,
+            health,
+            layers,
+            clusters,
+            build_cmd,
+            test_cmd,
+            frameworks,
+            build_tool,
         )
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(content)

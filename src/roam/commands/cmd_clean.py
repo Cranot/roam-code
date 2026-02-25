@@ -6,9 +6,9 @@ import os
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command("clean")
@@ -22,7 +22,7 @@ def clean(ctx):
     Faster than `roam reset --force` for incremental cleanup after
     files are deleted or moved outside of git tracking.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     project_root = find_project_root()
@@ -73,7 +73,7 @@ def clean(ctx):
             # We delete in batches to avoid SQLITE_MAX_VARIABLE_NUMBER.
             batch_size = 400
             for i in range(0, len(orphaned_ids), batch_size):
-                batch = orphaned_ids[i:i + batch_size]
+                batch = orphaned_ids[i : i + batch_size]
                 ph = ",".join("?" for _ in batch)
                 conn.execute(f"DELETE FROM files WHERE id IN ({ph})", batch)
 
@@ -83,25 +83,17 @@ def clean(ctx):
         # (can happen when FK enforcement was off or edge was written before
         #  symbol was cleaned up)
         dangling_source = conn.execute(
-            "SELECT COUNT(*) FROM edges e "
-            "WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = e.source_id)"
+            "SELECT COUNT(*) FROM edges e WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = e.source_id)"
         ).fetchone()[0]
         dangling_target = conn.execute(
-            "SELECT COUNT(*) FROM edges e "
-            "WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = e.target_id)"
+            "SELECT COUNT(*) FROM edges e WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = e.target_id)"
         ).fetchone()[0]
         dangling_edges = dangling_source + dangling_target
 
         if dangling_source > 0:
-            conn.execute(
-                "DELETE FROM edges WHERE NOT EXISTS "
-                "(SELECT 1 FROM symbols WHERE id = edges.source_id)"
-            )
+            conn.execute("DELETE FROM edges WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = edges.source_id)")
         if dangling_target > 0:
-            conn.execute(
-                "DELETE FROM edges WHERE NOT EXISTS "
-                "(SELECT 1 FROM symbols WHERE id = edges.target_id)"
-            )
+            conn.execute("DELETE FROM edges WHERE NOT EXISTS (SELECT 1 FROM symbols WHERE id = edges.target_id)")
 
         # Run VACUUM only if we removed a significant amount of data
         total_removed = files_removed + symbols_removed + edges_removed + dangling_edges
@@ -121,16 +113,22 @@ def clean(ctx):
         )
 
         if json_mode:
-            click.echo(to_json(json_envelope("clean", summary={
-                "verdict": verdict,
-                "files_removed": files_removed,
-                "symbols_removed": symbols_removed,
-                "edges_removed": edges_removed + dangling_edges,
-                "dangling_edges_removed": dangling_edges,
-                "vacuumed": vacuumed,
-            },
-                orphaned_paths=orphaned_paths,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "clean",
+                        summary={
+                            "verdict": verdict,
+                            "files_removed": files_removed,
+                            "symbols_removed": symbols_removed,
+                            "edges_removed": edges_removed + dangling_edges,
+                            "dangling_edges_removed": dangling_edges,
+                            "vacuumed": vacuumed,
+                        },
+                        orphaned_paths=orphaned_paths,
+                    )
+                )
+            )
             return
 
         # Text output

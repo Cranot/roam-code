@@ -5,15 +5,15 @@ from collections import Counter
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
-from roam.output.formatter import abbrev_kind, format_signature, to_json, json_envelope
 from roam.commands.resolve import ensure_index, file_not_found_hint
-
+from roam.db.connection import find_project_root, open_db
+from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
+from roam.output.formatter import abbrev_kind, format_signature, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _resolve_file(conn, path):
     """Resolve a file path to its DB row, or None."""
@@ -96,6 +96,7 @@ def _build_file_skeleton(conn, frow):
 
 def _skeleton_to_json(frow, symbols, kind_counts, parent_ids):
     """Convert a single file skeleton to a JSON-serializable dict."""
+
     def _depth(s):
         level = 0
         pid = s["parent_id"]
@@ -183,16 +184,22 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("file")
-@click.argument('paths', nargs=-1)
-@click.option('--full', is_flag=True, help='Show all results without truncation')
+@click.argument("paths", nargs=-1)
+@click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.option(
-    '--changed', is_flag=True, default=False,
-    help='Show skeletons of all uncommitted changed files',
+    "--changed",
+    is_flag=True,
+    default=False,
+    help="Show skeletons of all uncommitted changed files",
 )
 @click.option(
-    '--deps-of', 'deps_of', type=str, default=None,
-    help='Show skeleton of PATH plus all files it imports',
+    "--deps-of",
+    "deps_of",
+    type=str,
+    default=None,
+    help="Show skeleton of PATH plus all files it imports",
 )
 @click.pass_context
 def file_cmd(ctx, paths, full, changed, deps_of):
@@ -202,7 +209,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
     uncommitted changed files.  With --deps-of PATH, shows the skeleton of
     PATH plus every file it imports.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     # Collect target paths from all sources
@@ -249,19 +256,24 @@ def file_cmd(ctx, paths, full, changed, deps_of):
 
             if json_mode:
                 obj = _skeleton_to_json(frow, symbols, kind_counts, parent_ids)
-                click.echo(to_json(json_envelope("file",
-                    summary={
-                        "symbols": len(symbols),
-                        "line_count": frow["line_count"],
-                    },
-                    path=obj["path"],
-                    language=obj["language"],
-                    line_count=obj["line_count"],
-                    kind_summary=obj["kind_summary"],
-                    cognitive_load=obj.get("cognitive_load"),
-                    health_score=obj.get("health_score"),
-                    symbols=obj["symbols"],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "file",
+                            summary={
+                                "symbols": len(symbols),
+                                "line_count": frow["line_count"],
+                            },
+                            path=obj["path"],
+                            language=obj["language"],
+                            line_count=obj["line_count"],
+                            kind_summary=obj["kind_summary"],
+                            cognitive_load=obj.get("cognitive_load"),
+                            health_score=obj.get("health_score"),
+                            symbols=obj["symbols"],
+                        )
+                    )
+                )
                 return
 
             text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids)
@@ -282,18 +294,21 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         if json_mode:
             files_json = []
             for frow, symbols, kind_counts, parent_ids in file_results:
-                files_json.append(
-                    _skeleton_to_json(frow, symbols, kind_counts, parent_ids)
-                )
+                files_json.append(_skeleton_to_json(frow, symbols, kind_counts, parent_ids))
             total_symbols = sum(f["symbol_count"] for f in files_json)
-            click.echo(to_json(json_envelope("file",
-                summary={
-                    "files": len(files_json),
-                    "total_symbols": total_symbols,
-                    "missing": missing,
-                },
-                files=files_json,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "file",
+                        summary={
+                            "files": len(files_json),
+                            "total_symbols": total_symbols,
+                            "missing": missing,
+                        },
+                        files=files_json,
+                    )
+                )
+            )
             return
 
         # Text output
@@ -307,12 +322,13 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             if not first:
                 click.echo()
 
-            header = (
-                f"\u2500\u2500\u2500 {frow['path']} ({len(symbols)} symbols) "
-                f"\u2500\u2500\u2500"
-            )
+            header = f"\u2500\u2500\u2500 {frow['path']} ({len(symbols)} symbols) \u2500\u2500\u2500"
             text_lines = _render_skeleton_text(
-                frow, symbols, kind_counts, parent_ids, header=header,
+                frow,
+                symbols,
+                kind_counts,
+                parent_ids,
+                header=header,
             )
             click.echo("\n".join(text_lines))
             first = False

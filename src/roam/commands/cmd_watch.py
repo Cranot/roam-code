@@ -6,15 +6,15 @@ import json
 import queue
 import threading
 import time
-from datetime import datetime, timezone
 import urllib.parse
+from datetime import datetime, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root, db_exists
 from roam.commands.resolve import ensure_index
+from roam.db.connection import db_exists, find_project_root, open_db
 
 
 def load_tracked_files(project_root: Path) -> dict[str, float]:
@@ -70,10 +70,7 @@ def detect_changes(
 
     added = sorted(disk_set - tracked_set)
     removed = sorted(tracked_set - disk_set)
-    modified = sorted(
-        p for p in tracked_set & disk_set
-        if abs(current_disk[p] - tracked[p]) > 0.001
-    )
+    modified = sorted(p for p in tracked_set & disk_set if abs(current_disk[p] - tracked[p]) > 0.001)
     return added, modified, removed
 
 
@@ -85,6 +82,7 @@ def discover_current_files(project_root: Path) -> list[str]:
     """
     try:
         from roam.index.discovery import discover_files
+
         return discover_files(project_root)
     except Exception:
         return []
@@ -99,6 +97,7 @@ def run_incremental_index(project_root: Path, quiet: bool, force: bool = False) 
         force: run a full rebuild when True.
     """
     from roam.index.indexer import Indexer
+
     indexer = Indexer(project_root=project_root)
     indexer.run(force=force, quiet=quiet)
 
@@ -111,7 +110,7 @@ def _guardian_drift_summary(
 ) -> dict:
     """Return compact ownership-drift summary for architecture guardian mode."""
     from roam.commands.cmd_codeowners import find_codeowners, parse_codeowners, resolve_owners
-    from roam.commands.cmd_drift import compute_file_ownership, compute_drift_score
+    from roam.commands.cmd_drift import compute_drift_score, compute_file_ownership
 
     co_path = find_codeowners(project_root)
     if co_path is None:
@@ -176,8 +175,8 @@ def collect_guardian_snapshot(
     drift_threshold: float = 0.5,
 ) -> dict:
     """Collect a continuous architecture-guardian snapshot."""
-    from roam.commands.metrics_history import append_snapshot, get_snapshots
     from roam.commands.cmd_trend import _analyze_trends, _trend_verdict
+    from roam.commands.metrics_history import append_snapshot, get_snapshots
 
     with open_db(readonly=False, project_root=project_root) as conn:
         current = append_snapshot(conn, source="watch-guardian")
@@ -190,17 +189,19 @@ def collect_guardian_snapshot(
 
     chrono = []
     for snap in reversed(snaps):
-        chrono.append({
-            "files": snap["files"],
-            "symbols": snap["symbols"],
-            "edges": snap["edges"],
-            "cycles": snap["cycles"],
-            "god_components": snap["god_components"],
-            "bottlenecks": snap["bottlenecks"],
-            "dead_exports": snap["dead_exports"],
-            "layer_violations": snap["layer_violations"],
-            "health_score": snap["health_score"],
-        })
+        chrono.append(
+            {
+                "files": snap["files"],
+                "symbols": snap["symbols"],
+                "edges": snap["edges"],
+                "cycles": snap["cycles"],
+                "god_components": snap["god_components"],
+                "bottlenecks": snap["bottlenecks"],
+                "dead_exports": snap["dead_exports"],
+                "layer_violations": snap["layer_violations"],
+                "health_score": snap["health_score"],
+            }
+        )
 
     trend = {
         "verdict": "insufficient-data",
@@ -212,12 +213,7 @@ def collect_guardian_snapshot(
         trend = {
             "verdict": _trend_verdict(analysis),
             "anomaly_count": len(analysis.get("anomalies", [])),
-            "significant_trends": len(
-                [
-                    t for t in analysis.get("trends", [])
-                    if t.get("direction") != "stable"
-                ]
-            ),
+            "significant_trends": len([t for t in analysis.get("trends", []) if t.get("direction") != "stable"]),
         }
 
     health_score = int(current.get("health_score", 0) or 0)
@@ -226,12 +222,7 @@ def collect_guardian_snapshot(
         "health_gate_pass": health_score >= health_gate,
     }
     return {
-        "timestamp": (
-            datetime.now(timezone.utc)
-            .replace(microsecond=0)
-            .isoformat()
-            .replace("+00:00", "Z")
-        ),
+        "timestamp": (datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")),
         "source": "watch-guardian",
         "current": {
             "health_score": health_score,
@@ -296,11 +287,13 @@ class WebhookBridge:
     def _enqueue(self, event: str, force: bool = False) -> None:
         with self._lock:
             self._accepted += 1
-        self._events.put({
-            "event": event or "webhook",
-            "force": bool(force),
-            "received_at": time.time(),
-        })
+        self._events.put(
+            {
+                "event": event or "webhook",
+                "force": bool(force),
+                "received_at": time.time(),
+            }
+        )
 
     def drain_events(self) -> list[dict]:
         """Drain queued trigger events."""
@@ -520,9 +513,7 @@ def poll_loop(
         )
     if _guardian_write is None:
         _guardian_write = (
-            lambda payload: append_guardian_report(Path(guardian_report), payload)
-            if guardian_report
-            else None
+            lambda payload: append_guardian_report(Path(guardian_report), payload) if guardian_report else None
         )
 
     acc = DebounceAccumulator(window=debounce)
@@ -598,11 +589,7 @@ def poll_loop(
                     if guardian_report:
                         _guardian_write(guard_payload)
                     if not quiet:
-                        gate_state = (
-                            "PASS"
-                            if guard_payload.get("gates", {}).get("health_gate_pass")
-                            else "FAIL"
-                        )
+                        gate_state = "PASS" if guard_payload.get("gates", {}).get("health_gate_pass") else "FAIL"
                         click.echo(
                             "Guardian: health={} trend={} drift={} ({})".format(
                                 guard_payload.get("current", {}).get("health_score", "n/a"),
@@ -618,21 +605,24 @@ def poll_loop(
 
 @click.command("watch")
 @click.option(
-    "--interval", "-i",
+    "--interval",
+    "-i",
     default=2.0,
     show_default=True,
     type=float,
     help="Poll interval in seconds.",
 )
 @click.option(
-    "--debounce", "-d",
+    "--debounce",
+    "-d",
     default=1.0,
     show_default=True,
     type=float,
     help="Quiet-period window before triggering re-index (seconds).",
 )
 @click.option(
-    "--quiet", "-q",
+    "--quiet",
+    "-q",
     is_flag=True,
     help="Suppress per-file change messages.",
 )
@@ -737,9 +727,7 @@ def watch(
         )
         bridge.start()
         if not quiet:
-            click.echo(
-                f"Webhook bridge listening on http://{webhook_host}:{bridge.port}{bridge.path}"
-            )
+            click.echo(f"Webhook bridge listening on http://{webhook_host}:{bridge.port}{bridge.path}")
             if webhook_secret:
                 click.echo("Webhook auth: secret required via X-Roam-Secret or Bearer token.")
     if (guardian or guardian_report) and not quiet:

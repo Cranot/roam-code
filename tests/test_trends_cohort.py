@@ -10,7 +10,6 @@ from pathlib import Path
 import click
 import pytest
 from click.testing import CliRunner
-
 from conftest import git_init, index_in_process
 
 
@@ -65,13 +64,11 @@ def cohort_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
     (proj / "src").mkdir()
     (proj / "src" / "ai_module.py").write_text(
-        "def ai_logic(x):\n"
-        "    return x + 1\n",
+        "def ai_logic(x):\n    return x + 1\n",
         encoding="utf-8",
     )
     (proj / "src" / "human_module.py").write_text(
-        "def human_logic(x):\n"
-        "    return x - 1\n",
+        "def human_logic(x):\n    return x - 1\n",
         encoding="utf-8",
     )
     git_init(proj)
@@ -102,10 +99,7 @@ def cohort_project(tmp_path, monkeypatch):
 
     # Human edits on human_module.py
     (proj / "src" / "human_module.py").write_text(
-        "def human_logic(x):\n"
-        "    if x <= 1:\n"
-        "        return 1\n"
-        "    return x * 2\n",
+        "def human_logic(x):\n    if x <= 1:\n        return 1\n    return x * 2\n",
         encoding="utf-8",
     )
     _git_commit_as(proj, "manual tweak to business logic", "Human Dev", "human@example.com")

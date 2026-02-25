@@ -26,8 +26,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process
-
+from conftest import git_init, index_in_process
 
 # ===========================================================================
 # Helper: invoke the adversarial command directly (not via cli.py)
@@ -54,9 +53,7 @@ def run_adversarial(proj, args=None, json_mode=False):
     try:
         os.chdir(str(proj))
         obj = {"json": json_mode}
-        result = runner.invoke(
-            adversarial, full_args, obj=obj, catch_exceptions=False
-        )
+        result = runner.invoke(adversarial, full_args, obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result
@@ -126,17 +123,8 @@ def clean_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "models.py").write_text(
-        "class Item:\n"
-        "    def __init__(self, value):\n"
-        "        self.value = value\n"
-    )
-    (proj / "service.py").write_text(
-        "from models import Item\n"
-        "\n"
-        "def make_item(v):\n"
-        "    return Item(v)\n"
-    )
+    (proj / "models.py").write_text("class Item:\n    def __init__(self, value):\n        self.value = value\n")
+    (proj / "service.py").write_text("from models import Item\n\ndef make_item(v):\n    return Item(v)\n")
 
     git_init(proj)
     index_in_process(proj)
@@ -163,10 +151,7 @@ def indexed_project_no_changes(tmp_path):
     proj = tmp_path / "no_changes"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        "def main():\n"
-        "    return 0\n"
-    )
+    (proj / "app.py").write_text("def main():\n    return 0\n")
     git_init(proj)
     index_in_process(proj)
     return proj
@@ -183,16 +168,12 @@ class TestAdversarialBasic:
     def test_adversarial_runs(self, adversarial_project):
         """Command exits 0 with uncommitted changes."""
         result = run_adversarial(adversarial_project)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
 
     def test_adversarial_no_changes(self, indexed_project_no_changes):
         """Command exits 0 gracefully when no changes are detected."""
         result = run_adversarial(indexed_project_no_changes)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
         output = result.output
         # Should mention no changes or look clean
         assert len(output.strip()) > 0, "Expected non-empty output"
@@ -209,9 +190,7 @@ class TestAdversarialJSON:
     def test_adversarial_json_envelope(self, adversarial_project):
         """JSON output has required envelope fields."""
         result = run_adversarial(adversarial_project, json_mode=True)
-        assert result.exit_code == 0, (
-            f"Exit {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Exit {result.exit_code}:\n{result.output}"
         data = json.loads(result.output)
         assert "command" in data
         assert "version" in data
@@ -282,22 +261,22 @@ class TestAdversarialChallenges:
             assert isinstance(ch["title"], str)
             assert isinstance(ch["description"], str)
             assert isinstance(ch["question"], str)
-            assert ch["severity"] in ("CRITICAL", "HIGH", "WARNING", "INFO"), (
-                f"Invalid severity: {ch['severity']}"
-            )
+            assert ch["severity"] in ("CRITICAL", "HIGH", "WARNING", "INFO"), f"Invalid severity: {ch['severity']}"
 
     def test_adversarial_challenge_types_valid(self, adversarial_project):
         """All challenge types are from the known set."""
         result = run_adversarial(adversarial_project, json_mode=True)
         data = json.loads(result.output)
         valid_types = {
-            "new_cycle", "layer_violation", "anti_pattern",
-            "cross_cluster", "orphaned", "high_fan_out",
+            "new_cycle",
+            "layer_violation",
+            "anti_pattern",
+            "cross_cluster",
+            "orphaned",
+            "high_fan_out",
         }
         for ch in data["challenges"]:
-            assert ch["type"] in valid_types, (
-                f"Unknown challenge type: {ch['type']}"
-            )
+            assert ch["type"] in valid_types, f"Unknown challenge type: {ch['type']}"
 
     def test_adversarial_summary_counts_consistent(self, adversarial_project):
         """Summary counts match actual challenge list counts."""
@@ -323,9 +302,7 @@ class TestAdversarialSeverityFilter:
 
     def test_adversarial_severity_high_filters_info_warning(self, adversarial_project):
         """--severity high filters out INFO and WARNING challenges."""
-        result_high = run_adversarial(
-            adversarial_project, ["--severity", "high"], json_mode=True
-        )
+        result_high = run_adversarial(adversarial_project, ["--severity", "high"], json_mode=True)
         data_high = json.loads(result_high.output)
         for ch in data_high["challenges"]:
             assert ch["severity"] in ("CRITICAL", "HIGH"), (
@@ -334,20 +311,14 @@ class TestAdversarialSeverityFilter:
 
     def test_adversarial_severity_critical_only(self, adversarial_project):
         """--severity critical shows only CRITICAL challenges."""
-        result = run_adversarial(
-            adversarial_project, ["--severity", "critical"], json_mode=True
-        )
+        result = run_adversarial(adversarial_project, ["--severity", "critical"], json_mode=True)
         data = json.loads(result.output)
         for ch in data["challenges"]:
-            assert ch["severity"] == "CRITICAL", (
-                f"Expected only CRITICAL, got {ch['severity']}"
-            )
+            assert ch["severity"] == "CRITICAL", f"Expected only CRITICAL, got {ch['severity']}"
 
     def test_adversarial_severity_low_includes_info(self, adversarial_project):
         """--severity low (default) shows all severities including INFO."""
-        result_low = run_adversarial(
-            adversarial_project, ["--severity", "low"], json_mode=True
-        )
+        result_low = run_adversarial(adversarial_project, ["--severity", "low"], json_mode=True)
         result_default = run_adversarial(adversarial_project, json_mode=True)
         data_low = json.loads(result_low.output)
         data_default = json.loads(result_default.output)
@@ -356,12 +327,8 @@ class TestAdversarialSeverityFilter:
 
     def test_adversarial_severity_high_le_low_count(self, adversarial_project):
         """--severity high produces <= challenges than --severity low."""
-        result_low = run_adversarial(
-            adversarial_project, ["--severity", "low"], json_mode=True
-        )
-        result_high = run_adversarial(
-            adversarial_project, ["--severity", "high"], json_mode=True
-        )
+        result_low = run_adversarial(adversarial_project, ["--severity", "low"], json_mode=True)
+        result_high = run_adversarial(adversarial_project, ["--severity", "high"], json_mode=True)
         count_low = len(json.loads(result_low.output)["challenges"])
         count_high = len(json.loads(result_high.output)["challenges"])
         assert count_high <= count_low
@@ -370,21 +337,15 @@ class TestAdversarialSeverityFilter:
 class TestAdversarialFailOnCritical:
     """CI mode: --fail-on-critical tests."""
 
-    def test_adversarial_fail_on_critical_no_changes_exits_zero(
-        self, indexed_project_no_changes
-    ):
+    def test_adversarial_fail_on_critical_no_changes_exits_zero(self, indexed_project_no_changes):
         """--fail-on-critical exits 0 when there are no changes."""
         result = run_adversarial(indexed_project_no_changes, ["--fail-on-critical"])
-        assert result.exit_code == 0, (
-            f"Expected exit 0 (no changes), got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0 (no changes), got {result.exit_code}:\n{result.output}"
 
     def test_adversarial_fail_on_critical_runs(self, adversarial_project):
         """--fail-on-critical flag runs without crashing (may exit 0 or 1)."""
         result = run_adversarial(adversarial_project, ["--fail-on-critical"])
-        assert result.exit_code in (0, 1), (
-            f"Expected exit 0 or 1, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code in (0, 1), f"Expected exit 0 or 1, got {result.exit_code}:\n{result.output}"
 
 
 class TestAdversarialTextOutput:
@@ -395,18 +356,14 @@ class TestAdversarialTextOutput:
         result = run_adversarial(adversarial_project)
         assert result.exit_code == 0
         output = result.output.strip()
-        assert output.startswith("VERDICT:"), (
-            f"Expected output to start with 'VERDICT:', got:\n{output[:200]}"
-        )
+        assert output.startswith("VERDICT:"), f"Expected output to start with 'VERDICT:', got:\n{output[:200]}"
 
     def test_adversarial_verdict_line_no_changes(self, indexed_project_no_changes):
         """Text output has VERDICT: even when no changes."""
         result = run_adversarial(indexed_project_no_changes)
         assert result.exit_code == 0
         output = result.output.strip()
-        assert output.startswith("VERDICT:"), (
-            f"Expected VERDICT: at start, got:\n{output[:200]}"
-        )
+        assert output.startswith("VERDICT:"), f"Expected VERDICT: at start, got:\n{output[:200]}"
 
     def test_adversarial_challenge_block_when_found(self, adversarial_project):
         """When challenges exist, CHALLENGE N block appears in text output."""
@@ -417,9 +374,7 @@ class TestAdversarialTextOutput:
 
         result_text = run_adversarial(adversarial_project)
         output = result_text.output
-        assert "CHALLENGE 1 [" in output, (
-            f"Expected CHALLENGE 1 [ in output:\n{output}"
-        )
+        assert "CHALLENGE 1 [" in output, f"Expected CHALLENGE 1 [ in output:\n{output}"
 
     def test_adversarial_question_in_text_output(self, adversarial_project):
         """When challenges exist, Question: field appears in text output."""
@@ -430,9 +385,7 @@ class TestAdversarialTextOutput:
 
         result_text = run_adversarial(adversarial_project)
         output = result_text.output
-        assert "Question:" in output, (
-            f"Expected 'Question:' in output:\n{output}"
-        )
+        assert "Question:" in output, f"Expected 'Question:' in output:\n{output}"
 
 
 class TestAdversarialMarkdown:
@@ -443,23 +396,17 @@ class TestAdversarialMarkdown:
         result = run_adversarial(adversarial_project, ["--format", "markdown"])
         assert result.exit_code == 0
         output = result.output
-        assert "## Adversarial Architecture Review" in output, (
-            f"Expected markdown header:\n{output[:300]}"
-        )
+        assert "## Adversarial Architecture Review" in output, f"Expected markdown header:\n{output[:300]}"
 
     def test_adversarial_markdown_has_verdict(self, adversarial_project):
         """Markdown output contains Verdict."""
         result = run_adversarial(adversarial_project, ["--format", "markdown"])
         output = result.output
-        assert "Verdict" in output or "verdict" in output, (
-            f"Expected 'Verdict' in markdown:\n{output[:300]}"
-        )
+        assert "Verdict" in output or "verdict" in output, f"Expected 'Verdict' in markdown:\n{output[:300]}"
 
     def test_adversarial_markdown_no_changes(self, indexed_project_no_changes):
         """Markdown format works gracefully with no changes."""
-        result = run_adversarial(
-            indexed_project_no_changes, ["--format", "markdown"]
-        )
+        result = run_adversarial(indexed_project_no_changes, ["--format", "markdown"])
         assert result.exit_code == 0
         # Should still produce the header
         assert "## Adversarial Architecture Review" in result.output
@@ -474,10 +421,7 @@ class TestAdversarialMarkdown:
         result_md = run_adversarial(adversarial_project, ["--format", "markdown"])
         output = result_md.output
         # Should have at least one severity section header
-        has_section = any(
-            f"### {s}" in output
-            for s in ("Critical", "High", "Warning", "Info")
-        )
+        has_section = any(f"### {s}" in output for s in ("Critical", "High", "Warning", "Info"))
         assert has_section, f"Expected severity section in markdown:\n{output[:500]}"
 
 
@@ -487,9 +431,7 @@ class TestAdversarialOptions:
     def test_adversarial_staged_flag(self, adversarial_project):
         """--staged flag does not crash and exits 0."""
         result = run_adversarial(adversarial_project, ["--staged"])
-        assert result.exit_code == 0, (
-            f"--staged flag crashed:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"--staged flag crashed:\n{result.output}"
 
     def test_adversarial_staged_json(self, adversarial_project):
         """--staged with JSON mode produces valid JSON envelope."""
@@ -513,9 +455,7 @@ class TestAdversarialOrphaned:
         # All orphaned challenges should be INFO severity
         orphaned = [c for c in challenges if c["type"] == "orphaned"]
         for ch in orphaned:
-            assert ch["severity"] == "INFO", (
-                f"Orphaned challenge should be INFO, got {ch['severity']}"
-            )
+            assert ch["severity"] == "INFO", f"Orphaned challenge should be INFO, got {ch['severity']}"
 
     def test_adversarial_orphaned_not_from_test_files(self, adversarial_project):
         """Orphaned checks skip test files."""
@@ -526,12 +466,8 @@ class TestAdversarialOrphaned:
                 continue
             location = ch["location"].replace("\\", "/")
             # Should not be from test directories
-            assert "tests/" not in location, (
-                f"Orphaned check should skip test files: {location}"
-            )
-            assert "test_" not in location.split("/")[-1], (
-                f"Orphaned check should skip test files: {location}"
-            )
+            assert "tests/" not in location, f"Orphaned check should skip test files: {location}"
+            assert "test_" not in location.split("/")[-1], f"Orphaned check should skip test files: {location}"
 
     def test_adversarial_orphaned_question_present(self, adversarial_project):
         """Each orphaned challenge has a meaningful question."""
@@ -555,9 +491,7 @@ class TestAdversarialCleanChanges:
         """Clean changes produce a VERDICT line."""
         result = run_adversarial(clean_project)
         output = result.output.strip()
-        assert output.startswith("VERDICT:"), (
-            f"Expected VERDICT: at start:\n{output[:200]}"
-        )
+        assert output.startswith("VERDICT:"), f"Expected VERDICT: at start:\n{output[:200]}"
 
     def test_adversarial_clean_changes_json_valid(self, clean_project):
         """Clean changes produce valid JSON envelope."""
@@ -575,10 +509,8 @@ class TestAdversarialInternalFunctions:
     def test_challenge_builder_fields(self):
         """_challenge() produces all required fields."""
         from roam.commands.cmd_adversarial import _challenge
-        ch = _challenge(
-            "test_type", "HIGH", "Test title", "Test desc", "Test question",
-            location="foo.py:10"
-        )
+
+        ch = _challenge("test_type", "HIGH", "Test title", "Test desc", "Test question", location="foo.py:10")
         assert ch["type"] == "test_type"
         assert ch["severity"] == "HIGH"
         assert ch["title"] == "Test title"
@@ -589,12 +521,14 @@ class TestAdversarialInternalFunctions:
     def test_challenge_builder_default_location(self):
         """_challenge() defaults location to empty string."""
         from roam.commands.cmd_adversarial import _challenge
+
         ch = _challenge("t", "INFO", "T", "D", "Q")
         assert ch["location"] == ""
 
     def test_severity_order_constants(self):
         """_SEVERITY_ORDER maps severities to correct numeric values."""
         from roam.commands.cmd_adversarial import _SEVERITY_ORDER
+
         assert _SEVERITY_ORDER["CRITICAL"] > _SEVERITY_ORDER["HIGH"]
         assert _SEVERITY_ORDER["HIGH"] > _SEVERITY_ORDER["WARNING"]
         assert _SEVERITY_ORDER["WARNING"] > _SEVERITY_ORDER["INFO"]
@@ -602,16 +536,22 @@ class TestAdversarialInternalFunctions:
     def test_format_text_verdict_first(self):
         """_format_text() always starts with VERDICT:."""
         from roam.commands.cmd_adversarial import _format_text
+
         output = _format_text([], "No challenges found", 3)
         assert output.startswith("VERDICT:")
 
     def test_format_text_with_challenges(self):
         """_format_text() includes CHALLENGE N blocks when challenges exist."""
         from roam.commands.cmd_adversarial import _challenge, _format_text
+
         challenges = [
             _challenge(
-                "orphaned", "INFO", "Orphaned: foo", "foo has no callers",
-                "Is this a new entry point?", "foo.py:5"
+                "orphaned",
+                "INFO",
+                "Orphaned: foo",
+                "foo has no callers",
+                "Is this a new entry point?",
+                "foo.py:5",
             ),
         ]
         output = _format_text(challenges, "1 challenge(s), 1 info", 1)
@@ -622,11 +562,9 @@ class TestAdversarialInternalFunctions:
     def test_format_text_challenge_location(self):
         """_format_text() shows Location when it is set."""
         from roam.commands.cmd_adversarial import _challenge, _format_text
+
         challenges = [
-            _challenge(
-                "orphaned", "INFO", "Orphaned: bar", "bar is dead",
-                "Why?", location="src/bar.py:42"
-            ),
+            _challenge("orphaned", "INFO", "Orphaned: bar", "bar is dead", "Why?", location="src/bar.py:42"),
         ]
         output = _format_text(challenges, "1 info", 1)
         assert "Location:" in output
@@ -635,20 +573,22 @@ class TestAdversarialInternalFunctions:
     def test_format_markdown_header(self):
         """_format_markdown() starts with h2 header."""
         from roam.commands.cmd_adversarial import _format_markdown
+
         output = _format_markdown([], "Clean", 2)
         assert "## Adversarial Architecture Review" in output
 
     def test_format_markdown_with_challenges(self):
         """_format_markdown() includes severity section groupings."""
         from roam.commands.cmd_adversarial import _challenge, _format_markdown
+
         challenges = [
+            _challenge("orphaned", "INFO", "Orphaned: bar", "bar is orphaned", "Entry point?"),
             _challenge(
-                "orphaned", "INFO", "Orphaned: bar", "bar is orphaned",
-                "Entry point?"
-            ),
-            _challenge(
-                "layer_violation", "HIGH", "Layer skip: L0->L3",
-                "A calls D directly", "Justify the skip."
+                "layer_violation",
+                "HIGH",
+                "Layer skip: L0->L3",
+                "A calls D directly",
+                "Justify the skip.",
             ),
         ]
         output = _format_markdown(challenges, "2 challenges", 1)
@@ -657,11 +597,9 @@ class TestAdversarialInternalFunctions:
     def test_format_markdown_blockquote_question(self):
         """_format_markdown() uses blockquote (>) for questions."""
         from roam.commands.cmd_adversarial import _challenge, _format_markdown
+
         challenges = [
-            _challenge(
-                "orphaned", "INFO", "Orphaned: baz", "baz is orphaned",
-                "Is this intentional?"
-            ),
+            _challenge("orphaned", "INFO", "Orphaned: baz", "baz is orphaned", "Is this intentional?"),
         ]
         output = _format_markdown(challenges, "1 info", 1)
         assert "> Is this intentional?" in output
@@ -669,29 +607,34 @@ class TestAdversarialInternalFunctions:
     def test_check_orphaned_returns_list(self):
         """_check_orphaned_symbols returns a list (empty set case)."""
         from roam.commands.cmd_adversarial import _check_orphaned_symbols
+
         result = _check_orphaned_symbols(None, set())
         assert result == []
 
     def test_check_cycles_returns_list_empty(self):
         """_check_new_cycles returns empty list when no changed symbols."""
         from roam.commands.cmd_adversarial import _check_new_cycles
+
         result = _check_new_cycles(None, set())
         assert result == []
 
     def test_check_layer_violations_returns_list_empty(self):
         """_check_layer_violations returns empty list for empty input."""
         from roam.commands.cmd_adversarial import _check_layer_violations
+
         result = _check_layer_violations(None, set())
         assert result == []
 
     def test_check_cross_cluster_returns_list_empty(self):
         """_check_cross_cluster returns empty list for empty input."""
         from roam.commands.cmd_adversarial import _check_cross_cluster
+
         result = _check_cross_cluster(None, set())
         assert result == []
 
     def test_check_anti_patterns_returns_list_empty(self):
         """_check_anti_patterns returns empty list for empty input."""
         from roam.commands.cmd_adversarial import _check_anti_patterns
+
         result = _check_anti_patterns(None, set())
         assert result == []

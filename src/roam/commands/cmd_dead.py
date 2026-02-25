@@ -10,44 +10,121 @@ from statistics import median
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in, batched_count
-from roam.db.queries import UNREFERENCED_EXPORTS
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope, summary_envelope
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
-from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
+from roam.db.connection import batched_count, batched_in, find_project_root, open_db
+from roam.db.queries import UNREFERENCED_EXPORTS
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    summary_envelope,
+    to_json,
+)
 from roam.rules.dataflow import collect_dataflow_findings
-
 
 _ENTRY_NAMES = {
     # Generic entry points
-    "main", "app", "serve", "server", "setup", "run", "cli",
-    "handler", "middleware", "route", "index", "init",
-    "register", "boot", "start", "execute", "configure",
-    "command", "worker", "job", "task", "listener",
+    "main",
+    "app",
+    "serve",
+    "server",
+    "setup",
+    "run",
+    "cli",
+    "handler",
+    "middleware",
+    "route",
+    "index",
+    "init",
+    "register",
+    "boot",
+    "start",
+    "execute",
+    "configure",
+    "command",
+    "worker",
+    "job",
+    "task",
+    "listener",
     # Vue lifecycle hooks
-    "mounted", "created", "beforeMount", "beforeDestroy",
-    "beforeCreate", "activated", "deactivated",
-    "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
-    "onActivated", "onDeactivated", "onUpdated", "onBeforeUpdate",
+    "mounted",
+    "created",
+    "beforeMount",
+    "beforeDestroy",
+    "beforeCreate",
+    "activated",
+    "deactivated",
+    "onMounted",
+    "onUnmounted",
+    "onBeforeMount",
+    "onBeforeUnmount",
+    "onActivated",
+    "onDeactivated",
+    "onUpdated",
+    "onBeforeUpdate",
     # React lifecycle
-    "componentDidMount", "componentWillUnmount", "componentDidUpdate",
+    "componentDidMount",
+    "componentWillUnmount",
+    "componentDidUpdate",
     # Angular lifecycle
-    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
+    "ngOnInit",
+    "ngOnDestroy",
+    "ngOnChanges",
+    "ngAfterViewInit",
     # Test lifecycle
-    "setUp", "tearDown", "beforeEach", "afterEach", "beforeAll", "afterAll",
+    "setUp",
+    "tearDown",
+    "beforeEach",
+    "afterEach",
+    "beforeAll",
+    "afterAll",
 }
-_ENTRY_FILE_BASES = {"server", "app", "main", "cli", "index", "manage",
-                      "boot", "bootstrap", "start", "entry", "worker"}
-_API_PREFIXES = ("get", "use", "create", "validate", "fetch", "update",
-                 "delete", "find", "check", "make", "build", "parse")
+_ENTRY_FILE_BASES = {
+    "server",
+    "app",
+    "main",
+    "cli",
+    "index",
+    "manage",
+    "boot",
+    "bootstrap",
+    "start",
+    "entry",
+    "worker",
+}
+_API_PREFIXES = (
+    "get",
+    "use",
+    "create",
+    "validate",
+    "fetch",
+    "update",
+    "delete",
+    "find",
+    "check",
+    "make",
+    "build",
+    "parse",
+)
 
 
-_ABC_METHOD_NAMES = frozenset({
-    "language_name", "file_extensions", "extract_symbols", "extract_references",
-    "get_docstring", "get_signature", "node_text",
-    "detect", "supported_bridges",
-    "resolve_cross_language", "get_bridge_edges",
-})
+_ABC_METHOD_NAMES = frozenset(
+    {
+        "language_name",
+        "file_extensions",
+        "extract_symbols",
+        "extract_references",
+        "get_docstring",
+        "get_signature",
+        "node_text",
+        "detect",
+        "supported_bridges",
+        "resolve_cross_language",
+        "get_bridge_edges",
+    }
+)
 
 
 def _is_test_path(file_path):
@@ -130,6 +207,7 @@ def _dead_action(r, file_imported):
 # Dead cluster detection
 # ---------------------------------------------------------------------------
 
+
 def _find_dead_clusters(conn, dead_ids):
     """Find connected components of dead-only symbols.
 
@@ -183,6 +261,7 @@ def _find_dead_clusters(conn, dead_ids):
 # Extinction prediction
 # ---------------------------------------------------------------------------
 
+
 def _predict_extinction(conn, target_name):
     """Predict what becomes dead if symbol X is deleted.
 
@@ -208,9 +287,9 @@ def _predict_extinction(conn, target_name):
 
     # Pre-compute callers for any symbol
     def get_callers(sid):
-        return [r["source_id"] for r in conn.execute(
-            "SELECT source_id FROM edges WHERE target_id = ?", (sid,)
-        ).fetchall()]
+        return [
+            r["source_id"] for r in conn.execute("SELECT source_id FROM edges WHERE target_id = ?", (sid,)).fetchall()
+        ]
 
     # BFS cascade
     cascade = []
@@ -241,12 +320,14 @@ def _predict_extinction(conn, target_name):
                     (caller_id,),
                 ).fetchone()
                 if info:
-                    cascade.append({
-                        "name": info["name"],
-                        "kind": info["kind"],
-                        "location": loc(info["file_path"], info["line_start"]),
-                        "reason": "only callees removed",
-                    })
+                    cascade.append(
+                        {
+                            "name": info["name"],
+                            "kind": info["kind"],
+                            "location": loc(info["file_path"], info["line_start"]),
+                            "reason": "only callees removed",
+                        }
+                    )
 
     return sym, cascade
 
@@ -254,6 +335,7 @@ def _predict_extinction(conn, target_name):
 # ---------------------------------------------------------------------------
 # Grouping helpers
 # ---------------------------------------------------------------------------
+
 
 def _group_dead(dead_items, by):
     """Group dead items by directory or kind."""
@@ -273,6 +355,7 @@ def _group_dead(dead_items, by):
 # Core dead code analysis (shared between modes)
 # ---------------------------------------------------------------------------
 
+
 def _analyze_dead(conn):
     """Run the full dead code analysis.
 
@@ -285,16 +368,12 @@ def _analyze_dead(conn):
         return [], [], set()
 
     imported_files = set()
-    for r in conn.execute(
-        "SELECT DISTINCT target_file_id FROM file_edges"
-    ).fetchall():
+    for r in conn.execute("SELECT DISTINCT target_file_id FROM file_edges").fetchall():
         imported_files.add(r["target_file_id"])
 
     # Filter transitively alive (barrel re-exports)
     importers_of = {}
-    for fe in conn.execute(
-        "SELECT source_file_id, target_file_id FROM file_edges"
-    ).fetchall():
+    for fe in conn.execute("SELECT source_file_id, target_file_id FROM file_edges").fetchall():
         importers_of.setdefault(fe["target_file_id"], set()).add(fe["source_file_id"])
 
     transitively_alive = set()
@@ -337,6 +416,7 @@ def _analyze_dead(conn):
 # Dead code aging, decay, and effort estimation
 # ---------------------------------------------------------------------------
 
+
 def _sym_loc(sym):
     """Return LOC for a symbol's line range."""
     line_start = sym["line_start"] or 1
@@ -349,7 +429,7 @@ def _blame_age_for_sym(sym, blame_entries, now):
     line_start = sym["line_start"] or 1
     line_end = sym["line_end"] or line_start
 
-    relevant = blame_entries[line_start - 1: line_end]
+    relevant = blame_entries[line_start - 1 : line_end]
     if not relevant:
         relevant = blame_entries[:1] if blame_entries else []
 
@@ -414,7 +494,8 @@ def _get_blame_ages(conn, dead_symbols):
         return result
 
     active_authors = {
-        r["author"] for r in conn.execute(
+        r["author"]
+        for r in conn.execute(
             "SELECT DISTINCT author FROM git_commits WHERE timestamp >= ?",
             (now - 90 * 86400,),
         ).fetchall()
@@ -430,6 +511,7 @@ def _get_blame_ages(conn, dead_symbols):
         blame_entries = []
         try:
             from roam.index.git_stats import get_blame_for_file
+
             blame_entries = get_blame_for_file(project_root, file_path)
         except Exception:
             pass
@@ -469,8 +551,7 @@ def _get_blame_ages(conn, dead_symbols):
     return result
 
 
-def _decay_score(age_days, cognitive_complexity, cluster_size, importing_files,
-                 author_active, dead_loc):
+def _decay_score(age_days, cognitive_complexity, cluster_size, importing_files, author_active, dead_loc):
     """0-100 decay score. Higher = more decayed, harder to remove.
 
     Scoring breakdown (max 100):
@@ -485,13 +566,10 @@ def _decay_score(age_days, cognitive_complexity, cluster_size, importing_files,
     coupling_points = min(20, importing_files * 2 + cluster_size * 3)
     size_points = min(10, dead_loc / 20)
     author_points = 0 if author_active else 10
-    return min(100, int(round(
-        age_points + cc_points + coupling_points + size_points + author_points
-    )))
+    return min(100, int(round(age_points + cc_points + coupling_points + size_points + author_points)))
 
 
-def _estimate_removal_minutes(dead_loc, cognitive_complexity, importing_files,
-                              cluster_size, age_years, author_active):
+def _estimate_removal_minutes(dead_loc, cognitive_complexity, importing_files, cluster_size, age_years, author_active):
     """Estimate minutes to remove a dead symbol.
 
     Factors:
@@ -533,8 +611,7 @@ def _get_symbol_complexities(conn, symbol_ids):
         return {}
     rows = batched_in(
         conn,
-        "SELECT symbol_id, cognitive_complexity FROM symbol_metrics "
-        "WHERE symbol_id IN ({ph})",
+        "SELECT symbol_id, cognitive_complexity FROM symbol_metrics WHERE symbol_id IN ({ph})",
         list(symbol_ids),
     )
     return {r["symbol_id"]: r["cognitive_complexity"] or 0 for r in rows}
@@ -549,8 +626,7 @@ def _get_importing_file_counts(conn, file_ids):
         return {}
     rows = batched_in(
         conn,
-        "SELECT target_file_id, COUNT(*) as cnt FROM file_edges "
-        "WHERE target_file_id IN ({ph}) GROUP BY target_file_id",
+        "SELECT target_file_id, COUNT(*) as cnt FROM file_edges WHERE target_file_id IN ({ph}) GROUP BY target_file_id",
         list(file_ids),
     )
     return {r["target_file_id"]: r["cnt"] for r in rows}
@@ -589,10 +665,16 @@ def _compute_extended_data(conn, all_items, clusters_for_aging):
     result = {}
     for r in all_items:
         sid = r["id"]
-        aging = blame_ages.get(sid, {
-            "age_days": 0, "last_modified_days": 0,
-            "author": "", "author_active": False, "dead_loc": 1,
-        })
+        aging = blame_ages.get(
+            sid,
+            {
+                "age_days": 0,
+                "last_modified_days": 0,
+                "author": "",
+                "author_active": False,
+                "dead_loc": 1,
+            },
+        )
         cc = complexities.get(sid, 0)
         importing_files = importer_counts.get(r["file_id"], 0)
         cluster_size = cluster_membership.get(sid, 1)
@@ -601,18 +683,24 @@ def _compute_extended_data(conn, all_items, clusters_for_aging):
         author_active = aging["author_active"]
 
         dscore = _decay_score(
-            age_days, cc, cluster_size, importing_files,
-            author_active, dead_loc,
+            age_days,
+            cc,
+            cluster_size,
+            importing_files,
+            author_active,
+            dead_loc,
         )
         age_years = age_days / 365.25
         removal_min = _estimate_removal_minutes(
-            dead_loc, cc, importing_files, cluster_size,
-            age_years, author_active,
+            dead_loc,
+            cc,
+            importing_files,
+            cluster_size,
+            age_years,
+            author_active,
         )
         complexity_factor = round(1.0 + (cc / 20.0), 2)
-        coupling_factor = round(
-            1.0 + (0.05 * importing_files) + (0.1 * max(0, cluster_size - 1)), 2
-        )
+        coupling_factor = round(1.0 + (0.05 * importing_files) + (0.1 * max(0, cluster_size - 1)), 2)
 
         result[sid] = {
             "aging": {
@@ -644,7 +732,10 @@ def _extended_summary(extended_data):
             "total_effort_hours": 0.0,
             "median_age_days": 0,
             "decay_distribution": {
-                "fresh": 0, "stale": 0, "decayed": 0, "fossilized": 0,
+                "fresh": 0,
+                "stale": 0,
+                "decayed": 0,
+                "fossilized": 0,
             },
         }
 
@@ -668,37 +759,63 @@ def _extended_summary(extended_data):
 
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
-@click.option("--by-directory", "by_directory", is_flag=True,
-              help="Group dead symbols by parent directory")
-@click.option("--by-kind", "by_kind", is_flag=True,
-              help="Group dead symbols by symbol kind")
-@click.option("--summary", "summary_only", is_flag=True,
-              help="Only show aggregate counts, no individual symbols")
-@click.option("--clusters", "show_clusters", is_flag=True,
-              help="Detect dead subgraphs (groups of dead symbols referencing only each other)")
-@click.option("--extinction", "extinction_target", default=None,
-              help="Predict what else becomes dead if you delete this symbol")
-@click.option("--aging", "show_aging", is_flag=True,
-              help="Add age/staleness columns to output")
-@click.option("--effort", "show_effort", is_flag=True,
-              help="Add effort estimation columns to output")
-@click.option("--decay", "show_decay", is_flag=True,
-              help="Show decay score and distribution")
-@click.option("--sort-by-age", "sort_by_age", is_flag=True,
-              help="Sort dead code oldest-first")
-@click.option("--sort-by-effort", "sort_by_effort", is_flag=True,
-              help="Sort by removal effort (highest first)")
-@click.option("--sort-by-decay", "sort_by_decay", is_flag=True,
-              help="Sort by decay score (most fossilized first)")
+@click.option("--by-directory", "by_directory", is_flag=True, help="Group dead symbols by parent directory")
+@click.option("--by-kind", "by_kind", is_flag=True, help="Group dead symbols by symbol kind")
+@click.option(
+    "--summary",
+    "summary_only",
+    is_flag=True,
+    help="Only show aggregate counts, no individual symbols",
+)
+@click.option(
+    "--clusters",
+    "show_clusters",
+    is_flag=True,
+    help="Detect dead subgraphs (groups of dead symbols referencing only each other)",
+)
+@click.option(
+    "--extinction",
+    "extinction_target",
+    default=None,
+    help="Predict what else becomes dead if you delete this symbol",
+)
+@click.option("--aging", "show_aging", is_flag=True, help="Add age/staleness columns to output")
+@click.option("--effort", "show_effort", is_flag=True, help="Add effort estimation columns to output")
+@click.option("--decay", "show_decay", is_flag=True, help="Show decay score and distribution")
+@click.option("--sort-by-age", "sort_by_age", is_flag=True, help="Sort dead code oldest-first")
+@click.option(
+    "--sort-by-effort",
+    "sort_by_effort",
+    is_flag=True,
+    help="Sort by removal effort (highest first)",
+)
+@click.option(
+    "--sort-by-decay",
+    "sort_by_decay",
+    is_flag=True,
+    help="Sort by decay score (most fossilized first)",
+)
 @click.pass_context
-def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
-         extinction_target, show_aging, show_effort, show_decay,
-         sort_by_age, sort_by_effort, sort_by_decay):
+def dead(
+    ctx,
+    show_all,
+    by_directory,
+    by_kind,
+    summary_only,
+    show_clusters,
+    extinction_target,
+    show_aging,
+    show_effort,
+    show_decay,
+    sort_by_age,
+    sort_by_effort,
+    sort_by_decay,
+):
     """Show unreferenced exported symbols (dead code)."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
-    detail = ctx.obj.get('detail', False) if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     # Any extended flag implies we need extended data
@@ -710,34 +827,50 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
             sym, cascade = _predict_extinction(conn, extinction_target)
             if sym is None:
                 if json_mode:
-                    click.echo(to_json(json_envelope("dead",
-                        summary={"error": f"Symbol not found: {extinction_target}"},
-                    )))
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "dead",
+                                summary={"error": f"Symbol not found: {extinction_target}"},
+                            )
+                        )
+                    )
                 else:
                     click.echo(f"Symbol not found: {extinction_target}")
                 return
 
             if json_mode:
-                click.echo(to_json(json_envelope("dead",
-                    summary={"extinction_cascade": len(cascade)},
-                    mode="extinction",
-                    target=extinction_target,
-                    extinction_cascade=cascade,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "dead",
+                            summary={"extinction_cascade": len(cascade)},
+                            mode="extinction",
+                            target=extinction_target,
+                            extinction_cascade=cascade,
+                        )
+                    )
+                )
             else:
                 click.echo(f"=== Extinction Cascade for: {extinction_target} ===\n")
                 if cascade:
                     click.echo(f"Deleting {extinction_target} would orphan {len(cascade)} symbol(s):\n")
                     table_rows = []
                     for c in cascade:
-                        table_rows.append([
-                            c["name"], abbrev_kind(c["kind"]),
-                            c["location"], c["reason"],
-                        ])
-                    click.echo(format_table(
-                        ["Name", "Kind", "Location", "Reason"],
-                        table_rows,
-                    ))
+                        table_rows.append(
+                            [
+                                c["name"],
+                                abbrev_kind(c["kind"]),
+                                c["location"],
+                                c["reason"],
+                            ]
+                        )
+                    click.echo(
+                        format_table(
+                            ["Name", "Kind", "Location", "Reason"],
+                            table_rows,
+                        )
+                    )
                 else:
                     click.echo("No additional symbols would become dead.")
             return
@@ -754,15 +887,27 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         if not all_items:
             if sarif_mode:
                 from roam.output.sarif import dead_to_sarif, write_sarif
+
                 sarif = dead_to_sarif([])
                 click.echo(write_sarif(sarif))
                 return
             if json_mode:
-                click.echo(to_json(json_envelope("dead",
-                    summary={"safe": 0, "review": 0, "intentional": 0, "unused_assignments": len(unused_assignments)},
-                    high_confidence=[], low_confidence=[],
-                    unused_assignments=unused_assignments[:10],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "dead",
+                            summary={
+                                "safe": 0,
+                                "review": 0,
+                                "intentional": 0,
+                                "unused_assignments": len(unused_assignments),
+                            },
+                            high_confidence=[],
+                            low_confidence=[],
+                            unused_assignments=unused_assignments[:10],
+                        )
+                    )
+                )
             else:
                 click.echo("=== Unreferenced Exports (0) ===")
                 click.echo("  (none -- all exports are referenced)")
@@ -779,14 +924,17 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         # --- SARIF output ---
         if sarif_mode:
             from roam.output.sarif import dead_to_sarif, write_sarif
+
             dead_exports = []
             for r, action, confidence in all_dead:
-                dead_exports.append({
-                    "name": r["name"],
-                    "kind": r["kind"],
-                    "location": loc(r["file_path"], r["line_start"]),
-                    "action": action,
-                })
+                dead_exports.append(
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "location": loc(r["file_path"], r["line_start"]),
+                        "action": action,
+                    }
+                )
             sarif = dead_to_sarif(dead_exports)
             click.echo(write_sarif(sarif))
             return
@@ -817,11 +965,13 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                     for sid in sorted(cluster_set):
                         info = id_to_info.get(sid)
                         if info:
-                            syms.append({
-                                "name": info["name"],
-                                "kind": info["kind"],
-                                "location": loc(info["file_path"], info["line_start"]),
-                            })
+                            syms.append(
+                                {
+                                    "name": info["name"],
+                                    "kind": info["kind"],
+                                    "location": loc(info["file_path"], info["line_start"]),
+                                }
+                            )
                     clusters_data.append({"size": len(cluster_set), "symbols": syms})
 
         # --- Extended data (aging / effort / decay) ---
@@ -869,19 +1019,23 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
             grouped = _group_dead(all_items, group_by)
             for key, items in grouped:
                 verdicts = [_dead_action(r, r["file_id"] in imported_files)[0] for r in items]
-                groups_data.append({
-                    "key": key,
-                    "count": len(items),
-                    "safe": sum(1 for v in verdicts if v == "SAFE"),
-                    "review": sum(1 for v in verdicts if v == "REVIEW"),
-                    "intentional": sum(1 for v in verdicts if v == "INTENTIONAL"),
-                })
+                groups_data.append(
+                    {
+                        "key": key,
+                        "count": len(items),
+                        "safe": sum(1 for v in verdicts if v == "SAFE"),
+                        "review": sum(1 for v in verdicts if v == "REVIEW"),
+                        "intentional": sum(1 for v in verdicts if v == "INTENTIONAL"),
+                    }
+                )
 
         # --- JSON output ---
         if json_mode:
+
             def _build_sym_dict(r, file_imported):
                 d = {
-                    "name": r["name"], "kind": r["kind"],
+                    "name": r["name"],
+                    "kind": r["kind"],
                     "location": loc(r["file_path"], r["line_start"]),
                     "action": _dead_action(r, file_imported)[0],
                     "confidence": _dead_action(r, file_imported)[1],
@@ -902,18 +1056,20 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
             if need_extended:
                 summary.update(ext_summary)
 
-            _next_steps = suggest_next_steps("dead", {
-                "safe": n_safe,
-                "review": n_review,
-            })
-            envelope = json_envelope("dead",
+            _next_steps = suggest_next_steps(
+                "dead",
+                {
+                    "safe": n_safe,
+                    "review": n_review,
+                },
+            )
+            envelope = json_envelope(
+                "dead",
                 summary=summary,
                 budget=token_budget,
                 high_confidence=[_build_sym_dict(r, True) for r in high],
                 low_confidence=[_build_sym_dict(r, False) for r in low],
-                unused_assignments=(
-                    unused_assignments if detail else unused_assignments[:10]
-                ),
+                unused_assignments=(unused_assignments if detail else unused_assignments[:10]),
                 next_steps=_next_steps,
             )
             if group_by:
@@ -928,8 +1084,7 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
 
         # --- Text: summary-only mode (also used by --detail-less default) ---
         if summary_only or not detail:
-            click.echo(f"Dead exports: {len(all_items)} "
-                        f"({n_safe} safe, {n_review} review, {n_intent} intentional)")
+            click.echo(f"Dead exports: {len(all_items)} ({n_safe} safe, {n_review} review, {n_intent} intentional)")
             if unused_assignments:
                 click.echo(f"Intra-procedural unused assignments: {len(unused_assignments)}")
             # Show top 5 high-confidence dead symbols as a preview
@@ -937,7 +1092,9 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                 click.echo("Top dead symbols (high confidence):")
                 for r in high[:5]:
                     action, confidence = _dead_action(r, True)
-                    click.echo(f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}")
+                    click.echo(
+                        f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}"
+                    )
                 if len(high) > 5:
                     click.echo(f"  (+{len(high) - 5} more — use --detail for full list)")
             if need_extended and ext_summary:
@@ -945,13 +1102,14 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                 click.echo(f"  Median age: {ext_summary['median_age_days']} days")
                 click.echo(f"  Total removal effort: {ext_summary['total_effort_hours']} hours")
                 dist = ext_summary["decay_distribution"]
-                click.echo(f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
-                            f"{dist['decayed']} decayed, {dist['fossilized']} fossilized")
+                click.echo(
+                    f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
+                    f"{dist['decayed']} decayed, {dist['fossilized']} fossilized"
+                )
             if group_by and groups_data:
                 click.echo(f"\nBy {group_by}:")
                 for g in groups_data[:20]:
-                    click.echo(f"  {g['key']:<50s}  {g['count']:>3d}  "
-                                f"(safe={g['safe']}, review={g['review']})")
+                    click.echo(f"  {g['key']:<50s}  {g['count']:>3d}  (safe={g['safe']}, review={g['review']})")
             if show_clusters and clusters_data:
                 click.echo(f"\nDead clusters: {len(clusters_data)}")
                 for i, cl in enumerate(clusters_data[:10], 1):
@@ -963,22 +1121,25 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
         # --- Text: grouped mode ---
         if group_by and groups_data:
             click.echo(f"=== Unreferenced Exports by {group_by} ({len(all_items)} total) ===")
-            click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, "
-                        f"{n_intent} likely intentional\n")
+            click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, {n_intent} likely intentional\n")
             table_rows = []
             for g in groups_data:
-                table_rows.append([
-                    g["key"],
-                    str(g["count"]),
-                    str(g["safe"]),
-                    str(g["review"]),
-                    str(g["intentional"]),
-                ])
-            click.echo(format_table(
-                [group_by.title(), "Total", "Safe", "Review", "Intentional"],
-                table_rows,
-                budget=30,
-            ))
+                table_rows.append(
+                    [
+                        g["key"],
+                        str(g["count"]),
+                        str(g["safe"]),
+                        str(g["review"]),
+                        str(g["intentional"]),
+                    ]
+                )
+            click.echo(
+                format_table(
+                    [group_by.title(), "Total", "Safe", "Review", "Intentional"],
+                    table_rows,
+                    budget=30,
+                )
+            )
             if show_clusters and clusters_data:
                 click.echo(f"\n=== Dead Clusters ({len(clusters_data)}) ===")
                 for i, cl in enumerate(clusters_data[:10], 1):
@@ -989,20 +1150,23 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
 
         # --- Text: standard output ---
         click.echo(f"=== Unreferenced Exports ({len(high)} high confidence, {len(low)} low) ===")
-        click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, "
-                    f"{n_intent} likely intentional")
+        click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, {n_intent} likely intentional")
         if unused_assignments:
             click.echo(f"  Intra-procedural unused assignments: {len(unused_assignments)}")
 
         # Show extended summary if any extended flag is set
         if need_extended and ext_summary:
-            click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}  "
-                        f"Median age: {ext_summary['median_age_days']}d  "
-                        f"Removal effort: {ext_summary['total_effort_hours']}h")
+            click.echo(
+                f"  Total dead LOC: {ext_summary['total_dead_loc']}  "
+                f"Median age: {ext_summary['median_age_days']}d  "
+                f"Removal effort: {ext_summary['total_effort_hours']}h"
+            )
             if show_decay:
                 dist = ext_summary["decay_distribution"]
-                click.echo(f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
-                            f"{dist['decayed']} decayed, {dist['fossilized']} fossilized")
+                click.echo(
+                    f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
+                    f"{dist['decayed']} decayed, {dist['fossilized']} fossilized"
+                )
         click.echo()
 
         # Build imported-by lookup for high-confidence results
@@ -1065,21 +1229,27 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                     effort = ext.get("effort", {})
                     dscore = ext.get("decay_score", 0)
                     if show_aging:
-                        row.extend([
-                            str(aging.get("age_days", 0)),
-                            str(aging.get("last_modified_days", 0)),
-                            aging.get("author", "")[:20],
-                        ])
+                        row.extend(
+                            [
+                                str(aging.get("age_days", 0)),
+                                str(aging.get("last_modified_days", 0)),
+                                aging.get("author", "")[:20],
+                            ]
+                        )
                     if show_effort:
-                        row.extend([
-                            str(aging.get("dead_loc", 0)),
-                            str(effort.get("removal_minutes", 0)),
-                        ])
+                        row.extend(
+                            [
+                                str(aging.get("dead_loc", 0)),
+                                str(effort.get("removal_minutes", 0)),
+                            ]
+                        )
                     if show_decay:
-                        row.extend([
-                            str(dscore),
-                            _decay_tier(dscore),
-                        ])
+                        row.extend(
+                            [
+                                str(dscore),
+                                _decay_tier(dscore),
+                            ]
+                        )
                 table_rows.append(row)
             click.echo(format_table(headers, table_rows, budget=50))
 
@@ -1110,21 +1280,27 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
                     effort = ext.get("effort", {})
                     dscore = ext.get("decay_score", 0)
                     if show_aging:
-                        row.extend([
-                            str(aging.get("age_days", 0)),
-                            str(aging.get("last_modified_days", 0)),
-                            aging.get("author", "")[:20],
-                        ])
+                        row.extend(
+                            [
+                                str(aging.get("age_days", 0)),
+                                str(aging.get("last_modified_days", 0)),
+                                aging.get("author", "")[:20],
+                            ]
+                        )
                     if show_effort:
-                        row.extend([
-                            str(aging.get("dead_loc", 0)),
-                            str(effort.get("removal_minutes", 0)),
-                        ])
+                        row.extend(
+                            [
+                                str(aging.get("dead_loc", 0)),
+                                str(effort.get("removal_minutes", 0)),
+                            ]
+                        )
                     if show_decay:
-                        row.extend([
-                            str(dscore),
-                            _decay_tier(dscore),
-                        ])
+                        row.extend(
+                            [
+                                str(dscore),
+                                _decay_tier(dscore),
+                            ]
+                        )
                 table_rows.append(row)
             click.echo(format_table(headers, table_rows, budget=50))
         elif low:
@@ -1145,16 +1321,18 @@ def dead(ctx, show_all, by_directory, by_kind, summary_only, show_clusters,
 
         # Check for files with no extracted symbols
         unparsed = conn.execute(
-            "SELECT COUNT(*) FROM files f "
-            "WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)"
+            "SELECT COUNT(*) FROM files f WHERE NOT EXISTS (SELECT 1 FROM symbols s WHERE s.file_id = f.id)"
         ).fetchone()[0]
         if unparsed:
             click.echo(f"\nNote: {unparsed} files had no symbols extracted (may cause false positives)")
 
-        _next_steps = suggest_next_steps("dead", {
-            "safe": n_safe,
-            "review": n_review,
-        })
+        _next_steps = suggest_next_steps(
+            "dead",
+            {
+                "safe": n_safe,
+                "review": n_review,
+            },
+        )
         _ns_text = format_next_steps_text(_next_steps)
         if _ns_text:
             click.echo(_ns_text)

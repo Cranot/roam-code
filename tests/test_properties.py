@@ -13,7 +13,7 @@ import string
 import pytest
 
 try:
-    from hypothesis import given, settings, assume
+    from hypothesis import given, settings
     from hypothesis import strategies as st
 
     HAS_HYPOTHESIS = True
@@ -22,19 +22,19 @@ except ImportError:
 
 import networkx as nx
 
+from roam.db.connection import batched_in, ensure_schema
+from roam.graph.simulate import clone_graph, metric_delta
 from roam.output.formatter import (
+    KIND_ABBREV,
     abbrev_kind,
     format_table,
     format_table_compact,
-    KIND_ABBREV,
 )
-from roam.db.connection import batched_in, ensure_schema
-from roam.graph.simulate import metric_delta, clone_graph, _HIGHER_IS_BETTER
-
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _random_string(min_len: int = 0, max_len: int = 30) -> str:
     """Generate a random ASCII string."""
@@ -51,16 +51,14 @@ def _make_in_memory_db():
     return conn
 
 
-def _insert_symbol(conn, name: str, kind: str = "function",
-                   file_path: str = "test.py") -> int:
+def _insert_symbol(conn, name: str, kind: str = "function", file_path: str = "test.py") -> int:
     """Insert a file + symbol and return the symbol ID."""
     # Ensure the file exists
     row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if row:
         file_id = row[0]
     else:
-        conn.execute("INSERT INTO files (path, language) VALUES (?, ?)",
-                     (file_path, "python"))
+        conn.execute("INSERT INTO files (path, language) VALUES (?, ?)", (file_path, "python"))
         file_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
     conn.execute(
         "INSERT INTO symbols (file_id, name, qualified_name, kind) VALUES (?, ?, ?, ?)",
@@ -96,18 +94,14 @@ class TestAbbrevKindProperties:
         """abbrev_kind(x) should always be <= len(x)."""
         # Test all known kinds
         for kind, abbrev in KIND_ABBREV.items():
-            assert len(abbrev) <= len(kind), (
-                f"Abbreviation '{abbrev}' is longer than kind '{kind}'"
-            )
+            assert len(abbrev) <= len(kind), f"Abbreviation '{abbrev}' is longer than kind '{kind}'"
 
     def test_output_never_longer_than_input_random(self):
         """Random strings: abbrev_kind returns the string itself if unknown."""
         for _ in range(200):
             kind = _random_string(1, 50)
             result = abbrev_kind(kind)
-            assert len(result) <= len(kind), (
-                f"abbrev_kind({kind!r}) = {result!r} is longer than input"
-            )
+            assert len(result) <= len(kind), f"abbrev_kind({kind!r}) = {result!r} is longer than input"
 
     def test_known_kinds_map_correctly(self):
         """Every key in KIND_ABBREV must map to its value."""
@@ -166,14 +160,12 @@ class TestFormatTableProperties:
             n_cols = random.randint(1, 5)
             n_rows = random.randint(1, 20)
             headers = [_random_string(1, 8) for _ in range(n_cols)]
-            rows = [[_random_string(0, 15) for _ in range(n_cols)]
-                    for _ in range(n_rows)]
+            rows = [[_random_string(0, 15) for _ in range(n_cols)] for _ in range(n_rows)]
             result = format_table(headers, rows)
             lines = result.split("\n")
             expected = 2 + n_rows  # header + separator + data rows
             assert len(lines) == expected, (
-                f"Expected {expected} lines, got {len(lines)} for "
-                f"{n_cols} cols x {n_rows} rows"
+                f"Expected {expected} lines, got {len(lines)} for {n_cols} cols x {n_rows} rows"
             )
 
     def test_correct_line_count_with_budget(self):
@@ -183,14 +175,12 @@ class TestFormatTableProperties:
             n_rows = random.randint(5, 20)
             budget = random.randint(1, n_rows - 1)
             headers = [_random_string(1, 8) for _ in range(n_cols)]
-            rows = [[_random_string(0, 10) for _ in range(n_cols)]
-                    for _ in range(n_rows)]
+            rows = [[_random_string(0, 10) for _ in range(n_cols)] for _ in range(n_rows)]
             result = format_table(headers, rows, budget=budget)
             lines = result.split("\n")
             expected = 2 + budget + 1  # header + sep + budget rows + "(+N more)"
             assert len(lines) == expected, (
-                f"Expected {expected} lines with budget={budget}, "
-                f"got {len(lines)} for {n_rows} rows"
+                f"Expected {expected} lines with budget={budget}, got {len(lines)} for {n_rows} rows"
             )
 
     def test_header_always_first_line(self):
@@ -211,9 +201,7 @@ class TestFormatTableProperties:
         result = format_table(headers, rows)
         sep_line = result.split("\n")[1]
         allowed = set("- ")
-        assert set(sep_line) <= allowed, (
-            f"Separator line has unexpected chars: {sep_line!r}"
-        )
+        assert set(sep_line) <= allowed, f"Separator line has unexpected chars: {sep_line!r}"
 
     def test_compact_vs_regular_same_row_count(self):
         """format_table and format_table_compact should produce same data row count."""
@@ -221,8 +209,7 @@ class TestFormatTableProperties:
             n_cols = random.randint(1, 4)
             n_rows = random.randint(1, 10)
             headers = [_random_string(2, 8) for _ in range(n_cols)]
-            rows = [[_random_string(1, 8) for _ in range(n_cols)]
-                    for _ in range(n_rows)]
+            rows = [[_random_string(1, 8) for _ in range(n_cols)] for _ in range(n_rows)]
             regular = format_table(headers, rows)
             compact = format_table_compact(headers, rows)
             # Regular: header + sep + rows. Compact: header + rows (no sep)
@@ -262,8 +249,7 @@ class TestBatchedInProperties:
         conn = _make_in_memory_db()
         conn.execute("CREATE TABLE test_items (id INTEGER PRIMARY KEY, val TEXT)")
         for i in range(1, n_items + 1):
-            conn.execute("INSERT INTO test_items (id, val) VALUES (?, ?)",
-                         (i, f"item_{i}"))
+            conn.execute("INSERT INTO test_items (id, val) VALUES (?, ?)", (i, f"item_{i}"))
         conn.commit()
         return conn
 
@@ -277,9 +263,7 @@ class TestBatchedInProperties:
     def test_single_id_returns_one_row(self):
         """A single existing ID returns exactly one row."""
         conn = self._setup_db(10)
-        result = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", [5]
-        )
+        result = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", [5])
         assert len(result) == 1
         assert result[0]["id"] == 5
         conn.close()
@@ -289,9 +273,7 @@ class TestBatchedInProperties:
         n = 50
         conn = self._setup_db(n)
         ids = list(range(1, n + 1))
-        result = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids
-        )
+        result = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids)
         assert len(result) == n
         returned_ids = sorted(r["id"] for r in result)
         assert returned_ids == list(range(1, n + 1))
@@ -302,13 +284,9 @@ class TestBatchedInProperties:
         n = 30
         conn = self._setup_db(n)
         ids = list(range(1, n + 1))
-        result1 = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids
-        )
+        result1 = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids)
         random.shuffle(ids)
-        result2 = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids
-        )
+        result2 = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids)
         set1 = {r["id"] for r in result1}
         set2 = {r["id"] for r in result2}
         assert set1 == set2
@@ -322,12 +300,16 @@ class TestBatchedInProperties:
 
         # Large batch (everything in one go)
         result_large = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids,
+            conn,
+            "SELECT * FROM test_items WHERE id IN ({ph})",
+            ids,
             batch_size=9999,
         )
         # Tiny batch (many chunks)
         result_small = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids,
+            conn,
+            "SELECT * FROM test_items WHERE id IN ({ph})",
+            ids,
             batch_size=7,
         )
         set_large = {r["id"] for r in result_large}
@@ -340,7 +322,8 @@ class TestBatchedInProperties:
         """IDs that don't exist in the table return no rows."""
         conn = self._setup_db(10)
         result = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})",
+            conn,
+            "SELECT * FROM test_items WHERE id IN ({ph})",
             [999, 1000, 1001],
         )
         assert result == []
@@ -350,9 +333,7 @@ class TestBatchedInProperties:
         """Only existing IDs produce rows."""
         conn = self._setup_db(10)
         ids = [1, 5, 10, 999, 2000]
-        result = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids
-        )
+        result = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids)
         returned_ids = {r["id"] for r in result}
         assert returned_ids == {1, 5, 10}
         conn.close()
@@ -361,9 +342,7 @@ class TestBatchedInProperties:
         """Duplicate IDs in the input should still return distinct rows."""
         conn = self._setup_db(10)
         ids = [1, 1, 2, 2, 3, 3]
-        result = batched_in(
-            conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids
-        )
+        result = batched_in(conn, "SELECT * FROM test_items WHERE id IN ({ph})", ids)
         returned_ids = {r["id"] for r in result}
         # SQL IN naturally deduplicates, but batched_in might return dupes
         # across batches with tiny batch sizes -- the key property is
@@ -427,13 +406,9 @@ class TestMetricDeltaProperties:
                 expected = after[key] - before[key]
                 # Floats may get rounded
                 if isinstance(expected, float):
-                    assert abs(d["delta"] - expected) < 0.01, (
-                        f"key={key}: delta={d['delta']} != expected={expected}"
-                    )
+                    assert abs(d["delta"] - expected) < 0.01, f"key={key}: delta={d['delta']} != expected={expected}"
                 else:
-                    assert d["delta"] == expected, (
-                        f"key={key}: delta={d['delta']} != expected={expected}"
-                    )
+                    assert d["delta"] == expected, f"key={key}: delta={d['delta']} != expected={expected}"
 
     def test_direction_always_valid(self):
         """Direction is always one of the valid strings."""
@@ -443,9 +418,7 @@ class TestMetricDeltaProperties:
             after = self._random_metrics()
             result = metric_delta(before, after)
             for key, d in result.items():
-                assert d["direction"] in valid_directions, (
-                    f"key={key}: invalid direction {d['direction']!r}"
-                )
+                assert d["direction"] in valid_directions, f"key={key}: invalid direction {d['direction']!r}"
 
     def test_unchanged_when_equal(self):
         """When before == after, direction is 'unchanged' and delta is 0."""
@@ -455,18 +428,14 @@ class TestMetricDeltaProperties:
             assert d["direction"] == "unchanged", (
                 f"key={key}: direction should be 'unchanged' but is {d['direction']!r}"
             )
-            assert d["delta"] == 0 or d["delta"] == 0.0, (
-                f"key={key}: delta should be 0 but is {d['delta']}"
-            )
+            assert d["delta"] == 0 or d["delta"] == 0.0, f"key={key}: delta should be 0 but is {d['delta']}"
 
     def test_pct_change_zero_when_equal(self):
         """pct_change is 0 when before == after."""
         metrics = self._random_metrics()
         result = metric_delta(metrics, dict(metrics))
         for key, d in result.items():
-            assert d["pct_change"] == 0.0, (
-                f"key={key}: pct_change should be 0.0 but is {d['pct_change']}"
-            )
+            assert d["pct_change"] == 0.0, f"key={key}: pct_change should be 0.0 but is {d['pct_change']}"
 
     def test_before_after_stored_correctly(self):
         """The result stores before and after values accurately."""

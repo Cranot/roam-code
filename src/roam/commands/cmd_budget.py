@@ -6,10 +6,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Default budget rules (used when no config file exists)
@@ -203,15 +202,11 @@ def _budget_str(rule: dict) -> str:
 
 
 @click.command("budget")
-@click.option("--init", "do_init", is_flag=True,
-              help="Generate default .roam/budget.yaml.")
+@click.option("--init", "do_init", is_flag=True, help="Generate default .roam/budget.yaml.")
 @click.option("--staged", is_flag=True, help="Analyse staged changes only.")
-@click.option("--range", "commit_range", default=None,
-              help="Git range, e.g. main..HEAD.")
-@click.option("--explain", is_flag=True,
-              help="Show reasoning per rule.")
-@click.option("--config", "config_path", default=None,
-              help="Custom budget config path.")
+@click.option("--range", "commit_range", default=None, help="Git range, e.g. main..HEAD.")
+@click.option("--explain", is_flag=True, help="Show reasoning per rule.")
+@click.option("--config", "config_path", default=None, help="Custom budget config path.")
 @click.pass_context
 def budget(ctx, do_init, staged, commit_range, explain, config_path):
     """Check pending changes against architectural budgets.
@@ -242,8 +237,8 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
     if not budgets:
         budgets = list(_DEFAULT_BUDGETS)
 
-    from roam.graph.diff import find_before_snapshot
     from roam.commands.metrics_history import collect_metrics
+    from roam.graph.diff import find_before_snapshot
 
     with open_db(readonly=True) as conn:
         current = collect_metrics(conn)
@@ -263,16 +258,18 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
             results.append(_evaluate_rule(rule, before_snap, current))
     else:
         for rule in budgets:
-            results.append({
-                "name": rule.get("name", "unnamed"),
-                "metric": rule.get("metric", ""),
-                "status": "SKIP",
-                "before": None,
-                "after": None,
-                "delta": None,
-                "budget": _budget_str(rule),
-                "reason": "no snapshot available",
-            })
+            results.append(
+                {
+                    "name": rule.get("name", "unnamed"),
+                    "metric": rule.get("metric", ""),
+                    "status": "SKIP",
+                    "before": None,
+                    "after": None,
+                    "delta": None,
+                    "budget": _budget_str(rule),
+                    "reason": "no snapshot available",
+                }
+            )
 
     passed = sum(1 for r in results if r["status"] == "PASS")
     failed = sum(1 for r in results if r["status"] == "FAIL")
@@ -287,20 +284,25 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "budget",
-            summary={
-                "verdict": verdict,
-                "rules_checked": len(results),
-                "passed": passed,
-                "failed": failed,
-                "skipped": skipped,
-            },
-            rules=results,
-            has_before_snapshot=has_before,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "budget",
+                    summary={
+                        "verdict": verdict,
+                        "rules_checked": len(results),
+                        "passed": passed,
+                        "failed": failed,
+                        "skipped": skipped,
+                    },
+                    rules=results,
+                    has_before_snapshot=has_before,
+                )
+            )
+        )
         if failed > 0:
             from roam.exit_codes import EXIT_GATE_FAILURE
+
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -347,6 +349,7 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
 
     if failed > 0:
         from roam.exit_codes import EXIT_GATE_FAILURE
+
         ctx.exit(EXIT_GATE_FAILURE)
 
 
@@ -366,13 +369,22 @@ def _handle_init(root: Path, json_mode: bool):
 
     if config_path.exists():
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "budget",
-                summary={"verdict": "budget.yaml already exists", "rules_checked": 0,
-                         "passed": 0, "failed": 0, "skipped": 0},
-                rules=[],
-                has_before_snapshot=False,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "budget",
+                        summary={
+                            "verdict": "budget.yaml already exists",
+                            "rules_checked": 0,
+                            "passed": 0,
+                            "failed": 0,
+                            "skipped": 0,
+                        },
+                        rules=[],
+                        has_before_snapshot=False,
+                    )
+                )
+            )
         else:
             click.echo(f"Budget config already exists: {config_path}")
             click.echo("Edit it manually or delete it and re-run --init.")
@@ -380,13 +392,22 @@ def _handle_init(root: Path, json_mode: bool):
 
     config_path.write_text(_DEFAULT_YAML, encoding="utf-8")
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "budget",
-            summary={"verdict": f"created {config_path}", "rules_checked": 0,
-                     "passed": 0, "failed": 0, "skipped": 0},
-            rules=[],
-            has_before_snapshot=False,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "budget",
+                    summary={
+                        "verdict": f"created {config_path}",
+                        "rules_checked": 0,
+                        "passed": 0,
+                        "failed": 0,
+                        "skipped": 0,
+                    },
+                    rules=[],
+                    has_before_snapshot=False,
+                )
+            )
+        )
     else:
         click.echo(f"Created {config_path} with default budgets.")
         click.echo("Edit thresholds to match your project's needs.")

@@ -9,6 +9,7 @@ Spring Boot support: class-level @RequestMapping prefix is concatenated with
 method-level @GetMapping/@PostMapping/@PutMapping/@PatchMapping/@DeleteMapping
 routes (e.g. @RequestMapping("/api/v1") + @GetMapping("/users") -> /api/v1/users).
 """
+
 from __future__ import annotations
 
 import os
@@ -16,7 +17,6 @@ import re
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
-
 
 # Frontend extensions that may contain HTTP calls
 _FRONTEND_EXTS = frozenset({".js", ".ts", ".jsx", ".tsx"})
@@ -32,24 +32,24 @@ _ALL_TARGET_EXTS = _BACKEND_EXTS
 
 # fetch('/api/users') or fetch("/api/users")
 _FETCH_RE = re.compile(
-    r'''fetch\s*\(\s*['"](/[^'"]+)['"]''',
+    r"""fetch\s*\(\s*['"](/[^'"]+)['"]""",
 )
 
 # axios.get('/api/users'), axios.post('/api/orders'), etc.
 _AXIOS_RE = re.compile(
-    r'''axios\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(\s*['"](/[^'"]+)['"]''',
+    r"""axios\s*\.\s*(?:get|post|put|patch|delete|head|options)\s*\(\s*['"](/[^'"]+)['"]""",
     re.IGNORECASE,
 )
 
 # $.ajax({url: '/api/...'}) or $.get('/api/...') or $.post('/api/...')
 _JQUERY_RE = re.compile(
-    r'''\$\s*\.\s*(?:ajax|get|post|put|delete)\s*\(\s*(?:\{\s*url\s*:\s*)?['"](/[^'"]+)['"]''',
+    r"""\$\s*\.\s*(?:ajax|get|post|put|delete)\s*\(\s*(?:\{\s*url\s*:\s*)?['"](/[^'"]+)['"]""",
     re.IGNORECASE,
 )
 
 # Python: requests.get('/api/users'), httpx.get(...)
 _PY_HTTP_RE = re.compile(
-    r'''(?:requests|httpx|urllib\.request)\s*\.\s*(?:get|post|put|patch|delete|head|options|urlopen)\s*\(\s*['"](/[^'"]+)['"]''',
+    r"""(?:requests|httpx|urllib\.request)\s*\.\s*(?:get|post|put|patch|delete|head|options|urlopen)\s*\(\s*['"](/[^'"]+)['"]""",
     re.IGNORECASE,
 )
 
@@ -57,28 +57,28 @@ _PY_HTTP_RE = re.compile(
 
 # Python/Flask/FastAPI: @app.route('/api/users'), @router.get('/api/users')
 _PY_ROUTE_RE = re.compile(
-    r'''@\s*(?:\w+)\s*\.\s*(?:route|get|post|put|patch|delete|head|options|api_view)\s*\(\s*['"](/[^'"]+)['"]''',
+    r"""@\s*(?:\w+)\s*\.\s*(?:route|get|post|put|patch|delete|head|options|api_view)\s*\(\s*['"](/[^'"]+)['"]""",
 )
 
 # Express: app.get('/api/users', ...), router.post('/api/orders', ...)
 _EXPRESS_RE = re.compile(
-    r'''(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*['"](/[^'"]+)['"]''',
+    r"""(?:app|router|server)\s*\.\s*(?:get|post|put|patch|delete|head|options|all|use)\s*\(\s*['"](/[^'"]+)['"]""",
 )
 
 # Go: http.HandleFunc("/api/users", ...), r.GET("/api/users", ...)
 _GO_ROUTE_RE = re.compile(
-    r'''(?:HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Group|Any)\s*\(\s*["'](/[^"']+)["']''',
+    r"""(?:HandleFunc|Handle|GET|POST|PUT|PATCH|DELETE|HEAD|OPTIONS|Group|Any)\s*\(\s*["'](/[^"']+)["']""",
 )
 
 # Java Spring: @GetMapping("/api/users"), @RequestMapping("/api/users"),
 # @RequestMapping(value = "/api"), @GetMapping("users") (no leading /)
 _JAVA_ROUTE_RE = re.compile(
-    r'''@\s*(?:GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\s*\(\s*(?:value\s*=\s*|path\s*=\s*)?["'](/?\w[^"']*)["']''',
+    r"""@\s*(?:GetMapping|PostMapping|PutMapping|PatchMapping|DeleteMapping|RequestMapping)\s*\(\s*(?:value\s*=\s*|path\s*=\s*)?["'](/?\w[^"']*)["']""",
 )
 
 # Ruby/Rails: get '/api/users', post '/api/orders'
 _RUBY_ROUTE_RE = re.compile(
-    r'''(?:get|post|put|patch|delete|match)\s+['"](/[^'"]+)['"]''',
+    r"""(?:get|post|put|patch|delete|match)\s+['"](/[^'"]+)['"]""",
 )
 
 
@@ -111,8 +111,7 @@ class RestApiBridge(LanguageBridge):
                 return True
         return False
 
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve frontend HTTP calls to backend route definitions.
 
         This bridge works differently from symbol-based bridges:
@@ -141,20 +140,21 @@ class RestApiBridge(LanguageBridge):
             for src_url, src_sym_name in source_urls:
                 for tgt_url, tgt_sym_name in target_urls:
                     if self._urls_match(src_url, tgt_url):
-                        edges.append({
-                            "source": src_sym_name,
-                            "target": tgt_sym_name,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "url-match",
-                            "url": src_url,
-                            "confidence": 0.8,
-                        })
+                        edges.append(
+                            {
+                                "source": src_sym_name,
+                                "target": tgt_sym_name,
+                                "kind": "x-lang",
+                                "bridge": self.name,
+                                "mechanism": "url-match",
+                                "url": src_url,
+                                "confidence": 0.8,
+                            }
+                        )
 
         return edges
 
-    def _extract_urls_from_symbols(self, symbols: list[dict],
-                                    mode: str) -> list[tuple[str, str]]:
+    def _extract_urls_from_symbols(self, symbols: list[dict], mode: str) -> list[tuple[str, str]]:
         """Extract URL strings from symbol metadata.
 
         Returns list of (url, symbol_qualified_name) tuples.
@@ -205,8 +205,7 @@ class RestApiBridge(LanguageBridge):
                     parent = sym.get("parent", "")
                     prefix = class_prefixes.get(parent, "")
                     if prefix:
-                        urls = [prefix + u if not u.startswith(prefix) else u
-                                for u in urls]
+                        urls = [prefix + u if not u.startswith(prefix) else u for u in urls]
 
             for url in urls:
                 results.append((url, qname))
@@ -232,7 +231,7 @@ class RestApiBridge(LanguageBridge):
         # Check prefix match for parameterized routes
         # Convert server route params to regex
         # :param, <param>, {param} -> wildcard
-        param_re = re.sub(r'[:<{]\w+[>}]?', r'[^/]+', s)
+        param_re = re.sub(r"[:<{]\w+[>}]?", r"[^/]+", s)
         if re.fullmatch(param_re, c):
             return True
 

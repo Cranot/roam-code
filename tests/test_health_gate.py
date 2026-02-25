@@ -6,11 +6,8 @@ import json
 import sys
 from pathlib import Path
 
-import pytest
-from click.testing import CliRunner
-
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output
+from conftest import invoke_cli
 
 
 class TestHealthGate:
@@ -41,6 +38,7 @@ class TestHealthGate:
         config.write_text("health:\n  health_min: 100\n")
 
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["health", "--gate"], catch_exceptions=True)
         # Should fail with exit code 5 (GateFailureError)
         assert result.exit_code == 5
@@ -58,6 +56,7 @@ class TestHealthGate:
     def test_gate_without_config_uses_defaults(self, tmp_path, monkeypatch):
         """Without .roam-gates.yml, should use default thresholds."""
         from roam.commands.cmd_health import _load_gate_config
+
         monkeypatch.chdir(tmp_path)
         config = _load_gate_config()
         assert config["health_min"] == 60
@@ -65,6 +64,7 @@ class TestHealthGate:
     def test_load_gate_config_returns_dict(self, tmp_path, monkeypatch):
         """_load_gate_config should return a dict with health_min."""
         from roam.commands.cmd_health import _load_gate_config
+
         monkeypatch.chdir(tmp_path)
         config = _load_gate_config()
         assert isinstance(config, dict)
@@ -115,6 +115,7 @@ class TestHealthGate:
         config.write_text("health:\n  health_min: 100\n")
 
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["--json", "health", "--gate"], catch_exceptions=True)
         assert result.exit_code == 5
         # JSON should be printed before the error

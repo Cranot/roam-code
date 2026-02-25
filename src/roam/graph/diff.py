@@ -69,9 +69,9 @@ def _git_show(root: Path, ref: str, filepath: str) -> bytes | None:
 
 def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
     """Parse *source* bytes and extract symbols for *file_path*."""
-    from roam.languages.registry import get_language_for_file, get_extractor_for_file
-    from roam.index.symbols import extract_symbols
     from roam.index.parser import GRAMMAR_ALIASES
+    from roam.index.symbols import extract_symbols
+    from roam.languages.registry import get_extractor_for_file, get_language_for_file
 
     language = get_language_for_file(file_path)
     if language is None:
@@ -84,6 +84,7 @@ def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
     grammar = GRAMMAR_ALIASES.get(language, language)
     try:
         from tree_sitter_language_pack import get_parser
+
         parser = get_parser(grammar)
     except Exception:
         return []
@@ -101,9 +102,18 @@ def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _METRIC_KEYS = [
-    "files", "symbols", "edges", "cycles", "god_components",
-    "bottlenecks", "dead_exports", "layer_violations", "health_score",
-    "tangle_ratio", "avg_complexity", "brain_methods",
+    "files",
+    "symbols",
+    "edges",
+    "cycles",
+    "god_components",
+    "bottlenecks",
+    "dead_exports",
+    "layer_violations",
+    "health_score",
+    "tangle_ratio",
+    "avg_complexity",
+    "brain_methods",
 ]
 
 
@@ -195,8 +205,7 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
     # Query file_edges from changed files
     edges = batched_in(
         conn,
-        "SELECT source_file_id, target_file_id, symbol_count "
-        "FROM file_edges WHERE source_file_id IN ({ph})",
+        "SELECT source_file_id, target_file_id, symbol_count FROM file_edges WHERE source_file_id IN ({ph})",
         changed_file_ids,
     )
 
@@ -280,24 +289,28 @@ def edge_analysis(conn, changed_file_ids: list[int]) -> dict:
         src_cluster = file_clusters.get(src_id)
         tgt_cluster = file_clusters.get(tgt_id)
         if src_cluster and tgt_cluster and src_cluster != tgt_cluster:
-            cross_cluster.append({
-                "source": src_path,
-                "target": tgt_path,
-                "source_cluster": src_cluster,
-                "target_cluster": tgt_cluster,
-            })
+            cross_cluster.append(
+                {
+                    "source": src_path,
+                    "target": tgt_path,
+                    "source_cluster": src_cluster,
+                    "target_cluster": tgt_cluster,
+                }
+            )
 
         # Layer violation: lower layer depends on higher layer
         src_layer = file_layers.get(src_id)
         tgt_layer = file_layers.get(tgt_id)
         if src_layer is not None and tgt_layer is not None:
             if src_layer < tgt_layer:
-                layer_violations.append({
-                    "source": src_path,
-                    "target": tgt_path,
-                    "source_layer": src_layer,
-                    "target_layer": tgt_layer,
-                })
+                layer_violations.append(
+                    {
+                        "source": src_path,
+                        "target": tgt_path,
+                        "source_layer": src_layer,
+                        "target_layer": tgt_layer,
+                    }
+                )
 
     return {
         "total_from_changed": len(edges),
@@ -324,9 +337,7 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
         old_source = _git_show(root, base_ref, fpath)
 
         # Get current symbols from DB
-        file_row = conn.execute(
-            "SELECT id FROM files WHERE path = ?", (fpath,)
-        ).fetchone()
+        file_row = conn.execute("SELECT id FROM files WHERE path = ?", (fpath,)).fetchone()
         if not file_row:
             file_row = conn.execute(
                 "SELECT id FROM files WHERE path LIKE ? LIMIT 1",
@@ -336,8 +347,7 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
         current_syms = []
         if file_row:
             rows = conn.execute(
-                "SELECT name, qualified_name, kind, signature, line_start "
-                "FROM symbols WHERE file_id = ?",
+                "SELECT name, qualified_name, kind, signature, line_start FROM symbols WHERE file_id = ?",
                 (file_row["id"],),
             ).fetchall()
             current_syms = [
@@ -354,12 +364,14 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
         if old_source is None:
             # New file — all symbols are added
             for s in current_syms:
-                added.append({
-                    "name": s["name"],
-                    "kind": s["kind"],
-                    "file": fpath,
-                    "line": s.get("line_start"),
-                })
+                added.append(
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "file": fpath,
+                        "line": s.get("line_start"),
+                    }
+                )
             continue
 
         old_syms = _extract_old_symbols(old_source, fpath)
@@ -377,33 +389,39 @@ def symbol_changes(conn, root: Path, base_ref: str, changed_files: list[str]) ->
         # Added
         for k in new_keys - old_keys:
             s = new_by_key[k]
-            added.append({
-                "name": s["name"],
-                "kind": s["kind"],
-                "file": fpath,
-                "line": s.get("line_start"),
-            })
+            added.append(
+                {
+                    "name": s["name"],
+                    "kind": s["kind"],
+                    "file": fpath,
+                    "line": s.get("line_start"),
+                }
+            )
 
         # Removed
         for k in old_keys - new_keys:
             s = old_by_key[k]
-            removed.append({
-                "name": s["name"],
-                "kind": s["kind"],
-                "file": fpath,
-            })
+            removed.append(
+                {
+                    "name": s["name"],
+                    "kind": s["kind"],
+                    "file": fpath,
+                }
+            )
 
         # Modified (signature changed)
         for k in old_keys & new_keys:
             old_sig = (old_by_key[k].get("signature") or "").strip()
             new_sig = (new_by_key[k].get("signature") or "").strip()
             if old_sig and new_sig and old_sig != new_sig:
-                modified.append({
-                    "name": new_by_key[k]["name"],
-                    "kind": new_by_key[k]["kind"],
-                    "file": fpath,
-                    "line": new_by_key[k].get("line_start"),
-                })
+                modified.append(
+                    {
+                        "name": new_by_key[k]["name"],
+                        "kind": new_by_key[k]["kind"],
+                        "file": fpath,
+                        "line": new_by_key[k].get("line_start"),
+                    }
+                )
 
     return {"added": added, "removed": removed, "modified": modified}
 
@@ -428,6 +446,7 @@ def compute_footprint(conn, changed_file_ids: list[int]) -> dict:
     symbols_changed = 0
     if changed_file_ids:
         from roam.db.connection import batched_in
+
         rows = batched_in(
             conn,
             "SELECT COUNT(*) AS cnt FROM symbols WHERE file_id IN ({ph})",

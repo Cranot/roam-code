@@ -3,20 +3,20 @@
 from __future__ import annotations
 
 import json
-import math
-import os
-import subprocess
+import sys
 import time
 from pathlib import Path
 
-import sys
-
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process, invoke_cli, parse_json_output, assert_json_envelope
-
+from conftest import (
+    assert_json_envelope,
+    git_init,
+    index_in_process,
+    invoke_cli,
+    parse_json_output,
+)
 
 # ===========================================================================
 # Unit tests for time-decay scoring
@@ -140,12 +140,17 @@ class TestComputeFileOwnership:
     def test_empty_result_for_unknown_file(self, tmp_path):
         """compute_file_ownership returns empty dict when file has no git data."""
         import sqlite3
+
         from roam.commands.cmd_drift import compute_file_ownership
 
         db = sqlite3.connect(":memory:")
         db.row_factory = sqlite3.Row
-        db.execute("CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)")
-        db.execute("CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)")
+        db.execute(
+            "CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)"
+        )
 
         result = compute_file_ownership(db, file_id=999)
         assert result == {}
@@ -154,12 +159,17 @@ class TestComputeFileOwnership:
     def test_single_author_gets_full_ownership(self, tmp_path):
         """Single author should get 1.0 ownership share."""
         import sqlite3
+
         from roam.commands.cmd_drift import compute_file_ownership
 
         db = sqlite3.connect(":memory:")
         db.row_factory = sqlite3.Row
-        db.execute("CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)")
-        db.execute("CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)")
+        db.execute(
+            "CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)"
+        )
 
         now = int(time.time())
         db.execute("INSERT INTO git_commits VALUES (1, 'abc', 'alice', ?, 'init')", (now,))
@@ -172,12 +182,17 @@ class TestComputeFileOwnership:
     def test_recent_contributor_weighted_higher(self, tmp_path):
         """Recent contributions should receive higher weight than old ones."""
         import sqlite3
+
         from roam.commands.cmd_drift import compute_file_ownership
 
         db = sqlite3.connect(":memory:")
         db.row_factory = sqlite3.Row
-        db.execute("CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)")
-        db.execute("CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)")
+        db.execute(
+            "CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)"
+        )
 
         now = int(time.time())
         one_year_ago = now - 365 * 86400
@@ -191,20 +206,23 @@ class TestComputeFileOwnership:
         db.execute("INSERT INTO git_file_changes VALUES (2, 2, 1, 'foo.py', 80, 20)")
 
         result = compute_file_ownership(db, file_id=1, now_ts=now)
-        assert result["bob"] > result["alice"], (
-            f"Expected bob ({result['bob']:.3f}) > alice ({result['alice']:.3f})"
-        )
+        assert result["bob"] > result["alice"], f"Expected bob ({result['bob']:.3f}) > alice ({result['alice']:.3f})"
         db.close()
 
     def test_ownership_shares_sum_to_one(self, tmp_path):
         """Ownership shares should normalise to 1.0."""
         import sqlite3
+
         from roam.commands.cmd_drift import compute_file_ownership
 
         db = sqlite3.connect(":memory:")
         db.row_factory = sqlite3.Row
-        db.execute("CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)")
-        db.execute("CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)")
+        db.execute(
+            "CREATE TABLE git_commits (id INTEGER PRIMARY KEY, hash TEXT, author TEXT, timestamp INTEGER, message TEXT)"
+        )
+        db.execute(
+            "CREATE TABLE git_file_changes (id INTEGER PRIMARY KEY, commit_id INTEGER, file_id INTEGER, path TEXT, lines_added INTEGER DEFAULT 0, lines_removed INTEGER DEFAULT 0)"
+        )
 
         now = int(time.time())
         db.execute("INSERT INTO git_commits VALUES (1, 'a', 'alice', ?, 'x')", (now,))
@@ -310,15 +328,11 @@ class TestDriftCLI:
         runner = CliRunner()
 
         # With threshold=0.99, only extreme drift is shown
-        result_high = invoke_cli(
-            runner, ["drift", "--threshold", "0.99"], cwd=proj
-        )
+        result_high = invoke_cli(runner, ["drift", "--threshold", "0.99"], cwd=proj)
         assert result_high.exit_code == 0
 
         # With threshold=0.01, most drift is shown
-        result_low = invoke_cli(
-            runner, ["drift", "--threshold", "0.01"], cwd=proj
-        )
+        result_low = invoke_cli(runner, ["drift", "--threshold", "0.01"], cwd=proj)
         assert result_low.exit_code == 0
 
     def test_json_output_envelope(self, tmp_path):
@@ -355,9 +369,7 @@ class TestDriftCLI:
         assert rc == 0
 
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["drift", "--threshold", "0.1"], cwd=proj, json_mode=True
-        )
+        result = invoke_cli(runner, ["drift", "--threshold", "0.1"], cwd=proj, json_mode=True)
         data = parse_json_output(result, command="drift")
         if data.get("drift"):
             entry = data["drift"][0]
@@ -419,9 +431,7 @@ class TestDriftCLI:
         assert rc == 0
 
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["drift", "--threshold", "0.1"], cwd=proj
-        )
+        result = invoke_cli(runner, ["drift", "--threshold", "0.1"], cwd=proj)
         assert result.exit_code == 0
         # If drift is detected, recommendations should appear
         if "drift" in result.output.lower() and "0 files" not in result.output:
@@ -441,9 +451,7 @@ class TestDriftCLI:
         assert rc == 0
 
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["drift", "--threshold", "0.1"], cwd=proj, json_mode=True
-        )
+        result = invoke_cli(runner, ["drift", "--threshold", "0.1"], cwd=proj, json_mode=True)
         data = parse_json_output(result, command="drift")
         assert "recommendations" in data
 

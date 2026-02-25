@@ -1,4 +1,3 @@
-
 dest = r"redacted\Project\roam-code\tests\test_context_propagation.py"
 
 parts = []

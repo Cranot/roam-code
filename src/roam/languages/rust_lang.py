@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -106,18 +106,20 @@ class RustExtractor(LanguageExtractor):
             sig = f"pub {sig}"
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind=kind,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=self._is_pub(node, source),
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=self._is_pub(node, source),
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_struct(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -132,18 +134,20 @@ class RustExtractor(LanguageExtractor):
             sig += self.node_text(type_params, source)
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="struct",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="struct",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Extract struct fields
         body = node.child_by_field_name("body")
@@ -158,17 +162,19 @@ class RustExtractor(LanguageExtractor):
                         if ftype:
                             fsig += f": {self.node_text(ftype, source)}"
                         fvis = self._visibility(child, source)
-                        symbols.append(self._make_symbol(
-                            name=field_name,
-                            kind="field",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{qualified}::{field_name}",
-                            signature=fsig,
-                            visibility=fvis,
-                            is_exported=fvis == "public",
-                            parent_name=qualified,
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=field_name,
+                                kind="field",
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{qualified}::{field_name}",
+                                signature=fsig,
+                                visibility=fvis,
+                                is_exported=fvis == "public",
+                                parent_name=qualified,
+                            )
+                        )
 
     def _extract_enum(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -183,18 +189,20 @@ class RustExtractor(LanguageExtractor):
             sig += self.node_text(type_params, source)
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="enum",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="enum",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Extract enum variants
         body = node.child_by_field_name("body")
@@ -204,16 +212,18 @@ class RustExtractor(LanguageExtractor):
                     vn = child.child_by_field_name("name")
                     if vn:
                         variant_name = self.node_text(vn, source)
-                        symbols.append(self._make_symbol(
-                            name=variant_name,
-                            kind="field",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{qualified}::{variant_name}",
-                            parent_name=qualified,
-                            visibility=vis,
-                            is_exported=vis == "public",
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=variant_name,
+                                kind="field",
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{qualified}::{variant_name}",
+                                parent_name=qualified,
+                                visibility=vis,
+                                is_exported=vis == "public",
+                            )
+                        )
 
     def _extract_trait(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -228,18 +238,20 @@ class RustExtractor(LanguageExtractor):
             sig += self.node_text(type_params, source)
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="trait",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="trait",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Extract trait methods
         body = node.child_by_field_name("body")
@@ -262,16 +274,18 @@ class RustExtractor(LanguageExtractor):
         if ret:
             sig += f" -> {self.node_text(ret, source)}"
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=f"{parent_name}::{name}",
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=f"{parent_name}::{name}",
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_impl(self, node, source, symbols, parent_name):
         """Extract impl block: associate methods with the implementing type."""
@@ -308,17 +322,19 @@ class RustExtractor(LanguageExtractor):
         sig = f"{'pub ' if vis == 'public' else ''}mod {name}"
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="module",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="module",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Walk mod body if inline
         body = node.child_by_field_name("body")
@@ -344,17 +360,19 @@ class RustExtractor(LanguageExtractor):
                 sig += f" = {val_text}"
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="type_alias",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="type_alias",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_const(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -368,17 +386,19 @@ class RustExtractor(LanguageExtractor):
             sig += f": {self.node_text(type_n, source)}"
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="constant",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="constant",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_static(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -392,17 +412,19 @@ class RustExtractor(LanguageExtractor):
             sig += f": {self.node_text(type_n, source)}"
 
         qualified = f"{parent_name}::{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="variable",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="variable",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_macro(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -412,17 +434,19 @@ class RustExtractor(LanguageExtractor):
         sig = f"macro_rules! {name}"
         qualified = f"{parent_name}::{name}" if parent_name else name
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
     # ---- Reference extraction ----
 
@@ -451,20 +475,28 @@ class RustExtractor(LanguageExtractor):
         """Extract use declarations."""
         # Get the full use path text
         for child in node.children:
-            if child.type in ("use_as_clause", "use_list", "scoped_use_list",
-                              "scoped_identifier", "identifier", "use_wildcard"):
+            if child.type in (
+                "use_as_clause",
+                "use_list",
+                "scoped_use_list",
+                "scoped_identifier",
+                "identifier",
+                "use_wildcard",
+            ):
                 path = self.node_text(child, source)
                 # Clean up and extract the target name
                 target = path.rsplit("::", 1)[-1] if "::" in path else path
                 target = target.strip("{}*, ")
                 if target:
-                    refs.append(self._make_reference(
-                        target_name=target,
-                        kind="import",
-                        line=node.start_point[0] + 1,
-                        source_name=scope_name,
-                        import_path=path,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=target,
+                            kind="import",
+                            line=node.start_point[0] + 1,
+                            source_name=scope_name,
+                            import_path=path,
+                        )
+                    )
 
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
@@ -481,12 +513,14 @@ class RustExtractor(LanguageExtractor):
         else:
             name = self.node_text(func_node, source)
 
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=func_node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=func_node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)
@@ -501,9 +535,11 @@ class RustExtractor(LanguageExtractor):
                     break
         if macro_node:
             name = self.node_text(macro_node, source)
-            refs.append(self._make_reference(
-                target_name=f"{name}!",
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=f"{name}!",
+                    kind="call",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )

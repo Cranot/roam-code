@@ -7,8 +7,6 @@ affected tests detection, entry points, edge cases (no changes, empty index).
 from __future__ import annotations
 
 import json
-import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -16,14 +14,14 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope, git_commit
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 from roam.cli import cli
-
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -37,6 +35,7 @@ def cli_runner():
 # ---------------------------------------------------------------------------
 # Fixture: project with clear dependency chain and a second commit
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def affected_project(project_factory):
@@ -57,51 +56,45 @@ def affected_project(project_factory):
     proj = project_factory(
         {
             "models.py": (
-                'class User:\n'
-                '    def __init__(self, name):\n'
-                '        self.name = name\n'
-                '\n'
-                '    def greet(self):\n'
+                "class User:\n"
+                "    def __init__(self, name):\n"
+                "        self.name = name\n"
+                "\n"
+                "    def greet(self):\n"
                 '        return f"Hello {self.name}"\n'
             ),
             "service.py": (
-                'from models import User\n'
-                '\n'
-                'def create_user(name):\n'
-                '    return User(name)\n'
-                '\n'
-                'def get_greeting(name):\n'
-                '    user = User(name)\n'
-                '    return user.greet()\n'
+                "from models import User\n"
+                "\n"
+                "def create_user(name):\n"
+                "    return User(name)\n"
+                "\n"
+                "def get_greeting(name):\n"
+                "    user = User(name)\n"
+                "    return user.greet()\n"
             ),
             "api.py": (
-                'from service import create_user\n'
-                '\n'
-                'def handle_request(data):\n'
-                '    return create_user(data["name"])\n'
+                'from service import create_user\n\ndef handle_request(data):\n    return create_user(data["name"])\n'
             ),
             "tests/test_service.py": (
-                'from service import create_user\n'
-                '\n'
-                'def test_create_user():\n'
+                "from service import create_user\n"
+                "\n"
+                "def test_create_user():\n"
                 '    user = create_user("Alice")\n'
-                '    assert user is not None\n'
+                "    assert user is not None\n"
             ),
-            "utils.py": (
-                'def format_name(name):\n'
-                '    return name.strip().title()\n'
-            ),
+            "utils.py": ("def format_name(name):\n    return name.strip().title()\n"),
         },
         extra_commits=[
             (
                 {
                     "models.py": (
-                        'class User:\n'
+                        "class User:\n"
                         '    def __init__(self, name, email=""):\n'
-                        '        self.name = name\n'
-                        '        self.email = email\n'
-                        '\n'
-                        '    def greet(self):\n'
+                        "        self.name = name\n"
+                        "        self.email = email\n"
+                        "\n"
+                        "    def greet(self):\n"
                         '        return f"Hello {self.name}"\n'
                     ),
                 },
@@ -179,18 +172,14 @@ class TestAffected:
     def test_affected_json_envelope(self, cli_runner, affected_project, monkeypatch):
         """JSON output should follow the roam envelope contract."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert_json_envelope(data, "affected")
 
     def test_affected_json_has_verdict(self, cli_runner, affected_project, monkeypatch):
         """JSON summary should contain a verdict field."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         summary = data.get("summary", {})
         assert "verdict" in summary
@@ -199,9 +188,7 @@ class TestAffected:
     def test_affected_json_has_changed_files(self, cli_runner, affected_project, monkeypatch):
         """JSON output should contain a changed_files list."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert "changed_files" in data
         assert isinstance(data["changed_files"], list)
@@ -210,9 +197,7 @@ class TestAffected:
     def test_affected_json_has_transitive_lists(self, cli_runner, affected_project, monkeypatch):
         """JSON output should contain affected_transitive_1 and affected_transitive_2plus lists."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert "affected_transitive_1" in data
         assert "affected_transitive_2plus" in data
@@ -222,9 +207,7 @@ class TestAffected:
     def test_affected_json_has_tests(self, cli_runner, affected_project, monkeypatch):
         """JSON output should contain affected_tests list."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert "affected_tests" in data
         assert isinstance(data["affected_tests"], list)
@@ -232,9 +215,7 @@ class TestAffected:
     def test_affected_json_has_by_module(self, cli_runner, affected_project, monkeypatch):
         """JSON output should contain by_module dict."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert "by_module" in data
         assert isinstance(data["by_module"], dict)
@@ -242,9 +223,7 @@ class TestAffected:
     def test_affected_json_has_entry_points(self, cli_runner, affected_project, monkeypatch):
         """JSON output should contain affected_entry_points list."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         assert "affected_entry_points" in data
         assert isinstance(data["affected_entry_points"], list)
@@ -253,8 +232,10 @@ class TestAffected:
         """--depth 1 should limit results to 1-hop dependents only."""
         monkeypatch.chdir(affected_project)
         result = invoke_cli(
-            cli_runner, ["affected", "--depth", "1"],
-            cwd=affected_project, json_mode=True,
+            cli_runner,
+            ["affected", "--depth", "1"],
+            cwd=affected_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "affected")
         # With depth=1, transitive_2plus should be empty
@@ -263,9 +244,7 @@ class TestAffected:
     def test_affected_unmodified_not_included(self, cli_runner, affected_project, monkeypatch):
         """Files with no dependency on changed files should not appear."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         all_affected = (
             data.get("changed_files", [])
@@ -278,9 +257,7 @@ class TestAffected:
     def test_affected_summary_counts(self, cli_runner, affected_project, monkeypatch):
         """Summary counts should be consistent with detail lists."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         summary = data["summary"]
         assert summary["changed_files"] == len(data["changed_files"])
@@ -295,16 +272,20 @@ class TestAffectedEdgeCases:
 
     def test_affected_no_changes(self, cli_runner, project_factory, monkeypatch):
         """When there are no changes, should report zero affected."""
-        proj = project_factory({
-            "app.py": 'def main(): pass\n',
-        })
+        proj = project_factory(
+            {
+                "app.py": "def main(): pass\n",
+            }
+        )
         monkeypatch.chdir(proj)
         # HEAD~1..HEAD should exist because project_factory makes 2 commits
         # but if only 1 commit, the diff may be empty.
         # Use --base HEAD which means HEAD..HEAD = no changes
         result = invoke_cli(
-            cli_runner, ["affected", "--base", "HEAD"],
-            cwd=proj, json_mode=True,
+            cli_runner,
+            ["affected", "--base", "HEAD"],
+            cwd=proj,
+            json_mode=True,
         )
         # May either succeed with 0 affected or fail due to no changes
         if result.exit_code == 0:
@@ -317,8 +298,10 @@ class TestAffectedEdgeCases:
         monkeypatch.chdir(affected_project)
         # With --changed and no uncommitted changes, should report 0
         result = invoke_cli(
-            cli_runner, ["affected", "--changed"],
-            cwd=affected_project, json_mode=True,
+            cli_runner,
+            ["affected", "--changed"],
+            cwd=affected_project,
+            json_mode=True,
         )
         if result.exit_code == 0:
             data = json.loads(result.output)
@@ -329,9 +312,7 @@ class TestAffectedEdgeCases:
     def test_affected_transitive_1_has_reason(self, cli_runner, affected_project, monkeypatch):
         """Each entry in affected_transitive_1 should have a 'reason' field."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         for entry in data.get("affected_transitive_1", []):
             assert "file" in entry
@@ -340,9 +321,7 @@ class TestAffectedEdgeCases:
     def test_affected_transitive_2plus_has_reason(self, cli_runner, affected_project, monkeypatch):
         """Each entry in affected_transitive_2plus should have a 'reason' field."""
         monkeypatch.chdir(affected_project)
-        result = invoke_cli(
-            cli_runner, ["affected"], cwd=affected_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["affected"], cwd=affected_project, json_mode=True)
         data = parse_json_output(result, "affected")
         for entry in data.get("affected_transitive_2plus", []):
             assert "file" in entry

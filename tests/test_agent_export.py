@@ -20,12 +20,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process, invoke_cli
-
+from conftest import git_init, index_in_process, invoke_cli
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def small_project(tmp_path):
@@ -57,27 +57,17 @@ def small_project(tmp_path):
     )
 
     (src / "utils.py").write_text(
-        "def add(a, b):\n"
-        "    return a + b\n"
-        "\n"
-        "def format_name(first, last):\n"
-        "    return f'{first} {last}'\n"
+        "def add(a, b):\n    return a + b\n\ndef format_name(first, last):\n    return f'{first} {last}'\n"
     )
 
     tests_dir = repo / "tests"
     tests_dir.mkdir()
 
     (tests_dir / "test_models.py").write_text(
-        "from models import User\n"
-        "\n"
-        "def test_user():\n"
-        "    u = User('alice')\n"
-        "    assert u.display() == 'Alice'\n"
+        "from models import User\n\ndef test_user():\n    u = User('alice')\n    assert u.display() == 'Alice'\n"
     )
 
-    (repo / "pyproject.toml").write_text(
-        '[project]\nname = "myproject"\nversion = "1.0.0"\n'
-    )
+    (repo / "pyproject.toml").write_text('[project]\nname = "myproject"\nversion = "1.0.0"\n')
 
     git_init(repo)
     return repo
@@ -109,8 +99,8 @@ def empty_project(tmp_path, monkeypatch):
 # 1. Basic output contains expected sections
 # ---------------------------------------------------------------------------
 
-class TestBasicOutput:
 
+class TestBasicOutput:
     def test_contains_expected_sections(self, indexed_small_project, cli_runner):
         """agent-export output should contain all major sections."""
         result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project)
@@ -161,12 +151,11 @@ class TestBasicOutput:
 # 2. JSON mode
 # ---------------------------------------------------------------------------
 
-class TestJsonMode:
 
+class TestJsonMode:
     def test_json_produces_valid_envelope(self, indexed_small_project, cli_runner):
         """--json should produce a valid JSON envelope."""
-        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
         assert result.exit_code == 0, f"Failed:\n{result.output}"
 
         data = json.loads(result.output)
@@ -177,8 +166,7 @@ class TestJsonMode:
 
     def test_json_contains_sections(self, indexed_small_project, cli_runner):
         """JSON output should contain the key data sections."""
-        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
         data = json.loads(result.output)
 
         assert "languages" in data
@@ -190,23 +178,25 @@ class TestJsonMode:
 
     def test_json_format_field(self, indexed_small_project, cli_runner):
         """JSON output should include the format field."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "agents"],
-                            cwd=indexed_small_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["agent-export", "--format", "agents"],
+            cwd=indexed_small_project,
+            json_mode=True,
+        )
         data = json.loads(result.output)
         assert data["format"] == "agents"
 
     def test_json_has_schema(self, indexed_small_project, cli_runner):
         """JSON output should include schema versioning fields."""
-        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
         data = json.loads(result.output)
         assert "schema" in data
         assert "schema_version" in data
 
     def test_json_sort_keys(self, indexed_small_project, cli_runner):
         """JSON keys should be sorted for deterministic output."""
-        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
         # If keys are sorted, re-serializing with sort_keys should produce the same
         data = json.loads(result.output)
         reserialized = json.dumps(data, indent=2, default=str, sort_keys=True)
@@ -218,54 +208,47 @@ class TestJsonMode:
 # 3. Format variants
 # ---------------------------------------------------------------------------
 
-class TestFormatVariants:
 
+class TestFormatVariants:
     def test_claude_format_header(self, indexed_small_project, cli_runner):
         """--format claude should produce a simple project name header."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "claude"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "claude"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "# myproject\n" in result.output
 
     def test_agents_format_header(self, indexed_small_project, cli_runner):
         """--format agents should produce an Agent Guide header."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "agents"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "agents"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Agent Guide" in result.output
 
     def test_cursor_format_header(self, indexed_small_project, cli_runner):
         """--format cursor should produce a Cursor Rules header."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "cursor"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "cursor"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Cursor Rules" in result.output
 
     def test_codex_format_header(self, indexed_small_project, cli_runner):
         """--format codex should produce a Codex header."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "codex"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "codex"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Codex Instructions" in result.output
 
     def test_gemini_format_header(self, indexed_small_project, cli_runner):
         """--format gemini should produce a Gemini header."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "gemini"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "gemini"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Gemini Instructions" in result.output
 
     def test_profile_selects_default_format(self, indexed_small_project, cli_runner):
         """--profile codex should select codex format when --format is omitted."""
-        result = invoke_cli(cli_runner, ["agent-export", "--profile", "codex"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--profile", "codex"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Codex Instructions" in result.output
 
     def test_cursor_format_is_concise(self, indexed_small_project, cli_runner):
         """--format cursor should skip roam-specific commands in Common Tasks."""
-        result = invoke_cli(cli_runner, ["agent-export", "--format", "cursor"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--format", "cursor"], cwd=indexed_small_project)
         assert result.exit_code == 0
         # Cursor format should NOT include roam commands
         assert "roam search" not in result.output
@@ -275,8 +258,7 @@ class TestFormatVariants:
         """claude, agents, and cursor should produce distinct outputs."""
         results = {}
         for fmt in ("claude", "agents", "cursor"):
-            r = invoke_cli(cli_runner, ["agent-export", "--format", fmt],
-                           cwd=indexed_small_project)
+            r = invoke_cli(cli_runner, ["agent-export", "--format", fmt], cwd=indexed_small_project)
             assert r.exit_code == 0
             results[fmt] = r.output
 
@@ -290,12 +272,11 @@ class TestFormatVariants:
 # 4. --write flag
 # ---------------------------------------------------------------------------
 
-class TestWriteFlag:
 
+class TestWriteFlag:
     def test_write_creates_claude_md(self, indexed_small_project, cli_runner):
         """--write should create CLAUDE.md in the project root."""
-        result = invoke_cli(cli_runner, ["agent-export", "--write"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write"], cwd=indexed_small_project)
         assert result.exit_code == 0
 
         claude_path = indexed_small_project / "CLAUDE.md"
@@ -306,8 +287,7 @@ class TestWriteFlag:
 
     def test_write_agents_format(self, indexed_small_project, cli_runner):
         """--write --format agents should create AGENTS.md."""
-        result = invoke_cli(cli_runner, ["agent-export", "--write", "--format", "agents"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write", "--format", "agents"], cwd=indexed_small_project)
         assert result.exit_code == 0
 
         agents_path = indexed_small_project / "AGENTS.md"
@@ -315,8 +295,7 @@ class TestWriteFlag:
 
     def test_write_cursor_format(self, indexed_small_project, cli_runner):
         """--write --format cursor should create .cursorrules."""
-        result = invoke_cli(cli_runner, ["agent-export", "--write", "--format", "cursor"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write", "--format", "cursor"], cwd=indexed_small_project)
         assert result.exit_code == 0
 
         cursor_path = indexed_small_project / ".cursorrules"
@@ -368,8 +347,7 @@ class TestWriteFlag:
 
     def test_write_reports_size(self, indexed_small_project, cli_runner):
         """--write should report the file size and section count."""
-        result = invoke_cli(cli_runner, ["agent-export", "--write"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert "Wrote CLAUDE.md" in result.output
         assert "KB" in result.output
@@ -380,8 +358,7 @@ class TestWriteFlag:
         claude_path = indexed_small_project / "CLAUDE.md"
 
         # First write
-        result = invoke_cli(cli_runner, ["agent-export", "--write"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write"], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert claude_path.exists()
 
@@ -391,8 +368,7 @@ class TestWriteFlag:
         claude_path.write_text(content, encoding="utf-8")
 
         # Re-run --write
-        result = invoke_cli(cli_runner, ["agent-export", "--write"],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "--write"], cwd=indexed_small_project)
         assert result.exit_code == 0
 
         # Check manual content is preserved
@@ -405,8 +381,7 @@ class TestWriteFlag:
     def test_output_flag_custom_path(self, indexed_small_project, cli_runner):
         """-o should write to a custom path."""
         out_path = str(indexed_small_project / "custom_agents.md")
-        result = invoke_cli(cli_runner, ["agent-export", "-o", out_path],
-                            cwd=indexed_small_project)
+        result = invoke_cli(cli_runner, ["agent-export", "-o", out_path], cwd=indexed_small_project)
         assert result.exit_code == 0
         assert os.path.exists(out_path)
         content = open(out_path, encoding="utf-8").read()
@@ -417,8 +392,8 @@ class TestWriteFlag:
 # 5. Deterministic output
 # ---------------------------------------------------------------------------
 
-class TestDeterministic:
 
+class TestDeterministic:
     def test_same_input_same_output(self, indexed_small_project, cli_runner):
         """Running agent-export twice should produce identical output."""
         r1 = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project)
@@ -434,10 +409,8 @@ class TestDeterministic:
 
     def test_json_deterministic(self, indexed_small_project, cli_runner):
         """JSON output should be deterministic (ignoring timestamp)."""
-        r1 = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                        json_mode=True)
-        r2 = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project,
-                        json_mode=True)
+        r1 = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
+        r2 = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project, json_mode=True)
         d1 = json.loads(r1.output)
         d2 = json.loads(r2.output)
 
@@ -456,8 +429,8 @@ class TestDeterministic:
 # 6. Empty/minimal index
 # ---------------------------------------------------------------------------
 
-class TestEmptyProject:
 
+class TestEmptyProject:
     def test_empty_project_succeeds(self, empty_project, cli_runner):
         """agent-export on an empty project should not crash."""
         result = invoke_cli(cli_runner, ["agent-export"], cwd=empty_project)
@@ -466,8 +439,7 @@ class TestEmptyProject:
 
     def test_empty_project_json(self, empty_project, cli_runner):
         """JSON mode on an empty project should produce valid output."""
-        result = invoke_cli(cli_runner, ["agent-export"], cwd=empty_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["agent-export"], cwd=empty_project, json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "agent-export"
@@ -485,8 +457,8 @@ class TestEmptyProject:
 # 7. Hotspots and entry points
 # ---------------------------------------------------------------------------
 
-class TestDataSections:
 
+class TestDataSections:
     def test_entry_points_present(self, indexed_small_project, cli_runner):
         """Entry points section should list files."""
         result = invoke_cli(cli_runner, ["agent-export"], cwd=indexed_small_project)
@@ -495,7 +467,7 @@ class TestDataSections:
         if "## Entry Points" in result.output:
             # If present, should have at least one file
             idx = result.output.index("## Entry Points")
-            section = result.output[idx:idx + 500]
+            section = result.output[idx : idx + 500]
             assert "`" in section  # file paths are in backticks
 
     def test_test_patterns_present(self, indexed_small_project, cli_runner):
@@ -518,8 +490,8 @@ class TestDataSections:
 # 8. Help text
 # ---------------------------------------------------------------------------
 
-class TestHelp:
 
+class TestHelp:
     def test_help_flag(self, cli_runner):
         """agent-export --help should work."""
         result = invoke_cli(cli_runner, ["agent-export", "--help"])

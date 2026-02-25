@@ -9,42 +9,46 @@ import click
 import pytest
 from click.testing import CliRunner
 
-from tests.conftest import index_in_process, git_init
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def vuln_project(project_factory):
     """Create a project with call chains for reachability testing."""
-    return project_factory({
-        "api.py": (
-            "from service import process\n"
-            "def handle(): return process()\n"
-        ),
-        "service.py": (
-            "from utils import merge_data\n"
-            "def process(): return merge_data({})\n"
-        ),
-        "utils.py": (
-            "def merge_data(d): return d\n"
-            "def unused(): pass\n"
-        ),
-        "config.py": (
-            "def load_config(): pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "api.py": ("from service import process\ndef handle(): return process()\n"),
+            "service.py": ("from utils import merge_data\ndef process(): return merge_data({})\n"),
+            "utils.py": ("def merge_data(d): return d\ndef unused(): pass\n"),
+            "config.py": ("def load_config(): pass\n"),
+        }
+    )
 
 
 @pytest.fixture
 def generic_report(tmp_path):
     """Create a generic vulnerability report JSON file."""
     report = [
-        {"cve": "CVE-2024-0001", "package": "merge_data", "severity": "critical", "title": "RCE in merge_data"},
-        {"cve": "CVE-2024-0002", "package": "load_config", "severity": "high", "title": "Config injection"},
-        {"cve": "CVE-2024-0003", "package": "nonexistent_pkg", "severity": "low", "title": "Not in code"},
+        {
+            "cve": "CVE-2024-0001",
+            "package": "merge_data",
+            "severity": "critical",
+            "title": "RCE in merge_data",
+        },
+        {
+            "cve": "CVE-2024-0002",
+            "package": "load_config",
+            "severity": "high",
+            "title": "Config injection",
+        },
+        {
+            "cve": "CVE-2024-0003",
+            "package": "nonexistent_pkg",
+            "severity": "low",
+            "title": "Not in code",
+        },
     ]
     p = tmp_path / "generic_vulns.json"
     p.write_text(json.dumps(report))
@@ -58,7 +62,12 @@ def npm_report(tmp_path):
         "vulnerabilities": {
             "lodash": {
                 "severity": "high",
-                "via": [{"title": "Prototype Pollution", "url": "https://github.com/advisories/GHSA-xxxx"}],
+                "via": [
+                    {
+                        "title": "Prototype Pollution",
+                        "url": "https://github.com/advisories/GHSA-xxxx",
+                    }
+                ],
             },
             "express": {
                 "severity": "medium",
@@ -79,7 +88,11 @@ def pip_report(tmp_path):
             "name": "requests",
             "version": "2.25.0",
             "vulns": [
-                {"id": "CVE-2023-9999", "fix_versions": ["2.28.0"], "description": "SSRF vulnerability"},
+                {
+                    "id": "CVE-2023-9999",
+                    "fix_versions": ["2.28.0"],
+                    "description": "SSRF vulnerability",
+                },
             ],
         },
     ]
@@ -95,8 +108,18 @@ def trivy_report(tmp_path):
         "Results": [
             {
                 "Vulnerabilities": [
-                    {"VulnerabilityID": "CVE-2024-1111", "PkgName": "openssl", "Severity": "CRITICAL", "Title": "Buffer overflow"},
-                    {"VulnerabilityID": "CVE-2024-2222", "PkgName": "curl", "Severity": "HIGH", "Title": "Use after free"},
+                    {
+                        "VulnerabilityID": "CVE-2024-1111",
+                        "PkgName": "openssl",
+                        "Severity": "CRITICAL",
+                        "Title": "Buffer overflow",
+                    },
+                    {
+                        "VulnerabilityID": "CVE-2024-2222",
+                        "PkgName": "curl",
+                        "Severity": "HIGH",
+                        "Title": "Use after free",
+                    },
                 ]
             }
         ]
@@ -135,14 +158,17 @@ def osv_report(tmp_path):
 @pytest.fixture
 def empty_project(project_factory):
     """A minimal project with no vulnerabilities."""
-    return project_factory({
-        "main.py": "def main(): pass\n",
-    })
+    return project_factory(
+        {
+            "main.py": "def main(): pass\n",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _build_cli():
     """Build a minimal CLI group with the vulns command registered."""
@@ -156,6 +182,7 @@ def _build_cli():
         ctx.ensure_object(dict)
         ctx.obj["json"] = json_mode
         ctx.obj["sarif"] = sarif_mode
+
     cli.add_command(vulns)
     return cli
 
@@ -183,6 +210,7 @@ def _invoke(args, cwd, json_mode=False, sarif_mode=False):
 # 1. Basic command tests
 # ===========================================================================
 
+
 class TestBasicCommand:
     """Test that the command runs and produces output."""
 
@@ -207,6 +235,7 @@ class TestBasicCommand:
 # ===========================================================================
 # 2. Import tests -- generic format
 # ===========================================================================
+
 
 class TestGenericImport:
     """Test importing generic vulnerability reports."""
@@ -244,13 +273,15 @@ class TestGenericImport:
 # 3. Import tests -- multiple formats
 # ===========================================================================
 
+
 class TestMultiFormatImport:
     """Test format auto-detection and explicit format selection."""
 
     def test_auto_detect_npm(self, vuln_project, npm_report):
         result = _invoke(
             ["vulns", "--import-file", npm_report, "--format", "auto"],
-            vuln_project, json_mode=True,
+            vuln_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -259,7 +290,8 @@ class TestMultiFormatImport:
     def test_explicit_npm_format(self, vuln_project, npm_report):
         result = _invoke(
             ["vulns", "--import-file", npm_report, "--format", "npm-audit"],
-            vuln_project, json_mode=True,
+            vuln_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -268,7 +300,8 @@ class TestMultiFormatImport:
     def test_auto_detect_pip(self, vuln_project, pip_report):
         result = _invoke(
             ["vulns", "--import-file", pip_report],
-            vuln_project, json_mode=True,
+            vuln_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -277,7 +310,8 @@ class TestMultiFormatImport:
     def test_auto_detect_trivy(self, vuln_project, trivy_report):
         result = _invoke(
             ["vulns", "--import-file", trivy_report],
-            vuln_project, json_mode=True,
+            vuln_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -286,7 +320,8 @@ class TestMultiFormatImport:
     def test_auto_detect_osv(self, vuln_project, osv_report):
         result = _invoke(
             ["vulns", "--import-file", osv_report],
-            vuln_project, json_mode=True,
+            vuln_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -297,46 +332,55 @@ class TestMultiFormatImport:
 # 4. Format detection unit tests
 # ===========================================================================
 
+
 class TestFormatDetection:
     """Test the _detect_format function directly."""
 
     def test_detect_npm_v2(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = {"vulnerabilities": {"lodash": {"severity": "high"}}}
         assert _detect_format(data) == "npm-audit"
 
     def test_detect_npm_v1(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = {"advisories": {"1": {"module_name": "lodash"}}}
         assert _detect_format(data) == "npm-audit"
 
     def test_detect_trivy(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = {"Results": [{"Vulnerabilities": []}]}
         assert _detect_format(data) == "trivy"
 
     def test_detect_osv(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = {"results": [{"packages": []}]}
         assert _detect_format(data) == "osv"
 
     def test_detect_pip_audit_list(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = [{"name": "requests", "vulns": []}]
         assert _detect_format(data) == "pip-audit"
 
     def test_detect_pip_audit_wrapped(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = {"dependencies": [{"name": "requests", "vulns": []}]}
         assert _detect_format(data) == "pip-audit"
 
     def test_detect_generic_list(self):
         from roam.commands.cmd_vulns import _detect_format
+
         data = [{"cve": "CVE-2024-0001", "package": "foo"}]
         assert _detect_format(data) == "generic"
 
     def test_detect_unknown_raises(self):
         from roam.commands.cmd_vulns import _detect_format
+
         with pytest.raises(ValueError, match="Cannot auto-detect"):
             _detect_format({"random_key": "value"})
 
@@ -344,6 +388,7 @@ class TestFormatDetection:
 # ===========================================================================
 # 5. Inventory tests (no import, just query)
 # ===========================================================================
+
 
 class TestInventory:
     """Test querying existing vulnerability inventory."""
@@ -367,6 +412,7 @@ class TestInventory:
 # ===========================================================================
 # 6. Reachable-only filter tests
 # ===========================================================================
+
 
 class TestReachableOnly:
     """Test the --reachable-only flag."""
@@ -392,6 +438,7 @@ class TestReachableOnly:
 # ===========================================================================
 # 7. JSON output format tests
 # ===========================================================================
+
 
 class TestJsonOutput:
     """Test the JSON envelope structure."""
@@ -436,6 +483,7 @@ class TestJsonOutput:
 # 8. Text output format tests
 # ===========================================================================
 
+
 class TestTextOutput:
     """Test the plain-text output format."""
 
@@ -463,6 +511,7 @@ class TestTextOutput:
 # ===========================================================================
 # 9. SARIF output tests
 # ===========================================================================
+
 
 class TestSarifOutput:
     """Test the SARIF 2.1.0 output format."""
@@ -508,11 +557,13 @@ class TestSarifOutput:
 # 10. Severity helper tests
 # ===========================================================================
 
+
 class TestSeverityHelpers:
     """Test severity ranking and breakdown functions."""
 
     def test_severity_rank_order(self):
         from roam.commands.cmd_vulns import _severity_rank
+
         assert _severity_rank("critical") > _severity_rank("high")
         assert _severity_rank("high") > _severity_rank("medium")
         assert _severity_rank("medium") > _severity_rank("low")
@@ -520,11 +571,13 @@ class TestSeverityHelpers:
 
     def test_severity_rank_case_insensitive(self):
         from roam.commands.cmd_vulns import _severity_rank
+
         assert _severity_rank("CRITICAL") == _severity_rank("critical")
         assert _severity_rank("High") == _severity_rank("high")
 
     def test_severity_breakdown(self):
         from roam.commands.cmd_vulns import _severity_breakdown
+
         vulns = [
             {"severity": "critical"},
             {"severity": "high"},
@@ -539,6 +592,7 @@ class TestSeverityHelpers:
 
     def test_severity_breakdown_empty(self):
         from roam.commands.cmd_vulns import _severity_breakdown
+
         breakdown = _severity_breakdown([])
         assert len(breakdown) == 0
 
@@ -546,6 +600,7 @@ class TestSeverityHelpers:
 # ===========================================================================
 # 11. Multiple import accumulation tests
 # ===========================================================================
+
 
 class TestMultipleImports:
     """Test that importing multiple reports accumulates vulnerabilities."""
@@ -565,6 +620,7 @@ class TestMultipleImports:
 # ===========================================================================
 # 12. Matched file tracking tests
 # ===========================================================================
+
 
 class TestMatchedFiles:
     """Test that matched_file is populated for package-matching vulns."""

@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -12,14 +10,13 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
+    assert_json_envelope,
+    git_commit,
+    git_init,
+    index_in_process,
     invoke_cli,
     parse_json_output,
-    assert_json_envelope,
-    git_init,
-    git_commit,
-    index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,6 +26,7 @@ from conftest import (
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -61,24 +59,24 @@ class TestRemovedSymbols:
 
     def test_removed_function(self, tmp_path, cli_runner, monkeypatch):
         """Removing a public function should be detected as BREAKING."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def process_data(items):\n'
-                '    """Process data items."""\n'
-                '    return [x * 2 for x in items]\n'
-                '\n'
-                'def helper():\n'
-                '    return 42\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": (
+                    "def process_data(items):\n"
+                    '    """Process data items."""\n'
+                    "    return [x * 2 for x in items]\n"
+                    "\n"
+                    "def helper():\n"
+                    "    return 42\n"
+                ),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Modify file (remove process_data) — working tree change
-        (proj / "src" / "api.py").write_text(
-            'def helper():\n'
-            '    return 42\n'
-        )
+        (proj / "src" / "api.py").write_text("def helper():\n    return 42\n")
         # Index picks up the current working tree state
         out, rc = index_in_process(proj)
         assert rc == 0, f"index failed: {out}"
@@ -91,24 +89,19 @@ class TestRemovedSymbols:
 
     def test_removed_class(self, tmp_path, cli_runner, monkeypatch):
         """Removing a public class should be detected as BREAKING."""
-        proj = _make_api_project(tmp_path, {
-            "models.py": (
-                'class User:\n'
-                '    def __init__(self, name):\n'
-                '        self.name = name\n'
-                '\n'
-                'class Admin:\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "models.py": (
+                    "class User:\n    def __init__(self, name):\n        self.name = name\n\nclass Admin:\n    pass\n"
+                ),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Remove User class
-        (proj / "src" / "models.py").write_text(
-            'class Admin:\n'
-            '    pass\n'
-        )
+        (proj / "src" / "models.py").write_text("class Admin:\n    pass\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -128,21 +121,18 @@ class TestSignatureChanges:
 
     def test_added_required_param(self, tmp_path, cli_runner, monkeypatch):
         """Adding a required parameter should be BREAKING."""
-        proj = _make_api_project(tmp_path, {
-            "config.py": (
-                'def parse_config(path):\n'
-                '    """Parse config file."""\n'
-                '    return {}\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "config.py": ('def parse_config(path):\n    """Parse config file."""\n    return {}\n'),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Add required param 'strict'
         (proj / "src" / "config.py").write_text(
-            'def parse_config(path, strict):\n'
-            '    """Parse config file."""\n'
-            '    return {}\n'
+            'def parse_config(path, strict):\n    """Parse config file."""\n    return {}\n'
         )
         out, rc = index_in_process(proj)
         assert rc == 0
@@ -154,20 +144,17 @@ class TestSignatureChanges:
 
     def test_removed_param(self, tmp_path, cli_runner, monkeypatch):
         """Removing a parameter should be BREAKING."""
-        proj = _make_api_project(tmp_path, {
-            "handler.py": (
-                'def process(data, validate):\n'
-                '    return data\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "handler.py": ("def process(data, validate):\n    return data\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Remove the 'validate' param
-        (proj / "src" / "handler.py").write_text(
-            'def process(data):\n'
-            '    return data\n'
-        )
+        (proj / "src" / "handler.py").write_text("def process(data):\n    return data\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -187,20 +174,17 @@ class TestRenamedSymbols:
 
     def test_renamed_function(self, tmp_path, cli_runner, monkeypatch):
         """Renaming a function should be detected as WARNING."""
-        proj = _make_api_project(tmp_path, {
-            "module.py": (
-                'def old_name(x):\n'
-                '    return x + 1\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "module.py": ("def old_name(x):\n    return x + 1\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Rename to new_name (similar signature, same position)
-        (proj / "src" / "module.py").write_text(
-            'def new_name(x):\n'
-            '    return x + 1\n'
-        )
+        (proj / "src" / "module.py").write_text("def new_name(x):\n    return x + 1\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -221,20 +205,17 @@ class TestVisibilityChanges:
 
     def test_public_to_private(self, tmp_path, cli_runner, monkeypatch):
         """Making a public function private should be BREAKING."""
-        proj = _make_api_project(tmp_path, {
-            "utils.py": (
-                'def internal_helper(x):\n'
-                '    return x * 2\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "utils.py": ("def internal_helper(x):\n    return x * 2\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Make it private by adding underscore
-        (proj / "src" / "utils.py").write_text(
-            'def _internal_helper(x):\n'
-            '    return x * 2\n'
-        )
+        (proj / "src" / "utils.py").write_text("def _internal_helper(x):\n    return x * 2\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -256,19 +237,18 @@ class TestOptionalParams:
 
     def test_added_optional_param(self, tmp_path, cli_runner, monkeypatch):
         """Adding a parameter with default value should be INFO."""
-        proj = _make_api_project(tmp_path, {
-            "service.py": (
-                'def create_user(name):\n'
-                '    return {"name": name}\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "service.py": ('def create_user(name):\n    return {"name": name}\n'),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Add optional param
         (proj / "src" / "service.py").write_text(
-            'def create_user(name, active=True):\n'
-            '    return {"name": name, "active": active}\n'
+            'def create_user(name, active=True):\n    return {"name": name, "active": active}\n'
         )
         out, rc = index_in_process(proj)
         assert rc == 0
@@ -292,12 +272,12 @@ class TestNoChanges:
 
     def test_no_changes(self, tmp_path, cli_runner, monkeypatch):
         """When no files changed, should report no changes."""
-        proj = _make_api_project(tmp_path, {
-            "stable.py": (
-                'def stable_function():\n'
-                '    return 42\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "stable.py": ("def stable_function():\n    return 42\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj)
@@ -319,20 +299,17 @@ class TestJsonOutput:
 
     def test_json_envelope_structure(self, tmp_path, cli_runner, monkeypatch):
         """JSON output should follow the roam envelope contract."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def fetch(url):\n'
-                '    return None\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": ("def fetch(url):\n    return None\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Remove the function
-        (proj / "src" / "api.py").write_text(
-            'def other():\n'
-            '    return None\n'
-        )
+        (proj / "src" / "api.py").write_text("def other():\n    return None\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -361,20 +338,17 @@ class TestJsonOutput:
 
     def test_json_change_fields(self, tmp_path, cli_runner, monkeypatch):
         """Each change in JSON should have the required fields."""
-        proj = _make_api_project(tmp_path, {
-            "handler.py": (
-                'def handle(request):\n'
-                '    return None\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "handler.py": ("def handle(request):\n    return None\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Change signature
-        (proj / "src" / "handler.py").write_text(
-            'def handle(request, response):\n'
-            '    return None\n'
-        )
+        (proj / "src" / "handler.py").write_text("def handle(request, response):\n    return None\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -403,12 +377,12 @@ class TestJsonOutput:
 
     def test_json_no_changes(self, tmp_path, cli_runner, monkeypatch):
         """JSON output with no changes should still have valid structure."""
-        proj = _make_api_project(tmp_path, {
-            "stable.py": (
-                'def stable():\n'
-                '    return 42\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "stable.py": ("def stable():\n    return 42\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj)
@@ -438,26 +412,17 @@ class TestSeverityFiltering:
 
     def test_severity_breaking_only(self, tmp_path, cli_runner, monkeypatch):
         """--severity=breaking should hide warnings and info."""
-        proj = _make_api_project(tmp_path, {
-            "mixed.py": (
-                'def removed_fn():\n'
-                '    pass\n'
-                '\n'
-                'def kept_fn():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "mixed.py": ("def removed_fn():\n    pass\n\ndef kept_fn():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Remove one function, add a new one (ADDED = info)
-        (proj / "src" / "mixed.py").write_text(
-            'def kept_fn():\n'
-            '    pass\n'
-            '\n'
-            'def brand_new():\n'
-            '    pass\n'
-        )
+        (proj / "src" / "mixed.py").write_text("def kept_fn():\n    pass\n\ndef brand_new():\n    pass\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -472,23 +437,17 @@ class TestSeverityFiltering:
 
     def test_severity_info_shows_all(self, tmp_path, cli_runner, monkeypatch):
         """--severity=info should show everything including additions."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def existing():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": ("def existing():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Add a new function
-        (proj / "src" / "api.py").write_text(
-            'def existing():\n'
-            '    pass\n'
-            '\n'
-            'def new_feature(x, y):\n'
-            '    return x + y\n'
-        )
+        (proj / "src" / "api.py").write_text("def existing():\n    pass\n\ndef new_feature(x, y):\n    return x + y\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -512,12 +471,12 @@ class TestBaseFlag:
 
     def test_base_head(self, tmp_path, cli_runner, monkeypatch):
         """--base=HEAD should find no changes when working tree matches."""
-        proj = _make_api_project(tmp_path, {
-            "app.py": (
-                'def main():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "app.py": ("def main():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj)
@@ -529,12 +488,12 @@ class TestBaseFlag:
 
     def test_base_specific_commit(self, tmp_path, cli_runner, monkeypatch):
         """--base with a specific commit ref should work."""
-        proj = _make_api_project(tmp_path, {
-            "app.py": (
-                'def original():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "app.py": ("def original():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
@@ -548,13 +507,7 @@ class TestBaseFlag:
         first_commit = result_hash.stdout.strip()
 
         # Make a second commit with changes
-        (proj / "src" / "app.py").write_text(
-            'def original():\n'
-            '    pass\n'
-            '\n'
-            'def added_later():\n'
-            '    return 1\n'
-        )
+        (proj / "src" / "app.py").write_text("def original():\n    pass\n\ndef added_later():\n    return 1\n")
         git_commit(proj, "add function")
         out, rc = index_in_process(proj)
         assert rc == 0
@@ -569,20 +522,17 @@ class TestBaseFlag:
 
     def test_base_head_tilde_with_two_commits(self, tmp_path, cli_runner, monkeypatch):
         """HEAD~1 should work with two commits."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def old_api():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": ("def old_api():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Make a second commit with changes
-        (proj / "src" / "api.py").write_text(
-            'def new_api():\n'
-            '    pass\n'
-        )
+        (proj / "src" / "api.py").write_text("def new_api():\n    pass\n")
         git_commit(proj, "change api")
         out, rc = index_in_process(proj)
         assert rc == 0
@@ -607,22 +557,18 @@ class TestAddedSymbols:
 
     def test_new_file_symbols_are_added(self, tmp_path, cli_runner, monkeypatch):
         """Symbols in a brand new file should appear as ADDED."""
-        proj = _make_api_project(tmp_path, {
-            "existing.py": (
-                'def stable():\n'
-                '    pass\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "existing.py": ("def stable():\n    pass\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Add a new file and commit it (so git diff HEAD~1 shows it)
         (proj / "src" / "new_module.py").write_text(
-            'def brand_new_function():\n'
-            '    return "hello"\n'
-            '\n'
-            'class NewClass:\n'
-            '    pass\n'
+            'def brand_new_function():\n    return "hello"\n\nclass NewClass:\n    pass\n'
         )
         git_commit(proj, "add new module")
         out, rc = index_in_process(proj)
@@ -648,20 +594,17 @@ class TestVerdictOutput:
 
     def test_verdict_present(self, tmp_path, cli_runner, monkeypatch):
         """Output should start with VERDICT line."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def process(data):\n'
-                '    return data\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": ("def process(data):\n    return data\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Make a breaking change
-        (proj / "src" / "api.py").write_text(
-            'def process(data, mode):\n'
-            '    return data\n'
-        )
+        (proj / "src" / "api.py").write_text("def process(data, mode):\n    return data\n")
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -671,12 +614,12 @@ class TestVerdictOutput:
 
     def test_verdict_no_changes(self, tmp_path, cli_runner, monkeypatch):
         """Verdict should be present even with no changes."""
-        proj = _make_api_project(tmp_path, {
-            "stable.py": (
-                'def stable():\n'
-                '    return 42\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "stable.py": ("def stable():\n    return 42\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
         out, rc = index_in_process(proj)
@@ -697,20 +640,17 @@ class TestTypeChanges:
 
     def test_return_type_changed(self, tmp_path, cli_runner, monkeypatch):
         """Changing a return type should be detected."""
-        proj = _make_api_project(tmp_path, {
-            "counter.py": (
-                'def get_count() -> int:\n'
-                '    return 42\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "counter.py": ("def get_count() -> int:\n    return 42\n"),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Change return type
-        (proj / "src" / "counter.py").write_text(
-            'def get_count() -> str:\n'
-            '    return "42"\n'
-        )
+        (proj / "src" / "counter.py").write_text('def get_count() -> str:\n    return "42"\n')
         out, rc = index_in_process(proj)
         assert rc == 0
 
@@ -735,30 +675,33 @@ class TestMultipleChanges:
 
     def test_mixed_changes(self, tmp_path, cli_runner, monkeypatch):
         """Multiple change types in one file should all be detected."""
-        proj = _make_api_project(tmp_path, {
-            "api.py": (
-                'def process_data():\n'
-                '    pass\n'
-                '\n'
-                'def transform(x):\n'
-                '    return x\n'
-                '\n'
-                'def validate():\n'
-                '    return 1\n'
-            ),
-        })
+        proj = _make_api_project(
+            tmp_path,
+            {
+                "api.py": (
+                    "def process_data():\n"
+                    "    pass\n"
+                    "\n"
+                    "def transform(x):\n"
+                    "    return x\n"
+                    "\n"
+                    "def validate():\n"
+                    "    return 1\n"
+                ),
+            },
+        )
 
         monkeypatch.chdir(proj)
 
         # Remove process_data, change transform signature, add completely_new_handler
         (proj / "src" / "api.py").write_text(
-            'def transform(x, y):\n'
-            '    return x + y\n'
-            '\n'
-            'def validate():\n'
-            '    return 1\n'
-            '\n'
-            'def completely_new_handler():\n'
+            "def transform(x, y):\n"
+            "    return x + y\n"
+            "\n"
+            "def validate():\n"
+            "    return 1\n"
+            "\n"
+            "def completely_new_handler():\n"
             '    return "new"\n'
         )
         out, rc = index_in_process(proj)
@@ -799,6 +742,7 @@ class TestInternalFunctions:
 
     def test_extract_params(self):
         from roam.commands.cmd_api_changes import _extract_params
+
         assert _extract_params("def foo(a, b, c)") == ["a", "b", "c"]
         assert _extract_params("def foo(self, x)") == ["x"]
         assert _extract_params("def foo()") == []
@@ -807,11 +751,13 @@ class TestInternalFunctions:
 
     def test_extract_params_with_defaults(self):
         from roam.commands.cmd_api_changes import _extract_params_with_defaults
+
         result = _extract_params_with_defaults("def foo(a, b=10, c='x')")
         assert result == [("a", False), ("b", True), ("c", True)]
 
     def test_extract_return_type(self):
         from roam.commands.cmd_api_changes import _extract_return_type
+
         assert _extract_return_type("def foo() -> int") == "int"
         assert _extract_return_type("def foo() -> str") == "str"
         assert _extract_return_type("def foo()") == ""
@@ -819,29 +765,34 @@ class TestInternalFunctions:
 
     def test_similarity(self):
         from roam.commands.cmd_api_changes import _similarity
+
         assert _similarity("hello", "hello") == 1.0
         assert _similarity("hello", "helo") > 0.5
         assert _similarity("abc", "xyz") < 0.5
 
     def test_is_private_name(self):
         from roam.commands.cmd_api_changes import _is_private_name
+
         assert _is_private_name("_private") is True
         assert _is_private_name("public") is False
         assert _is_private_name("__dunder__") is False
 
     def test_sig_normalise(self):
         from roam.commands.cmd_api_changes import _sig_normalise
+
         assert _sig_normalise("def  foo( a,  b )") == "def foo( a, b )"
         assert _sig_normalise(None) == ""
         assert _sig_normalise("") == ""
 
     def test_severity_order(self):
         from roam.commands.cmd_api_changes import _SEVERITY_ORDER
+
         assert _SEVERITY_ORDER["breaking"] < _SEVERITY_ORDER["warning"]
         assert _SEVERITY_ORDER["warning"] < _SEVERITY_ORDER["info"]
 
     def test_change_categories(self):
         from roam.commands.cmd_api_changes import _CHANGE_CATEGORIES
+
         assert _CHANGE_CATEGORIES["REMOVED"] == "breaking"
         assert _CHANGE_CATEGORIES["SIGNATURE_CHANGED"] == "breaking"
         assert _CHANGE_CATEGORIES["VISIBILITY_REDUCED"] == "breaking"
@@ -856,9 +807,16 @@ class TestInternalFunctions:
         from roam.commands.cmd_api_changes import _compare_file_api
 
         old_symbols = [
-            {"name": "foo", "qualified_name": "foo", "kind": "function",
-             "signature": "def foo()", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "foo",
+                "qualified_name": "foo",
+                "kind": "function",
+                "signature": "def foo()",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
         new_symbols = []
 
@@ -873,9 +831,16 @@ class TestInternalFunctions:
 
         old_symbols = []
         new_symbols = [
-            {"name": "bar", "qualified_name": "bar", "kind": "function",
-             "signature": "def bar()", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "bar",
+                "qualified_name": "bar",
+                "kind": "function",
+                "signature": "def bar()",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
 
         changes = _compare_file_api("test.py", old_symbols, new_symbols)
@@ -888,14 +853,28 @@ class TestInternalFunctions:
         from roam.commands.cmd_api_changes import _compare_file_api
 
         old_symbols = [
-            {"name": "fn", "qualified_name": "fn", "kind": "function",
-             "signature": "def fn(a)", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "fn",
+                "qualified_name": "fn",
+                "kind": "function",
+                "signature": "def fn(a)",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
         new_symbols = [
-            {"name": "fn", "qualified_name": "fn", "kind": "function",
-             "signature": "def fn(a, b)", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "fn",
+                "qualified_name": "fn",
+                "kind": "function",
+                "signature": "def fn(a, b)",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
 
         changes = _compare_file_api("test.py", old_symbols, new_symbols)
@@ -909,14 +888,28 @@ class TestInternalFunctions:
         from roam.commands.cmd_api_changes import _compare_file_api
 
         old_symbols = [
-            {"name": "fn", "qualified_name": "fn", "kind": "function",
-             "signature": "def fn(a)", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "fn",
+                "qualified_name": "fn",
+                "kind": "function",
+                "signature": "def fn(a)",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
         new_symbols = [
-            {"name": "fn", "qualified_name": "fn", "kind": "function",
-             "signature": "def fn(a, b=10)", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "fn",
+                "qualified_name": "fn",
+                "kind": "function",
+                "signature": "def fn(a, b=10)",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
 
         changes = _compare_file_api("test.py", old_symbols, new_symbols)
@@ -930,14 +923,28 @@ class TestInternalFunctions:
         from roam.commands.cmd_api_changes import _compare_file_api
 
         old_symbols = [
-            {"name": "helper", "qualified_name": "helper", "kind": "function",
-             "signature": "def helper()", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "helper",
+                "qualified_name": "helper",
+                "kind": "function",
+                "signature": "def helper()",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
         new_symbols = [
-            {"name": "helper", "qualified_name": "helper", "kind": "function",
-             "signature": "def helper()", "line_start": 1, "line_end": 2,
-             "visibility": "private", "is_exported": False},
+            {
+                "name": "helper",
+                "qualified_name": "helper",
+                "kind": "function",
+                "signature": "def helper()",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "private",
+                "is_exported": False,
+            },
         ]
 
         changes = _compare_file_api("test.py", old_symbols, new_symbols)
@@ -951,9 +958,16 @@ class TestInternalFunctions:
         from roam.commands.cmd_api_changes import _compare_file_api
 
         symbols = [
-            {"name": "fn", "qualified_name": "fn", "kind": "function",
-             "signature": "def fn(a)", "line_start": 1, "line_end": 2,
-             "visibility": "public", "is_exported": True},
+            {
+                "name": "fn",
+                "qualified_name": "fn",
+                "kind": "function",
+                "signature": "def fn(a)",
+                "line_start": 1,
+                "line_end": 2,
+                "visibility": "public",
+                "is_exported": True,
+            },
         ]
 
         changes = _compare_file_api("test.py", symbols, symbols)

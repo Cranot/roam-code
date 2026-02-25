@@ -9,14 +9,16 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import to_json, json_envelope, loc
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.cmd_conventions import (
-    classify_case, _group_for_kind, _KIND_GROUPS, _SKIP_NAMES, _MIN_NAME_LEN,
+    _MIN_NAME_LEN,
+    _SKIP_NAMES,
+    _group_for_kind,
+    classify_case,
 )
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -41,6 +43,7 @@ SEVERITY_INFO = "INFO"
 # ---------------------------------------------------------------------------
 # Naming consistency check
 # ---------------------------------------------------------------------------
+
 
 def _check_naming(conn, file_ids: list[int]) -> dict:
     """Check naming consistency of symbols in changed files.
@@ -106,24 +109,24 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
         if group in dominant:
             expected_style, pct = dominant[group]
             if style != expected_style and pct >= 60:
-                violations.append({
-                    "category": "naming",
-                    "severity": SEVERITY_WARN if pct < 90 else SEVERITY_FAIL,
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                    "message": (
-                        f"fn `{name}` uses {style} "
-                        f"(codebase: {expected_style} {pct}%)"
-                        if group == "functions"
-                        else f"{group[:-1]} `{name}` uses {style} "
-                             f"(codebase: {expected_style} {pct}%)"
-                    ),
-                    "symbol": name,
-                    "actual_style": style,
-                    "expected_style": expected_style,
-                    "codebase_pct": pct,
-                    "fix": f"Rename `{name}` to match {expected_style} convention",
-                })
+                violations.append(
+                    {
+                        "category": "naming",
+                        "severity": SEVERITY_WARN if pct < 90 else SEVERITY_FAIL,
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                        "message": (
+                            f"fn `{name}` uses {style} (codebase: {expected_style} {pct}%)"
+                            if group == "functions"
+                            else f"{group[:-1]} `{name}` uses {style} (codebase: {expected_style} {pct}%)"
+                        ),
+                        "symbol": name,
+                        "actual_style": style,
+                        "expected_style": expected_style,
+                        "codebase_pct": pct,
+                        "fix": f"Rename `{name}` to match {expected_style} convention",
+                    }
+                )
 
     # Score: fraction of checked symbols that are consistent
     if checked == 0:
@@ -138,6 +141,7 @@ def _check_naming(conn, file_ids: list[int]) -> dict:
 # ---------------------------------------------------------------------------
 # Import pattern consistency check
 # ---------------------------------------------------------------------------
+
 
 def _check_imports(conn, file_ids: list[int]) -> dict:
     """Check import patterns in changed files against codebase norms.
@@ -164,12 +168,20 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     absolute_count = 0
     relative_count = 0
     for edge in all_edges:
-        src_dir = edge["source_path"].replace("\\", "/").rsplit("/", 1)[0] if "/" in edge["source_path"].replace("\\", "/") else ""
-        tgt_dir = edge["target_path"].replace("\\", "/").rsplit("/", 1)[0] if "/" in edge["target_path"].replace("\\", "/") else ""
-        if src_dir and tgt_dir and (
-            src_dir == tgt_dir
-            or src_dir.startswith(tgt_dir + "/")
-            or tgt_dir.startswith(src_dir + "/")
+        src_dir = (
+            edge["source_path"].replace("\\", "/").rsplit("/", 1)[0]
+            if "/" in edge["source_path"].replace("\\", "/")
+            else ""
+        )
+        tgt_dir = (
+            edge["target_path"].replace("\\", "/").rsplit("/", 1)[0]
+            if "/" in edge["target_path"].replace("\\", "/")
+            else ""
+        )
+        if (
+            src_dir
+            and tgt_dir
+            and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
         ):
             relative_count += 1
         else:
@@ -181,7 +193,9 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
 
     abs_pct = round(100 * absolute_count / total_imports, 1)
     dominant_style = "absolute" if abs_pct >= 60 else "relative" if abs_pct <= 40 else "mixed"
-    dominant_pct = abs_pct if dominant_style == "absolute" else round(100 - abs_pct, 1) if dominant_style == "relative" else 50.0
+    dominant_pct = (
+        abs_pct if dominant_style == "absolute" else round(100 - abs_pct, 1) if dominant_style == "relative" else 50.0
+    )
 
     if dominant_style == "mixed":
         return {"score": 100, "violations": []}
@@ -201,31 +215,41 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
     checked = 0
     for edge in changed_edges:
         checked += 1
-        src_dir = edge["source_path"].replace("\\", "/").rsplit("/", 1)[0] if "/" in edge["source_path"].replace("\\", "/") else ""
-        tgt_dir = edge["target_path"].replace("\\", "/").rsplit("/", 1)[0] if "/" in edge["target_path"].replace("\\", "/") else ""
+        src_dir = (
+            edge["source_path"].replace("\\", "/").rsplit("/", 1)[0]
+            if "/" in edge["source_path"].replace("\\", "/")
+            else ""
+        )
+        tgt_dir = (
+            edge["target_path"].replace("\\", "/").rsplit("/", 1)[0]
+            if "/" in edge["target_path"].replace("\\", "/")
+            else ""
+        )
 
-        is_same_dir = src_dir and tgt_dir and (
-            src_dir == tgt_dir
-            or src_dir.startswith(tgt_dir + "/")
-            or tgt_dir.startswith(src_dir + "/")
+        is_same_dir = (
+            src_dir
+            and tgt_dir
+            and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
         )
 
         # If dominant is absolute but this is same-directory (relative-style)
         if dominant_style == "absolute" and is_same_dir:
             pass  # same-dir imports are fine even in absolute codebases
         elif dominant_style == "relative" and not is_same_dir:
-            violations.append({
-                "category": "imports",
-                "severity": SEVERITY_WARN,
-                "file": edge["source_path"],
-                "line": None,
-                "message": (
-                    f"cross-directory import from `{edge['source_path']}` "
-                    f"to `{edge['target_path']}` "
-                    f"(codebase prefers same-directory imports {dominant_pct}%)"
-                ),
-                "fix": "Consider restructuring to keep imports within the same package",
-            })
+            violations.append(
+                {
+                    "category": "imports",
+                    "severity": SEVERITY_WARN,
+                    "file": edge["source_path"],
+                    "line": None,
+                    "message": (
+                        f"cross-directory import from `{edge['source_path']}` "
+                        f"to `{edge['target_path']}` "
+                        f"(codebase prefers same-directory imports {dominant_pct}%)"
+                    ),
+                    "fix": "Consider restructuring to keep imports within the same package",
+                }
+            )
 
     if checked == 0:
         score = 100
@@ -240,18 +264,12 @@ def _check_imports(conn, file_ids: list[int]) -> dict:
 # Error handling consistency check
 # ---------------------------------------------------------------------------
 
-_BARE_EXCEPT_RE = re.compile(r'^\s*except\s*:', re.MULTILINE)
-_BROAD_EXCEPT_RE = re.compile(r'^\s*except\s+Exception\s*:', re.MULTILINE)
-_SILENT_EXCEPT_RE = re.compile(
-    r'except[^:]*:\s*\n(\s*)(pass|\.\.\.)\s*$', re.MULTILINE
-)
-_SPECIFIC_EXCEPT_RE = re.compile(
-    r'^\s*except\s+(?!Exception\b)\w+', re.MULTILINE
-)
+_BARE_EXCEPT_RE = re.compile(r"^\s*except\s*:", re.MULTILINE)
+_BROAD_EXCEPT_RE = re.compile(r"^\s*except\s+Exception\s*:", re.MULTILINE)
+_SILENT_EXCEPT_RE = re.compile(r"except[^:]*:\s*\n(\s*)(pass|\.\.\.)\s*$", re.MULTILINE)
+_SPECIFIC_EXCEPT_RE = re.compile(r"^\s*except\s+(?!Exception\b)\w+", re.MULTILINE)
 
-_ERROR_NAME_RE = re.compile(
-    r'(Error|Exception|Err|Fault|Failure|Panic)$', re.IGNORECASE
-)
+_ERROR_NAME_RE = re.compile(r"(Error|Exception|Err|Fault|Failure|Panic)$", re.IGNORECASE)
 
 
 def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
@@ -277,10 +295,7 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
           AND s.kind IN ('class', 'struct', 'interface')
     """).fetchall()
 
-    custom_error_count = sum(
-        1 for r in error_candidates
-        if _ERROR_NAME_RE.search(r["name"])
-    )
+    custom_error_count = sum(1 for r in error_candidates if _ERROR_NAME_RE.search(r["name"]))
     has_custom_errors = custom_error_count > 0
 
     # 2. Read changed files and check for bad patterns
@@ -313,52 +328,62 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
 
         # Bare except
         for m in _BARE_EXCEPT_RE.finditer(content):
-            line_num = content[:m.start()].count('\n') + 1
+            line_num = content[: m.start()].count("\n") + 1
             issues_found += 1
-            violations.append({
-                "category": "error_handling",
-                "severity": SEVERITY_FAIL,
-                "file": frow["path"],
-                "line": line_num,
-                "message": (
-                    "bare `except:` "
-                    + (f"(codebase has {custom_error_count} custom exception classes)"
-                       if has_custom_errors
-                       else "(use specific exceptions)")
-                ),
-                "fix": "Replace bare `except:` with a specific exception type",
-            })
+            violations.append(
+                {
+                    "category": "error_handling",
+                    "severity": SEVERITY_FAIL,
+                    "file": frow["path"],
+                    "line": line_num,
+                    "message": (
+                        "bare `except:` "
+                        + (
+                            f"(codebase has {custom_error_count} custom exception classes)"
+                            if has_custom_errors
+                            else "(use specific exceptions)"
+                        )
+                    ),
+                    "fix": "Replace bare `except:` with a specific exception type",
+                }
+            )
 
         # Broad Exception catch
         for m in _BROAD_EXCEPT_RE.finditer(content):
-            line_num = content[:m.start()].count('\n') + 1
+            line_num = content[: m.start()].count("\n") + 1
             issues_found += 1
-            violations.append({
-                "category": "error_handling",
-                "severity": SEVERITY_WARN,
-                "file": frow["path"],
-                "line": line_num,
-                "message": (
-                    "broad `except Exception:` "
-                    + (f"(codebase has {custom_error_count} specific exception classes)"
-                       if has_custom_errors
-                       else "(consider catching specific exceptions)")
-                ),
-                "fix": "Narrow the exception type to catch only expected errors",
-            })
+            violations.append(
+                {
+                    "category": "error_handling",
+                    "severity": SEVERITY_WARN,
+                    "file": frow["path"],
+                    "line": line_num,
+                    "message": (
+                        "broad `except Exception:` "
+                        + (
+                            f"(codebase has {custom_error_count} specific exception classes)"
+                            if has_custom_errors
+                            else "(consider catching specific exceptions)"
+                        )
+                    ),
+                    "fix": "Narrow the exception type to catch only expected errors",
+                }
+            )
 
         # Silent exception swallowing
         for m in _SILENT_EXCEPT_RE.finditer(content):
-            line_num = content[:m.start()].count('\n') + 1
+            line_num = content[: m.start()].count("\n") + 1
             issues_found += 1
-            violations.append({
-                "category": "error_handling",
-                "severity": SEVERITY_WARN,
-                "file": frow["path"],
-                "line": line_num,
-                "message": "silent exception swallow (no logging/re-raise)",
-                "fix": "Add logging or re-raise the exception instead of silently swallowing",
-            })
+            violations.append(
+                {
+                    "category": "error_handling",
+                    "severity": SEVERITY_WARN,
+                    "file": frow["path"],
+                    "line": line_num,
+                    "message": "silent exception swallow (no logging/re-raise)",
+                    "fix": "Add logging or re-raise the exception instead of silently swallowing",
+                }
+            )
 
     # Score: based on ratio of issues to files checked
     if files_checked == 0:
@@ -376,6 +401,7 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
 # ---------------------------------------------------------------------------
 # Duplicate logic detection
 # ---------------------------------------------------------------------------
+
 
 def _check_duplicates(conn, file_ids: list[int]) -> dict:
     """Detect potential duplicate functions by comparing new symbols to existing ones.
@@ -435,17 +461,19 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
                 continue
             if existing["file_path"] == new_sym["file_path"]:
                 continue
-            violations.append({
-                "category": "duplicates",
-                "severity": SEVERITY_WARN,
-                "file": new_sym["file_path"],
-                "line": new_sym["line_start"],
-                "message": (
-                    f"fn `{name}` has same name as "
-                    f"`{existing['name']}` at {loc(existing['file_path'], existing['line_start'])}"
-                ),
-                "fix": f"Consider reusing `{existing['name']}` from {existing['file_path']}",
-            })
+            violations.append(
+                {
+                    "category": "duplicates",
+                    "severity": SEVERITY_WARN,
+                    "file": new_sym["file_path"],
+                    "line": new_sym["line_start"],
+                    "message": (
+                        f"fn `{name}` has same name as "
+                        f"`{existing['name']}` at {loc(existing['file_path'], existing['line_start'])}"
+                    ),
+                    "fix": f"Consider reusing `{existing['name']}` from {existing['file_path']}",
+                }
+            )
             break  # one match per new symbol is enough
 
         # Check for similar names (ratio > 0.8) in existing symbols
@@ -466,19 +494,21 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
             if candidates:
                 best = max(candidates, key=lambda x: x[1])
                 existing, ratio = best
-                violations.append({
-                    "category": "duplicates",
-                    "severity": SEVERITY_INFO,
-                    "file": new_sym["file_path"],
-                    "line": new_sym["line_start"],
-                    "message": (
-                        f"fn `{name}` is similar to "
-                        f"`{existing['name']}` at "
-                        f"{loc(existing['file_path'], existing['line_start'])} "
-                        f"({round(ratio * 100)}% match)"
-                    ),
-                    "fix": f"Check if `{existing['name']}` in {existing['file_path']} provides the same functionality",
-                })
+                violations.append(
+                    {
+                        "category": "duplicates",
+                        "severity": SEVERITY_INFO,
+                        "file": new_sym["file_path"],
+                        "line": new_sym["line_start"],
+                        "message": (
+                            f"fn `{name}` is similar to "
+                            f"`{existing['name']}` at "
+                            f"{loc(existing['file_path'], existing['line_start'])} "
+                            f"({round(ratio * 100)}% match)"
+                        ),
+                        "fix": f"Check if `{existing['name']}` in {existing['file_path']} provides the same functionality",
+                    }
+                )
 
     if checked == 0:
         score = 100
@@ -496,6 +526,7 @@ def _check_duplicates(conn, file_ids: list[int]) -> dict:
 # ---------------------------------------------------------------------------
 # Syntax integrity check
 # ---------------------------------------------------------------------------
+
 
 def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
     """Check for syntax errors via tree-sitter ERROR nodes.
@@ -547,14 +578,16 @@ def _check_syntax(conn, file_ids: list[int], root: Path) -> dict:
             files_with_errors += 1
             for node in error_nodes[:5]:  # Cap per-file error reports
                 line_num = node.start_point[0] + 1
-                violations.append({
-                    "category": "syntax",
-                    "severity": SEVERITY_FAIL,
-                    "file": frow["path"],
-                    "line": line_num,
-                    "message": f"syntax error at line {line_num}",
-                    "fix": "Fix the syntax error indicated by the parser",
-                })
+                violations.append(
+                    {
+                        "category": "syntax",
+                        "severity": SEVERITY_FAIL,
+                        "file": frow["path"],
+                        "line": line_num,
+                        "message": f"syntax error at line {line_num}",
+                        "fix": "Fix the syntax error indicated by the parser",
+                    }
+                )
 
     if files_checked == 0:
         score = 100
@@ -581,6 +614,7 @@ def _find_error_nodes(node) -> list:
 # Scoring
 # ---------------------------------------------------------------------------
 
+
 def _compute_verdict(score: int) -> str:
     """Compute verdict string from composite score."""
     if score >= 80:
@@ -603,14 +637,22 @@ def _compute_composite(categories: dict[str, dict]) -> int:
 # Main command
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option('--changed', is_flag=True, default=False,
-              help='Use git diff to get changed files (default if no files given)')
-@click.option('--threshold', type=int, default=70,
-              help='Fail if score drops below this (default 70)')
-@click.option('--fix-suggestions', is_flag=True, default=False,
-              help='Show concrete fix suggestions for each violation')
-@click.argument('files', nargs=-1, type=click.Path())
+@click.option(
+    "--changed",
+    is_flag=True,
+    default=False,
+    help="Use git diff to get changed files (default if no files given)",
+)
+@click.option("--threshold", type=int, default=70, help="Fail if score drops below this (default 70)")
+@click.option(
+    "--fix-suggestions",
+    is_flag=True,
+    default=False,
+    help="Show concrete fix suggestions for each violation",
+)
+@click.argument("files", nargs=-1, type=click.Path())
 @click.pass_context
 def verify(ctx, changed, threshold, fix_suggestions, files):
     """Verify changed files follow codebase conventions.
@@ -620,7 +662,7 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
 
     If no files are specified, defaults to git-changed files.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     root = find_project_root()
@@ -637,18 +679,22 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
         score = 100
         verdict = "PASS"
         if json_mode:
-            click.echo(to_json(json_envelope("verify",
-                summary={
-                    "verdict": verdict,
-                    "score": score,
-                    "threshold": threshold,
-                    "files_checked": 0,
-                    "violation_count": 0,
-                },
-                categories={cat: {"score": 100, "violations": []}
-                            for cat in _CATEGORY_WEIGHTS},
-                violations=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "verify",
+                        summary={
+                            "verdict": verdict,
+                            "score": score,
+                            "threshold": threshold,
+                            "files_checked": 0,
+                            "violation_count": 0,
+                        },
+                        categories={cat: {"score": 100, "violations": []} for cat in _CATEGORY_WEIGHTS},
+                        violations=[],
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {verdict} (score {score}/100) -- no changed files")
         return
@@ -696,17 +742,22 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
                     "violations": cat_result.get("violations", []),
                 }
 
-            click.echo(to_json(json_envelope("verify",
-                summary={
-                    "verdict": verdict,
-                    "score": score,
-                    "threshold": threshold,
-                    "files_checked": files_checked,
-                    "violation_count": violation_count,
-                },
-                categories=cat_summary,
-                violations=all_violations,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "verify",
+                        summary={
+                            "verdict": verdict,
+                            "score": score,
+                            "threshold": threshold,
+                            "files_checked": files_checked,
+                            "violation_count": violation_count,
+                        },
+                        categories=cat_summary,
+                        violations=all_violations,
+                    )
+                )
+            )
 
             if score < threshold:
                 ctx.exit(EXIT_GATE_FAILURE)
@@ -737,9 +788,7 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
 
         # Summary line
         gate_result = "PASS" if score >= threshold else "FAIL"
-        click.echo(
-            f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}"
-        )
+        click.echo(f"\nOverall: {score}/100 (threshold: {threshold}) -- {gate_result}")
 
         if score < threshold:
             ctx.exit(EXIT_GATE_FAILURE)

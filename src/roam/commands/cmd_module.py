@@ -2,15 +2,23 @@
 
 import click
 
-from roam.db.connection import open_db, batched_in
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, open_db
 from roam.db.queries import (
-    FILES_IN_DIR, SYMBOLS_IN_DIR, FILE_IMPORTS, FILE_IMPORTED_BY,
+    FILE_IMPORTED_BY,
+    FILE_IMPORTS,
+    FILES_IN_DIR,
+    SYMBOLS_IN_DIR,
 )
 from roam.output.formatter import (
-    abbrev_kind, loc, format_signature, format_table, section, to_json,
+    abbrev_kind,
+    format_signature,
+    format_table,
     json_envelope,
+    loc,
+    section,
+    to_json,
 )
-from roam.commands.resolve import ensure_index
 
 
 def _module_deps(conn, file_ids):
@@ -21,14 +29,10 @@ def _module_deps(conn, file_ids):
     for fid in file_ids:
         for row in conn.execute(FILE_IMPORTS, (fid,)).fetchall():
             if row["id"] not in file_id_set:
-                imports_external[row["path"]] = (
-                    imports_external.get(row["path"], 0) + row["symbol_count"]
-                )
+                imports_external[row["path"]] = imports_external.get(row["path"], 0) + row["symbol_count"]
         for row in conn.execute(FILE_IMPORTED_BY, (fid,)).fetchall():
             if row["id"] not in file_id_set:
-                imported_by_external[row["path"]] = (
-                    imported_by_external.get(row["path"], 0) + row["symbol_count"]
-                )
+                imported_by_external[row["path"]] = imported_by_external.get(row["path"], 0) + row["symbol_count"]
     return imports_external, imported_by_external
 
 
@@ -36,9 +40,7 @@ def _collect_sym_ids(conn, files):
     """Collect all symbol IDs for a list of files."""
     all_sym_ids = set()
     for f in files:
-        for sr in conn.execute(
-            "SELECT id FROM symbols WHERE file_id = ?", (f["id"],)
-        ).fetchall():
+        for sr in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (f["id"],)).fetchall():
             all_sym_ids.add(sr["id"])
     return all_sym_ids
 
@@ -66,11 +68,11 @@ def _module_cohesion(conn, all_sym_ids):
 
 
 @click.command()
-@click.argument('path')
+@click.argument("path")
 @click.pass_context
 def module(ctx, path):
     """Show directory contents: exports, signatures, deps."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     path = path.replace("\\", "/").rstrip("/")
@@ -117,36 +119,42 @@ def module(ctx, path):
         ext_importers = len(imported_by_external)
 
         if json_mode:
-            click.echo(to_json(json_envelope("module",
-                summary={
-                    "file_count": len(files),
-                    "cohesion_pct": round(cohesion),
-                    "external_importers": ext_importers,
-                },
-                path=path,
-                file_count=len(files),
-                files=[{"path": f["path"], "language": f["language"], "lines": f["line_count"]}
-                       for f in files],
-                symbols=[
-                    {"name": s["name"], "kind": s["kind"],
-                     "signature": s["signature"] or "",
-                     "location": loc(s["file_path"], s["line_start"])}
-                    for s in (symbols or [])
-                ],
-                external_imports=dict(sorted(imports_external.items(), key=lambda x: -x[1])),
-                imported_by_external=dict(sorted(imported_by_external.items(), key=lambda x: -x[1])),
-                cohesion_pct=round(cohesion),
-                api_surface_pct=round(api_surface),
-                external_importers=ext_importers,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "module",
+                        summary={
+                            "file_count": len(files),
+                            "cohesion_pct": round(cohesion),
+                            "external_importers": ext_importers,
+                        },
+                        path=path,
+                        file_count=len(files),
+                        files=[{"path": f["path"], "language": f["language"], "lines": f["line_count"]} for f in files],
+                        symbols=[
+                            {
+                                "name": s["name"],
+                                "kind": s["kind"],
+                                "signature": s["signature"] or "",
+                                "location": loc(s["file_path"], s["line_start"]),
+                            }
+                            for s in (symbols or [])
+                        ],
+                        external_imports=dict(sorted(imports_external.items(), key=lambda x: -x[1])),
+                        imported_by_external=dict(sorted(imported_by_external.items(), key=lambda x: -x[1])),
+                        cohesion_pct=round(cohesion),
+                        api_surface_pct=round(api_surface),
+                        external_importers=ext_importers,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
         click.echo(f"Module: {path}/  ({len(files)} files)")
         click.echo()
 
-        file_rows = [[f["path"], f["language"] or "?", str(f["line_count"])]
-                     for f in files]
+        file_rows = [[f["path"], f["language"] or "?", str(f["line_count"])] for f in files]
         click.echo("Files:")
         click.echo(format_table(["path", "lang", "lines"], file_rows, budget=30))
         click.echo()

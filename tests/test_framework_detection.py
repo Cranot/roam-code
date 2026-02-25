@@ -79,8 +79,9 @@ class TestCSharpFrameworkDetection:
 
     def test_csharp_detected_as_dotnet(self, project_factory):
         """c# project with asp.net should be detected as asp.net and dotnet build."""
-        proj = project_factory({
-            "Program.cs": """
+        proj = project_factory(
+            {
+                "Program.cs": """
 using Microsoft.AspNetCore.Mvc;
 using System.Linq;
 
@@ -104,14 +105,15 @@ namespace MyApp
     }
 }
 """,
-            "MyApp.csproj": """
+                "MyApp.csproj": """
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
 </Project>
 """,
-        })
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -127,8 +129,9 @@ namespace MyApp
 
     def test_csharp_with_entity_framework(self, project_factory):
         """c# project with entity framework should detect both asp.net and entity-framework."""
-        proj = project_factory({
-            "Data.cs": """
+        proj = project_factory(
+            {
+                "Data.cs": """
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.EntityFrameworkCore;
 
@@ -146,14 +149,15 @@ namespace MyApp
     }
 }
 """,
-            "MyApp.csproj": """
+                "MyApp.csproj": """
 <Project Sdk="Microsoft.NET.Sdk.Web">
   <PropertyGroup>
     <TargetFramework>net8.0</TargetFramework>
   </PropertyGroup>
 </Project>
 """,
-        })
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -167,8 +171,9 @@ namespace MyApp
 
     def test_nextjs_still_works(self, project_factory):
         """next.js projects should still be correctly detected."""
-        proj = project_factory({
-            "pages/index.js": """
+        proj = project_factory(
+            {
+                "pages/index.js": """
 import React from 'react';
 import { useRouter } from 'next/router';
 import Link from 'next/link';
@@ -178,8 +183,8 @@ export default function Home() {
     return <div><Link href="/about">About</Link></div>;
 }
 """,
-            "next.config.js": "module.exports = {};",
-            "package.json": """
+                "next.config.js": "module.exports = {};",
+                "package.json": """
 {
   "dependencies": {
     "next": "^14.0.0",
@@ -187,7 +192,8 @@ export default function Home() {
   }
 }
 """,
-        })
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -200,8 +206,9 @@ export default function Home() {
 
     def test_react_without_nextjs(self, project_factory):
         """react project without next.js should detect react but not next.js."""
-        proj = project_factory({
-            "App.js": """
+        proj = project_factory(
+            {
+                "App.js": """
 import React from 'react';
 import ReactDOM from 'react-dom';
 
@@ -211,7 +218,7 @@ function App() {
 
 export default App;
 """,
-            "package.json": """
+                "package.json": """
 {
   "dependencies": {
     "react": "^18.0.0",
@@ -219,7 +226,8 @@ export default App;
   }
 }
 """,
-        })
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -236,10 +244,12 @@ class TestDotNetBuildDetection:
 
     def test_csproj_detected(self, project_factory):
         """projects with .csproj should detect dotnet build."""
-        proj = project_factory({
-            "Program.cs": "class Program { static void Main() {} }",
-            "MyApp.csproj": "<Project Sdk=\"Microsoft.NET.Sdk\"/>",
-        })
+        proj = project_factory(
+            {
+                "Program.cs": "class Program { static void Main() {} }",
+                "MyApp.csproj": '<Project Sdk="Microsoft.NET.Sdk"/>',
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -250,10 +260,12 @@ class TestDotNetBuildDetection:
 
     def test_sln_detected(self, project_factory):
         """projects with .sln should detect dotnet build."""
-        proj = project_factory({
-            "Program.cs": "class Program { static void Main() {} }",
-            "MySolution.sln": "Microsoft Visual Studio Solution File",
-        })
+        proj = project_factory(
+            {
+                "Program.cs": "class Program { static void Main() {} }",
+                "MySolution.sln": "Microsoft Visual Studio Solution File",
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"
@@ -264,10 +276,12 @@ class TestDotNetBuildDetection:
 
     def test_fsproj_detected(self, project_factory):
         """f# projects with .fsproj should detect dotnet build."""
-        proj = project_factory({
-            "Program.fs": "printfn \"Hello\"",
-            "MyApp.fsproj": "<Project Sdk=\"Microsoft.NET.Sdk\"/>",
-        })
+        proj = project_factory(
+            {
+                "Program.fs": 'printfn "Hello"',
+                "MyApp.fsproj": '<Project Sdk="Microsoft.NET.Sdk"/>',
+            }
+        )
 
         out, rc = roam("--json", "understand", cwd=proj)
         assert rc == 0, f"understand failed: {out}"

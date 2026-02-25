@@ -15,9 +15,9 @@ from roam.commands.cmd_watch import (
     DebounceAccumulator,
     WebhookBridge,
     detect_changes,
-    scan_disk_mtimes,
     load_tracked_files,
     poll_loop,
+    scan_disk_mtimes,
 )
 
 
@@ -196,7 +196,6 @@ class TestDebounceAccumulator:
 
 
 class TestWebhookBridge:
-
     def _post(self, url: str, body: dict | None = None, headers: dict | None = None):
         data = None
         if body is not None:
@@ -252,13 +251,12 @@ class TestWebhookBridge:
             bridge.stop()
 
 
-
-
 class TestWatchCommand:
-
     def test_help_text(self):
         from click.testing import CliRunner
+
         from roam.commands.cmd_watch import watch
+
         runner = CliRunner()
         result = runner.invoke(watch, ["--help"])
         assert result.exit_code == 0
@@ -278,7 +276,9 @@ class TestWatchCommand:
 
     def _invoke_watch_with_flags(self, flags):
         from click.testing import CliRunner
+
         from roam.commands.cmd_watch import watch
+
         runner = CliRunner()
         mock_loop = MagicMock(side_effect=KeyboardInterrupt)
         with patch("roam.commands.cmd_watch.ensure_index"):
@@ -335,25 +335,36 @@ class TestWatchCommand:
         assert kwargs["quiet"] is True
 
     def test_webhook_flags_parsing(self):
-        mock = self._invoke_watch_with_flags([
-            "--webhook-port", "9000",
-            "--webhook-host", "0.0.0.0",
-            "--webhook-path", "/hook",
-            "--webhook-secret", "token",
-            "--webhook-only",
-            "--webhook-force",
-        ])
+        mock = self._invoke_watch_with_flags(
+            [
+                "--webhook-port",
+                "9000",
+                "--webhook-host",
+                "0.0.0.0",
+                "--webhook-path",
+                "/hook",
+                "--webhook-secret",
+                "token",
+                "--webhook-only",
+                "--webhook-force",
+            ]
+        )
         _, kwargs = mock.call_args
         assert kwargs["webhook_only"] is True
         assert kwargs["webhook_force"] is True
 
     def test_guardian_flags_parsing(self):
-        mock = self._invoke_watch_with_flags([
-            "--guardian",
-            "--guardian-report", ".roam/guardian.jsonl",
-            "--guardian-health-gate", "75",
-            "--guardian-drift-threshold", "0.4",
-        ])
+        mock = self._invoke_watch_with_flags(
+            [
+                "--guardian",
+                "--guardian-report",
+                ".roam/guardian.jsonl",
+                "--guardian-health-gate",
+                "75",
+                "--guardian-drift-threshold",
+                "0.4",
+            ]
+        )
         _, kwargs = mock.call_args
         assert kwargs["guardian"] is True
         assert kwargs["guardian_report"] == ".roam/guardian.jsonl"
@@ -362,23 +373,30 @@ class TestWatchCommand:
 
     def test_webhook_bridge_constructed_when_port_set(self):
         from click.testing import CliRunner
+
         from roam.commands.cmd_watch import watch
 
         runner = CliRunner()
-        with patch("roam.commands.cmd_watch.ensure_index"), \
-                patch("roam.commands.cmd_watch.find_project_root", return_value=Path("/tmp")), \
-                patch("roam.commands.cmd_watch.poll_loop", side_effect=KeyboardInterrupt), \
-                patch("roam.commands.cmd_watch.WebhookBridge") as bridge_cls:
+        with (
+            patch("roam.commands.cmd_watch.ensure_index"),
+            patch("roam.commands.cmd_watch.find_project_root", return_value=Path("/tmp")),
+            patch("roam.commands.cmd_watch.poll_loop", side_effect=KeyboardInterrupt),
+            patch("roam.commands.cmd_watch.WebhookBridge") as bridge_cls,
+        ):
             bridge = MagicMock()
             bridge.port = 7777
             bridge_cls.return_value = bridge
             runner.invoke(
                 watch,
                 [
-                    "--webhook-port", "7777",
-                    "--webhook-host", "0.0.0.0",
-                    "--webhook-path", "/hook",
-                    "--webhook-secret", "token",
+                    "--webhook-port",
+                    "7777",
+                    "--webhook-host",
+                    "0.0.0.0",
+                    "--webhook-path",
+                    "/hook",
+                    "--webhook-secret",
+                    "token",
                 ],
                 obj={},
             )
@@ -391,7 +409,9 @@ class TestWatchCommand:
 
     def test_keyboard_interrupt_shows_stopped(self):
         from click.testing import CliRunner
+
         from roam.commands.cmd_watch import watch
+
         runner = CliRunner()
         with patch("roam.commands.cmd_watch.ensure_index"):
             with patch("roam.commands.cmd_watch.find_project_root", return_value=Path("/tmp")):
@@ -401,7 +421,6 @@ class TestWatchCommand:
 
 
 class TestLoadTrackedFiles:
-
     def test_returns_empty_when_no_db(self, tmp_path):
         with patch("roam.commands.cmd_watch.db_exists", return_value=False):
             result = load_tracked_files(tmp_path)
@@ -415,7 +434,6 @@ class TestLoadTrackedFiles:
 
 
 class TestPollLoopWebhook:
-
     def test_webhook_event_triggers_reindex(self, tmp_path):
         calls: list[bool] = []
         first = True
@@ -537,32 +555,37 @@ class TestPollLoopWebhook:
 
 
 class TestWatchRegistration:
-
     def test_watch_registered_in_cli(self):
         from roam.cli import _COMMANDS
+
         assert "watch" in _COMMANDS
 
     def test_watch_in_category(self):
         from roam.cli import _CATEGORIES
+
         assert any("watch" in v for v in _CATEGORIES.values())
 
     def test_watch_module_importable(self):
         from roam.commands.cmd_watch import watch
+
         assert callable(watch)
 
     def test_poll_loop_importable(self):
         from roam.commands.cmd_watch import poll_loop
+
         assert callable(poll_loop)
 
     def test_debounce_accumulator_importable(self):
         from roam.commands.cmd_watch import DebounceAccumulator
+
         assert issubclass(DebounceAccumulator, object)
 
     def test_detect_changes_importable(self):
         from roam.commands.cmd_watch import detect_changes
+
         assert callable(detect_changes)
 
     def test_scan_disk_mtimes_importable(self):
         from roam.commands.cmd_watch import scan_disk_mtimes
-        assert callable(scan_disk_mtimes)
 
+        assert callable(scan_disk_mtimes)

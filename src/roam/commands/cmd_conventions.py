@@ -7,44 +7,79 @@ from collections import Counter, defaultdict
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import (
-    format_table, loc, abbrev_kind, to_json, json_envelope,
-)
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    to_json,
+)
 
 # ---------------------------------------------------------------------------
 # Case-style detection
 # ---------------------------------------------------------------------------
 
 _CASE_PATTERNS = {
-    "snake_case":  re.compile(r'^[a-z][a-z0-9]*(_[a-z0-9]+)+$'),
-    "camelCase":   re.compile(r'^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$'),
-    "PascalCase":  re.compile(r'^[A-Z][a-zA-Z0-9]*[a-z][a-zA-Z0-9]*$'),
-    "UPPER_SNAKE": re.compile(r'^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$'),
-    "kebab-case":  re.compile(r'^[a-z][a-z0-9]*(-[a-z0-9]+)+$'),
+    "snake_case": re.compile(r"^[a-z][a-z0-9]*(_[a-z0-9]+)+$"),
+    "camelCase": re.compile(r"^[a-z][a-zA-Z0-9]*[A-Z][a-zA-Z0-9]*$"),
+    "PascalCase": re.compile(r"^[A-Z][a-zA-Z0-9]*[a-z][a-zA-Z0-9]*$"),
+    "UPPER_SNAKE": re.compile(r"^[A-Z][A-Z0-9]*(_[A-Z0-9]+)+$"),
+    "kebab-case": re.compile(r"^[a-z][a-z0-9]*(-[a-z0-9]+)+$"),
 }
 
 # Single-word names match multiple conventions; classify them separately.
-_SINGLE_LOWER = re.compile(r'^[a-z][a-z0-9]*$')
-_SINGLE_UPPER = re.compile(r'^[A-Z][A-Z0-9]*$')
-_SINGLE_PASCAL = re.compile(r'^[A-Z][a-z0-9]+$')
+_SINGLE_LOWER = re.compile(r"^[a-z][a-z0-9]*$")
+_SINGLE_UPPER = re.compile(r"^[A-Z][A-Z0-9]*$")
+_SINGLE_PASCAL = re.compile(r"^[A-Z][a-z0-9]+$")
 
 # Names that are too short or generic to classify meaningfully.
 _MIN_NAME_LEN = 2
 
 # Dunder / framework names to skip when detecting naming conventions.
-_SKIP_NAMES = frozenset({
-    "__init__", "__str__", "__repr__", "__new__", "__del__",
-    "__enter__", "__exit__", "__getattr__", "__setattr__",
-    "__getitem__", "__setitem__", "__len__", "__iter__", "__next__",
-    "__call__", "__hash__", "__eq__", "__lt__", "__gt__", "__le__",
-    "__ge__", "__ne__", "__bool__", "__contains__", "__add__",
-    "__sub__", "__mul__", "__truediv__", "__floordiv__", "__mod__",
-    "__pow__", "__and__", "__or__", "__xor__", "__invert__",
-    "constructor", "toString", "valueOf",
-})
+_SKIP_NAMES = frozenset(
+    {
+        "__init__",
+        "__str__",
+        "__repr__",
+        "__new__",
+        "__del__",
+        "__enter__",
+        "__exit__",
+        "__getattr__",
+        "__setattr__",
+        "__getitem__",
+        "__setitem__",
+        "__len__",
+        "__iter__",
+        "__next__",
+        "__call__",
+        "__hash__",
+        "__eq__",
+        "__lt__",
+        "__gt__",
+        "__le__",
+        "__ge__",
+        "__ne__",
+        "__bool__",
+        "__contains__",
+        "__add__",
+        "__sub__",
+        "__mul__",
+        "__truediv__",
+        "__floordiv__",
+        "__mod__",
+        "__pow__",
+        "__and__",
+        "__or__",
+        "__xor__",
+        "__invert__",
+        "constructor",
+        "toString",
+        "valueOf",
+    }
+)
 
 
 def classify_case(name: str) -> str | None:
@@ -72,16 +107,16 @@ def classify_case(name: str) -> str | None:
 # Kind groupings for naming analysis
 _KIND_GROUPS = {
     "function": "functions",
-    "method":   "functions",
-    "class":    "classes",
+    "method": "functions",
+    "class": "classes",
     "interface": "classes",
-    "struct":    "classes",
-    "trait":     "classes",
-    "enum":      "classes",
-    "variable":  "variables",
-    "constant":  "constants",
-    "property":  "variables",
-    "field":     "variables",
+    "struct": "classes",
+    "trait": "classes",
+    "enum": "classes",
+    "variable": "variables",
+    "constant": "constants",
+    "property": "variables",
+    "field": "variables",
 }
 
 
@@ -93,19 +128,19 @@ def _group_for_kind(kind: str) -> str:
 # Prefix / suffix detection
 # ---------------------------------------------------------------------------
 
-def _detect_affixes(names: list[str], min_count: int = 5,
-                    min_ratio: float = 0.03) -> dict:
+
+def _detect_affixes(names: list[str], min_count: int = 5, min_ratio: float = 0.03) -> dict:
     """Detect common prefixes and suffixes from a list of names."""
     prefix_counter: Counter = Counter()
     suffix_counter: Counter = Counter()
 
     for name in names:
         # Prefixes: split on _ or case boundary
-        parts = re.split(r'[_]', name)
+        parts = re.split(r"[_]", name)
         if len(parts) >= 2 and len(parts[0]) >= 2:
             prefix_counter[parts[0] + "_"] += 1
         # Check camelCase prefix (lowercase start up to first uppercase)
-        m = re.match(r'^([a-z]+)[A-Z]', name)
+        m = re.match(r"^([a-z]+)[A-Z]", name)
         if m and len(m.group(1)) >= 2:
             prefix_counter[m.group(1)] += 1
 
@@ -113,7 +148,7 @@ def _detect_affixes(names: list[str], min_count: int = 5,
         if len(parts) >= 2 and len(parts[-1]) >= 2:
             suffix_counter["_" + parts[-1]] += 1
         # PascalCase suffix: last uppercase word
-        m = re.search(r'[a-z]([A-Z][a-z]+)$', name)
+        m = re.search(r"[a-z]([A-Z][a-z]+)$", name)
         if m and len(m.group(1)) >= 3:
             suffix_counter[m.group(1)] += 1
 
@@ -138,27 +173,33 @@ def _detect_affixes(names: list[str], min_count: int = 5,
 # ---------------------------------------------------------------------------
 
 _TEST_PATTERNS = [
-    ("test_*.py",     re.compile(r'(^|/)test_[^/]+\.py$')),
-    ("*_test.py",     re.compile(r'(^|/)[^/]+_test\.py$')),
-    ("*.test.ts",     re.compile(r'(^|/)[^/]+\.test\.ts$')),
-    ("*.test.tsx",    re.compile(r'(^|/)[^/]+\.test\.tsx$')),
-    ("*.test.js",     re.compile(r'(^|/)[^/]+\.test\.js$')),
-    ("*.test.jsx",    re.compile(r'(^|/)[^/]+\.test\.jsx$')),
-    ("*.spec.ts",     re.compile(r'(^|/)[^/]+\.spec\.ts$')),
-    ("*.spec.tsx",    re.compile(r'(^|/)[^/]+\.spec\.tsx$')),
-    ("*.spec.js",     re.compile(r'(^|/)[^/]+\.spec\.js$')),
-    ("*.spec.jsx",    re.compile(r'(^|/)[^/]+\.spec\.jsx$')),
-    ("*_test.go",     re.compile(r'(^|/)[^/]+_test\.go$')),
-    ("*_test.rs",     re.compile(r'(^|/)[^/]+_test\.rs$')),
-    ("Test*.java",    re.compile(r'(^|/)Test[^/]+\.java$')),
-    ("*Test.java",    re.compile(r'(^|/)[^/]+Test\.java$')),
+    ("test_*.py", re.compile(r"(^|/)test_[^/]+\.py$")),
+    ("*_test.py", re.compile(r"(^|/)[^/]+_test\.py$")),
+    ("*.test.ts", re.compile(r"(^|/)[^/]+\.test\.ts$")),
+    ("*.test.tsx", re.compile(r"(^|/)[^/]+\.test\.tsx$")),
+    ("*.test.js", re.compile(r"(^|/)[^/]+\.test\.js$")),
+    ("*.test.jsx", re.compile(r"(^|/)[^/]+\.test\.jsx$")),
+    ("*.spec.ts", re.compile(r"(^|/)[^/]+\.spec\.ts$")),
+    ("*.spec.tsx", re.compile(r"(^|/)[^/]+\.spec\.tsx$")),
+    ("*.spec.js", re.compile(r"(^|/)[^/]+\.spec\.js$")),
+    ("*.spec.jsx", re.compile(r"(^|/)[^/]+\.spec\.jsx$")),
+    ("*_test.go", re.compile(r"(^|/)[^/]+_test\.go$")),
+    ("*_test.rs", re.compile(r"(^|/)[^/]+_test\.rs$")),
+    ("Test*.java", re.compile(r"(^|/)Test[^/]+\.java$")),
+    ("*Test.java", re.compile(r"(^|/)[^/]+Test\.java$")),
 ]
 
-_BARREL_NAMES = frozenset({
-    "index.ts", "index.js", "index.tsx", "index.jsx",
-    "index.mjs", "index.cjs",
-    "__init__.py",
-})
+_BARREL_NAMES = frozenset(
+    {
+        "index.ts",
+        "index.js",
+        "index.tsx",
+        "index.jsx",
+        "index.mjs",
+        "index.cjs",
+        "__init__.py",
+    }
+)
 
 
 def _analyze_files(paths: list[str]) -> dict:
@@ -172,11 +213,7 @@ def _analyze_files(paths: list[str]) -> dict:
         if len(parts) > 1:
             dir_counts[parts[0] + "/"] += 1
 
-    top_dirs = [
-        {"dir": d, "count": c}
-        for d, c in dir_counts.most_common(15)
-        if c >= 2
-    ]
+    top_dirs = [{"dir": d, "count": c} for d, c in dir_counts.most_common(15) if c >= 2]
 
     # Test file patterns
     test_pattern_counts: Counter = Counter()
@@ -194,17 +231,9 @@ def _analyze_files(paths: list[str]) -> dict:
                     test_dir_counts[parts[0] + "/"] += 1
                 break
 
-    test_patterns = [
-        {"pattern": pat, "count": c}
-        for pat, c in test_pattern_counts.most_common(5)
-        if c >= 1
-    ]
+    test_patterns = [{"pattern": pat, "count": c} for pat, c in test_pattern_counts.most_common(5) if c >= 1]
 
-    test_dirs = [
-        {"dir": d, "count": c}
-        for d, c in test_dir_counts.most_common(5)
-        if c >= 1
-    ]
+    test_dirs = [{"dir": d, "count": c} for d, c in test_dir_counts.most_common(5) if c >= 1]
 
     # Barrel files
     barrel_count = 0
@@ -227,6 +256,7 @@ def _analyze_files(paths: list[str]) -> dict:
 # ---------------------------------------------------------------------------
 # Import pattern detection
 # ---------------------------------------------------------------------------
+
 
 def _analyze_imports(conn) -> dict:
     """Analyze import edges for absolute vs relative and grouping patterns."""
@@ -265,10 +295,10 @@ def _analyze_imports(conn) -> dict:
         src_dir = src_parts[0] if len(src_parts) > 1 else ""
         tgt_dir = tgt_parts[0] if len(tgt_parts) > 1 else ""
 
-        if src_dir and tgt_dir and (
-            src_dir == tgt_dir or
-            src_dir.startswith(tgt_dir + "/") or
-            tgt_dir.startswith(src_dir + "/")
+        if (
+            src_dir
+            and tgt_dir
+            and (src_dir == tgt_dir or src_dir.startswith(tgt_dir + "/") or tgt_dir.startswith(src_dir + "/"))
         ):
             relative += 1
         else:
@@ -290,6 +320,7 @@ def _analyze_imports(conn) -> dict:
 # ---------------------------------------------------------------------------
 # Export pattern detection
 # ---------------------------------------------------------------------------
+
 
 def _analyze_exports(conn) -> dict:
     """Analyze is_exported flag distribution across symbols."""
@@ -324,12 +355,14 @@ def _analyze_exports(conn) -> dict:
     for kr in kind_rows:
         kt = kr["total"] or 0
         ke = kr["exported"] or 0
-        by_kind.append({
-            "kind": kr["kind"],
-            "total": kt,
-            "exported": ke,
-            "exported_pct": round(100 * ke / kt, 1) if kt else 0,
-        })
+        by_kind.append(
+            {
+                "kind": kr["kind"],
+                "total": kt,
+                "exported": ke,
+                "exported_pct": round(100 * ke / kt, 1) if kt else 0,
+            }
+        )
 
     # Detect default-export vs named-export preference for JS/TS
     # Check if files have exactly one exported symbol (likely default export)
@@ -369,9 +402,7 @@ def _analyze_exports(conn) -> dict:
 # Error handling detection
 # ---------------------------------------------------------------------------
 
-_ERROR_NAME_RE = re.compile(
-    r'(Error|Exception|Err|Fault|Failure|Panic)$', re.IGNORECASE
-)
+_ERROR_NAME_RE = re.compile(r"(Error|Exception|Err|Fault|Failure|Panic)$", re.IGNORECASE)
 
 
 def _analyze_error_handling(conn) -> dict:
@@ -388,7 +419,8 @@ def _analyze_error_handling(conn) -> dict:
            OR s.name LIKE '%Failure%'
     """).fetchall()
     error_symbols = [
-        r for r in error_candidates
+        r
+        for r in error_candidates
         if _ERROR_NAME_RE.search(r["name"])
         or "Error" in r["name"]
         or "Exception" in r["name"]
@@ -412,8 +444,7 @@ def _analyze_error_handling(conn) -> dict:
         "error_classes": len(error_classes),
         "error_functions": len(error_functions),
         "error_symbols": [
-            {"name": r["name"], "kind": r["kind"],
-             "file": r["file_path"], "line": r["line_start"]}
+            {"name": r["name"], "kind": r["kind"], "file": r["file_path"], "line": r["line_start"]}
             for r in error_symbols[:20]
         ],
         "avg_complexity": round(complexity_rows["avg_complexity"] or 0, 1),
@@ -426,13 +457,13 @@ def _analyze_error_handling(conn) -> dict:
 # Main command
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option('-n', 'max_outliers', default=10,
-              help='Maximum outliers to display per category')
+@click.option("-n", "max_outliers", default=10, help="Maximum outliers to display per category")
 @click.pass_context
 def conventions(ctx, max_outliers):
     """Auto-detect codebase naming, file, import, and export conventions."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -459,14 +490,16 @@ def conventions(ctx, max_outliers):
             if style:
                 group_cases[group][style] += 1
                 group_names[group].append(sym["name"])
-                symbol_details.append({
-                    "name": sym["name"],
-                    "kind": sym["kind"],
-                    "group": group,
-                    "style": style,
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                })
+                symbol_details.append(
+                    {
+                        "name": sym["name"],
+                        "kind": sym["kind"],
+                        "group": group,
+                        "style": style,
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                    }
+                )
 
         # Determine dominant style per group
         naming_summary: dict[str, dict] = {}
@@ -487,19 +520,21 @@ def conventions(ctx, max_outliers):
         for det in symbol_details:
             grp_info = naming_summary.get(det["group"])
             if grp_info and det["style"] != grp_info["dominant_style"]:
-                outliers.append({
-                    "name": det["name"],
-                    "kind": det["kind"],
-                    "actual_style": det["style"],
-                    "expected_style": grp_info["dominant_style"],
-                    "file": det["file"],
-                    "line": det["line"],
-                })
+                outliers.append(
+                    {
+                        "name": det["name"],
+                        "kind": det["kind"],
+                        "actual_style": det["style"],
+                        "expected_style": grp_info["dominant_style"],
+                        "file": det["file"],
+                        "line": det["line"],
+                    }
+                )
 
         # Affix detection
-        all_names = [sym["name"] for sym in all_symbols
-                     if len(sym["name"]) >= _MIN_NAME_LEN
-                     and sym["name"] not in _SKIP_NAMES]
+        all_names = [
+            sym["name"] for sym in all_symbols if len(sym["name"]) >= _MIN_NAME_LEN and sym["name"] not in _SKIP_NAMES
+        ]
         affixes = _detect_affixes(all_names)
 
         # ---- 2. File organization ----
@@ -539,16 +574,21 @@ def conventions(ctx, max_outliers):
                 "import_style": import_info["style"],
                 "exported_pct": export_info["exported_pct"],
             }
-            click.echo(to_json(json_envelope("conventions",
-                summary=summary,
-                naming=naming_summary,
-                affixes=affixes,
-                files=file_info,
-                imports=import_info,
-                exports=export_info,
-                errors=error_info,
-                violations=violation_list,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "conventions",
+                        summary=summary,
+                        naming=naming_summary,
+                        affixes=affixes,
+                        files=file_info,
+                        imports=import_info,
+                        exports=export_info,
+                        errors=error_info,
+                        violations=violation_list,
+                    )
+                )
+            )
             return
 
         # ---- Text output ----
@@ -559,8 +599,7 @@ def conventions(ctx, max_outliers):
         if naming_summary:
             for group, info in sorted(naming_summary.items()):
                 click.echo(
-                    f"  {group.capitalize()}: {info['dominant_style']} "
-                    f"({info['percent']}% of {info['total']} {group})"
+                    f"  {group.capitalize()}: {info['dominant_style']} ({info['percent']}% of {info['total']} {group})"
                 )
                 # Show minority styles if present
                 for style, count in info["breakdown"].items():
@@ -625,40 +664,33 @@ def conventions(ctx, max_outliers):
                 f"{error_info['error_functions']} functions)"
             )
             for es in error_info["error_symbols"][:5]:
-                click.echo(
-                    f"    {es['name']} ({abbrev_kind(es['kind'])}) "
-                    f"at {loc(es['file'], es['line'])}"
-                )
+                click.echo(f"    {es['name']} ({abbrev_kind(es['kind'])}) at {loc(es['file'], es['line'])}")
             if len(error_info["error_symbols"]) > 5:
                 click.echo(f"    (+{len(error_info['error_symbols']) - 5} more)")
         else:
             click.echo("  (no error/exception symbols detected)")
         if error_info["files_with_complexity"] > 0:
-            click.echo(
-                f"  Avg file complexity: {error_info['avg_complexity']} "
-                f"(max {error_info['max_complexity']})"
-            )
+            click.echo(f"  Avg file complexity: {error_info['avg_complexity']} (max {error_info['max_complexity']})")
 
         # -- Export pattern --
         click.echo(f"\n=== Export Pattern ({export_info['total_symbols']} symbols) ===")
         if export_info["total_symbols"] > 0:
-            click.echo(
-                f"  Exported: {export_info['exported']} "
-                f"({export_info['exported_pct']}%)"
-            )
+            click.echo(f"  Exported: {export_info['exported']} ({export_info['exported_pct']}%)")
             click.echo(
                 f"  Private:  {export_info['private']} "
                 f"({round(100 * export_info['private'] / export_info['total_symbols'], 1)}%)"
             )
             if export_info["by_kind"]:
                 ek_rows = [
-                    [abbrev_kind(k["kind"]), str(k["total"]),
-                     str(k["exported"]), f"{k['exported_pct']}%"]
+                    [
+                        abbrev_kind(k["kind"]),
+                        str(k["total"]),
+                        str(k["exported"]),
+                        f"{k['exported_pct']}%",
+                    ]
                     for k in export_info["by_kind"]
                 ]
-                click.echo(format_table(
-                    ["Kind", "Total", "Exported", "Rate"], ek_rows
-                ))
+                click.echo(format_table(["Kind", "Total", "Exported", "Rate"], ek_rows))
             if export_info["js_ts_export_style"] != "unknown":
                 click.echo(f"  JS/TS: {export_info['js_ts_export_style']}")
         else:

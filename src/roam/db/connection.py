@@ -2,10 +2,10 @@
 
 from __future__ import annotations
 
-import sqlite3
 import os
-from pathlib import Path
+import sqlite3
 from contextlib import contextmanager
+from pathlib import Path
 
 from roam.db.schema import SCHEMA_SQL
 
@@ -32,6 +32,7 @@ def _load_project_config(project_root: Path) -> dict:
     if config_path.exists():
         try:
             import json
+
             return json.loads(config_path.read_text(encoding="utf-8"))
         except Exception:
             pass
@@ -45,6 +46,7 @@ def write_project_config(config: dict, project_root: Path | None = None) -> Path
     Returns the path of the written file.
     """
     import json
+
     if project_root is None:
         project_root = find_project_root()
     roam_dir = project_root / DEFAULT_DB_DIR
@@ -205,9 +207,7 @@ def ensure_schema(conn: sqlite3.Connection):
 def _ensure_tfidf_cascade(conn: sqlite3.Connection):
     """Ensure symbol_tfidf has ON DELETE CASCADE (missing in early schema)."""
     # Check if table exists and has proper FK — simplest: check table_info
-    row = conn.execute(
-        "SELECT sql FROM sqlite_master WHERE type='table' AND name='symbol_tfidf'"
-    ).fetchone()
+    row = conn.execute("SELECT sql FROM sqlite_master WHERE type='table' AND name='symbol_tfidf'").fetchone()
     if row is None:
         # Table doesn't exist yet; SCHEMA_SQL will create it with CASCADE
         return
@@ -233,9 +233,7 @@ def _ensure_fts5_table(conn: sqlite3.Connection):
     Falls back gracefully if FTS5 is not compiled into the SQLite build.
     """
     # Check if already exists
-    row = conn.execute(
-        "SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'"
-    ).fetchone()
+    row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
     if row:
         return
     try:
@@ -288,7 +286,7 @@ def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
 
     rows = []
     for i in range(0, len(ids), chunk):
-        batch = ids[i:i + chunk]
+        batch = ids[i : i + chunk]
         ph = ",".join("?" for _ in batch)
         q = sql.replace("{ph}", ph)
         params = list(pre) + batch * n_ph + list(post)
@@ -309,7 +307,7 @@ def batched_count(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
 
     total = 0
     for i in range(0, len(ids), chunk):
-        batch = ids[i:i + chunk]
+        batch = ids[i : i + chunk]
         ph = ",".join("?" for _ in batch)
         q = sql.replace("{ph}", ph)
         params = list(pre) + batch * n_ph + list(post)

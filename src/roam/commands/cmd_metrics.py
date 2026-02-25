@@ -7,25 +7,24 @@ structured output.  All data is read from the existing SQLite index.
 
 from __future__ import annotations
 
-import os
 import sqlite3
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import (
-    to_json,
-    json_envelope,
-    abbrev_kind,
-    loc,
-    format_table,
-)
 from roam.commands.resolve import ensure_index, find_symbol
-
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    to_json,
+)
 
 # ---------------------------------------------------------------------------
 # Health scoring
 # ---------------------------------------------------------------------------
+
 
 def _health_label(metrics: dict) -> str:
     """Derive a health label from collected metrics.
@@ -69,6 +68,7 @@ def _health_label(metrics: dict) -> str:
 # Metric collection — symbol level
 # ---------------------------------------------------------------------------
 
+
 def collect_symbol_metrics(
     conn: sqlite3.Connection,
     symbol_id: int,
@@ -109,8 +109,7 @@ def collect_symbol_metrics(
     # -- symbol_metrics (cognitive complexity, line_count) --
     try:
         sm = conn.execute(
-            "SELECT cognitive_complexity, line_count "
-            "FROM symbol_metrics WHERE symbol_id = ?",
+            "SELECT cognitive_complexity, line_count FROM symbol_metrics WHERE symbol_id = ?",
             (symbol_id,),
         ).fetchone()
         if sm:
@@ -121,8 +120,7 @@ def collect_symbol_metrics(
     # Optional imported coverage columns (safe on older DB schemas)
     try:
         cov = conn.execute(
-            "SELECT coverage_pct, covered_lines, coverable_lines "
-            "FROM symbol_metrics WHERE symbol_id = ?",
+            "SELECT coverage_pct, covered_lines, coverable_lines FROM symbol_metrics WHERE symbol_id = ?",
             (symbol_id,),
         ).fetchone()
         if cov:
@@ -135,8 +133,7 @@ def collect_symbol_metrics(
     # -- graph_metrics (pagerank, in_degree, out_degree, betweenness) --
     try:
         gm = conn.execute(
-            "SELECT pagerank, in_degree, out_degree, betweenness "
-            "FROM graph_metrics WHERE symbol_id = ?",
+            "SELECT pagerank, in_degree, out_degree, betweenness FROM graph_metrics WHERE symbol_id = ?",
             (symbol_id,),
         ).fetchone()
         if gm:
@@ -149,8 +146,7 @@ def collect_symbol_metrics(
     # Optional SNA v2 columns (safe on older DB schemas)
     try:
         extra = conn.execute(
-            "SELECT closeness, eigenvector, clustering_coefficient, debt_score "
-            "FROM graph_metrics WHERE symbol_id = ?",
+            "SELECT closeness, eigenvector, clustering_coefficient, debt_score FROM graph_metrics WHERE symbol_id = ?",
             (symbol_id,),
         ).fetchone()
         if extra:
@@ -194,8 +190,7 @@ def collect_symbol_metrics(
         file_id = sym_row["file_id"]
         try:
             fs = conn.execute(
-                "SELECT commit_count, total_churn FROM file_stats "
-                "WHERE file_id = ?",
+                "SELECT commit_count, total_churn FROM file_stats WHERE file_id = ?",
                 (file_id,),
             ).fetchone()
             if fs:
@@ -221,8 +216,7 @@ def collect_symbol_metrics(
         # -- co_change_count --
         try:
             cc_row = conn.execute(
-                "SELECT SUM(cochange_count) AS total "
-                "FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
+                "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
                 (file_id, file_id),
             ).fetchone()
             result["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
@@ -295,18 +289,14 @@ def _comprehension_score(*, fan_out: int, information_scatter: int, working_set_
     scatter_n = min(1.0, max(0.0, float(max(information_scatter - 1, 0)) / 8.0))
     working_n = min(1.0, max(0.0, float(working_set_size) / 30.0))
     complexity_n = min(1.0, max(0.0, float(complexity) / 30.0))
-    score = 100.0 * (
-        0.35 * fan_out_n
-        + 0.30 * scatter_n
-        + 0.20 * working_n
-        + 0.15 * complexity_n
-    )
+    score = 100.0 * (0.35 * fan_out_n + 0.30 * scatter_n + 0.20 * working_n + 0.15 * complexity_n)
     return round(score, 3)
 
 
 # ---------------------------------------------------------------------------
 # Metric collection — file level
 # ---------------------------------------------------------------------------
+
 
 def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
     """Gather aggregate metrics for all symbols in a file.
@@ -347,14 +337,16 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
         max_pagerank = max(max_pagerank, sm["pagerank"])
         if sm["dead_code_risk"]:
             dead_count += 1
-        symbol_metrics_list.append({
-            "name": sr["name"],
-            "kind": sr["kind"],
-            "qualified_name": sr["qualified_name"],
-            "line_start": sr["line_start"],
-            "line_end": sr["line_end"],
-            **sm,
-        })
+        symbol_metrics_list.append(
+            {
+                "name": sr["name"],
+                "kind": sr["kind"],
+                "qualified_name": sr["qualified_name"],
+                "line_start": sr["line_start"],
+                "line_end": sr["line_end"],
+                **sm,
+            }
+        )
 
     # File-level churn / commits
     churn = 0
@@ -374,8 +366,7 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
         pass
     try:
         cov = conn.execute(
-            "SELECT coverage_pct, covered_lines, coverable_lines "
-            "FROM file_stats WHERE file_id = ?",
+            "SELECT coverage_pct, covered_lines, coverable_lines FROM file_stats WHERE file_id = ?",
             (file_id,),
         ).fetchone()
         if cov:
@@ -403,8 +394,7 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
     co_change = 0
     try:
         cc_row = conn.execute(
-            "SELECT SUM(cochange_count) AS total "
-            "FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
+            "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
             (file_id, file_id),
         ).fetchone()
         co_change = cc_row["total"] or 0 if cc_row else 0
@@ -440,6 +430,7 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
 # ---------------------------------------------------------------------------
 # Target resolution
 # ---------------------------------------------------------------------------
+
 
 def _resolve_target(conn: sqlite3.Connection, target: str) -> tuple[str, int | None, dict | None]:
     """Determine if target is a file or symbol and return (type, id, row).
@@ -500,16 +491,19 @@ def metrics(ctx, target):
         if target_type == "unknown":
             msg = f'Target not found: "{target}"'
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "metrics",
-                    summary={"verdict": "not found", "target": target},
-                    error=msg,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "metrics",
+                            summary={"verdict": "not found", "target": target},
+                            error=msg,
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: not found -- {msg}")
                 click.echo(
-                    "  Tip: Use a file path or symbol name. "
-                    "Run `roam search {}` to find symbols.".format(target)
+                    "  Tip: Use a file path or symbol name. Run `roam search {}` to find symbols.".format(target)
                 )
             raise SystemExit(1)
 
@@ -545,21 +539,25 @@ def _output_symbol_metrics(conn, symbol_id, target, json_mode, budget):
     location = loc(sym_row["file_path"], sym_row["line_start"])
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "metrics",
-            budget=budget,
-            summary={
-                "verdict": f"{display_name}: health={health}",
-                "target": display_name,
-                "target_type": "symbol",
-                "health": health,
-            },
-            target_type="symbol",
-            name=display_name,
-            kind=sym_row["kind"],
-            location=location,
-            metrics=sm,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "metrics",
+                    budget=budget,
+                    summary={
+                        "verdict": f"{display_name}: health={health}",
+                        "target": display_name,
+                        "target_type": "symbol",
+                        "health": health,
+                    },
+                    target_type="symbol",
+                    name=display_name,
+                    kind=sym_row["kind"],
+                    location=location,
+                    metrics=sm,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {display_name}: health={health}")
@@ -580,51 +578,57 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
 
     fm = data["metrics"]
     # Compute health for file level
-    file_health = _health_label({
-        "complexity": fm["complexity"],
-        "fan_out": fm["fan_out"],
-        "churn": fm["churn"],
-        "dead_code_risk": fm["dead_symbols"] > 0,
-    })
+    file_health = _health_label(
+        {
+            "complexity": fm["complexity"],
+            "fan_out": fm["fan_out"],
+            "churn": fm["churn"],
+            "dead_code_risk": fm["dead_symbols"] > 0,
+        }
+    )
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "metrics",
-            budget=budget,
-            summary={
-                "verdict": f"{data['file']}: health={file_health}",
-                "target": data["file"],
-                "target_type": "file",
-                "health": file_health,
-                "symbol_count": fm["symbol_count"],
-            },
-            target_type="file",
-            file=data["file"],
-            language=data["language"],
-            file_role=data["file_role"],
-            metrics=fm,
-            symbols=[
-                {
-                    "name": s["name"],
-                    "kind": s["kind"],
-                    "line_start": s["line_start"],
-                    "complexity": s["complexity"],
-                    "fan_in": s["fan_in"],
-                    "fan_out": s["fan_out"],
-                    "pagerank": round(s["pagerank"], 6),
-                    "closeness": round(s["closeness"], 6),
-                    "eigenvector": round(s["eigenvector"], 6),
-                    "clustering_coefficient": round(s["clustering_coefficient"], 6),
-                    "debt_score": round(s["debt_score"], 3),
-                    "dead_code_risk": s["dead_code_risk"],
-                    "loc": s["loc"],
-                    "coverage_pct": s["coverage_pct"],
-                    "covered_lines": s["covered_lines"],
-                    "coverable_lines": s["coverable_lines"],
-                }
-                for s in data["symbols"]
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "metrics",
+                    budget=budget,
+                    summary={
+                        "verdict": f"{data['file']}: health={file_health}",
+                        "target": data["file"],
+                        "target_type": "file",
+                        "health": file_health,
+                        "symbol_count": fm["symbol_count"],
+                    },
+                    target_type="file",
+                    file=data["file"],
+                    language=data["language"],
+                    file_role=data["file_role"],
+                    metrics=fm,
+                    symbols=[
+                        {
+                            "name": s["name"],
+                            "kind": s["kind"],
+                            "line_start": s["line_start"],
+                            "complexity": s["complexity"],
+                            "fan_in": s["fan_in"],
+                            "fan_out": s["fan_out"],
+                            "pagerank": round(s["pagerank"], 6),
+                            "closeness": round(s["closeness"], 6),
+                            "eigenvector": round(s["eigenvector"], 6),
+                            "clustering_coefficient": round(s["clustering_coefficient"], 6),
+                            "debt_score": round(s["debt_score"], 3),
+                            "dead_code_risk": s["dead_code_risk"],
+                            "loc": s["loc"],
+                            "coverage_pct": s["coverage_pct"],
+                            "covered_lines": s["covered_lines"],
+                            "coverable_lines": s["coverable_lines"],
+                        }
+                        for s in data["symbols"]
+                    ],
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {data['file']}: health={file_health}")
@@ -640,15 +644,17 @@ def _output_file_metrics(conn, file_id, target, json_mode, budget):
         click.echo("  Symbol Breakdown:")
         rows = []
         for s in data["symbols"]:
-            rows.append([
-                abbrev_kind(s["kind"]),
-                s["name"],
-                str(s["complexity"]),
-                str(s["fan_in"]),
-                str(s["fan_out"]),
-                f"{s['pagerank']:.4f}",
-                "Y" if s["dead_code_risk"] else "",
-            ])
+            rows.append(
+                [
+                    abbrev_kind(s["kind"]),
+                    s["name"],
+                    str(s["complexity"]),
+                    str(s["fan_in"]),
+                    str(s["fan_out"]),
+                    f"{s['pagerank']:.4f}",
+                    "Y" if s["dead_code_risk"] else "",
+                ]
+            )
         table = format_table(
             ["Kind", "Name", "CC", "In", "Out", "PageRank", "Dead?"],
             rows,

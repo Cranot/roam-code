@@ -16,43 +16,72 @@ import re
 
 from .java_lang import JavaExtractor
 
-
 # Salesforce-specific annotations worth tracking
-_SF_ANNOTATIONS = frozenset({
-    "@AuraEnabled", "@IsTest", "@InvocableMethod", "@InvocableVariable",
-    "@Future", "@Queueable", "@RemoteAction", "@TestSetup", "@TestVisible",
-    "@SuppressWarnings", "@ReadOnly", "@RestResource", "@HttpGet",
-    "@HttpPost", "@HttpPut", "@HttpDelete", "@HttpPatch",
-    "@NamespaceAccessible", "@JsonAccess",
-})
+_SF_ANNOTATIONS = frozenset(
+    {
+        "@AuraEnabled",
+        "@IsTest",
+        "@InvocableMethod",
+        "@InvocableVariable",
+        "@Future",
+        "@Queueable",
+        "@RemoteAction",
+        "@TestSetup",
+        "@TestVisible",
+        "@SuppressWarnings",
+        "@ReadOnly",
+        "@RestResource",
+        "@HttpGet",
+        "@HttpPost",
+        "@HttpPut",
+        "@HttpDelete",
+        "@HttpPatch",
+        "@NamespaceAccessible",
+        "@JsonAccess",
+    }
+)
 
 # Sharing keywords that modify class declarations in Apex
-_SHARING_RE = re.compile(r'\b(with\s+sharing|without\s+sharing|inherited\s+sharing)\b')
+_SHARING_RE = re.compile(r"\b(with\s+sharing|without\s+sharing|inherited\s+sharing)\b")
 
 # SOQL: extract object names from FROM clauses
-_SOQL_FROM_RE = re.compile(r'\bFROM\s+([A-Z]\w+(?:__c|__r|__mdt|__e)?)', re.IGNORECASE)
+_SOQL_FROM_RE = re.compile(r"\bFROM\s+([A-Z]\w+(?:__c|__r|__mdt|__e)?)", re.IGNORECASE)
 
 # DML operations
 _DML_RE = re.compile(
-    r'\b(insert|update|delete|upsert|merge|undelete)\s+',
+    r"\b(insert|update|delete|upsert|merge|undelete)\s+",
     re.IGNORECASE,
 )
 
 # System.Label references
-_LABEL_RE = re.compile(r'System\.Label\.(\w+)')
+_LABEL_RE = re.compile(r"System\.Label\.(\w+)")
 
 # Generic type references: List<Account>, Map<Id, Contact>, Set<String>, etc.
-_GENERIC_TYPE_RE = re.compile(r'(?:List|Set|Map|Iterable)\s*<\s*([A-Z]\w+(?:__c|__r)?)')
+_GENERIC_TYPE_RE = re.compile(r"(?:List|Set|Map|Iterable)\s*<\s*([A-Z]\w+(?:__c|__r)?)")
 # Second type parameter in Map<K, V> — captures the value type after the comma
-_MAP_VALUE_TYPE_RE = re.compile(r'Map\s*<\s*[A-Z]\w*\s*,\s*([A-Z]\w+(?:__c|__r)?)')
-_APEX_BUILTINS = frozenset({
-    "String", "Integer", "Long", "Double", "Decimal", "Boolean", "Date",
-    "DateTime", "Time", "Id", "Blob", "Object", "SObject", "Type",
-})
+_MAP_VALUE_TYPE_RE = re.compile(r"Map\s*<\s*[A-Z]\w*\s*,\s*([A-Z]\w+(?:__c|__r)?)")
+_APEX_BUILTINS = frozenset(
+    {
+        "String",
+        "Integer",
+        "Long",
+        "Double",
+        "Decimal",
+        "Boolean",
+        "Date",
+        "DateTime",
+        "Time",
+        "Id",
+        "Blob",
+        "Object",
+        "SObject",
+        "Type",
+    }
+)
 
 # Trigger declaration pattern
 _TRIGGER_RE = re.compile(
-    r'trigger\s+(\w+)\s+on\s+(\w+)',
+    r"trigger\s+(\w+)\s+on\s+(\w+)",
     re.IGNORECASE,
 )
 
@@ -87,43 +116,51 @@ class ApexExtractor(JavaExtractor):
         # Extract SOQL object references
         for m in _SOQL_FROM_RE.finditer(text):
             obj_name = m.group(1)
-            line = text[:m.start()].count("\n") + 1
-            refs.append(self._make_reference(
-                target_name=obj_name,
-                kind="soql",
-                line=line,
-            ))
+            line = text[: m.start()].count("\n") + 1
+            refs.append(
+                self._make_reference(
+                    target_name=obj_name,
+                    kind="soql",
+                    line=line,
+                )
+            )
 
         # Extract System.Label references
         for m in _LABEL_RE.finditer(text):
             label_name = m.group(1)
-            line = text[:m.start()].count("\n") + 1
-            refs.append(self._make_reference(
-                target_name=f"Label.{label_name}",
-                kind="label",
-                line=line,
-            ))
+            line = text[: m.start()].count("\n") + 1
+            refs.append(
+                self._make_reference(
+                    target_name=f"Label.{label_name}",
+                    kind="label",
+                    line=line,
+                )
+            )
 
         # Extract type references from generic types (List<Account>, Map<Id, Contact>, etc.)
         for m in _GENERIC_TYPE_RE.finditer(text):
             type_name = m.group(1)
             if type_name not in _APEX_BUILTINS:
-                line = text[:m.start()].count("\n") + 1
-                refs.append(self._make_reference(
-                    target_name=type_name,
-                    kind="type_ref",
-                    line=line,
-                ))
+                line = text[: m.start()].count("\n") + 1
+                refs.append(
+                    self._make_reference(
+                        target_name=type_name,
+                        kind="type_ref",
+                        line=line,
+                    )
+                )
         # Also capture the value type in Map<K, V>
         for m in _MAP_VALUE_TYPE_RE.finditer(text):
             type_name = m.group(1)
             if type_name not in _APEX_BUILTINS:
-                line = text[:m.start()].count("\n") + 1
-                refs.append(self._make_reference(
-                    target_name=type_name,
-                    kind="type_ref",
-                    line=line,
-                ))
+                line = text[: m.start()].count("\n") + 1
+                refs.append(
+                    self._make_reference(
+                        target_name=type_name,
+                        kind="type_ref",
+                        line=line,
+                    )
+                )
 
         return refs
 
@@ -133,16 +170,18 @@ class ApexExtractor(JavaExtractor):
         if m:
             trigger_name = m.group(1)
             sobject_name = m.group(2)
-            line = text[:m.start()].count("\n") + 1
-            symbols.append(self._make_symbol(
-                name=trigger_name,
-                kind="trigger",
-                line_start=line,
-                line_end=line,
-                qualified_name=trigger_name,
-                signature=f"trigger {trigger_name} on {sobject_name}",
-                is_exported=True,
-            ))
+            line = text[: m.start()].count("\n") + 1
+            symbols.append(
+                self._make_symbol(
+                    name=trigger_name,
+                    kind="trigger",
+                    line_start=line,
+                    line_end=line,
+                    qualified_name=trigger_name,
+                    signature=f"trigger {trigger_name} on {sobject_name}",
+                    is_exported=True,
+                )
+            )
 
     def _get_visibility(self, node, source) -> str:
         """Apex visibility — same as Java but also recognizes 'global'."""
@@ -181,7 +220,7 @@ class ApexExtractor(JavaExtractor):
         # Look at the source text preceding the class keyword for visibility
         # and sharing modifiers (up to 80 chars back from the class node start)
         lookback_start = max(0, node.start_byte - 80)
-        context = source[lookback_start:node.start_byte + 50].decode("utf-8", errors="replace")
+        context = source[lookback_start : node.start_byte + 50].decode("utf-8", errors="replace")
 
         # Fix visibility: check if public/global appears before 'class'
         vis = class_sym.get("visibility", "package")

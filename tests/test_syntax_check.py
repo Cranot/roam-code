@@ -19,17 +19,14 @@ import json
 import os
 import sys
 from pathlib import Path
-from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit
+from conftest import git_init
 
 from roam.cli import cli
 from roam.exit_codes import EXIT_GATE_FAILURE
-
 
 # ===========================================================================
 # Helpers
@@ -87,7 +84,7 @@ class User:
         return self.name.title()
 '''
 
-VALID_JS = '''\
+VALID_JS = """\
 function add(a, b) {
     return a + b;
 }
@@ -95,32 +92,33 @@ function add(a, b) {
 const greet = (name) => {
     console.log("Hello, " + name);
 };
-'''
+"""
 
 
 # ===========================================================================
 # Broken file samples
 # ===========================================================================
 
-BROKEN_PYTHON = '''\
+BROKEN_PYTHON = """\
 def greet(name:
     return f"Hello, {name}!"
 
 def foo(
-'''
+"""
 
-BROKEN_JS = '''\
+BROKEN_JS = """\
 function add(a, b {
     return a + b;
 }
 
 const x = [1, 2,
-'''
+"""
 
 
 # ===========================================================================
 # 1. Valid Python file -> 0 errors
 # ===========================================================================
+
 
 class TestValidFiles:
     def test_valid_python(self, tmp_path):
@@ -142,6 +140,7 @@ class TestValidFiles:
 # 2. Broken Python file -> errors detected
 # ===========================================================================
 
+
 class TestBrokenFiles:
     def test_broken_python(self, tmp_path):
         proj = _make_files(tmp_path, {"broken.py": BROKEN_PYTHON})
@@ -162,6 +161,7 @@ class TestBrokenFiles:
 # ===========================================================================
 # 3. JSON output format
 # ===========================================================================
+
 
 class TestJsonOutput:
     def test_clean_json(self, tmp_path):
@@ -221,6 +221,7 @@ class TestJsonOutput:
 # 4. Exit codes
 # ===========================================================================
 
+
 class TestExitCodes:
     def test_exit_0_clean(self, tmp_path):
         proj = _make_files(tmp_path, {"ok.py": VALID_PYTHON})
@@ -244,31 +245,41 @@ class TestExitCodes:
 # 5. Multiple files
 # ===========================================================================
 
+
 class TestMultipleFiles:
     def test_mix_clean_and_broken(self, tmp_path):
-        proj = _make_files(tmp_path, {
-            "clean.py": VALID_PYTHON,
-            "broken.py": BROKEN_PYTHON,
-        })
+        proj = _make_files(
+            tmp_path,
+            {
+                "clean.py": VALID_PYTHON,
+                "broken.py": BROKEN_PYTHON,
+            },
+        )
         result = _invoke(proj, "clean.py", "broken.py")
         assert result.exit_code == EXIT_GATE_FAILURE
         assert "1 file" in result.output  # 1 file affected
         assert "2 files checked" in result.output
 
     def test_all_clean(self, tmp_path):
-        proj = _make_files(tmp_path, {
-            "a.py": VALID_PYTHON,
-            "b.js": VALID_JS,
-        })
+        proj = _make_files(
+            tmp_path,
+            {
+                "a.py": VALID_PYTHON,
+                "b.js": VALID_JS,
+            },
+        )
         result = _invoke(proj, "a.py", "b.js")
         assert result.exit_code == 0
         assert "clean" in result.output.lower()
 
     def test_multiple_broken(self, tmp_path):
-        proj = _make_files(tmp_path, {
-            "a.py": BROKEN_PYTHON,
-            "b.js": BROKEN_JS,
-        })
+        proj = _make_files(
+            tmp_path,
+            {
+                "a.py": BROKEN_PYTHON,
+                "b.js": BROKEN_JS,
+            },
+        )
         result = _invoke(proj, "a.py", "b.js")
         assert result.exit_code == EXIT_GATE_FAILURE
         assert "2 files" in result.output  # 2 files affected
@@ -278,13 +289,17 @@ class TestMultipleFiles:
 # 6. Unsupported and edge cases
 # ===========================================================================
 
+
 class TestEdgeCases:
     def test_unsupported_extension_skipped(self, tmp_path):
         """Files with unsupported extensions are silently skipped."""
-        proj = _make_files(tmp_path, {
-            "data.csv": "a,b,c\n1,2,3\n",
-            "clean.py": VALID_PYTHON,
-        })
+        proj = _make_files(
+            tmp_path,
+            {
+                "data.csv": "a,b,c\n1,2,3\n",
+                "clean.py": VALID_PYTHON,
+            },
+        )
         result = _invoke(proj, "data.csv", "clean.py")
         assert result.exit_code == 0
         # Only 1 file checked (csv skipped)
@@ -312,6 +327,7 @@ class TestEdgeCases:
 # ===========================================================================
 # 7. --changed flag
 # ===========================================================================
+
 
 class TestChangedFlag:
     def test_changed_with_git_repo(self, tmp_path):
@@ -342,6 +358,7 @@ class TestChangedFlag:
 # 8. Error detail accuracy
 # ===========================================================================
 
+
 class TestErrorDetails:
     def test_error_has_line_number(self, tmp_path):
         """Errors include correct line numbers."""
@@ -369,11 +386,13 @@ class TestErrorDetails:
 # 9. Core logic unit tests
 # ===========================================================================
 
+
 class TestCoreFunctions:
     def test_check_syntax_clean(self):
         """check_syntax returns empty list for valid Python."""
-        from roam.commands.cmd_syntax_check import check_syntax
         from tree_sitter_language_pack import get_parser
+
+        from roam.commands.cmd_syntax_check import check_syntax
 
         source = b"def foo():\n    return 42\n"
         parser = get_parser("python")
@@ -383,8 +402,9 @@ class TestCoreFunctions:
 
     def test_check_syntax_broken(self):
         """check_syntax returns errors for broken Python."""
-        from roam.commands.cmd_syntax_check import check_syntax
         from tree_sitter_language_pack import get_parser
+
+        from roam.commands.cmd_syntax_check import check_syntax
 
         source = b"def foo(:\n    return 42\n"
         parser = get_parser("python")
@@ -396,6 +416,7 @@ class TestCoreFunctions:
     def test_check_syntax_none_tree(self):
         """check_syntax returns empty list when tree is None."""
         from roam.commands.cmd_syntax_check import check_syntax
+
         errors = check_syntax("test.py", b"content", None)
         assert errors == []
 

@@ -6,7 +6,6 @@ import math
 
 import networkx as nx
 
-
 # ---------------------------------------------------------------------------
 # Higher-is-better map for direction logic
 # ---------------------------------------------------------------------------
@@ -30,21 +29,21 @@ _HIGHER_IS_BETTER = {
 # Health score approximation
 # ---------------------------------------------------------------------------
 
+
 def _hf(value: float, scale: float) -> float:
     """Exponential decay helper for health scoring."""
     return math.exp(-value / scale) if scale > 0 else 1.0
 
 
-def _approx_health(tangle_ratio: float, god_count: int,
-                   bn_count: int, layer_violations: int) -> int:
+def _approx_health(tangle_ratio: float, god_count: int, bn_count: int, layer_violations: int) -> int:
     """Compute an approximate health score from graph-derived signals.
 
     Uses exponential decay (same family as metrics_history._compute_health_score)
     so that the *delta* between before/after is directionally accurate.
     """
-    t = _hf(tangle_ratio, 10)   # weight 0.30
-    g = _hf(god_count * 3, 5)   # weight 0.25
-    b = _hf(bn_count * 2, 4)    # weight 0.20
+    t = _hf(tangle_ratio, 10)  # weight 0.30
+    g = _hf(god_count * 3, 5)  # weight 0.25
+    b = _hf(bn_count * 2, 4)  # weight 0.20
     lv = _hf(layer_violations, 5)  # weight 0.25
 
     weights = [0.30, 0.25, 0.20, 0.25]
@@ -59,11 +58,12 @@ def _approx_health(tangle_ratio: float, god_count: int,
 # Metric computation
 # ---------------------------------------------------------------------------
 
+
 def compute_graph_metrics(G: nx.DiGraph) -> dict:
     """Compute all graph-derivable metrics on any DiGraph."""
-    from roam.graph.cycles import find_cycles, algebraic_connectivity, propagation_cost
+    from roam.graph.clusters import cluster_quality, detect_clusters
+    from roam.graph.cycles import algebraic_connectivity, find_cycles, propagation_cost
     from roam.graph.layers import detect_layers, find_violations
-    from roam.graph.clusters import detect_clusters, cluster_quality
 
     n = len(G)
     e = G.number_of_edges()
@@ -96,7 +96,7 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
     # Bottlenecks: nodes with betweenness > 90th percentile
     bn_count = 0
     if n > 2:
-        k = min(n, max(50, int(n ** 0.5 * 3)))
+        k = min(n, max(50, int(n**0.5 * 3)))
         bc = nx.betweenness_centrality(G, k=k)
         if bc:
             vals = sorted(bc.values())
@@ -123,6 +123,7 @@ def compute_graph_metrics(G: nx.DiGraph) -> dict:
 # ---------------------------------------------------------------------------
 # Metric delta
 # ---------------------------------------------------------------------------
+
 
 def metric_delta(before: dict, after: dict) -> dict:
     """Compute per-metric deltas with direction classification."""
@@ -162,6 +163,7 @@ def metric_delta(before: dict, after: dict) -> dict:
 # Graph cloning
 # ---------------------------------------------------------------------------
 
+
 def clone_graph(G: nx.DiGraph) -> nx.DiGraph:
     """Deep-copy a graph preserving all node/edge attributes."""
     return G.copy()
@@ -170,6 +172,7 @@ def clone_graph(G: nx.DiGraph) -> nx.DiGraph:
 # ---------------------------------------------------------------------------
 # Transform functions
 # ---------------------------------------------------------------------------
+
 
 def apply_move(G: nx.DiGraph, node_id: int, target_file: str) -> dict:
     """Move a symbol to a different file. Edges stay the same."""
@@ -255,6 +258,7 @@ def apply_delete(G: nx.DiGraph, node_ids: list[int]) -> dict:
 # Resolution helper
 # ---------------------------------------------------------------------------
 
+
 def resolve_target(G: nx.DiGraph, conn, target_str: str) -> tuple:
     """Resolve a CLI argument to node IDs in the graph.
 
@@ -270,18 +274,12 @@ def resolve_target(G: nx.DiGraph, conn, target_str: str) -> tuple:
 
     # Try file path match
     target_norm = target_str.replace("\\", "/")
-    file_nodes = [
-        nid for nid in G.nodes
-        if (G.nodes[nid].get("file_path") or "").replace("\\", "/") == target_norm
-    ]
+    file_nodes = [nid for nid in G.nodes if (G.nodes[nid].get("file_path") or "").replace("\\", "/") == target_norm]
     if file_nodes:
         return (file_nodes, target_str)
 
     # Try partial file path match
-    file_nodes = [
-        nid for nid in G.nodes
-        if target_norm in (G.nodes[nid].get("file_path") or "").replace("\\", "/")
-    ]
+    file_nodes = [nid for nid in G.nodes if target_norm in (G.nodes[nid].get("file_path") or "").replace("\\", "/")]
     if file_nodes:
         return (file_nodes, target_str)
 

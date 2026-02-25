@@ -125,18 +125,9 @@ def parse_coveragepy_json_report(path: Path) -> dict[str, dict[str, set[int]]]:
     for file_path, data in files.items():
         if not isinstance(data, dict):
             continue
-        executed = {
-            ln for ln in (_to_int(v) for v in data.get("executed_lines", []))
-            if ln is not None and ln > 0
-        }
-        missing = {
-            ln for ln in (_to_int(v) for v in data.get("missing_lines", []))
-            if ln is not None and ln > 0
-        }
-        excluded = {
-            ln for ln in (_to_int(v) for v in data.get("excluded_lines", []))
-            if ln is not None and ln > 0
-        }
+        executed = {ln for ln in (_to_int(v) for v in data.get("executed_lines", [])) if ln is not None and ln > 0}
+        missing = {ln for ln in (_to_int(v) for v in data.get("missing_lines", [])) if ln is not None and ln > 0}
+        excluded = {ln for ln in (_to_int(v) for v in data.get("excluded_lines", [])) if ln is not None and ln > 0}
 
         coverable = (executed | missing) - excluded
         if not coverable:
@@ -269,12 +260,8 @@ def _merge_mapping(
         if not norm:
             continue
         entry = merged.setdefault(norm, _new_cov_entry())
-        entry["coverable"].update(
-            ln for ln in data.get("coverable", set()) if isinstance(ln, int) and ln > 0
-        )
-        entry["covered"].update(
-            ln for ln in data.get("covered", set()) if isinstance(ln, int) and ln > 0
-        )
+        entry["coverable"].update(ln for ln in data.get("coverable", set()) if isinstance(ln, int) and ln > 0)
+        entry["covered"].update(ln for ln in data.get("covered", set()) if isinstance(ln, int) and ln > 0)
         # covered is always a subset of coverable
         entry["covered"].intersection_update(entry["coverable"])
 
@@ -339,14 +326,8 @@ def ingest_coverage_reports(
         bucket["covered"].intersection_update(bucket["coverable"])
 
     if replace_existing:
-        conn.execute(
-            "UPDATE file_stats "
-            "SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL"
-        )
-        conn.execute(
-            "UPDATE symbol_metrics "
-            "SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL"
-        )
+        conn.execute("UPDATE file_stats SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL")
+        conn.execute("UPDATE symbol_metrics SET coverage_pct = NULL, covered_lines = NULL, coverable_lines = NULL")
 
     file_rows_updated = 0
     symbol_rows_updated = 0
@@ -381,8 +362,7 @@ def ingest_coverage_reports(
         cov_sorted = sorted(coverable)
         covered_sorted = sorted(covered)
         sym_rows = conn.execute(
-            "SELECT id, line_start, line_end FROM symbols "
-            "WHERE file_id = ? AND line_start IS NOT NULL",
+            "SELECT id, line_start, line_end FROM symbols WHERE file_id = ? AND line_start IS NOT NULL",
             (fid,),
         ).fetchall()
 

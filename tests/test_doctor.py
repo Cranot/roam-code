@@ -8,14 +8,11 @@ import shutil
 import sqlite3
 import sys
 import time
-from pathlib import Path
 from unittest.mock import patch
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-
 
 # ---------------------------------------------------------------------------
 # Helpers
@@ -140,6 +137,7 @@ class TestDoctorPythonCheck:
 
     def test_python_check_fails_old_version(self):
         from roam.commands.cmd_doctor import _check_python_version
+
         fake_vi = type("VI", (), {"major": 3, "minor": 8, "micro": 10})()
         with patch.object(sys, "version_info", fake_vi):
             check = _check_python_version()
@@ -147,6 +145,7 @@ class TestDoctorPythonCheck:
 
     def test_python_check_passes_39(self):
         from roam.commands.cmd_doctor import _check_python_version
+
         fake_vi = type("VI", (), {"major": 3, "minor": 9, "micro": 0})()
         with patch.object(sys, "version_info", fake_vi):
             check = _check_python_version()
@@ -154,6 +153,7 @@ class TestDoctorPythonCheck:
 
     def test_python_check_passes_310(self):
         from roam.commands.cmd_doctor import _check_python_version
+
         fake_vi = type("VI", (), {"major": 3, "minor": 10, "micro": 5})()
         with patch.object(sys, "version_info", fake_vi):
             check = _check_python_version()
@@ -178,8 +178,10 @@ class TestDoctorTreeSitterChecks:
         assert "tree-sitter" in check["detail"]
 
     def test_tree_sitter_check_fails_on_import_error(self):
-        from roam.commands.cmd_doctor import _check_tree_sitter
         import builtins
+
+        from roam.commands.cmd_doctor import _check_tree_sitter
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -198,8 +200,10 @@ class TestDoctorTreeSitterChecks:
         assert check["passed"] is True
 
     def test_tree_sitter_language_pack_fails_on_import_error(self):
-        from roam.commands.cmd_doctor import _check_tree_sitter_language_pack
         import builtins
+
+        from roam.commands.cmd_doctor import _check_tree_sitter_language_pack
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -234,6 +238,7 @@ class TestDoctorGitCheck:
 
     def test_git_check_fails_when_not_on_path(self):
         from roam.commands.cmd_doctor import _check_git
+
         with patch("shutil.which", return_value=None):
             check = _check_git()
         assert check["passed"] is False
@@ -241,8 +246,8 @@ class TestDoctorGitCheck:
 
     def test_git_check_passes_when_on_path(self):
         from roam.commands.cmd_doctor import _check_git
+
         with patch("shutil.which", return_value="/usr/bin/git"):
-            import subprocess
             fake_result = type("R", (), {"returncode": 0, "stdout": "git version 2.43.0\n"})()
             with patch("subprocess.run", return_value=fake_result):
                 check = _check_git()
@@ -268,8 +273,10 @@ class TestDoctorNetworkxCheck:
         assert "networkx" in check["detail"]
 
     def test_networkx_check_fails_on_import_error(self):
-        from roam.commands.cmd_doctor import _check_networkx
         import builtins
+
+        from roam.commands.cmd_doctor import _check_networkx
+
         real_import = builtins.__import__
 
         def mock_import(name, *args, **kwargs):
@@ -295,6 +302,7 @@ class TestDoctorIndexExistsCheck:
 
     def test_index_check_passes_when_db_exists(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_exists
+
         db_path = tmp_path / ".roam" / "index.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db_path.touch()
@@ -310,6 +318,7 @@ class TestDoctorIndexExistsCheck:
 
     def test_index_check_fails_when_db_missing(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_exists
+
         missing_path = tmp_path / ".roam" / "index.db"
         # Ensure it doesn't exist
         assert not missing_path.exists()
@@ -321,6 +330,7 @@ class TestDoctorIndexExistsCheck:
 
     def test_index_check_includes_path_on_pass(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_exists
+
         db_path = tmp_path / ".roam" / "index.db"
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db_path.touch()
@@ -339,12 +349,14 @@ class TestDoctorIndexExistsCheck:
 class TestDoctorIndexFreshnessCheck:
     def test_freshness_check_none_db_path(self):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         check = _check_index_freshness(None)
         assert check["passed"] is False
         assert "roam init" in check["detail"]
 
     def test_freshness_check_fresh_db(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         # mtime is now — should be fresh
@@ -354,6 +366,7 @@ class TestDoctorIndexFreshnessCheck:
 
     def test_freshness_check_stale_db(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         # Set mtime to 25 hours ago
@@ -366,6 +379,7 @@ class TestDoctorIndexFreshnessCheck:
 
     def test_freshness_check_24h_boundary_fresh(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         # 23 hours old — still fresh
@@ -376,6 +390,7 @@ class TestDoctorIndexFreshnessCheck:
 
     def test_freshness_check_includes_age(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         check = _check_index_freshness(str(db_path))
@@ -384,12 +399,14 @@ class TestDoctorIndexFreshnessCheck:
 
     def test_freshness_check_missing_file(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         missing = str(tmp_path / "nonexistent.db")
         check = _check_index_freshness(missing)
         assert check["passed"] is False
 
     def test_freshness_age_display_seconds(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         # Very fresh — seconds ago
@@ -398,6 +415,7 @@ class TestDoctorIndexFreshnessCheck:
 
     def test_freshness_age_display_days(self, tmp_path):
         from roam.commands.cmd_doctor import _check_index_freshness
+
         db_path = tmp_path / "index.db"
         db_path.touch()
         two_days_ago = time.time() - (49 * 3600)
@@ -414,17 +432,20 @@ class TestDoctorIndexFreshnessCheck:
 class TestDoctorSQLiteCheck:
     def test_sqlite_check_none_db_path(self):
         from roam.commands.cmd_doctor import _check_sqlite
+
         check = _check_sqlite(None)
         assert check["passed"] is False
 
     def test_sqlite_check_missing_file(self, tmp_path):
         from roam.commands.cmd_doctor import _check_sqlite
+
         missing = str(tmp_path / "nonexistent.db")
         check = _check_sqlite(missing)
         assert check["passed"] is False
 
     def test_sqlite_check_valid_db(self, tmp_path):
         from roam.commands.cmd_doctor import _check_sqlite
+
         db_path = tmp_path / "test.db"
         # Create a valid SQLite database
         conn = sqlite3.connect(str(db_path))
@@ -436,6 +457,7 @@ class TestDoctorSQLiteCheck:
 
     def test_sqlite_check_corrupted_db(self, tmp_path):
         from roam.commands.cmd_doctor import _check_sqlite
+
         db_path = tmp_path / "corrupt.db"
         # Write garbage bytes to simulate a corrupted DB
         db_path.write_bytes(b"this is not a valid sqlite database!!!")
@@ -460,7 +482,7 @@ class TestDoctorExitCodes:
 
     def test_exit_1_when_check_fails(self, tmp_path):
         """When a check fails, exit code must be 1."""
-        from roam.commands.cmd_doctor import doctor
+
         runner = CliRunner()
         # Force a failure by making git unavailable
         with patch("shutil.which", return_value=None):

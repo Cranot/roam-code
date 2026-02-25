@@ -16,7 +16,6 @@ from collections import defaultdict
 
 import networkx as nx
 
-
 _MIN_PARTITION_SIZE = 5
 _GAP_STOP_THRESHOLD = 1e-6
 _HIGH_GAP = 0.5
@@ -245,16 +244,9 @@ def adjusted_rand_index(labels_true: list, labels_pred: list) -> float:
     def _comb2(x):
         return x * (x - 1) // 2
 
-    sum_comb = sum(
-        _comb2(contingency[i][j])
-        for i in range(len(classes))
-        for j in range(len(clusters))
-    )
+    sum_comb = sum(_comb2(contingency[i][j]) for i in range(len(classes)) for j in range(len(clusters)))
     row_sums = [sum(contingency[i]) for i in range(len(classes))]
-    col_sums = [
-        sum(contingency[i][j] for i in range(len(classes)))
-        for j in range(len(clusters))
-    ]
+    col_sums = [sum(contingency[i][j] for i in range(len(classes))) for j in range(len(clusters))]
     sum_row_comb = sum(_comb2(r) for r in row_sums)
     sum_col_comb = sum(_comb2(c) for c in col_sums)
     comb_n = _comb2(n)

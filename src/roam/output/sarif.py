@@ -19,10 +19,7 @@ import json as _json
 from pathlib import Path
 
 _SARIF_VERSION = "2.1.0"
-_SARIF_SCHEMA = (
-    "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/"
-    "main/sarif-2.1/schema/sarif-schema-2.1.0.json"
-)
+_SARIF_SCHEMA = "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/main/sarif-2.1/schema/sarif-schema-2.1.0.json"
 _TOOL_NAME = "roam-code"
 _HELP_BASE = "https://github.com/AbanteAI/roam-code#"
 
@@ -30,6 +27,7 @@ _HELP_BASE = "https://github.com/AbanteAI/roam-code#"
 def _get_version() -> str:
     """Return roam-code version string."""
     from roam import __version__
+
     return __version__
 
 
@@ -37,11 +35,11 @@ def _get_version() -> str:
 
 _LEVEL_MAP = {
     "CRITICAL": "error",
-    "HIGH":     "warning",
-    "WARNING":  "warning",
-    "MEDIUM":   "note",
-    "LOW":      "note",
-    "INFO":     "note",
+    "HIGH": "warning",
+    "WARNING": "warning",
+    "MEDIUM": "note",
+    "LOW": "note",
+    "INFO": "note",
 }
 
 
@@ -51,6 +49,7 @@ def _to_level(severity: str) -> str:
 
 
 # ── Location helpers ─────────────────────────────────────────────────
+
 
 def _physical_location(file_path: str, line: int | None = None) -> dict:
     """Build a SARIF physicalLocation object.
@@ -87,6 +86,7 @@ def _parse_loc_string(loc_str: str) -> tuple[str, int | None]:
 
 
 # ── Core builder ─────────────────────────────────────────────────────
+
 
 def to_sarif(
     tool_name: str,
@@ -128,9 +128,7 @@ def to_sarif(
     driver: dict = {
         "name": tool_name,
         "version": version,
-        "rules": [
-            _build_rule(r) for r in rules
-        ],
+        "rules": [_build_rule(r) for r in rules],
     }
 
     return {
@@ -162,6 +160,7 @@ def _build_rule(rule: dict) -> dict:
 
 # ── Write / serialise ────────────────────────────────────────────────
 
+
 def write_sarif(data: dict, output_path: str | Path | None = None) -> str:
     """Serialise *data* to JSON and optionally write it to *output_path*.
 
@@ -174,6 +173,7 @@ def write_sarif(data: dict, output_path: str | Path | None = None) -> str:
 
 
 # ── Fitness violations ───────────────────────────────────────────────
+
 
 def fitness_to_sarif(violations: list[dict]) -> dict:
     """Convert fitness-rule violations to SARIF.
@@ -204,12 +204,14 @@ def fitness_to_sarif(violations: list[dict]) -> dict:
             fpath, line = _parse_loc_string(src)
             locations.append(_location(fpath, line))
 
-        results.append({
-            "ruleId": rule_id,
-            "level": "warning",
-            "message": {"text": v.get("message", "Fitness rule violation")},
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": "warning",
+                "message": {"text": v.get("message", "Fitness rule violation")},
+                "locations": locations,
+            }
+        )
 
     return to_sarif(
         _TOOL_NAME,
@@ -220,6 +222,7 @@ def fitness_to_sarif(violations: list[dict]) -> dict:
 
 
 # ── Dead code ────────────────────────────────────────────────────────
+
 
 def dead_to_sarif(dead_exports: list[dict]) -> dict:
     """Convert dead-code findings to SARIF.
@@ -232,12 +235,14 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
     - ``action`` (str, optional): ``"SAFE"`` / ``"REVIEW"`` / ``"INTENTIONAL"``
     """
     rule_id = "dead-code/unreferenced-export"
-    rules = [{
-        "id": rule_id,
-        "shortDescription": "Exported symbol has no references",
-        "helpUri": _HELP_BASE + "dead",
-        "defaultLevel": "warning",
-    }]
+    rules = [
+        {
+            "id": rule_id,
+            "shortDescription": "Exported symbol has no references",
+            "helpUri": _HELP_BASE + "dead",
+            "defaultLevel": "warning",
+        }
+    ]
 
     results: list[dict] = []
     for item in dead_exports:
@@ -252,22 +257,22 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
         if fpath:
             locations.append(_location(fpath, line))
 
-        results.append({
-            "ruleId": rule_id,
-            "level": level,
-            "message": {
-                "text": (
-                    f"Unreferenced export: {item.get('kind', '?')} "
-                    f"'{item.get('name', '?')}' ({action})"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": level,
+                "message": {
+                    "text": (f"Unreferenced export: {item.get('kind', '?')} '{item.get('name', '?')}' ({action})"),
+                },
+                "locations": locations,
+            }
+        )
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # ── Complexity ───────────────────────────────────────────────────────
+
 
 def complexity_to_sarif(
     complex_symbols: list[dict],
@@ -285,14 +290,14 @@ def complexity_to_sarif(
     - ``severity`` (str, optional): ``"CRITICAL"`` / ``"HIGH"`` / ``"MEDIUM"`` / ``"LOW"``
     """
     rule_id = "complexity/cognitive-complexity"
-    rules = [{
-        "id": rule_id,
-        "shortDescription": (
-            f"Cognitive complexity exceeds threshold ({threshold})"
-        ),
-        "helpUri": _HELP_BASE + "complexity",
-        "defaultLevel": "warning",
-    }]
+    rules = [
+        {
+            "id": rule_id,
+            "shortDescription": (f"Cognitive complexity exceeds threshold ({threshold})"),
+            "helpUri": _HELP_BASE + "complexity",
+            "defaultLevel": "warning",
+        }
+    ]
 
     results: list[dict] = []
     for sym in complex_symbols:
@@ -309,23 +314,26 @@ def complexity_to_sarif(
         if fpath:
             locations.append(_location(fpath, line))
 
-        results.append({
-            "ruleId": rule_id,
-            "level": level,
-            "message": {
-                "text": (
-                    f"{sym.get('kind', '?')} '{sym.get('name', '?')}' "
-                    f"has cognitive complexity {score:.0f} "
-                    f"(threshold {threshold})"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": level,
+                "message": {
+                    "text": (
+                        f"{sym.get('kind', '?')} '{sym.get('name', '?')}' "
+                        f"has cognitive complexity {score:.0f} "
+                        f"(threshold {threshold})"
+                    ),
+                },
+                "locations": locations,
+            }
+        )
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # ── Naming conventions ───────────────────────────────────────────────
+
 
 def conventions_to_sarif(violations: list[dict]) -> dict:
     """Convert naming-convention violations (outliers) to SARIF.
@@ -340,12 +348,14 @@ def conventions_to_sarif(violations: list[dict]) -> dict:
     - ``line`` (int | None): line number
     """
     rule_id = "conventions/naming-style"
-    rules = [{
-        "id": rule_id,
-        "shortDescription": "Symbol name does not match codebase naming convention",
-        "helpUri": _HELP_BASE + "conventions",
-        "defaultLevel": "note",
-    }]
+    rules = [
+        {
+            "id": rule_id,
+            "shortDescription": "Symbol name does not match codebase naming convention",
+            "helpUri": _HELP_BASE + "conventions",
+            "defaultLevel": "note",
+        }
+    ]
 
     results: list[dict] = []
     for v in violations:
@@ -356,23 +366,26 @@ def conventions_to_sarif(violations: list[dict]) -> dict:
         if fpath:
             locations.append(_location(fpath, line))
 
-        results.append({
-            "ruleId": rule_id,
-            "level": "note",
-            "message": {
-                "text": (
-                    f"{v.get('kind', '?')} '{v.get('name', '?')}' "
-                    f"uses {v.get('actual_style', '?')} "
-                    f"(expected {v.get('expected_style', '?')})"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": "note",
+                "message": {
+                    "text": (
+                        f"{v.get('kind', '?')} '{v.get('name', '?')}' "
+                        f"uses {v.get('actual_style', '?')} "
+                        f"(expected {v.get('expected_style', '?')})"
+                    ),
+                },
+                "locations": locations,
+            }
+        )
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # ── Breaking changes ─────────────────────────────────────────────────
+
 
 def breaking_to_sarif(changes: dict) -> dict:
     """Convert breaking-change analysis to SARIF.
@@ -414,17 +427,16 @@ def breaking_to_sarif(changes: dict) -> dict:
         locations = []
         if fpath:
             locations.append(_location(fpath, line))
-        results.append({
-            "ruleId": "breaking/removed-export",
-            "level": "error",
-            "message": {
-                "text": (
-                    f"Removed exported {item.get('kind', '?')} "
-                    f"'{item.get('name', '?')}'"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "breaking/removed-export",
+                "level": "error",
+                "message": {
+                    "text": (f"Removed exported {item.get('kind', '?')} '{item.get('name', '?')}'"),
+                },
+                "locations": locations,
+            }
+        )
 
     for item in changes.get("signature_changed", []):
         fpath = item.get("file", "")
@@ -432,17 +444,16 @@ def breaking_to_sarif(changes: dict) -> dict:
         locations = []
         if fpath:
             locations.append(_location(fpath, line))
-        results.append({
-            "ruleId": "breaking/signature-changed",
-            "level": "warning",
-            "message": {
-                "text": (
-                    f"Signature changed for {item.get('kind', '?')} "
-                    f"'{item.get('name', '?')}'"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "breaking/signature-changed",
+                "level": "warning",
+                "message": {
+                    "text": (f"Signature changed for {item.get('kind', '?')} '{item.get('name', '?')}'"),
+                },
+                "locations": locations,
+            }
+        )
 
     for item in changes.get("renamed", []):
         fpath = item.get("file", "")
@@ -450,23 +461,26 @@ def breaking_to_sarif(changes: dict) -> dict:
         locations = []
         if fpath:
             locations.append(_location(fpath, line))
-        results.append({
-            "ruleId": "breaking/renamed",
-            "level": "warning",
-            "message": {
-                "text": (
-                    f"Renamed {item.get('kind', '?')} "
-                    f"'{item.get('old_name', '?')}' -> "
-                    f"'{item.get('new_name', '?')}'"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "breaking/renamed",
+                "level": "warning",
+                "message": {
+                    "text": (
+                        f"Renamed {item.get('kind', '?')} "
+                        f"'{item.get('old_name', '?')}' -> "
+                        f"'{item.get('new_name', '?')}'"
+                    ),
+                },
+                "locations": locations,
+            }
+        )
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # ── Health issues ────────────────────────────────────────────────────
+
 
 def health_to_sarif(issues: dict) -> dict:
     """Convert health-check results to SARIF.
@@ -524,17 +538,16 @@ def health_to_sarif(issues: dict) -> dict:
         # Attach locations for every file in the cycle
         locations = [_location(f, None) for f in files]
 
-        results.append({
-            "ruleId": "health/cycle",
-            "level": level,
-            "message": {
-                "text": (
-                    f"Dependency cycle of {cyc.get('size', '?')} symbols: "
-                    f"{symbol_names}"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "health/cycle",
+                "level": level,
+                "message": {
+                    "text": (f"Dependency cycle of {cyc.get('size', '?')} symbols: {symbol_names}"),
+                },
+                "locations": locations,
+            }
+        )
 
     # God components
     for g in issues.get("god_components", []):
@@ -545,18 +558,18 @@ def health_to_sarif(issues: dict) -> dict:
         if fpath:
             locations.append(_location(fpath, None))
 
-        results.append({
-            "ruleId": "health/god-component",
-            "level": level,
-            "message": {
-                "text": (
-                    f"God component: {g.get('kind', '?')} "
-                    f"'{g.get('name', '?')}' "
-                    f"(degree {g.get('degree', '?')})"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "health/god-component",
+                "level": level,
+                "message": {
+                    "text": (
+                        f"God component: {g.get('kind', '?')} '{g.get('name', '?')}' (degree {g.get('degree', '?')})"
+                    ),
+                },
+                "locations": locations,
+            }
+        )
 
     # Bottlenecks
     for b in issues.get("bottlenecks", []):
@@ -567,42 +580,47 @@ def health_to_sarif(issues: dict) -> dict:
         if fpath:
             locations.append(_location(fpath, None))
 
-        results.append({
-            "ruleId": "health/bottleneck",
-            "level": level,
-            "message": {
-                "text": (
-                    f"Bottleneck: {b.get('kind', '?')} "
-                    f"'{b.get('name', '?')}' "
-                    f"(betweenness {b.get('betweenness', '?')})"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": "health/bottleneck",
+                "level": level,
+                "message": {
+                    "text": (
+                        f"Bottleneck: {b.get('kind', '?')} "
+                        f"'{b.get('name', '?')}' "
+                        f"(betweenness {b.get('betweenness', '?')})"
+                    ),
+                },
+                "locations": locations,
+            }
+        )
 
     # Layer violations
     for v in issues.get("layer_violations", []):
         severity = v.get("severity", "WARNING")
         level = _to_level(severity)
 
-        results.append({
-            "ruleId": "health/layer-violation",
-            "level": level,
-            "message": {
-                "text": (
-                    f"Layer violation: {v.get('source', '?')} "
-                    f"(L{v.get('source_layer', '?')}) -> "
-                    f"{v.get('target', '?')} "
-                    f"(L{v.get('target_layer', '?')})"
-                ),
-            },
-            "locations": [],
-        })
+        results.append(
+            {
+                "ruleId": "health/layer-violation",
+                "level": level,
+                "message": {
+                    "text": (
+                        f"Layer violation: {v.get('source', '?')} "
+                        f"(L{v.get('source_layer', '?')}) -> "
+                        f"{v.get('target', '?')} "
+                        f"(L{v.get('target_layer', '?')})"
+                    ),
+                },
+                "locations": [],
+            }
+        )
 
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
 # ── Rules violations ─────────────────────────────────────────────────
+
 
 def rules_to_sarif(rule_results: list[dict]) -> dict:
     """Convert custom governance rule results to SARIF.
@@ -649,12 +667,14 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
             if reason:
                 msg += f" - {reason}"
 
-            results.append({
-                "ruleId": rule_id,
-                "level": _to_level(severity.upper()),
-                "message": {"text": msg},
-                "locations": locations,
-            })
+            results.append(
+                {
+                    "ruleId": rule_id,
+                    "level": _to_level(severity.upper()),
+                    "message": {"text": msg},
+                    "locations": locations,
+                }
+            )
 
     return to_sarif(
         _TOOL_NAME,
@@ -665,6 +685,7 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
 
 
 # ── Secret scanning ──────────────────────────────────────────────────
+
 
 def secrets_to_sarif(findings: list[dict]) -> dict:
     """Convert secret-scanning findings to SARIF.
@@ -700,16 +721,16 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
             locations.append(_location(fpath, line))
 
         matched = f.get("matched_text", "")
-        results.append({
-            "ruleId": rule_id,
-            "level": _to_level(severity.upper()),
-            "message": {
-                "text": (
-                    f"Hardcoded {pattern_name} detected: {matched}"
-                ),
-            },
-            "locations": locations,
-        })
+        results.append(
+            {
+                "ruleId": rule_id,
+                "level": _to_level(severity.upper()),
+                "message": {
+                    "text": (f"Hardcoded {pattern_name} detected: {matched}"),
+                },
+                "locations": locations,
+            }
+        )
 
     return to_sarif(
         _TOOL_NAME,
@@ -720,6 +741,7 @@ def secrets_to_sarif(findings: list[dict]) -> dict:
 
 
 # ── Algorithmic findings ─────────────────────────────────────────────
+
 
 def algo_to_sarif(
     findings: list[dict],
@@ -790,23 +812,31 @@ def algo_to_sarif(
                 }
                 for step in evidence_path
             ]
-            result["codeFlows"] = [{
-                "threadFlows": [{"locations": flow_locations}],
-            }]
+            result["codeFlows"] = [
+                {
+                    "threadFlows": [{"locations": flow_locations}],
+                }
+            ]
 
         fix = f.get("fix", "")
         if fix and fpath:
             start_line = line if isinstance(line, int) and line > 0 else 1
-            result["fixes"] = [{
-                "description": {"text": "Suggested refactor template"},
-                "artifactChanges": [{
-                    "artifactLocation": {"uri": fpath.replace("\\", "/")},
-                    "replacements": [{
-                        "deletedRegion": {"startLine": start_line},
-                        "insertedContent": {"text": fix},
-                    }],
-                }],
-            }]
+            result["fixes"] = [
+                {
+                    "description": {"text": "Suggested refactor template"},
+                    "artifactChanges": [
+                        {
+                            "artifactLocation": {"uri": fpath.replace("\\", "/")},
+                            "replacements": [
+                                {
+                                    "deletedRegion": {"startLine": start_line},
+                                    "insertedContent": {"text": fix},
+                                }
+                            ],
+                        }
+                    ],
+                }
+            ]
 
         results.append(result)
 
@@ -833,30 +863,32 @@ def _algo_level(confidence: str) -> str:
 def _algo_message(finding: dict) -> str:
     msg = finding.get("reason", "Algorithmic improvement opportunity")
     if finding.get("suggested_way"):
-        msg += (
-            f" Suggestion: use '{finding.get('suggested_way')}' "
-            f"instead of '{finding.get('detected_way')}'."
-        )
+        msg += f" Suggestion: use '{finding.get('suggested_way')}' instead of '{finding.get('detected_way')}'."
     return msg
 
 
 def _finding_fingerprint(finding: dict) -> str:
-    payload = "|".join([
-        str(finding.get("task_id", "")),
-        str(finding.get("detected_way", "")),
-        str(finding.get("suggested_way", "")),
-        str(finding.get("symbol_name", "")),
-        str(finding.get("location", "")),
-    ])
+    payload = "|".join(
+        [
+            str(finding.get("task_id", "")),
+            str(finding.get("detected_way", "")),
+            str(finding.get("suggested_way", "")),
+            str(finding.get("symbol_name", "")),
+            str(finding.get("location", "")),
+        ]
+    )
     return _hashlib.sha1(payload.encode("utf-8")).hexdigest()
 
 
 def _primary_location_line_hash(finding: dict) -> str:
-    payload = "|".join([
-        str(finding.get("task_id", "")),
-        str(finding.get("location", "")),
-    ])
+    payload = "|".join(
+        [
+            str(finding.get("task_id", "")),
+            str(finding.get("location", "")),
+        ]
+    )
     return _hashlib.sha1(payload.encode("utf-8")).hexdigest()
+
 
 def _slugify(text: str) -> str:
     """Turn a human-readable name into a URL/ID-safe slug."""

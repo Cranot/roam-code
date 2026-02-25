@@ -59,9 +59,9 @@ def _write_test_plugin(tmp_path: Path, module_name: str = "roam_test_plugin") ->
 
 
 def _reset_plugin_runtime():
-    import roam.plugins as plugins
-    import roam.languages.registry as registry
     import roam.cli as cli_mod
+    import roam.languages.registry as registry
+    import roam.plugins as plugins
 
     plugins._reset_plugin_state_for_tests()
     registry._create_extractor.cache_clear()

@@ -1,4 +1,5 @@
 """Find controller endpoints and routes missing authentication or authorization checks."""
+
 from __future__ import annotations
 
 import os
@@ -6,10 +7,9 @@ import re
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Skip patterns — controllers / routes that are intentionally public
@@ -131,6 +131,7 @@ _RE_PROVIDER_ROUTE_MIDDLEWARE = re.compile(
 # Source reading helpers
 # ---------------------------------------------------------------------------
 
+
 def _read_source(file_path: str) -> str | None:
     """Read source file as text, returning None on failure."""
     try:
@@ -183,6 +184,7 @@ def _count_braces(line: str) -> tuple[int, int]:
 # ---------------------------------------------------------------------------
 # Route file analysis
 # ---------------------------------------------------------------------------
+
 
 def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[str]]:
     """Parse a routes file and return routes outside an auth middleware group.
@@ -237,14 +239,15 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
         # --- Multi-line middleware accumulation ---
         if middleware_accumulator is not None:
             middleware_accumulator.append(line)
-            if re.search(r'\]\s*\)\s*->\s*group\s*\(', line) or \
-               re.search(r'->\s*group\s*\(', line):
+            if re.search(r"\]\s*\)\s*->\s*group\s*\(", line) or re.search(r"->\s*group\s*\(", line):
                 accumulated = "\n".join(middleware_accumulator)
-                has_auth = bool(re.search(
-                    r"""['"]auth(?::sanctum)?['"]""",
-                    accumulated,
-                    re.IGNORECASE,
-                ))
+                has_auth = bool(
+                    re.search(
+                        r"""['"]auth(?::sanctum)?['"]""",
+                        accumulated,
+                        re.IGNORECASE,
+                    )
+                )
                 middleware_accumulator = None
                 _process_closes(closes)
                 auth_depth_stack.append((brace_depth, has_auth))
@@ -256,8 +259,9 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
             continue
 
         # --- Check for multi-line middleware start ---
-        if re.search(r'Route\s*::\s*middleware\s*\(\s*\[', line, re.IGNORECASE) and \
-           not re.search(r'->\s*group\s*\(', line):
+        if re.search(r"Route\s*::\s*middleware\s*\(\s*\[", line, re.IGNORECASE) and not re.search(
+            r"->\s*group\s*\(", line
+        ):
             middleware_accumulator = [line]
             _process_closes(closes)
             brace_depth += opens
@@ -271,8 +275,14 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
             continue
 
         # --- Single-line: non-auth group (prefix/name/domain) ---
-        if (re.search(r"Route\s*::\s*(?:prefix|name|domain)\s*\([^)]*\)\s*->\s*group\s*\(", line, re.IGNORECASE) or
-                re.search(r"Route\s*::\s*group\s*\(", line, re.IGNORECASE)) and opens > closes:
+        if (
+            re.search(
+                r"Route\s*::\s*(?:prefix|name|domain)\s*\([^)]*\)\s*->\s*group\s*\(",
+                line,
+                re.IGNORECASE,
+            )
+            or re.search(r"Route\s*::\s*group\s*\(", line, re.IGNORECASE)
+        ) and opens > closes:
             _process_closes(closes)
             auth_depth_stack.append((brace_depth, False))
             brace_depth += opens
@@ -316,15 +326,17 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
         if _ROUTE_AUTH_MIDDLEWARE_RE.search(line):
             continue
 
-        findings.append({
-            "type": "route",
-            "confidence": "high",
-            "verb": verb,
-            "path": path_str,
-            "file": file_path,
-            "line": lineno,
-            "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
-        })
+        findings.append(
+            {
+                "type": "route",
+                "confidence": "high",
+                "verb": verb,
+                "path": path_str,
+                "file": file_path,
+                "line": lineno,
+                "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
+            }
+        )
 
     return findings, protected_controllers
 
@@ -332,6 +344,7 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
 # ---------------------------------------------------------------------------
 # Controller file analysis
 # ---------------------------------------------------------------------------
+
 
 def _extract_method_bodies(source: str) -> list[dict]:
     """Extract public method name and body from PHP controller source.
@@ -367,11 +380,13 @@ def _extract_method_bodies(source: str) -> list[dict]:
                     break
                 j += 1
 
-            methods.append({
-                "name": method_name,
-                "start_line": start_line,
-                "body": "\n".join(body_lines),
-            })
+            methods.append(
+                {
+                    "name": method_name,
+                    "start_line": start_line,
+                    "body": "\n".join(body_lines),
+                }
+            )
             i = j + 1
         else:
             i += 1
@@ -405,10 +420,7 @@ def _analyze_controller_file(
         return []
 
     class_name = _controller_class_name(base)
-    is_route_protected = (
-        route_protected_controllers is not None
-        and class_name in route_protected_controllers
-    )
+    is_route_protected = route_protected_controllers is not None and class_name in route_protected_controllers
 
     findings = []
 
@@ -459,16 +471,18 @@ def _analyze_controller_file(
             reason = "Read method without authorization (may be intentionally public)"
             fix = "Add $this->authorize('view', $model) if access should be restricted"
 
-        findings.append({
-            "type": "controller",
-            "confidence": confidence,
-            "controller": class_name,
-            "method": name,
-            "file": file_path,
-            "line": line,
-            "reason": reason,
-            "fix": fix,
-        })
+        findings.append(
+            {
+                "type": "controller",
+                "confidence": confidence,
+                "controller": class_name,
+                "method": name,
+                "file": file_path,
+                "line": line,
+                "reason": reason,
+                "fix": fix,
+            }
+        )
 
     return findings
 
@@ -481,6 +495,7 @@ def _controller_class_name(basename: str) -> str:
 # ---------------------------------------------------------------------------
 # DB queries
 # ---------------------------------------------------------------------------
+
 
 def _find_route_files(conn) -> list[str]:
     """Return file paths for route definition files from the index."""
@@ -544,7 +559,7 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
         opens, closes = _count_braces(line)
 
         # Check for auth middleware group opener
-        if _RE_PROVIDER_ROUTE_MIDDLEWARE.search(line) and re.search(r'->\s*group\s*\(', line):
+        if _RE_PROVIDER_ROUTE_MIDDLEWARE.search(line) and re.search(r"->\s*group\s*\(", line):
             # Process closes first
             for _ in range(closes):
                 brace_depth -= 1
@@ -582,16 +597,29 @@ def _analyze_service_provider(file_path: str, source: str) -> set[str]:
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("auth-gaps")
 @click.option("--limit", "-n", default=50, show_default=True, help="Max findings to display")
-@click.option("--routes-only", "routes_only", is_flag=True,
-              help="Only check route files, skip controller analysis")
-@click.option("--controllers-only", "controllers_only", is_flag=True,
-              help="Only check controller files, skip route analysis")
-@click.option("--min-confidence", "min_confidence",
-              type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-              default="low", show_default=True,
-              help="Minimum confidence level to report")
+@click.option(
+    "--routes-only",
+    "routes_only",
+    is_flag=True,
+    help="Only check route files, skip controller analysis",
+)
+@click.option(
+    "--controllers-only",
+    "controllers_only",
+    is_flag=True,
+    help="Only check controller files, skip route analysis",
+)
+@click.option(
+    "--min-confidence",
+    "min_confidence",
+    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
+    default="low",
+    show_default=True,
+    help="Minimum confidence level to report",
+)
 @click.pass_context
 def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
     """Find endpoints missing authentication or authorization checks.
@@ -655,23 +683,20 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
                 source = _read_source(abs_path)
                 if source is None:
                     continue
-                findings = _analyze_controller_file(
-                    abs_path, source, route_protected_controllers
-                )
+                findings = _analyze_controller_file(abs_path, source, route_protected_controllers)
                 all_findings.extend(findings)
 
     # Apply confidence filter
-    all_findings = [
-        f for f in all_findings
-        if _CONF_ORDER.get(f["confidence"], 99) <= min_conf_rank
-    ]
+    all_findings = [f for f in all_findings if _CONF_ORDER.get(f["confidence"], 99) <= min_conf_rank]
 
     # Sort: high first, then medium, then low; within tier by file
-    all_findings.sort(key=lambda f: (
-        _CONF_ORDER.get(f["confidence"], 99),
-        f["file"],
-        f.get("line", 0),
-    ))
+    all_findings.sort(
+        key=lambda f: (
+            _CONF_ORDER.get(f["confidence"], 99),
+            f["file"],
+            f.get("line", 0),
+        )
+    )
 
     # Counts by confidence
     n_high = sum(1 for f in all_findings if f["confidence"] == "high")
@@ -685,20 +710,24 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "auth-gaps",
-            summary={
-                "verdict": f"{total} auth gap(s) found",
-                "total": total,
-                "high": n_high,
-                "medium": n_medium,
-                "low": n_low,
-                "route_gaps": len(route_findings),
-                "controller_gaps": len(ctrl_findings),
-            },
-            route_gaps=route_findings[:limit],
-            controller_gaps=ctrl_findings[:limit],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "auth-gaps",
+                    summary={
+                        "verdict": f"{total} auth gap(s) found",
+                        "total": total,
+                        "high": n_high,
+                        "medium": n_medium,
+                        "low": n_low,
+                        "route_gaps": len(route_findings),
+                        "controller_gaps": len(ctrl_findings),
+                    },
+                    route_gaps=route_findings[:limit],
+                    controller_gaps=ctrl_findings[:limit],
+                )
+            )
+        )
         return
 
     # --- Text output ---
@@ -721,17 +750,21 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
         click.echo(f"Routes without auth middleware ({len(route_findings)}):")
         rows = []
         for f in route_findings[:limit]:
-            rows.append([
-                f"[{f['confidence']}]",
-                f"{f['verb']}  {f['path']}",
-                loc(f["file"], f["line"]),
-                f["fix"],
-            ])
-        click.echo(format_table(
-            ["Conf", "Route", "Location", "Fix"],
-            rows,
-            budget=limit,
-        ))
+            rows.append(
+                [
+                    f"[{f['confidence']}]",
+                    f"{f['verb']}  {f['path']}",
+                    loc(f["file"], f["line"]),
+                    f["fix"],
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Conf", "Route", "Location", "Fix"],
+                rows,
+                budget=limit,
+            )
+        )
         click.echo()
     else:
         click.echo("Routes without auth middleware: (none found)\n")
@@ -741,17 +774,21 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
         click.echo(f"Controllers without authorization ({len(ctrl_findings)}):")
         rows = []
         for f in ctrl_findings[:limit]:
-            rows.append([
-                f"[{f['confidence']}]",
-                f"{f['controller']}::{f['method']}",
-                loc(f["file"], f["line"]),
-                f["fix"],
-            ])
-        click.echo(format_table(
-            ["Conf", "Symbol", "Location", "Fix"],
-            rows,
-            budget=limit,
-        ))
+            rows.append(
+                [
+                    f"[{f['confidence']}]",
+                    f"{f['controller']}::{f['method']}",
+                    loc(f["file"], f["line"]),
+                    f["fix"],
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Conf", "Symbol", "Location", "Fix"],
+                rows,
+                budget=limit,
+            )
+        )
         click.echo()
     else:
         click.echo("Controllers without authorization: (none found)\n")

@@ -3,13 +3,12 @@
 from __future__ import annotations
 
 import subprocess
-from collections import defaultdict, Counter
+from collections import Counter, defaultdict
 from datetime import datetime, timezone
 
 import click
 
-from roam.output.formatter import format_table, to_json, json_envelope
-
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Statistical helpers
@@ -103,23 +102,18 @@ def detect_sessions(timestamps: list[int], gap_seconds: int = 1800) -> dict:
             current_session = [ts]
     sessions.append(current_session)
 
-    session_lengths = [
-        (s[-1] - s[0]) / 60.0 for s in sessions if len(s) > 1
-    ]
+    session_lengths = [(s[-1] - s[0]) / 60.0 for s in sessions if len(s) > 1]
     commits_per_session = [len(s) for s in sessions]
 
     return {
         "session_count": len(sessions),
         "avg_session_length_minutes": (
-            round(sum(session_lengths) / len(session_lengths), 1)
-            if session_lengths else 0.0
+            round(sum(session_lengths) / len(session_lengths), 1) if session_lengths else 0.0
         ),
-        "avg_commits_per_session": round(
-            sum(commits_per_session) / len(commits_per_session), 1
-        ) if commits_per_session else 0.0,
-        "max_session_length_minutes": (
-            round(max(session_lengths), 1) if session_lengths else 0.0
-        ),
+        "avg_commits_per_session": round(sum(commits_per_session) / len(commits_per_session), 1)
+        if commits_per_session
+        else 0.0,
+        "max_session_length_minutes": (round(max(session_lengths), 1) if session_lengths else 0.0),
     }
 
 
@@ -156,8 +150,8 @@ def risk_score(
     - Burst coding (rapid-fire commits without reflection)
     """
     score = 0.0
-    score += late_night_pct * 0.30   # 30% weight
-    score += weekend_pct * 0.20      # 20% weight
+    score += late_night_pct * 0.30  # 30% weight
+    score += weekend_pct * 0.20  # 20% weight
     score += scatter_gini * 100 * 0.30  # 30% weight
     # burst_score: 1.0 = normal, higher = more bursty; cap at 5x
     normalized_burst = min((burst_score - 1.0) / 4.0, 1.0) if burst_score > 1.0 else 0.0
@@ -175,7 +169,8 @@ def _run_git_log(days: int, root: str) -> str | None:
     try:
         result = subprocess.run(
             [
-                "git", "log",
+                "git",
+                "log",
                 "--format=%H|%ae|%aI|%s",
                 "--numstat",
                 f"--since={days} days ago",
@@ -282,10 +277,7 @@ def _top_dirs(files: list[str], top_n: int = 5) -> list[dict]:
         slash = f.find("/")
         top_dir = f[:slash] if slash != -1 else "."
         dir_counts[top_dir] += 1
-    return [
-        {"directory": d, "file_count": c}
-        for d, c in dir_counts.most_common(top_n)
-    ]
+    return [{"directory": d, "file_count": c} for d, c in dir_counts.most_common(top_n)]
 
 
 def build_author_profile(
@@ -315,15 +307,11 @@ def build_author_profile(
 
     # Late-night = 22:00-05:00 UTC
     late_night_commits = sum(hour_hist[h] for h in list(range(22, 24)) + list(range(0, 6)))
-    late_night_pct = round(
-        late_night_commits * 100 / len(timestamps) if timestamps else 0.0, 1
-    )
+    late_night_pct = round(late_night_commits * 100 / len(timestamps) if timestamps else 0.0, 1)
 
     # Weekend = Saturday (5) + Sunday (6)
     weekend_commits = day_hist[5] + day_hist[6]
-    weekend_pct = round(
-        weekend_commits * 100 / len(timestamps) if timestamps else 0.0, 1
-    )
+    weekend_pct = round(weekend_commits * 100 / len(timestamps) if timestamps else 0.0, 1)
 
     # Burst detection
     bursts = detect_bursts(timestamps)
@@ -335,9 +323,7 @@ def build_author_profile(
     top_directories = _top_dirs(all_files)
 
     # Average files per commit
-    files_per_commit = round(
-        sum(len(c["files"]) for c in commits) / len(commits), 1
-    )
+    files_per_commit = round(sum(len(c["files"]) for c in commits) / len(commits), 1)
 
     # Risk score
     rscore = risk_score(
@@ -401,9 +387,11 @@ def dev_profile(ctx, author, days, limit):
     # Find project root (best-effort)
     try:
         from roam.db.connection import find_project_root
+
         root = str(find_project_root())
     except Exception:
         import os
+
         root = os.getcwd()
 
     raw = _run_git_log(days, root)
@@ -411,11 +399,15 @@ def dev_profile(ctx, author, days, limit):
     if raw is None:
         verdict = "no git history found"
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "dev-profile",
-                summary={"verdict": verdict, "author_count": 0, "days": days},
-                profiles=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "dev-profile",
+                        summary={"verdict": verdict, "author_count": 0, "days": days},
+                        profiles=[],
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {verdict}")
         return
@@ -425,11 +417,15 @@ def dev_profile(ctx, author, days, limit):
     if not all_commits:
         verdict = f"no commits in the last {days} days"
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "dev-profile",
-                summary={"verdict": verdict, "author_count": 0, "days": days},
-                profiles=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "dev-profile",
+                        summary={"verdict": verdict, "author_count": 0, "days": days},
+                        profiles=[],
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {verdict}")
         return
@@ -442,19 +438,24 @@ def dev_profile(ctx, author, days, limit):
     # Filter to requested author if specified
     if author:
         author_lower = author.lower()
-        matching = {
-            email: commits
-            for email, commits in by_author.items()
-            if author_lower in email
-        }
+        matching = {email: commits for email, commits in by_author.items() if author_lower in email}
         if not matching:
             verdict = f"no commits found for author matching '{author}'"
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "dev-profile",
-                    summary={"verdict": verdict, "author_count": 0, "days": days, "filter": author},
-                    profiles=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "dev-profile",
+                            summary={
+                                "verdict": verdict,
+                                "author_count": 0,
+                                "days": days,
+                                "filter": author,
+                            },
+                            profiles=[],
+                        )
+                    )
+                )
                 return
             click.echo(f"VERDICT: {verdict}")
             return
@@ -462,9 +463,7 @@ def dev_profile(ctx, author, days, limit):
 
     # Build profiles
     profiles = []
-    for email, commits in sorted(
-        by_author.items(), key=lambda x: len(x[1]), reverse=True
-    )[:limit]:
+    for email, commits in sorted(by_author.items(), key=lambda x: len(x[1]), reverse=True)[:limit]:
         profile = build_author_profile(email, commits)
         profiles.append(profile)
 
@@ -482,31 +481,29 @@ def dev_profile(ctx, author, days, limit):
             f"{highest_risk['author']} is highest risk (score={highest_risk['risk_score']})"
         )
     elif authors_with_risk:
-        verdict = (
-            f"{len(profiles)} developer(s) profiled — "
-            f"{authors_with_risk} with elevated behavioral risk score"
-        )
+        verdict = f"{len(profiles)} developer(s) profiled — {authors_with_risk} with elevated behavioral risk score"
     else:
-        verdict = (
-            f"{len(profiles)} developer(s) profiled over {days} days — "
-            f"no elevated behavioral risk detected"
-        )
+        verdict = f"{len(profiles)} developer(s) profiled over {days} days — no elevated behavioral risk detected"
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "dev-profile",
-            summary={
-                "verdict": verdict,
-                "author_count": len(profiles),
-                "total_commits": total_commits,
-                "days": days,
-                "highest_risk_author": highest_risk["author"] if highest_risk else None,
-                "highest_risk_score": highest_risk["risk_score"] if highest_risk else 0,
-                "authors_with_elevated_risk": authors_with_risk,
-            },
-            profiles=profiles,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "dev-profile",
+                    summary={
+                        "verdict": verdict,
+                        "author_count": len(profiles),
+                        "total_commits": total_commits,
+                        "days": days,
+                        "highest_risk_author": highest_risk["author"] if highest_risk else None,
+                        "highest_risk_score": highest_risk["risk_score"] if highest_risk else 0,
+                        "authors_with_elevated_risk": authors_with_risk,
+                    },
+                    profiles=profiles,
+                )
+            )
+        )
         return
 
     # --- Text output ---
@@ -520,20 +517,33 @@ def dev_profile(ctx, author, days, limit):
         tbl_rows = []
         for p in profiles:
             indicators = "; ".join(p["risk_indicators"][:2]) if p["risk_indicators"] else "none"
-            tbl_rows.append([
-                p["author"],
-                str(p["commit_count"]),
-                f"{p['late_night_pct']}%",
-                f"{p['weekend_pct']}%",
-                f"{p['scatter_gini']:.3f}",
-                f"{p['bursts']['burst_score']:.1f}x",
-                str(p["risk_score"]),
-                indicators,
-            ])
-        click.echo(format_table(
-            ["Author", "Commits", "LateNight%", "Weekend%", "Scatter(Gini)", "BurstScore", "RiskScore", "Risk Indicators"],
-            tbl_rows,
-        ))
+            tbl_rows.append(
+                [
+                    p["author"],
+                    str(p["commit_count"]),
+                    f"{p['late_night_pct']}%",
+                    f"{p['weekend_pct']}%",
+                    f"{p['scatter_gini']:.3f}",
+                    f"{p['bursts']['burst_score']:.1f}x",
+                    str(p["risk_score"]),
+                    indicators,
+                ]
+            )
+        click.echo(
+            format_table(
+                [
+                    "Author",
+                    "Commits",
+                    "LateNight%",
+                    "Weekend%",
+                    "Scatter(Gini)",
+                    "BurstScore",
+                    "RiskScore",
+                    "Risk Indicators",
+                ],
+                tbl_rows,
+            )
+        )
         click.echo()
 
     # Detailed section for single-author or top risk profile

@@ -5,19 +5,18 @@ snapshot, trend, coverage-gaps, report, and the --json envelope.
 """
 
 import json
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit, index_in_process
-
+from conftest import git_commit, git_init, index_in_process, roam
 
 # ============================================================================
 # Shared fixture: a small Python project with known dependency structure
 # ============================================================================
+
 
 @pytest.fixture(scope="module")
 def indexed_project(tmp_path_factory):
@@ -30,91 +29,91 @@ def indexed_project(tmp_path_factory):
     proj = tmp_path_factory.mktemp("newfeatures")
 
     (proj / "models.py").write_text(
-        'class User:\n'
+        "class User:\n"
         '    """A user model."""\n'
-        '    def __init__(self, name: str, email: str):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        '    def display(self):\n'
+        "    def __init__(self, name: str, email: str):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "    def display(self):\n"
         '        return f"{self.name} <{self.email}>"\n'
-        '\n'
-        'class Role:\n'
+        "\n"
+        "class Role:\n"
         '    """A role model."""\n'
-        '    def __init__(self, title):\n'
-        '        self.title = title\n'
-        '\n'
-        '    def describe(self):\n'
+        "    def __init__(self, title):\n"
+        "        self.title = title\n"
+        "\n"
+        "    def describe(self):\n"
         '        return f"Role: {self.title}"\n'
     )
 
     (proj / "utils.py").write_text(
-        'def validate_email(email: str) -> bool:\n'
+        "def validate_email(email: str) -> bool:\n"
         '    """Check if email is valid."""\n'
         '    return "@" in email\n'
-        '\n'
-        'def format_name(first: str, last: str) -> str:\n'
+        "\n"
+        "def format_name(first: str, last: str) -> str:\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        'def unused_helper():\n'
+        "\n"
+        "def unused_helper():\n"
         '    """This function is never called."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
     (proj / "service.py").write_text(
-        'from models import User, Role\n'
-        'from utils import validate_email, format_name\n'
-        '\n'
-        'def create_user(name: str, email: str) -> User:\n'
+        "from models import User, Role\n"
+        "from utils import validate_email, format_name\n"
+        "\n"
+        "def create_user(name: str, email: str) -> User:\n"
         '    """Create and validate a user."""\n'
-        '    if not validate_email(email):\n'
+        "    if not validate_email(email):\n"
         '        raise ValueError("Invalid email")\n'
-        '    return User(name, email)\n'
-        '\n'
-        'def get_user_role(user: User) -> Role:\n'
+        "    return User(name, email)\n"
+        "\n"
+        "def get_user_role(user: User) -> Role:\n"
         '    """Get the role for a user."""\n'
         '    return Role("member")\n'
-        '\n'
-        'def list_users():\n'
+        "\n"
+        "def list_users():\n"
         '    """List all users."""\n'
-        '    return []\n'
+        "    return []\n"
     )
 
     (proj / "main.py").write_text(
-        'from service import create_user, list_users\n'
-        '\n'
-        'def main():\n'
+        "from service import create_user, list_users\n"
+        "\n"
+        "def main():\n"
         '    """Application entry point."""\n'
         '    user = create_user("Alice", "alice@example.com")\n'
-        '    print(user.display())\n'
-        '    print(list_users())\n'
-        '\n'
+        "    print(user.display())\n"
+        "    print(list_users())\n"
+        "\n"
         'if __name__ == "__main__":\n'
-        '    main()\n'
+        "    main()\n"
     )
 
     git_init(proj)
 
     # Add a second commit for git history
     (proj / "service.py").write_text(
-        'from models import User, Role\n'
-        'from utils import validate_email, format_name\n'
-        '\n'
-        'def create_user(name: str, email: str) -> User:\n'
+        "from models import User, Role\n"
+        "from utils import validate_email, format_name\n"
+        "\n"
+        "def create_user(name: str, email: str) -> User:\n"
         '    """Create and validate a user."""\n'
-        '    if not validate_email(email):\n'
+        "    if not validate_email(email):\n"
         '        raise ValueError("Invalid email")\n'
         '    full = format_name(name, "")\n'
-        '    return User(full, email)\n'
-        '\n'
-        'def get_user_role(user: User) -> Role:\n'
+        "    return User(full, email)\n"
+        "\n"
+        "def get_user_role(user: User) -> Role:\n"
         '    """Get the role for a user."""\n'
         '    return Role("member")\n'
-        '\n'
-        'def list_users():\n'
+        "\n"
+        "def list_users():\n"
         '    """List all users."""\n'
-        '    return []\n'
+        "    return []\n"
     )
     git_commit(proj, "refactor service")
 
@@ -126,6 +125,7 @@ def indexed_project(tmp_path_factory):
 # ============================================================================
 # TestUnderstand
 # ============================================================================
+
 
 class TestUnderstand:
     def test_understand_text(self, indexed_project):
@@ -154,21 +154,20 @@ class TestUnderstand:
 # TestDeadEnhanced
 # ============================================================================
 
+
 class TestDeadEnhanced:
     def test_dead_summary(self, indexed_project):
         """roam dead --summary should print a one-line summary."""
         out, rc = roam("dead", "--summary", cwd=indexed_project)
         assert rc == 0, f"dead --summary failed: {out}"
-        assert "Dead exports:" in out or "safe" in out.lower(), \
-            f"Missing summary line in: {out}"
+        assert "Dead exports:" in out or "safe" in out.lower(), f"Missing summary line in: {out}"
 
     def test_dead_by_kind(self, indexed_project):
         """roam dead --by-kind should group dead symbols by kind."""
         out, rc = roam("dead", "--by-kind", cwd=indexed_project)
         assert rc == 0, f"dead --by-kind failed: {out}"
         # Grouped output should show the header mentioning 'by kind'
-        assert "kind" in out.lower() or "Kind" in out, \
-            f"Missing kind grouping header in: {out}"
+        assert "kind" in out.lower() or "Kind" in out, f"Missing kind grouping header in: {out}"
 
     def test_dead_clusters(self, indexed_project):
         """roam dead --clusters should attempt cluster detection."""
@@ -176,13 +175,15 @@ class TestDeadEnhanced:
         assert rc == 0, f"dead --clusters failed: {out}"
         # Output should mention clusters or at least run without error.
         # If no clusters exist, the basic dead output still appears.
-        assert "Unreferenced" in out or "cluster" in out.lower() or "Dead" in out.lower(), \
+        assert "Unreferenced" in out or "cluster" in out.lower() or "Dead" in out.lower(), (
             f"Unexpected output from dead --clusters: {out}"
+        )
 
 
 # ============================================================================
 # TestContextBatch
 # ============================================================================
+
 
 class TestContextBatch:
     def test_context_single(self, indexed_project):
@@ -196,28 +197,29 @@ class TestContextBatch:
         out, rc = roam("context", "create_user", "list_users", cwd=indexed_project)
         assert rc == 0, f"context batch failed: {out}"
         # Batch mode should show 'Batch Context' header or 'Shared callers'
-        assert "Batch Context" in out or "Shared callers" in out or \
-            "shared" in out.lower() or "Files to read" in out, \
+        assert "Batch Context" in out or "Shared callers" in out or "shared" in out.lower() or "Files to read" in out, (
             f"Missing batch context output in: {out}"
+        )
 
 
 # ============================================================================
 # TestSnapshot
 # ============================================================================
 
+
 class TestSnapshot:
     def test_snapshot_creates(self, indexed_project):
         """roam snapshot --tag test should save a snapshot successfully."""
         out, rc = roam("snapshot", "--tag", "test", cwd=indexed_project)
         assert rc == 0, f"snapshot failed: {out}"
-        assert "Snapshot saved" in out or "snapshot" in out.lower(), \
-            f"Missing success message in: {out}"
+        assert "Snapshot saved" in out or "snapshot" in out.lower(), f"Missing success message in: {out}"
         assert "test" in out, f"Tag 'test' not in output: {out}"
 
 
 # ============================================================================
 # TestTrend
 # ============================================================================
+
 
 class TestTrend:
     def test_trend_display(self, indexed_project):
@@ -230,8 +232,7 @@ class TestTrend:
         roam("snapshot", "--tag", "trend-seed", cwd=indexed_project)
         out, rc = roam("trend", cwd=indexed_project)
         assert rc == 0, f"trend failed: {out}"
-        assert "Health Trend" in out or "Score" in out or "Date" in out, \
-            f"Missing table output in: {out}"
+        assert "Health Trend" in out or "Score" in out or "Date" in out, f"Missing table output in: {out}"
 
     def test_trend_assert_pass(self, indexed_project):
         """roam trend --assert 'cycles<=100' should pass (exit 0) for a healthy project."""
@@ -256,19 +257,19 @@ class TestTrend:
 # TestCoverageGaps
 # ============================================================================
 
+
 class TestCoverageGaps:
     def test_coverage_gaps_basic(self, indexed_project):
         """roam coverage-gaps with a non-matching pattern should handle gracefully."""
-        out, rc = roam("coverage-gaps", "--gate-pattern", "nonexistent_xyz",
-                       cwd=indexed_project)
+        out, rc = roam("coverage-gaps", "--gate-pattern", "nonexistent_xyz", cwd=indexed_project)
         # Should either return 0 with 'No gate symbols found' or handle gracefully
-        assert "No gate" in out or "gate" in out.lower() or rc == 0, \
-            f"Unexpected coverage-gaps output: {out}"
+        assert "No gate" in out or "gate" in out.lower() or rc == 0, f"Unexpected coverage-gaps output: {out}"
 
 
 # ============================================================================
 # TestReport
 # ============================================================================
+
 
 class TestReport:
     def test_report_list(self, indexed_project):
@@ -287,15 +288,14 @@ class TestReport:
         out, rc = roam("report", "first-contact", cwd=indexed_project)
         assert rc == 0, f"report first-contact failed: {out}"
         # Should mention the report name and section statuses
-        assert "first-contact" in out or "Report" in out, \
-            f"Missing report header in: {out}"
-        assert "OK" in out or "pass" in out.lower(), \
-            f"No section success indicators in: {out}"
+        assert "first-contact" in out or "Report" in out, f"Missing report header in: {out}"
+        assert "OK" in out or "pass" in out.lower(), f"No section success indicators in: {out}"
 
 
 # ============================================================================
 # TestJsonEnvelope
 # ============================================================================
+
 
 class TestJsonEnvelope:
     """Verify that key commands produce valid JSON with the standard envelope."""
@@ -304,8 +304,7 @@ class TestJsonEnvelope:
         """Parse JSON and assert standard envelope keys."""
         data = json.loads(out)
         assert "command" in data, f"Missing 'command' in JSON: {list(data.keys())}"
-        assert data["command"] == expected_command, \
-            f"Expected command={expected_command}, got {data['command']}"
+        assert data["command"] == expected_command, f"Expected command={expected_command}, got {data['command']}"
         assert "timestamp" in data.get("_meta", data), f"Missing 'timestamp' in _meta or JSON: {list(data.keys())}"
         assert "summary" in data, f"Missing 'summary' in JSON: {list(data.keys())}"
         return data
@@ -333,8 +332,7 @@ class TestJsonEnvelope:
 
     def test_json_snapshot(self, indexed_project):
         """roam --json snapshot should have standard envelope."""
-        out, rc = roam("--json", "snapshot", "--tag", "json-test",
-                       cwd=indexed_project)
+        out, rc = roam("--json", "snapshot", "--tag", "json-test", cwd=indexed_project)
         assert rc == 0, f"snapshot --json failed: {out}"
         self._assert_envelope(out, "snapshot")
 
@@ -358,6 +356,7 @@ class TestJsonEnvelope:
 # ============================================================================
 # v6.0 Commands — comprehensive tests for new intelligence features
 # ============================================================================
+
 
 class TestV6Complexity:
     """Tests for cognitive complexity analysis."""

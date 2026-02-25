@@ -19,21 +19,21 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
 import click
+import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    git_init,
     git_commit,
+    git_init,
     index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local CLI shim
 # ---------------------------------------------------------------------------
+
 
 def _make_local_cli():
     """Return a Click group containing only the trends command."""
@@ -75,17 +75,14 @@ def _invoke(args, cwd=None, json_mode=False):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _parse_json(result, cmd="trends"):
     """Parse JSON from a CliRunner result, with a helpful error on failure."""
-    assert result.exit_code == 0, (
-        f"{cmd} exited {result.exit_code}:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"{cmd} exited {result.exit_code}:\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}"
-        )
+        pytest.fail(f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}")
 
 
 def _assert_envelope(data, cmd="trends"):
@@ -102,6 +99,7 @@ def _assert_envelope(data, cmd="trends"):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def trends_project(tmp_path, monkeypatch):
     """A project indexed and ready for trends recording."""
@@ -109,17 +107,9 @@ def trends_project(tmp_path, monkeypatch):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "app.py").write_text(
-        'def main():\n'
-        '    return "hello"\n\n'
-        'def helper(x):\n'
-        '    if x > 0:\n'
-        '        return x * 2\n'
-        '    return 0\n'
+        'def main():\n    return "hello"\n\ndef helper(x):\n    if x > 0:\n        return x * 2\n    return 0\n'
     )
-    (proj / "utils.py").write_text(
-        'def add(a, b):\n'
-        '    return a + b\n'
-    )
+    (proj / "utils.py").write_text("def add(a, b):\n    return a + b\n")
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj, "--force")
@@ -137,11 +127,7 @@ def trends_project_with_data(trends_project, monkeypatch):
 
     # Add a file and re-index, then record again
     (trends_project / "extra.py").write_text(
-        'def extra_func(x):\n'
-        '    if x > 10:\n'
-        '        if x > 20:\n'
-        '            return x * 3\n'
-        '    return x\n'
+        "def extra_func(x):\n    if x > 10:\n        if x > 20:\n            return x * 3\n    return x\n"
     )
     git_commit(trends_project, "add extra")
     out, rc = index_in_process(trends_project)
@@ -150,10 +136,7 @@ def trends_project_with_data(trends_project, monkeypatch):
     assert result.exit_code == 0, f"record 2 failed: {result.output}"
 
     # Add another file and record a third snapshot
-    (trends_project / "more.py").write_text(
-        'def more_func():\n'
-        '    return 42\n'
-    )
+    (trends_project / "more.py").write_text("def more_func():\n    return 42\n")
     git_commit(trends_project, "add more")
     out, rc = index_in_process(trends_project)
     assert rc == 0, f"re-index 2 failed: {out}"
@@ -167,15 +150,14 @@ def trends_project_with_data(trends_project, monkeypatch):
 # Tests: --record
 # ---------------------------------------------------------------------------
 
+
 class TestTrendsRecord:
     """Tests for the --record flag."""
 
     def test_record_exits_zero(self, trends_project):
         """Recording a snapshot exits cleanly."""
         result = _invoke(["trends", "--record"], cwd=trends_project)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
 
     def test_record_text_output(self, trends_project):
         """Text output includes VERDICT and metric names."""
@@ -199,32 +181,28 @@ class TestTrendsRecord:
         """After recording, metric_snapshots table has rows."""
         _invoke(["trends", "--record"], cwd=trends_project)
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
-            count = conn.execute(
-                "SELECT COUNT(*) FROM metric_snapshots"
-            ).fetchone()[0]
+            count = conn.execute("SELECT COUNT(*) FROM metric_snapshots").fetchone()[0]
         assert count > 0, "Expected metric_snapshots to have rows after --record"
 
     def test_record_stores_all_metrics(self, trends_project):
         """All 8 defined metrics are stored in a single snapshot."""
         _invoke(["trends", "--record"], cwd=trends_project)
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
-            names = [
-                r[0] for r in conn.execute(
-                    "SELECT DISTINCT metric_name FROM metric_snapshots"
-                ).fetchall()
-            ]
+            names = [r[0] for r in conn.execute("SELECT DISTINCT metric_name FROM metric_snapshots").fetchall()]
         from roam.commands.cmd_trends import _METRIC_DEFS
+
         for metric_name in _METRIC_DEFS:
-            assert metric_name in names, (
-                f"Expected metric '{metric_name}' in snapshots, got: {names}"
-            )
+            assert metric_name in names, f"Expected metric '{metric_name}' in snapshots, got: {names}"
 
 
 # ---------------------------------------------------------------------------
 # Tests: display mode (no --record)
 # ---------------------------------------------------------------------------
+
 
 class TestTrendsDisplay:
     """Tests for the default display mode."""
@@ -248,9 +226,7 @@ class TestTrendsDisplay:
         result = _invoke(["trends"], cwd=trends_project_with_data)
         assert result.exit_code == 0
         first_line = result.output.strip().splitlines()[0]
-        assert first_line.startswith("VERDICT:"), (
-            f"Expected VERDICT line, got: {first_line!r}"
-        )
+        assert first_line.startswith("VERDICT:"), f"Expected VERDICT line, got: {first_line!r}"
 
     def test_display_table_headers(self, trends_project_with_data):
         """Text output includes the table headers."""
@@ -281,9 +257,7 @@ class TestTrendsDisplay:
         required = {"name", "latest", "change", "change_pct", "direction", "history"}
         for m in data["metrics"]:
             missing = required - set(m.keys())
-            assert not missing, (
-                f"Metric {m.get('name')} missing fields: {missing}"
-            )
+            assert not missing, f"Metric {m.get('name')} missing fields: {missing}"
 
     def test_display_json_summary_fields(self, trends_project_with_data):
         """Summary contains verdict, days, snapshots_count."""
@@ -306,17 +280,14 @@ class TestTrendsDisplay:
         result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         for m in data["metrics"]:
-            assert isinstance(m["history"], list), (
-                f"Expected history to be a list for {m['name']}"
-            )
-            assert len(m["history"]) >= 2, (
-                f"Expected at least 2 history points for {m['name']}"
-            )
+            assert isinstance(m["history"], list), f"Expected history to be a list for {m['name']}"
+            assert len(m["history"]) >= 2, f"Expected at least 2 history points for {m['name']}"
 
 
 # ---------------------------------------------------------------------------
 # Tests: --metric flag
 # ---------------------------------------------------------------------------
+
 
 class TestTrendsMetricFilter:
     """Tests for the --metric flag."""
@@ -354,9 +325,7 @@ class TestTrendsMetricFilter:
                 table_rows.append(line)
         # All table rows should mention total_files
         for row in table_rows:
-            assert "total_files" in row, (
-                f"Expected only total_files rows, got: {row!r}"
-            )
+            assert "total_files" in row, f"Expected only total_files rows, got: {row!r}"
 
     def test_metric_filter_invalid(self, trends_project_with_data):
         """--metric with an invalid name exits with error."""
@@ -371,6 +340,7 @@ class TestTrendsMetricFilter:
 # ---------------------------------------------------------------------------
 # Tests: --days flag
 # ---------------------------------------------------------------------------
+
 
 class TestTrendsDays:
     """Tests for the --days flag."""
@@ -409,27 +379,32 @@ class TestTrendsDays:
 # Tests: direction and trend logic
 # ---------------------------------------------------------------------------
 
+
 class TestTrendsLogic:
     """Tests for direction computation and trend bars."""
 
     def test_direction_improving(self):
         """Increasing value with higher_is_better=True -> improving."""
         from roam.commands.cmd_trends import _direction_label
+
         assert _direction_label(50, 80, True) == "improving"
 
     def test_direction_worsening(self):
         """Increasing value with higher_is_better=False -> worsening."""
         from roam.commands.cmd_trends import _direction_label
+
         assert _direction_label(5, 10, False) == "worsening"
 
     def test_direction_stable(self):
         """Same value -> stable."""
         from roam.commands.cmd_trends import _direction_label
+
         assert _direction_label(50, 50, True) == "stable"
 
     def test_trend_bar_improving(self):
         """Improving trend ends with >."""
         from roam.commands.cmd_trends import _ascii_trend_bar
+
         bar = _ascii_trend_bar(50, 80, True)
         assert bar.endswith(">")
         assert "=" in bar
@@ -437,23 +412,27 @@ class TestTrendsLogic:
     def test_trend_bar_worsening(self):
         """Worsening trend starts with <."""
         from roam.commands.cmd_trends import _ascii_trend_bar
+
         bar = _ascii_trend_bar(50, 80, False)
         assert bar.startswith("<")
 
     def test_trend_bar_stable(self):
         """Stable trend is ===."""
         from roam.commands.cmd_trends import _ascii_trend_bar
+
         bar = _ascii_trend_bar(50, 50, True)
         assert bar == "==="
 
     def test_format_value_integer(self):
         """Integer values display without decimals."""
         from roam.commands.cmd_trends import _format_value
+
         assert _format_value(42.0) == "42"
 
     def test_format_value_float(self):
         """Float values display with 2 decimal places."""
         from roam.commands.cmd_trends import _format_value
+
         assert _format_value(3.14159) == "3.14"
 
 
@@ -461,12 +440,14 @@ class TestTrendsLogic:
 # Tests: alerts
 # ---------------------------------------------------------------------------
 
+
 class TestTrendsAlerts:
     """Tests for alert generation."""
 
     def test_alerts_for_worsening(self):
         """Worsening metrics generate alerts."""
         from roam.commands.cmd_trends import _generate_alerts
+
         results = [
             {"name": "cycle_count", "direction": "worsening", "change": 3},
             {"name": "health_score", "direction": "improving", "change": 5},
@@ -478,6 +459,7 @@ class TestTrendsAlerts:
     def test_no_alerts_when_improving(self):
         """No alerts when everything is improving or stable."""
         from roam.commands.cmd_trends import _generate_alerts
+
         results = [
             {"name": "health_score", "direction": "improving", "change": 5},
             {"name": "dead_symbols", "direction": "stable", "change": 0},
@@ -498,13 +480,15 @@ class TestTrendsAlerts:
 # Tests: collect_current_metrics
 # ---------------------------------------------------------------------------
 
+
 class TestCollectMetrics:
     """Tests for the metric collection function."""
 
     def test_collect_returns_all_metrics(self, trends_project):
         """_collect_current_metrics returns all defined metric names."""
+        from roam.commands.cmd_trends import _METRIC_DEFS, _collect_current_metrics
         from roam.db.connection import open_db
-        from roam.commands.cmd_trends import _collect_current_metrics, _METRIC_DEFS
+
         with open_db(readonly=True) as conn:
             metrics = _collect_current_metrics(conn)
         for name in _METRIC_DEFS:
@@ -512,8 +496,9 @@ class TestCollectMetrics:
 
     def test_collect_health_score_range(self, trends_project):
         """Health score should be 0-100."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_trends import _collect_current_metrics
+        from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             metrics = _collect_current_metrics(conn)
         score = metrics["health_score"]
@@ -521,16 +506,18 @@ class TestCollectMetrics:
 
     def test_collect_total_files_positive(self, trends_project):
         """Total files should be positive for an indexed project."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_trends import _collect_current_metrics
+        from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             metrics = _collect_current_metrics(conn)
         assert metrics["total_files"] > 0
 
     def test_collect_total_symbols_positive(self, trends_project):
         """Total symbols should be positive for an indexed project."""
-        from roam.db.connection import open_db
         from roam.commands.cmd_trends import _collect_current_metrics
+        from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             metrics = _collect_current_metrics(conn)
         assert metrics["total_symbols"] > 0

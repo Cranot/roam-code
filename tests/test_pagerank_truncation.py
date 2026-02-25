@@ -6,14 +6,10 @@ first instead of naively keeping the first N items.
 
 from __future__ import annotations
 
-import json
-
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper
 # ---------------------------------------------------------------------------
+
 
 def _make_envelope(items_key="items", items=None, summary=None):
     """Build a minimal JSON envelope dict for testing."""
@@ -151,10 +147,7 @@ class TestBudgetTruncateJsonImportance:
         """When truncating, highest-importance items survive."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50} for i in range(50)]
         # item_49 has highest pagerank (0.49), item_0 has lowest (0.00)
         data = _make_envelope(items=items)
 
@@ -176,10 +169,7 @@ class TestBudgetTruncateJsonImportance:
         """Truncation metadata includes omitted_low_importance_nodes count."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -196,10 +186,7 @@ class TestBudgetTruncateJsonImportance:
         """When importance sorting is applied, metadata flags it."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "importance": i, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "importance": i, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -210,10 +197,7 @@ class TestBudgetTruncateJsonImportance:
         """Items without importance key are truncated positionally."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -230,10 +214,7 @@ class TestBudgetTruncateJsonImportance:
         """budget=0 returns data unchanged (no sorting or truncation)."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01}
-            for i in range(10)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01} for i in range(10)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 0)
@@ -244,10 +225,7 @@ class TestBudgetTruncateJsonImportance:
         """Data that fits within budget is returned unchanged (no sorting)."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01}
-            for i in range(3)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01} for i in range(3)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100000)
@@ -260,16 +238,12 @@ class TestBudgetTruncateJsonImportance:
         data = {
             "command": "test",
             "summary": {"verdict": "ok"},
-            "symbols": [
-                {"name": f"low_sym_{i}", "pagerank": 0.001 * i, "data": "x" * 80}
-                for i in range(30)
-            ] + [
+            "symbols": [{"name": f"low_sym_{i}", "pagerank": 0.001 * i, "data": "x" * 80} for i in range(30)]
+            + [
                 {"name": "high_sym", "pagerank": 0.99, "data": "x" * 80},
             ],
-            "files": [
-                {"path": f"unimportant_{i}.py", "score": i, "data": "y" * 80}
-                for i in range(30)
-            ] + [
+            "files": [{"path": f"unimportant_{i}.py", "score": i, "data": "y" * 80} for i in range(30)]
+            + [
                 {"path": "critical.py", "score": 100, "data": "y" * 80},
             ],
         }
@@ -287,10 +261,7 @@ class TestBudgetTruncateJsonImportance:
         """Original data is not mutated by importance sorting."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": (50 - i) * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": (50 - i) * 0.01, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
         # Save original first item name
         original_first = data["items"][0]["name"]
@@ -306,10 +277,7 @@ class TestBudgetTruncateJsonImportance:
         """Items with 'score' key are sorted by score descending."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "score": i, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "score": i, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -322,10 +290,7 @@ class TestBudgetTruncateJsonImportance:
         """Items with 'rank' key are sorted by rank descending."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "rank": i, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "rank": i, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -337,10 +302,7 @@ class TestBudgetTruncateJsonImportance:
         """Items with 'importance' key are sorted by importance descending."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "importance": i * 0.001, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "importance": i * 0.001, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -352,10 +314,7 @@ class TestBudgetTruncateJsonImportance:
         """Summary budget_tokens matches the provided budget."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 200)
@@ -366,10 +325,7 @@ class TestBudgetTruncateJsonImportance:
         """Summary includes full_output_tokens for agent awareness."""
         from roam.output.formatter import budget_truncate_json
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50} for i in range(50)]
         data = _make_envelope(items=items)
 
         result = budget_truncate_json(data, 100)
@@ -390,10 +346,7 @@ class TestJsonEnvelopeImportanceTruncation:
         """json_envelope with budget sorts by importance before truncating."""
         from roam.output.formatter import json_envelope
 
-        items = [
-            {"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "pagerank": i * 0.01, "data": "x" * 50} for i in range(50)]
 
         result = json_envelope(
             "test",
@@ -410,10 +363,7 @@ class TestJsonEnvelopeImportanceTruncation:
         """json_envelope with budget falls back to positional for items without importance."""
         from roam.output.formatter import json_envelope
 
-        items = [
-            {"name": f"item_{i}", "data": "x" * 50}
-            for i in range(50)
-        ]
+        items = [{"name": f"item_{i}", "data": "x" * 50} for i in range(50)]
 
         result = json_envelope(
             "test",

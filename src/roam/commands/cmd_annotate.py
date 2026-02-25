@@ -9,14 +9,14 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
-
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Write command
 # ---------------------------------------------------------------------------
+
 
 @click.command()
 @click.argument("target")
@@ -72,18 +72,23 @@ def annotate(ctx, target, content, tag, author, expires):
         )
 
         if json_mode:
-            click.echo(to_json(json_envelope("annotate",
-                summary={
-                    "verdict": "Annotation saved",
-                    "target": qualified_name or file_path or target,
-                    "tag": tag,
-                },
-                target=qualified_name or file_path or target,
-                symbol_id=symbol_id,
-                tag=tag,
-                author=author,
-                expires_at=expires,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "annotate",
+                        summary={
+                            "verdict": "Annotation saved",
+                            "target": qualified_name or file_path or target,
+                            "tag": tag,
+                        },
+                        target=qualified_name or file_path or target,
+                        symbol_id=symbol_id,
+                        tag=tag,
+                        author=author,
+                        expires_at=expires,
+                    )
+                )
+            )
             return
 
         resolved = qualified_name or file_path or target
@@ -94,6 +99,7 @@ def annotate(ctx, target, content, tag, author, expires):
 # ---------------------------------------------------------------------------
 # Read command
 # ---------------------------------------------------------------------------
+
 
 @click.command()
 @click.argument("target", required=False, default=None)
@@ -125,9 +131,7 @@ def annotations(ctx, target, tag, since):
             if sym is not None:
                 sym_id = sym["id"]
                 qname = sym["qualified_name"] or sym["name"]
-                conditions.append(
-                    "(symbol_id = ? OR qualified_name = ?)"
-                )
+                conditions.append("(symbol_id = ? OR qualified_name = ?)")
                 params.extend([sym_id, qname])
             else:
                 # Try file path
@@ -153,8 +157,7 @@ def annotations(ctx, target, tag, since):
 
         where = " AND ".join(conditions)
         rows = conn.execute(
-            f"SELECT * FROM annotations WHERE {where} "
-            "ORDER BY created_at DESC",
+            f"SELECT * FROM annotations WHERE {where} ORDER BY created_at DESC",
             params,
         ).fetchall()
 
@@ -174,15 +177,20 @@ def annotations(ctx, target, tag, since):
         ]
 
         if json_mode:
-            click.echo(to_json(json_envelope("annotations",
-                summary={
-                    "verdict": f"{len(ann_list)} annotation{'s' if len(ann_list) != 1 else ''}",
-                    "count": len(ann_list),
-                    "target": target,
-                    "tag_filter": tag,
-                },
-                annotations=ann_list,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "annotations",
+                        summary={
+                            "verdict": f"{len(ann_list)} annotation{'s' if len(ann_list) != 1 else ''}",
+                            "count": len(ann_list),
+                            "target": target,
+                            "tag_filter": tag,
+                        },
+                        annotations=ann_list,
+                    )
+                )
+            )
             return
 
         if not ann_list:

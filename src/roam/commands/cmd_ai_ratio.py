@@ -21,9 +21,9 @@ import time
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 log = logging.getLogger(__name__)
 
@@ -94,7 +94,7 @@ def _gini_signal(commits: list[dict]) -> float:
 # ---------------------------------------------------------------------------
 
 _BURST_ADD_THRESHOLD = 100  # lines
-_BURST_ADD_RATIO = 0.80     # 80% additions
+_BURST_ADD_RATIO = 0.80  # 80% additions
 
 
 def _is_burst_add(commit: dict) -> bool:
@@ -134,10 +134,12 @@ def _burst_signal(commits: list[dict]) -> tuple[float, int]:
 
 # AI co-author patterns (case-insensitive)
 _CO_AUTHOR_PATTERNS = [
-    re.compile(r"co-authored-by:\s*.*?(claude|copilot|cursor|codeium|"
-               r"tabnine|amazon\s*q|cody|gemini|windsurf|devin|"
-               r"codex|gpt|chatgpt|anthropic|openai|aider)",
-               re.IGNORECASE),
+    re.compile(
+        r"co-authored-by:\s*.*?(claude|copilot|cursor|codeium|"
+        r"tabnine|amazon\s*q|cody|gemini|windsurf|devin|"
+        r"codex|gpt|chatgpt|anthropic|openai|aider)",
+        re.IGNORECASE,
+    ),
 ]
 
 # Conventional commit prefixes heavily used by AI tools
@@ -198,9 +200,7 @@ def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[fl
     Returns (score, anomalous_file_count).
     """
     # Get line counts from files table
-    rows = conn.execute(
-        "SELECT id, path, line_count FROM files WHERE line_count > 0"
-    ).fetchall()
+    rows = conn.execute("SELECT id, path, line_count FROM files WHERE line_count > 0").fetchall()
     if not rows:
         return 0.0, 0
 
@@ -279,8 +279,8 @@ def _comment_density_signal(conn, file_ids: list[int] | None = None) -> tuple[fl
 # Temporal pattern detection
 # ---------------------------------------------------------------------------
 
-_BURST_WINDOW_SECONDS = 600   # 10-minute window for burst detection
-_MIN_BURST_COMMITS = 3        # at least 3 commits in window to qualify
+_BURST_WINDOW_SECONDS = 600  # 10-minute window for burst detection
+_MIN_BURST_COMMITS = 3  # at least 3 commits in window to qualify
 _REGULARITY_THRESHOLD = 0.15  # coefficient of variation threshold for bot-like
 
 
@@ -392,11 +392,13 @@ def _per_file_probability(
         # Weighted: 60% peak + 40% average
         prob = 0.6 * peak + 0.4 * avg
         if prob > 0.05:  # only include files with non-trivial probability
-            results.append({
-                "path": path,
-                "probability": round(prob, 2),
-                "reasons": sorted(data["reasons"]),
-            })
+            results.append(
+                {
+                    "path": path,
+                    "probability": round(prob, 2),
+                    "reasons": sorted(data["reasons"]),
+                }
+            )
 
     results.sort(key=lambda r: r["probability"], reverse=True)
     return results
@@ -420,8 +422,8 @@ def _compute_trend(commits: list[dict], now: int) -> dict:
     third = len(sorted_c) // 3
     segments = [
         sorted_c[:third],
-        sorted_c[third:2 * third],
-        sorted_c[2 * third:],
+        sorted_c[third : 2 * third],
+        sorted_c[2 * third :],
     ]
 
     data_points = []
@@ -433,11 +435,13 @@ def _compute_trend(commits: list[dict], now: int) -> dict:
         ratio = ai_count / len(seg) if seg else 0.0
         ts = seg[len(seg) // 2].get("timestamp", 0)
         days_ago = (now - ts) // 86400 if now > ts else 0
-        data_points.append({
-            "days_ago": days_ago,
-            "ai_ratio": round(ratio, 2),
-            "commits": len(seg),
-        })
+        data_points.append(
+            {
+                "days_ago": days_ago,
+                "ai_ratio": round(ratio, 2),
+                "commits": len(seg),
+            }
+        )
 
     # Determine direction
     if len(data_points) >= 2:
@@ -518,8 +522,7 @@ def _get_commits_from_db(conn, since_days: int) -> list[dict]:
     cutoff = int(time.time()) - (since_days * 86400)
 
     commit_rows = conn.execute(
-        "SELECT id, hash, author, timestamp, message "
-        "FROM git_commits WHERE timestamp >= ? ORDER BY timestamp DESC",
+        "SELECT id, hash, author, timestamp, message FROM git_commits WHERE timestamp >= ? ORDER BY timestamp DESC",
         (cutoff,),
     ).fetchall()
 
@@ -535,28 +538,29 @@ def _get_commits_from_db(conn, since_days: int) -> list[dict]:
     for cr in commit_rows:
         cid = cr["id"]
         files = conn.execute(
-            "SELECT path, lines_added, lines_removed "
-            "FROM git_file_changes WHERE commit_id = ?",
+            "SELECT path, lines_added, lines_removed FROM git_file_changes WHERE commit_id = ?",
             (cid,),
         ).fetchall()
 
         # Use full message if available, fall back to DB subject
         message = full_messages.get(cr["hash"], cr["message"] or "")
 
-        commits.append({
-            "hash": cr["hash"],
-            "author": cr["author"],
-            "timestamp": cr["timestamp"],
-            "message": message,
-            "files": [
-                {
-                    "path": f["path"],
-                    "lines_added": f["lines_added"] or 0,
-                    "lines_removed": f["lines_removed"] or 0,
-                }
-                for f in files
-            ],
-        })
+        commits.append(
+            {
+                "hash": cr["hash"],
+                "author": cr["author"],
+                "timestamp": cr["timestamp"],
+                "message": message,
+                "files": [
+                    {
+                        "path": f["path"],
+                        "lines_added": f["lines_added"] or 0,
+                        "lines_removed": f["lines_removed"] or 0,
+                    }
+                    for f in files
+                ],
+            }
+        )
 
     return commits
 
@@ -666,10 +670,8 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
 
 
 @click.command()
-@click.option("--since", default=90, type=int,
-              help="Analyze commits from last N days (default: 90)")
-@click.option("--detail", is_flag=True,
-              help="Show per-file breakdown")
+@click.option("--since", default=90, type=int, help="Analyze commits from last N days (default: 90)")
+@click.option("--detail", is_flag=True, help="Show per-file breakdown")
 @click.pass_context
 def ai_ratio(ctx, since, detail):
     """Estimate the percentage of AI-generated code from git patterns."""
@@ -681,28 +683,29 @@ def ai_ratio(ctx, since, detail):
 
         ai_pct = round(result["ai_ratio"] * 100)
         confidence = result["confidence"]
-        verdict = (
-            f"~{ai_pct}% estimated AI-generated code "
-            f"(confidence: {confidence})"
-        )
+        verdict = f"~{ai_pct}% estimated AI-generated code (confidence: {confidence})"
 
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "ai-ratio",
-                summary={
-                    "verdict": verdict,
-                    "ai_ratio": result["ai_ratio"],
-                    "confidence": confidence,
-                    "commits_analyzed": result["commits_analyzed"],
-                },
-                ai_ratio=result["ai_ratio"],
-                confidence=confidence,
-                commits_analyzed=result["commits_analyzed"],
-                since_days=since,
-                signals=result["signals"],
-                top_ai_files=result["top_ai_files"][:20],
-                trend=result["trend"],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "ai-ratio",
+                        summary={
+                            "verdict": verdict,
+                            "ai_ratio": result["ai_ratio"],
+                            "confidence": confidence,
+                            "commits_analyzed": result["commits_analyzed"],
+                        },
+                        ai_ratio=result["ai_ratio"],
+                        confidence=confidence,
+                        commits_analyzed=result["commits_analyzed"],
+                        since_days=since,
+                        signals=result["signals"],
+                        top_ai_files=result["top_ai_files"][:20],
+                        trend=result["trend"],
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -718,10 +721,7 @@ def ai_ratio(ctx, since, detail):
         sig = result["signals"]
 
         g = sig["gini"]
-        click.echo(
-            f"  Change concentration (Gini): {g['raw_value']:.2f} "
-            f"-> suggests {round(g['score'] * 100)}% AI"
-        )
+        click.echo(f"  Change concentration (Gini): {g['raw_value']:.2f} -> suggests {round(g['score'] * 100)}% AI")
 
         b = sig["burst_additions"]
         click.echo(
@@ -731,23 +731,15 @@ def ai_ratio(ctx, since, detail):
         )
 
         p = sig["commit_patterns"]
-        click.echo(
-            f"  Commit patterns: {p['co_author_count']} commits with AI co-author tags"
-        )
+        click.echo(f"  Commit patterns: {p['co_author_count']} commits with AI co-author tags")
         if p["ai_pattern_count"]:
-            click.echo(
-                f"    {p['ai_pattern_count']} with AI-style message patterns"
-            )
+            click.echo(f"    {p['ai_pattern_count']} with AI-style message patterns")
 
         cd = sig["comment_density"]
-        click.echo(
-            f"  Comment density: {cd['anomalous_files']} files with anomalous density"
-        )
+        click.echo(f"  Comment density: {cd['anomalous_files']} files with anomalous density")
 
         t = sig["temporal"]
-        click.echo(
-            f"  Temporal patterns: {t['burst_sessions']} burst sessions detected"
-        )
+        click.echo(f"  Temporal patterns: {t['burst_sessions']} burst sessions detected")
 
         # Top AI-likely files
         top_files = result["top_ai_files"]
@@ -758,10 +750,7 @@ def ai_ratio(ctx, since, detail):
             click.echo("TOP AI-LIKELY FILES:")
             for f in shown:
                 reasons = ", ".join(f["reasons"]) if f["reasons"] else "heuristic"
-                click.echo(
-                    f"  {f['path']:<60s} ({round(f['probability'] * 100)}% AI probability "
-                    f"-- {reasons})"
-                )
+                click.echo(f"  {f['path']:<60s} ({round(f['probability'] * 100)}% AI probability -- {reasons})")
             if len(top_files) > limit:
                 click.echo(f"  (+{len(top_files) - limit} more, use --detail to see all)")
 
@@ -773,7 +762,4 @@ def ai_ratio(ctx, since, detail):
             parts = []
             for pt in pts:
                 parts.append(f"{round(pt['ai_ratio'] * 100)}% ({pt['days_ago']}d ago)")
-            click.echo(
-                f"TREND: AI ratio {trend['direction']} -- "
-                + " -> ".join(parts)
-            )
+            click.echo(f"TREND: AI ratio {trend['direction']} -- " + " -> ".join(parts))

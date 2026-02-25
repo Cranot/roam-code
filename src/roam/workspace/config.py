@@ -6,7 +6,6 @@ import json
 from pathlib import Path
 from typing import Any
 
-
 WORKSPACE_CONFIG_NAME = ".roam-workspace.json"
 WORKSPACE_DB_DIR = ".roam-workspace"
 WORKSPACE_DB_NAME = "workspace.db"
@@ -65,12 +64,14 @@ def get_repo_paths(config: dict[str, Any], root: Path) -> list[dict[str, Any]]:
     for repo in repos:
         repo_path = (root / repo["path"]).resolve()
         db_path = repo_path / roam_db_suffix
-        results.append({
-            "name": repo.get("name", repo_path.name),
-            "path": repo_path,
-            "role": repo.get("role", ""),
-            "db_path": db_path,
-        })
+        results.append(
+            {
+                "name": repo.get("name", repo_path.name),
+                "path": repo_path,
+                "role": repo.get("role", ""),
+                "db_path": db_path,
+            }
+        )
     return results
 
 

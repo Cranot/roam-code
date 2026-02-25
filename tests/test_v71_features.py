@@ -4,18 +4,15 @@ LWC anonymous classes, Flow actionCalls, report --config, SF test naming.
 
 import json
 import os
-import re
 import sqlite3
 import tempfile
 
 import pytest
 
-
 # ---------------------------------------------------------------------------
 # 1. batched_in / batched_count helpers
 # ---------------------------------------------------------------------------
-
-from roam.db.connection import batched_in, batched_count
+from roam.db.connection import batched_count, batched_in
 
 
 def _make_test_db():
@@ -49,9 +46,7 @@ class TestBatchedIn:
         """batched_in works correctly for a list smaller than batch_size."""
         conn = _make_test_db()
         ids = [0, 1, 2]
-        result = batched_in(
-            conn, "SELECT * FROM items WHERE id IN ({ph})", ids
-        )
+        result = batched_in(conn, "SELECT * FROM items WHERE id IN ({ph})", ids)
         assert len(result) == 3
         names = {r["name"] for r in result}
         assert names == {"item_0", "item_1", "item_2"}
@@ -154,9 +149,7 @@ class TestBatchedIn:
     def test_batched_in_returns_all_columns(self):
         """batched_in preserves all columns via sqlite3.Row."""
         conn = _make_test_db()
-        result = batched_in(
-            conn, "SELECT * FROM items WHERE id IN ({ph})", [5]
-        )
+        result = batched_in(conn, "SELECT * FROM items WHERE id IN ({ph})", [5])
         assert len(result) == 1
         row = result[0]
         assert row["id"] == 5
@@ -171,9 +164,7 @@ class TestBatchedCount:
     def test_batched_count_empty(self):
         """batched_count returns 0 for empty ids."""
         conn = _make_test_db()
-        total = batched_count(
-            conn, "SELECT COUNT(*) FROM items WHERE id IN ({ph})", []
-        )
+        total = batched_count(conn, "SELECT COUNT(*) FROM items WHERE id IN ({ph})", [])
         assert total == 0
         conn.close()
 
@@ -209,9 +200,7 @@ class TestBatchedCount:
         """batched_count works without chunking when ids fit in one batch."""
         conn = _make_test_db()
         ids = [0, 1, 2]
-        total = batched_count(
-            conn, "SELECT COUNT(*) FROM items WHERE id IN ({ph})", ids
-        )
+        total = batched_count(conn, "SELECT COUNT(*) FROM items WHERE id IN ({ph})", ids)
         assert total == 3
         conn.close()
 
@@ -231,9 +220,7 @@ class TestSalesforceImportResolution:
 
     def test_salesforce_apex_import(self):
         """Resolves @salesforce/apex/ClassName.methodName to (target, 'call')."""
-        result = self.ext._resolve_salesforce_import(
-            "@salesforce/apex/AccountController.getAccounts"
-        )
+        result = self.ext._resolve_salesforce_import("@salesforce/apex/AccountController.getAccounts")
         assert result is not None
         target, kind = result
         assert target == "AccountController.getAccounts"
@@ -241,9 +228,7 @@ class TestSalesforceImportResolution:
 
     def test_salesforce_schema_import(self):
         """Resolves @salesforce/schema/Object.Field to (target, 'schema_ref')."""
-        result = self.ext._resolve_salesforce_import(
-            "@salesforce/schema/Account.Name"
-        )
+        result = self.ext._resolve_salesforce_import("@salesforce/schema/Account.Name")
         assert result is not None
         target, kind = result
         assert target == "Account.Name"
@@ -251,9 +236,7 @@ class TestSalesforceImportResolution:
 
     def test_salesforce_label_import(self):
         """Resolves @salesforce/label/c.LabelName to (Label.LabelName, 'label')."""
-        result = self.ext._resolve_salesforce_import(
-            "@salesforce/label/c.greeting"
-        )
+        result = self.ext._resolve_salesforce_import("@salesforce/label/c.greeting")
         assert result is not None
         target, kind = result
         assert target == "Label.greeting"
@@ -261,9 +244,7 @@ class TestSalesforceImportResolution:
 
     def test_salesforce_label_without_c_prefix(self):
         """Resolves @salesforce/label/SomeName without c. prefix."""
-        result = self.ext._resolve_salesforce_import(
-            "@salesforce/label/SomeName"
-        )
+        result = self.ext._resolve_salesforce_import("@salesforce/label/SomeName")
         assert result is not None
         target, kind = result
         assert target == "SomeName"
@@ -271,9 +252,7 @@ class TestSalesforceImportResolution:
 
     def test_salesforce_message_channel_import(self):
         """Resolves @salesforce/messageChannel/Channel__c to (target, 'import')."""
-        result = self.ext._resolve_salesforce_import(
-            "@salesforce/messageChannel/MyChannel__c"
-        )
+        result = self.ext._resolve_salesforce_import("@salesforce/messageChannel/MyChannel__c")
         assert result is not None
         target, kind = result
         assert target == "MyChannel__c"
@@ -291,7 +270,7 @@ class TestSalesforceImportResolution:
 # 3. Apex generic type extraction
 # ---------------------------------------------------------------------------
 
-from roam.languages.apex_lang import _GENERIC_TYPE_RE, _MAP_VALUE_TYPE_RE, _APEX_BUILTINS
+from roam.languages.apex_lang import _APEX_BUILTINS, _GENERIC_TYPE_RE, _MAP_VALUE_TYPE_RE
 
 
 class TestApexGenericTypeExtraction:
@@ -324,9 +303,22 @@ class TestApexGenericTypeExtraction:
 
     def test_apex_generic_builtin_skip(self):
         """Builtin types like String, Integer, Id are in _APEX_BUILTINS."""
-        builtins_to_check = ["String", "Integer", "Long", "Double", "Decimal",
-                             "Boolean", "Date", "DateTime", "Time", "Id",
-                             "Blob", "Object", "SObject", "Type"]
+        builtins_to_check = [
+            "String",
+            "Integer",
+            "Long",
+            "Double",
+            "Decimal",
+            "Boolean",
+            "Date",
+            "DateTime",
+            "Time",
+            "Id",
+            "Blob",
+            "Object",
+            "SObject",
+            "Type",
+        ]
         for b in builtins_to_check:
             assert b in _APEX_BUILTINS, f"{b} should be in _APEX_BUILTINS"
 
@@ -541,7 +533,7 @@ class TestFlowApexActionCalls:
 # 6. Report --config
 # ---------------------------------------------------------------------------
 
-from roam.commands.cmd_report import _load_custom_presets, PRESETS
+from roam.commands.cmd_report import PRESETS, _load_custom_presets
 
 
 class TestReportConfig:
@@ -558,9 +550,7 @@ class TestReportConfig:
                 ],
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
@@ -583,9 +573,7 @@ class TestReportConfig:
                 ],
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
@@ -599,14 +587,13 @@ class TestReportConfig:
 
     def test_report_config_validation_not_dict(self):
         """Bad config raises error if the top level is not a dict."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump([1, 2, 3], f)
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter, match="JSON object"):
                 _load_custom_presets(tmp_path)
         finally:
@@ -619,14 +606,13 @@ class TestReportConfig:
                 "description": "This is broken",
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter, match="missing 'sections'"):
                 _load_custom_presets(tmp_path)
         finally:
@@ -639,14 +625,13 @@ class TestReportConfig:
                 "sections": "not-a-list",
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter, match="sections must be a list"):
                 _load_custom_presets(tmp_path)
         finally:
@@ -661,14 +646,13 @@ class TestReportConfig:
                 ],
             }
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter, match="needs 'title' and 'command'"):
                 _load_custom_presets(tmp_path)
         finally:
@@ -676,14 +660,13 @@ class TestReportConfig:
 
     def test_report_config_invalid_json(self):
         """Bad config raises error for invalid JSON."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("{not valid json}")
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter, match="Invalid JSON"):
                 _load_custom_presets(tmp_path)
         finally:
@@ -701,9 +684,7 @@ class TestReportConfig:
                 "sections": [{"title": "B", "command": ["map"]}],
             },
         }
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             json.dump(config, f)
             f.flush()
             tmp_path = f.name
@@ -806,6 +787,7 @@ class TestFlowCrossBlockSafety:
 
     def setup_method(self):
         from roam.languages.sfxml_lang import SfxmlExtractor
+
         self.ext = SfxmlExtractor()
 
     def test_flow_no_cross_block_false_positive(self):
@@ -875,14 +857,13 @@ class TestBatchedInCrossBatchEdges:
 
     def test_report_config_invalid_json_user_friendly(self):
         """Invalid JSON in config file gives a user-friendly error, not traceback."""
-        with tempfile.NamedTemporaryFile(
-            mode="w", suffix=".json", delete=False
-        ) as f:
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".json", delete=False) as f:
             f.write("{{invalid}}")
             f.flush()
             tmp_path = f.name
         try:
             from click import BadParameter
+
             with pytest.raises(BadParameter):
                 _load_custom_presets(tmp_path)
         finally:

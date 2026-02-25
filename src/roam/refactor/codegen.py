@@ -14,6 +14,7 @@ def detect_language(file_path: str) -> str:
     """
     try:
         from roam.languages.registry import get_language_for_file
+
         lang = get_language_for_file(file_path)
         if lang:
             return lang
@@ -73,8 +74,7 @@ def _python_module_path(file_path: str) -> str:
     return path.replace("/", ".")
 
 
-def generate_import(language: str, from_file: str, symbol_name: str,
-                    target_file: str) -> str:
+def generate_import(language: str, from_file: str, symbol_name: str, target_file: str) -> str:
     """Generate an import statement based on language.
 
     Parameters

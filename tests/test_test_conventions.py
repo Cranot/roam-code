@@ -11,29 +11,30 @@ Covers:
 - get_convention_for_language()
 - find_test_candidates() and find_source_candidates()
 """
+
 from __future__ import annotations
 
 import pytest
 
 from roam.index.test_conventions import (
-    PythonConvention,
-    GoConvention,
-    JavaScriptConvention,
-    JavaMavenConvention,
-    RubyConvention,
     ApexConvention,
     CSharpConvention,
+    GoConvention,
+    JavaMavenConvention,
+    JavaScriptConvention,
+    PythonConvention,
+    RubyConvention,
     TestConvention,
+    find_source_candidates,
+    find_test_candidates,
     get_convention_for_language,
     get_conventions,
-    find_test_candidates,
-    find_source_candidates,
 )
-
 
 # ---------------------------------------------------------------------------
 # PythonConvention
 # ---------------------------------------------------------------------------
+
 
 class TestPythonConvention:
     def setup_method(self):
@@ -78,6 +79,7 @@ class TestPythonConvention:
 # GoConvention
 # ---------------------------------------------------------------------------
 
+
 class TestGoConvention:
     def setup_method(self):
         self.conv = GoConvention()
@@ -108,6 +110,7 @@ class TestGoConvention:
 # ---------------------------------------------------------------------------
 # JavaScriptConvention
 # ---------------------------------------------------------------------------
+
 
 class TestJavaScriptConvention:
     def setup_method(self):
@@ -146,6 +149,7 @@ class TestJavaScriptConvention:
 # JavaMavenConvention
 # ---------------------------------------------------------------------------
 
+
 class TestJavaMavenConvention:
     def setup_method(self):
         self.conv = JavaMavenConvention()
@@ -169,6 +173,7 @@ class TestJavaMavenConvention:
 # RubyConvention
 # ---------------------------------------------------------------------------
 
+
 class TestRubyConvention:
     def setup_method(self):
         self.conv = RubyConvention()
@@ -191,6 +196,7 @@ class TestRubyConvention:
 # ---------------------------------------------------------------------------
 # ApexConvention
 # ---------------------------------------------------------------------------
+
 
 class TestApexConvention:
     def setup_method(self):
@@ -225,6 +231,7 @@ class TestApexConvention:
 # ---------------------------------------------------------------------------
 # CSharpConvention
 # ---------------------------------------------------------------------------
+
 
 class TestCSharpConvention:
     def setup_method(self):
@@ -298,6 +305,7 @@ class TestCSharpConvention:
 # ---------------------------------------------------------------------------
 # Registry helpers
 # ---------------------------------------------------------------------------
+
 
 class TestConventionRegistry:
     def test_get_convention_for_python(self):

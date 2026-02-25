@@ -15,128 +15,151 @@ import os
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Unit tests for the helper itself
 # ---------------------------------------------------------------------------
+
 
 class TestSuggestNextSteps:
     """Unit tests for suggest_next_steps()."""
 
     def test_health_low_score_gets_hotspots(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("health", {"score": 45, "critical_issues": 2, "cycles": 1})
         texts = "\n".join(steps)
         assert "hotspots" in texts
 
     def test_health_very_low_score_gets_vibe_check(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("health", {"score": 30, "critical_issues": 3, "cycles": 2})
         texts = "\n".join(steps)
         assert "vibe-check" in texts
 
     def test_health_critical_issues_gets_debt(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("health", {"score": 65, "critical_issues": 5, "cycles": 0})
         texts = "\n".join(steps)
         assert "debt" in texts
 
     def test_health_high_score_gets_trends(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("health", {"score": 92, "critical_issues": 0, "cycles": 0})
         texts = "\n".join(steps)
         assert "trends" in texts
 
     def test_health_max_3_suggestions(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("health", {"score": 10, "critical_issues": 10, "cycles": 5})
         assert len(steps) <= 3
 
     def test_context_gets_preflight(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("context", {"symbol": "my_func", "callers": 5})
         texts = "\n".join(steps)
         assert "preflight" in texts
 
     def test_context_with_many_callers_gets_impact(self):
         from roam.commands.next_steps import suggest_next_steps
-        steps = suggest_next_steps("context", {
-            "symbol": "core_service",
-            "callers": 25,
-            "blast_radius_symbols": 10,
-        })
+
+        steps = suggest_next_steps(
+            "context",
+            {
+                "symbol": "core_service",
+                "callers": 25,
+                "blast_radius_symbols": 10,
+            },
+        )
         texts = "\n".join(steps)
         assert "impact" in texts
 
     def test_context_no_callers_gets_dead(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("context", {"symbol": "orphan_fn", "callers": 0})
         texts = "\n".join(steps)
         assert "dead" in texts
 
     def test_context_max_3_suggestions(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("context", {"symbol": "x", "callers": 100, "blast_radius_symbols": 50})
         assert len(steps) <= 3
 
     def test_hotspots_no_data_suggests_ingest(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("hotspots", {"total": 0, "upgrades": 0})
         texts = "\n".join(steps)
         assert "ingest-trace" in texts
 
     def test_hotspots_with_upgrades_suggests_impact(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("hotspots", {"total": 5, "upgrades": 3})
         texts = "\n".join(steps)
         assert "impact" in texts
 
     def test_hotspots_max_3_suggestions(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("hotspots", {"total": 10, "upgrades": 5})
         assert len(steps) <= 3
 
     def test_diagnose_gets_trace(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("diagnose", {"symbol": "buggy_fn", "top_suspect": "caller_fn"})
         texts = "\n".join(steps)
         assert "trace" in texts
 
     def test_diagnose_with_suspect_gets_impact(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("diagnose", {"symbol": "buggy_fn", "top_suspect": "caller_fn"})
         texts = "\n".join(steps)
         assert "impact" in texts
 
     def test_diagnose_max_3_suggestions(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("diagnose", {"symbol": "x", "top_suspect": "y"})
         assert len(steps) <= 3
 
     def test_dead_safe_count_gets_safe_delete(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("dead", {"safe": 10, "review": 2})
         texts = "\n".join(steps)
         assert "safe-delete" in texts
 
     def test_dead_review_count_gets_by_directory(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("dead", {"safe": 0, "review": 5})
         texts = "\n".join(steps)
         assert "by-directory" in texts
 
     def test_dead_max_3_suggestions(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("dead", {"safe": 50, "review": 20})
         assert len(steps) <= 3
 
     def test_unknown_command_returns_empty(self):
         from roam.commands.next_steps import suggest_next_steps
+
         steps = suggest_next_steps("nonexistent-command", {})
         assert steps == []
 
     def test_empty_context_does_not_crash(self):
         from roam.commands.next_steps import suggest_next_steps
+
         # All commands should handle missing context keys gracefully
         for cmd in ("health", "context", "hotspots", "diagnose", "dead"):
             steps = suggest_next_steps(cmd, {})
@@ -149,15 +172,18 @@ class TestFormatNextStepsText:
 
     def test_empty_list_returns_empty_string(self):
         from roam.commands.next_steps import format_next_steps_text
+
         assert format_next_steps_text([]) == ""
 
     def test_non_empty_includes_header(self):
         from roam.commands.next_steps import format_next_steps_text
+
         result = format_next_steps_text(["Run `roam health`"])
         assert "NEXT STEPS:" in result
 
     def test_numbered_items(self):
         from roam.commands.next_steps import format_next_steps_text
+
         steps = ["Run `roam health`", "Run `roam hotspots`"]
         result = format_next_steps_text(steps)
         assert "1." in result
@@ -165,6 +191,7 @@ class TestFormatNextStepsText:
 
     def test_each_step_appears_in_output(self):
         from roam.commands.next_steps import format_next_steps_text
+
         steps = ["Run `roam health`", "Run `roam vibe-check`"]
         result = format_next_steps_text(steps)
         assert "roam health" in result
@@ -174,6 +201,7 @@ class TestFormatNextStepsText:
 # ---------------------------------------------------------------------------
 # Integration tests against a real indexed project
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture(scope="module")
 def ns_project(tmp_path_factory):
@@ -185,12 +213,7 @@ def ns_project(tmp_path_factory):
     (proj / ".gitignore").write_text(".roam/\n")
 
     # A few Python files so the indexer has something to chew on
-    (proj / "app.py").write_text(
-        "from service import process\n"
-        "\n"
-        "def main():\n"
-        "    return process('hello')\n"
-    )
+    (proj / "app.py").write_text("from service import process\n\ndef main():\n    return process('hello')\n")
     (proj / "service.py").write_text(
         "def process(data):\n"
         "    return transform(data)\n"
@@ -201,10 +224,7 @@ def ns_project(tmp_path_factory):
         "def unused_func():\n"
         "    return 'never called'\n"
     )
-    (proj / "utils.py").write_text(
-        "def helper():\n"
-        "    pass\n"
-    )
+    (proj / "utils.py").write_text("def helper():\n    pass\n")
 
     # Init git
     subprocess.run(["git", "init"], cwd=proj, capture_output=True)
@@ -250,7 +270,7 @@ class TestHealthNextSteps:
         result = _invoke(ns_project, "--json", "--detail", "health")
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
-        assert "next_steps" in data, f"'next_steps' missing from health JSON output"
+        assert "next_steps" in data, "'next_steps' missing from health JSON output"
 
     def test_json_next_steps_is_list(self, ns_project):
         result = _invoke(ns_project, "--json", "--detail", "health")
@@ -419,11 +439,13 @@ class TestDeadNextSteps:
 # Contextual differentiation tests
 # ---------------------------------------------------------------------------
 
+
 class TestContextualDifferentiation:
     """Verify that different context values produce different suggestions."""
 
     def test_health_low_vs_high_score_differ(self):
         from roam.commands.next_steps import suggest_next_steps
+
         low = suggest_next_steps("health", {"score": 20, "critical_issues": 5, "cycles": 3})
         high = suggest_next_steps("health", {"score": 95, "critical_issues": 0, "cycles": 0})
         # Low score should suggest vibe-check, high score should suggest trends
@@ -436,10 +458,16 @@ class TestContextualDifferentiation:
 
     def test_context_callers_zero_vs_many_differ(self):
         from roam.commands.next_steps import suggest_next_steps
+
         orphan = suggest_next_steps("context", {"symbol": "x", "callers": 0})
-        popular = suggest_next_steps("context", {
-            "symbol": "x", "callers": 30, "blast_radius_symbols": 20,
-        })
+        popular = suggest_next_steps(
+            "context",
+            {
+                "symbol": "x",
+                "callers": 30,
+                "blast_radius_symbols": 20,
+            },
+        )
         orphan_text = " ".join(orphan)
         popular_text = " ".join(popular)
         assert "dead" in orphan_text
@@ -447,6 +475,7 @@ class TestContextualDifferentiation:
 
     def test_hotspots_zero_vs_nonzero_total_differ(self):
         from roam.commands.next_steps import suggest_next_steps
+
         no_data = suggest_next_steps("hotspots", {"total": 0, "upgrades": 0})
         has_data = suggest_next_steps("hotspots", {"total": 10, "upgrades": 5})
         no_data_text = " ".join(no_data)

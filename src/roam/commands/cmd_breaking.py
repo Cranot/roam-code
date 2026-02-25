@@ -8,15 +8,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
     format_signature,
     json_envelope,
     to_json,
 )
-from roam.commands.resolve import ensure_index
-
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -38,11 +37,7 @@ def _git_changed_files(root: Path, ref: str) -> list[str]:
         )
         if result.returncode != 0:
             return []
-        return [
-            p.replace("\\", "/")
-            for p in result.stdout.strip().splitlines()
-            if p.strip()
-        ]
+        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
@@ -81,6 +76,7 @@ def _parse_source_bytes(source: bytes, language: str):
 
     try:
         from tree_sitter_language_pack import get_parser
+
         parser = get_parser(grammar)
     except Exception:
         return None, None, None
@@ -99,8 +95,8 @@ def _extract_old_symbols(source: bytes, file_path: str) -> list[dict]:
     Returns a list of normalised symbol dicts (same shape as
     ``roam.index.symbols.extract_symbols``).
     """
-    from roam.languages.registry import get_language_for_file, get_extractor_for_file
     from roam.index.symbols import extract_symbols
+    from roam.languages.registry import get_extractor_for_file, get_language_for_file
 
     language = get_language_for_file(file_path)
     if language is None:
@@ -189,8 +185,13 @@ def _compare_file(
 
     # Kinds whose signatures represent an API contract
     _SIG_KINDS = {
-        "function", "method", "class", "constructor",
-        "interface", "trait", "struct",
+        "function",
+        "method",
+        "class",
+        "constructor",
+        "interface",
+        "trait",
+        "struct",
     }
 
     # 1. Signature changes: same key exists in both, but signature differs
@@ -201,14 +202,16 @@ def _compare_file(
         old_sig = _sig_normalise(old_by_key[k].get("signature"))
         new_sig = _sig_normalise(new_by_key[k].get("signature"))
         if old_sig and new_sig and old_sig != new_sig:
-            sig_changed.append({
-                "name": old_by_key[k]["name"],
-                "kind": old_by_key[k]["kind"],
-                "old_signature": old_by_key[k].get("signature", ""),
-                "new_signature": new_by_key[k].get("signature", ""),
-                "file": file_path,
-                "line": new_by_key[k].get("line_start"),
-            })
+            sig_changed.append(
+                {
+                    "name": old_by_key[k]["name"],
+                    "kind": old_by_key[k]["kind"],
+                    "old_signature": old_by_key[k].get("signature", ""),
+                    "new_signature": new_by_key[k].get("signature", ""),
+                    "file": file_path,
+                    "line": new_by_key[k].get("line_start"),
+                }
+            )
 
     # 2. Removed: in old but not in new
     missing_keys = old_keys - new_keys
@@ -254,21 +257,25 @@ def _compare_file(
         # Threshold: require a reasonable match (name_sim > 0.5 area)
         if best_match is not None and best_score >= 0.6:
             new_sym = added_map.pop(best_match)
-            renamed.append({
-                "old_name": old_sym["name"],
-                "new_name": new_sym["name"],
-                "kind": old_sym["kind"],
-                "file": file_path,
-                "line": new_sym.get("line_start"),
-            })
+            renamed.append(
+                {
+                    "old_name": old_sym["name"],
+                    "new_name": new_sym["name"],
+                    "kind": old_sym["kind"],
+                    "file": file_path,
+                    "line": new_sym.get("line_start"),
+                }
+            )
         else:
-            removed.append({
-                "name": old_sym["name"],
-                "kind": old_sym["kind"],
-                "signature": old_sym.get("signature", ""),
-                "file": file_path,
-                "line": old_sym.get("line_start"),
-            })
+            removed.append(
+                {
+                    "name": old_sym["name"],
+                    "kind": old_sym["kind"],
+                    "signature": old_sym.get("signature", ""),
+                    "file": file_path,
+                    "line": old_sym.get("line_start"),
+                }
+            )
 
     return removed, sig_changed, renamed
 
@@ -284,9 +291,7 @@ def _get_current_symbols(conn, file_path: str) -> list[dict]:
     Returns dicts with the same keys as the extractor output so
     ``_compare_file`` can work uniformly.
     """
-    row = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    ).fetchone()
+    row = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if not row:
         # Try LIKE match
         row = conn.execute(
@@ -340,14 +345,18 @@ def breaking(ctx, target):
     changed = _git_changed_files(root, target)
     if not changed:
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "breaking",
-                summary={"removed": 0, "signature_changed": 0, "renamed": 0},
-                target=target,
-                removed=[],
-                signature_changed=[],
-                renamed=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "breaking",
+                        summary={"removed": 0, "signature_changed": 0, "renamed": 0},
+                        target=target,
+                        removed=[],
+                        signature_changed=[],
+                        renamed=[],
+                    )
+                )
+            )
         else:
             click.echo(f"No changed files vs {target}.")
         return
@@ -372,7 +381,9 @@ def breaking(ctx, target):
             new_symbols = _get_current_symbols(conn, fpath)
 
             removed, sig_changed, renamed = _compare_file(
-                fpath, old_symbols, new_symbols,
+                fpath,
+                old_symbols,
+                new_symbols,
             )
             all_removed.extend(removed)
             all_sig_changed.extend(sig_changed)
@@ -386,19 +397,23 @@ def breaking(ctx, target):
     total = len(all_removed) + len(all_sig_changed) + len(all_renamed)
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "breaking",
-            summary={
-                "removed": len(all_removed),
-                "signature_changed": len(all_sig_changed),
-                "renamed": len(all_renamed),
-                "total": total,
-            },
-            target=target,
-            removed=all_removed,
-            signature_changed=all_sig_changed,
-            renamed=all_renamed,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "breaking",
+                    summary={
+                        "removed": len(all_removed),
+                        "signature_changed": len(all_sig_changed),
+                        "renamed": len(all_renamed),
+                        "total": total,
+                    },
+                    target=target,
+                    removed=all_removed,
+                    signature_changed=all_sig_changed,
+                    renamed=all_renamed,
+                )
+            )
+        )
         return
 
     # --- Text output ---

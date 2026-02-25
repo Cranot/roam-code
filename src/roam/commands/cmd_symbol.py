@@ -2,15 +2,23 @@
 
 import click
 
+from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.db.queries import (
-    CALLERS_OF, CALLEES_OF, METRICS_FOR_SYMBOL,
+    CALLEES_OF,
+    CALLERS_OF,
+    METRICS_FOR_SYMBOL,
 )
 from roam.output.formatter import (
-    abbrev_kind, loc, format_signature, format_edge_kind,
-    truncate_lines, section, to_json, json_envelope,
+    abbrev_kind,
+    format_edge_kind,
+    format_signature,
+    json_envelope,
+    loc,
+    section,
+    to_json,
+    truncate_lines,
 )
-from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 
 _EDGE_PRIORITY = {"call": 0, "template": 0, "inherits": 1, "implements": 2, "import": 3}
 
@@ -27,12 +35,12 @@ def _dedup_edges(edges):
 
 
 @click.command()
-@click.argument('name')
-@click.option('--full', is_flag=True, help='Show all results without truncation')
+@click.argument("name")
+@click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def symbol(ctx, name, full):
     """Show symbol definition, callers, and callees."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -60,22 +68,35 @@ def symbol(ctx, name, full):
                 data["in_degree"] = metrics["in_degree"]
                 data["out_degree"] = metrics["out_degree"]
             data["callers"] = [
-                {"name": c["name"], "kind": c["kind"], "edge_kind": c["edge_kind"],
-                 "location": loc(c["file_path"], c["edge_line"])}
+                {
+                    "name": c["name"],
+                    "kind": c["kind"],
+                    "edge_kind": c["edge_kind"],
+                    "location": loc(c["file_path"], c["edge_line"]),
+                }
                 for c in deduped_callers
             ]
             data["callees"] = [
-                {"name": c["name"], "kind": c["kind"], "edge_kind": c["edge_kind"],
-                 "location": loc(c["file_path"], c["edge_line"])}
+                {
+                    "name": c["name"],
+                    "kind": c["kind"],
+                    "edge_kind": c["edge_kind"],
+                    "location": loc(c["file_path"], c["edge_line"]),
+                }
                 for c in deduped_callees
             ]
-            click.echo(to_json(json_envelope("symbol",
-                summary={
-                    "callers": len(deduped_callers),
-                    "callees": len(deduped_callees),
-                },
-                **data,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "symbol",
+                        summary={
+                            "callers": len(deduped_callers),
+                            "callees": len(deduped_callees),
+                        },
+                        **data,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -99,12 +120,16 @@ def symbol(ctx, name, full):
             lines = []
             for c in deduped_callers:
                 edge = format_edge_kind(c["edge_kind"])
-                lines.append(f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}")
+                lines.append(
+                    f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}"
+                )
             click.echo(section(f"Callers ({len(deduped_callers)}):", lines, budget=0 if full else 15))
 
         if deduped_callees:
             lines = []
             for c in deduped_callees:
                 edge = format_edge_kind(c["edge_kind"])
-                lines.append(f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}")
+                lines.append(
+                    f"  {abbrev_kind(c['kind'])}  {c['name']}  ({edge})  {loc(c['file_path'], c['edge_line'])}"
+                )
             click.echo(section(f"Callees ({len(deduped_callees)}):", lines, budget=0 if full else 15))

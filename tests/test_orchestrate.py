@@ -2,45 +2,31 @@
 
 from __future__ import annotations
 
-import json
 import os
 
 import pytest
-from click.testing import CliRunner
 
-from tests.conftest import index_in_process, invoke_cli, parse_json_output, assert_json_envelope
+from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 
 @pytest.fixture
 def orch_project(project_factory):
-    return project_factory({
-        "auth/login.py": (
-            "from auth.tokens import create_token\n"
-            "def authenticate(u, p): return create_token(u)\n"
-        ),
-        "auth/tokens.py": (
-            "def create_token(user): return 'tok'\n"
-            "def verify_token(t): return True\n"
-        ),
-        "billing/invoice.py": (
-            "from billing.tax import calc_tax\n"
-            "def create_invoice(order): return calc_tax(order)\n"
-        ),
-        "billing/tax.py": (
-            "def calc_tax(order): return order * 0.1\n"
-        ),
-        "api/routes.py": (
-            "from auth.login import authenticate\n"
-            "from billing.invoice import create_invoice\n"
-            "def handle(r): authenticate(r, r); return create_invoice(r)\n"
-        ),
-        "models.py": (
-            "class User:\n"
-            "    pass\n"
-            "class Order:\n"
-            "    pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "auth/login.py": ("from auth.tokens import create_token\ndef authenticate(u, p): return create_token(u)\n"),
+            "auth/tokens.py": ("def create_token(user): return 'tok'\ndef verify_token(t): return True\n"),
+            "billing/invoice.py": (
+                "from billing.tax import calc_tax\ndef create_invoice(order): return calc_tax(order)\n"
+            ),
+            "billing/tax.py": ("def calc_tax(order): return order * 0.1\n"),
+            "api/routes.py": (
+                "from auth.login import authenticate\n"
+                "from billing.invoice import create_invoice\n"
+                "def handle(r): authenticate(r, r); return create_invoice(r)\n"
+            ),
+            "models.py": ("class User:\n    pass\nclass Order:\n    pass\n"),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -81,9 +67,7 @@ class TestPartitionForAgents:
                 G = build_symbol_graph(conn)
                 for n in [2, 3, 5]:
                     result = partition_for_agents(G, conn, n)
-                    assert len(result["agents"]) == n, (
-                        f"Expected {n} agents, got {len(result['agents'])}"
-                    )
+                    assert len(result["agents"]) == n, f"Expected {n} agents, got {len(result['agents'])}"
         finally:
             os.chdir(old_cwd)
 
@@ -134,9 +118,7 @@ class TestPartitionForAgents:
                 seen = set()
                 for agent in result["agents"]:
                     for f in agent["write_files"]:
-                        assert f not in seen, (
-                            f"File {f} assigned to multiple agents"
-                        )
+                        assert f not in seen, f"File {f} assigned to multiple agents"
                         seen.add(f)
         finally:
             os.chdir(old_cwd)
@@ -226,16 +208,16 @@ class TestOrchestrateCommand:
 
     def test_cli_orchestrate_runs(self, orch_project, cli_runner):
         """Command exits with code 0."""
-        result = invoke_cli(
-            cli_runner, ["orchestrate", "--agents", "3"], cwd=orch_project
-        )
+        result = invoke_cli(cli_runner, ["orchestrate", "--agents", "3"], cwd=orch_project)
         assert result.exit_code == 0, f"Failed:\n{result.output}"
 
     def test_cli_orchestrate_json(self, orch_project, cli_runner):
         """JSON output is a valid envelope with command='orchestrate'."""
         result = invoke_cli(
-            cli_runner, ["orchestrate", "--agents", "3"],
-            cwd=orch_project, json_mode=True,
+            cli_runner,
+            ["orchestrate", "--agents", "3"],
+            cwd=orch_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="orchestrate")
         assert_json_envelope(data, command="orchestrate")
@@ -245,38 +227,35 @@ class TestOrchestrateCommand:
 
     def test_cli_orchestrate_verdict(self, orch_project, cli_runner):
         """Text output starts with VERDICT."""
-        result = invoke_cli(
-            cli_runner, ["orchestrate", "--agents", "2"], cwd=orch_project
-        )
+        result = invoke_cli(cli_runner, ["orchestrate", "--agents", "2"], cwd=orch_project)
         assert result.exit_code == 0
         assert result.output.strip().startswith("VERDICT:")
 
     def test_cli_orchestrate_agents_flag(self, orch_project, cli_runner):
         """--agents is required."""
-        result = invoke_cli(
-            cli_runner, ["orchestrate"], cwd=orch_project
-        )
+        result = invoke_cli(cli_runner, ["orchestrate"], cwd=orch_project)
         # Click should report missing --agents
         assert result.exit_code != 0
 
     def test_cli_orchestrate_with_files(self, orch_project, cli_runner):
         """--files flag restricts scope."""
         result = invoke_cli(
-            cli_runner, ["orchestrate", "--agents", "2", "--files", "auth/"],
-            cwd=orch_project, json_mode=True,
+            cli_runner,
+            ["orchestrate", "--agents", "2", "--files", "auth/"],
+            cwd=orch_project,
+            json_mode=True,
         )
         data = parse_json_output(result, command="orchestrate")
         assert_json_envelope(data, command="orchestrate")
         # All write files should be in auth/
         for agent in data["agents"]:
             for f in agent["write_files"]:
-                assert f.startswith("auth/"), (
-                    f"Expected auth/ prefix, got {f}"
-                )
+                assert f.startswith("auth/"), f"Expected auth/ prefix, got {f}"
 
     def test_cli_orchestrate_help(self, cli_runner):
         """--help works."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["orchestrate", "--help"])
         assert result.exit_code == 0
         assert "--agents" in result.output

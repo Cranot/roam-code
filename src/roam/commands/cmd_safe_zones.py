@@ -4,10 +4,10 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.graph_helpers import bfs_nx
+from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
 def _resolve_file_symbols(conn, target):
@@ -23,9 +23,7 @@ def _resolve_file_symbols(conn, target):
         return None, None
 
     file_id = row["id"]
-    syms = conn.execute(
-        "SELECT id FROM symbols WHERE file_id = ?", (file_id,)
-    ).fetchall()
+    syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()
     return file_id, {s["id"] for s in syms}
 
 
@@ -34,14 +32,22 @@ def _classify_zone(boundary_count):
     if boundary_count == 0:
         return "ISOLATED", "no external connections -- safe to refactor freely"
     if boundary_count <= 5:
-        return "CONTAINED", f"{boundary_count} boundary symbols -- refactor with minor API contract awareness"
+        return (
+            "CONTAINED",
+            f"{boundary_count} boundary symbols -- refactor with minor API contract awareness",
+        )
     return "EXPOSED", f"{boundary_count} boundary symbols -- refactor carefully, many consumers"
 
 
 @click.command("safe-zones")
 @click.argument("target")
-@click.option("--depth", default=5, type=int, show_default=True,
-              help="Max BFS depth for propagation analysis.")
+@click.option(
+    "--depth",
+    default=5,
+    type=int,
+    show_default=True,
+    help="Max BFS depth for propagation analysis.",
+)
 @click.pass_context
 def safe_zones(ctx, target, depth):
     """Identify safe refactoring boundaries for a symbol or file.
@@ -103,7 +109,7 @@ def safe_zones(ctx, target, depth):
         # neighbor outside the internal zone.
         boundary_ids: set[int] = set()
         external_caller_count: dict[int, int] = {}  # boundary_id -> count of external callers
-        external_callee_count: dict[int, int] = {}   # boundary_id -> count of external callees
+        external_callee_count: dict[int, int] = {}  # boundary_id -> count of external callees
 
         for nid in internal_ids:
             if nid not in G:
@@ -173,47 +179,56 @@ def safe_zones(ctx, target, depth):
                 info = detail_map.get(nid)
                 if not info:
                     continue
-                internal_list.append({
-                    "name": info["name"],
-                    "kind": abbrev_kind(info["kind"]),
-                    "file": info["file_path"],
-                    "line": info["line_start"],
-                })
+                internal_list.append(
+                    {
+                        "name": info["name"],
+                        "kind": abbrev_kind(info["kind"]),
+                        "file": info["file_path"],
+                        "line": info["line_start"],
+                    }
+                )
 
             boundary_list = []
             for nid in sorted(boundary_ids, key=lambda b: boundary_external_refs.get(b, 0), reverse=True):
                 info = detail_map.get(nid)
                 if not info:
                     continue
-                boundary_list.append({
-                    "name": info["name"],
-                    "kind": abbrev_kind(info["kind"]),
-                    "file": info["file_path"],
-                    "line": info["line_start"],
-                    "external_callers": external_caller_count.get(nid, 0),
-                    "external_callees": external_callee_count.get(nid, 0),
-                    "external_refs": boundary_external_refs.get(nid, 0),
-                })
+                boundary_list.append(
+                    {
+                        "name": info["name"],
+                        "kind": abbrev_kind(info["kind"]),
+                        "file": info["file_path"],
+                        "line": info["line_start"],
+                        "external_callers": external_caller_count.get(nid, 0),
+                        "external_callees": external_callee_count.get(nid, 0),
+                        "external_refs": boundary_external_refs.get(nid, 0),
+                    }
+                )
 
-            click.echo(to_json(json_envelope("safe-zones",
-                summary={
-                    "zone": zone_label,
-                    "internal_symbols": len(strictly_internal_ids),
-                    "boundary_symbols": len(boundary_ids),
-                    "total_symbols": len(internal_ids),
-                    "affected_files": len(affected_files),
-                },
-                target=target_label,
-                depth=depth,
-                zone=zone_label,
-                zone_description=zone_desc,
-                internal_symbols=len(strictly_internal_ids),
-                boundary_symbols=len(boundary_ids),
-                total_symbols=len(internal_ids),
-                affected_files=sorted(affected_files),
-                internal=internal_list,
-                boundary=boundary_list,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "safe-zones",
+                        summary={
+                            "zone": zone_label,
+                            "internal_symbols": len(strictly_internal_ids),
+                            "boundary_symbols": len(boundary_ids),
+                            "total_symbols": len(internal_ids),
+                            "affected_files": len(affected_files),
+                        },
+                        target=target_label,
+                        depth=depth,
+                        zone=zone_label,
+                        zone_description=zone_desc,
+                        internal_symbols=len(strictly_internal_ids),
+                        boundary_symbols=len(boundary_ids),
+                        total_symbols=len(internal_ids),
+                        affected_files=sorted(affected_files),
+                        internal=internal_list,
+                        boundary=boundary_list,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -228,11 +243,13 @@ def safe_zones(ctx, target, depth):
                 info = detail_map.get(nid)
                 if not info:
                     continue
-                int_rows.append([
-                    info["name"],
-                    abbrev_kind(info["kind"]),
-                    loc(info["file_path"], info["line_start"]),
-                ])
+                int_rows.append(
+                    [
+                        info["name"],
+                        abbrev_kind(info["kind"]),
+                        loc(info["file_path"], info["line_start"]),
+                    ]
+                )
             click.echo(format_table(["name", "kind", "location"], int_rows, budget=20))
             click.echo()
 
@@ -252,17 +269,21 @@ def safe_zones(ctx, target, depth):
                 if ext_e:
                     refs_parts.append(f"{ext_e} callee{'s' if ext_e != 1 else ''}")
                 refs_label = ", ".join(refs_parts) if refs_parts else "0 external refs"
-                bnd_rows.append([
-                    info["name"],
-                    abbrev_kind(info["kind"]),
-                    loc(info["file_path"], info["line_start"]),
-                    f"({refs_label})",
-                ])
-            click.echo(format_table(
-                ["name", "kind", "location", "external refs"],
-                bnd_rows,
-                budget=20,
-            ))
+                bnd_rows.append(
+                    [
+                        info["name"],
+                        abbrev_kind(info["kind"]),
+                        loc(info["file_path"], info["line_start"]),
+                        f"({refs_label})",
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["name", "kind", "location", "external refs"],
+                    bnd_rows,
+                    budget=20,
+                )
+            )
             click.echo()
 
         # Blast radius summary

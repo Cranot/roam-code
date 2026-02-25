@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from tree_sitter_language_pack import get_parser
+
 from roam.index.parser import GRAMMAR_ALIASES
 from roam.languages.registry import get_extractor
-from tree_sitter_language_pack import get_parser
 
 
 def _parse_and_extract(source_text: str, language: str, file_path: str):
@@ -38,12 +39,7 @@ class TestRegistryRouting:
 
 class TestKotlinExtractor:
     def test_kotlin_class_interface_enum_and_object_kinds(self):
-        source = (
-            "interface Talker { fun speak(): String }\n"
-            "class Base\n"
-            "object Singleton\n"
-            "enum class Color { RED }\n"
-        )
+        source = "interface Talker { fun speak(): String }\nclass Base\nobject Singleton\nenum class Color { RED }\n"
 
         symbols, _ = _parse_and_extract(source, "kotlin", "models.kt")
 
@@ -85,7 +81,7 @@ class TestSwiftExtractor:
         source = (
             "protocol Walkable {}\n"
             "class Person {\n"
-            "  var name: String = \"x\"\n"
+            '  var name: String = "x"\n'
             "  private let age: Int = 5\n"
             "  init(name: String) { self.name = name }\n"
             "  func speak() -> String { return name }\n"
@@ -129,4 +125,3 @@ class TestSwiftExtractor:
         assert ("Person", "Walkable") in implements
         assert ("Point", "Walkable") in implements
         assert ("Named", "Walkable") in inherits
-

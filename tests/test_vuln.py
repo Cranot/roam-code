@@ -8,42 +8,46 @@ import os
 import pytest
 from click.testing import CliRunner
 
-from tests.conftest import index_in_process, git_init
-
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def vuln_project(project_factory):
     """Create a small project with call chains for reachability testing."""
-    return project_factory({
-        "api.py": (
-            "from service import process\n"
-            "def handle(): return process()\n"
-        ),
-        "service.py": (
-            "from utils import merge_data\n"
-            "def process(): return merge_data({})\n"
-        ),
-        "utils.py": (
-            "def merge_data(d): return d\n"
-            "def unused(): pass\n"
-        ),
-        "config.py": (
-            "def load_config(): pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "api.py": ("from service import process\ndef handle(): return process()\n"),
+            "service.py": ("from utils import merge_data\ndef process(): return merge_data({})\n"),
+            "utils.py": ("def merge_data(d): return d\ndef unused(): pass\n"),
+            "config.py": ("def load_config(): pass\n"),
+        }
+    )
 
 
 @pytest.fixture
 def generic_vuln_report(tmp_path):
     """Create a generic vulnerability report JSON file."""
     report = [
-        {"cve": "CVE-2024-0001", "package": "merge_data", "severity": "critical", "title": "Test vuln"},
-        {"cve": "CVE-2024-0002", "package": "load_config", "severity": "high", "title": "Config vuln"},
-        {"cve": "CVE-2024-0003", "package": "nonexistent_pkg", "severity": "low", "title": "Not in code"},
+        {
+            "cve": "CVE-2024-0001",
+            "package": "merge_data",
+            "severity": "critical",
+            "title": "Test vuln",
+        },
+        {
+            "cve": "CVE-2024-0002",
+            "package": "load_config",
+            "severity": "high",
+            "title": "Config vuln",
+        },
+        {
+            "cve": "CVE-2024-0003",
+            "package": "nonexistent_pkg",
+            "severity": "low",
+            "title": "Not in code",
+        },
     ]
     p = tmp_path / "vulns.json"
     p.write_text(json.dumps(report))
@@ -54,9 +58,11 @@ def generic_vuln_report(tmp_path):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _invoke(args, cwd, json_mode=False):
     """Invoke roam CLI in-process."""
     from roam.cli import cli
+
     runner = CliRunner()
     full_args = []
     if json_mode:
@@ -75,10 +81,12 @@ def _invoke(args, cwd, json_mode=False):
 # 1. Schema tests
 # ===========================================================================
 
+
 class TestVulnSchema:
     def test_vuln_table_exists(self, vuln_project):
         """vulnerabilities table should be created after schema migration."""
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -95,11 +103,13 @@ class TestVulnSchema:
 # 2. Ingestion tests
 # ===========================================================================
 
+
 class TestVulnIngestion:
     def test_ingest_generic(self, vuln_project, generic_vuln_report):
         """Generic ingester should insert all entries."""
         from roam.db.connection import open_db
         from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -116,6 +126,7 @@ class TestVulnIngestion:
         """Matched packages should have matched_symbol_id populated."""
         from roam.db.connection import open_db
         from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -132,6 +143,7 @@ class TestVulnIngestion:
         """Unmatched packages should have NULL matched_symbol_id."""
         from roam.db.connection import open_db
         from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -148,13 +160,15 @@ class TestVulnIngestion:
 # 3. Reachability tests
 # ===========================================================================
 
+
 class TestVulnReachability:
     def test_reachability_analysis(self, vuln_project, generic_vuln_report):
         """Reachable vulns should be identified correctly."""
         from roam.db.connection import open_db
-        from roam.security.vuln_store import ingest_generic
-        from roam.security.vuln_reach import analyze_reachability
         from roam.graph.builder import build_symbol_graph
+        from roam.security.vuln_reach import analyze_reachability
+        from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -175,9 +189,10 @@ class TestVulnReachability:
     def test_unreachable_detection(self, vuln_project, generic_vuln_report):
         """Unmatched vulns should not be marked as reachable."""
         from roam.db.connection import open_db
-        from roam.security.vuln_store import ingest_generic
-        from roam.security.vuln_reach import analyze_reachability
         from roam.graph.builder import build_symbol_graph
+        from roam.security.vuln_reach import analyze_reachability
+        from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -196,9 +211,10 @@ class TestVulnReachability:
     def test_shortest_path(self, vuln_project, generic_vuln_report):
         """Shortest path should be computed for matched and reachable vulns."""
         from roam.db.connection import open_db
-        from roam.security.vuln_store import ingest_generic
-        from roam.security.vuln_reach import analyze_reachability
         from roam.graph.builder import build_symbol_graph
+        from roam.security.vuln_reach import analyze_reachability
+        from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -217,9 +233,10 @@ class TestVulnReachability:
     def test_vuln_blast_radius(self, vuln_project, generic_vuln_report):
         """Blast radius should be computed for matched vulns."""
         from roam.db.connection import open_db
-        from roam.security.vuln_store import ingest_generic
-        from roam.security.vuln_reach import analyze_reachability
         from roam.graph.builder import build_symbol_graph
+        from roam.security.vuln_reach import analyze_reachability
+        from roam.security.vuln_store import ingest_generic
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(vuln_project))
@@ -238,6 +255,7 @@ class TestVulnReachability:
 # ===========================================================================
 # 4. CLI tests
 # ===========================================================================
+
 
 class TestVulnMapCLI:
     def test_cli_vuln_map_runs(self, vuln_project, generic_vuln_report):
@@ -258,6 +276,7 @@ class TestVulnMapCLI:
     def test_cli_vuln_map_help(self):
         """vuln-map --help should exit 0."""
         from roam.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["vuln-map", "--help"])
         assert result.exit_code == 0
@@ -307,6 +326,7 @@ class TestVulnReachCLI:
     def test_cli_vuln_reach_help(self):
         """vuln-reach --help should exit 0."""
         from roam.cli import cli
+
         runner = CliRunner()
         result = runner.invoke(cli, ["vuln-reach", "--help"])
         assert result.exit_code == 0

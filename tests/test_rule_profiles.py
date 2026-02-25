@@ -9,10 +9,10 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture()
 def tmp_project(tmp_path: Path):
@@ -49,8 +49,7 @@ def tmp_project(tmp_path: Path):
     """)
     conn.execute("INSERT INTO files (id, path, loc) VALUES (1, 'src/app.py', 100)")
     conn.execute(
-        "INSERT INTO symbols (id, file_id, name, kind, cognitive_complexity) "
-        "VALUES (1, 1, 'main', 'function', 5)"
+        "INSERT INTO symbols (id, file_id, name, kind, cognitive_complexity) VALUES (1, 1, 'main', 'function', 5)"
     )
     conn.commit()
     conn.close()
@@ -67,47 +66,53 @@ class TestBuiltinProfiles:
 
     def test_profiles_exist(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         assert isinstance(BUILTIN_PROFILES, dict)
         expected = {"default", "strict-security", "ai-code-review", "legacy-maintenance", "minimal"}
         assert expected == set(BUILTIN_PROFILES.keys())
 
     def test_all_profiles_have_description(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         for name, prof in BUILTIN_PROFILES.items():
             assert "description" in prof, f"Profile {name} missing description"
             assert prof["description"], f"Profile {name} has empty description"
 
     def test_all_profiles_have_rules(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         for name, prof in BUILTIN_PROFILES.items():
             assert "rules" in prof, f"Profile {name} missing rules"
             assert isinstance(prof["rules"], dict)
 
     def test_default_profile_has_all_rules(self):
         from roam.rules.builtin import BUILTIN_PROFILES, BUILTIN_RULES
+
         default = BUILTIN_PROFILES["default"]
         for rule in BUILTIN_RULES:
-            assert rule.id in default["rules"], (
-                f"Default profile missing rule: {rule.id}"
-            )
+            assert rule.id in default["rules"], f"Default profile missing rule: {rule.id}"
 
     def test_strict_security_extends_default(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         prof = BUILTIN_PROFILES["strict-security"]
         assert prof.get("extends") == "default"
 
     def test_ai_code_review_extends_default(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         prof = BUILTIN_PROFILES["ai-code-review"]
         assert prof.get("extends") == "default"
 
     def test_legacy_maintenance_extends_default(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         prof = BUILTIN_PROFILES["legacy-maintenance"]
         assert prof.get("extends") == "default"
 
     def test_minimal_does_not_extend(self):
         from roam.rules.builtin import BUILTIN_PROFILES
+
         prof = BUILTIN_PROFILES["minimal"]
         assert prof.get("extends") is None
 
@@ -121,7 +126,8 @@ class TestResolveProfile:
     """Tests for the resolve_profile function."""
 
     def test_resolve_default(self):
-        from roam.rules.builtin import resolve_profile, BUILTIN_RULES
+        from roam.rules.builtin import BUILTIN_RULES, resolve_profile
+
         overrides = resolve_profile("default")
         assert isinstance(overrides, list)
         # Default should have an override for every built-in rule
@@ -131,6 +137,7 @@ class TestResolveProfile:
 
     def test_resolve_strict_security_inherits_default(self):
         from roam.rules.builtin import resolve_profile
+
         overrides = resolve_profile("strict-security")
         ov_map = {ov["id"]: ov for ov in overrides}
         # Strict security overrides max-fan-out threshold to 10
@@ -140,6 +147,7 @@ class TestResolveProfile:
 
     def test_resolve_legacy_relaxed_thresholds(self):
         from roam.rules.builtin import resolve_profile
+
         overrides = resolve_profile("legacy-maintenance")
         ov_map = {ov["id"]: ov for ov in overrides}
         assert ov_map["max-file-complexity"]["threshold"] == 80
@@ -147,30 +155,27 @@ class TestResolveProfile:
         assert ov_map["no-god-classes"]["threshold"] == 30
 
     def test_resolve_minimal_disables_most_rules(self):
-        from roam.rules.builtin import resolve_profile, BUILTIN_RULES
+        from roam.rules.builtin import resolve_profile
+
         overrides = resolve_profile("minimal")
         ov_map = {ov["id"]: ov for ov in overrides}
         # Minimal only enables no-circular-imports and layer-violation
-        enabled_ids = {
-            ov["id"] for ov in overrides
-            if ov.get("enabled", True) is True
-        }
+        enabled_ids = {ov["id"] for ov in overrides if ov.get("enabled", True) is True}
         assert "no-circular-imports" in enabled_ids
         assert "layer-violation" in enabled_ids
         # Others should be disabled
-        disabled_ids = {
-            ov["id"] for ov in overrides
-            if ov.get("enabled") is False
-        }
+        disabled_ids = {ov["id"] for ov in overrides if ov.get("enabled") is False}
         assert "max-fan-out" in disabled_ids
 
     def test_resolve_unknown_profile_raises(self):
         from roam.rules.builtin import resolve_profile
+
         with pytest.raises(ValueError, match="Unknown profile"):
             resolve_profile("nonexistent-profile")
 
     def test_resolve_ai_code_review_thresholds(self):
         from roam.rules.builtin import resolve_profile
+
         overrides = resolve_profile("ai-code-review")
         ov_map = {ov["id"]: ov for ov in overrides}
         assert ov_map["max-file-length"]["threshold"] == 300
@@ -184,7 +189,8 @@ class TestResolveProfile:
 
 class TestListProfiles:
     def test_list_profiles_returns_all(self):
-        from roam.rules.builtin import list_profiles, BUILTIN_PROFILES
+        from roam.rules.builtin import BUILTIN_PROFILES, list_profiles
+
         profiles = list_profiles()
         assert len(profiles) == len(BUILTIN_PROFILES)
         names = {p["name"] for p in profiles}
@@ -192,6 +198,7 @@ class TestListProfiles:
 
     def test_list_profiles_structure(self):
         from roam.rules.builtin import list_profiles
+
         for p in list_profiles():
             assert "name" in p
             assert "description" in p
@@ -207,10 +214,12 @@ class TestListProfiles:
 class TestProfileCLI:
     def test_profile_flag_strict_security(self, tmp_project, monkeypatch):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_project)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["check-rules", "--profile", "strict-security"],
+            cli,
+            ["check-rules", "--profile", "strict-security"],
             catch_exceptions=False,
         )
         assert result.exit_code in (0, 1)
@@ -218,10 +227,12 @@ class TestProfileCLI:
 
     def test_profile_flag_minimal(self, tmp_project, monkeypatch):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_project)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["check-rules", "--profile", "minimal"],
+            cli,
+            ["check-rules", "--profile", "minimal"],
             catch_exceptions=False,
         )
         assert result.exit_code in (0, 1)
@@ -229,20 +240,24 @@ class TestProfileCLI:
 
     def test_profile_flag_unknown_fails(self, tmp_project, monkeypatch):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_project)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["check-rules", "--profile", "nonexistent"],
+            cli,
+            ["check-rules", "--profile", "nonexistent"],
             catch_exceptions=False,
         )
         assert result.exit_code != 0
 
     def test_list_profiles_flag(self, monkeypatch, tmp_path):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["check-rules", "--list-profiles"],
+            cli,
+            ["check-rules", "--list-profiles"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0
@@ -251,10 +266,12 @@ class TestProfileCLI:
 
     def test_list_profiles_json(self, monkeypatch, tmp_path):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_path)
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "check-rules", "--list-profiles"],
+            cli,
+            ["--json", "check-rules", "--list-profiles"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0
@@ -272,6 +289,7 @@ class TestProfileCLI:
 class TestYAMLProfileConfig:
     def test_load_config_profile_from_yaml(self, tmp_path):
         from roam.commands.cmd_check_rules import _load_config_profile
+
         cfg = tmp_path / ".roam-rules.yml"
         cfg.write_text("profile: strict-security\n", encoding="utf-8")
         result = _load_config_profile(str(cfg))
@@ -279,6 +297,7 @@ class TestYAMLProfileConfig:
 
     def test_load_config_profile_none_when_missing(self, tmp_path):
         from roam.commands.cmd_check_rules import _load_config_profile
+
         cfg = tmp_path / ".roam-rules.yml"
         cfg.write_text("rules:\n  - id: max-fan-out\n    threshold: 5\n", encoding="utf-8")
         result = _load_config_profile(str(cfg))
@@ -286,11 +305,13 @@ class TestYAMLProfileConfig:
 
     def test_load_config_profile_none_when_no_file(self):
         from roam.commands.cmd_check_rules import _load_config_profile
+
         result = _load_config_profile("/nonexistent/path/rules.yml")
         assert result is None
 
     def test_profile_from_yaml_used_by_cli(self, tmp_project, monkeypatch):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_project)
         # Write a config with profile: minimal
         cfg = tmp_project / ".roam-rules.yml"
@@ -302,13 +323,15 @@ class TestYAMLProfileConfig:
 
     def test_cli_profile_overrides_yaml_profile(self, tmp_project, monkeypatch):
         from roam.cli import cli
+
         monkeypatch.chdir(tmp_project)
         # Config says minimal but CLI says strict-security
         cfg = tmp_project / ".roam-rules.yml"
         cfg.write_text("profile: minimal\n", encoding="utf-8")
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["check-rules", "--profile", "strict-security"],
+            cli,
+            ["check-rules", "--profile", "strict-security"],
             catch_exceptions=False,
         )
         # Should use strict-security (more rules than minimal)

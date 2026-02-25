@@ -9,10 +9,9 @@ from pathlib import Path, PurePosixPath
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # CODEOWNERS locations (checked in order)
@@ -108,10 +107,7 @@ def _codeowners_match(pattern: str, filepath: str) -> bool:
             dir_pattern = dir_pattern[1:]
             return filepath.startswith(dir_pattern + "/") or filepath == dir_pattern
         # Unanchored directory
-        return (
-            filepath.startswith(dir_pattern + "/")
-            or ("/" + dir_pattern + "/") in ("/" + filepath)
-        )
+        return filepath.startswith(dir_pattern + "/") or ("/" + dir_pattern + "/") in ("/" + filepath)
 
     # Anchored pattern (starts with /)
     anchored = pattern.startswith("/")
@@ -149,14 +145,14 @@ def _match_doublestar(pattern: str, filepath: str, anchored: bool) -> bool:
     i = 0
     plen = len(pattern)
     while i < plen:
-        if pattern[i:i + 2] == "**":
+        if pattern[i : i + 2] == "**":
             # Absorb trailing slash after **: a/**/ -> a/ or a/x/y/
             end = i + 2
             if end < plen and pattern[end] == "/":
                 end += 1
             # ** with absorbed trailing / becomes (.*/)? — zero or more
             # path segments ending with /
-            regex += "(.*/)?";
+            regex += "(.*/)?"
             i = end
         elif pattern[i] == "*":
             regex += "[^/]*"
@@ -179,9 +175,7 @@ def _match_doublestar(pattern: str, filepath: str, anchored: bool) -> bool:
     return bool(re.match(regex, filepath))
 
 
-def resolve_owners(
-    rules: list[tuple[str, list[str]]], filepath: str
-) -> list[str]:
+def resolve_owners(rules: list[tuple[str, list[str]]], filepath: str) -> list[str]:
     """Determine the owner(s) of a file by applying CODEOWNERS rules.
 
     Last matching rule wins (standard CODEOWNERS semantics).
@@ -281,9 +275,7 @@ def codeowners(ctx, unowned, owner, limit):
         click.echo(f"  Searched: {searched}")
         click.echo()
         click.echo("  Consider creating a CODEOWNERS file to define code ownership.")
-        click.echo(
-            "  Run `roam codeowners --unowned` after creating it to find coverage gaps."
-        )
+        click.echo("  Run `roam codeowners --unowned` after creating it to find coverage gaps.")
         return
 
     rules = parse_codeowners(co_path)
@@ -291,9 +283,7 @@ def codeowners(ctx, unowned, owner, limit):
 
     with open_db(readonly=True) as conn:
         # Get all indexed files
-        all_files = conn.execute(
-            "SELECT id, path FROM files ORDER BY path"
-        ).fetchall()
+        all_files = conn.execute("SELECT id, path FROM files ORDER BY path").fetchall()
 
         if not all_files:
             if json_mode:
@@ -393,9 +383,7 @@ def codeowners(ctx, unowned, owner, limit):
             if top_contributor and fo["owners"]:
                 # Check if top contributor is NOT one of the declared owners
                 # Normalize: owners might have @ prefix, contributors might not
-                declared_names = {
-                    o.lstrip("@").lower() for o in fo["owners"]
-                }
+                declared_names = {o.lstrip("@").lower() for o in fo["owners"]}
                 contributor_name = top_contributor.lower()
                 if contributor_name not in declared_names:
                     drift_files.append(
@@ -425,9 +413,7 @@ def codeowners(ctx, unowned, owner, limit):
             if json_mode:
                 owner_file_details = []
                 for fp in owner_matched[:limit]:
-                    frow = conn.execute(
-                        "SELECT id FROM files WHERE path = ?", (fp,)
-                    ).fetchone()
+                    frow = conn.execute("SELECT id FROM files WHERE path = ?", (fp,)).fetchone()
                     pr = 0.0
                     deps = 0
                     if frow:
@@ -447,9 +433,7 @@ def codeowners(ctx, unowned, owner, limit):
                             (frow["id"],),
                         ).fetchone()
                         deps = dep_row["cnt"] if dep_row else 0
-                    owner_file_details.append(
-                        {"path": fp, "pagerank": round(pr, 4), "dependents": deps}
-                    )
+                    owner_file_details.append({"path": fp, "pagerank": round(pr, 4), "dependents": deps})
 
                 click.echo(
                     to_json(
@@ -507,9 +491,7 @@ def codeowners(ctx, unowned, owner, limit):
                 )
                 return
 
-            click.echo(
-                f"VERDICT: {unowned_count} unowned files ({100 - coverage_pct}% of codebase)"
-            )
+            click.echo(f"VERDICT: {unowned_count} unowned files ({100 - coverage_pct}% of codebase)")
             click.echo()
             if not unowned_ranked:
                 click.echo("  All files have declared owners.")
@@ -519,9 +501,7 @@ def codeowners(ctx, unowned, owner, limit):
             for fo in unowned_ranked[:limit]:
                 pr = pagerank_map.get(fo["file_id"], 0)
                 deps = dependents_map.get(fo["file_id"], 0)
-                rows.append(
-                    [fo["path"], f"{pr:.4f}", str(deps)]
-                )
+                rows.append([fo["path"], f"{pr:.4f}", str(deps)])
             click.echo(format_table(["File", "PageRank", "Dependents"], rows))
             if len(unowned_ranked) > limit:
                 click.echo(f"  (+{len(unowned_ranked) - limit} more)")
@@ -568,12 +548,8 @@ def codeowners(ctx, unowned, owner, limit):
             tbl_rows = []
             for od in owner_dist:
                 areas_str = ", ".join(od["key_areas"])
-                tbl_rows.append(
-                    [od["name"], str(od["files"]), f"{od['pct']}%", areas_str]
-                )
-            click.echo(
-                format_table(["Owner", "Files", "%", "Key Areas"], tbl_rows, budget=limit)
-            )
+                tbl_rows.append([od["name"], str(od["files"]), f"{od['pct']}%", areas_str])
+            click.echo(format_table(["Owner", "Files", "%", "Key Areas"], tbl_rows, budget=limit))
             click.echo()
 
         # Coverage summary
@@ -590,9 +566,7 @@ def codeowners(ctx, unowned, owner, limit):
             for fo in unowned_ranked[:10]:
                 pr = pagerank_map.get(fo["file_id"], 0)
                 deps = dependents_map.get(fo["file_id"], 0)
-                tbl_rows.append(
-                    [fo["path"], f"{pr:.4f}", str(deps)]
-                )
+                tbl_rows.append([fo["path"], f"{pr:.4f}", str(deps)])
             click.echo(format_table(["File", "PageRank", "Dependents"], tbl_rows))
             if len(unowned_ranked) > 10:
                 click.echo(f"    (+{len(unowned_ranked) - 10} more unowned)")
@@ -611,9 +585,7 @@ def codeowners(ctx, unowned, owner, limit):
                     break
             click.echo("  Ownership Concentration:")
             click.echo(f"    Top owner covers: {top_owner_pct}% of files")
-            click.echo(
-                f"    Bus factor risk: {bus_factor_owners} owners cover 80% of owned files"
-            )
+            click.echo(f"    Bus factor risk: {bus_factor_owners} owners cover 80% of owned files")
             click.echo()
 
         # Ownership drift
@@ -622,13 +594,7 @@ def codeowners(ctx, unowned, owner, limit):
             tbl_rows = []
             for df in drift_files[:10]:
                 declared = ", ".join(df["declared_owners"])
-                tbl_rows.append(
-                    [df["path"], declared, df["top_contributor"]]
-                )
-            click.echo(
-                format_table(
-                    ["File", "Declared Owner", "Top Contributor"], tbl_rows
-                )
-            )
+                tbl_rows.append([df["path"], declared, df["top_contributor"]])
+            click.echo(format_table(["File", "Declared Owner", "Top Contributor"], tbl_rows))
             if len(drift_files) > 10:
                 click.echo(f"    (+{len(drift_files) - 10} more drift)")

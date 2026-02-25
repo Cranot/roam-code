@@ -15,15 +15,14 @@ import json
 import os
 import subprocess
 import sys
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-
 # ===========================================================================
 # Subprocess helpers (kept for backward compat + smoke tests)
 # ===========================================================================
+
 
 def roam(*args, cwd=None):
     """Run a roam CLI command and return (output, returncode)."""
@@ -58,6 +57,7 @@ def git_commit(path, msg="update"):
 # In-process index helper (faster than subprocess)
 # ===========================================================================
 
+
 def index_in_process(project_path, *extra_args):
     """Run `roam index` in-process via CliRunner (faster than subprocess).
 
@@ -73,8 +73,7 @@ def index_in_process(project_path, *extra_args):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(project_path))
-        result = runner.invoke(cli, ["index"] + list(extra_args),
-                               catch_exceptions=False)
+        result = runner.invoke(cli, ["index"] + list(extra_args), catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result.output, result.exit_code
@@ -83,6 +82,7 @@ def index_in_process(project_path, *extra_args):
 # ===========================================================================
 # CliRunner helpers
 # ===========================================================================
+
 
 @pytest.fixture
 def cli_runner():
@@ -127,6 +127,7 @@ def invoke_cli(runner, args, cwd=None, json_mode=False):
 # JSON validation helpers
 # ===========================================================================
 
+
 def parse_json_output(result, command=None):
     """Parse JSON from a CliRunner result.
 
@@ -138,17 +139,11 @@ def parse_json_output(result, command=None):
     Raises:
         AssertionError with context on parse failure
     """
-    assert result.exit_code == 0, (
-        f"Command {command or '?'} failed (exit {result.exit_code}):\n"
-        f"{result.output}"
-    )
+    assert result.exit_code == 0, f"Command {command or '?'} failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from {command or '?'}: {e}\n"
-            f"Output was:\n{result.output[:500]}"
-        )
+        pytest.fail(f"Invalid JSON from {command or '?'}: {e}\nOutput was:\n{result.output[:500]}")
 
 
 def assert_json_envelope(data, command=None):
@@ -159,18 +154,14 @@ def assert_json_envelope(data, command=None):
     Checks summary contains a verdict string.
     """
     assert isinstance(data, dict), f"Expected dict, got {type(data)}"
-    assert "command" in data, f"Missing 'command' key in envelope"
-    assert "version" in data, f"Missing 'version' key in envelope"
-    assert "summary" in data, f"Missing 'summary' key in envelope"
+    assert "command" in data, "Missing 'command' key in envelope"
+    assert "version" in data, "Missing 'version' key in envelope"
+    assert "summary" in data, "Missing 'summary' key in envelope"
     # timestamp lives in _meta (or legacy top-level for backward compat)
     meta = data.get("_meta", {})
-    assert (
-        "timestamp" in meta or "timestamp" in data
-    ), "Missing 'timestamp' in _meta or top-level envelope"
+    assert "timestamp" in meta or "timestamp" in data, "Missing 'timestamp' in _meta or top-level envelope"
     if command:
-        assert data["command"] == command, (
-            f"Expected command={command}, got {data['command']}"
-        )
+        assert data["command"] == command, f"Expected command={command}, got {data['command']}"
     summary = data["summary"]
     assert isinstance(summary, dict), f"summary should be dict, got {type(summary)}"
 
@@ -178,6 +169,7 @@ def assert_json_envelope(data, command=None):
 # ===========================================================================
 # Composable project fixtures
 # ===========================================================================
+
 
 @pytest.fixture
 def git_repo(tmp_path):
@@ -202,65 +194,65 @@ def python_project(git_repo):
     src.mkdir()
 
     (src / "models.py").write_text(
-        'class User:\n'
+        "class User:\n"
         '    """A user model."""\n'
-        '    def __init__(self, name, email):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        '    def display_name(self):\n'
-        '        return self.name.title()\n'
-        '\n'
-        '    def validate_email(self):\n'
+        "    def __init__(self, name, email):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
+        "\n"
+        "    def validate_email(self):\n"
         '        return "@" in self.email\n'
-        '\n'
-        '\n'
-        'class Admin(User):\n'
+        "\n"
+        "\n"
+        "class Admin(User):\n"
         '    """An admin user."""\n'
         '    def __init__(self, name, email, role="admin"):\n'
-        '        super().__init__(name, email)\n'
-        '        self.role = role\n'
-        '\n'
-        '    def promote(self, user):\n'
-        '        pass\n'
+        "        super().__init__(name, email)\n"
+        "        self.role = role\n"
+        "\n"
+        "    def promote(self, user):\n"
+        "        pass\n"
     )
 
     (src / "service.py").write_text(
-        'from models import User, Admin\n'
-        '\n'
-        '\n'
-        'def create_user(name, email):\n'
+        "from models import User, Admin\n"
+        "\n"
+        "\n"
+        "def create_user(name, email):\n"
         '    """Create a new user."""\n'
-        '    user = User(name, email)\n'
-        '    if not user.validate_email():\n'
+        "    user = User(name, email)\n"
+        "    if not user.validate_email():\n"
         '        raise ValueError("Invalid email")\n'
-        '    return user\n'
-        '\n'
-        '\n'
-        'def get_display(user):\n'
+        "    return user\n"
+        "\n"
+        "\n"
+        "def get_display(user):\n"
         '    """Get display name."""\n'
-        '    return user.display_name()\n'
-        '\n'
-        '\n'
-        'def unused_helper():\n'
+        "    return user.display_name()\n"
+        "\n"
+        "\n"
+        "def unused_helper():\n"
         '    """This function is never called (dead code)."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
     (src / "utils.py").write_text(
-        'def format_name(first, last):\n'
+        "def format_name(first, last):\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        '\n'
-        'def parse_email(raw):\n'
+        "\n"
+        "\n"
+        "def parse_email(raw):\n"
         '    """Parse an email address."""\n'
         '    if "@" not in raw:\n'
-        '        return None\n'
+        "        return None\n"
         '    parts = raw.split("@")\n'
         '    return {"user": parts[0], "domain": parts[1]}\n'
-        '\n'
-        '\n'
+        "\n"
+        "\n"
         'UNUSED_CONSTANT = "never_referenced"\n'
     )
 
@@ -295,6 +287,7 @@ def project_factory(tmp_path_factory):
     Returns a callable that accepts a dict of {relative_path: content}
     and returns an indexed project path.
     """
+
     def _create(files, *, index=True, extra_commits=None):
         proj = tmp_path_factory.mktemp("project")
         (proj / ".gitignore").write_text(".roam/\n")
@@ -327,6 +320,7 @@ def project_factory(tmp_path_factory):
 # Snapshot helper for trend tests
 # ===========================================================================
 
+
 @pytest.fixture
 def project_with_snapshots(indexed_project, monkeypatch):
     """An indexed project with multiple snapshots for trend testing.
@@ -339,11 +333,7 @@ def project_with_snapshots(indexed_project, monkeypatch):
     # Snapshot 1 is created by index. Create 4 more.
     src = indexed_project / "src"
     for i in range(2, 6):
-        (src / f"extra_{i}.py").write_text(
-            f'def func_{i}():\n'
-            f'    """Function {i}."""\n'
-            f'    return {i}\n'
-        )
+        (src / f"extra_{i}.py").write_text(f'def func_{i}():\n    """Function {i}."""\n    return {i}\n')
         git_commit(indexed_project, f"add extra_{i}")
         out, rc = index_in_process(indexed_project)
         assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"

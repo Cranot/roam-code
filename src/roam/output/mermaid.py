@@ -18,10 +18,10 @@ def sanitize_id(name: str) -> str:
     (``/``, ``.``, ``-``, ``:``, `` ``) with underscores, and strips
     leading digits so the ID is always a valid identifier.
     """
-    s = re.sub(r'[^A-Za-z0-9_]', '_', name)
+    s = re.sub(r"[^A-Za-z0-9_]", "_", name)
     # Mermaid IDs must not start with a digit
     if s and s[0].isdigit():
-        s = '_' + s
+        s = "_" + s
     return s
 
 
@@ -34,7 +34,7 @@ def node(node_id: str, label: str) -> str:
 
 def edge(source: str, target: str) -> str:
     """Generate a Mermaid edge (``source --> target``)."""
-    return f'    {sanitize_id(source)} --> {sanitize_id(target)}'
+    return f"    {sanitize_id(source)} --> {sanitize_id(target)}"
 
 
 def subgraph(name: str, node_lines: list[str]) -> str:
@@ -46,9 +46,9 @@ def subgraph(name: str, node_lines: list[str]) -> str:
     lines = [f'    subgraph "{safe_name}"']
     for n in node_lines:
         # Indent an extra level inside the subgraph
-        lines.append(f'    {n}')
-    lines.append('    end')
-    return '\n'.join(lines)
+        lines.append(f"    {n}")
+    lines.append("    end")
+    return "\n".join(lines)
 
 
 def diagram(direction: str, elements: list[str]) -> str:
@@ -57,6 +57,6 @@ def diagram(direction: str, elements: list[str]) -> str:
     *direction* is ``TD`` (top-down), ``LR`` (left-right), etc.
     *elements* is a list of pre-formatted lines or blocks.
     """
-    lines = [f'graph {direction}']
+    lines = [f"graph {direction}"]
     lines.extend(elements)
-    return '\n'.join(lines)
+    return "\n".join(lines)

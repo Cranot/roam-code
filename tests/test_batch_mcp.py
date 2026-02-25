@@ -13,12 +13,9 @@ Covers:
 from __future__ import annotations
 
 import sqlite3
-import tempfile
-from pathlib import Path
-from unittest.mock import patch, MagicMock
+from unittest.mock import patch
 
 import pytest
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -135,9 +132,11 @@ def mock_open_db(tmp_db):
         finally:
             conn.close()
 
-    with patch("roam.mcp_server.open_db", side_effect=_open), \
-         patch("roam.commands.resolve.db_exists", return_value=True), \
-         patch("roam.mcp_server.batch_search.__wrapped__", None, create=True):
+    with (
+        patch("roam.mcp_server.open_db", side_effect=_open),
+        patch("roam.commands.resolve.db_exists", return_value=True),
+        patch("roam.mcp_server.batch_search.__wrapped__", None, create=True),
+    ):
         yield _open
 
 
@@ -179,11 +178,13 @@ class TestFtsQueryFor:
 
     def test_single_token(self):
         from roam.mcp_server import _fts_query_for
+
         result = _fts_query_for("authenticate")
         assert '"authenticate"*' in result
 
     def test_underscore_split(self):
         from roam.mcp_server import _fts_query_for
+
         result = _fts_query_for("get_user")
         # Should split on underscore producing two tokens
         assert '"get"*' in result
@@ -192,18 +193,21 @@ class TestFtsQueryFor:
 
     def test_dot_split(self):
         from roam.mcp_server import _fts_query_for
+
         result = _fts_query_for("auth.AuthError")
         assert '"auth"*' in result
         assert '"AuthError"*' in result
 
     def test_empty_string_fallback(self):
         from roam.mcp_server import _fts_query_for
+
         result = _fts_query_for("")
         # Empty string should produce a fallback query
         assert '"' in result
 
     def test_multi_word(self):
         from roam.mcp_server import _fts_query_for
+
         result = _fts_query_for("create endpoint")
         assert '"create"*' in result
         assert '"endpoint"*' in result
@@ -224,6 +228,7 @@ class TestBatchSearchOne:
 
     def test_fts_hit(self, tmp_db):
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         rows, err = _batch_search_one(conn, "authenticate", 5)
         conn.close()
@@ -235,6 +240,7 @@ class TestBatchSearchOne:
     def test_like_fallback(self, tmp_db):
         """Even without FTS5, LIKE fallback should find symbols."""
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         # Force FTS5 path to fail by patching the SQL constant
         with patch("roam.mcp_server._BATCH_FTS_SQL", "SELECT invalid"):
@@ -247,6 +253,7 @@ class TestBatchSearchOne:
 
     def test_no_results(self, tmp_db):
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         rows, err = _batch_search_one(conn, "zzznomatchzz", 5)
         conn.close()
@@ -255,6 +262,7 @@ class TestBatchSearchOne:
 
     def test_limit_respected(self, tmp_db):
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         rows, err = _batch_search_one(conn, "a", 2)
         conn.close()
@@ -263,6 +271,7 @@ class TestBatchSearchOne:
 
     def test_row_dict_keys(self, tmp_db):
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         rows, err = _batch_search_one(conn, "user", 5)
         conn.close()
@@ -276,6 +285,7 @@ class TestBatchSearchOne:
 
     def test_pagerank_is_float(self, tmp_db):
         from roam.mcp_server import _batch_search_one
+
         conn = self._conn(tmp_db)
         rows, err = _batch_search_one(conn, "user", 5)
         conn.close()
@@ -299,6 +309,7 @@ class TestBatchGetOne:
 
     def test_found_by_name(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "authenticate")
         conn.close()
@@ -308,6 +319,7 @@ class TestBatchGetOne:
 
     def test_found_by_qualified_name(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "user.User")
         conn.close()
@@ -317,6 +329,7 @@ class TestBatchGetOne:
 
     def test_not_found(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "zzznomatchzz")
         conn.close()
@@ -326,6 +339,7 @@ class TestBatchGetOne:
 
     def test_detail_keys(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "User")
         conn.close()
@@ -339,6 +353,7 @@ class TestBatchGetOne:
 
     def test_callers_and_callees_are_lists(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "authenticate")
         conn.close()
@@ -349,6 +364,7 @@ class TestBatchGetOne:
     def test_caller_has_edge_data(self, tmp_db):
         """authenticate has one caller (get_user → authenticate)."""
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "authenticate")
         conn.close()
@@ -362,6 +378,7 @@ class TestBatchGetOne:
 
     def test_pagerank_included_when_metrics_exist(self, tmp_db):
         from roam.mcp_server import _batch_get_one
+
         conn = self._conn(tmp_db)
         details, err = _batch_get_one(conn, "User")
         conn.close()
@@ -380,6 +397,7 @@ class TestBatchSearch:
 
     def test_empty_queries_returns_empty_results(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=[], root=".")
@@ -389,6 +407,7 @@ class TestBatchSearch:
 
     def test_single_query_returns_results(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["auth"], limit_per_query=5, root=".")
@@ -400,6 +419,7 @@ class TestBatchSearch:
 
     def test_multiple_queries(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["auth", "user", "endpoint"], root=".")
@@ -410,6 +430,7 @@ class TestBatchSearch:
 
     def test_total_matches_is_aggregate(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["auth", "user"], limit_per_query=10, root=".")
@@ -418,6 +439,7 @@ class TestBatchSearch:
 
     def test_queries_capped_at_10(self, tmp_db):
         from roam.mcp_server import batch_search
+
         queries = [f"sym{i}" for i in range(15)]
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
@@ -427,6 +449,7 @@ class TestBatchSearch:
 
     def test_limit_per_query_respected(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["a"], limit_per_query=2, root=".")
@@ -436,6 +459,7 @@ class TestBatchSearch:
     def test_limit_per_query_clamped_to_50(self, tmp_db):
         """Passing limit_per_query > 50 should be clamped to 50."""
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             # Should not raise; limit is silently clamped
@@ -444,6 +468,7 @@ class TestBatchSearch:
 
     def test_command_field_is_correct(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["user"], root=".")
@@ -451,6 +476,7 @@ class TestBatchSearch:
 
     def test_summary_has_verdict(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["user"], root=".")
@@ -459,6 +485,7 @@ class TestBatchSearch:
 
     def test_no_match_query_returns_empty_list(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["zzznomatchzzz"], root=".")
@@ -467,7 +494,7 @@ class TestBatchSearch:
 
     def test_partial_failure_returns_errors_key(self, tmp_db):
         """If a query raises, it should appear in errors and not abort others."""
-        from roam.mcp_server import batch_search, _batch_search_one
+        from roam.mcp_server import _batch_search_one, batch_search
 
         call_count = [0]
         original = _batch_search_one
@@ -493,8 +520,10 @@ class TestBatchSearch:
         """A complete DB connection failure returns a structured error, not an exception."""
         from roam.mcp_server import batch_search
 
-        with patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")), \
-             patch("roam.commands.resolve.db_exists", return_value=True):
+        with (
+            patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")),
+            patch("roam.commands.resolve.db_exists", return_value=True),
+        ):
             result = batch_search(queries=["user"], root=".")
 
         assert "command" in result
@@ -504,6 +533,7 @@ class TestBatchSearch:
 
     def test_result_rows_have_required_fields(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["User"], root=".")
@@ -517,6 +547,7 @@ class TestBatchSearch:
 
     def test_queries_executed_matches_capped_count(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=["auth", "user"], root=".")
@@ -524,6 +555,7 @@ class TestBatchSearch:
 
     def test_none_queries_treated_as_empty(self, tmp_db):
         from roam.mcp_server import batch_search
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_search(queries=None, root=".")
@@ -540,6 +572,7 @@ class TestBatchGet:
 
     def test_empty_symbols_returns_empty_results(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=[], root=".")
@@ -548,6 +581,7 @@ class TestBatchGet:
 
     def test_single_symbol_found(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["authenticate"], root=".")
@@ -557,6 +591,7 @@ class TestBatchGet:
 
     def test_multiple_symbols(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["authenticate", "User", "get_user"], root=".")
@@ -567,6 +602,7 @@ class TestBatchGet:
 
     def test_symbols_capped_at_50(self, tmp_db):
         from roam.mcp_server import batch_get
+
         symbols = [f"sym{i}" for i in range(60)]
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
@@ -576,6 +612,7 @@ class TestBatchGet:
 
     def test_not_found_symbol_in_errors(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["nonexistent_xyz"], root=".")
@@ -585,6 +622,7 @@ class TestBatchGet:
 
     def test_partial_found_partial_not_found(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["User", "nonexistent_xyz"], root=".")
@@ -595,6 +633,7 @@ class TestBatchGet:
 
     def test_command_field(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["User"], root=".")
@@ -602,6 +641,7 @@ class TestBatchGet:
 
     def test_summary_verdict(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["User", "get_user"], root=".")
@@ -610,6 +650,7 @@ class TestBatchGet:
 
     def test_details_include_callers_callees(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["authenticate"], root=".")
@@ -621,6 +662,7 @@ class TestBatchGet:
 
     def test_details_include_pagerank(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["User"], root=".")
@@ -631,8 +673,10 @@ class TestBatchGet:
     def test_fatal_db_error_returns_structured_response(self):
         from roam.mcp_server import batch_get
 
-        with patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")), \
-             patch("roam.commands.resolve.db_exists", return_value=True):
+        with (
+            patch("roam.db.connection.open_db", side_effect=RuntimeError("db offline")),
+            patch("roam.commands.resolve.db_exists", return_value=True),
+        ):
             result = batch_get(symbols=["User"], root=".")
 
         assert result["command"] == "batch-get"
@@ -641,6 +685,7 @@ class TestBatchGet:
 
     def test_none_symbols_treated_as_empty(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=None, root=".")
@@ -648,6 +693,7 @@ class TestBatchGet:
 
     def test_symbols_requested_count_accurate(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["User", "authenticate"], root=".")
@@ -655,6 +701,7 @@ class TestBatchGet:
 
     def test_qualified_name_lookup(self, tmp_db):
         from roam.mcp_server import batch_get
+
         p1, p2 = _patch_db(tmp_db)
         with p1, p2:
             result = batch_get(symbols=["user.User"], root=".")
@@ -672,20 +719,24 @@ class TestCoreToolsMembership:
 
     def test_batch_search_in_core_tools(self):
         from roam.mcp_server import _CORE_TOOLS
+
         assert "roam_batch_search" in _CORE_TOOLS
 
     def test_batch_get_in_core_tools(self):
         from roam.mcp_server import _CORE_TOOLS
+
         assert "roam_batch_get" in _CORE_TOOLS
 
     def test_core_tools_count_is_23(self):
         """_CORE_TOOLS should now contain 23 tools (21 original + 2 batch)."""
         from roam.mcp_server import _CORE_TOOLS
+
         assert len(_CORE_TOOLS) == 23
 
     def test_presets_are_supersets_of_updated_core(self):
         """All named presets must include the new batch tools."""
-        from roam.mcp_server import _PRESETS, _CORE_TOOLS
+        from roam.mcp_server import _PRESETS
+
         for name, tools in _PRESETS.items():
             if name == "full":
                 continue  # full has empty set (no filtering)
@@ -693,7 +744,8 @@ class TestCoreToolsMembership:
             assert "roam_batch_get" in tools, f"{name} missing roam_batch_get"
 
     def test_batch_tools_callable(self):
-        from roam.mcp_server import batch_search, batch_get
+        from roam.mcp_server import batch_get, batch_search
+
         assert callable(batch_search)
         assert callable(batch_get)
 
@@ -708,6 +760,7 @@ class TestBatchSchemas:
 
     def test_batch_search_schema_structure(self):
         from roam.mcp_server import _SCHEMA_BATCH_SEARCH
+
         assert _SCHEMA_BATCH_SEARCH["type"] == "object"
         props = _SCHEMA_BATCH_SEARCH["properties"]
         assert "command" in props
@@ -717,6 +770,7 @@ class TestBatchSchemas:
 
     def test_batch_get_schema_structure(self):
         from roam.mcp_server import _SCHEMA_BATCH_GET
+
         assert _SCHEMA_BATCH_GET["type"] == "object"
         props = _SCHEMA_BATCH_GET["properties"]
         assert "command" in props
@@ -726,12 +780,14 @@ class TestBatchSchemas:
 
     def test_batch_search_summary_has_count_fields(self):
         from roam.mcp_server import _SCHEMA_BATCH_SEARCH
+
         summary_props = _SCHEMA_BATCH_SEARCH["properties"]["summary"]["properties"]
         assert "queries_executed" in summary_props
         assert "total_matches" in summary_props
 
     def test_batch_get_summary_has_count_fields(self):
         from roam.mcp_server import _SCHEMA_BATCH_GET
+
         summary_props = _SCHEMA_BATCH_GET["properties"]["summary"]["properties"]
         assert "symbols_resolved" in summary_props
         assert "symbols_requested" in summary_props
@@ -747,8 +803,10 @@ class TestBatchConstants:
 
     def test_max_batch_queries(self):
         from roam.mcp_server import _MAX_BATCH_QUERIES
+
         assert _MAX_BATCH_QUERIES == 10
 
     def test_max_batch_symbols(self):
         from roam.mcp_server import _MAX_BATCH_SYMBOLS
+
         assert _MAX_BATCH_SYMBOLS == 50

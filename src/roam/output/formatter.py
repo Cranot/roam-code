@@ -10,7 +10,16 @@ from datetime import datetime, timezone
 ENVELOPE_SCHEMA_VERSION = "1.0.0"
 ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
 
-_NON_CACHEABLE_COMMANDS = {"mutate", "annotate", "ingest-trace", "vuln-map", "reset", "clean", "index", "init"}
+_NON_CACHEABLE_COMMANDS = {
+    "mutate",
+    "annotate",
+    "ingest-trace",
+    "vuln-map",
+    "reset",
+    "clean",
+    "index",
+    "init",
+}
 _VOLATILE_COMMANDS = {"diff", "pr-risk", "pr-diff", "affected", "affected-tests", "weather"}
 
 KIND_ABBREV = {
@@ -43,8 +52,9 @@ def loc(path: str, line: int | None = None) -> str:
     return path
 
 
-def symbol_line(name: str, kind: str, signature: str | None, path: str,
-                line: int | None = None, extra: str = "") -> str:
+def symbol_line(
+    name: str, kind: str, signature: str | None, path: str, line: int | None = None, extra: str = ""
+) -> str:
     parts = [abbrev_kind(kind), name]
     if signature:
         parts.append(signature)
@@ -80,7 +90,7 @@ def format_signature(sig: str | None, max_len: int = 80) -> str:
         return ""
     sig = sig.strip()
     if len(sig) > max_len:
-        return sig[:max_len - 3] + "..."
+        return sig[: max_len - 3] + "..."
     return sig
 
 
@@ -88,8 +98,7 @@ def format_edge_kind(kind: str) -> str:
     return kind.replace("_", " ")
 
 
-def format_table(headers: list[str], rows: list[list[str]],
-                 budget: int = 0) -> str:
+def format_table(headers: list[str], rows: list[list[str]], budget: int = 0) -> str:
     if not rows:
         return "(none)"
     widths = [len(h) for h in headers]
@@ -162,10 +171,7 @@ def budget_truncate(text: str, budget: int) -> str:
         truncated = truncated[:last_newline]
 
     full_tokens = estimate_tokens(text)
-    truncated += (
-        f"\n\n... truncated (budget: {budget} tokens, "
-        f"full output: ~{full_tokens} tokens)"
-    )
+    truncated += f"\n\n... truncated (budget: {budget} tokens, full output: ~{full_tokens} tokens)"
     return truncated
 
 
@@ -254,8 +260,13 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
 
     # Fields that must never be truncated
     preserved = {
-        "command", "summary", "schema", "schema_version",
-        "version", "project", "_meta",
+        "command",
+        "summary",
+        "schema",
+        "schema_version",
+        "version",
+        "project",
+        "_meta",
     }
 
     # Sort list fields by importance before truncation so the most
@@ -289,10 +300,7 @@ def budget_truncate_json(data: dict, budget: int) -> dict:
     # If still too large, drop non-preserved keys entirely
     test_json = _json.dumps(result, default=str, sort_keys=True)
     if len(test_json) > char_limit:
-        drop_keys = [
-            k for k in list(result.keys())
-            if k not in preserved
-        ]
+        drop_keys = [k for k in list(result.keys()) if k not in preserved]
         for k in drop_keys:
             del result[k]
             test_json = _json.dumps(result, default=str, sort_keys=True)
@@ -326,6 +334,7 @@ def _compact_mode_enabled() -> bool:
     """Return True when CLI requested compact/agent output mode."""
     try:
         import click
+
         ctx = click.get_current_context(silent=True)
         if ctx and isinstance(ctx.obj, dict):
             return bool(ctx.obj.get("compact") or ctx.obj.get("agent"))
@@ -334,8 +343,7 @@ def _compact_mode_enabled() -> bool:
     return False
 
 
-def json_envelope(command: str, summary: dict | None = None,
-                  budget: int = 0, **payload) -> dict:
+def json_envelope(command: str, summary: dict | None = None, budget: int = 0, **payload) -> dict:
     """Wrap command output in a self-describing envelope.
 
     Every ``roam --json <cmd>`` call should use this to produce consistent
@@ -374,12 +382,7 @@ def json_envelope(command: str, summary: dict | None = None,
     # Version — read once and cache
     version = _get_version()
 
-    ts = (
-        datetime.now(timezone.utc)
-        .replace(microsecond=0)
-        .isoformat()
-        .replace("+00:00", "Z")
-    )
+    ts = datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
     out: dict = {
         "schema": ENVELOPE_SCHEMA_NAME,
@@ -420,6 +423,7 @@ def json_envelope(command: str, summary: dict | None = None,
 def _get_version() -> str:
     """Return roam-code version string."""
     from roam import __version__
+
     return __version__
 
 
@@ -427,6 +431,7 @@ def _index_age_seconds() -> int | None:
     """Seconds since .roam/index.db was last modified, or None if missing."""
     try:
         from roam.db.connection import get_db_path
+
         db_path = get_db_path()
         if db_path.exists():
             return int(time.time() - db_path.stat().st_mtime)
@@ -439,6 +444,7 @@ def _project_name() -> str:
     """Basename of the project root directory."""
     try:
         from roam.db.connection import find_project_root
+
         return find_project_root().name
     except Exception:
         return ""
@@ -450,6 +456,7 @@ def table_to_dicts(headers: list[str], rows: list[list[str]]) -> list[dict]:
 
 
 # ── Compact output mode ──────────────────────────────────────────────
+
 
 def compact_json_envelope(command: str, **payload) -> dict:
     """Minimal JSON envelope — strips version/timestamp/project overhead.
@@ -469,8 +476,7 @@ def ws_loc(repo: str, path: str, line: int | None = None) -> str:
     return f"[{repo}] {path}"
 
 
-def ws_json_envelope(command: str, workspace: str,
-                     summary: dict | None = None, **payload) -> dict:
+def ws_json_envelope(command: str, workspace: str, summary: dict | None = None, **payload) -> dict:
     """Workspace-aware JSON envelope.
 
     Extends :func:`json_envelope` with workspace metadata.
@@ -501,8 +507,12 @@ def summary_envelope(data: dict, keep_summary: bool = True) -> dict:
     stripped, the summary also receives ``truncated: true``.
     """
     preserved = {
-        "command", "schema", "schema_version",
-        "version", "project", "_meta",
+        "command",
+        "schema",
+        "schema_version",
+        "version",
+        "project",
+        "_meta",
     }
     list_counts: dict[str, int] = {}
 
@@ -534,8 +544,7 @@ def summary_envelope(data: dict, keep_summary: bool = True) -> dict:
     return result
 
 
-def format_table_compact(headers: list[str], rows: list[list[str]],
-                         budget: int = 0) -> str:
+def format_table_compact(headers: list[str], rows: list[list[str]], budget: int = 0) -> str:
     """Tab-separated table output — 40-50% more token-efficient than padded tables."""
     if not rows:
         return "(none)"

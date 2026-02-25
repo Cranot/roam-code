@@ -6,19 +6,22 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, to_json, json_envelope
-from roam.commands.resolve import ensure_index
-from roam.catalog.tasks import get_task, get_tip
 from roam.catalog.fixes import get_fix
+from roam.catalog.tasks import get_task, get_tip
+from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
 @click.command()
-@click.option("--task", "task_filter", default=None,
-              help="Filter by task ID (e.g. sorting, membership)")
-@click.option("--confidence", "confidence_filter", default=None,
-              type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-              help="Filter by confidence level")
+@click.option("--task", "task_filter", default=None, help="Filter by task ID (e.g. sorting, membership)")
+@click.option(
+    "--confidence",
+    "confidence_filter",
+    default=None,
+    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
+    help="Filter by confidence level",
+)
 @click.option(
     "--profile",
     "profile",
@@ -37,8 +40,8 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
 
     Primary name: algo. Alias: math (backward compat).
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     ensure_index()
 
     from roam.catalog.detectors import run_detectors
@@ -57,11 +60,10 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
         lang_map: dict[int, str] = {}
         if sym_ids:
             from roam.db.connection import batched_in
+
             rows = batched_in(
                 conn,
-                "SELECT s.id, f.language FROM symbols s "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE s.id IN ({ph})",
+                "SELECT s.id, f.language FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
                 sym_ids,
             )
             for r in rows:
@@ -108,13 +110,14 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
         conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
         verdict = (
-            f"{total} algorithmic improvement{'s' if total != 1 else ''} found "
-            f"({conf_str})"
-            if total else "No algorithmic issues detected"
+            f"{total} algorithmic improvement{'s' if total != 1 else ''} found ({conf_str})"
+            if total
+            else "No algorithmic issues detected"
         )
 
         if sarif_mode:
             from roam.output.sarif import algo_to_sarif, write_sarif
+
             sarif = algo_to_sarif(
                 findings,
                 detector_meta.get("detector_metadata", {}),
@@ -124,28 +127,31 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope("algo",
-                summary={
-                    "verdict": verdict,
-                    "total": total,
-                    "by_category": dict(
-                        (k, len(v)) for k, v in by_category.items()
-                    ),
-                    "by_confidence": dict(by_confidence),
-                    "truncated": truncated,
-                    "detectors_executed": detector_meta.get("detectors_executed", 0),
-                    "detectors_failed": detector_meta.get("detectors_failed", 0),
-                    "failed_detectors": detector_meta.get("failed_detectors", []),
-                    "detector_metadata": detector_meta.get("detector_metadata", {}),
-                    "profile": detector_meta.get("profile", profile),
-                    "profile_filtered": detector_meta.get("profile_filtered", 0),
-                    "max_impact_score": max(
-                        [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
-                        default=0.0,
-                    ),
-                },
-                findings=findings,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "algo",
+                        summary={
+                            "verdict": verdict,
+                            "total": total,
+                            "by_category": dict((k, len(v)) for k, v in by_category.items()),
+                            "by_confidence": dict(by_confidence),
+                            "truncated": truncated,
+                            "detectors_executed": detector_meta.get("detectors_executed", 0),
+                            "detectors_failed": detector_meta.get("detectors_failed", 0),
+                            "failed_detectors": detector_meta.get("failed_detectors", []),
+                            "detector_metadata": detector_meta.get("detector_metadata", {}),
+                            "profile": detector_meta.get("profile", profile),
+                            "profile_filtered": detector_meta.get("profile_filtered", 0),
+                            "max_impact_score": max(
+                                [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
+                                default=0.0,
+                            ),
+                        },
+                        findings=findings,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -156,10 +162,7 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
             f"(filtered {detector_meta.get('profile_filtered', 0)} low-signal findings)"
         )
         if detector_meta.get("detectors_failed"):
-            click.echo(
-                f"NOTE: {detector_meta['detectors_failed']} detector(s) failed "
-                "(use --json for details)."
-            )
+            click.echo(f"NOTE: {detector_meta['detectors_failed']} detector(s) failed (use --json for details).")
         if not findings:
             return
 
@@ -192,10 +195,7 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
                         if w["id"] == f["suggested_way"]:
                             suggested = w
 
-                click.echo(
-                    f"  {kind_abbr:<5s} {name:<40s} {location}  "
-                    f"[{conf}, impact={impact_score:.1f}]"
-                )
+                click.echo(f"  {kind_abbr:<5s} {name:<40s} {location}  [{conf}, impact={impact_score:.1f}]")
                 if detected:
                     click.echo(f"        Current: {detected['name']} -- {detected['time']}")
                 if suggested:

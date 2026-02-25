@@ -7,10 +7,10 @@ import re
 import click
 import networkx as nx
 
-from roam.db.connection import open_db, batched_in
-from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import batched_in, open_db
+from roam.graph.builder import build_symbol_graph
+from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 
 def _label_cluster(conn, sym_ids):
@@ -19,14 +19,26 @@ def _label_cluster(conn, sym_ids):
         return "misc"
     sample = list(sym_ids)[:50]
     ph = ",".join("?" for _ in sample)
-    rows = conn.execute(
-        f"SELECT name FROM symbols WHERE id IN ({ph})", sample
-    ).fetchall()
+    rows = conn.execute(f"SELECT name FROM symbols WHERE id IN ({ph})", sample).fetchall()
 
-    split_re = re.compile(r'[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
+    split_re = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
     stop = {
-        "get", "set", "use", "handle", "on", "is", "has", "can", "do",
-        "the", "for", "with", "from", "init", "new", "run",
+        "get",
+        "set",
+        "use",
+        "handle",
+        "on",
+        "is",
+        "has",
+        "can",
+        "do",
+        "the",
+        "for",
+        "with",
+        "from",
+        "init",
+        "new",
+        "run",
     }
     word_counts: dict[str, int] = {}
     for r in rows:
@@ -98,19 +110,12 @@ def _cluster_cohesion(conn, comm_set):
         "SELECT source_id, target_id FROM edges WHERE target_id IN ({ph})",
         id_list,
     )
-    edges = list({
-        (r["source_id"], r["target_id"]): r
-        for r in src_rows + tgt_rows
-    }.values())
-    internal = sum(
-        1 for e in edges
-        if e["source_id"] in comm_set and e["target_id"] in comm_set
-    )
+    edges = list({(r["source_id"], r["target_id"]): r for r in src_rows + tgt_rows}.values())
+    internal = sum(1 for e in edges if e["source_id"] in comm_set and e["target_id"] in comm_set)
     return round(internal * 100 / len(edges)) if edges else 0
 
 
-def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster,
-                    cluster_label_cache, cluster_cohesion_cache):
+def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster, cluster_label_cache, cluster_cohesion_cache):
     """Analyze a single symbol and return its result dict."""
     sym = find_symbol(conn, name)
     if sym is None:
@@ -119,8 +124,7 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster,
     sym_id = sym["id"]
 
     gm = conn.execute(
-        "SELECT in_degree, out_degree, betweenness, pagerank "
-        "FROM graph_metrics WHERE symbol_id = ?",
+        "SELECT in_degree, out_degree, betweenness, pagerank FROM graph_metrics WHERE symbol_id = ?",
         (sym_id,),
     ).fetchone()
 
@@ -142,10 +146,7 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster,
     is_bridge = False
     sym_cluster_id = sym_to_cluster.get(sym_id)
     if sym_cluster_id is not None and sym_id in G:
-        other_clusters = {
-            sym_to_cluster.get(n)
-            for n in list(G.predecessors(sym_id)) + list(G.successors(sym_id))
-        }
+        other_clusters = {sym_to_cluster.get(n) for n in list(G.predecessors(sym_id)) + list(G.successors(sym_id))}
         other_clusters.discard(None)
         other_clusters.discard(sym_cluster_id)
         is_bridge = len(other_clusters) >= 1
@@ -194,7 +195,7 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster,
 
 
 @click.command()
-@click.argument('names', nargs=-1, required=True)
+@click.argument("names", nargs=-1, required=True)
 @click.pass_context
 def why(ctx, names):
     """Explain why a symbol matters — role, reach, criticality, verdict.
@@ -206,7 +207,7 @@ def why(ctx, names):
 
         roam why parseAmount formatNumber clearGrid
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -221,9 +222,7 @@ def why(ctx, names):
                 communities = list(nx.community.louvain_communities(UG, seed=42))
             except (AttributeError, TypeError):
                 try:
-                    communities = list(
-                        nx.community.greedy_modularity_communities(UG)
-                    )
+                    communities = list(nx.community.greedy_modularity_communities(UG))
                 except Exception:
                     pass
 
@@ -238,19 +237,30 @@ def why(ctx, names):
         results = []
         for name in names:
             result = _analyze_symbol(
-                conn, G, RG, name, communities, sym_to_cluster,
-                cluster_label_cache, cluster_cohesion_cache,
+                conn,
+                G,
+                RG,
+                name,
+                communities,
+                sym_to_cluster,
+                cluster_label_cache,
+                cluster_cohesion_cache,
             )
             results.append(result)
 
         if json_mode:
-            click.echo(to_json(json_envelope("why",
-                summary={
-                    "symbols": len(results),
-                    "critical": sum(1 for r in results if r.get("critical")),
-                },
-                symbols=results,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "why",
+                        summary={
+                            "symbols": len(results),
+                            "critical": sum(1 for r in results if r.get("critical")),
+                        },
+                        symbols=results,
+                    )
+                )
+            )
             return
 
         # --- Batch mode: compact table ---
@@ -258,25 +268,34 @@ def why(ctx, names):
             table_rows = []
             for r in results:
                 if "error" in r:
-                    table_rows.append([
-                        r["name"], "?", "", "", "", r["error"],
-                    ])
+                    table_rows.append(
+                        [
+                            r["name"],
+                            "?",
+                            "",
+                            "",
+                            "",
+                            r["error"],
+                        ]
+                    )
                     continue
-                risk = "CRITICAL" if r["critical"] else (
-                    "moderate" if r["reach"] > 5 else "low"
+                risk = "CRITICAL" if r["critical"] else ("moderate" if r["reach"] > 5 else "low")
+                table_rows.append(
+                    [
+                        r["name"],
+                        r["role"],
+                        f"fan-in:{r['fan_in']}",
+                        f"reach:{r['reach']}",
+                        risk,
+                        r["verdict"],
+                    ]
                 )
-                table_rows.append([
-                    r["name"],
-                    r["role"],
-                    f"fan-in:{r['fan_in']}",
-                    f"reach:{r['reach']}",
-                    risk,
-                    r["verdict"],
-                ])
-            click.echo(format_table(
-                ["Symbol", "Role", "Fan", "Reach", "Risk", "Verdict"],
-                table_rows,
-            ))
+            click.echo(
+                format_table(
+                    ["Symbol", "Role", "Fan", "Reach", "Risk", "Verdict"],
+                    table_rows,
+                )
+            )
             return
 
         # --- Single symbol: detailed output ---
@@ -286,14 +305,8 @@ def why(ctx, names):
             raise SystemExit(1)
 
         click.echo(f"\n{r['name']}  {r['location']}")
-        click.echo(
-            f"  ROLE:      {r['role']}  "
-            f"(fan-in: {r['fan_in']}, fan-out: {r['fan_out']})"
-        )
-        click.echo(
-            f"  REACH:     {r['reach']} transitive dependents "
-            f"across {r['affected_files']} files"
-        )
+        click.echo(f"  ROLE:      {r['role']}  (fan-in: {r['fan_in']}, fan-out: {r['fan_out']})")
+        click.echo(f"  REACH:     {r['reach']} transitive dependents across {r['affected_files']} files")
 
         crit_str = "Yes" if r["critical"] else "No"
         if r["critical"]:
@@ -303,15 +316,8 @@ def why(ctx, names):
         click.echo(f"  CRITICAL:  {crit_str}")
 
         if r["cluster"] is not None:
-            coh = (
-                f", cohesion: {r['cluster_cohesion']}%"
-                if r["cluster_cohesion"] is not None
-                else ""
-            )
-            click.echo(
-                f"  CLUSTER:   {r['cluster']} "
-                f"({r['cluster_size']} symbols{coh})"
-            )
+            coh = f", cohesion: {r['cluster_cohesion']}%" if r["cluster_cohesion"] is not None else ""
+            click.echo(f"  CLUSTER:   {r['cluster']} ({r['cluster_size']} symbols{coh})")
         else:
             click.echo("  CLUSTER:   (none — disconnected)")
 

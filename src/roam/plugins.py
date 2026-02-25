@@ -16,7 +16,6 @@ import os
 from importlib import metadata as importlib_metadata
 from typing import Any, Callable
 
-
 CommandTarget = tuple[str, str]
 DetectorSpec = tuple[str, str, Callable[[Any], list[dict]]]
 
@@ -111,9 +110,7 @@ def _register_target(target: Any, source_label: str, api: PluginAPI) -> None:
             register_fn(api)
             return
 
-        raise TypeError(
-            "plugin target must be callable or expose register(api)"
-        )
+        raise TypeError("plugin target must be callable or expose register(api)")
     except Exception as exc:
         _errors.append(f"{source_label}: {exc}")
 

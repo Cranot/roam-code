@@ -6,8 +6,7 @@ import json
 
 import click
 
-from roam.output.formatter import to_json, json_envelope
-
+from roam.output.formatter import json_envelope, to_json
 
 # Platform config templates
 _CONFIGS = {
@@ -18,71 +17,35 @@ _CONFIGS = {
             "Run: claude mcp add roam-code -- roam mcp",
             "Or add to .mcp.json in your project root:",
         ],
-        "json_config": {
-            "mcpServers": {
-                "roam-code": {
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"mcpServers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
     "cursor": {
         "description": "Cursor IDE",
         "instructions": [
             "Add to .cursor/mcp.json in your project root:",
         ],
-        "json_config": {
-            "mcpServers": {
-                "roam-code": {
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"mcpServers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
     "windsurf": {
         "description": "Windsurf IDE",
         "instructions": [
             "Add to ~/.codeium/windsurf/mcp_config.json:",
         ],
-        "json_config": {
-            "mcpServers": {
-                "roam-code": {
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"mcpServers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
     "vscode": {
         "description": "VS Code (Copilot Agent Mode)",
         "instructions": [
             "Add to .vscode/mcp.json in your project root:",
         ],
-        "json_config": {
-            "servers": {
-                "roam-code": {
-                    "type": "stdio",
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"servers": {"roam-code": {"type": "stdio", "command": "roam", "args": ["mcp"]}}},
     },
     "gemini-cli": {
         "description": "Gemini CLI",
         "instructions": [
             "Add to ~/.gemini/settings.json:",
         ],
-        "json_config": {
-            "mcpServers": {
-                "roam-code": {
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"mcpServers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
     "codex-cli": {
         "description": "OpenAI Codex CLI",
@@ -90,14 +53,7 @@ _CONFIGS = {
             "Add to ~/.codex/config.json or use:",
             "codex --mcp roam-code='roam mcp'",
         ],
-        "json_config": {
-            "mcpServers": {
-                "roam-code": {
-                    "command": "roam",
-                    "args": ["mcp"]
-                }
-            }
-        },
+        "json_config": {"mcpServers": {"roam-code": {"command": "roam", "args": ["mcp"]}}},
     },
 }
 
@@ -123,36 +79,46 @@ def mcp_setup(ctx, platform):
       roam mcp-setup cursor
       roam --json mcp-setup vscode
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     if not platform:
         # List all platforms
         if json_mode:
-            click.echo(to_json(json_envelope("mcp-setup",
-                summary={"verdict": f"{len(_CONFIGS)} platforms supported"},
-                platforms=list(_CONFIGS.keys()),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mcp-setup",
+                        summary={"verdict": f"{len(_CONFIGS)} platforms supported"},
+                        platforms=list(_CONFIGS.keys()),
+                    )
+                )
+            )
             return
         click.echo("Supported platforms:\n")
         for name, cfg in sorted(_CONFIGS.items()):
             click.echo(f"  {name:16s} {cfg['description']}")
-        click.echo(f"\nUsage: roam mcp-setup <platform>")
+        click.echo("\nUsage: roam mcp-setup <platform>")
         return
 
     cfg = _CONFIGS[platform]
 
     if json_mode:
-        click.echo(to_json(json_envelope("mcp-setup",
-            summary={
-                "verdict": f"Config for {cfg['description']}",
-                "platform": platform,
-            },
-            platform=platform,
-            description=cfg["description"],
-            instructions=cfg.get("instructions", []),
-            config=cfg.get("json_config", {}),
-            setup_command=cfg.get("setup_command"),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mcp-setup",
+                    summary={
+                        "verdict": f"Config for {cfg['description']}",
+                        "platform": platform,
+                    },
+                    platform=platform,
+                    description=cfg["description"],
+                    instructions=cfg.get("instructions", []),
+                    config=cfg.get("json_config", {}),
+                    setup_command=cfg.get("setup_command"),
+                )
+            )
+        )
         return
 
     # Text output
@@ -165,5 +131,5 @@ def mcp_setup(ctx, platform):
 
     json_config = cfg.get("json_config")
     if json_config:
-        click.echo(f"\n  Configuration JSON:")
+        click.echo("\n  Configuration JSON:")
         click.echo(json.dumps(json_config, indent=2))

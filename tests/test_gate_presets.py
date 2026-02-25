@@ -8,16 +8,15 @@ Covers:
 - GatePreset structure validation
 - Each preset has at least one rule
 """
-from __future__ import annotations
 
-import pytest
+from __future__ import annotations
 
 from roam.commands.gate_presets import (
     ALL_PRESETS,
     GatePreset,
     GateRule,
-    get_preset,
     detect_preset,
+    get_preset,
 )
 
 
@@ -35,9 +34,7 @@ class TestAllPresets:
 
     def test_each_preset_has_detect_files(self):
         for preset in ALL_PRESETS:
-            assert len(preset.detect_files) >= 1, (
-                f"Preset {preset.name!r} has no detect_files"
-            )
+            assert len(preset.detect_files) >= 1, f"Preset {preset.name!r} has no detect_files"
 
 
 class TestGetPreset:
@@ -136,6 +133,4 @@ class TestGatePresetStructure:
     def test_python_preset_rules_have_patterns(self):
         p = get_preset("python")
         for rule in p.rules:
-            assert len(rule.include_patterns) >= 1, (
-                f"Rule {rule.name!r} in python preset has no include_patterns"
-            )
+            assert len(rule.include_patterns) >= 1, f"Rule {rule.name!r} in python preset has no include_patterns"

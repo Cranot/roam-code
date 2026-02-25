@@ -52,6 +52,7 @@ def _check_no_circular_imports(conn, G, threshold):
     if G is None or len(G) == 0:
         return []
     from roam.graph.cycles import find_cycles, format_cycles
+
     cycles = find_cycles(G, min_size=2)
     if not cycles:
         return []
@@ -64,8 +65,7 @@ def _check_no_circular_imports(conn, G, threshold):
         if len(names) > 5:
             reason += " (+{} more)".format(len(names) - 5)
         fpath = files[0] if files else ""
-        violations.append(make_violation(
-            symbol=names[0] if names else "", file=fpath, reason=reason))
+        violations.append(make_violation(symbol=names[0] if names else "", file=fpath, reason=reason))
     return violations
 
 
@@ -78,12 +78,14 @@ def _check_max_fan_out(conn, G, threshold):
     for node, out_deg in G.out_degree():
         if out_deg > limit:
             data = G.nodes[node]
-            violations.append(make_violation(
-                symbol=data.get("name", str(node)),
-                file=data.get("file_path", ""),
-                line=data.get("line_start"),
-                reason="fan-out {} exceeds limit {}".format(out_deg, limit),
-            ))
+            violations.append(
+                make_violation(
+                    symbol=data.get("name", str(node)),
+                    file=data.get("file_path", ""),
+                    line=data.get("line_start"),
+                    reason="fan-out {} exceeds limit {}".format(out_deg, limit),
+                )
+            )
     violations.sort(key=lambda v: v["file"])
     return violations
 
@@ -97,12 +99,14 @@ def _check_max_fan_in(conn, G, threshold):
     for node, in_deg in G.in_degree():
         if in_deg > limit:
             data = G.nodes[node]
-            violations.append(make_violation(
-                symbol=data.get("name", str(node)),
-                file=data.get("file_path", ""),
-                line=data.get("line_start"),
-                reason="fan-in {} exceeds limit {}".format(in_deg, limit),
-            ))
+            violations.append(
+                make_violation(
+                    symbol=data.get("name", str(node)),
+                    file=data.get("file_path", ""),
+                    line=data.get("line_start"),
+                    reason="fan-in {} exceeds limit {}".format(in_deg, limit),
+                )
+            )
     violations.sort(key=lambda v: v["file"])
     return violations
 
@@ -144,10 +148,7 @@ def _check_max_file_length(conn, G, threshold):
         ).fetchall()
     except Exception:
         return []
-    return [
-        make_violation(file=row[0], reason="{} lines exceeds limit {}".format(row[1], limit))
-        for row in rows
-    ]
+    return [make_violation(file=row[0], reason="{} lines exceeds limit {}".format(row[1], limit)) for row in rows]
 
 
 def _is_test_path(path: str) -> bool:
@@ -175,17 +176,35 @@ def _check_test_file_exists(conn, G, threshold):
         s = s.removeprefix("test_")
         for sfx in ("_test", ".test", ".spec"):
             if s.endswith(sfx):
-                s = s[:-len(sfx)]
+                s = s[: -len(sfx)]
         return s
 
     test_stems = {_stem(tp) for tp in test_paths}
     _SOURCE_EXTS = {
-        ".py", ".js", ".ts", ".jsx", ".tsx", ".go",
-        ".java", ".cs", ".rb", ".rs", ".php", ".cpp", ".c",
+        ".py",
+        ".js",
+        ".ts",
+        ".jsx",
+        ".tsx",
+        ".go",
+        ".java",
+        ".cs",
+        ".rb",
+        ".rs",
+        ".php",
+        ".cpp",
+        ".c",
     }
     _SKIP_SEGS = (
-        "migrations/", "docs/", "scripts/", "examples/", ".github/",
-        "__pycache__/", "node_modules/", ".roam/", "vendor/",
+        "migrations/",
+        "docs/",
+        "scripts/",
+        "examples/",
+        ".github/",
+        "__pycache__/",
+        "node_modules/",
+        ".roam/",
+        "vendor/",
     )
 
     violations = []
@@ -198,10 +217,12 @@ def _check_test_file_exists(conn, G, threshold):
         if os.path.splitext(path)[1].lower() not in _SOURCE_EXTS:
             continue
         if _stem(path) not in test_stems:
-            violations.append(make_violation(
-                file=path,
-                reason="no test file found for {}".format(os.path.basename(path)),
-            ))
+            violations.append(
+                make_violation(
+                    file=path,
+                    reason="no test file found for {}".format(os.path.basename(path)),
+                )
+            )
     violations.sort(key=lambda v: v["file"])
     return violations
 
@@ -224,10 +245,14 @@ def _check_no_god_classes(conn, G, threshold):
         return []
     violations = []
     for row in rows:
-        violations.append(make_violation(
-            symbol=row[1], file=row[2], line=row[3],
-            reason="class has {} methods (limit {})".format(row[4], limit),
-        ))
+        violations.append(
+            make_violation(
+                symbol=row[1],
+                file=row[2],
+                line=row[3],
+                reason="class has {} methods (limit {})".format(row[4], limit),
+            )
+        )
     return violations
 
 
@@ -250,6 +275,7 @@ def _check_no_deep_inheritance(conn, G, threshold):
         inherit_graph.add_edge(row[0], row[1])
 
     import networkx as nx
+
     if not nx.is_directed_acyclic_graph(inherit_graph):
         cond = nx.condensation(inherit_graph)
         depths = {}
@@ -276,10 +302,14 @@ def _check_no_deep_inheritance(conn, G, threshold):
                 sym_name, fpath, line = (row[0], row[1], row[2]) if row else (str(node), "", None)
             except Exception:
                 sym_name, fpath, line = str(node), "", None
-            violations.append(make_violation(
-                symbol=sym_name, file=fpath, line=line,
-                reason="inheritance depth {} exceeds limit {}".format(depth, limit),
-            ))
+            violations.append(
+                make_violation(
+                    symbol=sym_name,
+                    file=fpath,
+                    line=line,
+                    reason="inheritance depth {} exceeds limit {}".format(depth, limit),
+                )
+            )
     violations.sort(key=lambda v: v["file"])
     return violations
 
@@ -288,8 +318,8 @@ def _check_layer_violation(conn, G, threshold):
     """Find edges where a higher layer imports a lower layer."""
     if G is None or len(G) == 0:
         return []
-    from roam.graph.layers import detect_layers, find_violations
     from roam.db.connection import batched_in
+    from roam.graph.layers import detect_layers, find_violations
 
     layer_map = detect_layers(G)
     if not layer_map:
@@ -298,9 +328,7 @@ def _check_layer_violation(conn, G, threshold):
     if not raw_violations:
         return []
 
-    all_ids = list(
-        {v["source"] for v in raw_violations} | {v["target"] for v in raw_violations}
-    )
+    all_ids = list({v["source"] for v in raw_violations} | {v["target"] for v in raw_violations})
     lookup = {}
     for row in batched_in(
         conn,
@@ -314,15 +342,19 @@ def _check_layer_violation(conn, G, threshold):
     for v in raw_violations:
         src = lookup.get(v["source"], {})
         tgt = lookup.get(v["target"], {})
-        violations.append(make_violation(
-            symbol=src.get("name", "?"),
-            file=src.get("file", ""),
-            line=src.get("line"),
-            reason="{} (L{}) imports {} (L{})".format(
-                src.get("name", "?"), v["source_layer"],
-                tgt.get("name", "?"), v["target_layer"],
-            ),
-        ))
+        violations.append(
+            make_violation(
+                symbol=src.get("name", "?"),
+                file=src.get("file", ""),
+                line=src.get("line"),
+                reason="{} (L{}) imports {} (L{})".format(
+                    src.get("name", "?"),
+                    v["source_layer"],
+                    tgt.get("name", "?"),
+                    v["target_layer"],
+                ),
+            )
+        )
     return violations
 
 
@@ -337,12 +369,14 @@ def _check_no_orphan_symbols(conn, G, threshold):
             data = G.nodes[node]
             if data.get("kind", "") not in _ORPHAN_KINDS:
                 continue
-            violations.append(make_violation(
-                symbol=data.get("name", str(node)),
-                file=data.get("file_path", ""),
-                line=data.get("line_start"),
-                reason="symbol has 0 incoming and 0 outgoing edges",
-            ))
+            violations.append(
+                make_violation(
+                    symbol=data.get("name", str(node)),
+                    file=data.get("file_path", ""),
+                    line=data.get("line_start"),
+                    reason="symbol has 0 incoming and 0 outgoing edges",
+                )
+            )
     violations.sort(key=lambda v: (v["file"], v.get("line") or 0))
     return violations
 
@@ -352,49 +386,99 @@ def _check_no_orphan_symbols(conn, G, threshold):
 # ---------------------------------------------------------------------------
 
 _CHECK_FN_MAP: dict[str, Callable] = {
-    "cycles":           _check_no_circular_imports,
-    "fan-out":          _check_max_fan_out,
-    "fan-in":           _check_max_fan_in,
-    "file-complexity":  _check_max_file_complexity,
-    "file-length":      _check_max_file_length,
+    "cycles": _check_no_circular_imports,
+    "fan-out": _check_max_fan_out,
+    "fan-in": _check_max_fan_in,
+    "file-complexity": _check_max_file_complexity,
+    "file-length": _check_max_file_length,
     "test-file-exists": _check_test_file_exists,
-    "god-class":        _check_no_god_classes,
+    "god-class": _check_no_god_classes,
     "deep-inheritance": _check_no_deep_inheritance,
-    "layer-violation":  _check_layer_violation,
-    "orphan-symbols":   _check_no_orphan_symbols,
+    "layer-violation": _check_layer_violation,
+    "orphan-symbols": _check_no_orphan_symbols,
 }
 
 BUILTIN_RULES: list[BuiltinRule] = [
-    BuiltinRule(id="no-circular-imports", severity="error",
-                description="No circular import chains",
-                check="cycles", threshold=0, _fn=_check_no_circular_imports),
-    BuiltinRule(id="max-fan-out", severity="warning",
-                description="Functions should not call more than 15 other functions",
-                check="fan-out", threshold=15, _fn=_check_max_fan_out),
-    BuiltinRule(id="max-fan-in", severity="warning",
-                description="Symbols should not be called by more than 30 others",
-                check="fan-in", threshold=30, _fn=_check_max_fan_in),
-    BuiltinRule(id="max-file-complexity", severity="warning",
-                description="Max cognitive complexity per file (default 50)",
-                check="file-complexity", threshold=50, _fn=_check_max_file_complexity),
-    BuiltinRule(id="max-file-length", severity="info",
-                description="Max lines per file (default 500)",
-                check="file-length", threshold=500, _fn=_check_max_file_length),
-    BuiltinRule(id="test-file-exists", severity="info",
-                description="Source files should have corresponding test files",
-                check="test-file-exists", threshold=None, _fn=_check_test_file_exists),
-    BuiltinRule(id="no-god-classes", severity="warning",
-                description="Classes with more than 20 methods",
-                check="god-class", threshold=20, _fn=_check_no_god_classes),
-    BuiltinRule(id="no-deep-inheritance", severity="warning",
-                description="Inheritance depth should not exceed 4",
-                check="deep-inheritance", threshold=4, _fn=_check_no_deep_inheritance),
-    BuiltinRule(id="layer-violation", severity="warning",
-                description="Lower layers should not import upper layers",
-                check="layer-violation", threshold=None, _fn=_check_layer_violation),
-    BuiltinRule(id="no-orphan-symbols", severity="info",
-                description="Symbols with 0 incoming and 0 outgoing edges",
-                check="orphan-symbols", threshold=None, _fn=_check_no_orphan_symbols),
+    BuiltinRule(
+        id="no-circular-imports",
+        severity="error",
+        description="No circular import chains",
+        check="cycles",
+        threshold=0,
+        _fn=_check_no_circular_imports,
+    ),
+    BuiltinRule(
+        id="max-fan-out",
+        severity="warning",
+        description="Functions should not call more than 15 other functions",
+        check="fan-out",
+        threshold=15,
+        _fn=_check_max_fan_out,
+    ),
+    BuiltinRule(
+        id="max-fan-in",
+        severity="warning",
+        description="Symbols should not be called by more than 30 others",
+        check="fan-in",
+        threshold=30,
+        _fn=_check_max_fan_in,
+    ),
+    BuiltinRule(
+        id="max-file-complexity",
+        severity="warning",
+        description="Max cognitive complexity per file (default 50)",
+        check="file-complexity",
+        threshold=50,
+        _fn=_check_max_file_complexity,
+    ),
+    BuiltinRule(
+        id="max-file-length",
+        severity="info",
+        description="Max lines per file (default 500)",
+        check="file-length",
+        threshold=500,
+        _fn=_check_max_file_length,
+    ),
+    BuiltinRule(
+        id="test-file-exists",
+        severity="info",
+        description="Source files should have corresponding test files",
+        check="test-file-exists",
+        threshold=None,
+        _fn=_check_test_file_exists,
+    ),
+    BuiltinRule(
+        id="no-god-classes",
+        severity="warning",
+        description="Classes with more than 20 methods",
+        check="god-class",
+        threshold=20,
+        _fn=_check_no_god_classes,
+    ),
+    BuiltinRule(
+        id="no-deep-inheritance",
+        severity="warning",
+        description="Inheritance depth should not exceed 4",
+        check="deep-inheritance",
+        threshold=4,
+        _fn=_check_no_deep_inheritance,
+    ),
+    BuiltinRule(
+        id="layer-violation",
+        severity="warning",
+        description="Lower layers should not import upper layers",
+        check="layer-violation",
+        threshold=None,
+        _fn=_check_layer_violation,
+    ),
+    BuiltinRule(
+        id="no-orphan-symbols",
+        severity="info",
+        description="Symbols with 0 incoming and 0 outgoing edges",
+        check="orphan-symbols",
+        threshold=None,
+        _fn=_check_no_orphan_symbols,
+    ),
 ]
 
 BUILTIN_RULE_MAP: dict[str, BuiltinRule] = {r.id: r for r in BUILTIN_RULES}
@@ -412,10 +496,7 @@ def get_builtin_rule(rule_id: str) -> BuiltinRule | None:
 BUILTIN_PROFILES: dict[str, dict] = {
     "default": {
         "description": "Standard quality rules",
-        "rules": {
-            r.id: {"enabled": True, "threshold": r.threshold}
-            for r in BUILTIN_RULES
-        },
+        "rules": {r.id: {"enabled": True, "threshold": r.threshold} for r in BUILTIN_RULES},
     },
     "strict-security": {
         "description": "Security-focused rules with tighter thresholds",
@@ -478,9 +559,7 @@ def resolve_profile(profile_name: str) -> list[dict]:
     """
     if profile_name not in BUILTIN_PROFILES:
         raise ValueError(
-            "Unknown profile: '{}'. Available: {}".format(
-                profile_name, ", ".join(sorted(BUILTIN_PROFILES.keys()))
-            )
+            "Unknown profile: '{}'. Available: {}".format(profile_name, ", ".join(sorted(BUILTIN_PROFILES.keys())))
         )
 
     profile = BUILTIN_PROFILES[profile_name]
@@ -527,10 +606,12 @@ def list_profiles() -> list[dict]:
     """
     result = []
     for name, prof in sorted(BUILTIN_PROFILES.items()):
-        result.append({
-            "name": name,
-            "description": prof.get("description", ""),
-            "extends": prof.get("extends"),
-            "rule_count": len(prof.get("rules", {})),
-        })
+        result.append(
+            {
+                "name": name,
+                "description": prof.get("description", ""),
+                "extends": prof.get("extends"),
+                "rule_count": len(prof.get("rules", {})),
+            }
+        )
     return result

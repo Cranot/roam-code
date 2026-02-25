@@ -4,22 +4,47 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command()
-@click.option("--npm-audit", "npm_audit_path", default=None, type=click.Path(exists=True),
-              help="Path to npm audit JSON report")
-@click.option("--pip-audit", "pip_audit_path", default=None, type=click.Path(exists=True),
-              help="Path to pip-audit JSON report")
-@click.option("--trivy", "trivy_path", default=None, type=click.Path(exists=True),
-              help="Path to Trivy JSON report")
-@click.option("--osv", "osv_path", default=None, type=click.Path(exists=True),
-              help="Path to OSV scanner JSON report")
-@click.option("--generic", "generic_path", default=None, type=click.Path(exists=True),
-              help="Path to generic JSON vulnerability list")
+@click.option(
+    "--npm-audit",
+    "npm_audit_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to npm audit JSON report",
+)
+@click.option(
+    "--pip-audit",
+    "pip_audit_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to pip-audit JSON report",
+)
+@click.option(
+    "--trivy",
+    "trivy_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to Trivy JSON report",
+)
+@click.option(
+    "--osv",
+    "osv_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to OSV scanner JSON report",
+)
+@click.option(
+    "--generic",
+    "generic_path",
+    default=None,
+    type=click.Path(exists=True),
+    help="Path to generic JSON vulnerability list",
+)
 @click.pass_context
 def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_path):
     """Ingest vulnerability scanner reports and match to codebase symbols.
@@ -40,8 +65,11 @@ def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_
     ensure_index()
 
     from roam.security.vuln_store import (
-        ingest_npm_audit, ingest_pip_audit, ingest_trivy,
-        ingest_osv, ingest_generic,
+        ingest_generic,
+        ingest_npm_audit,
+        ingest_osv,
+        ingest_pip_audit,
+        ingest_trivy,
     )
 
     all_vulns: list[dict] = []
@@ -60,10 +88,19 @@ def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_
 
     if not all_vulns:
         if json_mode:
-            click.echo(to_json(json_envelope("vuln-map",
-                summary={"verdict": "No vulnerability reports provided", "total": 0, "matched": 0},
-                vulnerabilities=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "vuln-map",
+                        summary={
+                            "verdict": "No vulnerability reports provided",
+                            "total": 0,
+                            "matched": 0,
+                        },
+                        vulnerabilities=[],
+                    )
+                )
+            )
             return
         click.echo("VERDICT: No vulnerability reports provided")
         click.echo("  Use --npm-audit, --pip-audit, --trivy, --osv, or --generic to supply a report.")
@@ -73,14 +110,19 @@ def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_
     total = len(all_vulns)
 
     if json_mode:
-        click.echo(to_json(json_envelope("vuln-map",
-            summary={
-                "verdict": f"{total} vulnerabilities ingested, {matched} matched to symbols",
-                "total": total,
-                "matched": matched,
-            },
-            vulnerabilities=all_vulns,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "vuln-map",
+                    summary={
+                        "verdict": f"{total} vulnerabilities ingested, {matched} matched to symbols",
+                        "total": total,
+                        "matched": matched,
+                    },
+                    vulnerabilities=all_vulns,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {total} vulnerabilities ingested, {matched} matched to symbols")

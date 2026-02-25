@@ -10,13 +10,12 @@ It is designed for fast, index-backed scans and custom `dataflow_match` rules.
 
 from __future__ import annotations
 
-from collections import Counter
-from pathlib import Path
 import fnmatch
 import re
+from collections import Counter
+from pathlib import Path
 
 from roam.db.connection import find_project_root
-
 
 _IDENT_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*)\b")
 
@@ -65,13 +64,7 @@ def _match_glob(path: str, pattern: str | None) -> bool:
 
 def _is_test_path(path: str) -> bool:
     p = (path or "").replace("\\", "/").lower()
-    return (
-        "/tests/" in p
-        or "/test/" in p
-        or p.endswith("_test.py")
-        or p.endswith(".spec.js")
-        or p.endswith(".spec.ts")
-    )
+    return "/tests/" in p or "/test/" in p or p.endswith("_test.py") or p.endswith(".spec.js") or p.endswith(".spec.ts")
 
 
 def _parse_param_names(signature: str | None) -> list[str]:
@@ -273,10 +266,7 @@ def collect_dataflow_findings(
                             "file": file_path,
                             "line": var_line,
                             "variable": var_name,
-                            "reason": (
-                                f"'{var_name}' is assigned but never read "
-                                f"in {symbol_name}"
-                            ),
+                            "reason": (f"'{var_name}' is assigned but never read in {symbol_name}"),
                         }
                     )
 
@@ -293,10 +283,7 @@ def collect_dataflow_findings(
                             "file": file_path,
                             "line": line_start,
                             "variable": name,
-                            "reason": (
-                                f"parameter '{name}' is never read "
-                                f"in {symbol_name}"
-                            ),
+                            "reason": (f"parameter '{name}' is never read in {symbol_name}"),
                         }
                     )
 
@@ -318,10 +305,7 @@ def collect_dataflow_findings(
                         "source_line": src_line,
                         "source": source,
                         "sink": sink,
-                        "reason": (
-                            f"possible source-to-sink flow in {symbol_name}: "
-                            f"'{source}' -> '{sink}'"
-                        ),
+                        "reason": (f"possible source-to-sink flow in {symbol_name}: '{source}' -> '{sink}'"),
                     }
                 )
 

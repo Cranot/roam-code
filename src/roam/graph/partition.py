@@ -36,19 +36,10 @@ def partition_for_agents(
     # ── 1. Scope the graph ────────────────────────────────────────
     if target_files:
         target_set = set(target_files)
-        keep = {
-            n for n in G.nodes
-            if G.nodes[n].get("file_path", "") in target_set
-        }
+        keep = {n for n in G.nodes if G.nodes[n].get("file_path", "") in target_set}
         if not keep:
             # Try prefix matching (directories)
-            keep = {
-                n for n in G.nodes
-                if any(
-                    G.nodes[n].get("file_path", "").startswith(t)
-                    for t in target_set
-                )
-            }
+            keep = {n for n in G.nodes if any(G.nodes[n].get("file_path", "").startswith(t) for t in target_set)}
         if keep:
             G = G.subgraph(keep).copy()
 
@@ -97,9 +88,7 @@ def partition_for_agents(
     }
 
 
-def compute_conflict_probability(
-    G: nx.DiGraph, partitions: list[dict[str, set[int]]]
-) -> float:
+def compute_conflict_probability(G: nx.DiGraph, partitions: list[dict[str, set[int]]]) -> float:
     """Ratio of cross-partition edges to total edges."""
     if len(G.edges) == 0:
         return 0.0
@@ -121,9 +110,7 @@ def compute_conflict_probability(
     return cross / total if total > 0 else 0.0
 
 
-def compute_merge_order(
-    G: nx.DiGraph, partitions: list[dict[str, set[int]]]
-) -> list[int]:
+def compute_merge_order(G: nx.DiGraph, partitions: list[dict[str, set[int]]]) -> list[int]:
     """Topological sort of partitions by dependency direction (leaves first).
 
     Returns a list of 1-based agent IDs in merge order.
@@ -326,14 +313,16 @@ def _build_agent_descriptors(
     for idx, p in enumerate(partitions):
         nodes = p["nodes"]
         if not nodes:
-            agents.append({
-                "id": idx + 1,
-                "write_files": [],
-                "read_only_files": [],
-                "symbols_owned": 0,
-                "contracts": [],
-                "cluster_label": f"partition-{idx + 1}",
-            })
+            agents.append(
+                {
+                    "id": idx + 1,
+                    "write_files": [],
+                    "read_only_files": [],
+                    "symbols_owned": 0,
+                    "contracts": [],
+                    "cluster_label": f"partition-{idx + 1}",
+                }
+            )
             continue
 
         write_files_set = partition_write_files.get(idx, set())
@@ -374,11 +363,7 @@ def _build_agent_descriptors(
                             contracts.append(contract)
 
         # Cluster label from directory majority
-        dirs = [
-            os.path.dirname(node_to_file.get(n, "")).replace("\\", "/")
-            for n in nodes
-            if n in node_to_file
-        ]
+        dirs = [os.path.dirname(node_to_file.get(n, "")).replace("\\", "/") for n in nodes if n in node_to_file]
         dir_counts = Counter(dirs) if dirs else Counter()
         if dir_counts:
             label = dir_counts.most_common(1)[0][0]
@@ -388,14 +373,16 @@ def _build_agent_descriptors(
         else:
             label = f"partition-{idx + 1}"
 
-        agents.append({
-            "id": idx + 1,
-            "write_files": sorted(write_files_set),
-            "read_only_files": sorted(read_only_set),
-            "symbols_owned": len(nodes),
-            "contracts": contracts[:10],  # cap at 10
-            "cluster_label": label,
-        })
+        agents.append(
+            {
+                "id": idx + 1,
+                "write_files": sorted(write_files_set),
+                "read_only_files": sorted(read_only_set),
+                "symbols_owned": len(nodes),
+                "contracts": contracts[:10],  # cap at 10
+                "cluster_label": label,
+            }
+        )
 
     return agents
 
@@ -431,9 +418,7 @@ def _find_shared_interfaces(
     if top_ids:
         rows = batched_in(
             conn,
-            "SELECT s.id, s.name, f.path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.id IN ({ph})",
+            "SELECT s.id, s.name, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
             top_ids,
         )
         seen = set()
@@ -441,10 +426,12 @@ def _find_shared_interfaces(
             sym_label = f"{r['path'].replace(chr(92), '/')}::{r['name']}"
             if sym_label not in seen:
                 seen.add(sym_label)
-                result.append({
-                    "symbol": sym_label,
-                    "boundary_edges": boundary_counts.get(r["id"], 0),
-                })
+                result.append(
+                    {
+                        "symbol": sym_label,
+                        "boundary_edges": boundary_counts.get(r["id"], 0),
+                    }
+                )
 
     result.sort(key=lambda x: -x["boundary_edges"])
     return result[:10]

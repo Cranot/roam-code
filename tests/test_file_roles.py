@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import pytest
-
 from roam.index.file_roles import (
     ALL_ROLES,
     classify_file,
@@ -12,7 +10,6 @@ from roam.index.file_roles import (
     is_test,
     is_vendored,
 )
-
 
 # -----------------------------------------------------------------------
 # Tier 1 — Path-based classification
@@ -437,7 +434,16 @@ class TestEdgeCases:
         """ALL_ROLES contains exactly 11 roles."""
         assert len(ALL_ROLES) == 11
         expected = {
-            "source", "test", "config", "build", "docs",
-            "generated", "vendored", "data", "examples", "scripts", "ci",
+            "source",
+            "test",
+            "config",
+            "build",
+            "docs",
+            "generated",
+            "vendored",
+            "data",
+            "examples",
+            "scripts",
+            "ci",
         }
         assert ALL_ROLES == expected

@@ -7,14 +7,12 @@ Covers:
 
 from __future__ import annotations
 
-import re
-import tempfile
 from pathlib import Path
-
 
 # ===========================================================================
 # 1. I.10.2 - Raw SQL CREATE INDEX detection in _parse_migration_indexes
 # ===========================================================================
+
 
 def _make_migration_dir(tmp_path: Path, filename: str, content: str) -> list[str]:
     """Create a migration file under a migrations/ subdir and return rel paths."""
@@ -145,6 +143,7 @@ DB::statement('CREATE INDEX IF NOT EXISTS idx_logs_level ON logs (level)');
 # ===========================================================================
 # 2. I.10.5 - information_schema guard recognition in migration-safety
 # ===========================================================================
+
 
 class TestInfoSchemaGuardRegex:
     """The _RE_INFO_SCHEMA_GUARD regex should match various information_schema patterns."""

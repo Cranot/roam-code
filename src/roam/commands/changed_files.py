@@ -6,8 +6,8 @@ import os
 import subprocess
 from pathlib import Path
 
-from roam.index.file_roles import classify_file, is_test as _roles_is_test
-
+from roam.index.file_roles import classify_file
+from roam.index.file_roles import is_test as _roles_is_test
 
 # ---------------------------------------------------------------------------
 # Test / low-risk file detection
@@ -34,9 +34,24 @@ def is_test_file(path: str) -> bool:
 _LOW_RISK_ROLES = frozenset({"docs", "config", "data", "ci", "generated", "vendored"})
 
 _LOW_RISK_EXTS = {
-    ".md", ".txt", ".rst", ".json", ".yaml", ".yml", ".toml",
-    ".ini", ".cfg", ".lock", ".xml", ".svg", ".png", ".jpg",
-    ".gif", ".ico", ".csv", ".env",
+    ".md",
+    ".txt",
+    ".rst",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".lock",
+    ".xml",
+    ".svg",
+    ".png",
+    ".jpg",
+    ".gif",
+    ".ico",
+    ".csv",
+    ".env",
 }
 
 
@@ -96,11 +111,7 @@ def get_changed_files(
         )
         if result.returncode != 0:
             return []
-        return [
-            p.replace("\\", "/")
-            for p in result.stdout.strip().splitlines()
-            if p.strip()
-        ]
+        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 

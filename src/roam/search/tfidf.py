@@ -9,24 +9,109 @@ import re
 # Stopwords: common English + common code tokens
 # ---------------------------------------------------------------------------
 
-_STOPWORDS = frozenset({
-    # English
-    "a", "an", "the", "is", "it", "in", "on", "of", "to", "and", "or",
-    "for", "with", "not", "be", "are", "was", "were", "been", "has", "have",
-    "had", "do", "does", "did", "but", "at", "by", "this", "that", "from",
-    "as", "if", "else", "then", "than", "so", "no", "all", "any", "each",
-    "can", "will", "may", "should", "would", "could",
-    # Code keywords
-    "self", "return", "import", "from", "def", "class", "function", "var",
-    "let", "const", "new", "null", "none", "true", "false", "try", "except",
-    "catch", "throw", "raises", "pass", "continue", "break", "yield",
-    "async", "await", "static", "public", "private", "protected", "void",
-    "int", "str", "bool", "float", "string", "type",
-})
+_STOPWORDS = frozenset(
+    {
+        # English
+        "a",
+        "an",
+        "the",
+        "is",
+        "it",
+        "in",
+        "on",
+        "of",
+        "to",
+        "and",
+        "or",
+        "for",
+        "with",
+        "not",
+        "be",
+        "are",
+        "was",
+        "were",
+        "been",
+        "has",
+        "have",
+        "had",
+        "do",
+        "does",
+        "did",
+        "but",
+        "at",
+        "by",
+        "this",
+        "that",
+        "from",
+        "as",
+        "if",
+        "else",
+        "then",
+        "than",
+        "so",
+        "no",
+        "all",
+        "any",
+        "each",
+        "can",
+        "will",
+        "may",
+        "should",
+        "would",
+        "could",
+        # Code keywords
+        "self",
+        "return",
+        "import",
+        "from",
+        "def",
+        "class",
+        "function",
+        "var",
+        "let",
+        "const",
+        "new",
+        "null",
+        "none",
+        "true",
+        "false",
+        "try",
+        "except",
+        "catch",
+        "throw",
+        "raises",
+        "pass",
+        "continue",
+        "break",
+        "yield",
+        "async",
+        "await",
+        "static",
+        "public",
+        "private",
+        "protected",
+        "void",
+        "int",
+        "str",
+        "bool",
+        "float",
+        "string",
+        "type",
+    }
+)
 
 # Suffixes to strip (simple stemming)
 _SUFFIXES = (
-    "tion", "ment", "ness", "able", "ible", "ing", "est", "ly", "ed", "er",
+    "tion",
+    "ment",
+    "ness",
+    "able",
+    "ible",
+    "ing",
+    "est",
+    "ly",
+    "ed",
+    "er",
 )
 
 
@@ -66,15 +151,13 @@ def _stem(word: str) -> str:
 # TF-IDF computation
 # ---------------------------------------------------------------------------
 
+
 def build_corpus(conn) -> dict[int, dict[str, float]]:
     """Build a TF-IDF corpus from the symbols table.
 
     Returns ``{symbol_id: {term: tfidf_score}}``.
     """
-    rows = conn.execute(
-        "SELECT s.id, s.name, s.qualified_name, s.signature, s.kind "
-        "FROM symbols s"
-    ).fetchall()
+    rows = conn.execute("SELECT s.id, s.name, s.qualified_name, s.signature, s.kind FROM symbols s").fetchall()
 
     if not rows:
         return {}
@@ -162,19 +245,22 @@ def compute_tfidf_vectors(conn) -> list[dict]:
     results = []
     for sid, vec in corpus.items():
         m = meta.get(sid, {})
-        results.append({
-            "symbol_id": sid,
-            "name": m.get("name", ""),
-            "file_path": m.get("file_path", ""),
-            "kind": m.get("kind", ""),
-            "vector": vec,
-        })
+        results.append(
+            {
+                "symbol_id": sid,
+                "name": m.get("name", ""),
+                "file_path": m.get("file_path", ""),
+                "kind": m.get("kind", ""),
+                "vector": vec,
+            }
+        )
     return results
 
 
 # ---------------------------------------------------------------------------
 # Similarity
 # ---------------------------------------------------------------------------
+
 
 def cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float:
     """Cosine similarity between two sparse TF-IDF vectors (dicts)."""
@@ -202,6 +288,7 @@ def cosine_similarity(vec_a: dict[str, float], vec_b: dict[str, float]) -> float
 # ---------------------------------------------------------------------------
 # Search
 # ---------------------------------------------------------------------------
+
 
 def search(conn, query: str, top_k: int = 10) -> list[dict]:
     """Search symbols using TF-IDF cosine similarity.
@@ -253,14 +340,16 @@ def search(conn, query: str, top_k: int = 10) -> list[dict]:
         m = meta.get(sid)
         if not m:
             continue
-        results.append({
-            "score": round(score, 4),
-            "symbol_id": sid,
-            "name": m["name"],
-            "file_path": m["file_path"],
-            "kind": m["kind"],
-            "line_start": m["line_start"],
-            "line_end": m["line_end"],
-        })
+        results.append(
+            {
+                "score": round(score, 4),
+                "symbol_id": sid,
+                "name": m["name"],
+                "file_path": m["file_path"],
+                "kind": m["kind"],
+                "line_start": m["line_start"],
+                "line_end": m["line_end"],
+            }
+        )
 
     return results

@@ -9,16 +9,19 @@ from datetime import datetime, timezone
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import (
-    abbrev_kind, loc, to_json, json_envelope,
-)
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import (
+    abbrev_kind,
+    json_envelope,
+    loc,
+    to_json,
+)
 
 # ---------------------------------------------------------------------------
 # Git blame parsing
 # ---------------------------------------------------------------------------
+
 
 def _run_git_blame(file_path, project_root):
     """Run ``git blame -t <file>`` and return raw stdout, or None on error.
@@ -29,7 +32,9 @@ def _run_git_blame(file_path, project_root):
     try:
         result = subprocess.run(
             ["git", "blame", "-t", "--", file_path],
-            capture_output=True, text=True, timeout=30,
+            capture_output=True,
+            text=True,
+            timeout=30,
             cwd=str(project_root),
         )
         if result.returncode != 0:
@@ -77,6 +82,7 @@ def _parse_blame(blame_output):
 # Docstring line-range heuristic
 # ---------------------------------------------------------------------------
 
+
 def _estimate_docstring_lines(line_start, line_end, docstring_text):
     """Estimate the line range of the docstring within a symbol.
 
@@ -119,6 +125,7 @@ def _estimate_docstring_lines(line_start, line_end, docstring_text):
 # Core staleness analysis
 # ---------------------------------------------------------------------------
 
+
 def _analyze_staleness(symbols_by_file, project_root, threshold_days):
     """Analyze docstring staleness for all symbols grouped by file.
 
@@ -151,7 +158,9 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days):
 
         for sym in symbols:
             ranges = _estimate_docstring_lines(
-                sym["line_start"], sym["line_end"], sym["docstring"],
+                sym["line_start"],
+                sym["line_end"],
+                sym["docstring"],
             )
             if ranges is None:
                 continue
@@ -190,17 +199,19 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days):
                 doc_date = datetime.fromtimestamp(doc_latest, tz=timezone.utc)
                 body_date = datetime.fromtimestamp(body_latest, tz=timezone.utc)
 
-                stale.append({
-                    "name": sym["name"],
-                    "kind": sym["kind"],
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                    "doc_date": doc_date.strftime("%Y-%m-%d"),
-                    "doc_author": doc_authors.get(doc_latest, "?"),
-                    "body_date": body_date.strftime("%Y-%m-%d"),
-                    "body_author": body_authors.get(body_latest, "?"),
-                    "drift_days": drift_days,
-                })
+                stale.append(
+                    {
+                        "name": sym["name"],
+                        "kind": sym["kind"],
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                        "doc_date": doc_date.strftime("%Y-%m-%d"),
+                        "doc_author": doc_authors.get(doc_latest, "?"),
+                        "body_date": body_date.strftime("%Y-%m-%d"),
+                        "body_author": body_authors.get(body_latest, "?"),
+                        "drift_days": drift_days,
+                    }
+                )
 
     # Sort by drift descending (most stale first)
     stale.sort(key=lambda s: -s["drift_days"])
@@ -229,11 +240,15 @@ ORDER BY f.path, s.line_start
 # Click command
 # ---------------------------------------------------------------------------
 
+
 @click.command("doc-staleness")
-@click.option("--limit", default=20, show_default=True,
-              help="Maximum number of stale symbols to display.")
-@click.option("--days", default=90, show_default=True,
-              help="Staleness threshold in days (body changed N+ days after docstring).")
+@click.option("--limit", default=20, show_default=True, help="Maximum number of stale symbols to display.")
+@click.option(
+    "--days",
+    default=90,
+    show_default=True,
+    help="Staleness threshold in days (body changed N+ days after docstring).",
+)
 @click.pass_context
 def doc_staleness(ctx, limit, days):
     """Detect stale docstrings where the code body changed long after the docs."""
@@ -247,10 +262,15 @@ def doc_staleness(ctx, limit, days):
 
     if not rows:
         if json_mode:
-            click.echo(to_json(json_envelope("doc-staleness",
-                summary={"stale_count": 0, "threshold_days": days},
-                stale=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "doc-staleness",
+                        summary={"stale_count": 0, "threshold_days": days},
+                        stale=[],
+                    )
+                )
+            )
         else:
             click.echo("No documented symbols found in index.")
         return
@@ -258,14 +278,16 @@ def doc_staleness(ctx, limit, days):
     # Group by file path for efficient blame (one git blame per file)
     symbols_by_file = defaultdict(list)
     for r in rows:
-        symbols_by_file[r["file_path"]].append({
-            "name": r["name"],
-            "kind": r["kind"],
-            "file_path": r["file_path"],
-            "line_start": r["line_start"],
-            "line_end": r["line_end"],
-            "docstring": r["docstring"],
-        })
+        symbols_by_file[r["file_path"]].append(
+            {
+                "name": r["name"],
+                "kind": r["kind"],
+                "file_path": r["file_path"],
+                "line_start": r["line_start"],
+                "line_end": r["line_end"],
+                "docstring": r["docstring"],
+            }
+        )
 
     stale = _analyze_staleness(symbols_by_file, project_root, days)
 
@@ -273,39 +295,40 @@ def doc_staleness(ctx, limit, days):
     displayed = stale[:limit]
 
     if json_mode:
-        click.echo(to_json(json_envelope("doc-staleness",
-            summary={
-                "stale_count": len(stale),
-                "displayed": len(displayed),
-                "threshold_days": days,
-                "files_scanned": len(symbols_by_file),
-                "symbols_scanned": len(rows),
-            },
-            stale=displayed,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "doc-staleness",
+                    summary={
+                        "stale_count": len(stale),
+                        "displayed": len(displayed),
+                        "threshold_days": days,
+                        "files_scanned": len(symbols_by_file),
+                        "symbols_scanned": len(rows),
+                    },
+                    stale=displayed,
+                )
+            )
+        )
         return
 
     # --- Text output ---
     if not stale:
         click.echo(f"No stale docstrings found (threshold: {days} days).")
-        click.echo(f"  Scanned {len(rows)} documented symbols across "
-                    f"{len(symbols_by_file)} files.")
+        click.echo(f"  Scanned {len(rows)} documented symbols across {len(symbols_by_file)} files.")
         return
 
     click.echo(f"Stale documentation (body changed >{days} days after docstring):\n")
 
     for item in displayed:
-        click.echo(f"  {item['name']:<25s} {abbrev_kind(item['kind']):<5s} "
-                    f"{loc(item['file'], item['line'])}")
-        click.echo(f"    Docstring: last updated {item['doc_date']} "
-                    f"(by {item['doc_author']})")
-        click.echo(f"    Body:      last updated {item['body_date']} "
-                    f"(by {item['body_author']})")
+        click.echo(f"  {item['name']:<25s} {abbrev_kind(item['kind']):<5s} {loc(item['file'], item['line'])}")
+        click.echo(f"    Docstring: last updated {item['doc_date']} (by {item['doc_author']})")
+        click.echo(f"    Body:      last updated {item['body_date']} (by {item['body_author']})")
         click.echo(f"    Drift: {item['drift_days']} days")
         click.echo()
 
     if len(stale) > limit:
-        click.echo(f"  (+{len(stale) - limit} more stale docstrings, "
-                    f"use --limit to see all)")
-    click.echo(f"  Total: {len(stale)} stale docstring(s) across "
-                f"{len(symbols_by_file)} files ({len(rows)} symbols scanned)")
+        click.echo(f"  (+{len(stale) - limit} more stale docstrings, use --limit to see all)")
+    click.echo(
+        f"  Total: {len(stale)} stale docstring(s) across {len(symbols_by_file)} files ({len(rows)} symbols scanned)"
+    )

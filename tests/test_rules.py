@@ -18,16 +18,13 @@ import os
 import sys
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope, git_init, index_in_process
-
+from conftest import assert_json_envelope, git_init, index_in_process
 
 from roam.cli import cli
-from roam.rules.engine import load_rules, evaluate_rule, evaluate_all
-
+from roam.rules.engine import evaluate_all, load_rules
 
 # ===========================================================================
 # Helpers
@@ -80,12 +77,8 @@ class TestLoadRules:
         """load_rules finds .yaml and .yml files and returns rule dicts."""
         rules_dir = tmp_path / "rules"
         rules_dir.mkdir()
-        (rules_dir / "rule1.yaml").write_text(
-            'name: "Rule One"\nseverity: error\n', encoding="utf-8"
-        )
-        (rules_dir / "rule2.yml").write_text(
-            'name: "Rule Two"\nseverity: warning\n', encoding="utf-8"
-        )
+        (rules_dir / "rule1.yaml").write_text('name: "Rule One"\nseverity: error\n', encoding="utf-8")
+        (rules_dir / "rule2.yml").write_text('name: "Rule Two"\nseverity: warning\n', encoding="utf-8")
         # Non-YAML file should be ignored
         (rules_dir / "readme.txt").write_text("ignore me\n")
 
@@ -119,31 +112,25 @@ class TestPathMatch:
     def test_evaluate_path_match_pass(self, tmp_path):
         """When no edges match the from/to pattern, the rule passes."""
         source_files = {
-            "src/service.py": (
-                "def create_user():\n"
-                "    return 42\n"
-            ),
-            "src/utils.py": (
-                "def helper():\n"
-                "    return 1\n"
-            ),
+            "src/service.py": ("def create_user():\n    return 42\n"),
+            "src/utils.py": ("def helper():\n    return 1\n"),
         }
         rule_yaml = (
             'name: "No service calls DB"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/controllers/**"\n'
-            '    kind: [function]\n'
-            '  to:\n'
+            "    kind: [function]\n"
+            "  to:\n"
             '    file_glob: "**/db/**"\n'
-            '    kind: [function]\n'
-            '  max_distance: 1\n'
+            "    kind: [function]\n"
+            "  max_distance: 1\n"
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"no_svc_db.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"no_svc_db.yaml": rule_yaml})
 
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(proj))
@@ -160,32 +147,26 @@ class TestPathMatch:
         """When edges match from/to pattern, violations are reported."""
         source_files = {
             "controllers/user_ctrl.py": (
-                "from db.queries import get_user\n"
-                "\n"
-                "def handle_request():\n"
-                "    return get_user()\n"
+                "from db.queries import get_user\n\ndef handle_request():\n    return get_user()\n"
             ),
-            "db/queries.py": (
-                "def get_user():\n"
-                "    return {'name': 'Alice'}\n"
-            ),
+            "db/queries.py": ("def get_user():\n    return {'name': 'Alice'}\n"),
         }
         rule_yaml = (
             'name: "No controller calls DB"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/controllers/**"\n'
-            '    kind: [function]\n'
-            '  to:\n'
+            "    kind: [function]\n"
+            "  to:\n"
             '    file_glob: "**/db/**"\n'
-            '    kind: [function]\n'
-            '  max_distance: 1\n'
+            "    kind: [function]\n"
+            "  max_distance: 1\n"
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"no_ctrl_db.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"no_ctrl_db.yaml": rule_yaml})
 
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(proj))
@@ -213,26 +194,16 @@ class TestSymbolMatch:
     def test_evaluate_symbol_match(self, tmp_path):
         """symbol_match finds symbols matching kind/exported criteria."""
         source_files = {
-            "src/app.py": (
-                "def public_fn():\n"
-                "    return 1\n"
-                "\n"
-                "def another_fn():\n"
-                "    return 2\n"
-            ),
+            "src/app.py": ("def public_fn():\n    return 1\n\ndef another_fn():\n    return 2\n"),
         }
         # Match all exported functions (violations = symbols that match)
         rule_yaml = (
-            'name: "Find all exported functions"\n'
-            'severity: info\n'
-            'match:\n'
-            '  kind: [function]\n'
-            '  exported: true\n'
+            'name: "Find all exported functions"\nseverity: info\nmatch:\n  kind: [function]\n  exported: true\n'
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"find_fns.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"find_fns.yaml": rule_yaml})
 
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(proj))
@@ -262,41 +233,32 @@ class TestExemptions:
         """Exempt symbols and files should be excluded from violations."""
         source_files = {
             "controllers/user_ctrl.py": (
-                "from db.queries import get_user\n"
-                "\n"
-                "def handle_request():\n"
-                "    return get_user()\n"
+                "from db.queries import get_user\n\ndef handle_request():\n    return get_user()\n"
             ),
             "controllers/admin_ctrl.py": (
-                "from db.queries import get_user\n"
-                "\n"
-                "def admin_request():\n"
-                "    return get_user()\n"
+                "from db.queries import get_user\n\ndef admin_request():\n    return get_user()\n"
             ),
-            "db/queries.py": (
-                "def get_user():\n"
-                "    return {'name': 'Alice'}\n"
-            ),
+            "db/queries.py": ("def get_user():\n    return {'name': 'Alice'}\n"),
         }
         # Exempt admin_request by symbol name
         rule_yaml = (
             'name: "No controller calls DB"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/controllers/**"\n'
-            '    kind: [function]\n'
-            '  to:\n'
+            "    kind: [function]\n"
+            "  to:\n"
             '    file_glob: "**/db/**"\n'
-            '    kind: [function]\n'
-            '  max_distance: 1\n'
-            'exempt:\n'
-            '  symbols: [admin_request]\n'
+            "    kind: [function]\n"
+            "  max_distance: 1\n"
+            "exempt:\n"
+            "  symbols: [admin_request]\n"
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"no_ctrl_db.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"no_ctrl_db.yaml": rule_yaml})
 
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(proj))
@@ -328,38 +290,43 @@ class TestSeverity:
         }
         rule_error = (
             'name: "Error rule"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nope/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nope/**"\n'
         )
         rule_warning = (
             'name: "Warning rule"\n'
-            'severity: warning\n'
-            'match:\n'
-            '  from:\n'
+            "severity: warning\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nope/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nope/**"\n'
         )
         rule_info = (
             'name: "Info rule"\n'
-            'severity: info\n'
-            'match:\n'
-            '  from:\n'
+            "severity: info\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nope/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nope/**"\n'
         )
-        proj = _make_project_with_rules(tmp_path, source_files, {
-            "a_error.yaml": rule_error,
-            "b_warning.yaml": rule_warning,
-            "c_info.yaml": rule_info,
-        })
+        proj = _make_project_with_rules(
+            tmp_path,
+            source_files,
+            {
+                "a_error.yaml": rule_error,
+                "b_warning.yaml": rule_warning,
+                "c_info.yaml": rule_info,
+            },
+        )
 
         from roam.db.connection import open_db
+
         old_cwd = os.getcwd()
         try:
             os.chdir(str(proj))
@@ -398,15 +365,14 @@ class TestRulesCLI:
         # A rule that won't match anything (passes)
         rule_yaml = (
             'name: "No X calls Y"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nonexistent/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nonexistent/**"\n'
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"pass_rule.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"pass_rule.yaml": rule_yaml})
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
@@ -420,15 +386,14 @@ class TestRulesCLI:
         }
         rule_yaml = (
             'name: "Passes"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nonexistent/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nonexistent/**"\n'
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"pass_rule.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"pass_rule.yaml": rule_yaml})
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
@@ -443,15 +408,14 @@ class TestRulesCLI:
         }
         rule_yaml = (
             'name: "Passes"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nonexistent/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nonexistent/**"\n'
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"pass_rule.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"pass_rule.yaml": rule_yaml})
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
@@ -465,31 +429,22 @@ class TestRulesCLI:
     def test_rules_ci_mode(self, tmp_path, monkeypatch):
         """roam rules --ci exits 1 when error-severity violations exist."""
         source_files = {
-            "controllers/ctrl.py": (
-                "from db.queries import get_data\n"
-                "\n"
-                "def handle():\n"
-                "    return get_data()\n"
-            ),
-            "db/queries.py": (
-                "def get_data():\n"
-                "    return []\n"
-            ),
+            "controllers/ctrl.py": ("from db.queries import get_data\n\ndef handle():\n    return get_data()\n"),
+            "db/queries.py": ("def get_data():\n    return []\n"),
         }
         rule_yaml = (
             'name: "No ctrl -> DB"\n'
-            'severity: error\n'
-            'match:\n'
-            '  from:\n'
+            "severity: error\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/controllers/**"\n'
-            '    kind: [function]\n'
-            '  to:\n'
+            "    kind: [function]\n"
+            "  to:\n"
             '    file_glob: "**/db/**"\n'
-            '    kind: [function]\n'
-            '  max_distance: 1\n'
+            "    kind: [function]\n"
+            "  max_distance: 1\n"
         )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"no_ctrl_db.yaml": rule_yaml})
+        proj = _make_project_with_rules(tmp_path, source_files, {"no_ctrl_db.yaml": rule_yaml})
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
@@ -597,21 +552,11 @@ class TestCIWarningPasses:
     def test_rules_ci_warning_passes(self, tmp_path, monkeypatch):
         """roam rules --ci exits 0 when only warning-severity violations exist."""
         source_files = {
-            "src/app.py": (
-                "def public_fn():\n"
-                "    return 1\n"
-            ),
+            "src/app.py": ("def public_fn():\n    return 1\n"),
         }
         # This symbol_match rule will find violations but severity=warning
-        rule_yaml = (
-            'name: "Warn about functions"\n'
-            'severity: warning\n'
-            'match:\n'
-            '  kind: [function]\n'
-            '  exported: true\n'
-        )
-        proj = _make_project_with_rules(tmp_path, source_files,
-                                        {"warn.yaml": rule_yaml})
+        rule_yaml = 'name: "Warn about functions"\nseverity: warning\nmatch:\n  kind: [function]\n  exported: true\n'
+        proj = _make_project_with_rules(tmp_path, source_files, {"warn.yaml": rule_yaml})
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
@@ -641,19 +586,18 @@ class TestCustomRulesDir:
         custom_dir.mkdir()
         (custom_dir / "r1.yaml").write_text(
             'name: "Custom rule"\n'
-            'severity: info\n'
-            'match:\n'
-            '  from:\n'
+            "severity: info\n"
+            "match:\n"
+            "  from:\n"
             '    file_glob: "**/nope/**"\n'
-            '  to:\n'
+            "  to:\n"
             '    file_glob: "**/nope/**"\n',
             encoding="utf-8",
         )
         monkeypatch.chdir(proj)
 
         runner = CliRunner()
-        result = runner.invoke(cli, ["rules", "--rules-dir", str(custom_dir)],
-                               catch_exceptions=False)
+        result = runner.invoke(cli, ["rules", "--rules-dir", str(custom_dir)], catch_exceptions=False)
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
         assert "Custom rule" in result.output or "1 rules passed" in result.output

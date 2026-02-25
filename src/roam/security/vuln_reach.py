@@ -57,9 +57,7 @@ def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
     Returns list of analyzed vulns with reachability info.
     """
     rows = conn.execute(
-        "SELECT id, cve_id, package_name, severity, title, "
-        "matched_symbol_id, matched_file "
-        "FROM vulnerabilities"
+        "SELECT id, cve_id, package_name, severity, title, matched_symbol_id, matched_file FROM vulnerabilities"
     ).fetchall()
 
     if not rows:
@@ -100,8 +98,7 @@ def analyze_reachability(conn: sqlite3.Connection, G: nx.DiGraph) -> list[dict]:
 
             # Update the DB record
             conn.execute(
-                "UPDATE vulnerabilities SET reachable=?, shortest_path=?, hop_count=? "
-                "WHERE id=?",
+                "UPDATE vulnerabilities SET reachable=?, shortest_path=?, hop_count=? WHERE id=?",
                 (
                     result["reachable"],
                     json.dumps(result["path_names"]),
@@ -147,9 +144,7 @@ def reach_from_entry(conn: sqlite3.Connection, G: nx.DiGraph, entry_point: str) 
 
     # Check each vulnerability
     rows = conn.execute(
-        "SELECT id, cve_id, package_name, severity, title, "
-        "matched_symbol_id, matched_file "
-        "FROM vulnerabilities"
+        "SELECT id, cve_id, package_name, severity, title, matched_symbol_id, matched_file FROM vulnerabilities"
     ).fetchall()
 
     results: list[dict] = []
@@ -171,19 +166,21 @@ def reach_from_entry(conn: sqlite3.Connection, G: nx.DiGraph, entry_point: str) 
                 continue
 
         path_names = [_node_name(G, n) for n in best_path] if best_path else []
-        results.append({
-            "vuln_id": row["id"],
-            "cve_id": row["cve_id"],
-            "package_name": row["package_name"],
-            "severity": row["severity"],
-            "title": row["title"],
-            "matched_file": row["matched_file"],
-            "reachable": True,
-            "path": best_path or [],
-            "path_names": path_names,
-            "hop_count": len(best_path) - 1 if best_path else 0,
-            "blast_radius": _blast_radius(G, symbol_id),
-        })
+        results.append(
+            {
+                "vuln_id": row["id"],
+                "cve_id": row["cve_id"],
+                "package_name": row["package_name"],
+                "severity": row["severity"],
+                "title": row["title"],
+                "matched_file": row["matched_file"],
+                "reachable": True,
+                "path": best_path or [],
+                "path_names": path_names,
+                "hop_count": len(best_path) - 1 if best_path else 0,
+                "blast_radius": _blast_radius(G, symbol_id),
+            }
+        )
 
     return results
 

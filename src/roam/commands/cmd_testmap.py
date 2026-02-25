@@ -2,18 +2,19 @@
 
 from __future__ import annotations
 
-
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_edge_kind, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.changed_files import is_test_file as _is_test_file
+from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, format_edge_kind, json_envelope, loc, to_json
 
 
 def _test_map_symbol(conn, sym):
     """Show test files that exercise a given symbol."""
-    click.echo(f"Test coverage for: {sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})")
+    click.echo(
+        f"Test coverage for: {sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
+    )
     click.echo()
 
     # Direct tests: edges where source is in a test file and target is this symbol
@@ -39,9 +40,7 @@ def _test_map_symbol(conn, sym):
 
     # Test files importing the symbol's file
     test_importers = []
-    sym_file_id = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (sym["file_path"],)
-    ).fetchone()
+    sym_file_id = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
     if sym_file_id:
         importers = conn.execute(
             "SELECT f.path, fe.symbol_count "
@@ -79,16 +78,16 @@ def _test_map_symbol(conn, sym):
             (sym["id"],),
         ).fetchone()
         if pr_row and (pr_row["pagerank"] or 0) > 0:
-            click.echo(f"\nNo tests found. This symbol has PR={pr_row['pagerank']:.4f}, in_degree={pr_row['in_degree']} — consider adding tests.")
+            click.echo(
+                f"\nNo tests found. This symbol has PR={pr_row['pagerank']:.4f}, in_degree={pr_row['in_degree']} — consider adding tests."
+            )
 
 
 def _test_map_file(conn, path):
     """Show test files that exercise a given source file."""
     frow = conn.execute("SELECT * FROM files WHERE path = ?", (path,)).fetchone()
     if frow is None:
-        frow = conn.execute(
-            "SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)
-        ).fetchone()
+        frow = conn.execute("SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)).fetchone()
     if frow is None:
         click.echo(f"File not found in index: {path}")
         raise SystemExit(1)
@@ -127,9 +126,7 @@ def _test_map_file(conn, path):
     click.echo()
 
     # Also show direct test references to symbols in this file
-    sym_ids = conn.execute(
-        "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
-    ).fetchall()
+    sym_ids = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
     test_caller_files = []
     if sym_ids:
         ph = ",".join("?" for _ in sym_ids)
@@ -166,11 +163,11 @@ def _test_map_file(conn, path):
 
 
 @click.command("test-map")
-@click.argument('name')
+@click.argument("name")
 @click.pass_context
 def test_map(ctx, name):
     """Map a symbol or file to its test coverage."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     name_norm = name.replace("\\", "/")
@@ -179,9 +176,7 @@ def test_map(ctx, name):
         if "/" in name_norm or "." in name_norm:
             frow = conn.execute("SELECT id FROM files WHERE path = ?", (name_norm,)).fetchone()
             if frow is None:
-                frow = conn.execute(
-                    "SELECT id FROM files WHERE path LIKE ? LIMIT 1", (f"%{name_norm}",)
-                ).fetchone()
+                frow = conn.execute("SELECT id FROM files WHERE path LIKE ? LIMIT 1", (f"%{name_norm}",)).fetchone()
             if frow:
                 if json_mode:
                     _test_map_file_json(conn, name_norm)
@@ -211,9 +206,7 @@ def _test_map_symbol_json(conn, sym):
     ).fetchall()
     direct_tests = [c for c in callers if _is_test_file(c["file_path"])]
 
-    sym_file_id = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (sym["file_path"],)
-    ).fetchone()
+    sym_file_id = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
     test_importers = []
     if sym_file_id:
         importers = conn.execute(
@@ -232,42 +225,51 @@ def _test_map_symbol_json(conn, sym):
         (f"{base_name}Test", f"{base_name}_Test"),
     ).fetchall()
 
-    click.echo(to_json(json_envelope("test-map",
-        summary={
-            "direct_tests": len(direct_tests),
-            "test_importers": len(test_importers),
-            "convention_tests": len(convention_tests),
-        },
-        name=sym["name"], kind=sym["kind"],
-        location=loc(sym["file_path"], sym["line_start"]),
-        direct_tests=[
-            {"name": t["name"], "kind": t["kind"], "file": t["file_path"],
-             "edge_kind": t["edge_kind"]}
-            for t in direct_tests
-        ],
-        test_importers=[
-            {"path": r["path"], "symbols_used": r["symbol_count"]}
-            for r in test_importers
-        ],
-        convention_tests=[
-            {"name": ct["name"], "kind": ct["kind"], "path": ct["path"]}
-            for ct in convention_tests
-        ],
-    )))
+    click.echo(
+        to_json(
+            json_envelope(
+                "test-map",
+                summary={
+                    "direct_tests": len(direct_tests),
+                    "test_importers": len(test_importers),
+                    "convention_tests": len(convention_tests),
+                },
+                name=sym["name"],
+                kind=sym["kind"],
+                location=loc(sym["file_path"], sym["line_start"]),
+                direct_tests=[
+                    {
+                        "name": t["name"],
+                        "kind": t["kind"],
+                        "file": t["file_path"],
+                        "edge_kind": t["edge_kind"],
+                    }
+                    for t in direct_tests
+                ],
+                test_importers=[{"path": r["path"], "symbols_used": r["symbol_count"]} for r in test_importers],
+                convention_tests=[
+                    {"name": ct["name"], "kind": ct["kind"], "path": ct["path"]} for ct in convention_tests
+                ],
+            )
+        )
+    )
 
 
 def _test_map_file_json(conn, path):
     """JSON output for test-map on a file."""
     frow = conn.execute("SELECT * FROM files WHERE path = ?", (path,)).fetchone()
     if frow is None:
-        frow = conn.execute(
-            "SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)
-        ).fetchone()
+        frow = conn.execute("SELECT * FROM files WHERE path LIKE ? LIMIT 1", (f"%{path}",)).fetchone()
     if frow is None:
-        click.echo(to_json(json_envelope("test-map",
-            summary={"error": True},
-            error=f"File not found: {path}",
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "test-map",
+                    summary={"error": True},
+                    error=f"File not found: {path}",
+                )
+            )
+        )
         return
 
     importers = conn.execute(
@@ -277,9 +279,7 @@ def _test_map_file_json(conn, path):
     ).fetchall()
     test_importers = [r for r in importers if _is_test_file(r["path"])]
 
-    sym_ids = conn.execute(
-        "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
-    ).fetchall()
+    sym_ids = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
     test_caller_files = []
     if sym_ids:
         ph = ",".join("?" for _ in sym_ids)
@@ -292,15 +292,17 @@ def _test_map_file_json(conn, path):
         ).fetchall()
         test_caller_files = [r["path"] for r in test_callers if _is_test_file(r["path"])]
 
-    click.echo(to_json(json_envelope("test-map",
-        summary={
-            "test_importers": len(test_importers),
-            "test_callers": len(test_caller_files),
-        },
-        path=frow["path"],
-        test_importers=[
-            {"path": r["path"], "symbols_used": r["symbol_count"]}
-            for r in test_importers
-        ],
-        test_callers=test_caller_files,
-    )))
+    click.echo(
+        to_json(
+            json_envelope(
+                "test-map",
+                summary={
+                    "test_importers": len(test_importers),
+                    "test_callers": len(test_caller_files),
+                },
+                path=frow["path"],
+                test_importers=[{"path": r["path"], "symbols_used": r["symbol_count"]} for r in test_importers],
+                test_callers=test_caller_files,
+            )
+        )
+    )

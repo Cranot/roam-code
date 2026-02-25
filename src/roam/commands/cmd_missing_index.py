@@ -28,15 +28,14 @@ Confidence levels:
 
 from __future__ import annotations
 
-from collections import defaultdict
 import re
+from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Regex patterns for PHP migration and query parsing
@@ -134,6 +133,7 @@ _RE_TABLE_PROP = re.compile(
 # Helper utilities
 # ---------------------------------------------------------------------------
 
+
 def _is_migration_path(path: str) -> bool:
     """Return True if this path looks like a database migration file."""
     p = path.replace("\\", "/").lower()
@@ -146,10 +146,7 @@ def _is_query_source_path(path: str) -> bool:
     if "migration" in p or "test" in p or "vendor" in p:
         return False
     keywords = ("model", "service", "controller", "repository", "scope", "query")
-    return (
-        p.endswith(".php")
-        and any(k in p for k in keywords)
-    ) or p.endswith(".php")
+    return (p.endswith(".php") and any(k in p for k in keywords)) or p.endswith(".php")
 
 
 def _extract_string_list(raw: str) -> list[str]:
@@ -173,7 +170,7 @@ def _class_to_table(class_name: str) -> str:
     # Strip non-model suffixes before converting
     for suffix in ("Controller", "Service", "Repository", "Scope", "Factory"):
         if class_name.endswith(suffix) and len(class_name) > len(suffix):
-            class_name = class_name[:-len(suffix)]
+            class_name = class_name[: -len(suffix)]
             break
 
     # Insert underscores before uppercase letters
@@ -187,8 +184,13 @@ def _class_to_table(class_name: str) -> str:
         return snake[:-2] + "ves"
     if snake.endswith("f") and not snake.endswith("ff"):
         return snake[:-1] + "ves"
-    if (snake.endswith("s") or snake.endswith("x") or snake.endswith("z")
-            or snake.endswith("sh") or snake.endswith("ch")):
+    if (
+        snake.endswith("s")
+        or snake.endswith("x")
+        or snake.endswith("z")
+        or snake.endswith("sh")
+        or snake.endswith("ch")
+    ):
         return snake + "es"
     return snake + "s"
 
@@ -196,6 +198,7 @@ def _class_to_table(class_name: str) -> str:
 # ---------------------------------------------------------------------------
 # Step 1: Parse migration files for index definitions
 # ---------------------------------------------------------------------------
+
 
 def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[tuple[str, ...]]]:
     """Read migration files and build table -> set-of-indexed-column-tuples.
@@ -223,7 +226,7 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         # index declarations within the closure that follows it.
         for i, sm in enumerate(schema_matches):
             raw_table = sm.group(1)
-            table_name = raw_table.rsplit(".", 1)[-1].strip('{}"\' $')
+            table_name = raw_table.rsplit(".", 1)[-1].strip("{}\"' $")
 
             # The closure starts after the match and ends at the next
             # Schema:: call or end of file.
@@ -274,13 +277,11 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         # 7. Raw SQL CREATE INDEX outside Schema blocks
         for m in _RE_CREATE_INDEX_RAW.finditer(content):
             raw_tbl = m.group(1)
-            tbl = raw_tbl.rsplit(".", 1)[-1].strip('{}"\' $')
+            tbl = raw_tbl.rsplit(".", 1)[-1].strip("{}\"' $")
             cols = tuple(_extract_string_list(m.group(2)))
             if not cols:
                 # Fallback: split on comma for unquoted column names
-                cols = tuple(
-                    c.strip() for c in m.group(2).split(",") if c.strip()
-                )
+                cols = tuple(c.strip() for c in m.group(2).split(",") if c.strip())
             if cols:
                 table_indexes[tbl].add(cols)
                 for c in cols:
@@ -292,6 +293,7 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
 # ---------------------------------------------------------------------------
 # Step 2: Parse query files for WHERE / ORDER BY patterns
 # ---------------------------------------------------------------------------
+
 
 def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     """Try to infer the table name from surrounding code context.
@@ -308,7 +310,7 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     followed by a method-chain continuation (``->``) — this preserves chains
     like ``Model::where(...)->orderBy(...)`` while cutting off prior statements.
     """
-    raw_window = content[max(0, match_pos - 2000): match_pos]
+    raw_window = content[max(0, match_pos - 2000) : match_pos]
 
     # Truncate at the nearest statement boundary (`;') that is not followed
     # by a chain continuation ('->').  We scan from the end backwards and
@@ -318,13 +320,13 @@ def _infer_table_from_context(content: str, match_pos: int) -> str | None:
     for i in range(len(search_area) - 1, -1, -1):
         if search_area[i] == ";":
             # Check if text after the semicolon starts a chain continuation
-            rest = search_area[i + 1:].lstrip()
+            rest = search_area[i + 1 :].lstrip()
             if rest.startswith("->"):
                 # This semicolon is inside a chained expression context;
                 # keep looking further back.
                 continue
             # Found a real statement boundary — use only content after it
-            truncated_window = search_area[i + 1:]
+            truncated_window = search_area[i + 1 :]
             break
 
     window = truncated_window
@@ -361,13 +363,25 @@ class _QueryPattern:
     """Represents a detected query pattern in source code."""
 
     __slots__ = (
-        "file_path", "line_no", "table", "where_cols",
-        "orderby_cols", "has_paginate", "kind",
+        "file_path",
+        "line_no",
+        "table",
+        "where_cols",
+        "orderby_cols",
+        "has_paginate",
+        "kind",
     )
 
-    def __init__(self, file_path: str, line_no: int, table: str | None,
-                 where_cols: list[str], orderby_cols: list[str],
-                 has_paginate: bool, kind: str):
+    def __init__(
+        self,
+        file_path: str,
+        line_no: int,
+        table: str | None,
+        where_cols: list[str],
+        orderby_cols: list[str],
+        has_paginate: bool,
+        kind: str,
+    ):
         self.file_path = file_path
         self.line_no = line_no
         self.table = table
@@ -432,7 +446,7 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
                     if depth == 0:
                         break
                 pos += 1
-            scope_body = content[brace_start:pos + 1]
+            scope_body = content[brace_start : pos + 1]
             scope_line = _line_no_for_pos(scope_match.start())
             table = _infer_table_from_context(content, scope_match.start())
 
@@ -446,15 +460,17 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
             orderby_cols = [c.split(".")[-1] for c in orderby_cols]
 
             if where_cols or orderby_cols:
-                patterns.append(_QueryPattern(
-                    file_path=rel_path,
-                    line_no=scope_line,
-                    table=table,
-                    where_cols=list(dict.fromkeys(where_cols)),
-                    orderby_cols=list(dict.fromkeys(orderby_cols)),
-                    has_paginate=has_paginate,
-                    kind="scope",
-                ))
+                patterns.append(
+                    _QueryPattern(
+                        file_path=rel_path,
+                        line_no=scope_line,
+                        table=table,
+                        where_cols=list(dict.fromkeys(where_cols)),
+                        orderby_cols=list(dict.fromkeys(orderby_cols)),
+                        has_paginate=has_paginate,
+                        kind="scope",
+                    )
+                )
 
         # --- Method-level analysis: chunk file into method bodies ---
         # Find all method declarations and process them as logical blocks
@@ -482,7 +498,7 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
                     if depth == 0:
                         break
                 pos += 1
-            body = content[brace_start:pos + 1]
+            body = content[brace_start : pos + 1]
             fn_line = _line_no_for_pos(mm.start())
             table = _infer_table_from_context(content, mm.start())
 
@@ -495,15 +511,17 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
             orderby_cols = [c.split(".")[-1] for c in orderby_cols]
 
             if where_cols or orderby_cols:
-                patterns.append(_QueryPattern(
-                    file_path=rel_path,
-                    line_no=fn_line,
-                    table=table,
-                    where_cols=list(dict.fromkeys(where_cols)),
-                    orderby_cols=list(dict.fromkeys(orderby_cols)),
-                    has_paginate=has_paginate,
-                    kind=file_kind,
-                ))
+                patterns.append(
+                    _QueryPattern(
+                        file_path=rel_path,
+                        line_no=fn_line,
+                        table=table,
+                        where_cols=list(dict.fromkeys(where_cols)),
+                        orderby_cols=list(dict.fromkeys(orderby_cols)),
+                        has_paginate=has_paginate,
+                        kind=file_kind,
+                    )
+                )
 
     return patterns
 
@@ -513,14 +531,27 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
 # ---------------------------------------------------------------------------
 
 # Columns that are nearly always indexed or not worth flagging
-_SKIP_COLUMNS = frozenset({
-    "id", "uuid", "created_at", "updated_at", "deleted_at",
-})
+_SKIP_COLUMNS = frozenset(
+    {
+        "id",
+        "uuid",
+        "created_at",
+        "updated_at",
+        "deleted_at",
+    }
+)
 
 # Columns typically low-cardinality / not worth indexing individually
-_LOW_CARDINALITY_HINTS = frozenset({
-    "status", "type", "flag", "active", "enabled", "is_",
-})
+_LOW_CARDINALITY_HINTS = frozenset(
+    {
+        "status",
+        "type",
+        "flag",
+        "active",
+        "enabled",
+        "is_",
+    }
+)
 
 
 def _is_low_cardinality(col: str) -> bool:
@@ -563,28 +594,30 @@ def _build_findings(
                 if dedup_key not in seen:
                     seen.add(dedup_key)
                     # Check if individual indexes exist for each column
-                    missing_individual = [
-                        c for c in query_cols if not _column_has_any_index(c, indexed)
-                    ]
+                    missing_individual = [c for c in query_cols if not _column_has_any_index(c, indexed)]
                     confidence = "high" if pat.has_paginate else "medium"
                     fix_cols = ", ".join(query_cols)
-                    findings.append({
-                        "confidence": confidence,
-                        "table": table,
-                        "columns": query_cols,
-                        "issue": f"no composite index covering ({fix_cols})",
-                        "query_location": loc(pat.file_path, pat.line_no),
-                        "query_kind": pat.kind,
-                        "has_paginate": pat.has_paginate,
-                        "pattern_type": "composite_where",
-                        "suggestion": (
-                            f"Add composite index on ({fix_cols})"
-                            + (" — also missing individual indexes for: "
-                               + ", ".join(missing_individual)
-                               if missing_individual else "")
-                        ),
-                        "missing_individual": missing_individual,
-                    })
+                    findings.append(
+                        {
+                            "confidence": confidence,
+                            "table": table,
+                            "columns": query_cols,
+                            "issue": f"no composite index covering ({fix_cols})",
+                            "query_location": loc(pat.file_path, pat.line_no),
+                            "query_kind": pat.kind,
+                            "has_paginate": pat.has_paginate,
+                            "pattern_type": "composite_where",
+                            "suggestion": (
+                                f"Add composite index on ({fix_cols})"
+                                + (
+                                    " — also missing individual indexes for: " + ", ".join(missing_individual)
+                                    if missing_individual
+                                    else ""
+                                )
+                            ),
+                            "missing_individual": missing_individual,
+                        }
+                    )
         elif len(query_cols) == 1:
             col = query_cols[0]
             if _is_low_cardinality(col):
@@ -594,20 +627,20 @@ def _build_findings(
                 if dedup_key not in seen:
                     seen.add(dedup_key)
                     confidence = "high" if pat.has_paginate else "medium"
-                    findings.append({
-                        "confidence": confidence,
-                        "table": table,
-                        "columns": [col],
-                        "issue": f"no index on {col}",
-                        "query_location": loc(pat.file_path, pat.line_no),
-                        "query_kind": pat.kind,
-                        "has_paginate": pat.has_paginate,
-                        "pattern_type": "single_where",
-                        "suggestion": (
-                            f"Add index on {col}, or a composite index starting with {col}"
-                        ),
-                        "missing_individual": [col],
-                    })
+                    findings.append(
+                        {
+                            "confidence": confidence,
+                            "table": table,
+                            "columns": [col],
+                            "issue": f"no index on {col}",
+                            "query_location": loc(pat.file_path, pat.line_no),
+                            "query_kind": pat.kind,
+                            "has_paginate": pat.has_paginate,
+                            "pattern_type": "single_where",
+                            "suggestion": (f"Add index on {col}, or a composite index starting with {col}"),
+                            "missing_individual": [col],
+                        }
+                    )
 
         # --- ORDER BY analysis ---
         order_cols = [c for c in pat.orderby_cols if c not in _SKIP_COLUMNS]
@@ -621,49 +654,53 @@ def _build_findings(
                     # orderBy without index is always medium confidence
                     # (becomes high if paginated)
                     confidence = "high" if pat.has_paginate else "medium"
-                    findings.append({
-                        "confidence": confidence,
-                        "table": table,
-                        "columns": [col],
-                        "issue": f"orderBy on non-indexed column {col}",
-                        "query_location": loc(pat.file_path, pat.line_no),
-                        "query_kind": pat.kind,
-                        "has_paginate": pat.has_paginate,
-                        "pattern_type": "orderby",
-                        "suggestion": (
-                            f"Add index on {col}"
-                            + (f", or composite index starting with a filter column + {col}"
-                               if pat.where_cols else "")
-                        ),
-                        "missing_individual": [col],
-                    })
+                    findings.append(
+                        {
+                            "confidence": confidence,
+                            "table": table,
+                            "columns": [col],
+                            "issue": f"orderBy on non-indexed column {col}",
+                            "query_location": loc(pat.file_path, pat.line_no),
+                            "query_kind": pat.kind,
+                            "has_paginate": pat.has_paginate,
+                            "pattern_type": "orderby",
+                            "suggestion": (
+                                f"Add index on {col}"
+                                + (
+                                    f", or composite index starting with a filter column + {col}"
+                                    if pat.where_cols
+                                    else ""
+                                )
+                            ),
+                            "missing_individual": [col],
+                        }
+                    )
 
             elif table and _column_has_any_index(col, indexed) and pat.where_cols:
                 # Column IS individually indexed but may need a composite
                 # index with the WHERE columns for efficient sort+filter
                 non_skip_where = [c for c in pat.where_cols if c not in _SKIP_COLUMNS]
-                if non_skip_where and not _composite_covered(
-                    non_skip_where + [col], indexed
-                ):
+                if non_skip_where and not _composite_covered(non_skip_where + [col], indexed):
                     dedup_key = ("orderby_composite", table, col, pat.file_path)
                     if dedup_key not in seen:
                         seen.add(dedup_key)
                         fix_cols = ", ".join(non_skip_where + [col])
-                        findings.append({
-                            "confidence": "low",
-                            "table": table,
-                            "columns": [col],
-                            "issue": (
-                                f"{col} has an index but no composite index "
-                                f"covering filter+sort ({fix_cols})"
-                            ),
-                            "query_location": loc(pat.file_path, pat.line_no),
-                            "query_kind": pat.kind,
-                            "has_paginate": pat.has_paginate,
-                            "pattern_type": "orderby_with_where",
-                            "suggestion": f"Consider a composite index on ({fix_cols})",
-                            "missing_individual": [],
-                        })
+                        findings.append(
+                            {
+                                "confidence": "low",
+                                "table": table,
+                                "columns": [col],
+                                "issue": (
+                                    f"{col} has an index but no composite index covering filter+sort ({fix_cols})"
+                                ),
+                                "query_location": loc(pat.file_path, pat.line_no),
+                                "query_kind": pat.kind,
+                                "has_paginate": pat.has_paginate,
+                                "pattern_type": "orderby_with_where",
+                                "suggestion": f"Consider a composite index on ({fix_cols})",
+                                "missing_individual": [],
+                            }
+                        )
 
     # Sort: high → medium → low
     _order = {"high": 0, "medium": 1, "low": 2}
@@ -674,6 +711,7 @@ def _build_findings(
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
 
 @click.command("missing-index")
 @click.option("--limit", "-n", default=50, help="Max findings to show")
@@ -719,17 +757,13 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
 
     with open_db(readonly=True) as conn:
         # Fetch all PHP file paths from the index
-        all_php = conn.execute(
-            "SELECT path FROM files WHERE language = 'php'"
-        ).fetchall()
+        all_php = conn.execute("SELECT path FROM files WHERE language = 'php'").fetchall()
         all_php_paths = [r["path"] for r in all_php]
 
         # Step 1: Separate migration files from query source files
         migration_paths = [p for p in all_php_paths if _is_migration_path(p)]
         source_paths = [
-            p for p in all_php_paths
-            if not _is_migration_path(p)
-            and ("vendor" not in p.replace("\\", "/").lower())
+            p for p in all_php_paths if not _is_migration_path(p) and ("vendor" not in p.replace("\\", "/").lower())
         ]
 
         # Step 2: Parse index definitions
@@ -779,32 +813,31 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
                 f" ({', '.join(parts)})"
             )
 
-        index_summary = (
-            f"Indexes found: {total_indexes} across {total_tables} tables"
-        )
-        migrations_summary = (
-            f"Migrations scanned: {len(migration_paths)} | "
-            f"Source files scanned: {len(source_paths)}"
-        )
+        index_summary = f"Indexes found: {total_indexes} across {total_tables} tables"
+        migrations_summary = f"Migrations scanned: {len(migration_paths)} | Source files scanned: {len(source_paths)}"
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "missing-index",
-                summary={
-                    "verdict": verdict,
-                    "total": total_findings,
-                    "by_confidence": dict(by_confidence),
-                    "indexes_found": total_indexes,
-                    "tables_with_indexes": total_tables,
-                    "migrations_scanned": len(migration_paths),
-                    "source_files_scanned": len(source_paths),
-                    "truncated": truncated,
-                    "confidence_filter": confidence_filter,
-                    "table_filter": table_filter,
-                },
-                findings=findings,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "missing-index",
+                        summary={
+                            "verdict": verdict,
+                            "total": total_findings,
+                            "by_confidence": dict(by_confidence),
+                            "indexes_found": total_indexes,
+                            "tables_with_indexes": total_tables,
+                            "migrations_scanned": len(migration_paths),
+                            "source_files_scanned": len(source_paths),
+                            "truncated": truncated,
+                            "confidence_filter": confidence_filter,
+                            "table_filter": table_filter,
+                        },
+                        findings=findings,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -849,6 +882,4 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
             click.echo()
 
         if truncated:
-            click.echo(
-                f"  (showing {limit} of {total_findings} findings — use --limit to see more)"
-            )
+            click.echo(f"  (showing {limit} of {total_findings} findings — use --limit to see more)")

@@ -5,16 +5,21 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
-import pytest
-
 sys.path.insert(0, str(Path(__file__).parent))
 
 from roam.analysis.effects import (
+    CACHE,
+    FILESYSTEM,
+    LOGGING,
+    MUTATES_GLOBAL,
+    NETWORK,
+    QUEUE,
+    RANDOM,
+    READS_DB,
+    TIME,
+    WRITES_DB,
     classify_symbol_effects,
-    PURE, READS_DB, WRITES_DB, NETWORK, FILESYSTEM,
-    TIME, RANDOM, MUTATES_GLOBAL, CACHE, QUEUE, LOGGING,
 )
-
 
 # ===========================================================================
 # Python effect classification
@@ -131,7 +136,7 @@ class TestPythonEffects:
 
     def test_multiple_effects(self):
         body = (
-            'data = requests.get(url).json()\n'
+            "data = requests.get(url).json()\n"
             'conn.execute("INSERT INTO cache VALUES (?)", (data,))\n'
             'logger.info("cached")\n'
         )
@@ -318,12 +323,7 @@ class TestEdgeCases:
 
     def test_multiline_body(self):
         """Effects spread across multiple lines should be detected."""
-        body = (
-            "def process():\n"
-            "    data = requests.get(url)\n"
-            "    conn.execute('INSERT ...')\n"
-            "    return data\n"
-        )
+        body = "def process():\n    data = requests.get(url)\n    conn.execute('INSERT ...')\n    return data\n"
         effects = classify_symbol_effects(body, "python")
         assert NETWORK in effects
         assert WRITES_DB in effects

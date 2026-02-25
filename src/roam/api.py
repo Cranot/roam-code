@@ -40,9 +40,11 @@ class RoamAPIError(RuntimeError):
 def _cwd_scope(path: Path | None):
     """Context manager for temporary cwd changes."""
     if path is None:
+
         @contextmanager
         def _noop():
             yield
+
         return _noop()
 
     @contextmanager
@@ -185,11 +187,7 @@ class RoamClient:
     """Reusable client for programmatic in-process roam calls."""
 
     def __init__(self, project_root: str | Path | None = None) -> None:
-        self.project_root = (
-            Path(project_root).resolve()
-            if project_root is not None
-            else find_project_root()
-        )
+        self.project_root = Path(project_root).resolve() if project_root is not None else find_project_root()
 
     def run(self, command: str, *args: str, **kwargs) -> dict:
         kwargs.setdefault("project_root", self.project_root)

@@ -10,10 +10,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import find_project_root, open_db
-from roam.output.formatter import loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Skip patterns — routes that are intentionally internal / infrastructure
@@ -35,8 +34,15 @@ _SKIP_NAMES = re.compile(
 
 # Frontend file extensions to search
 _FRONTEND_EXTENSIONS = {
-    ".vue", ".ts", ".tsx", ".js", ".jsx",
-    ".mts", ".mjs", ".cts", ".cjs",
+    ".vue",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".mts",
+    ".mjs",
+    ".cts",
+    ".cjs",
 }
 
 # Backend-only file patterns (tests, seeders, etc.)
@@ -107,9 +113,14 @@ _RESOURCE_METHODS = {
 }
 
 _HTTP_METHOD_MAP = {
-    "get": "GET", "post": "POST", "put": "PUT",
-    "patch": "PATCH", "delete": "DELETE", "options": "OPTIONS",
-    "head": "HEAD", "any": "ANY",
+    "get": "GET",
+    "post": "POST",
+    "put": "PUT",
+    "patch": "PATCH",
+    "delete": "DELETE",
+    "options": "OPTIONS",
+    "head": "HEAD",
+    "any": "ANY",
 }
 
 
@@ -150,14 +161,16 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
             controller = None  # closure-based route
             action = None
 
-        routes.append({
-            "method": http_verb,
-            "path": raw_path,
-            "controller": controller,
-            "action": action,
-            "file": str(file_path),
-            "line": _line_of(m),
-        })
+        routes.append(
+            {
+                "method": http_verb,
+                "path": raw_path,
+                "controller": controller,
+                "action": action,
+                "file": str(file_path),
+                "line": _line_of(m),
+            }
+        )
 
     # --- Resource / apiResource routes ---
     for m in _RESOURCE_ROUTE_RE.finditer(source):
@@ -183,14 +196,16 @@ def _extract_routes_from_file(file_path: Path) -> list[dict]:
             else:
                 path = f"/{resource_name}"
 
-            routes.append({
-                "method": http_verb,
-                "path": path,
-                "controller": controller,
-                "action": action,
-                "file": str(file_path),
-                "line": line,
-            })
+            routes.append(
+                {
+                    "method": http_verb,
+                    "path": path,
+                    "controller": controller,
+                    "action": action,
+                    "file": str(file_path),
+                    "line": line,
+                }
+            )
 
     return routes
 
@@ -231,6 +246,7 @@ def _should_skip_route(route: dict) -> bool:
 # Path segment extraction
 # ---------------------------------------------------------------------------
 
+
 def _path_segments(route_path: str) -> list[str]:
     """Extract meaningful segments from a route path for searching.
 
@@ -250,17 +266,21 @@ def _path_segments(route_path: str) -> list[str]:
 # Codebase searching
 # ---------------------------------------------------------------------------
 
-def _search_with_git_grep(pattern: str, project_root: Path,
-                          extra_args: list[str] | None = None) -> list[str]:
+
+def _search_with_git_grep(pattern: str, project_root: Path, extra_args: list[str] | None = None) -> list[str]:
     """Run git grep and return matching file paths (unique)."""
     cmd = ["git", "grep", "-l", "-I", "--no-color", "-F", pattern]
     if extra_args:
         cmd.extend(extra_args)
     try:
         result = subprocess.run(
-            cmd, cwd=str(project_root),
-            capture_output=True, text=True,
-            timeout=15, encoding="utf-8", errors="replace",
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode <= 1:
             return [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -274,9 +294,13 @@ def _search_with_git_grep_regex(pattern: str, project_root: Path) -> list[str]:
     cmd = ["git", "grep", "-l", "-I", "--no-color", "-E", pattern]
     try:
         result = subprocess.run(
-            cmd, cwd=str(project_root),
-            capture_output=True, text=True,
-            timeout=15, encoding="utf-8", errors="replace",
+            cmd,
+            cwd=str(project_root),
+            capture_output=True,
+            text=True,
+            timeout=15,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode <= 1:
             return [line.strip() for line in result.stdout.splitlines() if line.strip()]
@@ -285,8 +309,7 @@ def _search_with_git_grep_regex(pattern: str, project_root: Path) -> list[str]:
     return []
 
 
-def _search_in_files(segment: str, project_root: Path,
-                     file_paths: list[str]) -> list[str]:
+def _search_in_files(segment: str, project_root: Path, file_paths: list[str]) -> list[str]:
     """Fallback: search for segment in a list of files by reading them."""
     matches = []
     pattern = re.compile(re.escape(segment), re.IGNORECASE)
@@ -366,8 +389,7 @@ _RE_PUBLIC_METHOD = re.compile(
 )
 
 
-def _extract_controller_public_methods(project_root: Path,
-                                       controller_name: str) -> list[str]:
+def _extract_controller_public_methods(project_root: Path, controller_name: str) -> list[str]:
     """Find public methods in a controller PHP file.
 
     Returns a list of method names.
@@ -409,9 +431,8 @@ def _find_routed_actions(routes: list[dict]) -> dict[str, set]:
 # Main analysis
 # ---------------------------------------------------------------------------
 
-def _analyse_orphan_routes(project_root: Path,
-                           conn,
-                           limit: int) -> dict:
+
+def _analyse_orphan_routes(project_root: Path, conn, limit: int) -> dict:
     """Run the full orphan routes analysis.
 
     Returns a dict with:
@@ -532,15 +553,24 @@ def _analyse_orphan_routes(project_root: Path,
             if method not in mapped:
                 # Also skip common Laravel lifecycle / base methods
                 if method in {
-                    "callAction", "middleware", "getMiddleware",
-                    "authorize", "authorizeResource", "authorizeForUser",
-                    "dispatch", "dispatchNow", "validate", "validateWithBag",
+                    "callAction",
+                    "middleware",
+                    "getMiddleware",
+                    "authorize",
+                    "authorizeResource",
+                    "authorizeForUser",
+                    "dispatch",
+                    "dispatchNow",
+                    "validate",
+                    "validateWithBag",
                 }:
                     continue
-                unrouted_methods.append({
-                    "controller": ctrl,
-                    "method": method,
-                })
+                unrouted_methods.append(
+                    {
+                        "controller": ctrl,
+                        "method": method,
+                    }
+                )
 
     return {
         "routes_total": len(all_routes),
@@ -554,14 +584,23 @@ def _analyse_orphan_routes(project_root: Path,
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("orphan-routes")
-@click.option("--limit", "-n", default=50, show_default=True,
-              help="Maximum number of orphan findings to show")
-@click.option("--confidence", "confidence_filter", default=None,
-              type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-              help="Only show orphans of a specific confidence level")
-@click.option("--no-unrouted", "skip_unrouted", is_flag=True, default=False,
-              help="Skip controller method analysis (faster)")
+@click.option("--limit", "-n", default=50, show_default=True, help="Maximum number of orphan findings to show")
+@click.option(
+    "--confidence",
+    "confidence_filter",
+    default=None,
+    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
+    help="Only show orphans of a specific confidence level",
+)
+@click.option(
+    "--no-unrouted",
+    "skip_unrouted",
+    is_flag=True,
+    default=False,
+    help="Skip controller method analysis (faster)",
+)
 @click.pass_context
 def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     """Find backend API routes that have no frontend consumers (dead endpoints).
@@ -601,14 +640,16 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     n_low = sum(1 for o in orphans if o["confidence"] == "low")
 
     if routes_total == 0:
-        msg = (
-            "No routes found. Ensure routes/api.php or routes/web.php exist "
-            "and the roam index is up to date."
-        )
+        msg = "No routes found. Ensure routes/api.php or routes/web.php exist and the roam index is up to date."
         if json_mode:
-            click.echo(to_json(json_envelope("orphan-routes",
-                summary={"verdict": "no routes found", "error": msg},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "orphan-routes",
+                        summary={"verdict": "no routes found", "error": msg},
+                    )
+                )
+            )
         else:
             click.echo(msg)
         return
@@ -631,34 +672,35 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
                 entry["referenced_in"] = refs
             clean_orphans.append(entry)
 
-        clean_unrouted = [] if skip_unrouted else [
-            {"controller": u["controller"], "method": u["method"]}
-            for u in unrouted
-        ]
+        clean_unrouted = (
+            [] if skip_unrouted else [{"controller": u["controller"], "method": u["method"]} for u in unrouted]
+        )
 
-        click.echo(to_json(json_envelope("orphan-routes",
-            summary={
-                "verdict": f"{len(orphans)} orphan routes found "
-                           f"({n_high} high, {n_medium} medium, {n_low} low)",
-                "routes_total": routes_total,
-                "routes_with_consumers": routes_with_consumers,
-                "orphans_found": len(orphans),
-                "high": n_high,
-                "medium": n_medium,
-                "low": n_low,
-                "unrouted_controller_methods": len(clean_unrouted),
-            },
-            orphans=clean_orphans,
-            unrouted_methods=clean_unrouted,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "orphan-routes",
+                    summary={
+                        "verdict": f"{len(orphans)} orphan routes found "
+                        f"({n_high} high, {n_medium} medium, {n_low} low)",
+                        "routes_total": routes_total,
+                        "routes_with_consumers": routes_with_consumers,
+                        "orphans_found": len(orphans),
+                        "high": n_high,
+                        "medium": n_medium,
+                        "low": n_low,
+                        "unrouted_controller_methods": len(clean_unrouted),
+                    },
+                    orphans=clean_orphans,
+                    unrouted_methods=clean_unrouted,
+                )
+            )
+        )
         return
 
     # --- Text output ---
     click.echo("=== Orphan Routes ===\n")
-    click.echo(
-        f"VERDICT: {len(orphans)} orphan routes found "
-        f"({n_high} high, {n_medium} medium, {n_low} low)"
-    )
+    click.echo(f"VERDICT: {len(orphans)} orphan routes found ({n_high} high, {n_medium} medium, {n_low} low)")
     click.echo()
     click.echo(f"  Routes defined:        {routes_total}")
     click.echo(f"  Routes with consumers: {routes_with_consumers}")
@@ -692,11 +734,7 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
             else:
                 ref_str = "\n          No references found in codebase"
 
-            click.echo(
-                f"  {conf_label:<10} {o['method']} {o['path']}  {location_str}"
-                f"{controller_str}"
-                f"{ref_str}"
-            )
+            click.echo(f"  {conf_label:<10} {o['method']} {o['path']}  {location_str}{controller_str}{ref_str}")
             click.echo()
 
     if not skip_unrouted and unrouted:
@@ -704,11 +742,13 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
         rows = []
         for u in unrouted[:30]:
             rows.append([u["controller"], u["method"]])
-        click.echo(format_table(
-            ["Controller", "Method"],
-            rows,
-            budget=30,
-        ))
+        click.echo(
+            format_table(
+                ["Controller", "Method"],
+                rows,
+                budget=30,
+            )
+        )
         if len(unrouted) > 30:
             click.echo(f"  (+{len(unrouted) - 30} more)")
         click.echo()

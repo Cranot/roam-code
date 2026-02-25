@@ -2,23 +2,31 @@
 
 from __future__ import annotations
 
-
 import click
 
+from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import ALL_CLUSTERS
-from roam.graph.clusters import compare_with_directories, cluster_quality
 from roam.graph.builder import build_symbol_graph
-from roam.output.formatter import format_table, to_json, json_envelope, summary_envelope
-from roam.output.mermaid import sanitize_id, node as mnode, edge as medge, subgraph as msubgraph, diagram as mdiagram
-from roam.commands.resolve import ensure_index
+from roam.graph.clusters import cluster_quality, compare_with_directories
+from roam.output.formatter import format_table, json_envelope, summary_envelope, to_json
+from roam.output.mermaid import (
+    diagram as mdiagram,
+)
+from roam.output.mermaid import (
+    edge as medge,
+)
+from roam.output.mermaid import (
+    node as mnode,
+)
+from roam.output.mermaid import (
+    subgraph as msubgraph,
+)
 
 
 def _compute_cohesion(conn):
     """Compute per-cluster intra/total edge counts and inter-cluster pairs."""
-    cluster_rows = conn.execute(
-        "SELECT symbol_id, cluster_id FROM clusters"
-    ).fetchall()
+    cluster_rows = conn.execute("SELECT symbol_id, cluster_id FROM clusters").fetchall()
     sym_to_cluster = {r["symbol_id"]: r["cluster_id"] for r in cluster_rows}
     edges = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
 
@@ -42,8 +50,7 @@ def _compute_cohesion(conn):
     return edges, intra, total, inter_pairs
 
 
-def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count,
-                       total_count, median_cohesion, edges):
+def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count, total_count, median_cohesion, edges):
     """Print mega-cluster sub-directory breakdowns and coupling matrices."""
     click.echo("\n=== Mega-Cluster Detail ===")
     for r in visible:
@@ -53,9 +60,11 @@ def _print_mega_detail(conn, visible, mega_ids, total_symbols, intra_count,
         pct = r["size"] * 100 / total_symbols if total_symbols else 0
         c_coh = intra_count.get(cid, 0) * 100 / total_count[cid] if total_count.get(cid) else 0
         coh_ctx = "above" if c_coh >= median_cohesion else "below"
-        click.echo(f"\n  Cluster {cid}: {r['cluster_label']} "
-                    f"({r['size']} symbols, {pct:.0f}% of graph, "
-                    f"cohesion {c_coh:.0f}% — {coh_ctx} median {median_cohesion:.0f}%)")
+        click.echo(
+            f"\n  Cluster {cid}: {r['cluster_label']} "
+            f"({r['size']} symbols, {pct:.0f}% of graph, "
+            f"cohesion {c_coh:.0f}% — {coh_ctx} median {median_cohesion:.0f}%)"
+        )
 
         c_syms = conn.execute(
             "SELECT s.id, s.name, s.kind, f.path, "
@@ -126,24 +135,24 @@ def _print_coupling_matrix(big_groups, edges):
     total_grp = total_internal + total_cross
 
     for i, (lbl_a, d_a, _) in enumerate(big_groups):
-        for lbl_b, d_b, _ in big_groups[i + 1:]:
+        for lbl_b, d_b, _ in big_groups[i + 1 :]:
             pair = (min(lbl_a, lbl_b), max(lbl_a, lbl_b))
             cnt = pair_edges.get(pair, 0)
             cpct = cnt * 100 / total_grp if total_grp else 0
             d_a_short = d_a.rsplit("/", 1)[-1] if "/" in d_a else d_a
             d_b_short = d_b.rsplit("/", 1)[-1] if "/" in d_b else d_b
             if cnt > 0:
-                click.echo(f"      {lbl_a}({d_a_short}) <-> {lbl_b}({d_b_short}): "
-                            f"{cnt} edges ({cpct:.0f}%)")
+                click.echo(f"      {lbl_a}({d_a_short}) <-> {lbl_b}({d_b_short}): {cnt} edges ({cpct:.0f}%)")
 
     if total_grp > 0:
         overall_cross = total_cross * 100 / total_grp
         if overall_cross < 20:
-            click.echo(f"    ** Consider splitting: {len(big_groups)} sub-groups, "
-                        f"only {overall_cross:.0f}% cross-group coupling — clear seams")
+            click.echo(
+                f"    ** Consider splitting: {len(big_groups)} sub-groups, "
+                f"only {overall_cross:.0f}% cross-group coupling — clear seams"
+            )
         elif overall_cross < 40:
-            click.echo(f"    Cross-group coupling: {overall_cross:.0f}% — moderate, "
-                        f"some seams visible")
+            click.echo(f"    Cross-group coupling: {overall_cross:.0f}% — moderate, some seams visible")
 
 
 def _clusters_mermaid(conn, rows, min_size):
@@ -183,8 +192,7 @@ def _clusters_mermaid(conn, rows, min_size):
     # Add inter-cluster edges
     _, _, _, inter_pairs = _compute_cohesion(conn)
     visible_ids = {r["cluster_id"] for r in visible[:15]}
-    visible_pairs = {k: v for k, v in inter_pairs.items()
-                     if k[0] in visible_ids and k[1] in visible_ids}
+    visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
     top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
     cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
     for (ca, cb), cnt in top_inter:
@@ -220,7 +228,8 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
     if mermaid is not None:
         extra["mermaid"] = mermaid
 
-    envelope = json_envelope("clusters",
+    envelope = json_envelope(
+        "clusters",
         summary={
             "clusters": len(visible),
             "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
@@ -233,7 +242,9 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
                 "id": r["cluster_id"],
                 "label": r["cluster_label"],
                 "size": r["size"],
-                "cohesion_pct": round(intra.get(r["cluster_id"], 0) * 100 / total[r["cluster_id"]]) if total.get(r["cluster_id"]) else 0,
+                "cohesion_pct": round(intra.get(r["cluster_id"], 0) * 100 / total[r["cluster_id"]])
+                if total.get(r["cluster_id"])
+                else 0,
                 "conductance": quality["per_cluster"].get(r["cluster_id"], 0.0),
                 "members": r["members"] or "",
             }
@@ -246,7 +257,8 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
                 "mismatch_count": m["mismatch_count"],
                 "directories": m["directories"],
             }
-            for m in mismatches if m["cluster_id"] in visible_ids
+            for m in mismatches
+            if m["cluster_id"] in visible_ids
         ],
         **extra,
     )
@@ -256,29 +268,35 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
 
 
 @click.command()
-@click.option('--min-size', default=3, show_default=True, help='Hide clusters smaller than this')
-@click.option('--mermaid', 'mermaid_mode', is_flag=True, help='Output Mermaid diagram')
+@click.option("--min-size", default=3, show_default=True, help="Hide clusters smaller than this")
+@click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.pass_context
 def clusters(ctx, min_size, mermaid_mode):
     """Show code clusters and directory mismatches."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    detail = ctx.obj.get('detail', False) if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
         rows = conn.execute(ALL_CLUSTERS).fetchall()
 
         G = build_symbol_graph(conn)
-        cluster_map_rows = conn.execute(
-            "SELECT symbol_id, cluster_id FROM clusters"
-        ).fetchall()
+        cluster_map_rows = conn.execute("SELECT symbol_id, cluster_id FROM clusters").fetchall()
         cluster_map = {r["symbol_id"]: r["cluster_id"] for r in cluster_map_rows}
         quality = cluster_quality(G, cluster_map)
 
         if mermaid_mode:
             mermaid_text = _clusters_mermaid(conn, rows, min_size)
             if json_mode:
-                _clusters_json(conn, rows, min_size, quality, mermaid=mermaid_text, detail=detail, token_budget=token_budget)
+                _clusters_json(
+                    conn,
+                    rows,
+                    min_size,
+                    quality,
+                    mermaid=mermaid_text,
+                    detail=detail,
+                    token_budget=token_budget,
+                )
             else:
                 click.echo(mermaid_text)
             return
@@ -343,12 +361,22 @@ def clusters(ctx, min_size, mermaid_mode):
                     preview = f"MEGA ({pct:.0f}%) — see detail below"
                 else:
                     preview = members_str[:80] + "..." if len(members_str) > 80 else members_str
-                table_rows.append([
-                    str(cid), r["cluster_label"], str(r["size"]), coh_str, preview,
-                ])
-            click.echo(format_table(
-                ["ID", "Label", "Size", "Cohsn", "Members"], table_rows, budget=30,
-            ))
+                table_rows.append(
+                    [
+                        str(cid),
+                        r["cluster_label"],
+                        str(r["size"]),
+                        coh_str,
+                        preview,
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["ID", "Label", "Size", "Cohsn", "Members"],
+                    table_rows,
+                    budget=30,
+                )
+            )
         else:
             click.echo("  (no clusters with size >= {})".format(min_size))
 
@@ -358,28 +386,41 @@ def clusters(ctx, min_size, mermaid_mode):
         median_cohesion = sorted(cohesion_values)[len(cohesion_values) // 2] if cohesion_values else 50
 
         if visible and mega_ids:
-            _print_mega_detail(conn, visible, mega_ids, total_symbols,
-                               intra_count, total_count, median_cohesion, edges)
+            _print_mega_detail(
+                conn,
+                visible,
+                mega_ids,
+                total_symbols,
+                intra_count,
+                total_count,
+                median_cohesion,
+                edges,
+            )
 
         # Global cohesion summary
-        click.echo(f"\n  Cluster cohesion: {cohesion_pct:.0f}% edges are intra-cluster ({total_intra} internal, {total_inter} cross-cluster)")
-        click.echo(f"  Modularity Q: {quality['modularity']:.3f} ({q_label}), mean conductance: {quality['mean_conductance']:.3f}")
+        click.echo(
+            f"\n  Cluster cohesion: {cohesion_pct:.0f}% edges are intra-cluster ({total_intra} internal, {total_inter} cross-cluster)"
+        )
+        click.echo(
+            f"  Modularity Q: {quality['modularity']:.3f} ({q_label}), mean conductance: {quality['mean_conductance']:.3f}"
+        )
 
         # Top inter-cluster coupling pairs
         if inter_pairs:
-            visible_pairs = {k: v for k, v in inter_pairs.items()
-                             if k[0] in visible_ids and k[1] in visible_ids}
+            visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
             top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
             if top_inter:
                 cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
                 click.echo("\n=== Inter-Cluster Coupling (top pairs) ===")
                 ic_rows = []
                 for (ca, cb), cnt in top_inter:
-                    ic_rows.append([
-                        cl_labels.get(ca, f"c{ca}"),
-                        cl_labels.get(cb, f"c{cb}"),
-                        str(cnt),
-                    ])
+                    ic_rows.append(
+                        [
+                            cl_labels.get(ca, f"c{ca}"),
+                            cl_labels.get(cb, f"c{cb}"),
+                            str(cnt),
+                        ]
+                    )
                 click.echo(format_table(["Cluster A", "Cluster B", "Edges"], ic_rows))
 
         _print_mismatches(conn, visible_ids)
@@ -397,16 +438,20 @@ def _print_mismatches(conn, visible_ids):
             dirs = ", ".join(m["directories"][:5])
             if len(m["directories"]) > 5:
                 dirs += f" (+{len(m['directories']) - 5})"
-            m_rows.append([
-                str(m["cluster_id"]),
-                m["cluster_label"],
-                str(m["mismatch_count"]),
-                dirs,
-            ])
-        click.echo(format_table(
-            ["Cluster", "Label", "Mismatches", "Directories"],
-            m_rows,
-            budget=20,
-        ))
+            m_rows.append(
+                [
+                    str(m["cluster_id"]),
+                    m["cluster_label"],
+                    str(m["mismatch_count"]),
+                    dirs,
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Cluster", "Label", "Mismatches", "Directories"],
+                m_rows,
+                budget=20,
+            )
+        )
     else:
         click.echo("  (none -- clusters align with directories)")

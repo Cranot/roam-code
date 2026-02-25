@@ -8,24 +8,20 @@ that the schema registry validates envelopes correctly, and that the
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
-import tempfile
 from pathlib import Path
-
-import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli
 
-from roam.output.formatter import json_envelope, ENVELOPE_SCHEMA_VERSION, ENVELOPE_SCHEMA_NAME
-from roam.output.schema_registry import get_schema_info, validate_envelope
-
+from roam.output.formatter import ENVELOPE_SCHEMA_NAME, ENVELOPE_SCHEMA_VERSION, json_envelope
+from roam.output.schema_registry import validate_envelope
 
 # ============================================================================
 # 1. test_envelope_has_schema
 # ============================================================================
+
 
 def test_envelope_has_schema():
     """json_envelope output includes 'schema' field."""
@@ -38,6 +34,7 @@ def test_envelope_has_schema():
 # 2. test_envelope_has_schema_version
 # ============================================================================
 
+
 def test_envelope_has_schema_version():
     """json_envelope output includes 'schema_version' field."""
     env = json_envelope("test-cmd", summary={"verdict": "ok"})
@@ -49,18 +46,18 @@ def test_envelope_has_schema_version():
 # 3. test_schema_version_is_semver
 # ============================================================================
 
+
 def test_schema_version_is_semver():
     """schema_version matches X.Y.Z semver pattern."""
     env = json_envelope("test-cmd", summary={"verdict": "ok"})
     version = env["schema_version"]
-    assert re.match(r"^\d+\.\d+\.\d+$", version), (
-        f"schema_version '{version}' does not match semver X.Y.Z"
-    )
+    assert re.match(r"^\d+\.\d+\.\d+$", version), f"schema_version '{version}' does not match semver X.Y.Z"
 
 
 # ============================================================================
 # 4. test_schema_name
 # ============================================================================
+
 
 def test_schema_name():
     """schema field equals 'roam-envelope-v1'."""
@@ -71,6 +68,7 @@ def test_schema_name():
 # ============================================================================
 # 5. test_validate_valid_envelope
 # ============================================================================
+
 
 def test_validate_valid_envelope():
     """Validation passes for a correct envelope."""
@@ -83,6 +81,7 @@ def test_validate_valid_envelope():
 # ============================================================================
 # 6. test_validate_missing_field
 # ============================================================================
+
 
 def test_validate_missing_field():
     """Validation catches missing required fields."""
@@ -102,6 +101,7 @@ def test_validate_missing_field():
 # 7. test_validate_bad_version
 # ============================================================================
 
+
 def test_validate_bad_version():
     """Validation catches non-semver version string."""
     data = json_envelope("health", summary={"verdict": "ok"})
@@ -114,6 +114,7 @@ def test_validate_bad_version():
 # ============================================================================
 # 8. test_validate_bad_summary
 # ============================================================================
+
 
 def test_validate_bad_summary():
     """Validation catches non-dict summary."""
@@ -128,24 +129,22 @@ def test_validate_bad_summary():
 # 9. test_cli_schema_runs
 # ============================================================================
 
+
 def test_cli_schema_runs(cli_runner):
     """roam schema exits with code 0."""
     result = invoke_cli(cli_runner, ["schema"])
-    assert result.exit_code == 0, (
-        f"'schema' exited with code {result.exit_code}:\n{result.output[:500]}"
-    )
+    assert result.exit_code == 0, f"'schema' exited with code {result.exit_code}:\n{result.output[:500]}"
 
 
 # ============================================================================
 # 10. test_cli_schema_json
 # ============================================================================
 
+
 def test_cli_schema_json(cli_runner):
     """roam --json schema produces valid JSON envelope."""
     result = invoke_cli(cli_runner, ["schema"], json_mode=True)
-    assert result.exit_code == 0, (
-        f"'schema --json' exited with code {result.exit_code}:\n{result.output[:500]}"
-    )
+    assert result.exit_code == 0, f"'schema --json' exited with code {result.exit_code}:\n{result.output[:500]}"
     data = json.loads(result.output)
     assert data["command"] == "schema"
     assert "schema" in data
@@ -161,12 +160,11 @@ def test_cli_schema_json(cli_runner):
 # 11. test_cli_schema_changelog
 # ============================================================================
 
+
 def test_cli_schema_changelog(cli_runner):
     """roam schema --changelog shows changelog."""
     result = invoke_cli(cli_runner, ["schema", "--changelog"])
-    assert result.exit_code == 0, (
-        f"'schema --changelog' exited with code {result.exit_code}:\n{result.output[:500]}"
-    )
+    assert result.exit_code == 0, f"'schema --changelog' exited with code {result.exit_code}:\n{result.output[:500]}"
     assert "CHANGELOG" in result.output
     assert "1.0.0" in result.output
 
@@ -174,6 +172,7 @@ def test_cli_schema_changelog(cli_runner):
 # ============================================================================
 # 12. test_cli_schema_validate
 # ============================================================================
+
 
 def test_cli_schema_validate(cli_runner, tmp_path):
     """roam schema --validate works with a valid file."""
@@ -183,7 +182,5 @@ def test_cli_schema_validate(cli_runner, tmp_path):
     filepath.write_text(json.dumps(env, indent=2, default=str))
 
     result = invoke_cli(cli_runner, ["schema", "--validate", str(filepath)])
-    assert result.exit_code == 0, (
-        f"'schema --validate' exited with code {result.exit_code}:\n{result.output[:500]}"
-    )
+    assert result.exit_code == 0, f"'schema --validate' exited with code {result.exit_code}:\n{result.output[:500]}"
     assert "valid" in result.output.lower()

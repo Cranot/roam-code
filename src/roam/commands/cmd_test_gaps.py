@@ -7,16 +7,15 @@ from collections import deque
 
 import click
 
-from roam.coverage_reports import load_symbol_coverage_map
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import (
     get_changed_files,
-    resolve_changed_to_db,
     is_test_file,
+    resolve_changed_to_db,
 )
-
+from roam.commands.resolve import ensure_index
+from roam.coverage_reports import load_symbol_coverage_map
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 _MAX_HOPS = 10
 
@@ -24,6 +23,7 @@ _MAX_HOPS = 10
 # ---------------------------------------------------------------------------
 # Reverse-edge BFS to find test-file callers
 # ---------------------------------------------------------------------------
+
 
 def _bfs_to_test_files(conn, start_ids):
     """Walk reverse edges from *start_ids* up to _MAX_HOPS.
@@ -92,10 +92,7 @@ def _find_test_coverage(conn, symbol_ids):
     if caller_ids:
         rows = batched_in(
             conn,
-            "SELECT s.id, f.path as file_path "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.id IN ({ph})",
+            "SELECT s.id, f.path as file_path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
             caller_ids,
         )
         for r in rows:
@@ -119,6 +116,7 @@ def _find_test_coverage(conn, symbol_ids):
 # Stale test detection
 # ---------------------------------------------------------------------------
 
+
 def _detect_stale_tests(conn, symbol_ids, coverage_map):
     """Detect symbols whose test files have not been updated since the symbol changed.
 
@@ -133,9 +131,7 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
     for sid, test_files in coverage_map.items():
         # Get the source file mtime for this symbol
         row = conn.execute(
-            "SELECT f.path, f.mtime FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "WHERE s.id = ?",
+            "SELECT f.path, f.mtime FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
             (sid,),
         ).fetchone()
         if not row or row["mtime"] is None:
@@ -145,16 +141,16 @@ def _detect_stale_tests(conn, symbol_ids, coverage_map):
         source_path = row["path"]
 
         for tf in test_files:
-            tf_row = conn.execute(
-                "SELECT mtime FROM files WHERE path = ?", (tf,)
-            ).fetchone()
+            tf_row = conn.execute("SELECT mtime FROM files WHERE path = ?", (tf,)).fetchone()
             if tf_row and tf_row["mtime"] is not None:
                 if source_mtime > tf_row["mtime"]:
-                    stale.append({
-                        "symbol_id": sid,
-                        "source_file": source_path,
-                        "test_file": tf,
-                    })
+                    stale.append(
+                        {
+                            "symbol_id": sid,
+                            "source_file": source_path,
+                            "test_file": tf,
+                        }
+                    )
 
     return stale
 
@@ -171,10 +167,7 @@ def _classify_severity(symbol_row, pagerank):
 
     Returns 'high', 'medium', or 'low'.
     """
-    is_private = (
-        symbol_row["visibility"] == "private"
-        or symbol_row["name"].startswith("_")
-    )
+    is_private = symbol_row["visibility"] == "private" or symbol_row["name"].startswith("_")
 
     if is_private:
         return "low"
@@ -190,13 +183,17 @@ def _classify_severity(symbol_row, pagerank):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("test-gaps")
 @click.argument("files", nargs=-1, required=False)
-@click.option("--changed", is_flag=True,
-              help="Use `git diff --name-only` to get changed files")
-@click.option("--severity", "min_severity", default="medium",
-              type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-              help="Minimum severity to report (default: medium)")
+@click.option("--changed", is_flag=True, help="Use `git diff --name-only` to get changed files")
+@click.option(
+    "--severity",
+    "min_severity",
+    default="medium",
+    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
+    help="Minimum severity to report (default: medium)",
+)
 @click.pass_context
 def test_gaps(ctx, files, changed, min_severity):
     """Map changed symbols to missing test coverage.
@@ -219,17 +216,22 @@ def test_gaps(ctx, files, changed, min_severity):
 
     if not target_paths:
         if json_mode:
-            click.echo(to_json(json_envelope("test-gaps",
-                summary={
-                    "verdict": "No changed files to analyze",
-                    "total_gaps": 0,
-                },
-                high_gaps=[],
-                medium_gaps=[],
-                low_gaps=[],
-                stale_tests=[],
-                recommendations=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "test-gaps",
+                        summary={
+                            "verdict": "No changed files to analyze",
+                            "total_gaps": 0,
+                        },
+                        high_gaps=[],
+                        medium_gaps=[],
+                        low_gaps=[],
+                        stale_tests=[],
+                        recommendations=[],
+                    )
+                )
+            )
         else:
             click.echo("VERDICT: No changed files to analyze")
             click.echo()
@@ -244,17 +246,22 @@ def test_gaps(ctx, files, changed, min_severity):
 
         if not file_map:
             if json_mode:
-                click.echo(to_json(json_envelope("test-gaps",
-                    summary={
-                        "verdict": "Changed files not found in index",
-                        "total_gaps": 0,
-                    },
-                    high_gaps=[],
-                    medium_gaps=[],
-                    low_gaps=[],
-                    stale_tests=[],
-                    recommendations=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "test-gaps",
+                            summary={
+                                "verdict": "Changed files not found in index",
+                                "total_gaps": 0,
+                            },
+                            high_gaps=[],
+                            medium_gaps=[],
+                            low_gaps=[],
+                            stale_tests=[],
+                            recommendations=[],
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: Changed files not found in index")
                 click.echo()
@@ -262,24 +269,26 @@ def test_gaps(ctx, files, changed, min_severity):
             return
 
         # Filter out test files from analysis targets
-        source_file_map = {
-            p: fid for p, fid in file_map.items()
-            if not is_test_file(p)
-        }
+        source_file_map = {p: fid for p, fid in file_map.items() if not is_test_file(p)}
 
         if not source_file_map:
             if json_mode:
-                click.echo(to_json(json_envelope("test-gaps",
-                    summary={
-                        "verdict": "All changed files are test files",
-                        "total_gaps": 0,
-                    },
-                    high_gaps=[],
-                    medium_gaps=[],
-                    low_gaps=[],
-                    stale_tests=[],
-                    recommendations=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "test-gaps",
+                            summary={
+                                "verdict": "All changed files are test files",
+                                "total_gaps": 0,
+                            },
+                            high_gaps=[],
+                            medium_gaps=[],
+                            low_gaps=[],
+                            stale_tests=[],
+                            recommendations=[],
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: All changed files are test files")
             return
@@ -299,17 +308,22 @@ def test_gaps(ctx, files, changed, min_severity):
 
         if not all_symbols:
             if json_mode:
-                click.echo(to_json(json_envelope("test-gaps",
-                    summary={
-                        "verdict": "No symbols found in changed files",
-                        "total_gaps": 0,
-                    },
-                    high_gaps=[],
-                    medium_gaps=[],
-                    low_gaps=[],
-                    stale_tests=[],
-                    recommendations=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "test-gaps",
+                            summary={
+                                "verdict": "No symbols found in changed files",
+                                "total_gaps": 0,
+                            },
+                            high_gaps=[],
+                            medium_gaps=[],
+                            low_gaps=[],
+                            stale_tests=[],
+                            recommendations=[],
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: No symbols found in changed files")
             return
@@ -319,10 +333,7 @@ def test_gaps(ctx, files, changed, min_severity):
         # Find test coverage via reverse-edge walk
         coverage_map = _find_test_coverage(conn, symbol_ids)
         imported_cov_map = load_symbol_coverage_map(conn, symbol_ids)
-        imported_symbols = sum(
-            1 for data in imported_cov_map.values()
-            if (data.get("coverable_lines") or 0) > 0
-        )
+        imported_symbols = sum(1 for data in imported_cov_map.values() if (data.get("coverable_lines") or 0) > 0)
 
         # Fetch PageRank for all symbols (for severity classification)
         pagerank_map = {}
@@ -330,8 +341,7 @@ def test_gaps(ctx, files, changed, min_severity):
         if sym_id_list:
             pr_rows = batched_in(
                 conn,
-                "SELECT symbol_id, pagerank FROM graph_metrics "
-                "WHERE symbol_id IN ({ph})",
+                "SELECT symbol_id, pagerank FROM graph_metrics WHERE symbol_id IN ({ph})",
                 sym_id_list,
             )
             for r in pr_rows:
@@ -377,33 +387,32 @@ def test_gaps(ctx, files, changed, min_severity):
 
             # Coverage source disagreement tracking (for enrichment diagnostics)
             if test_files and has_actual_data and not has_actual_coverage:
-                predicted_only.append({
-                    "name": sym["name"],
-                    "kind": sym["kind"],
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                    "actual_coverage_pct": actual_cov_pct or 0.0,
-                })
+                predicted_only.append(
+                    {
+                        "name": sym["name"],
+                        "kind": sym["kind"],
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                        "actual_coverage_pct": actual_cov_pct or 0.0,
+                    }
+                )
             elif (not test_files) and has_actual_coverage:
-                actual_only.append({
-                    "name": sym["name"],
-                    "kind": sym["kind"],
-                    "file": sym["file_path"],
-                    "line": sym["line_start"],
-                    "actual_coverage_pct": actual_cov_pct,
-                })
+                actual_only.append(
+                    {
+                        "name": sym["name"],
+                        "kind": sym["kind"],
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                        "actual_coverage_pct": actual_cov_pct,
+                    }
+                )
 
-            gap_required = (
-                (not test_files and not has_actual_coverage)
-                or (test_files and has_actual_data and not has_actual_coverage)
+            gap_required = (not test_files and not has_actual_coverage) or (
+                test_files and has_actual_data and not has_actual_coverage
             )
             if gap_required:
                 severity = _classify_severity(sym, pr)
-                reason = (
-                    "no tests found"
-                    if not test_files
-                    else "tests found in graph, but imported coverage is 0%"
-                )
+                reason = "no tests found" if not test_files else "tests found in graph, but imported coverage is 0%"
                 gap_entry = {
                     "name": sym["name"],
                     "kind": sym["kind"],
@@ -427,13 +436,15 @@ def test_gaps(ctx, files, changed, min_severity):
             if test_files:
                 stale_files = stale_lookup.get(sid, set())
                 for tf in stale_files:
-                    stale_tests.append({
-                        "name": sym["name"],
-                        "kind": sym["kind"],
-                        "file": sym["file_path"],
-                        "line": sym["line_start"],
-                        "test_file": tf,
-                    })
+                    stale_tests.append(
+                        {
+                            "name": sym["name"],
+                            "kind": sym["kind"],
+                            "file": sym["file_path"],
+                            "line": sym["line_start"],
+                            "test_file": tf,
+                        }
+                    )
 
         # Sort gaps by PageRank (descending), then name
         def _gap_sort_key(g):
@@ -455,17 +466,11 @@ def test_gaps(ctx, files, changed, min_severity):
         # Build recommendations
         recommendations = []
         if high_gaps:
-            recommendations.append(
-                f"Add tests for {len(high_gaps)} high-impact public symbols"
-            )
+            recommendations.append(f"Add tests for {len(high_gaps)} high-impact public symbols")
         if medium_gaps:
-            recommendations.append(
-                f"Add tests for {len(medium_gaps)} public symbols"
-            )
+            recommendations.append(f"Add tests for {len(medium_gaps)} public symbols")
         if stale_tests:
-            recommendations.append(
-                f"Update {len(stale_tests)} stale test file(s)"
-            )
+            recommendations.append(f"Update {len(stale_tests)} stale test file(s)")
         if predicted_only:
             recommendations.append(
                 f"Investigate {len(predicted_only)} symbols with graph-predicted tests but 0% imported coverage"
@@ -477,36 +482,39 @@ def test_gaps(ctx, files, changed, min_severity):
 
         n_changed = len(source_file_map)
         actionable = len(high_gaps) + len(medium_gaps)
-        verdict = (
-            f"{total_gaps} test gaps found in {n_changed} changed file(s)"
-        )
+        verdict = f"{total_gaps} test gaps found in {n_changed} changed file(s)"
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope("test-gaps",
-                summary={
-                    "verdict": verdict,
-                    "total_gaps": total_gaps,
-                    "high": len(high_gaps),
-                    "medium": len(medium_gaps),
-                    "low": len(low_gaps),
-                    "stale": len(stale_tests),
-                    "files_analyzed": n_changed,
-                    "predicted_covered_symbols": predicted_covered_symbols,
-                    "actual_covered_symbols": actual_covered_symbols,
-                    "imported_coverage_symbols": imported_symbols,
-                    "actual_only_count": len(actual_only),
-                    "predicted_only_count": len(predicted_only),
-                },
-                budget=token_budget,
-                high_gaps=filtered_high,
-                medium_gaps=filtered_medium,
-                low_gaps=filtered_low,
-                stale_tests=stale_tests,
-                actual_only_covered=actual_only,
-                predicted_only_covered=predicted_only,
-                recommendations=recommendations,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "test-gaps",
+                        summary={
+                            "verdict": verdict,
+                            "total_gaps": total_gaps,
+                            "high": len(high_gaps),
+                            "medium": len(medium_gaps),
+                            "low": len(low_gaps),
+                            "stale": len(stale_tests),
+                            "files_analyzed": n_changed,
+                            "predicted_covered_symbols": predicted_covered_symbols,
+                            "actual_covered_symbols": actual_covered_symbols,
+                            "imported_coverage_symbols": imported_symbols,
+                            "actual_only_count": len(actual_only),
+                            "predicted_only_count": len(predicted_only),
+                        },
+                        budget=token_budget,
+                        high_gaps=filtered_high,
+                        medium_gaps=filtered_medium,
+                        low_gaps=filtered_low,
+                        stale_tests=stale_tests,
+                        actual_only_covered=actual_only,
+                        predicted_only_covered=predicted_only,
+                        recommendations=recommendations,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -519,38 +527,28 @@ def test_gaps(ctx, files, changed, min_severity):
         click.echo()
 
         if filtered_high:
-            click.echo(f"HIGH (public + high-impact):")
+            click.echo("HIGH (public + high-impact):")
             for g in filtered_high:
                 pr_str = f" (PageRank {g['pagerank']:.4f})" if g["pagerank"] else ""
                 click.echo(
-                    f"  {abbrev_kind(g['kind'])} {g['name']} at "
-                    f"{loc(g['file'], g['line'])} "
-                    f"-- {g['reason']}{pr_str}"
+                    f"  {abbrev_kind(g['kind'])} {g['name']} at {loc(g['file'], g['line'])} -- {g['reason']}{pr_str}"
                 )
             click.echo()
 
         if filtered_medium:
-            click.echo(f"MEDIUM (public):")
+            click.echo("MEDIUM (public):")
             for g in filtered_medium:
-                click.echo(
-                    f"  {abbrev_kind(g['kind'])} {g['name']} at "
-                    f"{loc(g['file'], g['line'])} "
-                    f"-- {g['reason']}"
-                )
+                click.echo(f"  {abbrev_kind(g['kind'])} {g['name']} at {loc(g['file'], g['line'])} -- {g['reason']}")
             click.echo()
 
         if filtered_low:
-            click.echo(f"LOW (internal):")
+            click.echo("LOW (internal):")
             for g in filtered_low:
-                click.echo(
-                    f"  {abbrev_kind(g['kind'])} {g['name']} at "
-                    f"{loc(g['file'], g['line'])} "
-                    f"-- {g['reason']}"
-                )
+                click.echo(f"  {abbrev_kind(g['kind'])} {g['name']} at {loc(g['file'], g['line'])} -- {g['reason']}")
             click.echo()
 
         if stale_tests:
-            click.echo(f"COVERED (but stale):")
+            click.echo("COVERED (but stale):")
             for s in stale_tests:
                 click.echo(
                     f"  {abbrev_kind(s['kind'])} {s['name']} at "

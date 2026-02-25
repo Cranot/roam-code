@@ -10,15 +10,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope, abbrev_kind
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import (
     get_changed_files,
-    resolve_changed_to_db,
     is_test_file,
+    resolve_changed_to_db,
 )
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Evidence collectors
@@ -31,8 +30,9 @@ def _collect_blast_radius(conn, file_map):
     Returns {changed_files, affected_symbols, affected_files, per_file}.
     """
     try:
-        from roam.graph.builder import build_symbol_graph
         import networkx as nx
+
+        from roam.graph.builder import build_symbol_graph
     except ImportError:
         return {
             "changed_files": len(file_map),
@@ -49,9 +49,7 @@ def _collect_blast_radius(conn, file_map):
     sym_by_file = {}
 
     for path, fid in file_map.items():
-        syms = conn.execute(
-            "SELECT id, name, kind FROM symbols WHERE file_id = ?", (fid,)
-        ).fetchall()
+        syms = conn.execute("SELECT id, name, kind FROM symbols WHERE file_id = ?", (fid,)).fetchall()
         sym_by_file[path] = syms
 
         for s in syms:
@@ -79,17 +77,18 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
     Returns {score, level, verdict} or None on failure.
     """
     try:
-        from roam.commands.cmd_pr_risk import (
-            _detect_author,
-            _author_familiarity,
-            _calibrated_hotspot_score,
-            _author_count_risk,
-        )
+        import networkx as nx
+
         from roam.commands.changed_files import is_low_risk_file
         from roam.commands.cmd_coupling import _compute_surprise
+        from roam.commands.cmd_pr_risk import (
+            _author_count_risk,
+            _author_familiarity,
+            _calibrated_hotspot_score,
+            _detect_author,
+        )
         from roam.graph.builder import build_symbol_graph
         from roam.graph.layers import detect_layers  # noqa: F401
-        import networkx as nx
     except ImportError:
         return None
 
@@ -103,9 +102,7 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
     all_affected = set()
     changed_sym_ids = set()
     for path, fid in file_map.items():
-        syms = conn.execute(
-            "SELECT id FROM symbols WHERE file_id = ?", (fid,)
-        ).fetchall()
+        syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
         for s in syms:
             changed_sym_ids.add(s["id"])
             if s["id"] in RG:
@@ -148,7 +145,8 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
         authors = conn.execute(
             "SELECT DISTINCT gc.author FROM git_file_changes gfc "
             "JOIN git_commits gc ON gfc.commit_id = gc.id "
-            "WHERE gfc.file_id = ?", (fid,),
+            "WHERE gfc.file_id = ?",
+            (fid,),
         ).fetchall()
         if authors:
             author_counts.append(len(authors))
@@ -162,9 +160,8 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
         has_test = any(
             is_test_file(r["path"])
             for r in conn.execute(
-                "SELECT f.path FROM file_edges fe "
-                "JOIN files f ON fe.source_file_id = f.id "
-                "WHERE fe.target_file_id = ?", (fid,),
+                "SELECT f.path FROM file_edges fe JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
+                (fid,),
             ).fetchall()
         )
         if has_test:
@@ -177,8 +174,7 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
         fids = list(file_map.values())
         ph = ",".join("?" for _ in fids)
         cross_edges = conn.execute(
-            f"SELECT COUNT(*) FROM file_edges "
-            f"WHERE source_file_id IN ({ph}) AND target_file_id IN ({ph})",
+            f"SELECT COUNT(*) FROM file_edges WHERE source_file_id IN ({ph}) AND target_file_id IN ({ph})",
             fids + fids,
         ).fetchone()[0]
         max_possible = len(fids) * (len(fids) - 1)
@@ -206,7 +202,7 @@ def _collect_risk(conn, root, file_map, staged, commit_range):
     ]
     no_risk = 1.0
     for f in _factors:
-        no_risk *= (1 - max(0, min(f, 0.99)))
+        no_risk *= 1 - max(0, min(f, 0.99))
     risk = int(min(100, (1 - no_risk) * 100))
 
     if risk <= 25:
@@ -228,11 +224,11 @@ def _collect_breaking(conn, root, base_ref):
     """
     try:
         from roam.commands.cmd_breaking import (
-            _git_changed_files,
-            _git_show,
+            _compare_file,
             _extract_old_symbols,
             _get_current_symbols,
-            _compare_file,
+            _git_changed_files,
+            _git_show,
         )
     except ImportError:
         return {"removed": [], "signature_changed": [], "renamed": []}
@@ -285,8 +281,12 @@ def _collect_affected_tests_evidence(conn, sym_by_file):
         "colocated": colocated,
         "command": pytest_cmd,
         "tests": [
-            {"file": t["file"], "symbol": t.get("symbol"), "kind": t["kind"],
-             "hops": t.get("hops", 0)}
+            {
+                "file": t["file"],
+                "symbol": t.get("symbol"),
+                "kind": t["kind"],
+                "hops": t.get("hops", 0),
+            }
             for t in test_results[:50]
         ],
     }
@@ -298,9 +298,9 @@ def _collect_budget_evidence(conn, root):
     Returns {rules_checked, passed, failed, skipped, rules}.
     """
     try:
-        from roam.commands.cmd_budget import _load_budgets, _evaluate_rule, _DEFAULT_BUDGETS
-        from roam.graph.diff import find_before_snapshot
+        from roam.commands.cmd_budget import _DEFAULT_BUDGETS, _evaluate_rule, _load_budgets
         from roam.commands.metrics_history import collect_metrics
+        from roam.graph.diff import find_before_snapshot
     except ImportError:
         return {"rules_checked": 0, "passed": 0, "failed": 0, "skipped": 0, "rules": []}
 
@@ -345,6 +345,7 @@ def _collect_fitness_evidence(conn, file_map, root):
     """
     try:
         from roam.commands.cmd_diff import _collect_fitness_violations
+
         rule_results, violations = _collect_fitness_violations(conn, file_map, root)
         return {"rules": rule_results, "violations": violations[:50]}
     except Exception:
@@ -426,8 +427,12 @@ def _get_git_hashes(root, base_ref, head_ref):
         try:
             result = subprocess.run(
                 ["git", "rev-parse", "--short", ref],
-                cwd=str(root), capture_output=True, text=True,
-                timeout=10, encoding="utf-8", errors="replace",
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
             )
             if result.returncode == 0:
                 hashes[label] = result.stdout.strip()
@@ -564,7 +569,9 @@ def _format_markdown(attestation, evidence, verdict):
     if tests.get("selected", 0) > 0:
         lines.append(f"### Affected Tests ({tests['selected']})")
         lines.append("")
-        lines.append(f"- {tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive, {tests.get('colocated', 0)} colocated")
+        lines.append(
+            f"- {tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive, {tests.get('colocated', 0)} colocated"
+        )
         cmd = tests.get("command", "")
         if cmd:
             lines.append(f"- `{cmd}`")
@@ -582,7 +589,9 @@ def _format_markdown(attestation, evidence, verdict):
 
     # Attestation metadata
     lines.append("---")
-    lines.append(f"*Generated by roam-code v{attestation.get('tool_version', '?')} at {attestation.get('timestamp', '?')}*")
+    lines.append(
+        f"*Generated by roam-code v{attestation.get('tool_version', '?')} at {attestation.get('timestamp', '?')}*"
+    )
     if attestation.get("content_hash"):
         lines.append(f"*Hash: `{attestation['content_hash']}`*")
 
@@ -597,13 +606,15 @@ def _format_markdown(attestation, evidence, verdict):
 @click.command("attest")
 @click.argument("commit_range", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Attest staged changes only.")
-@click.option("--format", "output_format", default="text",
-              type=click.Choice(["text", "markdown", "json"]),
-              help="Output format (default: text).")
-@click.option("--sign", is_flag=True,
-              help="Include SHA-256 content hash for tamper detection.")
-@click.option("--output", "output_file", default=None,
-              help="Write attestation to file.")
+@click.option(
+    "--format",
+    "output_format",
+    default="text",
+    type=click.Choice(["text", "markdown", "json"]),
+    help="Output format (default: text).",
+)
+@click.option("--sign", is_flag=True, help="Include SHA-256 content hash for tamper detection.")
+@click.option("--output", "output_file", default=None, help="Write attestation to file.")
 @click.pass_context
 def attest(ctx, commit_range, staged, output_format, sign, output_file):
     """Generate a proof-carrying PR attestation.
@@ -635,10 +646,14 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     if not changed:
         label = commit_range or ("staged" if staged else "uncommitted")
         if json_mode or output_format == "json":
-            click.echo(to_json(json_envelope("attest",
-                summary={"verdict": f"no changes found for {label}",
-                         "safe_to_merge": True},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "attest",
+                        summary={"verdict": f"no changes found for {label}", "safe_to_merge": True},
+                    )
+                )
+            )
         else:
             click.echo(f"No changes found for {label}.")
         return
@@ -680,6 +695,7 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
         # Tool version
         try:
             import roam
+
             tool_version = roam.__version__
         except Exception:
             tool_version = "unknown"
@@ -721,7 +737,8 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             return
 
         if json_mode or output_format == "json":
-            envelope = json_envelope("attest",
+            envelope = json_envelope(
+                "attest",
                 summary={
                     "verdict": _make_verdict_str(verdict, risk),
                     "safe_to_merge": verdict["safe_to_merge"],
@@ -749,8 +766,19 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
             return
 
         # ── Text output ───────────────────────────────────────────────
-        _emit_text(attestation, evidence, verdict, risk, blast, breaking,
-                    fitness, budget, tests, effects, output_file)
+        _emit_text(
+            attestation,
+            evidence,
+            verdict,
+            risk,
+            blast,
+            breaking,
+            fitness,
+            budget,
+            tests,
+            effects,
+            output_file,
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -765,8 +793,19 @@ def _make_verdict_str(verdict, risk):
     return f"{safe}{risk_str}"
 
 
-def _emit_text(attestation, evidence, verdict, risk, blast, breaking,
-               fitness, budget, tests, effects, output_file):
+def _emit_text(
+    attestation,
+    evidence,
+    verdict,
+    risk,
+    blast,
+    breaking,
+    fitness,
+    budget,
+    tests,
+    effects,
+    output_file,
+):
     """Emit plain text attestation."""
     lines = []
 
@@ -833,10 +872,12 @@ def _emit_text(attestation, evidence, verdict, risk, blast, breaking,
 
     # Affected tests
     if tests.get("selected", 0) > 0:
-        lines.append(f"AFFECTED TESTS ({tests['selected']}: "
-                      f"{tests.get('direct', 0)} direct, "
-                      f"{tests.get('transitive', 0)} transitive, "
-                      f"{tests.get('colocated', 0)} colocated):")
+        lines.append(
+            f"AFFECTED TESTS ({tests['selected']}: "
+            f"{tests.get('direct', 0)} direct, "
+            f"{tests.get('transitive', 0)} transitive, "
+            f"{tests.get('colocated', 0)} colocated):"
+        )
         cmd = tests.get("command", "")
         if cmd:
             lines.append(f"  Run: {cmd}")
@@ -855,8 +896,9 @@ def _emit_text(attestation, evidence, verdict, risk, blast, breaking,
 
     # Attestation metadata
     lines.append("---")
-    lines.append(f"Attested by roam-code v{attestation.get('tool_version', '?')} "
-                  f"at {attestation.get('timestamp', '?')}")
+    lines.append(
+        f"Attested by roam-code v{attestation.get('tool_version', '?')} at {attestation.get('timestamp', '?')}"
+    )
     if attestation.get("content_hash"):
         lines.append(f"Hash: {attestation['content_hash']}")
     git_range = attestation.get("git_range", "?")

@@ -7,14 +7,13 @@ import re
 import click
 import networkx as nx
 
+from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
-from roam.graph.builder import build_symbol_graph, build_file_graph
-from roam.graph.pagerank import compute_pagerank
+from roam.graph.builder import build_file_graph, build_symbol_graph
 from roam.graph.clusters import detect_clusters, label_clusters
 from roam.graph.cycles import find_cycles
-from roam.output.formatter import to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found_hint
-
+from roam.graph.pagerank import compute_pagerank
+from roam.output.formatter import json_envelope, to_json
 
 # -- Node shape helpers -------------------------------------------------------
 
@@ -55,13 +54,13 @@ def _dot_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
 
 # -- Subgraph filtering -------------------------------------------------------
 
+
 def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiGraph:
     """BFS neighborhood around a focal symbol."""
     sym = find_symbol(conn, focus_name)
     if sym is None:
         raise click.ClickException(
-            f'Symbol not found: "{focus_name}"\n'
-            f"  Tip: Run `roam search {focus_name}` to find similar symbols."
+            f'Symbol not found: "{focus_name}"\n  Tip: Run `roam search {focus_name}` to find similar symbols.'
         )
     sid = sym["id"]
     if sid not in G:
@@ -83,6 +82,7 @@ def _filter_by_pagerank(G: nx.DiGraph, limit: int) -> nx.DiGraph:
 
 # -- Cycle edge detection -----------------------------------------------------
 
+
 def _cycle_edges(G: nx.DiGraph) -> set[tuple[int, int]]:
     """Return the set of edges that participate in strongly connected components."""
     sccs = find_cycles(G, min_size=2)
@@ -102,6 +102,7 @@ def _cycle_edges(G: nx.DiGraph) -> set[tuple[int, int]]:
 
 
 # -- Mermaid generation --------------------------------------------------------
+
 
 def _generate_mermaid(
     G: nx.DiGraph,
@@ -179,9 +180,7 @@ def _generate_mermaid(
     return "\n".join(lines)
 
 
-def _emit_flat_nodes_mermaid(
-    G: nx.DiGraph, lines: list[str], is_file_level: bool
-) -> None:
+def _emit_flat_nodes_mermaid(G: nx.DiGraph, lines: list[str], is_file_level: bool) -> None:
     """Emit all nodes without subgraph grouping."""
     for n in sorted(G.nodes()):
         data = G.nodes[n]
@@ -194,6 +193,7 @@ def _emit_flat_nodes_mermaid(
 
 
 # -- DOT generation -----------------------------------------------------------
+
 
 def _generate_dot(
     G: nx.DiGraph,
@@ -225,7 +225,7 @@ def _generate_dot(
 
             for cid, members in sorted(groups.items()):
                 label = cluster_labels.get(cid, f"cluster-{cid}").replace('"', '\\"')
-                lines.append(f'    subgraph cluster_{cid} {{')
+                lines.append(f"    subgraph cluster_{cid} {{")
                 lines.append(f'        label="{label}";')
                 for n in sorted(members):
                     data = G.nodes[n]
@@ -249,7 +249,7 @@ def _generate_dot(
         nid_u = f"n{u}"
         nid_v = f"n{v}"
         if (u, v) in cycle_e:
-            lines.append(f'    {nid_u} -> {nid_v} [style=dashed, color=red];')
+            lines.append(f"    {nid_u} -> {nid_v} [style=dashed, color=red];")
         else:
             lines.append(f"    {nid_u} -> {nid_v};")
 
@@ -257,9 +257,7 @@ def _generate_dot(
     return "\n".join(lines)
 
 
-def _emit_flat_nodes_dot(
-    G: nx.DiGraph, lines: list[str], is_file_level: bool
-) -> None:
+def _emit_flat_nodes_dot(G: nx.DiGraph, lines: list[str], is_file_level: bool) -> None:
     """Emit all DOT nodes without subgraph grouping."""
     for n in sorted(G.nodes()):
         data = G.nodes[n]
@@ -273,18 +271,27 @@ def _emit_flat_nodes_dot(
 
 # -- CLI command ---------------------------------------------------------------
 
+
 @click.command()
-@click.option("--format", "fmt", type=click.Choice(["mermaid", "dot"]),
-              default="mermaid", show_default=True, help="Output format")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["mermaid", "dot"]),
+    default="mermaid",
+    show_default=True,
+    help="Output format",
+)
 @click.option("--focus", default="", help="Focus on a symbol (BFS neighborhood)")
-@click.option("--depth", default=1, show_default=True,
-              help="BFS depth for focus mode")
-@click.option("--limit", default=30, show_default=True,
-              help="Max nodes in overview mode (top-N by PageRank)")
+@click.option("--depth", default=1, show_default=True, help="BFS depth for focus mode")
+@click.option("--limit", default=30, show_default=True, help="Max nodes in overview mode (top-N by PageRank)")
 @click.option("--no-clusters", is_flag=True, help="Disable cluster grouping")
-@click.option("--direction", type=click.Choice(["TD", "LR"]),
-              default="TD", show_default=True,
-              help="Mermaid direction (TD=top-down, LR=left-right)")
+@click.option(
+    "--direction",
+    type=click.Choice(["TD", "LR"]),
+    default="TD",
+    show_default=True,
+    help="Mermaid direction (TD=top-down, LR=left-right)",
+)
 @click.option("--file-level", is_flag=True, help="Use file-level graph")
 @click.pass_context
 def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level):
@@ -301,10 +308,15 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
 
         if len(G) == 0:
             if json_mode:
-                click.echo(to_json(json_envelope("visualize",
-                    summary={"verdict": "EMPTY", "nodes": 0, "edges": 0},
-                    diagram="",
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "visualize",
+                            summary={"verdict": "EMPTY", "nodes": 0, "edges": 0},
+                            diagram="",
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: EMPTY -- no symbols in index")
             return
@@ -327,16 +339,21 @@ def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level)
 
         # Output
         if json_mode:
-            click.echo(to_json(json_envelope("visualize",
-                summary={
-                    "verdict": "OK",
-                    "nodes": node_count,
-                    "edges": edge_count,
-                    "format": fmt,
-                    "focus": focus or None,
-                },
-                diagram=diagram,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "visualize",
+                        summary={
+                            "verdict": "OK",
+                            "nodes": node_count,
+                            "edges": edge_count,
+                            "format": fmt,
+                            "focus": focus or None,
+                        },
+                        diagram=diagram,
+                    )
+                )
+            )
         else:
             mode = f"focus={focus} depth={depth}" if focus else f"top-{min(limit, len(G))} by PageRank"
             click.echo(f"VERDICT: OK -- {node_count} nodes, {edge_count} edges ({mode})")

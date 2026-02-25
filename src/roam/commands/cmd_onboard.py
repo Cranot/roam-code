@@ -14,20 +14,19 @@ from collections import Counter, defaultdict
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import is_test_file
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Detail levels
 # ---------------------------------------------------------------------------
 
 _LIMITS = {
-    "brief":  {"entry_points": 5,  "critical": 5,  "risk": 3,  "reading": 5,  "clusters": 5},
-    "normal": {"entry_points": 10, "critical": 8,  "risk": 5,  "reading": 10, "clusters": 8},
-    "full":   {"entry_points": 15, "critical": 15, "risk": 10, "reading": 20, "clusters": 15},
+    "brief": {"entry_points": 5, "critical": 5, "risk": 3, "reading": 5, "clusters": 5},
+    "normal": {"entry_points": 10, "critical": 8, "risk": 5, "reading": 10, "clusters": 8},
+    "full": {"entry_points": 15, "critical": 15, "risk": 10, "reading": 20, "clusters": 15},
 }
 
 
@@ -35,15 +34,14 @@ _LIMITS = {
 # Section: Project overview
 # ---------------------------------------------------------------------------
 
+
 def _project_overview(conn):
     """Gather top-level project statistics."""
     total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
     total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
 
     # File breakdown by role
-    role_rows = conn.execute(
-        "SELECT file_role, COUNT(*) as cnt FROM files GROUP BY file_role"
-    ).fetchall()
+    role_rows = conn.execute("SELECT file_role, COUNT(*) as cnt FROM files GROUP BY file_role").fetchall()
     role_counts = {r["file_role"]: r["cnt"] for r in role_rows}
     source_count = role_counts.get("source", 0)
     test_count = role_counts.get("test", 0)
@@ -52,26 +50,26 @@ def _project_overview(conn):
 
     # Languages
     lang_rows = conn.execute(
-        "SELECT language, COUNT(*) as cnt FROM files "
-        "WHERE language IS NOT NULL "
-        "GROUP BY language ORDER BY cnt DESC"
+        "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
     ).fetchall()
     languages = []
     for r in lang_rows:
         pct = round(r["cnt"] * 100 / total_files, 0) if total_files else 0
-        languages.append({
-            "name": r["language"],
-            "files": r["cnt"],
-            "pct": int(pct),
-        })
+        languages.append(
+            {
+                "name": r["language"],
+                "files": r["cnt"],
+                "pct": int(pct),
+            }
+        )
 
     primary_language = languages[0]["name"] if languages else "unknown"
 
     # Test coverage presence
-    has_tests = test_count > 0 or conn.execute(
-        "SELECT COUNT(*) FROM files "
-        "WHERE path LIKE '%test%' OR path LIKE '%spec%'"
-    ).fetchone()[0] > 0
+    has_tests = (
+        test_count > 0
+        or conn.execute("SELECT COUNT(*) FROM files WHERE path LIKE '%test%' OR path LIKE '%spec%'").fetchone()[0] > 0
+    )
 
     return {
         "total_files": total_files,
@@ -89,6 +87,7 @@ def _project_overview(conn):
 # ---------------------------------------------------------------------------
 # Section: Architecture overview
 # ---------------------------------------------------------------------------
+
 
 def _architecture_overview(conn, limit_clusters):
     """Analyze layers and clusters from the graph."""
@@ -120,14 +119,12 @@ def _architecture_overview(conn, limit_clusters):
                 continue
             rows = batched_in(
                 conn,
-                "SELECT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
-                "WHERE s.id IN ({ph})",
+                "SELECT f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
                 sym_ids,
             )
             dirs = [os.path.dirname(r["path"]).replace("\\", "/") for r in rows]
             dir_counts = Counter(dirs)
-            top_dirs = [d.rstrip("/").rsplit("/", 1)[-1] or "."
-                        for d, _ in dir_counts.most_common(3)]
+            top_dirs = [d.rstrip("/").rsplit("/", 1)[-1] or "." for d, _ in dir_counts.most_common(3)]
             dirs_str = ", ".join(d for d in top_dirs if d)
 
             # Role label
@@ -138,17 +135,18 @@ def _architecture_overview(conn, limit_clusters):
             else:
                 role = "logic/middleware"
 
-            layer_descriptions.append({
-                "layer": layer_num,
-                "role": role,
-                "directories": dirs_str,
-                "symbol_count": len(layer_groups[layer_num]),
-            })
+            layer_descriptions.append(
+                {
+                    "layer": layer_num,
+                    "role": role,
+                    "directories": dirs_str,
+                    "symbol_count": len(layer_groups[layer_num]),
+                }
+            )
 
     # Clusters
     cluster_rows = conn.execute(
-        "SELECT cluster_id, cluster_label, COUNT(*) as size "
-        "FROM clusters GROUP BY cluster_id ORDER BY size DESC"
+        "SELECT cluster_id, cluster_label, COUNT(*) as size FROM clusters GROUP BY cluster_id ORDER BY size DESC"
     ).fetchall()
     clusters = []
     for cr in cluster_rows[:limit_clusters]:
@@ -159,12 +157,14 @@ def _architecture_overview(conn, limit_clusters):
             "ORDER BY s.name LIMIT 4",
             (cr["cluster_id"],),
         ).fetchall()
-        clusters.append({
-            "id": cr["cluster_id"],
-            "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
-            "size": cr["size"],
-            "top_symbols": [s["name"] for s in top_syms],
-        })
+        clusters.append(
+            {
+                "id": cr["cluster_id"],
+                "label": cr["cluster_label"] or f"cluster-{cr['cluster_id']}",
+                "size": cr["size"],
+                "top_symbols": [s["name"] for s in top_syms],
+            }
+        )
 
     return {
         "layer_count": layer_count,
@@ -177,6 +177,7 @@ def _architecture_overview(conn, limit_clusters):
 # ---------------------------------------------------------------------------
 # Section: Entry points (top PageRank symbols)
 # ---------------------------------------------------------------------------
+
 
 def _entry_points(conn, limit):
     """Find highest PageRank symbols as main entry points."""
@@ -208,17 +209,19 @@ def _entry_points(conn, limit):
         else:
             why = "high PageRank"
 
-        results.append({
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "file": r["file_path"],
-            "line": r["line_start"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "pagerank": round(r["pagerank"] or 0, 4),
-            "fan_in": fan_in,
-            "fan_out": fan_out,
-            "why": why,
-        })
+        results.append(
+            {
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "file": r["file_path"],
+                "line": r["line_start"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "pagerank": round(r["pagerank"] or 0, 4),
+                "fan_in": fan_in,
+                "fan_out": fan_out,
+                "why": why,
+            }
+        )
 
     return results
 
@@ -226,6 +229,7 @@ def _entry_points(conn, limit):
 # ---------------------------------------------------------------------------
 # Section: Critical paths (backbone files)
 # ---------------------------------------------------------------------------
+
 
 def _critical_paths(conn, limit):
     """Identify files that are critical to understand: high PageRank + high churn."""
@@ -276,15 +280,17 @@ def _critical_paths(conn, limit):
         if in_both:
             reason_parts = ["backbone + active development"]
 
-        results.append({
-            "path": path,
-            "pagerank": pr,
-            "churn": churn,
-            "commits": commits,
-            "importance": round(importance, 2),
-            "must_understand": in_both,
-            "reason": ", ".join(reason_parts),
-        })
+        results.append(
+            {
+                "path": path,
+                "pagerank": pr,
+                "churn": churn,
+                "commits": commits,
+                "importance": round(importance, 2),
+                "must_understand": in_both,
+                "reason": ", ".join(reason_parts),
+            }
+        )
 
     results.sort(key=lambda r: (-int(r["must_understand"]), -r["importance"]))
     return results[:limit]
@@ -293,6 +299,7 @@ def _critical_paths(conn, limit):
 # ---------------------------------------------------------------------------
 # Section: Risk areas
 # ---------------------------------------------------------------------------
+
 
 def _risk_areas(conn, limit):
     """Identify bus factor = 1, high complexity, and hotspot files."""
@@ -311,12 +318,14 @@ def _risk_areas(conn, limit):
     for r in bf_rows:
         if is_test_file(r["path"]):
             continue
-        risks.append({
-            "path": r["path"],
-            "type": "bus_factor",
-            "detail": f"single contributor, {r['commit_count']} commits",
-            "severity": "HIGH",
-        })
+        risks.append(
+            {
+                "path": r["path"],
+                "type": "bus_factor",
+                "detail": f"single contributor, {r['commit_count']} commits",
+                "severity": "HIGH",
+            }
+        )
 
     # High complexity files
     cc_rows = conn.execute(
@@ -336,12 +345,14 @@ def _risk_areas(conn, limit):
             continue
         max_cc = round(r["max_cc"] or 0)
         severity = "CRITICAL" if max_cc >= 25 else "HIGH"
-        risks.append({
-            "path": r["path"],
-            "type": "high_complexity",
-            "detail": f"max CC={max_cc}",
-            "severity": severity,
-        })
+        risks.append(
+            {
+                "path": r["path"],
+                "type": "high_complexity",
+                "detail": f"max CC={max_cc}",
+                "severity": severity,
+            }
+        )
 
     # Hotspots (high churn + high complexity)
     hotspot_rows = conn.execute(
@@ -356,12 +367,14 @@ def _risk_areas(conn, limit):
     for r in hotspot_rows:
         if is_test_file(r["path"]):
             continue
-        risks.append({
-            "path": r["path"],
-            "type": "hotspot",
-            "detail": f"churn={r['total_churn']}, complexity={round(r['complexity'] or 0, 1)}",
-            "severity": "MEDIUM",
-        })
+        risks.append(
+            {
+                "path": r["path"],
+                "type": "hotspot",
+                "detail": f"churn={r['total_churn']}, complexity={round(r['complexity'] or 0, 1)}",
+                "severity": "MEDIUM",
+            }
+        )
 
     # Deduplicate by path, keeping highest severity
     severity_rank = {"CRITICAL": 0, "HIGH": 1, "MEDIUM": 2, "LOW": 3}
@@ -379,6 +392,7 @@ def _risk_areas(conn, limit):
 # Section: Suggested reading order
 # ---------------------------------------------------------------------------
 
+
 def _suggested_reading_order(conn, entry_points, critical_paths, architecture, limit):
     """Build a prioritized reading order for new developers."""
     order = []
@@ -390,11 +404,13 @@ def _suggested_reading_order(conn, entry_points, critical_paths, architecture, l
         path = ep["file"]
         if path not in seen:
             seen.add(path)
-            order.append({
-                "priority": priority,
-                "path": path,
-                "reason": "entry point",
-            })
+            order.append(
+                {
+                    "priority": priority,
+                    "path": path,
+                    "reason": "entry point",
+                }
+            )
             priority += 1
 
     # 2. Layer-by-layer from top (interface) to bottom (core)
@@ -421,30 +437,32 @@ def _suggested_reading_order(conn, entry_points, critical_paths, architecture, l
             for r in rows:
                 if r["path"] not in seen:
                     seen.add(r["path"])
-                    order.append({
-                        "priority": priority,
-                        "path": r["path"],
-                        "reason": f"layer {layer_desc['layer']} ({layer_desc['role']})",
-                    })
+                    order.append(
+                        {
+                            "priority": priority,
+                            "path": r["path"],
+                            "reason": f"layer {layer_desc['layer']} ({layer_desc['role']})",
+                        }
+                    )
                     priority += 1
 
     # 3. Must-understand files from critical paths
     for cp in critical_paths[:5]:
         if cp["path"] not in seen:
             seen.add(cp["path"])
-            order.append({
-                "priority": priority,
-                "path": cp["path"],
-                "reason": cp["reason"],
-            })
+            order.append(
+                {
+                    "priority": priority,
+                    "path": cp["path"],
+                    "reason": cp["reason"],
+                }
+            )
             priority += 1
 
     # 4. Test files for critical modules
     for ep in entry_points[:3]:
         file_path = ep["file"]
-        frow = conn.execute(
-            "SELECT id FROM files WHERE path = ?", (file_path,)
-        ).fetchone()
+        frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
         if not frow:
             continue
         test_rows = conn.execute(
@@ -456,11 +474,13 @@ def _suggested_reading_order(conn, entry_points, critical_paths, architecture, l
         for tr in test_rows:
             if is_test_file(tr["path"]) and tr["path"] not in seen:
                 seen.add(tr["path"])
-                order.append({
-                    "priority": priority,
-                    "path": tr["path"],
-                    "reason": f"tests for {os.path.basename(file_path)}",
-                })
+                order.append(
+                    {
+                        "priority": priority,
+                        "path": tr["path"],
+                        "reason": f"tests for {os.path.basename(file_path)}",
+                    }
+                )
                 priority += 1
 
     return order[:limit]
@@ -470,18 +490,17 @@ def _suggested_reading_order(conn, entry_points, critical_paths, architecture, l
 # Section: Key conventions
 # ---------------------------------------------------------------------------
 
+
 def _key_conventions(conn):
     """Detect naming conventions and patterns from the indexed symbols."""
-    _SNAKE = re.compile(r'^[a-z_][a-z0-9_]*$')
-    _CAMEL = re.compile(r'^[a-z][a-zA-Z0-9]*$')
-    _PASCAL = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
-    _UPPER = re.compile(r'^[A-Z_][A-Z0-9_]*$')
+    _SNAKE = re.compile(r"^[a-z_][a-z0-9_]*$")
+    _CAMEL = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+    _PASCAL = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
+    _UPPER = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 
     conventions = {}
     for kind in ("function", "class", "method", "variable"):
-        rows = conn.execute(
-            "SELECT name FROM symbols WHERE kind = ?", (kind,)
-        ).fetchall()
+        rows = conn.execute("SELECT name FROM symbols WHERE kind = ?", (kind,)).fetchall()
         if not rows:
             continue
         names = [r["name"] for r in rows]
@@ -503,9 +522,7 @@ def _key_conventions(conn):
             conventions[kind] = {"style": dominant, "pct": int(pct), "total": total}
 
     # Test file patterns
-    test_files = conn.execute(
-        "SELECT path FROM files WHERE file_role = 'test'"
-    ).fetchall()
+    test_files = conn.execute("SELECT path FROM files WHERE file_role = 'test'").fetchall()
     test_patterns = Counter()
     for r in test_files:
         bn = os.path.basename(r["path"])
@@ -523,9 +540,7 @@ def _key_conventions(conn):
     dominant_test_pattern = test_patterns.most_common(1)[0][0] if test_patterns else None
 
     # Import patterns (absolute vs relative)
-    edge_rows = conn.execute(
-        "SELECT COUNT(*) as cnt FROM edges WHERE kind = 'imports'"
-    ).fetchone()
+    edge_rows = conn.execute("SELECT COUNT(*) as cnt FROM edges WHERE kind = 'imports'").fetchone()
     import_count = edge_rows["cnt"] if edge_rows else 0
 
     return {
@@ -540,8 +555,8 @@ def _key_conventions(conn):
 # Text output
 # ---------------------------------------------------------------------------
 
-def _emit_text(detail, overview, architecture, entry_points,
-               critical_paths, risks, reading_order, conventions):
+
+def _emit_text(detail, overview, architecture, entry_points, critical_paths, risks, reading_order, conventions):
     """Render the onboarding guide as plain text."""
     click.echo("=== ONBOARDING GUIDE ===\n")
 
@@ -578,8 +593,7 @@ def _emit_text(detail, overview, architecture, entry_points,
     click.echo(f"ARCHITECTURE ({architecture['layer_count']} layers, {architecture['cluster_count']} modules)")
     if architecture["layers"]:
         for ld in architecture["layers"]:
-            click.echo(f"  Layer {ld['layer']} ({ld['role']}): {ld['directories']}"
-                        f" -- {ld['symbol_count']} symbols")
+            click.echo(f"  Layer {ld['layer']} ({ld['role']}): {ld['directories']} -- {ld['symbol_count']} symbols")
     if architecture["clusters"] and detail != "brief":
         click.echo()
         click.echo(f"  Modules ({len(architecture['clusters'])}):")
@@ -591,10 +605,12 @@ def _emit_text(detail, overview, architecture, entry_points,
 
     # --- Entry Points ---
     if entry_points:
-        click.echo(f"ENTRY POINTS (start here)")
+        click.echo("ENTRY POINTS (start here)")
         for i, ep in enumerate(entry_points, 1):
-            click.echo(f"  {i:>2d}. {abbrev_kind(ep['kind'])} {ep['name']:<40s}  "
-                        f"at {ep['location']}  (PageRank {ep['pagerank']:.3f})")
+            click.echo(
+                f"  {i:>2d}. {abbrev_kind(ep['kind'])} {ep['name']:<40s}  "
+                f"at {ep['location']}  (PageRank {ep['pagerank']:.3f})"
+            )
         click.echo()
 
     # --- Critical Paths ---
@@ -633,9 +649,14 @@ def _emit_text(detail, overview, architecture, entry_points,
 # CLI
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option("--detail", type=click.Choice(["brief", "normal", "full"]),
-              default="normal", help="Level of detail: brief, normal, or full")
+@click.option(
+    "--detail",
+    type=click.Choice(["brief", "normal", "full"]),
+    default="normal",
+    help="Level of detail: brief, normal, or full",
+)
 @click.pass_context
 def onboard(ctx, detail):
     """Generate a new-developer onboarding guide for the codebase.
@@ -662,7 +683,11 @@ def onboard(ctx, detail):
         critical = _critical_paths(conn, limits["critical"])
         risks = _risk_areas(conn, limits["risk"])
         reading = _suggested_reading_order(
-            conn, entry_pts, critical, architecture, limits["reading"],
+            conn,
+            entry_pts,
+            critical,
+            architecture,
+            limits["reading"],
         )
         conventions = _key_conventions(conn)
 
@@ -676,29 +701,40 @@ def onboard(ctx, detail):
             verdict = f"complex codebase, {risk_count} risk areas to review"
 
         if json_mode:
-            click.echo(to_json(json_envelope("onboard",
-                summary={
-                    "verdict": verdict,
-                    "files": overview["total_files"],
-                    "symbols": overview["total_symbols"],
-                    "languages": len(overview["languages"]),
-                    "layers": architecture["layer_count"],
-                    "modules": architecture["cluster_count"],
-                    "entry_points": len(entry_pts),
-                    "risk_areas": risk_count,
-                    "detail": detail,
-                },
-                overview=overview,
-                architecture=architecture,
-                entry_points=entry_pts,
-                critical_paths=critical,
-                risk_areas=risks,
-                reading_order=reading,
-                conventions=conventions,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "onboard",
+                        summary={
+                            "verdict": verdict,
+                            "files": overview["total_files"],
+                            "symbols": overview["total_symbols"],
+                            "languages": len(overview["languages"]),
+                            "layers": architecture["layer_count"],
+                            "modules": architecture["cluster_count"],
+                            "entry_points": len(entry_pts),
+                            "risk_areas": risk_count,
+                            "detail": detail,
+                        },
+                        overview=overview,
+                        architecture=architecture,
+                        entry_points=entry_pts,
+                        critical_paths=critical,
+                        risk_areas=risks,
+                        reading_order=reading,
+                        conventions=conventions,
+                    )
+                )
+            )
             return
 
         _emit_text(
-            detail, overview, architecture, entry_pts,
-            critical, risks, reading, conventions,
+            detail,
+            overview,
+            architecture,
+            entry_pts,
+            critical,
+            risks,
+            reading,
+            conventions,
         )

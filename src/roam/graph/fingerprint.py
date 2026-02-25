@@ -55,7 +55,7 @@ def _dependency_direction(G: nx.DiGraph, layers: dict[int, int]) -> str:
     vs. higher to lower (bottom-up).  The majority direction wins.
     """
     down = 0  # lower-layer -> higher-layer (normal dependency direction)
-    up = 0    # higher-layer -> lower-layer (reverse)
+    up = 0  # higher-layer -> lower-layer (reverse)
     for src, tgt in G.edges():
         src_layer = layers.get(src)
         tgt_layer = layers.get(tgt)
@@ -99,8 +99,8 @@ def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
         Fingerprint with topology, clusters, hub_bridge_ratio,
         pagerank_gini, dependency_direction, and antipatterns sections.
     """
-    from roam.graph.cycles import find_cycles, algebraic_connectivity
-    from roam.graph.clusters import detect_clusters, cluster_quality, label_clusters
+    from roam.graph.clusters import cluster_quality, detect_clusters, label_clusters
+    from roam.graph.cycles import algebraic_connectivity, find_cycles
     from roam.graph.layers import detect_layers
     from roam.graph.pagerank import compute_pagerank
 
@@ -158,14 +158,16 @@ def compute_fingerprint(conn: sqlite3.Connection, G: nx.DiGraph) -> dict:
 
         pattern = _classify_cluster_pattern(size_pct, conductance)
 
-        cluster_summaries.append({
-            "label": cluster_labels.get(cid, f"cluster-{cid}"),
-            "layer": majority_layer,
-            "size_pct": size_pct,
-            "conductance": conductance,
-            "roles": dict(roles),
-            "pattern": pattern,
-        })
+        cluster_summaries.append(
+            {
+                "label": cluster_labels.get(cid, f"cluster-{cid}"),
+                "layer": majority_layer,
+                "size_pct": size_pct,
+                "conductance": conductance,
+                "roles": dict(roles),
+                "pattern": pattern,
+            }
+        )
 
     # -- PageRank Gini --
     pr = compute_pagerank(G)
@@ -231,11 +233,27 @@ def compare_fingerprints(fp1: dict, fp2: dict) -> dict:
     # Metrics to compare with normalization ranges
     metrics = {
         "layers": {"v1": t1.get("layers", 0), "v2": t2.get("layers", 0), "max_range": 20},
-        "modularity": {"v1": t1.get("modularity", 0), "v2": t2.get("modularity", 0), "max_range": 1.0},
+        "modularity": {
+            "v1": t1.get("modularity", 0),
+            "v2": t2.get("modularity", 0),
+            "max_range": 1.0,
+        },
         "fiedler": {"v1": t1.get("fiedler", 0), "v2": t2.get("fiedler", 0), "max_range": 1.0},
-        "tangle_ratio": {"v1": t1.get("tangle_ratio", 0), "v2": t2.get("tangle_ratio", 0), "max_range": 1.0},
-        "hub_bridge_ratio": {"v1": fp1.get("hub_bridge_ratio", 0), "v2": fp2.get("hub_bridge_ratio", 0), "max_range": 1.0},
-        "pagerank_gini": {"v1": fp1.get("pagerank_gini", 0), "v2": fp2.get("pagerank_gini", 0), "max_range": 1.0},
+        "tangle_ratio": {
+            "v1": t1.get("tangle_ratio", 0),
+            "v2": t2.get("tangle_ratio", 0),
+            "max_range": 1.0,
+        },
+        "hub_bridge_ratio": {
+            "v1": fp1.get("hub_bridge_ratio", 0),
+            "v2": fp2.get("hub_bridge_ratio", 0),
+            "max_range": 1.0,
+        },
+        "pagerank_gini": {
+            "v1": fp1.get("pagerank_gini", 0),
+            "v2": fp2.get("pagerank_gini", 0),
+            "max_range": 1.0,
+        },
         "god_objects": {
             "v1": fp1.get("antipatterns", {}).get("god_objects", 0),
             "v2": fp2.get("antipatterns", {}).get("god_objects", 0),
@@ -256,7 +274,7 @@ def compare_fingerprints(fp1: dict, fp2: dict) -> dict:
         delta = round(v1 - v2, 6)
         max_range = float(m["max_range"])
         normalized_diff = abs(delta) / max_range if max_range > 0 else 0.0
-        squared_diffs.append(normalized_diff ** 2)
+        squared_diffs.append(normalized_diff**2)
         direction = "higher" if delta > 0 else ("lower" if delta < 0 else "same")
         per_metric[name] = {
             "this": v1,

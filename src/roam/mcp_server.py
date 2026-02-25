@@ -48,43 +48,98 @@ except Exception:
 
 _CORE_TOOLS = {
     # compound operations (4) — each replaces 2-4 individual calls
-    "roam_explore", "roam_prepare_change", "roam_review_change", "roam_diagnose_issue",
+    "roam_explore",
+    "roam_prepare_change",
+    "roam_review_change",
+    "roam_diagnose_issue",
     # batch operations (2) — replace 10-50 sequential calls with one
-    "roam_batch_search", "roam_batch_get",
+    "roam_batch_search",
+    "roam_batch_get",
     # comprehension (5)
-    "roam_understand", "roam_search_symbol", "roam_context", "roam_file_info", "roam_deps",
+    "roam_understand",
+    "roam_search_symbol",
+    "roam_context",
+    "roam_file_info",
+    "roam_deps",
     # daily workflow (7)
-    "roam_preflight", "roam_diff", "roam_pr_risk", "roam_affected_tests", "roam_impact", "roam_uses",
+    "roam_preflight",
+    "roam_diff",
+    "roam_pr_risk",
+    "roam_affected_tests",
+    "roam_impact",
+    "roam_uses",
     "roam_syntax_check",
     # code quality (5)
-    "roam_health", "roam_dead_code", "roam_complexity_report", "roam_diagnose", "roam_trace",
+    "roam_health",
+    "roam_dead_code",
+    "roam_complexity_report",
+    "roam_diagnose",
+    "roam_trace",
 }
 
 _PRESETS: dict[str, set[str]] = {
     "core": _CORE_TOOLS.copy(),
-    "review": _CORE_TOOLS | {
-        "roam_breaking_changes", "roam_pr_diff", "roam_effects",
-        "roam_adversarial_review", "roam_budget_check", "roam_attest",
-        "roam_rules_check", "roam_weather", "roam_debt", "roam_symbol",
-        "roam_algo", "roam_secrets", "roam_docs_coverage",
+    "review": _CORE_TOOLS
+    | {
+        "roam_breaking_changes",
+        "roam_pr_diff",
+        "roam_effects",
+        "roam_adversarial_review",
+        "roam_budget_check",
+        "roam_attest",
+        "roam_rules_check",
+        "roam_weather",
+        "roam_debt",
+        "roam_symbol",
+        "roam_algo",
+        "roam_secrets",
+        "roam_docs_coverage",
     },
-    "refactor": _CORE_TOOLS | {
-        "roam_simulate", "roam_closure", "roam_mutate", "roam_generate_plan",
-        "roam_suggest_refactoring", "roam_plan_refactor",
-        "roam_get_invariants", "roam_cut_analysis", "roam_fingerprint",
-        "roam_relate", "roam_symbol", "roam_visualize",
+    "refactor": _CORE_TOOLS
+    | {
+        "roam_simulate",
+        "roam_closure",
+        "roam_mutate",
+        "roam_generate_plan",
+        "roam_suggest_refactoring",
+        "roam_plan_refactor",
+        "roam_get_invariants",
+        "roam_cut_analysis",
+        "roam_fingerprint",
+        "roam_relate",
+        "roam_symbol",
+        "roam_visualize",
     },
-    "debug": _CORE_TOOLS | {
-        "roam_effects", "roam_path_coverage", "roam_bisect_blame",
-        "roam_forecast", "roam_vuln_map", "roam_vuln_reach",
-        "roam_ingest_trace", "roam_runtime_hotspots", "roam_relate",
-        "roam_symbol", "roam_algo",
+    "debug": _CORE_TOOLS
+    | {
+        "roam_effects",
+        "roam_path_coverage",
+        "roam_bisect_blame",
+        "roam_forecast",
+        "roam_vuln_map",
+        "roam_vuln_reach",
+        "roam_ingest_trace",
+        "roam_runtime_hotspots",
+        "roam_relate",
+        "roam_symbol",
+        "roam_algo",
     },
-    "architecture": _CORE_TOOLS | {
-        "roam_visualize", "roam_tour", "roam_dark_matter", "roam_repo_map",
-        "roam_simulate", "roam_fingerprint", "roam_orchestrate",
-        "roam_capsule_export", "roam_cut_analysis", "roam_forecast",
-        "roam_algo", "roam_symbol", "roam_relate", "roam_agent_export",
+    "architecture": _CORE_TOOLS
+    | {
+        "roam_visualize",
+        "roam_tour",
+        "roam_dark_matter",
+        "roam_repo_map",
+        "roam_simulate",
+        "roam_fingerprint",
+        "roam_orchestrate",
+        "roam_capsule_export",
+        "roam_cut_analysis",
+        "roam_forecast",
+        "roam_algo",
+        "roam_symbol",
+        "roam_relate",
+        "roam_agent_export",
     },
     "full": set(),  # empty = all tools exposed
 }
@@ -217,7 +272,12 @@ _CLIENT_COMPAT_PROFILES: dict[str, dict] = {
     },
     "copilot": {
         "display_name": "GitHub Copilot Coding Agent",
-        "instruction_precedence": [".github/copilot-instructions.md", "AGENTS.md", "CLAUDE.md", "GEMINI.md"],
+        "instruction_precedence": [
+            ".github/copilot-instructions.md",
+            "AGENTS.md",
+            "CLAUDE.md",
+            "GEMINI.md",
+        ],
         "mcp_capabilities": {
             "tools": "supported",
             "resources": "unsupported",
@@ -239,7 +299,12 @@ _CLIENT_COMPAT_PROFILES: dict[str, dict] = {
     },
     "cursor": {
         "display_name": "Cursor",
-        "instruction_precedence": [".cursor/rules/roam.mdc", ".cursorrules", "AGENTS.md", "CLAUDE.md"],
+        "instruction_precedence": [
+            ".cursor/rules/roam.mdc",
+            ".cursorrules",
+            "AGENTS.md",
+            "CLAUDE.md",
+        ],
         "mcp_capabilities": {
             "tools": "supported",
             "resources": "unknown",
@@ -297,12 +362,14 @@ def _compat_profile_payload(profile: str, root: str = ".") -> dict:
 
     data = _CLIENT_COMPAT_PROFILES[profile]
     payload = _build(profile, data)
-    payload.update({
-        "server": "roam-code",
-        "compat_version": "2026-02-22",
-        "detected_instruction_files": existing,
-        "profile": profile,
-    })
+    payload.update(
+        {
+            "server": "roam-code",
+            "compat_version": "2026-02-22",
+            "detected_instruction_files": existing,
+            "profile": profile,
+        }
+    )
     return payload
 
 
@@ -380,8 +447,11 @@ _SCHEMA_UNDERSTAND = _make_schema(
 )
 
 _SCHEMA_HEALTH = _make_schema(
-    {"health_score": {"type": "number"}, "total_files": {"type": "integer"},
-     "total_symbols": {"type": "integer"}},
+    {
+        "health_score": {"type": "number"},
+        "total_files": {"type": "integer"},
+        "total_symbols": {"type": "integer"},
+    },
     issues={"type": "array"},
     bottlenecks={"type": "array"},
 )
@@ -390,10 +460,15 @@ _SCHEMA_SEARCH = _make_schema(
     {"total_matches": {"type": "integer"}, "query": {"type": "string"}},
     results={
         "type": "array",
-        "items": {"type": "object", "properties": {
-            "name": {"type": "string"}, "kind": {"type": "string"},
-            "file_path": {"type": "string"}, "line_start": {"type": "integer"},
-        }},
+        "items": {
+            "type": "object",
+            "properties": {
+                "name": {"type": "string"},
+                "kind": {"type": "string"},
+                "file_path": {"type": "string"},
+                "line_start": {"type": "integer"},
+            },
+        },
     },
 )
 
@@ -436,8 +511,7 @@ _SCHEMA_DIAGNOSE = _make_schema(
 )
 
 _SCHEMA_TRACE = _make_schema(
-    {"source": {"type": "string"}, "target": {"type": "string"},
-     "hop_count": {"type": "integer"}},
+    {"source": {"type": "string"}, "target": {"type": "string"}, "hop_count": {"type": "integer"}},
     path={"type": "array"},
 )
 
@@ -448,11 +522,16 @@ _SCHEMA_BATCH_SEARCH = _make_schema(
         "description": "Map of query -> list of matching symbols",
         "additionalProperties": {
             "type": "array",
-            "items": {"type": "object", "properties": {
-                "name": {"type": "string"}, "kind": {"type": "string"},
-                "file_path": {"type": "string"}, "line_start": {"type": "integer"},
-                "pagerank": {"type": "number"},
-            }},
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "kind": {"type": "string"},
+                    "file_path": {"type": "string"},
+                    "line_start": {"type": "integer"},
+                    "pagerank": {"type": "number"},
+                },
+            },
         },
     },
     errors={
@@ -536,6 +615,7 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
     This enables Claude Code's Tool Search feature to achieve ~85% context
     reduction by only loading non-core tool descriptions when needed.
     """
+
     def decorator(fn):
         if mcp is None:
             return fn
@@ -592,6 +672,7 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
         if last_error is not None:
             raise last_error
         return fn
+
     return decorator
 
 
@@ -603,17 +684,21 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
 _ERROR_PATTERNS: list[tuple[str, str, str]] = [
     # (pattern, error_code, hint) — checked in order, first match wins.
     # More specific patterns MUST come before broader ones.
-    ("no .roam",            "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
-    ("not found in index",  "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
-    ("index is stale",      "INDEX_STALE",      "run `roam index` to refresh."),
-    ("out of date",         "INDEX_STALE",      "run `roam index` to refresh."),
-    ("not a git repository","NOT_GIT_REPO",     "some commands require git history. run: git init."),
-    ("database is locked",  "DB_LOCKED",        "another roam process is running. wait or delete .roam/index.lock."),
-    ("permission denied",   "PERMISSION_DENIED","check file permissions."),
-    ("cannot open index",   "INDEX_NOT_FOUND",  "run `roam init` to create the codebase index."),
-    ("symbol not found",    "NO_RESULTS",       "try a different search term or check spelling."),
-    ("no matches",          "NO_RESULTS",       "try a different search term or check spelling."),
-    ("no results",          "NO_RESULTS",       "try a different search term or check spelling."),
+    ("no .roam", "INDEX_NOT_FOUND", "run `roam init` to create the codebase index."),
+    ("not found in index", "INDEX_NOT_FOUND", "run `roam init` to create the codebase index."),
+    ("index is stale", "INDEX_STALE", "run `roam index` to refresh."),
+    ("out of date", "INDEX_STALE", "run `roam index` to refresh."),
+    ("not a git repository", "NOT_GIT_REPO", "some commands require git history. run: git init."),
+    (
+        "database is locked",
+        "DB_LOCKED",
+        "another roam process is running. wait or delete .roam/index.lock.",
+    ),
+    ("permission denied", "PERMISSION_DENIED", "check file permissions."),
+    ("cannot open index", "INDEX_NOT_FOUND", "run `roam init` to create the codebase index."),
+    ("symbol not found", "NO_RESULTS", "try a different search term or check spelling."),
+    ("no matches", "NO_RESULTS", "try a different search term or check spelling."),
+    ("no results", "NO_RESULTS", "try a different search term or check spelling."),
 ]
 
 
@@ -629,9 +714,13 @@ def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
     (True for DB_LOCKED, INDEX_STALE; False for everything else).
     """
     from roam.exit_codes import (
-        EXIT_USAGE, EXIT_INDEX_MISSING, EXIT_INDEX_STALE,
-        EXIT_GATE_FAILURE, EXIT_PARTIAL,
+        EXIT_GATE_FAILURE,
+        EXIT_INDEX_MISSING,
+        EXIT_INDEX_STALE,
+        EXIT_PARTIAL,
+        EXIT_USAGE,
     )
+
     # Standardized exit code mapping (takes priority)
     _EXIT_CODE_MAP: dict[int, tuple[str, str]] = {
         EXIT_USAGE: ("USAGE_ERROR", "invalid arguments or flags. check --help."),
@@ -691,11 +780,13 @@ def _run_roam_inprocess(args: list[str]) -> dict:
     try:
         result = runner.invoke(_cli, cmd_args, catch_exceptions=True)
     except Exception as exc:
-        return _structured_error({
-            "error": str(exc),
-            "error_code": "UNKNOWN",
-            "hint": "an unexpected error occurred.",
-        })
+        return _structured_error(
+            {
+                "error": str(exc),
+                "error_code": "UNKNOWN",
+                "hint": "an unexpected error occurred.",
+            }
+        )
 
     output = result.output.strip() if result.output else ""
 
@@ -703,6 +794,7 @@ def _run_roam_inprocess(args: list[str]) -> dict:
     # command completed but found issues.  Treat it like success for output
     # parsing, but annotate the result with gate_failure=True.
     from roam.exit_codes import EXIT_GATE_FAILURE
+
     _success_codes = {0, EXIT_GATE_FAILURE}
 
     # Successful JSON output — look for JSON object in output
@@ -714,11 +806,13 @@ def _run_roam_inprocess(args: list[str]) -> dict:
                 parsed["exit_code"] = EXIT_GATE_FAILURE
             return parsed
         except json.JSONDecodeError as exc:
-            return _structured_error({
-                "error": f"Failed to parse JSON output: {exc}",
-                "error_code": "COMMAND_FAILED",
-                "hint": "command produced invalid JSON output.",
-            })
+            return _structured_error(
+                {
+                    "error": f"Failed to parse JSON output: {exc}",
+                    "error_code": "COMMAND_FAILED",
+                    "hint": "command produced invalid JSON output.",
+                }
+            )
 
     # Error path — classify and return structured error
     error_text = output
@@ -726,18 +820,21 @@ def _run_roam_inprocess(args: list[str]) -> dict:
         error_text = error_text or str(result.exception)
 
     error_code, hint, _retryable = _classify_error(error_text, result.exit_code)
-    return _structured_error({
-        "error": error_text or "command failed",
-        "error_code": error_code,
-        "hint": hint,
-        "exit_code": result.exit_code,
-        "command": "roam --json " + " ".join(args),
-    })
+    return _structured_error(
+        {
+            "error": error_text or "command failed",
+            "error_code": error_code,
+            "hint": hint,
+            "exit_code": result.exit_code,
+            "command": "roam --json " + " ".join(args),
+        }
+    )
 
 
 def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command via subprocess (fallback for non-local roots)."""
     from roam.exit_codes import EXIT_GATE_FAILURE
+
     _success_codes = {0, EXIT_GATE_FAILURE}
 
     cmd = ["roam", "--json"] + args
@@ -757,31 +854,39 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
             return parsed
         stderr = result.stderr.strip()
         error_code, hint, _retryable = _classify_error(stderr, result.returncode)
-        return _structured_error({
-            "error": stderr or "command failed",
-            "error_code": error_code,
-            "hint": hint,
-            "exit_code": result.returncode,
-            "command": " ".join(cmd),
-        })
+        return _structured_error(
+            {
+                "error": stderr or "command failed",
+                "error_code": error_code,
+                "hint": hint,
+                "exit_code": result.returncode,
+                "command": " ".join(cmd),
+            }
+        )
     except subprocess.TimeoutExpired:
-        return _structured_error({
-            "error": "Command timed out after 60s",
-            "error_code": "COMMAND_FAILED",
-            "hint": "the command took too long. try a smaller scope or check system load.",
-        })
+        return _structured_error(
+            {
+                "error": "Command timed out after 60s",
+                "error_code": "COMMAND_FAILED",
+                "hint": "the command took too long. try a smaller scope or check system load.",
+            }
+        )
     except json.JSONDecodeError as exc:
-        return _structured_error({
-            "error": f"Failed to parse JSON output: {exc}",
-            "error_code": "COMMAND_FAILED",
-            "hint": "command produced invalid JSON output.",
-        })
+        return _structured_error(
+            {
+                "error": f"Failed to parse JSON output: {exc}",
+                "error_code": "COMMAND_FAILED",
+                "hint": "command produced invalid JSON output.",
+            }
+        )
     except Exception as exc:
-        return _structured_error({
-            "error": str(exc),
-            "error_code": "UNKNOWN",
-            "hint": "an unexpected error occurred.",
-        })
+        return _structured_error(
+            {
+                "error": str(exc),
+                "error_code": "UNKNOWN",
+                "hint": "an unexpected error occurred.",
+            }
+        )
 
 
 async def _run_roam_async(args: list[str], root: str = ".") -> dict:
@@ -790,7 +895,10 @@ async def _run_roam_async(args: list[str], root: str = ".") -> dict:
 
 
 async def _ctx_report_progress(
-    ctx: _Context | None, progress: float, total: float | None = None, message: str | None = None,
+    ctx: _Context | None,
+    progress: float,
+    total: float | None = None,
+    message: str | None = None,
 ) -> None:
     """Best-effort MCP progress reporting (safe on clients without support)."""
     if ctx is None or not hasattr(ctx, "report_progress"):
@@ -915,11 +1023,13 @@ def _apply_budget(data: dict, budget: int) -> dict:
     if budget <= 0:
         return data
     from roam.output.formatter import budget_truncate_json
+
     return budget_truncate_json(data, budget)
 
 
-def _append_context_personalization_args(args: list[str], session_hint: str = "",
-                                         recent_symbols: str = "") -> list[str]:
+def _append_context_personalization_args(
+    args: list[str], session_hint: str = "", recent_symbols: str = ""
+) -> list[str]:
     """Append optional context personalization flags to a roam CLI arg list."""
     if session_hint:
         args.extend(["--session-hint", session_hint])
@@ -931,11 +1041,18 @@ def _append_context_personalization_args(args: list[str], session_hint: str = ""
     return args
 
 
-@_tool(name="roam_explore",
-       description="Codebase exploration bundle: understand overview + optional symbol deep-dive in one call.",
-       output_schema=_SCHEMA_EXPLORE)
-def explore(symbol: str = "", budget: int = 0, session_hint: str = "",
-            recent_symbols: str = "", root: str = ".") -> dict:
+@_tool(
+    name="roam_explore",
+    description="Codebase exploration bundle: understand overview + optional symbol deep-dive in one call.",
+    output_schema=_SCHEMA_EXPLORE,
+)
+def explore(
+    symbol: str = "",
+    budget: int = 0,
+    session_hint: str = "",
+    recent_symbols: str = "",
+    root: str = ".",
+) -> dict:
     """Full codebase exploration in one call.
 
     WHEN TO USE: Call this FIRST when starting work on a new codebase.
@@ -971,19 +1088,30 @@ def explore(symbol: str = "", budget: int = 0, session_hint: str = "",
         recent_symbols=recent_symbols,
     )
     ctx = _run_roam(ctx_args, root)
-    result = _compound_envelope("explore", [
-        ("understand", overview),
-        ("context", ctx),
-    ], target=symbol)
+    result = _compound_envelope(
+        "explore",
+        [
+            ("understand", overview),
+            ("context", ctx),
+        ],
+        target=symbol,
+    )
     return _apply_budget(result, budget)
 
 
-@_tool(name="roam_prepare_change",
-       description="Pre-change bundle: preflight + context + effects in one call. Call BEFORE modifying code.",
-       output_schema=_SCHEMA_PREPARE_CHANGE)
-def prepare_change(target: str, staged: bool = False, budget: int = 0,
-                   session_hint: str = "", recent_symbols: str = "",
-                   root: str = ".") -> dict:
+@_tool(
+    name="roam_prepare_change",
+    description="Pre-change bundle: preflight + context + effects in one call. Call BEFORE modifying code.",
+    output_schema=_SCHEMA_PREPARE_CHANGE,
+)
+def prepare_change(
+    target: str,
+    staged: bool = False,
+    budget: int = 0,
+    session_hint: str = "",
+    recent_symbols: str = "",
+    root: str = ".",
+) -> dict:
     """Everything needed before modifying code, in one call.
 
     WHEN TO USE: Call this BEFORE making any non-trivial code change.
@@ -1029,17 +1157,23 @@ def prepare_change(target: str, staged: bool = False, budget: int = 0,
         ctx_data = _run_roam(ctx_args, root)
         effects_data = _run_roam(budget_args + ["effects", target], root)
 
-    result = _compound_envelope("prepare-change", [
-        ("preflight", preflight_data),
-        ("context", ctx_data),
-        ("effects", effects_data),
-    ], target=target)
+    result = _compound_envelope(
+        "prepare-change",
+        [
+            ("preflight", preflight_data),
+            ("context", ctx_data),
+            ("effects", effects_data),
+        ],
+        target=target,
+    )
     return _apply_budget(result, budget)
 
 
-@_tool(name="roam_review_change",
-       description="Change review bundle: pr-risk + breaking changes + structural diff in one call.",
-       output_schema=_SCHEMA_REVIEW_CHANGE)
+@_tool(
+    name="roam_review_change",
+    description="Change review bundle: pr-risk + breaking changes + structural diff in one call.",
+    output_schema=_SCHEMA_REVIEW_CHANGE,
+)
 def review_change(staged: bool = False, commit_range: str = "", budget: int = 0, root: str = ".") -> dict:
     """Review pending changes in one call.
 
@@ -1076,17 +1210,22 @@ def review_change(staged: bool = False, commit_range: str = "", budget: int = 0,
     breaking_data = _run_roam(breaking_args, root)
     diff_data = _run_roam(diff_args, root)
 
-    result = _compound_envelope("review-change", [
-        ("pr_risk", risk_data),
-        ("breaking_changes", breaking_data),
-        ("pr_diff", diff_data),
-    ])
+    result = _compound_envelope(
+        "review-change",
+        [
+            ("pr_risk", risk_data),
+            ("breaking_changes", breaking_data),
+            ("pr_diff", diff_data),
+        ],
+    )
     return _apply_budget(result, budget)
 
 
-@_tool(name="roam_diagnose_issue",
-       description="Debug bundle: root cause suspects + side effects in one call.",
-       output_schema=_SCHEMA_DIAGNOSE_ISSUE)
+@_tool(
+    name="roam_diagnose_issue",
+    description="Debug bundle: root cause suspects + side effects in one call.",
+    output_schema=_SCHEMA_DIAGNOSE_ISSUE,
+)
 def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = ".") -> dict:
     """Debug a failing symbol in one call.
 
@@ -1112,10 +1251,14 @@ def diagnose_issue(symbol: str, depth: int = 2, budget: int = 0, root: str = "."
     diag_data = _run_roam(budget_args + ["diagnose", symbol, "--depth", str(depth)], root)
     effects_data = _run_roam(budget_args + ["effects", symbol], root)
 
-    result = _compound_envelope("diagnose-issue", [
-        ("diagnose", diag_data),
-        ("effects", effects_data),
-    ], target=symbol)
+    result = _compound_envelope(
+        "diagnose-issue",
+        [
+            ("diagnose", diag_data),
+            ("effects", effects_data),
+        ],
+        target=symbol,
+    )
     return _apply_budget(result, budget)
 
 
@@ -1199,7 +1342,7 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
     Uses the same lookup chain as find_symbol(): qualified -> name -> fuzzy.
     """
     from roam.commands.resolve import find_symbol
-    from roam.db.queries import CALLERS_OF, CALLEES_OF, METRICS_FOR_SYMBOL
+    from roam.db.queries import CALLEES_OF, CALLERS_OF, METRICS_FOR_SYMBOL
     from roam.output.formatter import loc
 
     try:
@@ -1250,9 +1393,11 @@ def _batch_get_one(conn, sym: str) -> tuple[dict | None, str | None]:
     return details, None
 
 
-@_tool(name="roam_batch_search",
-       description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
-       output_schema=_SCHEMA_BATCH_SEARCH)
+@_tool(
+    name="roam_batch_search",
+    description="Search up to 10 patterns in one call. Replaces 10 sequential roam_search_symbol calls.",
+    output_schema=_SCHEMA_BATCH_SEARCH,
+)
 def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> dict:
     """Batch symbol search: run multiple name queries in one MCP call.
 
@@ -1276,7 +1421,6 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
     """
     from roam.commands.resolve import ensure_index
     from roam.db.connection import open_db
-    from roam.output.formatter import json_envelope, to_json
 
     ensure_index()
 
@@ -1320,11 +1464,7 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
         }
 
     total_matches = sum(len(v) for v in results.values())
-    verdict = (
-        f"{total_matches} matches across {len(results)} queries"
-        if results
-        else "no matches found"
-    )
+    verdict = f"{total_matches} matches across {len(results)} queries" if results else "no matches found"
     if errors:
         verdict += f", {len(errors)} queries failed"
 
@@ -1343,9 +1483,11 @@ def batch_search(queries: list, limit_per_query: int = 5, root: str = ".") -> di
     return payload
 
 
-@_tool(name="roam_batch_get",
-       description="Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls.",
-       output_schema=_SCHEMA_BATCH_GET)
+@_tool(
+    name="roam_batch_get",
+    description="Get details for up to 50 symbols in one call. Replaces 50 sequential roam_symbol calls.",
+    output_schema=_SCHEMA_BATCH_GET,
+)
 def batch_get(symbols: list, root: str = ".") -> dict:
     """Batch symbol detail retrieval: fetch multiple symbol definitions in one MCP call.
 
@@ -1434,9 +1576,11 @@ def batch_get(symbols: list, root: str = ".") -> dict:
 # ===================================================================
 
 
-@_tool(name="roam_expand_toolset",
-       description="List available tool presets or show contents of a preset. "
-                   "Presets: core (16), review (27), refactor (26), debug (27), architecture (29), full (all).")
+@_tool(
+    name="roam_expand_toolset",
+    description="List available tool presets or show contents of a preset. "
+    "Presets: core (16), review (27), refactor (26), debug (27), architecture (29), full (all).",
+)
 def expand_toolset(preset: str = "") -> dict:
     """List available presets and their tools. Call to discover tools beyond the active preset.
 
@@ -1455,8 +1599,7 @@ def expand_toolset(preset: str = "") -> dict:
             "tool_count": len(tools),
             "tools": tools,
             "switch_instructions": (
-                f"To switch to '{preset}' preset, restart the MCP server with: "
-                f"ROAM_MCP_PRESET={preset} roam mcp"
+                f"To switch to '{preset}' preset, restart the MCP server with: ROAM_MCP_PRESET={preset} roam mcp"
             ),
         }
     # List all presets
@@ -1472,9 +1615,11 @@ def expand_toolset(preset: str = "") -> dict:
     }
 
 
-@_tool(name="roam_init",
-       description="Initialize roam and build the first index. Task-mode for non-blocking setup.",
-       output_schema=_SCHEMA_INIT)
+@_tool(
+    name="roam_init",
+    description="Initialize roam and build the first index. Task-mode for non-blocking setup.",
+    output_schema=_SCHEMA_INIT,
+)
 async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = None) -> dict:
     """Initialize roam for a repo and create the first index.
 
@@ -1494,9 +1639,11 @@ async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = No
     return result
 
 
-@_tool(name="roam_reindex",
-       description="Incremental or force reindex. Task-mode + elicited confirmation for force runs.",
-       output_schema=_SCHEMA_REINDEX)
+@_tool(
+    name="roam_reindex",
+    description="Incremental or force reindex. Task-mode + elicited confirmation for force runs.",
+    output_schema=_SCHEMA_REINDEX,
+)
 async def roam_reindex(
     force: bool = False,
     verbose: bool = False,
@@ -1513,12 +1660,14 @@ async def roam_reindex(
     if force and not confirm_force:
         approved = await _confirm_force_reindex(ctx)
         if approved is None:
-            return _structured_error({
-                "error": "force reindex requires confirmation but elicitation is unavailable.",
-                "error_code": "ELICITATION_REQUIRED",
-                "hint": "rerun with confirm_force=true or use a client with elicitation support.",
-                "command": "roam_reindex",
-            })
+            return _structured_error(
+                {
+                    "error": "force reindex requires confirmation but elicitation is unavailable.",
+                    "error_code": "ELICITATION_REQUIRED",
+                    "hint": "rerun with confirm_force=true or use a client with elicitation support.",
+                    "command": "roam_reindex",
+                }
+            )
         if not approved:
             return {
                 "command": "index",
@@ -1546,9 +1695,11 @@ async def roam_reindex(
     return result
 
 
-@_tool(name="roam_understand",
-       description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
-       output_schema=_SCHEMA_UNDERSTAND)
+@_tool(
+    name="roam_understand",
+    description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
+    output_schema=_SCHEMA_UNDERSTAND,
+)
 def understand(root: str = ".") -> dict:
     """Get a full codebase briefing in a single call.
 
@@ -1578,9 +1729,11 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_health",
-       description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
-       output_schema=_SCHEMA_HEALTH)
+@_tool(
+    name="roam_health",
+    description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
+    output_schema=_SCHEMA_HEALTH,
+)
 def health(root: str = ".") -> dict:
     """Codebase health score (0-100) with issue breakdown.
 
@@ -1591,9 +1744,11 @@ def health(root: str = ".") -> dict:
     return _run_roam(["health"], root)
 
 
-@_tool(name="roam_preflight",
-       description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.",
-       output_schema=_SCHEMA_PREFLIGHT)
+@_tool(
+    name="roam_preflight",
+    description="Pre-change safety check: blast radius, tests, complexity, fitness. Call BEFORE modifying code.",
+    output_schema=_SCHEMA_PREFLIGHT,
+)
 def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
@@ -1609,9 +1764,11 @@ def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_search_symbol",
-       description="Find symbols by name substring. Returns kind, file, line, PageRank importance.",
-       output_schema=_SCHEMA_SEARCH)
+@_tool(
+    name="roam_search_symbol",
+    description="Find symbols by name substring. Returns kind, file, line, PageRank importance.",
+    output_schema=_SCHEMA_SEARCH,
+)
 def search_symbol(query: str, root: str = ".") -> dict:
     """Find symbols by name (case-insensitive substring match).
 
@@ -1623,11 +1780,12 @@ def search_symbol(query: str, root: str = ".") -> dict:
     return _run_roam(["search", query], root)
 
 
-@_tool(name="roam_context",
-       description="Minimal files + line ranges needed to work with a symbol.",
-       output_schema=_SCHEMA_CONTEXT)
-def context(symbol: str, task: str = "", session_hint: str = "",
-            recent_symbols: str = "", root: str = ".") -> dict:
+@_tool(
+    name="roam_context",
+    description="Minimal files + line ranges needed to work with a symbol.",
+    output_schema=_SCHEMA_CONTEXT,
+)
+def context(symbol: str, task: str = "", session_hint: str = "", recent_symbols: str = "", root: str = ".") -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
     Call this when you need to understand or modify a function, class,
@@ -1645,9 +1803,11 @@ def context(symbol: str, task: str = "", session_hint: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_trace",
-       description="Shortest dependency path between two symbols with hop details.",
-       output_schema=_SCHEMA_TRACE)
+@_tool(
+    name="roam_trace",
+    description="Shortest dependency path between two symbols with hop details.",
+    output_schema=_SCHEMA_TRACE,
+)
 def trace(source: str, target: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
@@ -1657,9 +1817,11 @@ def trace(source: str, target: str, root: str = ".") -> dict:
     return _run_roam(["trace", source, target], root)
 
 
-@_tool(name="roam_impact",
-       description="Blast radius: all symbols and files affected by changing a symbol.",
-       output_schema=_SCHEMA_IMPACT)
+@_tool(
+    name="roam_impact",
+    description="Blast radius: all symbols and files affected by changing a symbol.",
+    output_schema=_SCHEMA_IMPACT,
+)
 def impact(symbol: str, root: str = ".") -> dict:
     """Show the blast radius of changing a symbol.
 
@@ -1670,8 +1832,10 @@ def impact(symbol: str, root: str = ".") -> dict:
     return _run_roam(["impact", symbol], root)
 
 
-@_tool(name="roam_file_info",
-       description="File skeleton: all symbols with signatures, kinds, line ranges.")
+@_tool(
+    name="roam_file_info",
+    description="File skeleton: all symbols with signatures, kinds, line ranges.",
+)
 def file_info(path: str, root: str = ".") -> dict:
     """Show a file skeleton: every symbol definition with its signature.
 
@@ -1685,9 +1849,11 @@ def file_info(path: str, root: str = ".") -> dict:
 # ===================================================================
 
 
-@_tool(name="roam_pr_risk",
-       description="Risk score (0-100) for pending changes with per-file breakdown.",
-       output_schema=_SCHEMA_PR_RISK)
+@_tool(
+    name="roam_pr_risk",
+    description="Risk score (0-100) for pending changes with per-file breakdown.",
+    output_schema=_SCHEMA_PR_RISK,
+)
 def pr_risk(staged: bool = False, root: str = ".") -> dict:
     """Compute a risk score (0-100) for pending changes.
 
@@ -1701,8 +1867,7 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
 
 
 @_tool(name="roam_suggest_reviewers")
-def suggest_reviewers(top: int = 3, exclude: str = "",
-                      changed: bool = True, root: str = ".") -> dict:
+def suggest_reviewers(top: int = 3, exclude: str = "", changed: bool = True, root: str = ".") -> dict:
     """Suggest optimal code reviewers for changed files.
 
     WHEN TO USE: Call this before creating a PR to find the best reviewers.
@@ -1752,8 +1917,10 @@ def verify(threshold: int = 70, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_breaking_changes",
-       description="Detect breaking API changes between git refs: removed exports, changed signatures.")
+@_tool(
+    name="roam_breaking_changes",
+    description="Detect breaking API changes between git refs: removed exports, changed signatures.",
+)
 def breaking_changes(target: str = "HEAD~1", root: str = ".") -> dict:
     """Detect breaking API changes between git refs.
 
@@ -1795,8 +1962,10 @@ def api_changes(base: str = "HEAD~1", severity: str = "warning", root: str = "."
     return _run_roam(args, root)
 
 
-@_tool(name="roam_affected_tests",
-       description="Test files that exercise changed code, with hop distance.")
+@_tool(
+    name="roam_affected_tests",
+    description="Test files that exercise changed code, with hop distance.",
+)
 def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Find test files that exercise changed code.
 
@@ -1813,8 +1982,7 @@ def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> d
 
 
 @_tool(name="roam_test_gaps")
-def test_gaps(changed: bool = True, severity: str = "medium",
-              files: str = "", root: str = ".") -> dict:
+def test_gaps(changed: bool = True, severity: str = "medium", files: str = "", root: str = ".") -> dict:
     """Find changed symbols missing test coverage, ranked by severity.
 
     WHEN TO USE: Call this after making changes to see which new or
@@ -1843,8 +2011,10 @@ def test_gaps(changed: bool = True, severity: str = "medium",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_algo",
-       description="Detect suboptimal algorithms with better alternatives and complexity analysis.")
+@_tool(
+    name="roam_algo",
+    description="Detect suboptimal algorithms with better alternatives and complexity analysis.",
+)
 def algo(task: str = "", confidence: str = "", root: str = ".") -> dict:
     """Detect suboptimal algorithms and suggest better approaches.
 
@@ -1872,8 +2042,10 @@ def algo(task: str = "", confidence: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dark_matter",
-       description="File pairs that co-change without structural links (hidden coupling).")
+@_tool(
+    name="roam_dark_matter",
+    description="File pairs that co-change without structural links (hidden coupling).",
+)
 def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") -> dict:
     """Detect dark matter: file pairs that co-change but have no structural link.
 
@@ -1893,14 +2065,18 @@ def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") 
     Returns: dark-matter pairs with NPMI, lift, strength, co-change count,
     and hypothesis (category + detail + confidence) for each pair.
     """
-    args = ["dark-matter", "--explain",
-            "--min-npmi", str(min_npmi),
-            "--min-cochanges", str(min_cochanges)]
+    args = [
+        "dark-matter",
+        "--explain",
+        "--min-npmi",
+        str(min_npmi),
+        "--min-cochanges",
+        str(min_cochanges),
+    ]
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dead_code",
-       description="Unreferenced exported symbols (dead code candidates).")
+@_tool(name="roam_dead_code", description="Unreferenced exported symbols (dead code candidates).")
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 
@@ -1911,8 +2087,7 @@ def dead_code(root: str = ".") -> dict:
 
 
 @_tool(name="roam_duplicates")
-def duplicates_tool(threshold: float = 0.75, min_lines: int = 5,
-                    scope: str = "", root: str = ".") -> dict:
+def duplicates_tool(threshold: float = 0.75, min_lines: int = 5, scope: str = "", root: str = ".") -> dict:
     """Detect semantically duplicate functions via structural similarity.
 
     WHEN TO USE: Call this to find functions with similar structure that
@@ -1931,15 +2106,16 @@ def duplicates_tool(threshold: float = 0.75, min_lines: int = 5,
     Returns: duplicate clusters with similarity scores, shared patterns,
     and refactoring suggestions.
     """
-    args = ["duplicates", "--threshold", str(threshold),
-            "--min-lines", str(min_lines)]
+    args = ["duplicates", "--threshold", str(threshold), "--min-lines", str(min_lines)]
     if scope:
         args.extend(["--scope", scope])
     return _run_roam(args, root)
 
 
-@_tool(name="roam_vibe_check",
-       description="AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns.")
+@_tool(
+    name="roam_vibe_check",
+    description="AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns.",
+)
 def vibe_check(threshold: int = 0, root: str = ".") -> dict:
     """Detect AI code anti-patterns and compute composite AI rot score.
 
@@ -1960,8 +2136,10 @@ def vibe_check(threshold: int = 0, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_supply_chain",
-       description="Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.")
+@_tool(
+    name="roam_supply_chain",
+    description="Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.",
+)
 def supply_chain_tool(top: int = 5, root: str = ".") -> dict:
     """Analyze project dependency files for supply-chain risk.
 
@@ -1983,8 +2161,10 @@ def supply_chain_tool(top: int = 5, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dashboard",
-       description="Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot.")
+@_tool(
+    name="roam_dashboard",
+    description="Unified single-screen codebase status: health, hotspots, bus factor, dead code, AI rot.",
+)
 def dashboard_tool(root: str = ".") -> dict:
     """One-call codebase status combining health, hotspots, risks, and AI rot.
 
@@ -1995,8 +2175,10 @@ def dashboard_tool(root: str = ".") -> dict:
     return _run_roam(["dashboard"], root)
 
 
-@_tool(name="roam_ai_readiness",
-       description="AI readiness score (0-100): how effectively AI agents can work on this codebase.")
+@_tool(
+    name="roam_ai_readiness",
+    description="AI readiness score (0-100): how effectively AI agents can work on this codebase.",
+)
 def ai_readiness(threshold: int = 0, root: str = ".") -> dict:
     """Estimate AI agent effectiveness on this codebase across 7 dimensions.
 
@@ -2017,10 +2199,10 @@ def ai_readiness(threshold: int = 0, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-
-
-@_tool(name="roam_check_rules",
-       description="Run 10 built-in structural rules: cycles, fan-out, complexity, tests, god classes, layer violations.")
+@_tool(
+    name="roam_check_rules",
+    description="Run 10 built-in structural rules: cycles, fan-out, complexity, tests, god classes, layer violations.",
+)
 def check_rules(
     rule: str = "",
     severity: str = "",
@@ -2058,8 +2240,11 @@ def check_rules(
         args.extend(["--config", config])
     return _run_roam(args, root)
 
-@_tool(name="roam_complexity_report",
-       description="Functions ranked by cognitive complexity above threshold.")
+
+@_tool(
+    name="roam_complexity_report",
+    description="Functions ranked by cognitive complexity above threshold.",
+)
 def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     """Rank functions by cognitive complexity.
 
@@ -2069,8 +2254,10 @@ def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     return _run_roam(["complexity", "--threshold", str(threshold)], root)
 
 
-@_tool(name="roam_repo_map",
-       description="Compact project skeleton with key symbols per file, by PageRank.")
+@_tool(
+    name="roam_repo_map",
+    description="Compact project skeleton with key symbols per file, by PageRank.",
+)
 def repo_map(budget: int = 0, root: str = ".") -> dict:
     """Show a compact project skeleton with key symbols.
 
@@ -2093,8 +2280,10 @@ def repo_map(budget: int = 0, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_tour",
-       description="Codebase onboarding guide: reading order, entry points, architecture roles.")
+@_tool(
+    name="roam_tour",
+    description="Codebase onboarding guide: reading order, entry points, architecture roles.",
+)
 def tour(root: str = ".") -> dict:
     """Generate a codebase onboarding guide.
 
@@ -2113,8 +2302,10 @@ def tour(root: str = ".") -> dict:
     return _run_roam(["tour"], root)
 
 
-@_tool(name="roam_agent_export",
-       description="Generate AI agent context file (CLAUDE.md/AGENTS.md/.cursorrules) from index.")
+@_tool(
+    name="roam_agent_export",
+    description="Generate AI agent context file (CLAUDE.md/AGENTS.md/.cursorrules) from index.",
+)
 def agent_export(format: str = "claude", root: str = ".") -> dict:
     """Generate an AI agent context file from the roam index.
 
@@ -2135,8 +2326,10 @@ def agent_export(format: str = "claude", root: str = ".") -> dict:
     return _run_roam(["agent-export", "--format", format], root)
 
 
-@_tool(name="roam_visualize",
-       description="Generate Mermaid/DOT architecture diagram with smart filtering.")
+@_tool(
+    name="roam_visualize",
+    description="Generate Mermaid/DOT architecture diagram with smart filtering.",
+)
 def visualize(
     focus: str = "",
     format: str = "mermaid",
@@ -2175,8 +2368,17 @@ def visualize(
     Returns: diagram text (Mermaid or DOT), node/edge counts, and
     format metadata.
     """
-    args = ["visualize", "--format", format, "--depth", str(depth),
-            "--limit", str(limit), "--direction", direction]
+    args = [
+        "visualize",
+        "--format",
+        format,
+        "--depth",
+        str(depth),
+        "--limit",
+        str(limit),
+        "--direction",
+        direction,
+    ]
     if focus:
         args.extend(["--focus", focus])
     if no_clusters:
@@ -2186,9 +2388,11 @@ def visualize(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_diagnose",
-       description="Root cause analysis: upstream/downstream suspects ranked by composite risk.",
-       output_schema=_SCHEMA_DIAGNOSE)
+@_tool(
+    name="roam_diagnose",
+    description="Root cause analysis: upstream/downstream suspects ranked by composite risk.",
+    output_schema=_SCHEMA_DIAGNOSE,
+)
 def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     """Root cause analysis for a failing symbol or test.
 
@@ -2200,10 +2404,11 @@ def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_relate",
-       description="How symbols connect: shared deps, call chains, conflicts, cohesion score.")
-def relate(symbols: list[str], files: list[str] | None = None,
-           depth: int = 3, root: str = ".") -> dict:
+@_tool(
+    name="roam_relate",
+    description="How symbols connect: shared deps, call chains, conflicts, cohesion score.",
+)
+def relate(symbols: list[str], files: list[str] | None = None, depth: int = 3, root: str = ".") -> dict:
     """Show how a set of symbols relate: shared deps, call chains, conflicts.
 
     WHEN TO USE: Call this when you have queried multiple symbols via
@@ -2238,11 +2443,16 @@ def relate(symbols: list[str], files: list[str] | None = None,
 # ===================================================================
 
 
-@_tool(name="roam_annotate_symbol",
-       description="Add persistent annotation to a symbol/file for future agent sessions.")
+@_tool(
+    name="roam_annotate_symbol",
+    description="Add persistent annotation to a symbol/file for future agent sessions.",
+)
 def annotate_symbol(
-    target: str, content: str,
-    tag: str = "", author: str = "", expires: str = "",
+    target: str,
+    content: str,
+    tag: str = "",
+    author: str = "",
+    expires: str = "",
     root: str = ".",
 ) -> dict:
     """Add a persistent annotation to a symbol or file.
@@ -2277,10 +2487,14 @@ def annotate_symbol(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_get_annotations",
-       description="Read annotations for symbols, files, or project. Filter by tag/date.")
+@_tool(
+    name="roam_get_annotations",
+    description="Read annotations for symbols, files, or project. Filter by tag/date.",
+)
 def get_annotations(
-    target: str = "", tag: str = "", since: str = "",
+    target: str = "",
+    tag: str = "",
+    since: str = "",
     root: str = ".",
 ) -> dict:
     """Read annotations for a symbol, file, or the whole project.
@@ -2310,10 +2524,11 @@ def get_annotations(
     return _run_roam(args, root)
 
 
-@_tool(name="roam_endpoints",
-       description="List all REST/GraphQL/gRPC endpoints with handlers, methods, and locations.")
-def endpoints_tool(framework: str = "", method: str = "", group_by: str = "framework",
-                   root: str = ".") -> dict:
+@_tool(
+    name="roam_endpoints",
+    description="List all REST/GraphQL/gRPC endpoints with handlers, methods, and locations.",
+)
+def endpoints_tool(framework: str = "", method: str = "", group_by: str = "framework", root: str = ".") -> dict:
     """List all detected API endpoints in the codebase.
 
     WHEN TO USE: Call this to get a full map of all API routes and their
@@ -2386,11 +2601,14 @@ if mcp is not None:
         data = _run_roam(["understand"])
         # Extract just the tech stack portion
         if isinstance(data, dict):
-            return json.dumps({
-                "languages": data.get("languages", {}),
-                "files": data.get("files", {}),
-                "frameworks": data.get("frameworks", []),
-            }, indent=2)
+            return json.dumps(
+                {
+                    "languages": data.get("languages", {}),
+                    "files": data.get("files", {}),
+                    "frameworks": data.get("frameworks", []),
+                },
+                indent=2,
+            )
         return json.dumps(data, indent=2)
 
     @mcp.resource("roam://dead-code")
@@ -2429,8 +2647,10 @@ if mcp is not None:
 # ===================================================================
 
 
-@_tool(name="roam_ws_understand",
-       description="Multi-repo workspace overview: per-repo stats, cross-repo connections.")
+@_tool(
+    name="roam_ws_understand",
+    description="Multi-repo workspace overview: per-repo stats, cross-repo connections.",
+)
 def ws_understand(root: str = ".") -> dict:
     """Get a unified overview of a multi-repo workspace.
 
@@ -2450,8 +2670,10 @@ def ws_understand(root: str = ".") -> dict:
     return _run_roam(["ws", "understand"], root)
 
 
-@_tool(name="roam_ws_context",
-       description="Cross-repo augmented context for a symbol spanning multiple repos.")
+@_tool(
+    name="roam_ws_context",
+    description="Cross-repo augmented context for a symbol spanning multiple repos.",
+)
 def ws_context(symbol: str, root: str = ".") -> dict:
     """Get cross-repo augmented context for a symbol.
 
@@ -2471,8 +2693,10 @@ def ws_context(symbol: str, root: str = ".") -> dict:
     return _run_roam(["ws", "context", symbol], root)
 
 
-@_tool(name="roam_pr_diff",
-       description="Structural graph delta of code changes: metric deltas, layer violations.")
+@_tool(
+    name="roam_pr_diff",
+    description="Structural graph delta of code changes: metric deltas, layer violations.",
+)
 def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Show structural consequences of code changes (graph delta).
 
@@ -2499,8 +2723,10 @@ def pr_diff(staged: bool = False, commit_range: str = "", root: str = ".") -> di
     return _run_roam(args, root)
 
 
-@_tool(name="roam_effects",
-       description="Side effects of functions: DB writes, network, filesystem (direct + transitive).")
+@_tool(
+    name="roam_effects",
+    description="Side effects of functions: DB writes, network, filesystem (direct + transitive).",
+)
 def effects(target: str = "", file: str = "", effect_type: str = "", root: str = ".") -> dict:
     """Show side effects of functions (DB writes, network, filesystem, etc.).
 
@@ -2531,8 +2757,10 @@ def effects(target: str = "", file: str = "", effect_type: str = "", root: str =
     return _run_roam(args, root)
 
 
-@_tool(name="roam_budget_check",
-       description="Check changes against architectural budgets (cycles, health floor, complexity).")
+@_tool(
+    name="roam_budget_check",
+    description="Check changes against architectural budgets (cycles, health floor, complexity).",
+)
 def budget_check(config: str = "", staged: bool = False, commit_range: str = "", root: str = ".") -> dict:
     """Check pending changes against architectural budgets.
 
@@ -2563,10 +2791,17 @@ def budget_check(config: str = "", staged: bool = False, commit_range: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_attest",
-       description="Proof-carrying PR attestation: evidence bundle + merge verdict.")
-def attest(commit_range: str = "", staged: bool = False, output_format: str = "json",
-           sign: bool = False, root: str = ".") -> dict:
+@_tool(
+    name="roam_attest",
+    description="Proof-carrying PR attestation: evidence bundle + merge verdict.",
+)
+def attest(
+    commit_range: str = "",
+    staged: bool = False,
+    output_format: str = "json",
+    sign: bool = False,
+    root: str = ".",
+) -> dict:
     """Generate a proof-carrying PR attestation with all evidence bundled.
 
     WHEN TO USE: Call this before merging or in CI to get a single
@@ -2599,8 +2834,10 @@ def attest(commit_range: str = "", staged: bool = False, output_format: str = "j
     return _run_roam(args, root)
 
 
-@_tool(name="roam_capsule_export",
-       description="Sanitized structural graph export without code bodies (privacy-safe).")
+@_tool(
+    name="roam_capsule_export",
+    description="Sanitized structural graph export without code bodies (privacy-safe).",
+)
 def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root: str = ".") -> dict:
     """Export a sanitized structural graph without function bodies.
 
@@ -2626,10 +2863,11 @@ def capsule_export(redact_paths: bool = False, no_signatures: bool = False, root
     return _run_roam(args, root)
 
 
-@_tool(name="roam_path_coverage",
-       description="Critical call paths with zero test protection, ranked by risk.")
-def path_coverage(from_pattern: str = "", to_pattern: str = "",
-                  max_depth: int = 8, root: str = ".") -> dict:
+@_tool(
+    name="roam_path_coverage",
+    description="Critical call paths with zero test protection, ranked by risk.",
+)
+def path_coverage(from_pattern: str = "", to_pattern: str = "", max_depth: int = 8, root: str = ".") -> dict:
     """Find critical call paths with zero test protection.
 
     WHEN TO USE: Call this to discover untested paths from entry
@@ -2658,10 +2896,11 @@ def path_coverage(from_pattern: str = "", to_pattern: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_forecast",
-       description="Predict when metrics will exceed thresholds (Theil-Sen regression).")
-def forecast(symbol: str = "", horizon: int = 30,
-             alert_only: bool = False, root: str = ".") -> dict:
+@_tool(
+    name="roam_forecast",
+    description="Predict when metrics will exceed thresholds (Theil-Sen regression).",
+)
+def forecast(symbol: str = "", horizon: int = 30, alert_only: bool = False, root: str = ".") -> dict:
     """Predict when metrics will exceed thresholds.
 
     WHEN TO USE: Call this to identify functions with accelerating
@@ -2690,11 +2929,18 @@ def forecast(symbol: str = "", horizon: int = 30,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_generate_plan",
-       description="Structured execution plan for code modification: read order, invariants, tests.")
-def generate_plan(target: str = "", task: str = "refactor",
-                  file_path: str = "", staged: bool = False,
-                  depth: int = 2, root: str = ".") -> dict:
+@_tool(
+    name="roam_generate_plan",
+    description="Structured execution plan for code modification: read order, invariants, tests.",
+)
+def generate_plan(
+    target: str = "",
+    task: str = "refactor",
+    file_path: str = "",
+    staged: bool = False,
+    depth: int = 2,
+    root: str = ".",
+) -> dict:
     """Generate a structured execution plan for modifying code.
 
     WHEN TO USE: Call this before any non-trivial code modification.
@@ -2731,10 +2977,11 @@ def generate_plan(target: str = "", task: str = "refactor",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_adversarial_review",
-       description="Adversarial architecture review: challenges about cycles, anti-patterns, coupling.")
-def adversarial_review(staged: bool = False, commit_range: str = "",
-                       severity: str = "low", root: str = ".") -> dict:
+@_tool(
+    name="roam_adversarial_review",
+    description="Adversarial architecture review: challenges about cycles, anti-patterns, coupling.",
+)
+def adversarial_review(staged: bool = False, commit_range: str = "", severity: str = "low", root: str = ".") -> dict:
     """Adversarial architecture review — challenge code changes.
 
     WHEN TO USE: Call this after making changes to get targeted
@@ -2763,11 +3010,17 @@ def adversarial_review(staged: bool = False, commit_range: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_cut_analysis",
-       description="Minimum cut analysis: fragile domain boundaries, highest-impact leak edges.")
-def cut_analysis(between_a: str = "", between_b: str = "",
-                 leak_edges: bool = False, top_n: int = 10,
-                 root: str = ".") -> dict:
+@_tool(
+    name="roam_cut_analysis",
+    description="Minimum cut analysis: fragile domain boundaries, highest-impact leak edges.",
+)
+def cut_analysis(
+    between_a: str = "",
+    between_b: str = "",
+    leak_edges: bool = False,
+    top_n: int = 10,
+    root: str = ".",
+) -> dict:
     """Minimum cut analysis — find fragile domain boundaries.
 
     WHEN TO USE: Call this to identify the thinnest boundaries between
@@ -2798,11 +3051,17 @@ def cut_analysis(between_a: str = "", between_b: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_get_invariants",
-       description="Implicit contracts for symbols: signature stability, usage spread, breaking risk.")
-def get_invariants(target: str = "", public_api: bool = False,
-                   breaking_risk: bool = False, top_n: int = 20,
-                   root: str = ".") -> dict:
+@_tool(
+    name="roam_get_invariants",
+    description="Implicit contracts for symbols: signature stability, usage spread, breaking risk.",
+)
+def get_invariants(
+    target: str = "",
+    public_api: bool = False,
+    breaking_risk: bool = False,
+    top_n: int = 20,
+    root: str = ".",
+) -> dict:
     """Discover implicit contracts for symbols.
 
     WHEN TO USE: Call this before modifying a symbol to understand what
@@ -2834,11 +3093,17 @@ def get_invariants(target: str = "", public_api: bool = False,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_bisect_blame",
-       description="Find snapshots that caused architectural degradation, ranked by impact.")
-def bisect_blame(metric: str = "health_score", threshold: float = 0,
-                 direction: str = "degraded", top_n: int = 10,
-                 root: str = ".") -> dict:
+@_tool(
+    name="roam_bisect_blame",
+    description="Find snapshots that caused architectural degradation, ranked by impact.",
+)
+def bisect_blame(
+    metric: str = "health_score",
+    threshold: float = 0,
+    direction: str = "degraded",
+    top_n: int = 10,
+    root: str = ".",
+) -> dict:
     """Find which snapshots caused architectural degradation.
 
     WHEN TO USE: Call this when health score has dropped or metrics
@@ -2869,10 +3134,18 @@ def bisect_blame(metric: str = "health_score", threshold: float = 0,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_simulate",
-       description="Predict metric deltas from move/extract/merge/delete operations.")
-def simulate(operation: str, symbol: str = "", target_file: str = "",
-             file_a: str = "", file_b: str = "", root: str = ".") -> dict:
+@_tool(
+    name="roam_simulate",
+    description="Predict metric deltas from move/extract/merge/delete operations.",
+)
+def simulate(
+    operation: str,
+    symbol: str = "",
+    target_file: str = "",
+    file_a: str = "",
+    file_b: str = "",
+    root: str = ".",
+) -> dict:
     """Simulate a structural change and predict metric deltas.
 
     WHEN TO USE: Call this before making architectural changes (moving,
@@ -2913,8 +3186,10 @@ def simulate(operation: str, symbol: str = "", target_file: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_closure",
-       description="Minimal set of changes needed for rename/delete/modify (exact files + lines).")
+@_tool(
+    name="roam_closure",
+    description="Minimal set of changes needed for rename/delete/modify (exact files + lines).",
+)
 def closure(symbol: str, rename: str = "", delete: bool = False, root: str = ".") -> dict:
     """Compute the minimal set of changes needed when modifying a symbol.
 
@@ -2944,11 +3219,18 @@ def closure(symbol: str, rename: str = "", delete: bool = False, root: str = "."
     return _run_roam(args, root)
 
 
-@_tool(name="roam_doc_intent",
-       description="Link documentation to code: find drift, dead refs, undocumented symbols.")
-def doc_intent(symbol: str = "", doc: str = "",
-               drift: bool = False, undocumented: bool = False,
-               top_n: int = 20, root: str = ".") -> dict:
+@_tool(
+    name="roam_doc_intent",
+    description="Link documentation to code: find drift, dead refs, undocumented symbols.",
+)
+def doc_intent(
+    symbol: str = "",
+    doc: str = "",
+    drift: bool = False,
+    undocumented: bool = False,
+    top_n: int = 20,
+    root: str = ".",
+) -> dict:
     """Link documentation to code — find what docs describe what code.
 
     WHEN TO USE: Call this to understand the relationship between
@@ -2985,10 +3267,11 @@ def doc_intent(symbol: str = "", doc: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_fingerprint",
-       description="Topology fingerprint for cross-repo comparison or structural drift tracking.")
-def fingerprint(compact: bool = False, export_path: str = "",
-                compare_path: str = "", root: str = ".") -> dict:
+@_tool(
+    name="roam_fingerprint",
+    description="Topology fingerprint for cross-repo comparison or structural drift tracking.",
+)
+def fingerprint(compact: bool = False, export_path: str = "", compare_path: str = "", root: str = ".") -> dict:
     """Extract a topology fingerprint for cross-repo comparison.
 
     WHEN TO USE: Call this to get the structural signature of a codebase
@@ -3019,8 +3302,10 @@ def fingerprint(compact: bool = False, export_path: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_rules_check",
-       description="Evaluate custom governance rules from .roam/rules/ YAML files.")
+@_tool(
+    name="roam_rules_check",
+    description="Evaluate custom governance rules from .roam/rules/ YAML files.",
+)
 def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     """Evaluate custom governance rules defined in .roam/rules/.
 
@@ -3047,10 +3332,11 @@ def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_orchestrate",
-       description="Partition codebase for parallel multi-agent work with exclusive write zones.")
-def orchestrate(n_agents: int, files: list[str] | None = None,
-                staged: bool = False, root: str = ".") -> dict:
+@_tool(
+    name="roam_orchestrate",
+    description="Partition codebase for parallel multi-agent work with exclusive write zones.",
+)
+def orchestrate(n_agents: int, files: list[str] | None = None, staged: bool = False, root: str = ".") -> dict:
     """Partition codebase for parallel multi-agent work (swarm orchestration).
 
     WHEN TO USE: Call this before splitting work across multiple AI agents.
@@ -3079,12 +3365,22 @@ def orchestrate(n_agents: int, files: list[str] | None = None,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_mutate",
-       description="Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite.")
-def mutate(operation: str, symbol: str = "", target_file: str = "",
-           new_name: str = "", from_symbol: str = "", to_symbol: str = "",
-           args: str = "", lines: str = "", apply: bool = False,
-           root: str = ".") -> dict:
+@_tool(
+    name="roam_mutate",
+    description="Agentic editing: move/rename/add-call/extract symbols with auto-import rewrite.",
+)
+def mutate(
+    operation: str,
+    symbol: str = "",
+    target_file: str = "",
+    new_name: str = "",
+    from_symbol: str = "",
+    to_symbol: str = "",
+    args: str = "",
+    lines: str = "",
+    apply: bool = False,
+    root: str = ".",
+) -> dict:
     """Syntax-less agentic editing -- move, rename, add-call, extract symbols.
 
     WHEN TO USE: Call this when you need to make structural code changes
@@ -3146,10 +3442,18 @@ def mutate(operation: str, symbol: str = "", target_file: str = "",
     return _run_roam(cmd_args, root)
 
 
-@_tool(name="roam_vuln_map",
-       description="Ingest vulnerability scanner reports (npm/pip/trivy/osv), match to symbols.")
-def vuln_map(npm_audit: str = "", pip_audit: str = "", trivy: str = "",
-             osv: str = "", generic: str = "", root: str = ".") -> dict:
+@_tool(
+    name="roam_vuln_map",
+    description="Ingest vulnerability scanner reports (npm/pip/trivy/osv), match to symbols.",
+)
+def vuln_map(
+    npm_audit: str = "",
+    pip_audit: str = "",
+    trivy: str = "",
+    osv: str = "",
+    generic: str = "",
+    root: str = ".",
+) -> dict:
     """Ingest vulnerability scanner reports and match to codebase symbols.
 
     WHEN TO USE: Call this to import vulnerability data from security scanners
@@ -3187,8 +3491,10 @@ def vuln_map(npm_audit: str = "", pip_audit: str = "", trivy: str = "",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_vuln_reach",
-       description="Vulnerability reachability through call graph: paths, hops, blast radius.")
+@_tool(
+    name="roam_vuln_reach",
+    description="Vulnerability reachability through call graph: paths, hops, blast radius.",
+)
 def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
     """Query reachability of ingested vulnerabilities through the call graph.
 
@@ -3215,8 +3521,10 @@ def vuln_reach(from_entry: str = "", cve: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_secrets",
-       description="Scan for hardcoded secrets, API keys, tokens, passwords (24 patterns).")
+@_tool(
+    name="roam_secrets",
+    description="Scan for hardcoded secrets, API keys, tokens, passwords (24 patterns).",
+)
 def secrets_scan(severity: str = "all", root: str = ".") -> dict:
     """Scan indexed files for hardcoded secrets and credentials.
 
@@ -3244,8 +3552,10 @@ def secrets_scan(severity: str = "all", root: str = ".") -> dict:
 # ===================================================================
 
 
-@_tool(name="roam_ingest_trace",
-       description="Ingest runtime traces (OTel/Jaeger/Zipkin), match spans to symbols.")
+@_tool(
+    name="roam_ingest_trace",
+    description="Ingest runtime traces (OTel/Jaeger/Zipkin), match spans to symbols.",
+)
 def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
     """Ingest runtime traces and match spans to symbols.
 
@@ -3273,10 +3583,11 @@ def ingest_trace(trace_file: str, format: str = "", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_runtime_hotspots",
-       description="Runtime hotspots where static and runtime rankings disagree (UPGRADE/DOWNGRADE).")
-def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
-                     root: str = ".") -> dict:
+@_tool(
+    name="roam_runtime_hotspots",
+    description="Runtime hotspots where static and runtime rankings disagree (UPGRADE/DOWNGRADE).",
+)
+def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False, root: str = ".") -> dict:
     """Show runtime hotspots where static and runtime rankings disagree.
 
     WHEN TO USE: Call this after ingesting traces to find hidden hotspots
@@ -3306,10 +3617,11 @@ def runtime_hotspots(runtime_sort: bool = False, discrepancy: bool = False,
 # ===================================================================
 
 
-@_tool(name="roam_search_semantic",
-       description="Find symbols by natural language query (hybrid BM25 + vector + framework packs).")
-def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
-                    root: str = ".") -> dict:
+@_tool(
+    name="roam_search_semantic",
+    description="Find symbols by natural language query (hybrid BM25 + vector + framework packs).",
+)
+def search_semantic(query: str, top: int = 10, threshold: float = 0.05, root: str = ".") -> dict:
     """Find symbols by natural language query using hybrid BM25+vector search.
 
     WHEN TO USE: Call this when you have a conceptual description of what
@@ -3331,8 +3643,7 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
     Returns: ranked list of matching symbols with similarity scores,
     file paths, kinds, and line numbers.
     """
-    args = ["search-semantic", query, "--top", str(top),
-            "--threshold", str(threshold)]
+    args = ["search-semantic", query, "--top", str(top), "--threshold", str(threshold)]
     return _run_roam(args, root)
 
 
@@ -3341,9 +3652,11 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
 # ===================================================================
 
 
-@_tool(name="roam_diff",
-       description="Blast radius of uncommitted/committed changes: affected symbols, files, tests.",
-       output_schema=_SCHEMA_DIFF)
+@_tool(
+    name="roam_diff",
+    description="Blast radius of uncommitted/committed changes: affected symbols, files, tests.",
+    output_schema=_SCHEMA_DIFF,
+)
 def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> dict:
     """Blast radius of uncommitted or committed changes.
 
@@ -3358,8 +3671,10 @@ def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_symbol",
-       description="Symbol definition, callers, callees, PageRank, fan-in/out metrics.")
+@_tool(
+    name="roam_symbol",
+    description="Symbol definition, callers, callees, PageRank, fan-in/out metrics.",
+)
 def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
     """Symbol definition, callers, callees, and graph metrics.
 
@@ -3385,8 +3700,7 @@ def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_deps",
-       description="File-level imports and importers (what depends on this file).")
+@_tool(name="roam_deps", description="File-level imports and importers (what depends on this file).")
 def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
     """File-level import/imported-by relationships.
 
@@ -3399,8 +3713,10 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_uses",
-       description="All consumers of a symbol: callers, importers, inheritors by edge type.")
+@_tool(
+    name="roam_uses",
+    description="All consumers of a symbol: callers, importers, inheritors by edge type.",
+)
 def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
     """All consumers of a symbol: callers, importers, inheritors.
 
@@ -3417,8 +3733,10 @@ def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
 # ===================================================================
 
 
-@_tool(name="roam_weather",
-       description="Churn x complexity hotspot ranking: highest-leverage refactoring targets.")
+@_tool(
+    name="roam_weather",
+    description="Churn x complexity hotspot ranking: highest-leverage refactoring targets.",
+)
 def roam_weather(count: int = 20, root: str = ".") -> dict:
     """Code hotspots: churn x complexity ranking.
 
@@ -3440,11 +3758,14 @@ def roam_weather(count: int = 20, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_debt",
-       description="Prioritized tech debt with SQALE remediation cost estimates.")
-def roam_debt(limit: int = 20, by_kind: bool = False, threshold: float = 0.0,
-              roi: bool = False,
-              root: str = ".") -> dict:
+@_tool(name="roam_debt", description="Prioritized tech debt with SQALE remediation cost estimates.")
+def roam_debt(
+    limit: int = 20,
+    by_kind: bool = False,
+    threshold: float = 0.0,
+    roi: bool = False,
+    root: str = ".",
+) -> dict:
     """Hotspot-weighted technical debt prioritization with remediation costs.
 
     WHEN TO USE: to get a prioritized refactoring list. Combines health
@@ -3478,10 +3799,11 @@ def roam_debt(limit: int = 20, by_kind: bool = False, threshold: float = 0.0,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_docs_coverage",
-       description="Doc coverage + stale-doc drift with PageRank-ranked missing docs.")
-def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0,
-                       root: str = ".") -> dict:
+@_tool(
+    name="roam_docs_coverage",
+    description="Doc coverage + stale-doc drift with PageRank-ranked missing docs.",
+)
+def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0, root: str = ".") -> dict:
     """Analyze exported-symbol documentation coverage and staleness drift.
 
     WHEN TO USE: documentation hygiene audits and CI gating for doc quality.
@@ -3510,10 +3832,11 @@ def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_suggest_refactoring",
-       description="Rank proactive refactoring candidates using complexity/coupling/churn/smells.")
-def roam_suggest_refactoring(limit: int = 20, min_score: int = 45,
-                             root: str = ".") -> dict:
+@_tool(
+    name="roam_suggest_refactoring",
+    description="Rank proactive refactoring candidates using complexity/coupling/churn/smells.",
+)
+def roam_suggest_refactoring(limit: int = 20, min_score: int = 45, root: str = ".") -> dict:
     """Suggest high-ROI refactoring candidates.
 
     WHEN TO USE: proactive refactoring triage. Ranks symbols by a weighted
@@ -3536,10 +3859,13 @@ def roam_suggest_refactoring(limit: int = 20, min_score: int = 45,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_plan_refactor",
-       description="Build an ordered refactor plan for one symbol using risk/test/simulation context.")
-def roam_plan_refactor(symbol: str, operation: str = "auto", target_file: str = "",
-                       max_steps: int = 7, root: str = ".") -> dict:
+@_tool(
+    name="roam_plan_refactor",
+    description="Build an ordered refactor plan for one symbol using risk/test/simulation context.",
+)
+def roam_plan_refactor(
+    symbol: str, operation: str = "auto", target_file: str = "", max_steps: int = 7, root: str = "."
+) -> dict:
     """Build a compound refactoring plan for a symbol.
 
     WHEN TO USE: before making structural edits to a high-impact symbol.
@@ -3573,8 +3899,10 @@ def roam_plan_refactor(symbol: str, operation: str = "auto", target_file: str = 
 # ===================================================================
 
 
-@_tool(name="roam_n1",
-       description="Detect N+1 I/O patterns in ORM code (Laravel/Django/Rails/SQLAlchemy/JPA).")
+@_tool(
+    name="roam_n1",
+    description="Detect N+1 I/O patterns in ORM code (Laravel/Django/Rails/SQLAlchemy/JPA).",
+)
 def roam_n1(confidence: str = "medium", verbose: bool = False, root: str = ".") -> dict:
     """Detect implicit N+1 I/O patterns in ORM code.
 
@@ -3602,10 +3930,13 @@ def roam_n1(confidence: str = "medium", verbose: bool = False, root: str = ".") 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_auth_gaps",
-       description="Endpoints missing authentication or authorization checks.")
-def roam_auth_gaps(routes_only: bool = False, controllers_only: bool = False,
-                   min_confidence: str = "medium", root: str = ".") -> dict:
+@_tool(name="roam_auth_gaps", description="Endpoints missing authentication or authorization checks.")
+def roam_auth_gaps(
+    routes_only: bool = False,
+    controllers_only: bool = False,
+    min_confidence: str = "medium",
+    root: str = ".",
+) -> dict:
     """Find endpoints missing authentication or authorization.
 
     WHEN TO USE: security audit -- detects routes outside auth middleware,
@@ -3636,10 +3967,11 @@ def roam_auth_gaps(routes_only: bool = False, controllers_only: bool = False,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_over_fetch",
-       description="Models serializing too many fields (data over-exposure risk).")
-def roam_over_fetch(threshold: int = 10, confidence: str = "medium",
-                    root: str = ".") -> dict:
+@_tool(
+    name="roam_over_fetch",
+    description="Models serializing too many fields (data over-exposure risk).",
+)
+def roam_over_fetch(threshold: int = 10, confidence: str = "medium", root: str = ".") -> dict:
     """Detect models serializing too many fields (data over-exposure).
 
     WHEN TO USE: to find API responses leaking too many fields. Detects
@@ -3664,10 +3996,8 @@ def roam_over_fetch(threshold: int = 10, confidence: str = "medium",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_missing_index",
-       description="Queries on non-indexed columns (slow query risk).")
-def roam_missing_index(table: str = "", confidence: str = "medium",
-                       root: str = ".") -> dict:
+@_tool(name="roam_missing_index", description="Queries on non-indexed columns (slow query risk).")
+def roam_missing_index(table: str = "", confidence: str = "medium", root: str = ".") -> dict:
     """Find queries on non-indexed columns (potential slow queries).
 
     WHEN TO USE: to detect queries that will table-scan instead of using
@@ -3694,10 +4024,11 @@ def roam_missing_index(table: str = "", confidence: str = "medium",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_orphan_routes",
-       description="Backend routes with no frontend consumer (dead endpoints).")
-def roam_orphan_routes(limit: int = 50, confidence: str = "medium",
-                       root: str = ".") -> dict:
+@_tool(
+    name="roam_orphan_routes",
+    description="Backend routes with no frontend consumer (dead endpoints).",
+)
+def roam_orphan_routes(limit: int = 50, confidence: str = "medium", root: str = ".") -> dict:
     """Detect backend routes with no frontend consumer (dead endpoints).
 
     WHEN TO USE: to find API endpoints defined but never called. Parses
@@ -3721,10 +4052,11 @@ def roam_orphan_routes(limit: int = 50, confidence: str = "medium",
     return _run_roam(args, root)
 
 
-@_tool(name="roam_migration_safety",
-       description="Non-idempotent database migrations (unsafe for re-run).")
-def roam_migration_safety(limit: int = 50, include_archive: bool = False,
-                          root: str = ".") -> dict:
+@_tool(
+    name="roam_migration_safety",
+    description="Non-idempotent database migrations (unsafe for re-run).",
+)
+def roam_migration_safety(limit: int = 50, include_archive: bool = False, root: str = ".") -> dict:
     """Detect non-idempotent database migrations (unsafe for re-run).
 
     WHEN TO USE: to find migrations that will fail or corrupt data if run
@@ -3749,10 +4081,8 @@ def roam_migration_safety(limit: int = 50, include_archive: bool = False,
     return _run_roam(args, root)
 
 
-@_tool(name="roam_api_drift",
-       description="Mismatches between backend models and frontend interfaces.")
-def roam_api_drift(model: str = "", confidence: str = "medium",
-                   root: str = ".") -> dict:
+@_tool(name="roam_api_drift", description="Mismatches between backend models and frontend interfaces.")
+def roam_api_drift(model: str = "", confidence: str = "medium", root: str = ".") -> dict:
     """Detect mismatches between backend models and frontend interfaces.
 
     WHEN TO USE: to find drift between PHP $fillable/$appends and
@@ -3825,13 +4155,18 @@ def roam_ai_ratio(since: int = 90, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_syntax_check",
-       description="Tree-sitter syntax validation. Finds ERROR/MISSING AST nodes. No index needed.",
-       output_schema=_make_schema(
-           {"total_files": {"type": "integer"}, "total_errors": {"type": "integer"},
-            "clean": {"type": "boolean"}},
-           files={"type": "array", "items": {"type": "object"}},
-       ))
+@_tool(
+    name="roam_syntax_check",
+    description="Tree-sitter syntax validation. Finds ERROR/MISSING AST nodes. No index needed.",
+    output_schema=_make_schema(
+        {
+            "total_files": {"type": "integer"},
+            "total_errors": {"type": "integer"},
+            "clean": {"type": "boolean"},
+        },
+        files={"type": "array", "items": {"type": "object"}},
+    ),
+)
 def roam_syntax_check(paths: str = "", changed: bool = False, root: str = ".") -> dict:
     """Check files for tree-sitter syntax errors (ERROR/MISSING AST nodes).
 
@@ -3862,21 +4197,30 @@ def roam_syntax_check(paths: str = "", changed: bool = False, root: str = ".") -
     return _run_roam(args, root)
 
 
-@_tool(name="roam_doctor",
-       description="Setup diagnostics: Python version, tree-sitter, git, index existence, freshness, SQLite.",
-       output_schema=_make_schema(
-           {"total": {"type": "integer"}, "passed": {"type": "integer"},
-            "failed": {"type": "integer"}, "all_passed": {"type": "boolean"}},
-           checks={"type": "array", "items": {
-               "type": "object",
-               "properties": {
-                   "name": {"type": "string"},
-                   "passed": {"type": "boolean"},
-                   "detail": {"type": "string"},
-               },
-           }},
-           failed_checks={"type": "array", "items": {"type": "object"}},
-       ))
+@_tool(
+    name="roam_doctor",
+    description="Setup diagnostics: Python version, tree-sitter, git, index existence, freshness, SQLite.",
+    output_schema=_make_schema(
+        {
+            "total": {"type": "integer"},
+            "passed": {"type": "integer"},
+            "failed": {"type": "integer"},
+            "all_passed": {"type": "boolean"},
+        },
+        checks={
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "passed": {"type": "boolean"},
+                    "detail": {"type": "string"},
+                },
+            },
+        },
+        failed_checks={"type": "array", "items": {"type": "object"}},
+    ),
+)
 def roam_doctor(root: str = ".") -> dict:
     """Diagnose environment setup: Python, dependencies, index state.
 
@@ -3891,8 +4235,10 @@ def roam_doctor(root: str = ".") -> dict:
     return _run_roam(["doctor"], root)
 
 
-@_tool(name="roam_codeowners",
-       description="CODEOWNERS coverage, ownership distribution, unowned files, drift detection.")
+@_tool(
+    name="roam_codeowners",
+    description="CODEOWNERS coverage, ownership distribution, unowned files, drift detection.",
+)
 def roam_codeowners(unowned: bool = False, owner: str = "", root: str = ".") -> dict:
     """Analyze CODEOWNERS coverage, ownership distribution, and unowned files.
 
@@ -3920,8 +4266,10 @@ def roam_codeowners(unowned: bool = False, owner: str = "", root: str = ".") -> 
     return _run_roam(args, root)
 
 
-@_tool(name="roam_drift",
-       description="Ownership drift detection: declared CODEOWNERS vs actual time-decayed contributors.")
+@_tool(
+    name="roam_drift",
+    description="Ownership drift detection: declared CODEOWNERS vs actual time-decayed contributors.",
+)
 def roam_drift(threshold: float = 0.5, root: str = ".") -> dict:
     """Detect ownership drift using time-decayed blame scoring.
 
@@ -3942,8 +4290,10 @@ def roam_drift(threshold: float = 0.5, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_dev_profile",
-       description="Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection.")
+@_tool(
+    name="roam_dev_profile",
+    description="Developer behavioral profiling: commit time patterns, change scatter (Gini), burst detection.",
+)
 def roam_dev_profile(author: str = "", days: int = 90, limit: int = 20, root: str = ".") -> dict:
     """Profile developer commit behavior for PR risk scoring.
 
@@ -3973,8 +4323,10 @@ def roam_dev_profile(author: str = "", days: int = 90, limit: int = 20, root: st
     return _run_roam(args, root)
 
 
-@_tool(name="roam_partition",
-       description="Multi-agent work partitioning: split codebase into independent work zones.")
+@_tool(
+    name="roam_partition",
+    description="Multi-agent work partitioning: split codebase into independent work zones.",
+)
 def roam_partition(n_agents: int = 4, output_format: str = "text", root: str = ".") -> dict:
     """Partition codebase into independent work zones for parallel agents.
 
@@ -3999,12 +4351,11 @@ def roam_partition(n_agents: int = 4, output_format: str = "text", root: str = "
     return _run_roam(args, root)
 
 
-
-
-@_tool(name="roam_spectral",
-       description="Spectral bisection: Fiedler vector partition tree and modularity gap.")
-def roam_spectral(depth: int = 3, compare: bool = False, gap_only: bool = False,
-                  k: int = 0, root: str = ".") -> dict:
+@_tool(
+    name="roam_spectral",
+    description="Spectral bisection: Fiedler vector partition tree and modularity gap.",
+)
+def roam_spectral(depth: int = 3, compare: bool = False, gap_only: bool = False, k: int = 0, root: str = ".") -> dict:
     """Spectral bisection using the Fiedler vector as an alternative to Louvain.
 
     Parameters
@@ -4031,8 +4382,11 @@ def roam_spectral(depth: int = 3, compare: bool = False, gap_only: bool = False,
         args.extend(["--k", str(k)])
     return _run_roam(args, root)
 
-@_tool(name="roam_affected",
-       description="Monorepo impact analysis: find all affected packages/modules from changes.")
+
+@_tool(
+    name="roam_affected",
+    description="Monorepo impact analysis: find all affected packages/modules from changes.",
+)
 def roam_affected(base: str = "HEAD~1", depth: int = 3, changed: str = "", root: str = ".") -> dict:
     """Analyze which packages/modules are affected by recent changes.
 
@@ -4059,8 +4413,10 @@ def roam_affected(base: str = "HEAD~1", depth: int = 3, changed: str = "", root:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_semantic_diff",
-       description="Structural change summary: what symbols were added/removed/modified.")
+@_tool(
+    name="roam_semantic_diff",
+    description="Structural change summary: what symbols were added/removed/modified.",
+)
 def roam_semantic_diff(base: str = "HEAD~1", root: str = ".") -> dict:
     """Produce a semantic diff showing structural changes between commits.
 
@@ -4081,8 +4437,10 @@ def roam_semantic_diff(base: str = "HEAD~1", root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_trends",
-       description="Historical metric tracking: record and query health metric trends over time.")
+@_tool(
+    name="roam_trends",
+    description="Historical metric tracking: record and query health metric trends over time.",
+)
 def roam_trends(record: bool = False, days: int = 30, metric: str = "", root: str = ".") -> dict:
     """Track and query health metric trends over time.
 
@@ -4113,11 +4471,13 @@ def roam_trends(record: bool = False, days: int = 30, metric: str = "", root: st
     return _run_roam(args, root)
 
 
-@_tool(name="roam_reset",
-       description="Delete index DB and rebuild from scratch. Requires force=True. Recovery for corrupted indexes.",
-       output_schema=_make_schema(
-           {"removed": {"type": "boolean"}, "db_path": {"type": "string"}},
-       ))
+@_tool(
+    name="roam_reset",
+    description="Delete index DB and rebuild from scratch. Requires force=True. Recovery for corrupted indexes.",
+    output_schema=_make_schema(
+        {"removed": {"type": "boolean"}, "db_path": {"type": "string"}},
+    ),
+)
 def roam_reset(force: bool = False, root: str = ".") -> dict:
     """Delete the roam index DB and rebuild from scratch.
 
@@ -4143,13 +4503,18 @@ def roam_reset(force: bool = False, root: str = ".") -> dict:
     return _run_roam(args, root)
 
 
-@_tool(name="roam_clean",
-       description="Remove orphaned index entries (files deleted from disk) without full rebuild.",
-       output_schema=_make_schema(
-           {"files_removed": {"type": "integer"}, "symbols_removed": {"type": "integer"},
-            "edges_removed": {"type": "integer"}},
-           orphaned_paths={"type": "array", "items": {"type": "string"}},
-       ))
+@_tool(
+    name="roam_clean",
+    description="Remove orphaned index entries (files deleted from disk) without full rebuild.",
+    output_schema=_make_schema(
+        {
+            "files_removed": {"type": "integer"},
+            "symbols_removed": {"type": "integer"},
+            "edges_removed": {"type": "integer"},
+        },
+        orphaned_paths={"type": "array", "items": {"type": "string"}},
+    ),
+)
 def roam_clean(root: str = ".") -> dict:
     """Remove stale/orphaned entries from the index without a full rebuild.
 
@@ -4173,18 +4538,23 @@ def roam_clean(root: str = ".") -> dict:
 
 
 @click.command()
-@click.option('--transport', type=click.Choice(['stdio', 'sse', 'streamable-http']), default='stdio',
-              help='transport protocol (default: stdio)')
-@click.option('--host', default='127.0.0.1', help='host for network transports')
-@click.option('--port', type=int, default=8000, help='port for network transports')
-@click.option('--no-auto-index', is_flag=True, help='skip automatic index freshness check')
-@click.option('--list-tools', is_flag=True, help='list registered tools and exit')
-@click.option('--list-tools-json', is_flag=True,
-              help='list registered tools with metadata as JSON and exit')
-@click.option('--compat-profile',
-              type=click.Choice(['all', 'claude', 'codex', 'gemini', 'copilot', 'vscode', 'cursor']),
-              default=None,
-              help='emit client compatibility profile JSON and exit')
+@click.option(
+    "--transport",
+    type=click.Choice(["stdio", "sse", "streamable-http"]),
+    default="stdio",
+    help="transport protocol (default: stdio)",
+)
+@click.option("--host", default="127.0.0.1", help="host for network transports")
+@click.option("--port", type=int, default=8000, help="port for network transports")
+@click.option("--no-auto-index", is_flag=True, help="skip automatic index freshness check")
+@click.option("--list-tools", is_flag=True, help="list registered tools and exit")
+@click.option("--list-tools-json", is_flag=True, help="list registered tools with metadata as JSON and exit")
+@click.option(
+    "--compat-profile",
+    type=click.Choice(["all", "claude", "codex", "gemini", "copilot", "vscode", "cursor"]),
+    default=None,
+    help="emit client compatibility profile JSON and exit",
+)
 def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, compat_profile):
     """Start the roam MCP server.
 
@@ -4217,13 +4587,13 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
 
     if mcp is None:
         click.echo(
-            "error: fastmcp is required for the MCP server.\n"
-            "install it with:  pip install roam-code[mcp]",
+            "error: fastmcp is required for the MCP server.\ninstall it with:  pip install roam-code[mcp]",
             err=True,
         )
         raise SystemExit(1)
 
     if list_tools_json:
+
         async def _collect_tools():
             return await mcp.list_tools()
 
@@ -4233,13 +4603,15 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
             ann = tool.annotations.model_dump(exclude_none=True) if tool.annotations else {}
             execution = tool.execution.model_dump(exclude_none=True) if tool.execution else {}
             meta = dict(tool.meta or {})
-            payload_tools.append({
-                "name": tool.name,
-                "title": tool.title,
-                "description": tool.description,
-                "annotations": ann,
-                "task_support": execution.get("taskSupport") or meta.get("taskSupport"),
-            })
+            payload_tools.append(
+                {
+                    "name": tool.name,
+                    "title": tool.title,
+                    "description": tool.description,
+                    "annotations": ann,
+                    "task_support": execution.get("taskSupport") or meta.get("taskSupport"),
+                }
+            )
         payload = {
             "server": "roam-code",
             "preset": _ACTIVE_PRESET,
@@ -4282,6 +4654,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
 
 if mcp is not None:
     try:
+
         @mcp.prompt(name="roam-onboard", description="Get started with a new codebase")
         def prompt_onboard() -> str:
             return (
@@ -4417,8 +4790,5 @@ else:
 
 if __name__ == "__main__":
     if mcp is None:
-        raise SystemExit(
-            "fastmcp is required for the MCP server.\n"
-            "Install it with:  pip install roam-code[mcp]"
-        )
+        raise SystemExit("fastmcp is required for the MCP server.\nInstall it with:  pip install roam-code[mcp]")
     mcp.run()

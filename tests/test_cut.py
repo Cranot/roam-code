@@ -25,12 +25,11 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    index_in_process,
     git_init,
+    index_in_process,
 )
 
 from roam.commands.cmd_cut import cut
-
 
 # ===========================================================================
 # Helper: invoke `cut` directly (avoids needing cli.py registration)
@@ -69,17 +68,11 @@ def run_cut(runner, project, extra_args=None, json_mode=False):
 
 def parse_json(result, command=None):
     """Parse JSON output from a result, asserting exit_code == 0."""
-    assert result.exit_code == 0, (
-        f"Command {command or 'cut'} failed (exit {result.exit_code}):\n"
-        f"{result.output}"
-    )
+    assert result.exit_code == 0, f"Command {command or 'cut'} failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from {command or 'cut'}: {e}\n"
-            f"Output was:\n{result.output[:500]}"
-        )
+        pytest.fail(f"Invalid JSON from {command or 'cut'}: {e}\nOutput was:\n{result.output[:500]}")
 
 
 def check_envelope(data, command="cut"):
@@ -166,10 +159,7 @@ def empty_project(tmp_path):
     proj = tmp_path / "empty_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "main.py").write_text(
-        "def main():\n"
-        "    print('hello')\n"
-    )
+    (proj / "main.py").write_text("def main():\n    print('hello')\n")
     git_init(proj)
     old = os.getcwd()
     os.chdir(str(proj))
@@ -194,9 +184,7 @@ class TestCutBasic:
     def test_cut_runs(self, runner, cut_project):
         """Command exits with code 0."""
         result = run_cut(runner, cut_project)
-        assert result.exit_code == 0, (
-            f"roam cut failed (exit {result.exit_code}):\n{result.output}"
-        )
+        assert result.exit_code == 0, f"roam cut failed (exit {result.exit_code}):\n{result.output}"
 
     def test_cut_verdict_line(self, runner, cut_project):
         """Text output starts with VERDICT:."""
@@ -265,13 +253,9 @@ class TestCutBoundaries:
         data = parse_json(result, command="cut")
         for b in data["boundaries"]:
             if b["thinness"] < 0.4:
-                assert b["fragile"] is True, (
-                    f"Boundary with thinness {b['thinness']} should be fragile"
-                )
+                assert b["fragile"] is True, f"Boundary with thinness {b['thinness']} should be fragile"
             else:
-                assert b["fragile"] is False, (
-                    f"Boundary with thinness {b['thinness']} should not be fragile"
-                )
+                assert b["fragile"] is False, f"Boundary with thinness {b['thinness']} should not be fragile"
 
 
 class TestCutLeakEdges:
@@ -323,7 +307,8 @@ class TestCutFilters:
         label_b = b["cluster_b"].split("/")[0].split("+")[0].strip()
 
         result = run_cut(
-            runner, cut_project,
+            runner,
+            cut_project,
             extra_args=["--between", label_a, label_b],
             json_mode=True,
         )
@@ -366,7 +351,8 @@ class TestCutEdgeCases:
     def test_cut_between_no_match(self, runner, cut_project):
         """--between with unrecognized names returns zero boundaries gracefully."""
         result = run_cut(
-            runner, cut_project,
+            runner,
+            cut_project,
             extra_args=["--between", "zzz_nonexistent_x", "zzz_nonexistent_y"],
             json_mode=True,
         )

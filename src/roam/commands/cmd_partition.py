@@ -8,10 +8,9 @@ from collections import Counter, defaultdict
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import to_json, json_envelope, abbrev_kind
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Role classification heuristics
@@ -270,9 +269,7 @@ def compute_partition_manifest(
         file_path_to_id[fr["path"].replace("\\", "/")] = fr["id"]
 
     cochange_map: dict[tuple[int, int], int] = {}
-    cochange_rows = conn.execute(
-        "SELECT file_id_a, file_id_b, cochange_count FROM git_cochange"
-    ).fetchall()
+    cochange_rows = conn.execute("SELECT file_id_a, file_id_b, cochange_count FROM git_cochange").fetchall()
     for cr in cochange_rows:
         cochange_map[(cr["file_id_a"], cr["file_id_b"])] = cr["cochange_count"]
         cochange_map[(cr["file_id_b"], cr["file_id_a"])] = cr["cochange_count"]
@@ -313,19 +310,18 @@ def compute_partition_manifest(
         )
         for n in ranked_nodes[:5]:
             m = node_meta[n]
-            key_symbols.append({
-                "name": m["name"],
-                "kind": abbrev_kind(m["kind"]),
-                "pagerank": round(m["pagerank"], 4),
-                "file": m["path"],
-            })
+            key_symbols.append(
+                {
+                    "name": m["name"],
+                    "kind": abbrev_kind(m["kind"]),
+                    "pagerank": round(m["pagerank"], 4),
+                    "file": m["path"],
+                }
+            )
 
         # Test coverage: ratio of symbols that have a test-role file in this partition
         # or whose name appears in a test file within the partition
-        total_source_symbols = sum(
-            1 for n in nodes
-            if n in node_meta and node_meta[n]["file_role"] != "test"
-        )
+        total_source_symbols = sum(1 for n in nodes if n in node_meta and node_meta[n]["file_role"] != "test")
         test_names = set()
         for n in nodes:
             meta = node_meta.get(n)
@@ -342,11 +338,7 @@ def compute_partition_manifest(
                     elif f"test_{meta['name'].lower()}" in test_names:
                         symbols_with_tests += 1
 
-        test_coverage = (
-            round(symbols_with_tests / total_source_symbols, 2)
-            if total_source_symbols > 0
-            else 0.0
-        )
+        test_coverage = round(symbols_with_tests / total_source_symbols, 2) if total_source_symbols > 0 else 0.0
 
         # Cross-partition edge count for this partition
         cross_edges = 0
@@ -361,9 +353,7 @@ def compute_partition_manifest(
         # Co-change conflict score: files in this partition that co-change
         # with files in OTHER partitions
         cochange_score = 0
-        partition_file_ids = {
-            file_path_to_id[f] for f in files_set if f in file_path_to_id
-        }
+        partition_file_ids = {file_path_to_id[f] for f in files_set if f in file_path_to_id}
         for fid_a in partition_file_ids:
             for fid_b, count in cochange_map.items():
                 if fid_b[0] == fid_a:
@@ -413,21 +403,23 @@ def compute_partition_manifest(
 
         all_partition_files.append(files_set)
 
-        result_partitions.append({
-            "id": idx + 1,
-            "label": label,
-            "role": role,
-            "files": sorted(files_set),
-            "file_count": len(files_set),
-            "symbol_count": len(nodes),
-            "key_symbols": key_symbols,
-            "complexity": round(total_complexity, 1),
-            "churn": partition_churn,
-            "test_coverage": test_coverage,
-            "conflict_risk": conflict_risk,
-            "cross_partition_edges": cross_edges,
-            "cochange_score": cochange_score,
-        })
+        result_partitions.append(
+            {
+                "id": idx + 1,
+                "label": label,
+                "role": role,
+                "files": sorted(files_set),
+                "file_count": len(files_set),
+                "symbol_count": len(nodes),
+                "key_symbols": key_symbols,
+                "complexity": round(total_complexity, 1),
+                "churn": partition_churn,
+                "test_coverage": test_coverage,
+                "conflict_risk": conflict_risk,
+                "cross_partition_edges": cross_edges,
+                "cochange_score": cochange_score,
+            }
+        )
 
     # -- 6. Balance partitions by complexity → assign to agents ---------------
     # Sort partitions by complexity descending, assign round-robin to balance
@@ -463,13 +455,15 @@ def compute_partition_manifest(
     for (from_id, to_id), edge_descs in sorted(dep_counter.items()):
         # Find shared files
         shared = all_partition_files[from_id - 1] & all_partition_files[to_id - 1]
-        dependencies.append({
-            "from": from_id,
-            "to": to_id,
-            "edge_count": len(edge_descs),
-            "sample_edges": edge_descs[:5],
-            "shared_files": sorted(shared),
-        })
+        dependencies.append(
+            {
+                "from": from_id,
+                "to": to_id,
+                "edge_count": len(edge_descs),
+                "sample_edges": edge_descs[:5],
+                "shared_files": sorted(shared),
+            }
+        )
 
     # -- 8. Conflict hotspots ------------------------------------------------
     # Files referenced by symbols in multiple partitions
@@ -482,11 +476,13 @@ def compute_partition_manifest(
     conflict_hotspots = []
     for fpath, part_ids in sorted(file_partitions.items()):
         if len(part_ids) >= 2:
-            conflict_hotspots.append({
-                "file": fpath,
-                "partition_count": len(part_ids),
-                "partitions": sorted(part_ids),
-            })
+            conflict_hotspots.append(
+                {
+                    "file": fpath,
+                    "partition_count": len(part_ids),
+                    "partitions": sorted(part_ids),
+                }
+            )
     conflict_hotspots.sort(key=lambda h: -h["partition_count"])
     conflict_hotspots = conflict_hotspots[:20]  # cap
 
@@ -497,8 +493,7 @@ def compute_partition_manifest(
     merge_order = compute_merge_order(G, partitions)
 
     verdict = (
-        f"{len(result_partitions)} partitions for {n_agents} agents, "
-        f"conflict probability {int(overall_cp * 100)}%"
+        f"{len(result_partitions)} partitions for {n_agents} agents, conflict probability {int(overall_cp * 100)}%"
     )
 
     return {
@@ -542,19 +537,21 @@ def _to_claude_teams(manifest: dict) -> dict:
     """
     agents = []
     for p in manifest["partitions"]:
-        agents.append({
-            "agent_id": p.get("agent", f"Worker-{p['id']}"),
-            "role": p["role"],
-            "scope": {
-                "write_files": p["files"],
-                "read_only_deps": [],  # populated below
-            },
-            "constraints": {
-                "conflict_risk": p["conflict_risk"],
-                "estimated_complexity": p["complexity"],
-                "test_coverage": p["test_coverage"],
-            },
-        })
+        agents.append(
+            {
+                "agent_id": p.get("agent", f"Worker-{p['id']}"),
+                "role": p["role"],
+                "scope": {
+                    "write_files": p["files"],
+                    "read_only_deps": [],  # populated below
+                },
+                "constraints": {
+                    "conflict_risk": p["conflict_risk"],
+                    "estimated_complexity": p["complexity"],
+                    "test_coverage": p["test_coverage"],
+                },
+            }
+        )
 
     # Fill read-only deps from dependencies
     part_id_to_idx = {p["id"]: i for i, p in enumerate(manifest["partitions"])}
@@ -589,11 +586,16 @@ def _to_claude_teams(manifest: dict) -> dict:
 
 @click.command("partition")
 @click.option(
-    "--agents", "n_agents", type=int, default=None,
+    "--agents",
+    "n_agents",
+    type=int,
+    default=None,
     help="Number of agents (default: auto-detect from cluster count)",
 )
 @click.option(
-    "--format", "output_format", type=click.Choice(["plain", "json", "claude-teams"]),
+    "--format",
+    "output_format",
+    type=click.Choice(["plain", "json", "claude-teams"]),
     default="plain",
     help="Output format: plain (human readable), json, claude-teams",
 )
@@ -615,33 +617,43 @@ def partition(ctx, n_agents, output_format):
     if output_format == "claude-teams":
         teams_data = _to_claude_teams(manifest)
         if json_mode:
-            click.echo(to_json(json_envelope("partition",
-                summary={
-                    "verdict": manifest["verdict"],
-                    "total_partitions": manifest["total_partitions"],
-                    "overall_conflict_probability": manifest["overall_conflict_probability"],
-                },
-                format="claude-teams",
-                **teams_data,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "partition",
+                        summary={
+                            "verdict": manifest["verdict"],
+                            "total_partitions": manifest["total_partitions"],
+                            "overall_conflict_probability": manifest["overall_conflict_probability"],
+                        },
+                        format="claude-teams",
+                        **teams_data,
+                    )
+                )
+            )
         else:
             click.echo(to_json(teams_data))
         return
 
     # -- JSON format ---------------------------------------------------------
     if json_mode or output_format == "json":
-        click.echo(to_json(json_envelope("partition",
-            summary={
-                "verdict": manifest["verdict"],
-                "total_partitions": manifest["total_partitions"],
-                "n_agents": manifest["n_agents"],
-                "overall_conflict_probability": manifest["overall_conflict_probability"],
-            },
-            partitions=manifest["partitions"],
-            dependencies=manifest["dependencies"],
-            conflict_hotspots=manifest["conflict_hotspots"],
-            merge_order=manifest["merge_order"],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "partition",
+                    summary={
+                        "verdict": manifest["verdict"],
+                        "total_partitions": manifest["total_partitions"],
+                        "n_agents": manifest["n_agents"],
+                        "overall_conflict_probability": manifest["overall_conflict_probability"],
+                    },
+                    partitions=manifest["partitions"],
+                    dependencies=manifest["dependencies"],
+                    conflict_hotspots=manifest["conflict_hotspots"],
+                    merge_order=manifest["merge_order"],
+                )
+            )
+        )
         return
 
     # -- Plain text format ---------------------------------------------------
@@ -650,9 +662,7 @@ def partition(ctx, n_agents, output_format):
 
     for p in manifest["partitions"]:
         agent_label = p.get("agent", f"Worker-{p['id']}")
-        click.echo(
-            f'PARTITION {p["id"]} -- "{p["role"]}" (Agent: {agent_label})'
-        )
+        click.echo(f'PARTITION {p["id"]} -- "{p["role"]}" (Agent: {agent_label})')
         diff_label = p.get("difficulty_label", "?")
         diff_score = p.get("difficulty_score", 0)
         click.echo(
@@ -662,9 +672,7 @@ def partition(ctx, n_agents, output_format):
             f"Churn: {p.get('churn', 0)} | "
             f"Difficulty: {diff_label} ({diff_score})"
         )
-        click.echo(
-            f"  Test coverage: {int(p['test_coverage'] * 100)}%"
-        )
+        click.echo(f"  Test coverage: {int(p['test_coverage'] * 100)}%")
         # Key files (top 3)
         if p["files"]:
             top_files = p["files"][:3]
@@ -676,14 +684,9 @@ def partition(ctx, n_agents, output_format):
         if p["key_symbols"]:
             sym_strs = []
             for s in p["key_symbols"][:3]:
-                sym_strs.append(
-                    f"{s['kind']} {s['name']} (PageRank {s['pagerank']:.4f})"
-                )
+                sym_strs.append(f"{s['kind']} {s['name']} (PageRank {s['pagerank']:.4f})")
             click.echo(f"  Key symbols: {', '.join(sym_strs)}")
-        click.echo(
-            f"  Conflict risk: {p['conflict_risk']} "
-            f"({p['cross_partition_edges']} cross-partition edges)"
-        )
+        click.echo(f"  Conflict risk: {p['conflict_risk']} ({p['cross_partition_edges']} cross-partition edges)")
         click.echo()
 
     # Cross-partition dependencies
@@ -695,21 +698,14 @@ def partition(ctx, n_agents, output_format):
                 sample = f": {dep['sample_edges'][0]}"
                 if len(dep["sample_edges"]) > 1:
                     sample += ", ..."
-            click.echo(
-                f"  Partition {dep['from']} -> Partition {dep['to']} "
-                f"({dep['edge_count']} edges{sample})"
-            )
+            click.echo(f"  Partition {dep['from']} -> Partition {dep['to']} ({dep['edge_count']} edges{sample})")
         click.echo()
 
     # Conflict hotspots
     if manifest["conflict_hotspots"]:
         click.echo("CONFLICT HOTSPOTS:")
         for h in manifest["conflict_hotspots"][:10]:
-            click.echo(
-                f"  {h['file']} -- referenced by "
-                f"{h['partition_count']} partitions "
-                f"(assign to Coordinator)"
-            )
+            click.echo(f"  {h['file']} -- referenced by {h['partition_count']} partitions (assign to Coordinator)")
         click.echo()
 
     # Merge order

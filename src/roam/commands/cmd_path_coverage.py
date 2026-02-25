@@ -7,15 +7,15 @@ from collections import deque
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import is_test_file
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Entry point discovery
 # ---------------------------------------------------------------------------
+
 
 def _find_entry_points(conn, from_pattern):
     """Find symbols with outgoing edges but no incoming edges (call graph roots).
@@ -37,19 +37,22 @@ def _find_entry_points(conn, from_pattern):
     for r in rows:
         if from_pattern and not fnmatch.fnmatch(r["file_path"], from_pattern):
             continue
-        entries.append({
-            "id": r["id"],
-            "name": r["name"],
-            "kind": r["kind"],
-            "file": r["file_path"],
-            "line": r["line_start"] or 0,
-        })
+        entries.append(
+            {
+                "id": r["id"],
+                "name": r["name"],
+                "kind": r["kind"],
+                "file": r["file_path"],
+                "line": r["line_start"] or 0,
+            }
+        )
     return entries
 
 
 # ---------------------------------------------------------------------------
 # Sink discovery
 # ---------------------------------------------------------------------------
+
 
 def _find_sinks_from_effects(conn, to_pattern):
     """Find sink symbols from symbol_effects table (writes_db, network, filesystem)."""
@@ -115,6 +118,7 @@ def _find_sinks_fallback(conn, to_pattern):
 # BFS path finding
 # ---------------------------------------------------------------------------
 
+
 def _find_paths(conn, entry_id, sink_ids, max_depth):
     """BFS from entry_id, return list of paths (as node ID lists) that reach any sink."""
     paths = []
@@ -147,17 +151,14 @@ def _find_paths(conn, entry_id, sink_ids, max_depth):
 # Test coverage check
 # ---------------------------------------------------------------------------
 
+
 def _build_tested_set(conn):
     """Return a set of symbol IDs that are directly called by test code."""
     tested = set()
 
     # Symbols that live in test files are inherently test symbols
-    test_file_rows = conn.execute(
-        "SELECT f.id, f.path FROM files f"
-    ).fetchall()
-    test_file_ids = {
-        r["id"] for r in test_file_rows if is_test_file(r["path"])
-    }
+    test_file_rows = conn.execute("SELECT f.id, f.path FROM files f").fetchall()
+    test_file_ids = {r["id"] for r in test_file_rows if is_test_file(r["path"])}
 
     if not test_file_ids:
         return tested
@@ -165,10 +166,7 @@ def _build_tested_set(conn):
     # All symbols that are targets of edges originating from test symbols
     for file_id in test_file_ids:
         rows = conn.execute(
-            "SELECT e.target_id "
-            "FROM edges e "
-            "JOIN symbols s ON e.source_id = s.id "
-            "WHERE s.file_id = ?",
+            "SELECT e.target_id FROM edges e JOIN symbols s ON e.source_id = s.id WHERE s.file_id = ?",
             (file_id,),
         ).fetchall()
         for r in rows:
@@ -221,6 +219,7 @@ def _classify_risk(path_ids, tested_set, sink_effects):
 # ---------------------------------------------------------------------------
 # Greedy set cover: optimal test insertion points
 # ---------------------------------------------------------------------------
+
 
 def _suggest_test_points(untested_paths, tested_set):
     """Return an ordered list of symbols to test for maximum path coverage.
@@ -279,13 +278,16 @@ def _suggest_test_points(untested_paths, tested_set):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("path-coverage")
-@click.option("--from", "from_pattern", default=None,
-              help="Glob to filter entry points by file path (e.g. 'api/*').")
-@click.option("--to", "to_pattern", default=None,
-              help="Glob to filter sinks by file path (e.g. 'db*').")
-@click.option("--max-depth", default=8, show_default=True,
-              help="Maximum BFS depth for path search.")
+@click.option(
+    "--from",
+    "from_pattern",
+    default=None,
+    help="Glob to filter entry points by file path (e.g. 'api/*').",
+)
+@click.option("--to", "to_pattern", default=None, help="Glob to filter sinks by file path (e.g. 'db*').")
+@click.option("--max-depth", default=8, show_default=True, help="Maximum BFS depth for path search.")
 @click.pass_context
 def path_coverage(ctx, from_pattern, to_pattern, max_depth):
     """Find critical untested paths from entry points to sensitive sinks.
@@ -391,23 +393,27 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             nodes = []
             for nid in path_ids:
                 info = sym_info.get(nid, {})
-                nodes.append({
-                    "id": nid,
-                    "name": info.get("name", "?"),
-                    "kind": info.get("kind", "?"),
-                    "file": info.get("file", "?"),
-                    "line": info.get("line", 0),
-                    "tested": nid in tested_set,
-                })
+                nodes.append(
+                    {
+                        "id": nid,
+                        "name": info.get("name", "?"),
+                        "kind": info.get("kind", "?"),
+                        "file": info.get("file", "?"),
+                        "line": info.get("line", 0),
+                        "tested": nid in tested_set,
+                    }
+                )
 
-            classified_paths.append({
-                "risk": risk,
-                "nodes": nodes,
-                "tested_count": tested_count,
-                "total_count": len(path_ids),
-                "sink_effect": sink_effect,
-                "path_ids": path_ids,
-            })
+            classified_paths.append(
+                {
+                    "risk": risk,
+                    "nodes": nodes,
+                    "tested_count": tested_count,
+                    "total_count": len(path_ids),
+                    "sink_effect": sink_effect,
+                    "path_ids": path_ids,
+                }
+            )
 
             if tested_count == 0:
                 untested_paths_for_cover.append(path_ids)
@@ -422,12 +428,14 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
         suggestions = []
         for nid, paths_covered in suggestion_ids[:10]:
             info = sym_info.get(nid, {})
-            suggestions.append({
-                "symbol": info.get("name", "?"),
-                "file": info.get("file", "?"),
-                "line": info.get("line", 0),
-                "paths_covered": paths_covered,
-            })
+            suggestions.append(
+                {
+                    "symbol": info.get("name", "?"),
+                    "file": info.get("file", "?"),
+                    "line": info.get("line", 0),
+                    "paths_covered": paths_covered,
+                }
+            )
 
         # --- Summary counts ---
         total_paths = len(classified_paths)
@@ -440,14 +448,10 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
         critical_high = counts["CRITICAL"] + counts["HIGH"]
         if counts["CRITICAL"] > 0:
             verdict = (
-                f"{counts['CRITICAL']} critical path{'s' if counts['CRITICAL'] != 1 else ''} "
-                f"with zero test coverage"
+                f"{counts['CRITICAL']} critical path{'s' if counts['CRITICAL'] != 1 else ''} with zero test coverage"
             )
         elif counts["HIGH"] > 0:
-            verdict = (
-                f"{counts['HIGH']} high-risk path{'s' if counts['HIGH'] != 1 else ''} "
-                f"with zero test coverage"
-            )
+            verdict = f"{counts['HIGH']} high-risk path{'s' if counts['HIGH'] != 1 else ''} with zero test coverage"
         elif critical_high == 0 and total_paths > 0:
             verdict = f"{total_paths} path{'s' if total_paths != 1 else ''} found, all partially tested"
         else:
@@ -460,20 +464,24 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             for cp in classified_paths:
                 paths_clean.append({k: v for k, v in cp.items() if k != "path_ids"})
 
-            click.echo(to_json(json_envelope(
-                "path-coverage",
-                summary={
-                    "verdict": verdict,
-                    "total_paths": total_paths,
-                    "untested_paths": untested_paths_count,
-                    "critical": counts["CRITICAL"],
-                    "high": counts["HIGH"],
-                },
-                paths=paths_clean,
-                suggestions=suggestions,
-                entry_points_found=len(entries),
-                sinks_found=len(sink_info),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "path-coverage",
+                        summary={
+                            "verdict": verdict,
+                            "total_paths": total_paths,
+                            "untested_paths": untested_paths_count,
+                            "critical": counts["CRITICAL"],
+                            "high": counts["HIGH"],
+                        },
+                        paths=paths_clean,
+                        suggestions=suggestions,
+                        entry_points_found=len(entries),
+                        sinks_found=len(sink_info),
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -531,21 +539,25 @@ def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_patter
     verdict = "no critical paths found"
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "path-coverage",
-            summary={
-                "verdict": verdict,
-                "total_paths": 0,
-                "untested_paths": 0,
-                "critical": 0,
-                "high": 0,
-            },
-            paths=[],
-            suggestions=[],
-            entry_points_found=entry_count,
-            sinks_found=sink_count,
-            note=note,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "path-coverage",
+                    summary={
+                        "verdict": verdict,
+                        "total_paths": 0,
+                        "untested_paths": 0,
+                        "critical": 0,
+                        "high": 0,
+                    },
+                    paths=[],
+                    suggestions=[],
+                    entry_points_found=entry_count,
+                    sinks_found=sink_count,
+                    note=note,
+                )
+            )
+        )
     else:
         click.echo(f"VERDICT: {verdict}")
         click.echo()

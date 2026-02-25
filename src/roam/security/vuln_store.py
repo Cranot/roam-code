@@ -6,7 +6,6 @@ import json
 import sqlite3
 from pathlib import Path
 
-
 # ---------------------------------------------------------------------------
 # Schema
 # ---------------------------------------------------------------------------
@@ -15,6 +14,7 @@ from pathlib import Path
 # created by ensure_schema() during open_db().  The helper below is kept for
 # callers that operate on standalone connections (e.g. tests, external tools).
 
+
 def ensure_vuln_table(conn: sqlite3.Connection) -> None:
     """Ensure the vulnerabilities table exists.
 
@@ -22,12 +22,14 @@ def ensure_vuln_table(conn: sqlite3.Connection) -> None:
     source of truth for the table definition.
     """
     from roam.db.schema import SCHEMA_SQL
+
     conn.executescript(SCHEMA_SQL)
 
 
 # ---------------------------------------------------------------------------
 # Symbol matching
 # ---------------------------------------------------------------------------
+
 
 def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[dict]:
     """Try to find symbols that reference or match the vulnerable package.
@@ -50,12 +52,14 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
     for r in rows:
         if r["id"] not in seen_ids:
             seen_ids.add(r["id"])
-            matches.append({
-                "symbol_id": r["id"],
-                "name": r["name"],
-                "qualified_name": r["qualified_name"],
-                "file_path": r["file_path"],
-            })
+            matches.append(
+                {
+                    "symbol_id": r["id"],
+                    "name": r["name"],
+                    "qualified_name": r["qualified_name"],
+                    "file_path": r["file_path"],
+                }
+            )
 
     # Edge-based: look for import edges targeting a symbol whose name matches
     rows = conn.execute(
@@ -71,12 +75,14 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
     for r in rows:
         if r["source_id"] not in seen_ids:
             seen_ids.add(r["source_id"])
-            matches.append({
-                "symbol_id": r["source_id"],
-                "name": r["name"],
-                "qualified_name": r["qualified_name"],
-                "file_path": r["file_path"],
-            })
+            matches.append(
+                {
+                    "symbol_id": r["source_id"],
+                    "name": r["name"],
+                    "qualified_name": r["qualified_name"],
+                    "file_path": r["file_path"],
+                }
+            )
 
     return matches
 
@@ -85,8 +91,15 @@ def match_vuln_to_symbols(conn: sqlite3.Connection, package_name: str) -> list[d
 # Ingest helpers
 # ---------------------------------------------------------------------------
 
-def _insert_vuln(conn: sqlite3.Connection, cve_id: str | None, package_name: str,
-                 severity: str | None, title: str | None, source: str) -> dict:
+
+def _insert_vuln(
+    conn: sqlite3.Connection,
+    cve_id: str | None,
+    package_name: str,
+    severity: str | None,
+    title: str | None,
+    source: str,
+) -> dict:
     """Insert a single vulnerability and attempt symbol matching.
 
     Returns a dict describing the ingested vuln.
@@ -122,6 +135,7 @@ def _load_json(report_path: str) -> object:
 # Format-specific ingesters
 # ---------------------------------------------------------------------------
 
+
 def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
     """Parse npm audit JSON format and ingest vulnerabilities.
 
@@ -153,13 +167,16 @@ def ingest_npm_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                 cves = adv.get("cves", [])
                 if cves:
                     cve_id = cves[0]
-                results.append(_insert_vuln(
-                    conn, cve_id,
-                    adv.get("module_name", "unknown"),
-                    adv.get("severity", "unknown"),
-                    adv.get("title"),
-                    "npm-audit",
-                ))
+                results.append(
+                    _insert_vuln(
+                        conn,
+                        cve_id,
+                        adv.get("module_name", "unknown"),
+                        adv.get("severity", "unknown"),
+                        adv.get("title"),
+                        "npm-audit",
+                    )
+                )
 
     return results
 
@@ -178,24 +195,32 @@ def ingest_pip_audit(conn: sqlite3.Connection, report_path: str) -> list[dict]:
             pkg = entry.get("name", "unknown")
             for vuln in entry.get("vulns", []):
                 cve_id = vuln.get("id") or vuln.get("aliases", [None])[0] if vuln.get("aliases") else vuln.get("id")
-                results.append(_insert_vuln(
-                    conn, cve_id, pkg,
-                    vuln.get("fix_versions", [""])[0] if vuln.get("fix_versions") else "unknown",
-                    vuln.get("description"),
-                    "pip-audit",
-                ))
+                results.append(
+                    _insert_vuln(
+                        conn,
+                        cve_id,
+                        pkg,
+                        vuln.get("fix_versions", [""])[0] if vuln.get("fix_versions") else "unknown",
+                        vuln.get("description"),
+                        "pip-audit",
+                    )
+                )
     # pip-audit may also produce {"dependencies": [...]}
     elif isinstance(data, dict) and "dependencies" in data:
         for entry in data["dependencies"]:
             pkg = entry.get("name", "unknown")
             for vuln in entry.get("vulns", []):
                 cve_id = vuln.get("id")
-                results.append(_insert_vuln(
-                    conn, cve_id, pkg,
-                    vuln.get("severity", "unknown"),
-                    vuln.get("description"),
-                    "pip-audit",
-                ))
+                results.append(
+                    _insert_vuln(
+                        conn,
+                        cve_id,
+                        pkg,
+                        vuln.get("severity", "unknown"),
+                        vuln.get("description"),
+                        "pip-audit",
+                    )
+                )
 
     return results
 
@@ -212,14 +237,16 @@ def ingest_trivy(conn: sqlite3.Connection, report_path: str) -> list[dict]:
     if isinstance(data, dict):
         for result_block in data.get("Results", []):
             for vuln in result_block.get("Vulnerabilities", []):
-                results.append(_insert_vuln(
-                    conn,
-                    vuln.get("VulnerabilityID"),
-                    vuln.get("PkgName", "unknown"),
-                    vuln.get("Severity", "unknown").lower(),
-                    vuln.get("Title"),
-                    "trivy",
-                ))
+                results.append(
+                    _insert_vuln(
+                        conn,
+                        vuln.get("VulnerabilityID"),
+                        vuln.get("PkgName", "unknown"),
+                        vuln.get("Severity", "unknown").lower(),
+                        vuln.get("Title"),
+                        "trivy",
+                    )
+                )
 
     return results
 
@@ -247,11 +274,16 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
                     db_specific = vuln.get("database_specific", {})
                     if db_specific.get("severity"):
                         severity = db_specific["severity"].lower()
-                    results.append(_insert_vuln(
-                        conn, cve_id, pkg_name, severity,
-                        vuln.get("summary"),
-                        "osv",
-                    ))
+                    results.append(
+                        _insert_vuln(
+                            conn,
+                            cve_id,
+                            pkg_name,
+                            severity,
+                            vuln.get("summary"),
+                            "osv",
+                        )
+                    )
     elif isinstance(data, list):
         for vuln in data:
             cve_id = vuln.get("id")
@@ -263,11 +295,16 @@ def ingest_osv(conn: sqlite3.Connection, report_path: str) -> list[dict]:
             db_specific = vuln.get("database_specific", {})
             if db_specific.get("severity"):
                 severity = db_specific["severity"].lower()
-            results.append(_insert_vuln(
-                conn, cve_id, pkg_name, severity,
-                vuln.get("summary"),
-                "osv",
-            ))
+            results.append(
+                _insert_vuln(
+                    conn,
+                    cve_id,
+                    pkg_name,
+                    severity,
+                    vuln.get("summary"),
+                    "osv",
+                )
+            )
 
     return results
 
@@ -283,13 +320,15 @@ def ingest_generic(conn: sqlite3.Connection, report_path: str) -> list[dict]:
 
     if isinstance(data, list):
         for entry in data:
-            results.append(_insert_vuln(
-                conn,
-                entry.get("cve"),
-                entry.get("package", "unknown"),
-                entry.get("severity", "unknown"),
-                entry.get("title"),
-                "generic",
-            ))
+            results.append(
+                _insert_vuln(
+                    conn,
+                    entry.get("cve"),
+                    entry.get("package", "unknown"),
+                    entry.get("severity", "unknown"),
+                    entry.get("title"),
+                    "generic",
+                )
+            )
 
     return results

@@ -18,7 +18,6 @@ from roam.output.formatter import (
     to_json,
 )
 
-
 _CANDIDATES_SQL = """
 SELECT
     s.id,
@@ -275,8 +274,7 @@ def _reasons(
         reasons.append(f"High complexity (CC {cc:.0f}, nesting {nesting})")
     if coupling_n >= 0.6 or coupling >= 10:
         reasons.append(
-            "High coupling "
-            f"(fan-in {int(row.get('in_degree') or 0)}, fan-out {int(row.get('out_degree') or 0)})",
+            f"High coupling (fan-in {int(row.get('in_degree') or 0)}, fan-out {int(row.get('out_degree') or 0)})",
         )
     if churn_n >= 0.6 and churn > 0:
         reasons.append(f"High churn ({churn} changed lines across {commits} commits)")

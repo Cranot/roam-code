@@ -1,6 +1,7 @@
-
 from __future__ import annotations
+
 import os
+
 from .base import LanguageExtractor
 
 
@@ -17,7 +18,7 @@ class JavaScriptExtractor(LanguageExtractor):
 
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
         symbols = []
-        if not hasattr(self, '_pending_inherits'):
+        if not hasattr(self, "_pending_inherits"):
             self._pending_inherits = []
         self._walk_symbols(tree.root_node, source, file_path, symbols, parent_name=None, is_exported=False)
         return symbols
@@ -26,7 +27,7 @@ class JavaScriptExtractor(LanguageExtractor):
         refs = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
         # Collect inheritance refs accumulated during extract_symbols
-        refs.extend(getattr(self, '_pending_inherits', []))
+        refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
 
@@ -78,17 +79,19 @@ class JavaScriptExtractor(LanguageExtractor):
         sig = f"{prefix} {name}({self._params_text(params, source)})"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_class(self, node, source, file_path, symbols, parent_name, is_exported):
         name_node = node.child_by_field_name("name")
@@ -112,43 +115,51 @@ class JavaScriptExtractor(LanguageExtractor):
                         # TS: extends_clause > identifier or type_identifier
                         for exn in sub.children:
                             if exn.type in ("identifier", "type_identifier"):
-                                self._pending_inherits.append(self._make_reference(
-                                    target_name=self.node_text(exn, source),
-                                    kind="inherits",
-                                    line=node.start_point[0] + 1,
-                                    source_name=qualified,
-                                ))
+                                self._pending_inherits.append(
+                                    self._make_reference(
+                                        target_name=self.node_text(exn, source),
+                                        kind="inherits",
+                                        line=node.start_point[0] + 1,
+                                        source_name=qualified,
+                                    )
+                                )
                                 break
                     elif sub.type == "implements_clause":
                         # TS: implements_clause > type_identifier (can be multiple)
                         for imp in sub.children:
                             if imp.type in ("type_identifier", "identifier"):
-                                self._pending_inherits.append(self._make_reference(
-                                    target_name=self.node_text(imp, source),
-                                    kind="implements",
-                                    line=node.start_point[0] + 1,
-                                    source_name=qualified,
-                                ))
+                                self._pending_inherits.append(
+                                    self._make_reference(
+                                        target_name=self.node_text(imp, source),
+                                        kind="implements",
+                                        line=node.start_point[0] + 1,
+                                        source_name=qualified,
+                                    )
+                                )
                     elif sub.type == "identifier":
                         # Plain JS: class_heritage > identifier (no extends_clause wrapper)
-                        self._pending_inherits.append(self._make_reference(
-                            target_name=self.node_text(sub, source),
-                            kind="inherits",
-                            line=node.start_point[0] + 1,
-                            source_name=qualified,
-                        ))
+                        self._pending_inherits.append(
+                            self._make_reference(
+                                target_name=self.node_text(sub, source),
+                                kind="inherits",
+                                line=node.start_point[0] + 1,
+                                source_name=qualified,
+                            )
+                        )
                 break
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="class",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=is_exported,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="class",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=is_exported,
+                parent_name=parent_name,
+            )
+        )
 
         # Walk class body for methods
         body = node.child_by_field_name("body")
@@ -171,7 +182,12 @@ class JavaScriptExtractor(LanguageExtractor):
                     # Check for static/async/get/set
                     prefixes = []
                     for sub in child.children:
-                        if sub.type in ("static", "async", "get", "set") or self.node_text(sub, source) in ("static", "async", "get", "set"):
+                        if sub.type in ("static", "async", "get", "set") or self.node_text(sub, source) in (
+                            "static",
+                            "async",
+                            "get",
+                            "set",
+                        ):
                             if sub == name_node:
                                 continue
                             t = self.node_text(sub, source)
@@ -181,32 +197,40 @@ class JavaScriptExtractor(LanguageExtractor):
                         sig = " ".join(prefixes) + " " + sig
 
                     kind = "constructor" if name == "constructor" else "method"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind=kind,
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        docstring=self.get_docstring(child, source),
-                        parent_name=class_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind=kind,
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            docstring=self.get_docstring(child, source),
+                            parent_name=class_name,
+                        )
+                    )
                 else:
                     # Field/property
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="property",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified,
-                        parent_name=class_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="property",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            parent_name=class_name,
+                        )
+                    )
 
     def _extract_variable_decl(self, node, source, file_path, symbols, parent_name, is_exported):
         """Extract const/let/var declarations, detecting function values."""
         decl_kind_text = ""
         for child in node.children:
-            if child.type in ("const", "let", "var") or self.node_text(child, source) in ("const", "let", "var"):
+            if child.type in ("const", "let", "var") or self.node_text(child, source) in (
+                "const",
+                "let",
+                "var",
+            ):
                 decl_kind_text = self.node_text(child, source)
                 break
 
@@ -220,8 +244,14 @@ class JavaScriptExtractor(LanguageExtractor):
                 # Handle destructured bindings: const { a, b } = ... or const [a, b] = ...
                 if name_node.type in ("object_pattern", "array_pattern"):
                     self._extract_destructured(
-                        name_node, node, source, symbols,
-                        parent_name, is_exported, decl_kind_text, value_node,
+                        name_node,
+                        node,
+                        source,
+                        symbols,
+                        parent_name,
+                        is_exported,
+                        decl_kind_text,
+                        value_node,
                     )
                     continue
 
@@ -229,7 +259,11 @@ class JavaScriptExtractor(LanguageExtractor):
                 qualified = f"{parent_name}.{name}" if parent_name else name
 
                 # Check if value is a function
-                if value_node and value_node.type in ("arrow_function", "function_expression", "generator_function"):
+                if value_node and value_node.type in (
+                    "arrow_function",
+                    "function_expression",
+                    "generator_function",
+                ):
                     params = value_node.child_by_field_name("parameters")
                     p_text = self._params_text(params, source)
                     if value_node.type == "arrow_function":
@@ -237,45 +271,51 @@ class JavaScriptExtractor(LanguageExtractor):
                     else:
                         sig = f"const {name} = function({p_text})"
 
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="function",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        docstring=self.get_docstring(node, source),
-                        is_exported=is_exported,
-                        parent_name=parent_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="function",
+                            line_start=node.start_point[0] + 1,
+                            line_end=node.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            docstring=self.get_docstring(node, source),
+                            is_exported=is_exported,
+                            parent_name=parent_name,
+                        )
+                    )
                 elif value_node and value_node.type == "class":
                     # const Foo = class { ... }
                     sig = f"const {name} = class"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="class",
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        is_exported=is_exported,
-                        parent_name=parent_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="class",
+                            line_start=node.start_point[0] + 1,
+                            line_end=node.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            is_exported=is_exported,
+                            parent_name=parent_name,
+                        )
+                    )
                 else:
                     kind = "constant" if decl_kind_text == "const" else "variable"
                     val_text = self.node_text(value_node, source)[:80] if value_node else ""
                     sig = f"{decl_kind_text} {name}" + (f" = {val_text}" if val_text else "")
 
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind=kind,
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        is_exported=is_exported,
-                        parent_name=parent_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind=kind,
+                            line_start=node.start_point[0] + 1,
+                            line_end=node.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            is_exported=is_exported,
+                            parent_name=parent_name,
+                        )
+                    )
 
     def _extract_member_assignment(self, child, left, right, source, symbols, node):
         """Extract symbol from a member_expression assignment (exports.X = ..., obj.method = ...)."""
@@ -304,25 +344,33 @@ class JavaScriptExtractor(LanguageExtractor):
         if right.type in ("function_expression", "arrow_function", "generator_function"):
             params = right.child_by_field_name("parameters")
             p_text = self._params_text(params, source)
-            symbols.append(self._make_symbol(
-                name=prop_name, kind="function",
-                line_start=child.start_point[0] + 1,
-                line_end=child.end_point[0] + 1,
-                qualified_name=f"{obj_text}.{prop_name}",
-                signature=f"{obj_text}.{prop_name} = function({p_text})",
-                docstring=self.get_docstring(node, source),
-                is_exported=is_exports, parent_name=obj_text,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=prop_name,
+                    kind="function",
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    qualified_name=f"{obj_text}.{prop_name}",
+                    signature=f"{obj_text}.{prop_name} = function({p_text})",
+                    docstring=self.get_docstring(node, source),
+                    is_exported=is_exports,
+                    parent_name=obj_text,
+                )
+            )
         else:
             val_text = self.node_text(right, source)[:80]
-            symbols.append(self._make_symbol(
-                name=prop_name, kind="constant",
-                line_start=child.start_point[0] + 1,
-                line_end=child.end_point[0] + 1,
-                qualified_name=f"{obj_text}.{prop_name}",
-                signature=f"{obj_text}.{prop_name} = {val_text}",
-                is_exported=is_exports, parent_name=obj_text,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=prop_name,
+                    kind="constant",
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    qualified_name=f"{obj_text}.{prop_name}",
+                    signature=f"{obj_text}.{prop_name} = {val_text}",
+                    is_exported=is_exports,
+                    parent_name=obj_text,
+                )
+            )
 
     def _extract_module_exports(self, node, source, symbols, parent_name):
         """Detect module.exports/exports assignments and obj.method assignments."""
@@ -359,26 +407,8 @@ class JavaScriptExtractor(LanguageExtractor):
                 name = self.node_text(name_node, source)
                 params = child.child_by_field_name("parameters")
                 sig = f"exports.{name}({self._params_text(params, source)})"
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="function",
-                    line_start=child.start_point[0] + 1,
-                    line_end=child.end_point[0] + 1,
-                    qualified_name=f"exports.{name}",
-                    signature=sig,
-                    is_exported=True,
-                    parent_name="exports",
-                ))
-            elif child.type == "pair":
-                key_node = child.child_by_field_name("key")
-                value_node = child.child_by_field_name("value")
-                if key_node is None or value_node is None:
-                    continue
-                name = self.node_text(key_node, source)
-                if value_node.type in ("function_expression", "arrow_function", "generator_function"):
-                    params = value_node.child_by_field_name("parameters")
-                    sig = f"exports.{name} = function({self._params_text(params, source)})"
-                    symbols.append(self._make_symbol(
+                symbols.append(
+                    self._make_symbol(
                         name=name,
                         kind="function",
                         line_start=child.start_point[0] + 1,
@@ -387,19 +417,47 @@ class JavaScriptExtractor(LanguageExtractor):
                         signature=sig,
                         is_exported=True,
                         parent_name="exports",
-                    ))
+                    )
+                )
+            elif child.type == "pair":
+                key_node = child.child_by_field_name("key")
+                value_node = child.child_by_field_name("value")
+                if key_node is None or value_node is None:
+                    continue
+                name = self.node_text(key_node, source)
+                if value_node.type in (
+                    "function_expression",
+                    "arrow_function",
+                    "generator_function",
+                ):
+                    params = value_node.child_by_field_name("parameters")
+                    sig = f"exports.{name} = function({self._params_text(params, source)})"
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="function",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=f"exports.{name}",
+                            signature=sig,
+                            is_exported=True,
+                            parent_name="exports",
+                        )
+                    )
                 else:
                     val_text = self.node_text(value_node, source)[:80]
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="constant",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=f"exports.{name}",
-                        signature=f"exports.{name} = {val_text}",
-                        is_exported=True,
-                        parent_name="exports",
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="constant",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=f"exports.{name}",
+                            signature=f"exports.{name} = {val_text}",
+                            is_exported=True,
+                            parent_name="exports",
+                        )
+                    )
             elif child.type == "shorthand_property_identifier":
                 # { existingVar } — mark matching symbol as exported
                 name = self.node_text(child, source)
@@ -407,32 +465,45 @@ class JavaScriptExtractor(LanguageExtractor):
                     if sym["name"] == name:
                         sym["is_exported"] = True
 
-    def _extract_destructured(self, pattern_node, decl_node, source, symbols,
-                              parent_name, is_exported, decl_kind, value_node):
+    def _extract_destructured(
+        self,
+        pattern_node,
+        decl_node,
+        source,
+        symbols,
+        parent_name,
+        is_exported,
+        decl_kind,
+        value_node,
+    ):
         """Extract individual bindings from destructured patterns."""
         names = self._collect_pattern_names(pattern_node, source)
         kind = "constant" if decl_kind == "const" else "variable"
         for name in names:
             qualified = f"{parent_name}.{name}" if parent_name else name
             sig = f"{decl_kind} {name}"
-            symbols.append(self._make_symbol(
-                name=name,
-                kind=kind,
-                line_start=decl_node.start_point[0] + 1,
-                line_end=decl_node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                is_exported=is_exported,
-                parent_name=parent_name,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind=kind,
+                    line_start=decl_node.start_point[0] + 1,
+                    line_end=decl_node.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=sig,
+                    is_exported=is_exported,
+                    parent_name=parent_name,
+                )
+            )
 
     def _collect_pattern_names(self, pattern_node, source):
         """Collect all identifier names from a destructuring pattern."""
         names = []
         for child in pattern_node.children:
-            if child.type in ("shorthand_property_identifier_pattern",
-                              "shorthand_property_identifier",
-                              "identifier"):
+            if child.type in (
+                "shorthand_property_identifier_pattern",
+                "shorthand_property_identifier",
+                "identifier",
+            ):
                 names.append(self.node_text(child, source))
             elif child.type == "pair_pattern":
                 # { key: localVar } — extract the local binding
@@ -452,8 +523,10 @@ class JavaScriptExtractor(LanguageExtractor):
                 if left:
                     if left.type == "identifier":
                         names.append(self.node_text(left, source))
-                    elif left.type in ("shorthand_property_identifier_pattern",
-                                       "shorthand_property_identifier"):
+                    elif left.type in (
+                        "shorthand_property_identifier_pattern",
+                        "shorthand_property_identifier",
+                    ):
                         names.append(self.node_text(left, source))
             elif child.type in ("object_pattern", "array_pattern"):
                 names.extend(self._collect_pattern_names(child, source))
@@ -462,11 +535,31 @@ class JavaScriptExtractor(LanguageExtractor):
     # ---- Reference extraction ----
 
     # JS keywords to skip when extracting identifier references from arguments
-    _JS_KEYWORDS = frozenset({
-        "true", "false", "null", "undefined", "this", "super", "arguments",
-        "new", "void", "typeof", "instanceof", "in", "of", "async", "await",
-        "yield", "return", "throw", "delete", "NaN", "Infinity",
-    })
+    _JS_KEYWORDS = frozenset(
+        {
+            "true",
+            "false",
+            "null",
+            "undefined",
+            "this",
+            "super",
+            "arguments",
+            "new",
+            "void",
+            "typeof",
+            "instanceof",
+            "in",
+            "of",
+            "async",
+            "await",
+            "yield",
+            "return",
+            "throw",
+            "delete",
+            "NaN",
+            "Infinity",
+        }
+    )
 
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
@@ -483,27 +576,35 @@ class JavaScriptExtractor(LanguageExtractor):
                 # e.g. addEventListener('keydown', handleKeyboardShortcut)
                 name = self.node_text(child, source)
                 if name and name not in self._JS_KEYWORDS:
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="reference",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="reference",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
             elif child.type == "shorthand_property_identifier":
                 # Bug 3: Shorthand properties are always variable references
                 # e.g. defineExpose({ resetForm, loadUserData })
                 name = self.node_text(child, source)
                 if name:
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="reference",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="reference",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
                 # No recursion needed — shorthand_property_identifier is a leaf node
             else:
                 new_scope = scope_name
-                if child.type in ("function_declaration", "class_declaration", "generator_function_declaration"):
+                if child.type in (
+                    "function_declaration",
+                    "class_declaration",
+                    "generator_function_declaration",
+                ):
                     n = child.child_by_field_name("name")
                     if n:
                         fname = self.node_text(n, source)
@@ -530,21 +631,21 @@ class JavaScriptExtractor(LanguageExtractor):
         """
         if not path.startswith("@salesforce/"):
             return None
-        rest = path[len("@salesforce/"):]
+        rest = path[len("@salesforce/") :]
         if rest.startswith("apex/"):
-            target = rest[len("apex/"):]
+            target = rest[len("apex/") :]
             return (target, "call")
         if rest.startswith("schema/"):
-            target = rest[len("schema/"):]
+            target = rest[len("schema/") :]
             return (target, "schema_ref")
         if rest.startswith("label/"):
-            target = rest[len("label/"):]
+            target = rest[len("label/") :]
             # Normalise c.LabelName -> Label.LabelName
             if target.startswith("c."):
                 target = "Label." + target[2:]
             return (target, "label")
         if rest.startswith("messageChannel/"):
-            target = rest[len("messageChannel/"):]
+            target = rest[len("messageChannel/") :]
             return (target, "import")
         return None
 
@@ -579,27 +680,39 @@ class JavaScriptExtractor(LanguageExtractor):
         sf_resolved = self._resolve_salesforce_import(path)
         if sf_resolved is not None:
             sf_target, sf_kind = sf_resolved
-            refs.append(self._make_reference(
-                target_name=sf_target, kind=sf_kind,
-                line=node.start_point[0] + 1, source_name=scope_name,
-                import_path=path,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=sf_target,
+                    kind=sf_kind,
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                    import_path=path,
+                )
+            )
             return
 
         names = self._collect_import_names(node, source)
         if names:
             for name in names:
-                refs.append(self._make_reference(
-                    target_name=name, kind="import",
-                    line=node.start_point[0] + 1, source_name=scope_name,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=name,
+                        kind="import",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                        import_path=path,
+                    )
+                )
         else:
-            refs.append(self._make_reference(
-                target_name=path, kind="import",
-                line=node.start_point[0] + 1, source_name=scope_name,
-                import_path=path,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=path,
+                    kind="import",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                    import_path=path,
+                )
+            )
 
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
@@ -628,23 +741,27 @@ class JavaScriptExtractor(LanguageExtractor):
                         # Strip .js/.json extension
                         for ext in (".js", ".json", ".mjs", ".cjs"):
                             if target.endswith(ext):
-                                target = target[:-len(ext)]
+                                target = target[: -len(ext)]
                                 break
-                        refs.append(self._make_reference(
-                            target_name=target,
-                            kind="import",
-                            line=node.start_point[0] + 1,
-                            source_name=scope_name,
-                            import_path=path,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="import",
+                                line=node.start_point[0] + 1,
+                                source_name=scope_name,
+                                import_path=path,
+                            )
+                        )
                         return
 
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
 
         # Recurse into arguments for nested calls
         args = node.child_by_field_name("arguments")
@@ -667,12 +784,14 @@ class JavaScriptExtractor(LanguageExtractor):
         else:
             name = self.node_text(ctor, source)
 
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=ctor.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=ctor.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
 
         # Recurse into arguments for nested calls/refs
         args = node.child_by_field_name("arguments")

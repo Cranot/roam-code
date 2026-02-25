@@ -6,20 +6,20 @@ import time
 
 import click
 
-from roam.output.formatter import to_json, json_envelope
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command()
-@click.option('--force', is_flag=True, help='Force full reindex')
-@click.option('--verbose', is_flag=True, help='Show detailed warnings during indexing')
-@click.option('--quiet', '-q', is_flag=True, help='Suppress progress output')
+@click.option("--force", is_flag=True, help="Force full reindex")
+@click.option("--verbose", is_flag=True, help="Show detailed warnings during indexing")
+@click.option("--quiet", "-q", is_flag=True, help="Suppress progress output")
 @click.pass_context
 def index(ctx, force, verbose, quiet):
     """Build or rebuild the codebase index."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    include_excluded = ctx.obj.get('include_excluded') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
+    from roam.db.connection import db_exists, open_db
     from roam.index.indexer import Indexer
-    from roam.db.connection import open_db, db_exists
 
     # Suppress progress in JSON mode (consumers don't want progress text)
     suppress_progress = quiet or json_mode
@@ -52,6 +52,7 @@ def index(ctx, force, verbose, quiet):
 
             # Parse coverage: only count files with a parseable language
             from roam.languages.registry import _SUPPORTED_LANGUAGES
+
             parseable_langs = ",".join(f"'{l}'" for l in _SUPPORTED_LANGUAGES)
             parseable_count = conn.execute(
                 f"SELECT COUNT(*) FROM files WHERE language IN ({parseable_langs})"
@@ -64,20 +65,25 @@ def index(ctx, force, verbose, quiet):
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
             if json_mode:
-                click.echo(to_json(json_envelope("index",
-                    summary={
-                        "files": file_count,
-                        "symbols": sym_count,
-                        "edges": edge_count,
-                    },
-                    elapsed_s=round(elapsed, 1),
-                    files=file_count,
-                    symbols=sym_count,
-                    edges=edge_count,
-                    languages={r["language"]: r["cnt"] for r in lang_rows[:8]},
-                    avg_symbols_per_file=round(avg_sym, 1),
-                    parse_coverage_pct=round(coverage, 0),
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "index",
+                            summary={
+                                "files": file_count,
+                                "symbols": sym_count,
+                                "edges": edge_count,
+                            },
+                            elapsed_s=round(elapsed, 1),
+                            files=file_count,
+                            symbols=sym_count,
+                            edges=edge_count,
+                            languages={r["language"]: r["cnt"] for r in lang_rows[:8]},
+                            avg_symbols_per_file=round(avg_sym, 1),
+                            parse_coverage_pct=round(coverage, 0),
+                        )
+                    )
+                )
             elif not quiet:
                 lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
@@ -87,6 +93,7 @@ def index(ctx, force, verbose, quiet):
             # Auto-snapshot after every index for trend tracking
             try:
                 from roam.commands.metrics_history import append_snapshot
+
                 with open_db() as wconn:
                     snap = append_snapshot(wconn, source="index")
                 if not json_mode and not quiet:

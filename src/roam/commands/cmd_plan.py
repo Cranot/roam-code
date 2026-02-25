@@ -8,15 +8,14 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope, abbrev_kind, loc
-from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.cmd_affected_tests import (
     _gather_affected_tests,
-    _resolve_file_symbols,
     _looks_like_file,
+    _resolve_file_symbols,
 )
-
+from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Post-change verification commands (static, per task type)
@@ -24,7 +23,10 @@ from roam.commands.cmd_affected_tests import (
 
 _POST_CHANGE = {
     "refactor": [
-        {"command": "roam preflight {target}", "reason": "Re-check blast radius and tests after refactor"},
+        {
+            "command": "roam preflight {target}",
+            "reason": "Re-check blast radius and tests after refactor",
+        },
         {"command": "roam diff --fitness", "reason": "Verify no fitness rules broken"},
         {"command": "roam health", "reason": "Confirm overall health score unchanged"},
     ],
@@ -54,6 +56,7 @@ _POST_CHANGE = {
 # ---------------------------------------------------------------------------
 # Read order: gather callees and callers for topological ordering
 # ---------------------------------------------------------------------------
+
 
 def _build_read_order(conn, sym_ids, file_paths, task, depth):
     """Build a ranked read order from the call graph.
@@ -114,13 +117,15 @@ def _build_read_order(conn, sym_ids, file_paths, task, depth):
             (fp,),
         ).fetchone()
         if row and row["path"]:
-            target_entries.append({
-                "file": row["path"],
-                "line_start": row["line_start"],
-                "line_end": row["line_end"],
-                "reason": "target",
-                "rank": 999.0,  # Always show target first
-            })
+            target_entries.append(
+                {
+                    "file": row["path"],
+                    "line_start": row["line_start"],
+                    "line_end": row["line_end"],
+                    "reason": "target",
+                    "rank": 999.0,  # Always show target first
+                }
+            )
 
     # Group callee / caller entries by file, pick best pagerank per file
     callee_map = {}  # file_path -> {line_start, line_end, pagerank, sym_name}
@@ -184,32 +189,37 @@ def _build_read_order(conn, sym_ids, file_paths, task, depth):
     for entry in target_entries:
         if entry["file"] not in seen:
             seen.add(entry["file"])
-            result.append({
-                "file": entry["file"],
-                "line_start": entry["line_start"],
-                "line_end": entry["line_end"],
-                "reason": entry["reason"],
-                "rank": entry["rank"],
-            })
+            result.append(
+                {
+                    "file": entry["file"],
+                    "line_start": entry["line_start"],
+                    "line_end": entry["line_end"],
+                    "reason": entry["reason"],
+                    "rank": entry["rank"],
+                }
+            )
 
     for entry in ordered:
         fp = entry["file"]
         if fp not in seen:
             seen.add(fp)
-            result.append({
-                "file": fp,
-                "line_start": entry["line_start"],
-                "line_end": entry["line_end"],
-                "reason": entry["reason"],
-                "rank": round(entry["pagerank"], 6),
-            })
+            result.append(
+                {
+                    "file": fp,
+                    "line_start": entry["line_start"],
+                    "line_end": entry["line_end"],
+                    "reason": entry["reason"],
+                    "rank": round(entry["pagerank"], 6),
+                }
+            )
 
-    return result[:limit + len(file_paths)]
+    return result[: limit + len(file_paths)]
 
 
 # ---------------------------------------------------------------------------
 # Invariants: callers of target with signature info
 # ---------------------------------------------------------------------------
+
 
 def _build_invariants(conn, sym_ids, task):
     """Gather invariants to preserve: caller signatures + target signatures."""
@@ -226,14 +236,16 @@ def _build_invariants(conn, sym_ids, task):
             (sid,),
         ).fetchone()
         if row:
-            invariants.append({
-                "name": row["name"],
-                "kind": row["kind"],
-                "signature": row["signature"] or "",
-                "callers": row["caller_count"],
-                "location": loc(row["file_path"], row["line_start"]),
-                "role": "target",
-            })
+            invariants.append(
+                {
+                    "name": row["name"],
+                    "kind": row["kind"],
+                    "signature": row["signature"] or "",
+                    "callers": row["caller_count"],
+                    "location": loc(row["file_path"], row["line_start"]),
+                    "role": "target",
+                }
+            )
 
     # Add direct callers with their signatures
     caller_rows = []
@@ -255,14 +267,16 @@ def _build_invariants(conn, sym_ids, task):
         if row["name"] in seen_names:
             continue
         seen_names.add(row["name"])
-        invariants.append({
-            "name": row["name"],
-            "kind": row["kind"],
-            "signature": row["signature"] or "",
-            "callers": row["caller_count"],
-            "location": loc(row["file_path"], row["line_start"]),
-            "role": "caller",
-        })
+        invariants.append(
+            {
+                "name": row["name"],
+                "kind": row["kind"],
+                "signature": row["signature"] or "",
+                "callers": row["caller_count"],
+                "location": loc(row["file_path"], row["line_start"]),
+                "role": "caller",
+            }
+        )
 
     return invariants[:15]
 
@@ -270,6 +284,7 @@ def _build_invariants(conn, sym_ids, task):
 # ---------------------------------------------------------------------------
 # Safe modification points and "touch carefully" symbols
 # ---------------------------------------------------------------------------
+
 
 def _build_modification_points(conn, file_paths):
     """For each symbol in target files, classify as safe or touch-carefully."""
@@ -312,6 +327,7 @@ def _build_modification_points(conn, file_paths):
 # Test shortlist
 # ---------------------------------------------------------------------------
 
+
 def _build_test_shortlist(conn, sym_ids, file_paths):
     """Gather affected tests ranked by relevance."""
     results = _gather_affected_tests(conn, sym_ids, file_paths)
@@ -345,6 +361,7 @@ def _build_test_shortlist(conn, sym_ids, file_paths):
 # Target resolution
 # ---------------------------------------------------------------------------
 
+
 def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
     """Resolve CLI arguments into (sym_ids, file_paths, label).
 
@@ -357,6 +374,7 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
 
     if staged:
         from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+
         changed = get_changed_files(root, staged=True)
         if not changed:
             return sym_ids, file_paths, "staged (no changes)", "No staged changes found"
@@ -389,9 +407,7 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                 (f"%{fp_norm}",),
             ).fetchone()
             if frow:
-                sids2 = conn.execute(
-                    "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
-                ).fetchall()
+                sids2 = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
                 sids = {s["id"] for s in sids2}
                 fpaths = {frow["path"]}
         if not sids and not staged:
@@ -411,9 +427,7 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
                     (f"%{target_norm}",),
                 ).fetchone()
                 if frow:
-                    sids2 = conn.execute(
-                        "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
-                    ).fetchall()
+                    sids2 = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
                     sids = {s["id"] for s in sids2}
                     fpaths = {frow["path"]}
             if not sids:
@@ -435,6 +449,7 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
+
 
 @click.command("plan")
 @click.argument("target", required=False, default=None)
@@ -465,20 +480,23 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
     root = find_project_root()
 
     with open_db(readonly=True) as conn:
-        sym_ids, file_paths, label, error = _resolve_plan_targets(
-            conn, target, symbol_name, file_path, staged, root
-        )
+        sym_ids, file_paths, label, error = _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root)
 
         if error or not sym_ids:
             msg = error or f"No symbols found for: {label}"
             if json_mode:
-                click.echo(to_json(json_envelope("plan",
-                    summary={
-                        "verdict": f"Cannot plan: {msg}",
-                        "task": task,
-                        "error": msg,
-                    },
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "plan",
+                            summary={
+                                "verdict": f"Cannot plan: {msg}",
+                                "task": task,
+                                "error": msg,
+                            },
+                        )
+                    )
+                )
             else:
                 click.echo(f"Cannot plan: {msg}")
             return
@@ -503,24 +521,29 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
 
         # JSON mode
         if json_mode:
-            click.echo(to_json(json_envelope("plan",
-                summary={
-                    "verdict": verdict,
-                    "task": task,
-                    "target": label,
-                    "read_order_count": len(read_order),
-                    "invariant_count": len(invariants),
-                    "safe_points": len(safe_points),
-                    "touch_carefully": len(touch_carefully),
-                    "tests": tests["count"],
-                },
-                read_order=read_order,
-                invariants=invariants,
-                safe_points=safe_points,
-                touch_carefully=touch_carefully,
-                tests=tests,
-                post_change=post_change,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "plan",
+                        summary={
+                            "verdict": verdict,
+                            "task": task,
+                            "target": label,
+                            "read_order_count": len(read_order),
+                            "invariant_count": len(invariants),
+                            "safe_points": len(safe_points),
+                            "touch_carefully": len(touch_carefully),
+                            "tests": tests["count"],
+                        },
+                        read_order=read_order,
+                        invariants=invariants,
+                        safe_points=safe_points,
+                        touch_carefully=touch_carefully,
+                        tests=tests,
+                        post_change=post_change,
+                    )
+                )
+            )
             return
 
         # Text output — verdict first
@@ -557,10 +580,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
         click.echo("3. SAFE MODIFICATION POINTS:")
         if safe_points:
             for sp in safe_points[:10]:
-                click.echo(
-                    f"   - {abbrev_kind(sp['kind'])} {sp['name']:<35s}"
-                    f" (line {sp['line']})  0 external callers"
-                )
+                click.echo(f"   - {abbrev_kind(sp['kind'])} {sp['name']:<35s} (line {sp['line']})  0 external callers")
         else:
             click.echo("   (all symbols have callers — proceed carefully)")
         click.echo()

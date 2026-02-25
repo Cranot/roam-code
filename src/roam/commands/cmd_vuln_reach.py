@@ -4,16 +4,19 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command()
-@click.option("--from", "from_entry", default=None,
-              help="Check reachability from a specific entry point symbol")
-@click.option("--cve", "cve_id", default=None,
-              help="Analyze a specific CVE ID")
+@click.option(
+    "--from",
+    "from_entry",
+    default=None,
+    help="Check reachability from a specific entry point symbol",
+)
+@click.option("--cve", "cve_id", default=None, help="Analyze a specific CVE ID")
 @click.pass_context
 def vuln_reach(ctx, from_entry, cve_id):
     """Query reachability of ingested vulnerabilities through the call graph.
@@ -32,10 +35,12 @@ def vuln_reach(ctx, from_entry, cve_id):
     ensure_index()
 
     from roam.graph.builder import build_symbol_graph
-    from roam.security.vuln_store import ensure_vuln_table
     from roam.security.vuln_reach import (
-        analyze_reachability, reach_from_entry, reach_for_cve,
+        analyze_reachability,
+        reach_for_cve,
+        reach_from_entry,
     )
+    from roam.security.vuln_store import ensure_vuln_table
 
     with open_db(readonly=False) as conn:
         ensure_vuln_table(conn)
@@ -45,15 +50,20 @@ def vuln_reach(ctx, from_entry, cve_id):
         vuln_count = conn.execute("SELECT COUNT(*) FROM vulnerabilities").fetchone()[0]
         if vuln_count == 0:
             if json_mode:
-                click.echo(to_json(json_envelope("vuln-reach",
-                    summary={
-                        "verdict": "No vulnerabilities ingested. Run vuln-map first.",
-                        "total_vulns": 0,
-                        "reachable_count": 0,
-                        "critical_count": 0,
-                    },
-                    vulnerabilities=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "vuln-reach",
+                            summary={
+                                "verdict": "No vulnerabilities ingested. Run vuln-map first.",
+                                "total_vulns": 0,
+                                "reachable_count": 0,
+                                "critical_count": 0,
+                            },
+                            vulnerabilities=[],
+                        )
+                    )
+                )
                 return
             click.echo("VERDICT: No vulnerabilities ingested. Run vuln-map first.")
             return
@@ -87,24 +97,31 @@ def _output_all(ctx, results: list[dict], json_mode: bool) -> None:
     if json_mode:
         vuln_out = []
         for r in results:
-            vuln_out.append({
-                "cve": r.get("cve_id"),
-                "package": r.get("package_name"),
-                "severity": r.get("severity"),
-                "reachable": r["reachable"] == 1,
-                "path": r.get("path_names", []),
-                "hops": r.get("hop_count", 0),
-                "blast_radius": r.get("blast_radius", 0),
-            })
-        click.echo(to_json(json_envelope("vuln-reach",
-            summary={
-                "verdict": verdict,
-                "total_vulns": total,
-                "reachable_count": len(reachable),
-                "critical_count": len(critical),
-            },
-            vulnerabilities=vuln_out,
-        )))
+            vuln_out.append(
+                {
+                    "cve": r.get("cve_id"),
+                    "package": r.get("package_name"),
+                    "severity": r.get("severity"),
+                    "reachable": r["reachable"] == 1,
+                    "path": r.get("path_names", []),
+                    "hops": r.get("hop_count", 0),
+                    "blast_radius": r.get("blast_radius", 0),
+                }
+            )
+        click.echo(
+            to_json(
+                json_envelope(
+                    "vuln-reach",
+                    summary={
+                        "verdict": verdict,
+                        "total_vulns": total,
+                        "reachable_count": len(reachable),
+                        "critical_count": len(critical),
+                    },
+                    vulnerabilities=vuln_out,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -112,11 +129,13 @@ def _output_all(ctx, results: list[dict], json_mode: bool) -> None:
 
     # Show reachable first, sorted by severity
     severity_order = {"critical": 0, "high": 1, "medium": 2, "low": 3, "unknown": 4}
-    sorted_results = sorted(results,
+    sorted_results = sorted(
+        results,
         key=lambda r: (
             0 if r["reachable"] == 1 else 1,
             severity_order.get((r.get("severity") or "unknown").lower(), 5),
-        ))
+        ),
+    )
 
     for r in sorted_results:
         cve = r.get("cve_id") or r.get("package_name", "?")
@@ -152,24 +171,31 @@ def _output_from_entry(ctx, results: list[dict], entry: str, json_mode: bool) ->
     if json_mode:
         vuln_out = []
         for r in results:
-            vuln_out.append({
-                "cve": r.get("cve_id"),
-                "package": r.get("package_name"),
-                "severity": r.get("severity"),
-                "reachable": True,
-                "path": r.get("path_names", []),
-                "hops": r.get("hop_count", 0),
-                "blast_radius": r.get("blast_radius", 0),
-            })
-        click.echo(to_json(json_envelope("vuln-reach",
-            summary={
-                "verdict": f"{len(results)} vulnerabilities reachable from {entry}",
-                "total_vulns": len(results),
-                "reachable_count": len(results),
-                "critical_count": sum(1 for r in results if (r.get("severity") or "").lower() == "critical"),
-            },
-            vulnerabilities=vuln_out,
-        )))
+            vuln_out.append(
+                {
+                    "cve": r.get("cve_id"),
+                    "package": r.get("package_name"),
+                    "severity": r.get("severity"),
+                    "reachable": True,
+                    "path": r.get("path_names", []),
+                    "hops": r.get("hop_count", 0),
+                    "blast_radius": r.get("blast_radius", 0),
+                }
+            )
+        click.echo(
+            to_json(
+                json_envelope(
+                    "vuln-reach",
+                    summary={
+                        "verdict": f"{len(results)} vulnerabilities reachable from {entry}",
+                        "total_vulns": len(results),
+                        "reachable_count": len(results),
+                        "critical_count": sum(1 for r in results if (r.get("severity") or "").lower() == "critical"),
+                    },
+                    vulnerabilities=vuln_out,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {len(results)} vulnerabilities reachable from {entry}")
@@ -194,11 +220,20 @@ def _output_cve(ctx, result: dict, json_mode: bool) -> None:
     """Output for --cve single CVE analysis."""
     if "error" in result:
         if json_mode:
-            click.echo(to_json(json_envelope("vuln-reach",
-                summary={"verdict": result["error"], "total_vulns": 0,
-                          "reachable_count": 0, "critical_count": 0},
-                vulnerabilities=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "vuln-reach",
+                        summary={
+                            "verdict": result["error"],
+                            "total_vulns": 0,
+                            "reachable_count": 0,
+                            "critical_count": 0,
+                        },
+                        vulnerabilities=[],
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {result['error']}")
         return
@@ -209,23 +244,30 @@ def _output_cve(ctx, result: dict, json_mode: bool) -> None:
     pkg = result.get("package_name", "?")
 
     if json_mode:
-        click.echo(to_json(json_envelope("vuln-reach",
-            summary={
-                "verdict": f"{cve}: {'reachable' if reachable else 'not reachable'}",
-                "total_vulns": 1,
-                "reachable_count": 1 if reachable else 0,
-                "critical_count": 1 if reachable and sev == "CRITICAL" else 0,
-            },
-            vulnerabilities=[{
-                "cve": cve,
-                "package": pkg,
-                "severity": result.get("severity"),
-                "reachable": reachable,
-                "path": result.get("path_names", []),
-                "hops": result.get("hop_count", 0),
-                "blast_radius": result.get("blast_radius", 0),
-            }],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "vuln-reach",
+                    summary={
+                        "verdict": f"{cve}: {'reachable' if reachable else 'not reachable'}",
+                        "total_vulns": 1,
+                        "reachable_count": 1 if reachable else 0,
+                        "critical_count": 1 if reachable and sev == "CRITICAL" else 0,
+                    },
+                    vulnerabilities=[
+                        {
+                            "cve": cve,
+                            "package": pkg,
+                            "severity": result.get("severity"),
+                            "reachable": reachable,
+                            "path": result.get("path_names", []),
+                            "hops": result.get("hop_count", 0),
+                            "blast_radius": result.get("blast_radius", 0),
+                        }
+                    ],
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {cve}: {'reachable' if reachable else 'not reachable'}")

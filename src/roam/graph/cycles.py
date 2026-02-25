@@ -48,18 +48,12 @@ def find_cycles(G: nx.DiGraph, min_size: int = 2) -> list[list[int]]:
     if len(G) == 0:
         return []
 
-    sccs = [
-        sorted(c)
-        for c in nx.strongly_connected_components(G)
-        if len(c) >= min_size
-    ]
+    sccs = [sorted(c) for c in nx.strongly_connected_components(G) if len(c) >= min_size]
     sccs.sort(key=len, reverse=True)
     return sccs
 
 
-def format_cycles(
-    cycles: list[list[int]], conn: sqlite3.Connection
-) -> list[dict]:
+def format_cycles(cycles: list[list[int]], conn: sqlite3.Connection) -> list[dict]:
     """Annotate each cycle with symbol names and file paths.
 
     Returns a list of dicts::
@@ -134,9 +128,7 @@ def propagation_cost(G: nx.DiGraph) -> float:
     return round(TC.number_of_edges() / (n * (n - 1)), 4)
 
 
-def _propagation_cost_sampled(
-    G: nx.DiGraph, n: int, sample_size: int = 200
-) -> float:
+def _propagation_cost_sampled(G: nx.DiGraph, n: int, sample_size: int = 200) -> float:
     """BFS-sampled approximation of propagation cost for large graphs.
 
     Picks up to *sample_size* nodes, computes the number of reachable
@@ -157,9 +149,7 @@ def _propagation_cost_sampled(
     return round(avg_reach / (n - 1), 4) if n > 1 else 0.0
 
 
-def find_weakest_edge(
-    G: nx.DiGraph, scc_members: list[int]
-) -> tuple[int, int, str] | None:
+def find_weakest_edge(G: nx.DiGraph, scc_members: list[int]) -> tuple[int, int, str] | None:
     """Find the single edge in an SCC whose removal most likely breaks the cycle.
 
     Uses edge betweenness centrality on the SCC subgraph: the edge with
@@ -178,10 +168,7 @@ def find_weakest_edge(
         return None
 
     # Collect internal edges (both endpoints inside the SCC)
-    internal_edges = [
-        (u, v) for u, v in G.edges()
-        if u in member_set and v in member_set
-    ]
+    internal_edges = [(u, v) for u, v in G.edges() if u in member_set and v in member_set]
     if not internal_edges:
         return None
 
@@ -219,8 +206,5 @@ def find_weakest_edge(
     u, v = best_edge
     src_out = out_deg[u]
     tgt_in = in_deg[v]
-    reason = (
-        f"source has {src_out} outgoing edge{'s' if src_out != 1 else ''} in cycle, "
-        f"target has {tgt_in} incoming"
-    )
+    reason = f"source has {src_out} outgoing edge{'s' if src_out != 1 else ''} in cycle, target has {tgt_in} incoming"
     return (u, v, reason)

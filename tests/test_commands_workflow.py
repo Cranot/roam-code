@@ -6,7 +6,6 @@ Uses CliRunner for in-process testing (~50 tests).
 
 from __future__ import annotations
 
-import os
 import sys
 from pathlib import Path
 
@@ -14,12 +13,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope, git_commit
-
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -86,7 +85,9 @@ class TestPreflight:
         """--json with unknown symbol returns envelope with error info."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["preflight", "DoesNotExist"], json_mode=True,
+            cli_runner,
+            ["preflight", "DoesNotExist"],
+            json_mode=True,
         )
         data = parse_json_output(result, "preflight")
         assert_json_envelope(data, "preflight")
@@ -127,6 +128,7 @@ class TestPrRisk:
         output = result.output.strip()
         if output.startswith("{"):
             import json
+
             data = json.loads(output)
             # Could be either a simple dict or a full envelope
             assert "risk_score" in data or "summary" in data
@@ -138,37 +140,36 @@ class TestPrRisk:
         original = models_path.read_text()
         try:
             models_path.write_text(
-                'class User:\n'
+                "class User:\n"
                 '    """A user model (modified)."""\n'
-                '    def __init__(self, name, email):\n'
-                '        self.name = name\n'
-                '        self.email = email\n'
-                '\n'
-                '    def display_name(self):\n'
-                '        return self.name.title()\n'
-                '\n'
-                '    def validate_email(self):\n'
+                "    def __init__(self, name, email):\n"
+                "        self.name = name\n"
+                "        self.email = email\n"
+                "\n"
+                "    def display_name(self):\n"
+                "        return self.name.title()\n"
+                "\n"
+                "    def validate_email(self):\n"
                 '        return "@" in self.email\n'
-                '\n'
-                '\n'
-                'class Admin(User):\n'
+                "\n"
+                "\n"
+                "class Admin(User):\n"
                 '    """An admin user."""\n'
                 '    def __init__(self, name, email, role="admin"):\n'
-                '        super().__init__(name, email)\n'
-                '        self.role = role\n'
-                '\n'
-                '    def promote(self, user):\n'
-                '        pass\n'
-                '\n'
-                '    def new_method(self):\n'
+                "        super().__init__(name, email)\n"
+                "        self.role = role\n"
+                "\n"
+                "    def promote(self, user):\n"
+                "        pass\n"
+                "\n"
+                "    def new_method(self):\n"
                 '        return "new"\n'
             )
             result = invoke_cli(cli_runner, ["pr-risk"])
             assert result.exit_code == 0
             output = result.output
             # Should show some risk output or "no changes"
-            assert ("Risk" in output or "risk" in output
-                    or "No changes" in output)
+            assert "Risk" in output or "risk" in output or "No changes" in output
         finally:
             models_path.write_text(original)
 
@@ -179,17 +180,17 @@ class TestPrRisk:
         original = utils_path.read_text()
         try:
             utils_path.write_text(
-                'def format_name(first, last):\n'
+                "def format_name(first, last):\n"
                 '    """Format a full name (updated)."""\n'
                 '    return f"{first} {last}".strip()\n'
-                '\n'
-                'def parse_email(raw):\n'
+                "\n"
+                "def parse_email(raw):\n"
                 '    """Parse an email address."""\n'
                 '    if "@" not in raw:\n'
-                '        return None\n'
+                "        return None\n"
                 '    parts = raw.split("@")\n'
                 '    return {"user": parts[0], "domain": parts[1]}\n'
-                '\n'
+                "\n"
                 'UNUSED_CONSTANT = "never_referenced"\n'
             )
             result = invoke_cli(cli_runner, ["pr-risk"], json_mode=True)
@@ -236,18 +237,18 @@ class TestDiff:
         models_path = indexed_project / "src" / "models.py"
         original = models_path.read_text()
         try:
-            models_path.write_text(
-                'class User:\n'
-                '    def __init__(self, name):\n'
-                '        self.name = name\n'
-            )
+            models_path.write_text("class User:\n    def __init__(self, name):\n        self.name = name\n")
             result = invoke_cli(cli_runner, ["diff"])
             assert result.exit_code == 0
             output = result.output
             # Should show blast radius or indicate changes
-            assert ("Blast Radius" in output or "Changed files" in output
-                    or "Affected" in output or "No changes" in output
-                    or "not found in index" in output.lower())
+            assert (
+                "Blast Radius" in output
+                or "Changed files" in output
+                or "Affected" in output
+                or "No changes" in output
+                or "not found in index" in output.lower()
+            )
         finally:
             models_path.write_text(original)
 
@@ -258,26 +259,27 @@ class TestDiff:
         original = service_path.read_text()
         try:
             service_path.write_text(
-                'from models import User, Admin\n'
-                '\n'
-                'def create_user(name, email):\n'
+                "from models import User, Admin\n"
+                "\n"
+                "def create_user(name, email):\n"
                 '    """Create a new user (updated)."""\n'
-                '    user = User(name, email)\n'
-                '    return user\n'
-                '\n'
-                'def get_display(user):\n'
+                "    user = User(name, email)\n"
+                "    return user\n"
+                "\n"
+                "def get_display(user):\n"
                 '    """Get display name."""\n'
-                '    return user.display_name()\n'
-                '\n'
-                'def unused_helper():\n'
+                "    return user.display_name()\n"
+                "\n"
+                "def unused_helper():\n"
                 '    """Still unused."""\n'
-                '    return 42\n'
+                "    return 42\n"
             )
             result = invoke_cli(cli_runner, ["diff"], json_mode=True)
             assert result.exit_code == 0
             output = result.output.strip()
             if output.startswith("{"):
                 import json
+
                 data = json.loads(output)
                 if "summary" in data:
                     assert "changed_files" in data["summary"]
@@ -360,7 +362,9 @@ class TestContext:
         """--json for create_user contains caller/callee data."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["context", "create_user"], json_mode=True,
+            cli_runner,
+            ["context", "create_user"],
+            json_mode=True,
         )
         data = parse_json_output(result, "context")
         assert_json_envelope(data, "context")
@@ -379,7 +383,8 @@ class TestContext:
         """--task refactor tailors context output."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["context", "User", "--task", "refactor"],
+            cli_runner,
+            ["context", "User", "--task", "refactor"],
         )
         assert result.exit_code == 0
         assert "task=refactor" in result.output or "refactor" in result.output.lower()
@@ -390,10 +395,14 @@ class TestContext:
         result = invoke_cli(
             cli_runner,
             [
-                "context", "create_user",
-                "--task", "refactor",
-                "--session-hint", "user validation service flow",
-                "--recent-symbol", "User",
+                "context",
+                "create_user",
+                "--task",
+                "refactor",
+                "--session-hint",
+                "user validation service flow",
+                "--recent-symbol",
+                "User",
             ],
             json_mode=True,
         )
@@ -412,9 +421,13 @@ class TestContext:
         result = invoke_cli(
             cli_runner,
             [
-                "context", "User", "create_user",
-                "--session-hint", "user model service interactions",
-                "--recent-symbol", "User",
+                "context",
+                "User",
+                "create_user",
+                "--session-hint",
+                "user model service interactions",
+                "--recent-symbol",
+                "User",
             ],
             json_mode=True,
         )
@@ -459,7 +472,9 @@ class TestAffectedTests:
         """--json returns envelope."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["affected-tests", "User"], json_mode=True,
+            cli_runner,
+            ["affected-tests", "User"],
+            json_mode=True,
         )
         data = parse_json_output(result, "affected-tests")
         assert_json_envelope(data, "affected-tests")
@@ -489,7 +504,8 @@ class TestAffectedTests:
         """--command flag outputs a pytest command or comment."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["affected-tests", "User", "--command"],
+            cli_runner,
+            ["affected-tests", "User", "--command"],
         )
         assert result.exit_code == 0
         output = result.output.strip()
@@ -499,24 +515,23 @@ class TestAffectedTests:
     def test_affected_tests_csharp_convention(self, project_factory, cli_runner, monkeypatch):
         """c# test discovery finds tests in separate test projects."""
         # create a c# project with source and test files
-        csharp_project = project_factory({
-            "src/MyProject/Services/UserService.cs": (
-                "namespace MyProject.Services;\n"
-                "public class UserService {\n"
-                "    public void CreateUser() { }\n"
-                "}\n"
-            ),
-            "tests/MyProject.Tests/Services/UserServiceTests.cs": (
-                "namespace MyProject.Tests.Services;\n"
-                "using MyProject.Services;\n"
-                "public class UserServiceTests {\n"
-                "    public void TestCreateUser() {\n"
-                "        var service = new UserService();\n"
-                "        service.CreateUser();\n"
-                "    }\n"
-                "}\n"
-            ),
-        })
+        csharp_project = project_factory(
+            {
+                "src/MyProject/Services/UserService.cs": (
+                    "namespace MyProject.Services;\npublic class UserService {\n    public void CreateUser() { }\n}\n"
+                ),
+                "tests/MyProject.Tests/Services/UserServiceTests.cs": (
+                    "namespace MyProject.Tests.Services;\n"
+                    "using MyProject.Services;\n"
+                    "public class UserServiceTests {\n"
+                    "    public void TestCreateUser() {\n"
+                    "        var service = new UserService();\n"
+                    "        service.CreateUser();\n"
+                    "    }\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(csharp_project)
 
         # run affected-tests on the source file
@@ -551,7 +566,9 @@ class TestDiagnose:
         """--json returns envelope."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["diagnose", "User"], json_mode=True,
+            cli_runner,
+            ["diagnose", "User"],
+            json_mode=True,
         )
         data = parse_json_output(result, "diagnose")
         assert_json_envelope(data, "diagnose")
@@ -575,7 +592,8 @@ class TestDiagnose:
         """diagnose with --depth flag exits 0."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["diagnose", "User", "--depth", "3"],
+            cli_runner,
+            ["diagnose", "User", "--depth", "3"],
         )
         assert result.exit_code == 0
 
@@ -583,7 +601,9 @@ class TestDiagnose:
         """JSON output contains verdict in summary."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
-            cli_runner, ["diagnose", "create_user"], json_mode=True,
+            cli_runner,
+            ["diagnose", "create_user"],
+            json_mode=True,
         )
         data = parse_json_output(result, "diagnose")
         assert_json_envelope(data, "diagnose")
@@ -605,8 +625,7 @@ class TestDigest:
         assert result.exit_code == 0
         output = result.output
         # Either shows digest or tells us no snapshots exist
-        assert ("Digest" in output or "No snapshots" in output
-                or "snapshot" in output.lower())
+        assert "Digest" in output or "No snapshots" in output or "snapshot" in output.lower()
 
     def test_digest_json(self, indexed_project, cli_runner, monkeypatch):
         """--json returns envelope."""
@@ -656,11 +675,11 @@ class TestWorkflowIntegration:
         original = models_path.read_text()
         try:
             models_path.write_text(
-                'class User:\n'
+                "class User:\n"
                 '    """Modified user."""\n'
-                '    def __init__(self, name, email):\n'
-                '        self.name = name\n'
-                '        self.email = email\n'
+                "    def __init__(self, name, email):\n"
+                "        self.name = name\n"
+                "        self.email = email\n"
             )
 
             # Diff after changes
