@@ -512,8 +512,8 @@ def poll_loop(
             drift_threshold=guardian_drift_threshold,
         )
     if _guardian_write is None:
-        _guardian_write = (
-            lambda payload: append_guardian_report(Path(guardian_report), payload) if guardian_report else None
+        _guardian_write = lambda payload: (
+            append_guardian_report(Path(guardian_report), payload) if guardian_report else None
         )
 
     acc = DebounceAccumulator(window=debounce)
