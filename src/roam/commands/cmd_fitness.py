@@ -55,7 +55,6 @@ Example .roam/fitness.yaml:
 
 from __future__ import annotations
 
-import fnmatch
 import re
 from pathlib import Path
 
@@ -154,10 +153,12 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
            JOIN files tf ON ts.file_id = tf.id"""
     ).fetchall()
 
+    from roam.index.gitignore import matches_gitignore
+
     violations = []
     for r in rows:
-        src_match = fnmatch.fnmatch(r["source_path"], from_pattern)
-        tgt_match = fnmatch.fnmatch(r["target_path"], to_pattern)
+        src_match = matches_gitignore(r["source_path"], from_pattern)
+        tgt_match = matches_gitignore(r["target_path"], to_pattern)
 
         if src_match and tgt_match and not allow:
             violations.append(

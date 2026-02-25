@@ -2,10 +2,8 @@
 
 from __future__ import annotations
 
-import fnmatch
-import re
 from collections import defaultdict
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 
 import click
 
@@ -89,90 +87,11 @@ def parse_codeowners(codeowners_path: str | Path) -> list[tuple[str, list[str]]]
 def _codeowners_match(pattern: str, filepath: str) -> bool:
     """Match a CODEOWNERS pattern against a file path.
 
-    CODEOWNERS uses gitignore-style patterns:
-    - ``*`` matches anything except ``/``
-    - ``**`` matches anything including ``/``
-    - Leading ``/`` means anchored to repo root
-    - Trailing ``/`` means directory match (any file under that dir)
-    - No leading ``/`` means match the basename or partial path
+    Delegates to the shared gitignore matcher in ``roam.index.gitignore``.
     """
-    # Normalize path separators
-    filepath = filepath.replace("\\", "/")
+    from roam.index.gitignore import matches_gitignore
 
-    # Directory pattern: trailing / matches everything under that dir
-    if pattern.endswith("/"):
-        dir_pattern = pattern.rstrip("/")
-        # Anchored directory
-        if dir_pattern.startswith("/"):
-            dir_pattern = dir_pattern[1:]
-            return filepath.startswith(dir_pattern + "/") or filepath == dir_pattern
-        # Unanchored directory
-        return filepath.startswith(dir_pattern + "/") or ("/" + dir_pattern + "/") in ("/" + filepath)
-
-    # Anchored pattern (starts with /)
-    anchored = pattern.startswith("/")
-    if anchored:
-        pattern = pattern[1:]
-
-    # Handle ** patterns
-    if "**" in pattern:
-        return _match_doublestar(pattern, filepath, anchored)
-
-    if anchored:
-        # Match from root
-        return fnmatch.fnmatch(filepath, pattern)
-
-    # Unanchored: if pattern contains /, match against full path
-    if "/" in pattern:
-        return fnmatch.fnmatch(filepath, pattern)
-
-    # No slash in pattern: match against the basename
-    basename = PurePosixPath(filepath).name
-    return fnmatch.fnmatch(basename, pattern)
-
-
-def _match_doublestar(pattern: str, filepath: str, anchored: bool) -> bool:
-    """Handle ** glob patterns.
-
-    ``**`` matches zero or more path segments (directories).
-    When ``**`` is surrounded by ``/`` (e.g. ``src/**/foo``), it can
-    match zero segments (``src/foo``) or many (``src/a/b/foo``).
-    """
-    # Strategy: convert the CODEOWNERS pattern to a regex.
-    # ** means "zero or more path segments" — we must absorb adjacent
-    # slashes so that a/**/b matches both a/b and a/x/y/b.
-    regex = ""
-    i = 0
-    plen = len(pattern)
-    while i < plen:
-        if pattern[i : i + 2] == "**":
-            # Absorb trailing slash after **: a/**/ -> a/ or a/x/y/
-            end = i + 2
-            if end < plen and pattern[end] == "/":
-                end += 1
-            # ** with absorbed trailing / becomes (.*/)? — zero or more
-            # path segments ending with /
-            regex += "(.*/)?"
-            i = end
-        elif pattern[i] == "*":
-            regex += "[^/]*"
-            i += 1
-        elif pattern[i] == "?":
-            regex += "[^/]"
-            i += 1
-        elif pattern[i] == ".":
-            regex += r"\."
-            i += 1
-        else:
-            regex += re.escape(pattern[i])
-            i += 1
-
-    if anchored:
-        regex = "^" + regex + "$"
-    else:
-        regex = "(^|.*/)" + regex + "$"
-
-    return bool(re.match(regex, filepath))
+    return matches_gitignore(filepath, pattern)
 
 
 def resolve_owners(rules: list[tuple[str, list[str]]], filepath: str) -> list[str]:

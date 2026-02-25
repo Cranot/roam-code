@@ -8,7 +8,6 @@ cluster-level impact to produce a comprehensive knowledge-loss risk report.
 
 from __future__ import annotations
 
-import fnmatch
 import math
 import time
 from collections import defaultdict
@@ -136,44 +135,14 @@ def parse_codeowners(project_root: Path) -> list[tuple[str, list[str]]]:
 def resolve_codeowner(file_path: str, rules: list[tuple[str, list[str]]]) -> list[str]:
     """Resolve CODEOWNERS for a file path.  Last matching rule wins.
 
-    CODEOWNERS pattern semantics:
-    - ``*.py``        -- matches any .py file anywhere
-    - ``docs/``       -- matches anything under docs/
-    - ``/src/core/``  -- matches anything under src/core/ (anchored to root)
-    - ``src/app.py``  -- matches src/app.py exactly (or anywhere if no /)
+    Uses gitignore-style pattern matching (see ``roam.index.gitignore``).
     """
+    from roam.index.gitignore import matches_gitignore
+
     matched_owners: list[str] = []
-    normalised = file_path.replace("\\", "/")
-
     for pattern, owners in rules:
-        raw = pattern
-
-        # Strip leading / (anchors to repo root — but paths are already relative)
-        if raw.startswith("/"):
-            raw = raw[1:]
-
-        # Directory pattern: "dir/" matches "dir/**"
-        if raw.endswith("/"):
-            if normalised.startswith(raw) or ("/" + raw) in ("/" + normalised):
-                matched_owners = owners
-                continue
-
-        # Use fnmatch for glob patterns (*, ?)
-        if fnmatch.fnmatch(normalised, raw):
+        if matches_gitignore(file_path, pattern):
             matched_owners = owners
-            continue
-
-        # If pattern has no directory separator, match against basename too
-        if "/" not in raw:
-            basename = normalised.rsplit("/", 1)[-1]
-            if fnmatch.fnmatch(basename, raw):
-                matched_owners = owners
-                continue
-
-        # Also try matching with any prefix for non-anchored patterns
-        if fnmatch.fnmatch(normalised, "*/" + raw):
-            matched_owners = owners
-
     return matched_owners
 
 

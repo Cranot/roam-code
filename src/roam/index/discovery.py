@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import json
 import os
 import subprocess
@@ -167,44 +166,46 @@ def _load_config_excludes(root: Path) -> list[str]:
 
 
 def load_exclude_patterns(project_root: Path) -> list[str]:
-    """Load all exclude patterns from .roamignore + config.json + built-in patterns.
+    """Load all exclude patterns from built-in + config.json + .roamignore.
 
-    Sources (in order):
-    1. .roamignore file in project root (gitignore-style globs)
+    Sources (lowest to highest priority for negation):
+    1. Built-in patterns for common generated files (protobuf, gRPC, etc.)
     2. "exclude" array in .roam/config.json (local project config)
-    3. Built-in patterns for common generated files (protobuf, gRPC, etc.)
+    3. .roamignore file in project root (user patterns — highest priority)
 
-    Returns a deduplicated list of glob patterns.
+    Returns a deduplicated list of glob patterns.  Because the last matching
+    pattern wins (gitignore semantics), user .roamignore patterns can negate
+    built-in or config patterns with ``!pattern``.
     """
     project_root = Path(project_root).resolve()
     patterns: list[str] = []
-    patterns.extend(_load_roamignore(project_root))
-    patterns.extend(_load_config_excludes(project_root))
     patterns.extend(BUILTIN_GENERATED_PATTERNS)
-    # Deduplicate while preserving order
+    patterns.extend(_load_config_excludes(project_root))
+    patterns.extend(_load_roamignore(project_root))
+    # Deduplicate while preserving order (skip negation patterns in dedup)
     seen: set[str] = set()
     unique: list[str] = []
     for p in patterns:
-        if p not in seen:
+        if p.startswith("!"):
+            # Always keep negation patterns (even if the positive form was seen)
+            unique.append(p)
+        elif p not in seen:
             seen.add(p)
             unique.append(p)
     return unique
 
 
 def _matches_exclude(rel_path: str, patterns: list[str]) -> bool:
-    """Check if a relative path matches any exclude pattern."""
-    for pattern in patterns:
-        # Match against full relative path
-        if fnmatch.fnmatch(rel_path, pattern):
-            return True
-        # Also match against just the filename
-        if fnmatch.fnmatch(os.path.basename(rel_path), pattern):
-            return True
-        # Directory prefix match: pattern "public/js/" matches "public/js/app.js"
-        prefix = pattern.rstrip("/")
-        if rel_path.startswith(prefix + "/"):
-            return True
-    return False
+    """Check if a relative path matches exclude patterns (gitignore semantics).
+
+    Supports ``*`` (single segment), ``**`` (recursive), ``?``, ``[abc]``,
+    ``[!abc]``, leading ``/`` (root anchor), trailing ``/`` (directory),
+    implicit anchoring for patterns containing ``/``, and ``!pattern``
+    negation (last matching pattern wins).
+    """
+    from roam.index.gitignore import matches_exclude_patterns
+
+    return matches_exclude_patterns(rel_path, patterns)
 
 
 def _is_generated_content(full_path: Path) -> bool:

@@ -1258,6 +1258,37 @@ Codebase
 
 After the first full index, `roam index` only re-processes changed files (mtime + SHA-256 hash). Incremental updates are near-instant.
 
+### .roamignore
+
+Create a `.roamignore` file in your project root to exclude files from indexing. It uses **full gitignore syntax**:
+
+| Pattern | Meaning |
+|---------|---------|
+| `*.log` | Exclude all `.log` files (basename match) |
+| `vendor/` | Exclude the `vendor` directory and everything under it |
+| `/build/` | Exclude `build/` at repo root only (anchored) |
+| `src/**/*.pb.go` | Exclude `.pb.go` files at any depth under `src/` |
+| `**/test_*.py` | Exclude `test_*.py` files anywhere |
+| `?` | Match any single character (not `/`) |
+| `[abc]` / `[!abc]` | Character class / negated character class |
+| `!important.log` | Un-exclude (re-include) `important.log` |
+| `# comment` | Lines starting with `#` are comments |
+
+Key rules: `*` matches within a single path segment (not across `/`). `**` matches across `/` boundaries. Last matching pattern wins (for negation). Patterns containing `/` are anchored to the repo root.
+
+```
+# .roamignore example
+*_pb2.py
+*_pb2_grpc.py
+vendor/
+node_modules/
+*.generated.*
+/build/
+!build/keep/
+```
+
+You can also exclude patterns via `roam config --exclude "*.proto"` (stored in `.roam/config.json`) or inspect active patterns with `roam config --show`.
+
 <details>
 <summary><strong>Graph algorithms</strong></summary>
 
