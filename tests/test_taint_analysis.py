@@ -28,6 +28,7 @@ from roam.db.schema import SCHEMA_SQL
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _make_db(tmp_path: Path | None = None) -> sqlite3.Connection:
     """Create an in-memory DB with the full schema."""
     conn = sqlite3.connect(":memory:")
@@ -74,6 +75,7 @@ def _insert_edge(conn, source_id, target_id, kind="calls"):
 # TaintSummary dataclass
 # ---------------------------------------------------------------------------
 
+
 class TestTaintSummary:
     def test_default_creation(self):
         s = TaintSummary(symbol_id=1)
@@ -119,6 +121,7 @@ class TestTaintFinding:
 # Sanitizer detection
 # ---------------------------------------------------------------------------
 
+
 class TestSanitizerDetection:
     def test_positive_cases(self):
         assert _detect_sanitizer("escape_html") is True
@@ -146,6 +149,7 @@ class TestSanitizerDetection:
 # Parameter parsing
 # ---------------------------------------------------------------------------
 
+
 class TestParseParamNames:
     def test_simple(self):
         assert _parse_param_names("def foo(a, b, c)") == ["a", "b", "c"]
@@ -172,15 +176,14 @@ class TestParseParamNames:
 # Intra-procedural variable taint tracking
 # ---------------------------------------------------------------------------
 
+
 class TestTrackVariableTaint:
     def test_source_to_sink(self):
         body = [
             "    data = request.args.get('key')",
             "    eval(data)",
         ]
-        result = _track_variable_taint(
-            body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert result["direct_sources"]
         assert result["direct_sinks"]
 
@@ -189,9 +192,7 @@ class TestTrackVariableTaint:
             "    result = x + 1",
             "    return result",
         ]
-        result = _track_variable_taint(
-            body, ["x"], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, ["x"], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert result["param_taints_return"].get(0) is True
 
     def test_param_to_sink(self):
@@ -199,9 +200,7 @@ class TestTrackVariableTaint:
             "    query = x",
             "    cursor.execute(query)",
         ]
-        result = _track_variable_taint(
-            body, ["x"], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, ["x"], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert 0 in result["param_to_sink"]
         assert any(".execute(" in s for s in result["param_to_sink"][0])
 
@@ -211,9 +210,7 @@ class TestTrackVariableTaint:
             "    data = escape(data)",
             "    eval(data)",
         ]
-        result = _track_variable_taint(
-            body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         # After sanitization, data should not be tainted
         # The source is still detected, but param_to_sink should be empty
         # because the taint was cleared before reaching the sink
@@ -225,9 +222,7 @@ class TestTrackVariableTaint:
             "    copy = data",
             "    eval(copy)",
         ]
-        result = _track_variable_taint(
-            body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert result["direct_sources"]
         assert result["direct_sinks"]
 
@@ -237,9 +232,7 @@ class TestTrackVariableTaint:
             "    data = 'safe_value'",
             "    return data",
         ]
-        result = _track_variable_taint(
-            body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert result["return_from_source"] is False
 
     def test_no_taint(self):
@@ -248,9 +241,7 @@ class TestTrackVariableTaint:
             "    y = x + 2",
             "    return y",
         ]
-        result = _track_variable_taint(
-            body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES
-        )
+        result = _track_variable_taint(body, [], _DEFAULT_SOURCES, _DEFAULT_SINKS, _SANITIZER_NAMES)
         assert not result["direct_sources"]
         assert not result["direct_sinks"]
         assert not result["param_taints_return"]
@@ -261,15 +252,11 @@ class TestTrackVariableTaint:
 # DB schema for taint tables
 # ---------------------------------------------------------------------------
 
+
 class TestTaintSchema:
     def test_tables_exist(self):
         conn = _make_db()
-        tables = [
-            r["name"]
-            for r in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type='table'"
-            ).fetchall()
-        ]
+        tables = [r["name"] for r in conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()]
         assert "taint_summaries" in tables
         assert "taint_findings" in tables
 
@@ -303,6 +290,7 @@ class TestTaintSchema:
 # Store / retrieve taint data
 # ---------------------------------------------------------------------------
 
+
 class TestStoreTaintData:
     def test_store_summaries(self):
         conn = _make_db()
@@ -322,9 +310,7 @@ class TestStoreTaintData:
         }
         store_taint_data(conn, summaries, [])
 
-        row = conn.execute(
-            "SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid,)
-        ).fetchone()
+        row = conn.execute("SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid,)).fetchone()
         assert row is not None
         assert json.loads(row["param_taints_return"]) == {"0": True}
         assert json.loads(row["param_to_sink"]) == {"1": ["eval("]}
@@ -378,6 +364,7 @@ class TestStoreTaintData:
 # Compute intra-procedural summary with mock DB
 # ---------------------------------------------------------------------------
 
+
 class TestComputeIntraSummary:
     def test_basic_summary(self):
         conn = _make_db()
@@ -389,8 +376,13 @@ class TestComputeIntraSummary:
             "    return result",
         ]
         summary = compute_intra_summary(
-            conn, sid, body_lines, "def process(data)", ["data"],
-            _DEFAULT_SOURCES, _DEFAULT_SINKS,
+            conn,
+            sid,
+            body_lines,
+            "def process(data)",
+            ["data"],
+            _DEFAULT_SOURCES,
+            _DEFAULT_SINKS,
         )
         assert summary.symbol_id == sid
         assert summary.param_taints_return.get(0) is True
@@ -402,8 +394,13 @@ class TestComputeIntraSummary:
         sid = _insert_symbol(conn, fid, "escape_html", signature="def escape_html(text)")
 
         summary = compute_intra_summary(
-            conn, sid, [], "def escape_html(text)", ["text"],
-            _DEFAULT_SOURCES, _DEFAULT_SINKS,
+            conn,
+            sid,
+            [],
+            "def escape_html(text)",
+            ["text"],
+            _DEFAULT_SOURCES,
+            _DEFAULT_SINKS,
         )
         assert summary.is_sanitizer is True
 
@@ -417,8 +414,13 @@ class TestComputeIntraSummary:
             "    eval(data)",
         ]
         summary = compute_intra_summary(
-            conn, sid, body_lines, "def handle()", [],
-            _DEFAULT_SOURCES, _DEFAULT_SINKS,
+            conn,
+            sid,
+            body_lines,
+            "def handle()",
+            [],
+            _DEFAULT_SOURCES,
+            _DEFAULT_SINKS,
         )
         assert summary.direct_sources
         assert summary.direct_sinks
@@ -427,6 +429,7 @@ class TestComputeIntraSummary:
 # ---------------------------------------------------------------------------
 # Compute all summaries (batch)
 # ---------------------------------------------------------------------------
+
 
 class TestComputeAllSummaries:
     def test_batch_with_files(self, tmp_path):
@@ -445,9 +448,12 @@ class TestComputeAllSummaries:
 
         fid = _insert_file(conn, path="app.py")
         sid = _insert_symbol(
-            conn, fid, "handler",
+            conn,
+            fid,
+            "handler",
             signature="def handler(request_data)",
-            line_start=1, line_end=3,
+            line_start=1,
+            line_end=3,
         )
 
         summaries = compute_all_summaries(conn, tmp_path)
@@ -463,6 +469,7 @@ class TestComputeAllSummaries:
 # ---------------------------------------------------------------------------
 # Inter-procedural propagation
 # ---------------------------------------------------------------------------
+
 
 class TestPropagateTaint:
     def test_cross_function_finding(self):
@@ -557,6 +564,7 @@ class TestPropagateTaint:
 # Inter-procedural dataflow patterns in dataflow.py
 # ---------------------------------------------------------------------------
 
+
 class TestInterProceduralDataflowPatterns:
     def test_inter_source_to_sink(self):
         conn = _make_db()
@@ -589,7 +597,9 @@ class TestInterProceduralDataflowPatterns:
         conn = _make_db()
         fid = _insert_file(conn, path="src/handler.py")
         sid = _insert_symbol(
-            conn, fid, "process",
+            conn,
+            fid,
+            "process",
             qualified_name="app.process",
             signature="def process(x, y)",
         )
@@ -600,7 +610,7 @@ class TestInterProceduralDataflowPatterns:
                (symbol_id, param_taints_return, param_to_sink,
                 return_from_source, direct_sources, direct_sinks, is_sanitizer)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (sid, '{}', '{}', 0, '[]', '[]', 0),
+            (sid, "{}", "{}", 0, "[]", "[]", 0),
         )
 
         from roam.rules.dataflow import _collect_inter_findings
@@ -620,7 +630,9 @@ class TestInterProceduralDataflowPatterns:
         conn = _make_db()
         fid = _insert_file(conn, path="src/handler.py")
         sid = _insert_symbol(
-            conn, fid, "compute",
+            conn,
+            fid,
+            "compute",
             qualified_name="app.compute",
         )
         # Insert symbol_metrics with return_count > 0
@@ -634,7 +646,7 @@ class TestInterProceduralDataflowPatterns:
                (symbol_id, param_taints_return, param_to_sink,
                 return_from_source, direct_sources, direct_sinks, is_sanitizer)
                VALUES (?, ?, ?, ?, ?, ?, ?)""",
-            (sid, '{}', '{}', 0, '[]', '[]', 0),
+            (sid, "{}", "{}", 0, "[]", "[]", 0),
         )
         # Insert a caller edge
         caller_fid = _insert_file(conn, path="src/main.py")
@@ -683,6 +695,7 @@ class TestInterProceduralDataflowPatterns:
 # ---------------------------------------------------------------------------
 # Engine integration: dataflow_match with inter-procedural keys
 # ---------------------------------------------------------------------------
+
 
 class TestEngineDataflowMatch:
     def test_max_chain_length_filter(self):
@@ -756,6 +769,7 @@ class TestEngineDataflowMatch:
 # Full pipeline: compute_and_store_taint
 # ---------------------------------------------------------------------------
 
+
 class TestComputeAndStoreTaint:
     def test_full_pipeline(self, tmp_path):
         conn = _make_db()
@@ -776,16 +790,22 @@ class TestComputeAndStoreTaint:
 
         fid = _insert_file(conn, path="handler.py")
         sid1 = _insert_symbol(
-            conn, fid, "get_user_input",
+            conn,
+            fid,
+            "get_user_input",
             qualified_name="handler.get_user_input",
             signature="def get_user_input()",
-            line_start=1, line_end=3,
+            line_start=1,
+            line_end=3,
         )
         sid2 = _insert_symbol(
-            conn, fid, "process",
+            conn,
+            fid,
+            "process",
             qualified_name="handler.process",
             signature="def process(cmd)",
-            line_start=5, line_end=6,
+            line_start=5,
+            line_end=6,
         )
         _insert_edge(conn, sid1, sid2, "calls")
 
@@ -796,15 +816,11 @@ class TestComputeAndStoreTaint:
         assert summary_count == 2
 
         # Check get_user_input has return_from_source
-        s1 = conn.execute(
-            "SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid1,)
-        ).fetchone()
+        s1 = conn.execute("SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid1,)).fetchone()
         assert s1["return_from_source"] == 1
 
         # Check process has param_to_sink
-        s2 = conn.execute(
-            "SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid2,)
-        ).fetchone()
+        s2 = conn.execute("SELECT * FROM taint_summaries WHERE symbol_id = ?", (sid2,)).fetchone()
         pts = json.loads(s2["param_to_sink"] or "{}")
         assert "0" in pts
 
