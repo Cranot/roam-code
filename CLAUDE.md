@@ -84,8 +84,10 @@ src/roam/
     clusters.py        # Louvain community detection
     layers.py          # Topological layer detection — returns {node_id: layer_number}
     pathfinding.py     # k-shortest paths for trace
-    split.py           # Intra-file decomposition
-    why.py             # Symbol role classification
+    dark_matter.py     # Hidden co-change coupling detection
+    diff.py            # Graph-level diff analysis
+    propagation.py     # Propagation cost computation
+    spectral.py        # Fiedler vector bisection + spectral gap
     anomaly.py         # Statistical anomaly detection (Modified Z-Score, Theil-Sen, Mann-Kendall, CUSUM)
     simulate.py        # Counterfactual architecture simulation (graph cloning + transforms)
     partition.py       # Multi-agent work partitioning (Louvain-based)
