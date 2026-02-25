@@ -1,0 +1,8 @@
+name: java-ssrf-httpurlconnection
+description: "HttpURLConnection with user URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "new URL(request.getParameter($P)).openConnection()"
+  language: java
+  file_glob: "**/*.java"

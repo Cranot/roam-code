@@ -1,0 +1,8 @@
+name: ts-cmd-exec
+description: "child_process.exec with variable risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "exec($CMD)"
+  language: typescript
+  file_glob: "**/*.ts"

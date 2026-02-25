@@ -1,0 +1,8 @@
+name: ruby-cmd-backtick
+description: "Backtick execution risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "`$CMD`"
+  language: ruby
+  file_glob: "**/*.rb"

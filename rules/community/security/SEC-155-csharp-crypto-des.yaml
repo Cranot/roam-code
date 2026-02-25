@@ -1,0 +1,8 @@
+name: csharp-crypto-des
+description: "DESCryptoServiceProvider is broken, use AES."
+severity: error
+type: ast_match
+match:
+  ast: "new DESCryptoServiceProvider()"
+  language: c_sharp
+  file_glob: "**/*.cs"

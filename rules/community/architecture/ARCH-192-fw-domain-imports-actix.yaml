@@ -1,0 +1,8 @@
+name: fw-domain-imports-actix
+description: "Domain layer must not import Actix web framework."
+severity: error
+type: ast_match
+match:
+  ast: "use actix_web::$MODULE"
+  language: rust
+  file_glob: "**/domain/**/*.rs"

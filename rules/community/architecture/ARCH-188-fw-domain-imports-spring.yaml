@@ -1,0 +1,8 @@
+name: fw-domain-imports-spring
+description: "Domain layer must not import Spring framework annotations."
+severity: error
+type: ast_match
+match:
+  ast: "import org.springframework.$PACKAGE"
+  language: java
+  file_glob: "**/domain/**/*.java"

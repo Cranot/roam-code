@@ -1,0 +1,8 @@
+name: java-xxe-saxparser
+description: "SAXParser without disabling external entities risks XXE."
+severity: error
+type: ast_match
+match:
+  ast: "SAXParserFactory.newInstance()"
+  language: java
+  file_glob: "**/*.java"

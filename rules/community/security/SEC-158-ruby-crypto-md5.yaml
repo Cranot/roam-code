@@ -1,0 +1,8 @@
+name: ruby-crypto-md5
+description: "Digest::MD5 is cryptographically broken."
+severity: warning
+type: ast_match
+match:
+  ast: "Digest::MD5.hexdigest($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

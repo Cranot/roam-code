@@ -1,0 +1,9 @@
+name: circular-lib-to-app
+description: "Library code must not import application code."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/lib/**"
+  to:
+    file_glob: "**/app/**"

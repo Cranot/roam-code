@@ -1,0 +1,8 @@
+name: py-requests-in-async
+description: "Synchronous requests in async function blocks event loop."
+severity: warning
+type: ast_match
+match:
+  ast: "requests.get($URL)"
+  language: python
+  file_glob: "**/*.py"

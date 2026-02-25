@@ -1,0 +1,8 @@
+name: go-err-not-checked
+description: "Error return value is not checked."
+severity: error
+type: ast_match
+match:
+  ast: "$VAL, _ := $FUNC($ARGS)"
+  language: go
+  file_glob: "**/*.go"

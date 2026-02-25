@@ -1,0 +1,11 @@
+name: php-cross-fn-sqli
+description: "Cross-function SQL injection: user input flows to query."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["$_GET[", "$_POST[", "$_REQUEST["]
+  sinks: ["mysqli_query(", "$pdo->query(", "$stmt->execute("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

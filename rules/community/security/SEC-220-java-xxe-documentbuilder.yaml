@@ -1,0 +1,8 @@
+name: java-xxe-documentbuilder
+description: "DocumentBuilder.parse without disabling DTD risks XXE."
+severity: error
+type: ast_match
+match:
+  ast: "DocumentBuilderFactory.newInstance()"
+  language: java
+  file_glob: "**/*.java"

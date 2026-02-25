@@ -1,0 +1,8 @@
+name: php-jwt-no-verify
+description: "JWT decode without verification allows tampering."
+severity: error
+type: ast_match
+match:
+  ast: "JWT::decode($TOKEN, new Key('', 'none'))"
+  language: php
+  file_glob: "**/*.php"

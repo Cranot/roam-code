@@ -1,0 +1,8 @@
+name: js-tls-node-tls-reject
+description: "NODE_TLS_REJECT_UNAUTHORIZED=0 disables SSL verification."
+severity: error
+type: ast_match
+match:
+  ast: "process.env.NODE_TLS_REJECT_UNAUTHORIZED = '0'"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

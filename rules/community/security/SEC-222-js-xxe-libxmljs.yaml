@@ -1,0 +1,8 @@
+name: js-xxe-libxmljs
+description: "libxmljs.parseXml with noent option risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "libxmljs.parseXml($XML, { noent: true })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

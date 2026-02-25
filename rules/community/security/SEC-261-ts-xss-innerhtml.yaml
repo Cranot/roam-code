@@ -1,0 +1,8 @@
+name: ts-xss-innerhtml
+description: "Setting innerHTML with user input risks XSS."
+severity: error
+type: ast_match
+match:
+  ast: "$EL.innerHTML = $INPUT"
+  language: typescript
+  file_glob: "**/*.ts"

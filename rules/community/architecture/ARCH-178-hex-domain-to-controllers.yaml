@@ -1,0 +1,9 @@
+name: hex-domain-to-controllers
+description: "Domain layer must not reference controller/handler layer."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+  to:
+    file_glob: "**/controllers/**"

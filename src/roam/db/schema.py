@@ -307,4 +307,29 @@ CREATE TABLE IF NOT EXISTS metric_snapshots (
 );
 CREATE INDEX IF NOT EXISTS idx_metric_snapshots_name_ts
     ON metric_snapshots(metric_name, timestamp);
+
+-- Taint analysis: per-function summaries and cross-function findings
+CREATE TABLE IF NOT EXISTS taint_summaries (
+    symbol_id INTEGER PRIMARY KEY REFERENCES symbols(id) ON DELETE CASCADE,
+    param_taints_return TEXT,
+    param_to_sink TEXT,
+    return_from_source INTEGER DEFAULT 0,
+    direct_sources TEXT,
+    direct_sinks TEXT,
+    is_sanitizer INTEGER DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS taint_findings (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    source_symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    sink_symbol_id INTEGER REFERENCES symbols(id) ON DELETE CASCADE,
+    source_type TEXT NOT NULL,
+    sink_type TEXT NOT NULL,
+    call_chain TEXT,
+    chain_length INTEGER DEFAULT 1,
+    sanitized INTEGER DEFAULT 0,
+    confidence REAL DEFAULT 0.8
+);
+CREATE INDEX IF NOT EXISTS idx_taint_findings_source ON taint_findings(source_symbol_id);
+CREATE INDEX IF NOT EXISTS idx_taint_findings_sink ON taint_findings(sink_symbol_id);
 """

@@ -1,0 +1,8 @@
+name: rust-sql-format
+description: "Using format! in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "client.execute(&format!($FMT, $ARGS))"
+  language: rust
+  file_glob: "**/*.rs"

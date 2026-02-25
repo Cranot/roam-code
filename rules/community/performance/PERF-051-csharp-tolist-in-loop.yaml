@@ -1,0 +1,8 @@
+name: csharp-tolist-in-loop
+description: "ToList() in loop creates unnecessary copies."
+severity: warning
+type: ast_match
+match:
+  ast: "$ENUM.ToList()"
+  language: c_sharp
+  file_glob: "**/*.cs"

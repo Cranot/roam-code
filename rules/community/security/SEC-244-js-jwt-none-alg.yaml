@@ -1,0 +1,8 @@
+name: js-jwt-none-alg
+description: "JWT verify with none algorithm allows forgery."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.verify($TOKEN, $SECRET, { algorithms: ['none'] })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

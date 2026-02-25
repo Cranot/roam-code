@@ -1,0 +1,8 @@
+name: ruby-nil-method-call
+description: "Method call on potentially nil object."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.$METHOD"
+  language: ruby
+  file_glob: "**/*.rb"

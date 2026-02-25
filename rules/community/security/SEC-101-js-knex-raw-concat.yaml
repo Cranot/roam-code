@@ -1,0 +1,8 @@
+name: js-knex-raw-concat
+description: "Knex raw query with concatenation risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "knex.raw($A + $B)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

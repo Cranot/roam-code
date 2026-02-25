@@ -1,0 +1,8 @@
+name: py-queryset-all
+description: "QuerySet.all() without pagination loads entire table."
+severity: warning
+type: ast_match
+match:
+  ast: "$MODEL.objects.all()"
+  language: python
+  file_glob: "**/*.py"

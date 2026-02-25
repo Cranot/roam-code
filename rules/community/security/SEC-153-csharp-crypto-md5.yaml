@@ -1,0 +1,8 @@
+name: csharp-crypto-md5
+description: "MD5.Create() is cryptographically broken."
+severity: warning
+type: ast_match
+match:
+  ast: "MD5.Create()"
+  language: c_sharp
+  file_glob: "**/*.cs"

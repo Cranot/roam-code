@@ -1,0 +1,8 @@
+name: py-sql-fstring
+description: "F-string used in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "cursor.execute(f\"$QUERY\")"
+  language: python
+  file_glob: "**/*.py"

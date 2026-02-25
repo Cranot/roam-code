@@ -1,0 +1,8 @@
+name: py-open-no-with
+description: "open() should use 'with' statement for automatic cleanup."
+severity: warning
+type: ast_match
+match:
+  ast: "$F = open($PATH, $MODE)"
+  language: python
+  file_glob: "**/*.py"

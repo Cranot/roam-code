@@ -1,0 +1,8 @@
+name: rust-float-equality
+description: "Float equality with == is unreliable, use f64::EPSILON."
+severity: warning
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: rust
+  file_glob: "**/*.rs"

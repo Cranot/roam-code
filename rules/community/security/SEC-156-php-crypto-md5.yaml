@@ -1,0 +1,8 @@
+name: php-crypto-md5
+description: "md5() is cryptographically broken for security use."
+severity: warning
+type: ast_match
+match:
+  ast: "md5($DATA)"
+  language: php
+  file_glob: "**/*.php"

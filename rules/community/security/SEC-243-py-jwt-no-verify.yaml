@@ -1,0 +1,8 @@
+name: py-jwt-no-verify
+description: "JWT decode without verification allows token tampering."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.decode($TOKEN, options={\"verify_signature\": False})"
+  language: python
+  file_glob: "**/*.py"

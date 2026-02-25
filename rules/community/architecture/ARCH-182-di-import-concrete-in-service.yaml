@@ -1,0 +1,9 @@
+name: di-import-concrete-in-service
+description: "Service should depend on interfaces, not concrete classes."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+  to:
+    file_glob: "**/impl/**"

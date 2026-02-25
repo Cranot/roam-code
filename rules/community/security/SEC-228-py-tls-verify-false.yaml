@@ -1,0 +1,8 @@
+name: py-tls-verify-false
+description: "SSL verification disabled risks MITM attacks."
+severity: error
+type: ast_match
+match:
+  ast: "requests.get($URL, verify=False)"
+  language: python
+  file_glob: "**/*.py"

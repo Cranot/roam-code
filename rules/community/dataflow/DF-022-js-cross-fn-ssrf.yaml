@@ -1,0 +1,11 @@
+name: js-cross-fn-ssrf
+description: "Cross-function SSRF: request input flows to HTTP call."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["req.body", "req.query"]
+  sinks: ["fetch(", "axios.get(", "axios.post(", "http.get("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.{js,mjs}"

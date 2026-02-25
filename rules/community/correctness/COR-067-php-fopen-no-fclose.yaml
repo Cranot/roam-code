@@ -1,0 +1,8 @@
+name: php-fopen-no-fclose
+description: "File handle from fopen without fclose may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "$FH = fopen($PATH, $MODE)"
+  language: php
+  file_glob: "**/*.php"

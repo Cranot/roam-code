@@ -1,0 +1,8 @@
+name: java-catch-throwable
+description: "Catching Throwable includes unrecoverable errors."
+severity: warning
+type: ast_match
+match:
+  ast: "catch (Throwable $E)"
+  language: java
+  file_glob: "**/*.java"

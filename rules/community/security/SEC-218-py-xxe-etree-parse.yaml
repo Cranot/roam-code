@@ -1,0 +1,8 @@
+name: py-xxe-etree-parse
+description: "xml.etree.ElementTree.parse may be vulnerable to XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "ET.parse($SOURCE)"
+  language: python
+  file_glob: "**/*.py"

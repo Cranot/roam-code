@@ -1,0 +1,8 @@
+name: php-xss-echo
+description: "Echo user input without htmlspecialchars risks XSS."
+severity: error
+type: ast_match
+match:
+  ast: "echo $_GET[$KEY]"
+  language: php
+  file_glob: "**/*.php"

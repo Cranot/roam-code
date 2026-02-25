@@ -1,0 +1,8 @@
+name: ts-redirect-location
+description: "Redirect to user input risks open redirect in TypeScript."
+severity: warning
+type: ast_match
+match:
+  ast: "res.redirect(req.query.$URL)"
+  language: typescript
+  file_glob: "**/*.ts"

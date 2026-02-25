@@ -1,0 +1,11 @@
+name: php-cross-fn-cmdi
+description: "Cross-function command injection: user input flows to exec."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["$_GET[", "$_POST["]
+  sinks: ["exec(", "system(", "passthru(", "shell_exec("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

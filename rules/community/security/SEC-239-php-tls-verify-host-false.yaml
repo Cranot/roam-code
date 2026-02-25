@@ -1,0 +1,8 @@
+name: php-tls-verify-host-false
+description: "CURLOPT_SSL_VERIFYHOST=0 disables hostname verification."
+severity: error
+type: ast_match
+match:
+  ast: "curl_setopt($CH, CURLOPT_SSL_VERIFYHOST, 0)"
+  language: php
+  file_glob: "**/*.php"

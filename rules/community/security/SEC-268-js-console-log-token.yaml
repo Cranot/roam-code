@@ -1,0 +1,8 @@
+name: js-console-log-token
+description: "Console logging auth token exposes credentials."
+severity: error
+type: ast_match
+match:
+  ast: "console.log($MSG, token)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

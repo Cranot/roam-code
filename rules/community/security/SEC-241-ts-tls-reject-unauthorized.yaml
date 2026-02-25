@@ -1,0 +1,8 @@
+name: ts-tls-reject-unauthorized
+description: "Disabling rejectUnauthorized in TypeScript risks MITM."
+severity: error
+type: ast_match
+match:
+  ast: "rejectUnauthorized: false"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: java-hardcoded-apikey
+description: "Hardcoded API key in Java code."
+severity: error
+type: ast_match
+match:
+  ast: "String apiKey = \"$VALUE\""
+  language: java
+  file_glob: "**/*.java"

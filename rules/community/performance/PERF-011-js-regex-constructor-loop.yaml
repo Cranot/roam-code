@@ -1,0 +1,8 @@
+name: js-regex-constructor-loop
+description: "new RegExp() inside loop recompiles on every iteration."
+severity: warning
+type: ast_match
+match:
+  ast: "new RegExp($PATTERN)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

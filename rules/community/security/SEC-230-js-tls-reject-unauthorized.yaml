@@ -1,0 +1,8 @@
+name: js-tls-reject-unauthorized
+description: "Disabling rejectUnauthorized risks MITM attacks."
+severity: error
+type: ast_match
+match:
+  ast: "rejectUnauthorized: false"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

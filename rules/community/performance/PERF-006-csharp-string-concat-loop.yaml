@@ -1,0 +1,8 @@
+name: csharp-string-concat-loop
+description: "String concatenation in loop is slow. Use StringBuilder."
+severity: warning
+type: ast_match
+match:
+  ast: "$STR += $PART"
+  language: c_sharp
+  file_glob: "**/*.cs"

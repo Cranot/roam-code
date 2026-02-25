@@ -1,0 +1,8 @@
+name: go-copy-slice-loop
+description: "Slice copy inside loop may be avoidable."
+severity: info
+type: ast_match
+match:
+  ast: "copy($DST, $SRC)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: ruby-bare-rescue
+description: "Bare rescue catches all StandardError subclasses."
+severity: warning
+type: ast_match
+match:
+  ast: "rescue"
+  language: ruby
+  file_glob: "**/*.rb"

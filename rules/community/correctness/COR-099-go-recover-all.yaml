@@ -1,0 +1,8 @@
+name: go-recover-all
+description: "recover() without type assertion catches all panics."
+severity: info
+type: ast_match
+match:
+  ast: "recover()"
+  language: go
+  file_glob: "**/*.go"

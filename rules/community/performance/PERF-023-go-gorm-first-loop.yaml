@@ -1,0 +1,8 @@
+name: go-gorm-first-loop
+description: "GORM First inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "db.First($DEST, $ID)"
+  language: go
+  file_glob: "**/*.go"

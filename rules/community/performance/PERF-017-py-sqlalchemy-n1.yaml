@@ -1,0 +1,8 @@
+name: py-sqlalchemy-n1
+description: "SQLAlchemy query inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "session.query($MODEL).filter($FILTER).first()"
+  language: python
+  file_glob: "**/*.py"

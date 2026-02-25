@@ -1,0 +1,8 @@
+name: go-sql-concat
+description: "String concatenation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "db.Query($A + $B)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: js-redirect-location
+description: "Setting location to user input risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "res.redirect(req.query.$URL)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

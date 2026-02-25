@@ -1,0 +1,8 @@
+name: py-dict-get-default-mutable
+description: "dict.setdefault with mutable value shares reference."
+severity: warning
+type: ast_match
+match:
+  ast: "$DICT.setdefault($KEY, [])"
+  language: python
+  file_glob: "**/*.py"

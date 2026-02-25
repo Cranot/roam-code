@@ -1,0 +1,8 @@
+name: rust-tls-danger-accept
+description: "danger_accept_invalid_certs disables TLS validation."
+severity: error
+type: ast_match
+match:
+  ast: "danger_accept_invalid_certs(true)"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: py-none-inequality
+description: "Use 'is not None' instead of '!= None' for identity check."
+severity: warning
+type: ast_match
+match:
+  ast: "$X != None"
+  language: python
+  file_glob: "**/*.py"

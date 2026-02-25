@@ -1,0 +1,8 @@
+name: py-sql-concat
+description: "String concatenation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "cursor.execute($A + $B)"
+  language: python
+  file_glob: "**/*.py"

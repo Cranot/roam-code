@@ -1,0 +1,8 @@
+name: py-late-binding-closure
+description: "Lambda in loop captures variable by reference, not value."
+severity: warning
+type: ast_match
+match:
+  ast: "lambda: $VAR"
+  language: python
+  file_glob: "**/*.py"

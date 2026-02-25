@@ -1,0 +1,8 @@
+name: csharp-xxe-xmlreader
+description: "XmlReader without DtdProcessing.Prohibit risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "XmlReader.Create($SOURCE)"
+  language: c_sharp
+  file_glob: "**/*.cs"

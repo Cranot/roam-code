@@ -1,0 +1,8 @@
+name: js-redirect-header
+description: "Setting Location header from user input risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "res.setHeader('Location', req.query.$URL)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

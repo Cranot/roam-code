@@ -1,0 +1,8 @@
+name: php-catch-all
+description: "Catching all exceptions hides specific error types."
+severity: warning
+type: ast_match
+match:
+  ast: "catch ($E)"
+  language: php
+  file_glob: "**/*.php"

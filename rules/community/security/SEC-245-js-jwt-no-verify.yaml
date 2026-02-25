@@ -1,0 +1,8 @@
+name: js-jwt-no-verify
+description: "jwt.decode without verification allows tampering."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.decode($TOKEN, { complete: true })"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

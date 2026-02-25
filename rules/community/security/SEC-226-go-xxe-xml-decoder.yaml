@@ -1,0 +1,8 @@
+name: go-xxe-xml-decoder
+description: "xml.NewDecoder without entity restrictions risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "xml.NewDecoder($READER)"
+  language: go
+  file_glob: "**/*.go"

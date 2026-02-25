@@ -1,0 +1,8 @@
+name: ruby-raise-production
+description: "Bare raise without rescue in non-test code."
+severity: info
+type: ast_match
+match:
+  ast: "raise $MSG"
+  language: ruby
+  file_glob: "**/lib/**/*.rb"

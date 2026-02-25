@@ -1,0 +1,8 @@
+name: java-hibernate-createquery
+description: "Hibernate createQuery with concatenation risks injection."
+severity: error
+type: ast_match
+match:
+  ast: "session.createQuery($A + $B)"
+  language: java
+  file_glob: "**/*.java"

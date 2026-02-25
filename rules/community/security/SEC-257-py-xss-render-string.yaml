@@ -1,0 +1,8 @@
+name: py-xss-render-string
+description: "render_template_string with user input risks XSS."
+severity: error
+type: ast_match
+match:
+  ast: "render_template_string($TEMPLATE)"
+  language: python
+  file_glob: "**/*.py"

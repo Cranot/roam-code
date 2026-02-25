@@ -1,0 +1,8 @@
+name: go-global-large-slice
+description: "Large package-level slice wastes memory."
+severity: info
+type: ast_match
+match:
+  ast: "var $NAME = []$TYPE{$ITEMS}"
+  language: go
+  file_glob: "**/*.go"

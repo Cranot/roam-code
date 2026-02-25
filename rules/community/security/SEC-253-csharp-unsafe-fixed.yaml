@@ -1,0 +1,8 @@
+name: csharp-unsafe-fixed
+description: "Unsafe fixed block with pointer arithmetic risks buffer overflow."
+severity: warning
+type: ast_match
+match:
+  ast: "fixed ($TYPE* $PTR = $EXPR)"
+  language: c_sharp
+  file_glob: "**/*.cs"

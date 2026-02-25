@@ -1,0 +1,8 @@
+name: py-unused-import
+description: "Imported module is never used in this file."
+severity: info
+type: ast_match
+match:
+  ast: "import $MODULE"
+  language: python
+  file_glob: "**/*.py"

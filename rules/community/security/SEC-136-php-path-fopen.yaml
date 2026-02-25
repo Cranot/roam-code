@@ -1,0 +1,8 @@
+name: php-path-fopen
+description: "fopen with user input risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "fopen($_GET[$PARAM])"
+  language: php
+  file_glob: "**/*.php"

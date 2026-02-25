@@ -1,0 +1,8 @@
+name: ts-path-readfile
+description: "fs.readFile with request path risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "fs.readFile(req.params.$PATH)"
+  language: typescript
+  file_glob: "**/*.ts"

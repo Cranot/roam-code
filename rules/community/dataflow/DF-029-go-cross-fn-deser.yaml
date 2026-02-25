@@ -1,0 +1,11 @@
+name: go-cross-fn-deser
+description: "Cross-function unsafe decode from request body."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["r.Body"]
+  sinks: ["gob.NewDecoder(", "json.NewDecoder("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

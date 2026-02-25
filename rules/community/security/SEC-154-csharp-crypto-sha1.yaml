@@ -1,0 +1,8 @@
+name: csharp-crypto-sha1
+description: "SHA1.Create() is cryptographically weak."
+severity: warning
+type: ast_match
+match:
+  ast: "SHA1.Create()"
+  language: c_sharp
+  file_glob: "**/*.cs"

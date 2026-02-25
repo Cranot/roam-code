@@ -1,0 +1,8 @@
+name: py-deser-yaml-load-unsafe
+description: "yaml.load without SafeLoader risks code execution."
+severity: error
+type: ast_match
+match:
+  ast: "yaml.load($DATA)"
+  language: python
+  file_glob: "**/*.py"

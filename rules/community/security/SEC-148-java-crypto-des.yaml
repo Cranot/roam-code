@@ -1,0 +1,8 @@
+name: java-crypto-des
+description: "DES cipher is broken, use AES instead."
+severity: error
+type: ast_match
+match:
+  ast: "Cipher.getInstance(\"DES\")"
+  language: java
+  file_glob: "**/*.java"

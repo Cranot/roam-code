@@ -1,0 +1,8 @@
+name: php-xxe-domdocument
+description: "DOMDocument::loadXML without disabling entities risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "$doc->loadXML($XML)"
+  language: php
+  file_glob: "**/*.php"

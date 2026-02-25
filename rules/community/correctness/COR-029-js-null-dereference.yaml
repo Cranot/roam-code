@@ -1,0 +1,8 @@
+name: js-null-dereference
+description: "Potential null dereference without optional chaining."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.$PROP.$NESTED"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: rust-sql-concat
+description: "String concatenation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "client.query($A + $B)"
+  language: rust
+  file_glob: "**/*.rs"

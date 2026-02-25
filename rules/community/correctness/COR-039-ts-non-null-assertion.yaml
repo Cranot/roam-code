@@ -1,0 +1,8 @@
+name: ts-non-null-assertion
+description: "Non-null assertion operator bypasses null safety."
+severity: info
+type: ast_match
+match:
+  ast: "$EXPR!.$PROP"
+  language: typescript
+  file_glob: "**/*.ts"

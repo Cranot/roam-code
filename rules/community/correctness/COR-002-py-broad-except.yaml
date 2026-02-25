@@ -1,0 +1,8 @@
+name: py-broad-except
+description: "Bare except catches all exceptions including SystemExit."
+severity: warning
+type: ast_match
+match:
+  ast: "except Exception: pass"
+  language: python
+  file_glob: "**/*.py"

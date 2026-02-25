@@ -1,0 +1,11 @@
+name: java-cross-fn-xss
+description: "Cross-function XSS: request param flows to response writer."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["request.getParameter("]
+  sinks: ["response.getWriter().write(", "response.getWriter().print("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.java"

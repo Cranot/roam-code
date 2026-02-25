@@ -1,0 +1,8 @@
+name: java-cmd-runtime-exec
+description: "Runtime.exec with variable input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "Runtime.getRuntime().exec($CMD)"
+  language: java
+  file_glob: "**/*.java"
