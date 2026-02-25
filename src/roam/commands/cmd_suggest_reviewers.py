@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import math
 import os
 import time
@@ -75,21 +74,13 @@ def _resolve_codeowners(file_path: str, entries: list[tuple[str, list[str]]]) ->
 
     GitHub uses last-match-wins semantics: only the last matching pattern
     applies.  Returns the owner list for that pattern, or [] if no match.
+    Uses gitignore-style pattern matching (see ``roam.index.gitignore``).
     """
+    from roam.index.gitignore import matches_gitignore
+
     matched_owners: list[str] = []
-    norm = file_path.replace("\\", "/")
     for pattern, owners in entries:
-        pat = pattern.replace("\\", "/")
-        # Directory pattern: *.py matches anywhere; /dir/ matches root dir
-        if pat.startswith("/"):
-            pat = pat.lstrip("/")
-        if fnmatch.fnmatch(norm, pat) or fnmatch.fnmatch(norm, f"**/{pat}"):
-            matched_owners = owners
-        # Also try matching as directory prefix
-        if pat.endswith("/") and norm.startswith(pat):
-            matched_owners = owners
-        # Handle **/pattern style
-        if fnmatch.fnmatch(norm, pat):
+        if matches_gitignore(file_path, pattern):
             matched_owners = owners
     return matched_owners
 

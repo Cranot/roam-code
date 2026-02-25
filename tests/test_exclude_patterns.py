@@ -18,6 +18,7 @@ from roam.index.discovery import (
     discover_files,
     load_exclude_patterns,
 )
+from roam.index.gitignore import matches_exclude_patterns, matches_gitignore
 
 # -----------------------------------------------------------------------
 # 1. Loading patterns from .roamignore
@@ -406,3 +407,216 @@ class TestConfigExcludeCLI:
         assert "exclude_all" in data
         assert "my_pattern.*" in data["exclude_roamignore"]
         assert "config_pattern.*" in data["exclude_config"]
+
+
+# -----------------------------------------------------------------------
+# 8. Gitignore-compatible pattern semantics
+# -----------------------------------------------------------------------
+
+
+class TestGitignoreSemantics:
+    """Full gitignore-compatible pattern matching via roam.index.gitignore."""
+
+    # -- Star (*) does NOT cross / boundaries --
+
+    def test_star_matches_single_segment(self):
+        """* should match within a single path segment only."""
+        assert matches_gitignore("src/app.py", "*.py")
+        assert matches_gitignore("app.py", "*.py")
+
+    def test_star_does_not_cross_slash(self):
+        """* must not match across / boundaries."""
+        # Pattern src/*.py should NOT match src/sub/app.py
+        assert not matches_gitignore("src/sub/app.py", "src/*.py")
+        assert matches_gitignore("src/app.py", "src/*.py")
+
+    # -- Double-star (**) crosses / boundaries --
+
+    def test_doublestar_recursive_middle(self):
+        """src/**/*.py matches files at any depth under src/."""
+        assert matches_gitignore("src/app.py", "src/**/*.py")
+        assert matches_gitignore("src/sub/deep/app.py", "src/**/*.py")
+        assert not matches_gitignore("lib/app.py", "src/**/*.py")
+
+    def test_doublestar_leading(self):
+        """**/test.py matches test.py at any depth."""
+        assert matches_gitignore("test.py", "**/test.py")
+        assert matches_gitignore("src/test.py", "**/test.py")
+        assert matches_gitignore("a/b/c/test.py", "**/test.py")
+
+    def test_doublestar_trailing(self):
+        """src/** matches everything under src/."""
+        assert matches_gitignore("src/app.py", "src/**")
+        assert matches_gitignore("src/sub/deep/app.py", "src/**")
+        assert not matches_gitignore("lib/app.py", "src/**")
+
+    # -- Root anchoring (leading /) --
+
+    def test_root_anchored_pattern(self):
+        """/vendor matches only at root, not nested."""
+        assert matches_gitignore("vendor/lib.go", "/vendor/")
+        assert not matches_gitignore("src/vendor/lib.go", "/vendor/")
+
+    def test_unanchored_matches_anywhere(self):
+        """vendor/ without leading / matches at any depth."""
+        assert matches_gitignore("vendor/lib.go", "vendor/")
+        assert matches_gitignore("src/vendor/lib.go", "vendor/")
+
+    # -- Implicit anchoring (/ in middle of pattern) --
+
+    def test_implicit_anchoring_with_slash(self):
+        """src/generated has a /, so it's implicitly anchored to root."""
+        assert matches_gitignore("src/generated/api.py", "src/generated/")
+        assert not matches_gitignore("lib/src/generated/api.py", "src/generated/")
+
+    # -- Directory patterns (trailing /) --
+
+    def test_directory_trailing_slash(self):
+        """vendor/ matches the dir and everything under it."""
+        assert matches_gitignore("vendor/pkg/main.go", "vendor/")
+        assert matches_gitignore("vendor/main.go", "vendor/")
+
+    def test_directory_trailing_slash_no_false_positive(self):
+        """vendor/ should not match a file named 'vendor' (no trailing content)."""
+        # A file exactly named "vendor" with no / after — edge case.
+        # In gitignore, trailing / means "only if it is a directory".
+        # We match prefix, so "vendor" alone won't have content after /.
+        assert not matches_gitignore("vendor_stuff/file.py", "vendor/")
+
+    # -- Negation (!pattern) --
+
+    def test_negation_un_excludes(self):
+        """!important.log un-excludes a file matched by *.log."""
+        patterns = ["*.log", "!important.log"]
+        assert matches_exclude_patterns("debug.log", patterns)
+        assert not matches_exclude_patterns("important.log", patterns)
+
+    def test_negation_last_match_wins(self):
+        """Last matching pattern wins — re-exclude after negation."""
+        patterns = ["*.log", "!important.log", "*.log"]
+        assert matches_exclude_patterns("important.log", patterns)
+
+    def test_negation_with_directory(self):
+        """Negation works with directory patterns."""
+        patterns = ["build/", "!build/keep/"]
+        assert matches_exclude_patterns("build/output.js", patterns)
+        assert not matches_exclude_patterns("build/keep/important.js", patterns)
+
+    # -- Character classes --
+
+    def test_char_class_positive(self):
+        """[abc] matches any of the listed characters."""
+        assert matches_gitignore("file_a.txt", "file_[abc].txt")
+        assert matches_gitignore("file_b.txt", "file_[abc].txt")
+        assert not matches_gitignore("file_d.txt", "file_[abc].txt")
+
+    def test_char_class_negated(self):
+        """[!abc] matches any character NOT listed."""
+        assert matches_gitignore("file_d.txt", "file_[!abc].txt")
+        assert not matches_gitignore("file_a.txt", "file_[!abc].txt")
+
+    # -- Question mark --
+
+    def test_question_mark_single_char(self):
+        """? matches exactly one character (not /)."""
+        assert matches_gitignore("foo.py", "fo?.py")
+        assert not matches_gitignore("fooo.py", "fo?.py")
+        assert not matches_gitignore("fo/py", "fo?.py")
+
+    # -- Backward compatibility with existing patterns --
+
+    def test_compat_pb2_py(self):
+        """*_pb2.py still matches protobuf stubs."""
+        assert matches_gitignore("src/models_pb2.py", "*_pb2.py")
+        assert matches_gitignore("models_pb2.py", "*_pb2.py")
+
+    def test_compat_generated_extension(self):
+        """*.generated.* still matches generated files."""
+        assert matches_gitignore("lib/schema.generated.ts", "*.generated.*")
+
+    def test_compat_vendor_directory(self):
+        """vendor/ still matches vendor directory contents."""
+        assert matches_gitignore("vendor/pkg/main.go", "vendor/")
+
+    def test_compat_src_generated_star(self):
+        """src/generated/* matches files directly in src/generated/."""
+        assert matches_gitignore("src/generated/api.py", "src/generated/*")
+        # * doesn't cross /, so nested won't match
+        assert not matches_gitignore("src/generated/sub/api.py", "src/generated/*")
+
+    # -- Comments and blanks in pattern lists --
+
+    def test_comments_and_blanks_ignored(self):
+        """# lines and empty strings are skipped in pattern lists."""
+        patterns = ["# comment", "", "*.log", "  ", "# another"]
+        assert matches_exclude_patterns("debug.log", patterns)
+        assert not matches_exclude_patterns("app.py", patterns)
+
+
+# -----------------------------------------------------------------------
+# 9. Gitignore integration with discover_files
+# -----------------------------------------------------------------------
+
+
+class TestGitignoreDiscoverIntegration:
+    """Integration tests: gitignore patterns with discover_files."""
+
+    def test_negation_in_roamignore(self, tmp_path):
+        """!pattern in .roamignore un-excludes a file."""
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".gitignore").write_text(".roam/\n")
+        # Exclude all .log but keep important.log
+        (repo / ".roamignore").write_text("*.log\n!important.log\n")
+        (repo / "app.py").write_text("def main(): pass\n")
+        (repo / "debug.log").write_text("debug info\n")
+        (repo / "important.log").write_text("important info\n")
+        git_init(repo)
+
+        files = discover_files(repo)
+        assert "app.py" in files
+        assert "debug.log" not in files
+        assert "important.log" in files
+
+    def test_root_anchored_in_roamignore(self, tmp_path):
+        """Leading / in .roamignore anchors to repo root."""
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".gitignore").write_text(".roam/\n")
+        # /build/ only matches root-level build/
+        (repo / ".roamignore").write_text("/build/\n")
+        (repo / "app.py").write_text("def main(): pass\n")
+        build_dir = repo / "build"
+        build_dir.mkdir()
+        (build_dir / "output.js").write_text("// compiled\n")
+        src_build = repo / "src" / "build"
+        src_build.mkdir(parents=True)
+        (src_build / "helper.py").write_text("def help(): pass\n")
+        git_init(repo)
+
+        files = discover_files(repo)
+        assert "app.py" in files
+        assert "build/output.js" not in files
+        # src/build/ should NOT be excluded (root-anchored)
+        assert "src/build/helper.py" in files
+
+    def test_star_doesnt_cross_slash_in_discovery(self, tmp_path):
+        """* in .roamignore should not cross / boundaries."""
+        repo = tmp_path / "proj"
+        repo.mkdir()
+        (repo / ".gitignore").write_text(".roam/\n")
+        (repo / ".roamignore").write_text("src/*.tmp\n")
+        (repo / "app.py").write_text("def main(): pass\n")
+        src = repo / "src"
+        src.mkdir()
+        (src / "cache.tmp").write_text("temp\n")
+        sub = src / "sub"
+        sub.mkdir()
+        (sub / "deep.tmp").write_text("temp\n")
+        git_init(repo)
+
+        files = discover_files(repo)
+        assert "app.py" in files
+        assert "src/cache.tmp" not in files
+        # src/sub/deep.tmp should NOT be excluded (star doesn't cross /)
+        assert "src/sub/deep.tmp" in files
