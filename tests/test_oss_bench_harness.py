@@ -4,7 +4,6 @@ import importlib.util
 import sys
 from pathlib import Path
 
-
 ROOT = Path(__file__).resolve().parents[1]
 MODULE_PATH = ROOT / "benchmarks" / "oss-eval" / "run_oss_bench.py"
 
@@ -17,7 +16,11 @@ spec.loader.exec_module(oss_bench)
 
 def test_extract_metrics_handles_missing_optional_payloads():
     metrics = oss_bench._extract_metrics(
-        health={"health_score": 91, "severity": {"CRITICAL": 0, "WARNING": 2}, "tangle_ratio": 0.04},
+        health={
+            "health_score": 91,
+            "severity": {"CRITICAL": 0, "WARNING": 2},
+            "tangle_ratio": 0.04,
+        },
         dead=None,
         complexity=None,
         coupling=None,

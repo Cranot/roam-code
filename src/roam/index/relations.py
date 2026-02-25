@@ -99,18 +99,28 @@ def resolve_references(
         target_sym = None
         if import_path and import_path.startswith("@salesforce/"):
             target_sym = _resolve_salesforce_import(
-                import_path, symbols_by_name, symbols_by_qualified,
+                import_path,
+                symbols_by_name,
+                symbols_by_qualified,
             )
         elif kind in ("controller", "soql", "metadata_ref", "component_ref"):
             target_sym = _resolve_salesforce_name(
-                target_name, kind, symbols_by_name, sf_file_priority,
+                target_name,
+                kind,
+                symbols_by_name,
+                sf_file_priority,
             )
 
         # Standard resolution (skip if Salesforce already resolved)
         if target_sym is None:
             target_sym = _resolve_standard(
-                target_name, source_file, source_parent, kind,
-                symbols_by_name, symbols_by_qualified, symbols_by_name_lower,
+                target_name,
+                source_file,
+                source_parent,
+                kind,
+                symbols_by_name,
+                symbols_by_qualified,
+                symbols_by_name_lower,
                 import_map,
             )
 
@@ -128,13 +138,15 @@ def resolve_references(
             continue
         seen.add(edge_key)
 
-        edges.append({
-            "source_id": source_id,
-            "target_id": target_id,
-            "kind": kind,
-            "line": line,
-            "source_file_id": files_by_path.get(source_file),
-        })
+        edges.append(
+            {
+                "source_id": source_id,
+                "target_id": target_id,
+                "kind": kind,
+                "line": line,
+                "source_file_id": files_by_path.get(source_file),
+            }
+        )
 
     return edges
 
@@ -155,32 +167,51 @@ def _prefer_local(target_sym, target_name, source_file, symbols_by_name):
     return target_sym
 
 
-def _resolve_standard(target_name, source_file, source_parent, kind,
-                      symbols_by_name, symbols_by_qualified, symbols_by_name_lower,
-                      import_map):
+def _resolve_standard(
+    target_name,
+    source_file,
+    source_parent,
+    kind,
+    symbols_by_name,
+    symbols_by_qualified,
+    symbols_by_name_lower,
+    import_map,
+):
     """Standard multi-strategy resolution: qualified -> simple -> case-insensitive."""
     # 1. Qualified name exact match
     qn_matches = symbols_by_qualified.get(target_name, [])
     target_sym = qn_matches[0] if len(qn_matches) == 1 else None
     if len(qn_matches) > 1:
         target_sym = _best_match(
-            target_name, source_file, symbols_by_name,
-            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+            target_name,
+            source_file,
+            symbols_by_name,
+            ref_kind=kind,
+            source_parent=source_parent,
+            import_map=import_map,
         )
     target_sym = _prefer_local(target_sym, target_name, source_file, symbols_by_name)
 
     # 2. Simple name with disambiguation
     if target_sym is None:
         target_sym = _best_match(
-            target_name, source_file, symbols_by_name,
-            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+            target_name,
+            source_file,
+            symbols_by_name,
+            ref_kind=kind,
+            source_parent=source_parent,
+            import_map=import_map,
         )
 
     # 3. Case-insensitive fallback (VFP and other case-insensitive langs)
     if target_sym is None:
         target_sym = _best_match(
-            target_name.lower(), source_file, symbols_by_name_lower,
-            ref_kind=kind, source_parent=source_parent, import_map=import_map,
+            target_name.lower(),
+            source_file,
+            symbols_by_name_lower,
+            ref_kind=kind,
+            source_parent=source_parent,
+            import_map=import_map,
         )
 
     return target_sym
@@ -434,8 +465,7 @@ def _resolve_salesforce_import(
             candidates = symbols_by_qualified.get(qn, [])
             if candidates:
                 # Prefer candidates from .cls files
-                cls_cands = [c for c in candidates
-                             if c.get("file_path", "").endswith(".cls")]
+                cls_cands = [c for c in candidates if c.get("file_path", "").endswith(".cls")]
                 return cls_cands[0] if cls_cands else candidates[0]
             # Try just the method name
             method_cands = symbols_by_name.get(method_name, [])
@@ -448,9 +478,7 @@ def _resolve_salesforce_import(
         else:
             # Just class name: @salesforce/apex/MyController
             candidates = symbols_by_name.get(apex_ref, [])
-            cls_cands = [c for c in candidates
-                         if c.get("file_path", "").endswith(".cls")
-                         and c.get("kind") == "class"]
+            cls_cands = [c for c in candidates if c.get("file_path", "").endswith(".cls") and c.get("kind") == "class"]
             if cls_cands:
                 return cls_cands[0]
 
@@ -496,9 +524,7 @@ def _resolve_salesforce_name(
 
     # For controller refs, prefer class symbols in .cls files
     if kind == "controller":
-        cls_classes = [c for c in candidates
-                       if c.get("file_path", "").endswith(".cls")
-                       and c.get("kind") == "class"]
+        cls_classes = [c for c in candidates if c.get("file_path", "").endswith(".cls") and c.get("kind") == "class"]
         if cls_classes:
             return cls_classes[0]
 

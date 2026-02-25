@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
@@ -22,12 +22,14 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     op_args_fn : callable(G_sim, conn) -> (dict, str | None)
         Returns (op_result, error_message).  error_message is None on success.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     from roam.graph.builder import build_symbol_graph
     from roam.graph.simulate import (
-        compute_graph_metrics, clone_graph, metric_delta,
+        clone_graph,
+        compute_graph_metrics,
+        metric_delta,
     )
 
     with open_db(readonly=True) as conn:
@@ -38,14 +40,25 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
         op_result, error = op_args_fn(G_sim, conn)
         if error:
             if json_mode:
-                click.echo(to_json(json_envelope("simulate",
-                    summary={"verdict": error, "operation": op_name,
-                             "health_delta": 0, "health_before": before["health_score"],
-                             "health_after": before["health_score"],
-                             "improved_metrics": 0, "degraded_metrics": 0},
-                    operation={"operation": op_name, "error": error},
-                    metrics={}, warnings=[error],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "simulate",
+                            summary={
+                                "verdict": error,
+                                "operation": op_name,
+                                "health_delta": 0,
+                                "health_before": before["health_score"],
+                                "health_after": before["health_score"],
+                                "improved_metrics": 0,
+                                "degraded_metrics": 0,
+                            },
+                            operation={"operation": op_name, "error": error},
+                            metrics={},
+                            warnings=[error],
+                        )
+                    )
+                )
                 return
             click.echo(f"VERDICT: {error}")
             return
@@ -77,27 +90,36 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
         cycle_str = f", {cycle_delta} new cycles" if cycle_delta > 0 else ", 0 new cycles"
 
         if health_delta > 0:
-            verdict = f"health {health_delta:+d} ({before['health_score']} -> {after['health_score']}){mod_str}{cycle_str}"
+            verdict = (
+                f"health {health_delta:+d} ({before['health_score']} -> {after['health_score']}){mod_str}{cycle_str}"
+            )
         elif health_delta == 0:
             verdict = f"health unchanged at {before['health_score']}{mod_str}{cycle_str}"
         else:
-            verdict = f"health {health_delta:+d} ({before['health_score']} -> {after['health_score']}){mod_str}{cycle_str}"
+            verdict = (
+                f"health {health_delta:+d} ({before['health_score']} -> {after['health_score']}){mod_str}{cycle_str}"
+            )
 
         if json_mode:
-            click.echo(to_json(json_envelope("simulate",
-                summary={
-                    "verdict": verdict,
-                    "operation": op_name,
-                    "health_delta": health_delta,
-                    "health_before": before["health_score"],
-                    "health_after": after["health_score"],
-                    "improved_metrics": improved,
-                    "degraded_metrics": degraded,
-                },
-                operation=op_result,
-                metrics=deltas,
-                warnings=warnings,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "simulate",
+                        summary={
+                            "verdict": verdict,
+                            "operation": op_name,
+                            "health_delta": health_delta,
+                            "health_before": before["health_score"],
+                            "health_after": after["health_score"],
+                            "improved_metrics": improved,
+                            "degraded_metrics": degraded,
+                        },
+                        operation=op_result,
+                        metrics=deltas,
+                        warnings=warnings,
+                    )
+                )
+            )
             return
 
         # Text output
@@ -135,9 +157,15 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
             "edges": "Edges",
         }
         display_order = [
-            "health_score", "cycles", "tangle_ratio", "layer_violations",
-            "modularity", "fiedler", "propagation_cost",
-            "god_components", "bottlenecks",
+            "health_score",
+            "cycles",
+            "tangle_ratio",
+            "layer_violations",
+            "modularity",
+            "fiedler",
+            "propagation_cost",
+            "god_components",
+            "bottlenecks",
         ]
         for key in display_order:
             d = deltas.get(key)
@@ -178,6 +206,7 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
 # Click group
 # ---------------------------------------------------------------------------
 
+
 @click.group("simulate")
 @click.pass_context
 def simulate(ctx):
@@ -192,6 +221,7 @@ def simulate(ctx):
 # ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
+
 
 @simulate.command("move")
 @click.argument("symbol")
@@ -240,10 +270,7 @@ def simulate_merge(ctx, file_a, file_b):
     def do_op(G_sim, conn):
         # Check file_b has nodes
         norm_b = file_b.replace("\\", "/")
-        has_nodes = any(
-            norm_b in (G_sim.nodes[n].get("file_path") or "").replace("\\", "/")
-            for n in G_sim.nodes
-        )
+        has_nodes = any(norm_b in (G_sim.nodes[n].get("file_path") or "").replace("\\", "/") for n in G_sim.nodes)
         if not has_nodes:
             return {}, f"no symbols found in: {file_b}"
         result = apply_merge(G_sim, file_a, file_b)

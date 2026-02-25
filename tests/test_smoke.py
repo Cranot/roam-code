@@ -8,7 +8,6 @@ interface (not CliRunner).
 from __future__ import annotations
 
 import json
-import os
 import subprocess
 import sys
 from pathlib import Path
@@ -18,10 +17,10 @@ import pytest
 # conftest.py is auto-loaded by pytest for fixtures, but we need an
 # explicit import for the non-fixture helpers (roam, git_init, etc.).
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit
-
+from conftest import git_init, roam
 
 # ── Helpers / fixtures ──────────────────────────────────────────────
+
 
 @pytest.fixture
 def empty_git_repo(tmp_path):
@@ -40,24 +39,15 @@ def small_project(tmp_path):
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
     (repo / "app.py").write_text(
-        "def main():\n"
-        "    return greet('world')\n"
-        "\n"
-        "def greet(name):\n"
-        "    return f'Hello, {name}!'\n"
+        "def main():\n    return greet('world')\n\ndef greet(name):\n    return f'Hello, {name}!'\n"
     )
-    (repo / "utils.py").write_text(
-        "def add(a, b):\n"
-        "    return a + b\n"
-        "\n"
-        "def unused():\n"
-        "    pass\n"
-    )
+    (repo / "utils.py").write_text("def add(a, b):\n    return a + b\n\ndef unused():\n    pass\n")
     git_init(repo)
     return repo
 
 
 # ── 1. Version ──────────────────────────────────────────────────────
+
 
 def test_version():
     """roam --version exits 0 and prints a version string."""
@@ -68,6 +58,7 @@ def test_version():
 
 
 # ── 2. Help ─────────────────────────────────────────────────────────
+
 
 def test_help():
     """roam --help exits 0 and includes command categories."""
@@ -82,9 +73,22 @@ def test_help():
 # ── 3. Per-command help ─────────────────────────────────────────────
 
 _HELP_COMMANDS = [
-    "index", "health", "map", "dead", "search", "grep",
-    "weather", "clusters", "layers", "trend", "snapshot",
-    "diff", "describe", "deps", "file", "symbol",
+    "index",
+    "health",
+    "map",
+    "dead",
+    "search",
+    "grep",
+    "weather",
+    "clusters",
+    "layers",
+    "trend",
+    "snapshot",
+    "diff",
+    "describe",
+    "deps",
+    "file",
+    "symbol",
 ]
 
 
@@ -98,6 +102,7 @@ def test_help_per_command(cmd):
 
 # ── 4. No args ──────────────────────────────────────────────────────
 
+
 def test_no_args():
     """Running roam with no arguments shows help (Click returns exit 2 for missing command)."""
     output, rc = roam()
@@ -108,6 +113,7 @@ def test_no_args():
 
 # ── 5. Unknown command ──────────────────────────────────────────────
 
+
 def test_unknown_command():
     """roam nonexistent returns a non-zero exit code."""
     output, rc = roam("nonexistent")
@@ -115,6 +121,7 @@ def test_unknown_command():
 
 
 # ── 6. Index creates DB ─────────────────────────────────────────────
+
 
 def test_index_creates_db(small_project):
     """roam index creates .roam/index.db in the project root."""
@@ -127,6 +134,7 @@ def test_index_creates_db(small_project):
 
 # ── 7. Index in non-git directory ───────────────────────────────────
 
+
 def test_index_no_git_repo(tmp_path):
     """roam index in a non-git directory fails gracefully."""
     plain_dir = tmp_path / "no_git"
@@ -138,6 +146,7 @@ def test_index_no_git_repo(tmp_path):
 
 
 # ── 8. JSON flag produces valid JSON ────────────────────────────────
+
 
 def test_json_flag_produces_json(small_project):
     """roam --json health in an indexed project outputs valid JSON."""
@@ -160,6 +169,7 @@ def test_json_flag_produces_json(small_project):
 
 # ── 9. Compact flag ─────────────────────────────────────────────────
 
+
 def test_compact_flag(small_project):
     """roam --compact health produces output (possibly shorter)."""
     out, rc = roam("index", cwd=small_project)
@@ -174,6 +184,7 @@ def test_compact_flag(small_project):
 
 
 # ── 10. Unicode handling ────────────────────────────────────────────
+
 
 def test_unicode_handling(tmp_path):
     """Indexing a project with unicode filenames and content succeeds."""
@@ -197,6 +208,7 @@ def test_unicode_handling(tmp_path):
 
 # ── 11. Empty project ──────────────────────────────────────────────
 
+
 def test_empty_project(empty_git_repo):
     """Indexing an empty git repo and running health still works."""
     out, rc = roam("index", cwd=empty_git_repo)
@@ -209,6 +221,7 @@ def test_empty_project(empty_git_repo):
 
 # ── 12. Exit code on error ─────────────────────────────────────────
 
+
 def test_exit_code_on_error(tmp_path):
     """Commands that cannot run return non-zero exit codes."""
     plain_dir = tmp_path / "nope"
@@ -219,6 +232,7 @@ def test_exit_code_on_error(tmp_path):
 
 
 # ── 13. Multiple commands sequential ───────────────────────────────
+
 
 def test_multiple_commands_sequential(small_project):
     """Running index, health, and map sequentially all succeed."""
@@ -236,6 +250,7 @@ def test_multiple_commands_sequential(small_project):
 
 # ── 14. Index idempotent ───────────────────────────────────────────
 
+
 def test_index_idempotent(small_project):
     """Running roam index twice does not crash."""
     out1, rc1 = roam("index", cwd=small_project)
@@ -250,6 +265,7 @@ def test_index_idempotent(small_project):
 
 
 # ── 15. Stderr separation ──────────────────────────────────────────
+
 
 def test_stderr_separation(small_project):
     """Errors go to stderr, structured data goes to stdout."""

@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from abc import ABC, abstractmethod
 
 
@@ -8,13 +8,11 @@ class LanguageExtractor(ABC):
 
     @property
     @abstractmethod
-    def language_name(self) -> str:
-        ...
+    def language_name(self) -> str: ...
 
     @property
     @abstractmethod
-    def file_extensions(self) -> list[str]:
-        ...
+    def file_extensions(self) -> list[str]: ...
 
     @abstractmethod
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
@@ -51,7 +49,7 @@ class LanguageExtractor(ABC):
     def node_text(self, node, source: bytes) -> str:
         if node is None:
             return ""
-        return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+        return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
     def _params_text(self, node, source: bytes) -> str:
         """Get parameter list text, stripping outer parens if present."""

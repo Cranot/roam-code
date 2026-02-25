@@ -14,8 +14,7 @@ from pathlib import Path
 
 import click
 
-from roam.output.formatter import to_json, json_envelope
-
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Individual check functions
@@ -38,6 +37,7 @@ def _check_tree_sitter() -> dict:
     """tree-sitter package importable."""
     try:
         import tree_sitter
+
         version = getattr(tree_sitter, "__version__", "unknown")
         return {
             "name": "tree-sitter",
@@ -56,6 +56,7 @@ def _check_tree_sitter_language_pack() -> dict:
     """tree-sitter-language-pack importable."""
     try:
         import tree_sitter_language_pack
+
         version = getattr(tree_sitter_language_pack, "__version__", "unknown")
         return {
             "name": "tree-sitter-language-pack",
@@ -82,6 +83,7 @@ def _check_git() -> dict:
     # Get version string
     try:
         import subprocess
+
         result = subprocess.run(
             ["git", "--version"],
             capture_output=True,
@@ -104,6 +106,7 @@ def _check_networkx() -> dict:
     """networkx importable."""
     try:
         import networkx
+
         version = getattr(networkx, "__version__", "unknown")
         return {
             "name": "networkx",
@@ -122,6 +125,7 @@ def _check_index_exists() -> dict:
     """Index DB file exists at the expected path."""
     try:
         from roam.db.connection import get_db_path
+
         db_path = get_db_path()
     except Exception as exc:
         return {
@@ -174,11 +178,7 @@ def _check_index_freshness(db_path_str: str | None) -> dict:
     return {
         "name": "Index freshness",
         "passed": not stale,
-        "detail": (
-            f"fresh ({age_str})"
-            if not stale
-            else f"stale ({age_str}, run `roam index` to refresh)"
-        ),
+        "detail": (f"fresh ({age_str})" if not stale else f"stale ({age_str}, run `roam index` to refresh)"),
         "_age_s": round(age_s, 1),
     }
 
@@ -201,6 +201,7 @@ def _check_sqlite(db_path_str: str | None) -> dict:
 
     try:
         import sqlite3
+
         conn = sqlite3.connect(str(db_path), timeout=5)
         # PRAGMA integrity_check verifies the file is a real, non-corrupted DB
         rows = conn.execute("PRAGMA integrity_check").fetchall()
@@ -279,25 +280,28 @@ def doctor(ctx):
         verdict = f"{len(failed)} checks failed"
 
     # Strip private keys (prefixed with _) before output
-    clean_checks = [
-        {k: v for k, v in c.items() if not k.startswith("_")}
-        for c in checks
-    ]
+    clean_checks = [{k: v for k, v in c.items() if not k.startswith("_")} for c in checks]
 
     if json_mode:
-        click.echo(to_json(json_envelope("doctor",
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "passed": passed_count,
-                "failed": len(failed),
-                "all_passed": len(failed) == 0,
-            },
-            checks=clean_checks,
-            failed_checks=[c for c in clean_checks if not c["passed"]],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "doctor",
+                    summary={
+                        "verdict": verdict,
+                        "total": total,
+                        "passed": passed_count,
+                        "failed": len(failed),
+                        "all_passed": len(failed) == 0,
+                    },
+                    checks=clean_checks,
+                    failed_checks=[c for c in clean_checks if not c["passed"]],
+                )
+            )
+        )
         if failed:
             from roam.exit_codes import EXIT_ERROR
+
             ctx.exit(EXIT_ERROR)
         return
 
@@ -311,4 +315,5 @@ def doctor(ctx):
         click.echo()
         click.echo(f"  {len(failed)} check{'s' if len(failed) != 1 else ''} failed.")
         from roam.exit_codes import EXIT_ERROR
+
         ctx.exit(EXIT_ERROR)

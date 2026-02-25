@@ -17,28 +17,59 @@ if TYPE_CHECKING:
 _EXTENSION_MAP: dict[str, str] = EXTENSION_MAP
 
 # Languages with dedicated extractors
-_DEDICATED_EXTRACTORS = frozenset({
-    "python", "javascript", "typescript", "tsx",
-    "go", "rust", "java", "c", "cpp", "php",
-    "c_sharp", "ruby", "kotlin", "swift",
-})
+_DEDICATED_EXTRACTORS = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "go",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "php",
+        "c_sharp",
+        "ruby",
+        "kotlin",
+        "swift",
+    }
+)
 
 # All supported tree-sitter language names (includes aliased languages)
-_SUPPORTED_LANGUAGES = frozenset({
-    "python", "javascript", "typescript", "tsx",
-    "go", "rust", "java", "c", "cpp",
-    "ruby", "php", "c_sharp", "kotlin", "swift", "scala",
-    "vue", "svelte",
-    # Aliased languages (parsed via grammar aliases)
-    "apex", "sfxml", "aura", "visualforce",
-    # Regex-only languages (no tree-sitter grammar)
-    "foxpro",
-    "yaml",
-    "hcl",
-    # Aliased variants
-    "jsonc",
-    "mdx",
-})
+_SUPPORTED_LANGUAGES = frozenset(
+    {
+        "python",
+        "javascript",
+        "typescript",
+        "tsx",
+        "go",
+        "rust",
+        "java",
+        "c",
+        "cpp",
+        "ruby",
+        "php",
+        "c_sharp",
+        "kotlin",
+        "swift",
+        "scala",
+        "vue",
+        "svelte",
+        # Aliased languages (parsed via grammar aliases)
+        "apex",
+        "sfxml",
+        "aura",
+        "visualforce",
+        # Regex-only languages (no tree-sitter grammar)
+        "foxpro",
+        "yaml",
+        "hcl",
+        # Aliased variants
+        "jsonc",
+        "mdx",
+    }
+)
 
 
 def _plugin_language_extractors():
@@ -113,6 +144,7 @@ def get_ts_language(language: str):
     grammar = plugin_alias or GRAMMAR_ALIASES.get(language, language)
 
     from tree_sitter_language_pack import get_language
+
     return get_language(grammar)
 
 
@@ -121,64 +153,84 @@ def _create_extractor(language: str) -> "LanguageExtractor":
     """Create and cache an extractor instance for a language."""
     if language == "python":
         from .python_lang import PythonExtractor
+
         return PythonExtractor()
     elif language == "javascript":
         from .javascript_lang import JavaScriptExtractor
+
         return JavaScriptExtractor()
     elif language in ("typescript", "tsx", "vue", "svelte"):
         from .typescript_lang import TypeScriptExtractor
+
         return TypeScriptExtractor()
     elif language == "go":
         from .go_lang import GoExtractor
+
         return GoExtractor()
     elif language == "rust":
         from .rust_lang import RustExtractor
+
         return RustExtractor()
     elif language == "java":
         from .java_lang import JavaExtractor
+
         return JavaExtractor()
     elif language == "c":
         from .c_lang import CExtractor
+
         return CExtractor()
     elif language == "cpp":
         from .c_lang import CppExtractor
+
         return CppExtractor()
     elif language == "php":
         from .php_lang import PhpExtractor
+
         return PhpExtractor()
     elif language == "c_sharp":
         from .csharp_lang import CSharpExtractor
+
         return CSharpExtractor()
     elif language == "ruby":
         from .ruby_lang import RubyExtractor
+
         return RubyExtractor()
     elif language == "kotlin":
         from .kotlin_lang import KotlinExtractor
+
         return KotlinExtractor()
     elif language == "swift":
         from .swift_lang import SwiftExtractor
+
         return SwiftExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor
+
         return ApexExtractor()
     elif language == "sfxml":
         from .sfxml_lang import SfxmlExtractor
+
         return SfxmlExtractor()
     elif language == "aura":
         from .aura_lang import AuraExtractor
+
         return AuraExtractor()
     elif language == "visualforce":
         from .visualforce_lang import VisualforceExtractor
+
         return VisualforceExtractor()
     elif language == "foxpro":
         from .foxpro_lang import FoxProExtractor
+
         return FoxProExtractor()
     elif language == "yaml":
         from .yaml_lang import YamlExtractor
+
         return YamlExtractor()
     elif language == "hcl":
         from .hcl_lang import HclExtractor
+
         return HclExtractor()
     else:
         plugin_factory = _plugin_language_extractors().get(language)
@@ -190,6 +242,7 @@ def _create_extractor(language: str) -> "LanguageExtractor":
             return _create_extractor(alias_target)
         # Use generic extractor for tier-2 languages
         from .generic_lang import GenericExtractor
+
         return GenericExtractor(language=language)
 
 

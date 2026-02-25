@@ -3,17 +3,16 @@
 Extracted from cmd_context.py to reduce file size.  These functions
 query the index DB and return plain dicts — no rendering or CLI I/O.
 """
+
 from __future__ import annotations
 
 import re
 from collections import deque
 
-from roam.db.connection import batched_in
-from roam.output.formatter import loc
 from roam.commands.changed_files import is_test_file
 from roam.commands.graph_helpers import build_forward_adj
-from roam.graph.propagation import propagate_context, merge_rankings
-
+from roam.db.connection import batched_in
+from roam.output.formatter import loc
 
 _DEFAULT_REASON_WEIGHTS = {
     "definition": 1.0,
@@ -65,10 +64,7 @@ def _reason_weight(task, reason):
 def _tokenize_hint(text):
     if not text:
         return set()
-    return {
-        tok for tok in re.split(r"[^a-zA-Z0-9_]+", str(text).lower())
-        if len(tok) >= 3
-    }
+    return {tok for tok in re.split(r"[^a-zA-Z0-9_]+", str(text).lower()) if len(tok) >= 3}
 
 
 def _session_overlap(path, tokens):
@@ -117,11 +113,7 @@ def _recent_path_boost(path, recent_paths):
 
 
 def _file_pagerank_map(conn, paths):
-    path_list = sorted({
-        (p or "").replace("\\", "/")
-        for p in paths
-        if p
-    })
+    path_list = sorted({(p or "").replace("\\", "/") for p in paths if p})
     if not path_list:
         return {}
 
@@ -145,10 +137,7 @@ def _file_pagerank_map(conn, paths):
         "GROUP BY s.file_id",
         file_ids,
     )
-    file_pr = {
-        id_to_path[r["file_id"]]: float(r["pagerank"] or 0.0)
-        for r in pr_rows
-    }
+    file_pr = {id_to_path[r["file_id"]]: float(r["pagerank"] or 0.0) for r in pr_rows}
     for path in path_list:
         file_pr.setdefault(path, 0.0)
     return file_pr
@@ -206,20 +195,17 @@ def _rank_single_files(
                 + (0.05 * recent_score)
             )
         else:
-            score = (
-                (0.50 * reason_score)
-                + (0.30 * pr_norm)
-                + (0.12 * session_score)
-                + (0.08 * recent_score)
-            )
+            score = (0.50 * reason_score) + (0.30 * pr_norm) + (0.12 * session_score) + (0.08 * recent_score)
         if reason == "definition":
             score = max(score, 1.25)
 
-        ranked.append({
-            **f,
-            "path": path,
-            "score": round(score, 3),
-        })
+        ranked.append(
+            {
+                **f,
+                "path": path,
+                "score": round(score, 3),
+            }
+        )
 
     ranked.sort(key=lambda x: (-x["score"], x["path"], x.get("start") or 0))
     return _attach_rank_scores(ranked)
@@ -283,11 +269,13 @@ def _rank_batch_files(
         if "definition" in reasons:
             score = max(score, 1.2)
 
-        ranked.append({
-            **item,
-            "path": path,
-            "score": round(score, 3),
-        })
+        ranked.append(
+            {
+                **item,
+                "path": path,
+                "score": round(score, 3),
+            }
+        )
 
     ranked.sort(key=lambda x: (-x["score"], -x["relevance"], x["path"]))
     return _attach_rank_scores(ranked)
@@ -296,6 +284,7 @@ def _rank_batch_files(
 # ---------------------------------------------------------------------------
 # Propagation-aware ranking helpers
 # ---------------------------------------------------------------------------
+
 
 def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=3, decay=0.5):
     """Compute per-file propagation scores for a set of seed symbol IDs.
@@ -318,7 +307,7 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
     seed_set = set(sym_ids)
 
     # Load edges in both directions
-    forward: dict = {}   # caller -> {callee, ...}
+    forward: dict = {}  # caller -> {callee, ...}
     backward: dict = {}  # callee -> {caller, ...}
 
     for batch_ids in _batch_list(list(seed_set), 400):
@@ -338,7 +327,7 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
             nd = depth + 1
             if neighbor not in visited_callee or visited_callee[neighbor] > nd:
                 visited_callee[neighbor] = nd
-                score = decay ** nd
+                score = decay**nd
                 prev = callee_scores.get(neighbor, 0.0)
                 callee_scores[neighbor] = max(prev, score)
                 queue.append((neighbor, nd))
@@ -357,7 +346,7 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
             nd = depth + 1
             if neighbor not in visited_caller or visited_caller[neighbor] > nd:
                 visited_caller[neighbor] = nd
-                score = caller_decay ** nd
+                score = caller_decay**nd
                 prev = callee_scores.get(neighbor, 0.0)
                 callee_scores[neighbor] = max(prev, score)
                 queue.append((neighbor, nd))
@@ -372,9 +361,7 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
     for chunk in _batch_list(all_sym_ids, 400):
         ph = ",".join("?" * len(chunk))
         rows = conn.execute(
-            f"SELECT s.id, f.path FROM symbols s "
-            f"JOIN files f ON s.file_id = f.id "
-            f"WHERE s.id IN ({ph})",
+            f"SELECT s.id, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
             chunk,
         ).fetchall()
         for row in rows:
@@ -397,7 +384,7 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
 def _batch_list(lst, size):
     """Yield successive chunks of *size* from *lst*."""
     for i in range(0, len(lst), size):
-        yield lst[i: i + size]
+        yield lst[i : i + size]
 
 
 def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
@@ -411,8 +398,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
         frontier_list = list(frontier)
         # Forward edges (callees)
         rows = conn.execute(
-            f"SELECT source_id, target_id FROM edges "
-            f"WHERE source_id IN ({ph})",
+            f"SELECT source_id, target_id FROM edges WHERE source_id IN ({ph})",
             frontier_list,
         ).fetchall()
         next_frontier = set()
@@ -428,8 +414,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
                 visited_nodes.add(tgt)
         # Backward edges (callers)
         rows = conn.execute(
-            f"SELECT source_id, target_id FROM edges "
-            f"WHERE target_id IN ({ph})",
+            f"SELECT source_id, target_id FROM edges WHERE target_id IN ({ph})",
             frontier_list,
         ).fetchall()
         for row in rows:
@@ -448,6 +433,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
 # ---------------------------------------------------------------------------
 # Annotations
 # ---------------------------------------------------------------------------
+
 
 def gather_annotations(conn, sym=None, file_path=None):
     """Fetch active annotations for a symbol or file.
@@ -475,8 +461,7 @@ def gather_annotations(conn, sym=None, file_path=None):
     where = " AND ".join(conditions)
     try:
         rows = conn.execute(
-            f"SELECT * FROM annotations WHERE {where} "
-            "ORDER BY created_at DESC",
+            f"SELECT * FROM annotations WHERE {where} ORDER BY created_at DESC",
             params,
         ).fetchall()
     except Exception:
@@ -498,11 +483,10 @@ def gather_annotations(conn, sym=None, file_path=None):
 # Per-symbol metric fetchers
 # ---------------------------------------------------------------------------
 
+
 def get_symbol_metrics(conn, sym_id):
     """Fetch symbol_metrics row for a symbol, or None."""
-    row = conn.execute(
-        "SELECT * FROM symbol_metrics WHERE symbol_id = ?", (sym_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM symbol_metrics WHERE symbol_id = ?", (sym_id,)).fetchone()
     if row is None:
         return None
     return {
@@ -518,9 +502,7 @@ def get_symbol_metrics(conn, sym_id):
 
 def get_graph_metrics(conn, sym_id):
     """Fetch graph_metrics row for a symbol, or None."""
-    row = conn.execute(
-        "SELECT * FROM graph_metrics WHERE symbol_id = ?", (sym_id,)
-    ).fetchone()
+    row = conn.execute("SELECT * FROM graph_metrics WHERE symbol_id = ?", (sym_id,)).fetchone()
     if row is None:
         return None
     out = {
@@ -543,14 +525,10 @@ def get_graph_metrics(conn, sym_id):
 
 def get_file_churn(conn, file_path):
     """Fetch git churn stats for the file containing the symbol."""
-    frow = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    ).fetchone()
+    frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if frow is None:
         return None
-    stats = conn.execute(
-        "SELECT * FROM file_stats WHERE file_id = ?", (frow["id"],)
-    ).fetchone()
+    stats = conn.execute("SELECT * FROM file_stats WHERE file_id = ?", (frow["id"],)).fetchone()
     if stats is None:
         return None
     return {
@@ -562,16 +540,12 @@ def get_file_churn(conn, file_path):
 
 def get_coupling(conn, file_path, limit=10):
     """Fetch temporal coupling partners for the symbol's file."""
-    frow = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (file_path,)
-    ).fetchone()
+    frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if frow is None:
         return []
     fid = frow["id"]
 
-    fstats = conn.execute(
-        "SELECT commit_count FROM file_stats WHERE file_id = ?", (fid,)
-    ).fetchone()
+    fstats = conn.execute("SELECT commit_count FROM file_stats WHERE file_id = ?", (fid,)).fetchone()
     file_commits = (fstats["commit_count"] or 1) if fstats else 1
 
     partners = conn.execute(
@@ -590,18 +564,17 @@ def get_coupling(conn, file_path, limit=10):
 
     results = []
     for p in partners:
-        pstats = conn.execute(
-            "SELECT commit_count FROM file_stats WHERE file_id = ?",
-            (p["partner_fid"],)
-        ).fetchone()
+        pstats = conn.execute("SELECT commit_count FROM file_stats WHERE file_id = ?", (p["partner_fid"],)).fetchone()
         partner_commits = (pstats["commit_count"] or 1) if pstats else 1
         avg = (file_commits + partner_commits) / 2
         strength = round(p["cochange_count"] / avg, 2) if avg > 0 else 0
-        results.append({
-            "path": p["path"],
-            "cochange_count": p["cochange_count"],
-            "strength": strength,
-        })
+        results.append(
+            {
+                "path": p["path"],
+                "cochange_count": p["cochange_count"],
+                "strength": strength,
+            }
+        )
     return results
 
 
@@ -616,9 +589,7 @@ def get_affected_tests_bfs(conn, sym_id, max_hops=8):
         if hops >= max_hops:
             continue
         callers = conn.execute(
-            "SELECT e.source_id, s.name "
-            "FROM edges e JOIN symbols s ON e.source_id = s.id "
-            "WHERE e.target_id = ?",
+            "SELECT e.source_id, s.name FROM edges e JOIN symbols s ON e.source_id = s.id WHERE e.target_id = ?",
             (current_id,),
         ).fetchall()
         for row in callers:
@@ -651,17 +622,23 @@ def get_affected_tests_bfs(conn, sym_id, max_hops=8):
             continue
         seen.add(key)
         hops, via = visited[r["id"]]
-        tests.append({
-            "file": r["file_path"],
-            "symbol": r["name"],
-            "kind": "DIRECT" if hops == 1 else "TRANSITIVE",
-            "hops": hops,
-            "via": via if hops > 1 else None,
-        })
+        tests.append(
+            {
+                "file": r["file_path"],
+                "symbol": r["name"],
+                "kind": "DIRECT" if hops == 1 else "TRANSITIVE",
+                "hops": hops,
+                "via": via if hops > 1 else None,
+            }
+        )
 
-    tests.sort(key=lambda t: (
-        0 if t["kind"] == "DIRECT" else 1, t["hops"], t["file"],
-    ))
+    tests.sort(
+        key=lambda t: (
+            0 if t["kind"] == "DIRECT" else 1,
+            t["hops"],
+            t["file"],
+        )
+    )
     return tests
 
 
@@ -671,9 +648,7 @@ def get_blast_radius(conn, sym_id):
     queue = deque([sym_id])
     while queue:
         current = queue.popleft()
-        callers = conn.execute(
-            "SELECT source_id FROM edges WHERE target_id = ?", (current,)
-        ).fetchall()
+        callers = conn.execute("SELECT source_id FROM edges WHERE target_id = ?", (current,)).fetchall()
         for row in callers:
             cid = row["source_id"]
             if cid not in visited:
@@ -686,9 +661,7 @@ def get_blast_radius(conn, sym_id):
     dep_ids = [sid for sid in visited if sid != sym_id]
     file_rows = batched_in(
         conn,
-        "SELECT DISTINCT f.path FROM symbols s "
-        "JOIN files f ON s.file_id = f.id "
-        "WHERE s.id IN ({ph})",
+        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
         dep_ids,
     )
 
@@ -720,9 +693,7 @@ def get_cluster_info(conn, sym_id):
         "cluster_id": row["cluster_id"],
         "cluster_label": row["cluster_label"] or f"cluster-{row['cluster_id']}",
         "cluster_size": size,
-        "top_members": [
-            {"name": m["name"], "kind": m["kind"]} for m in members
-        ],
+        "top_members": [{"name": m["name"], "kind": m["kind"]} for m in members],
     }
 
 
@@ -792,11 +763,13 @@ def get_entry_points_reaching(conn, sym_id, limit=5):
             if found:
                 break
         if found:
-            results.append({
-                "name": ep["qualified_name"] or ep["name"],
-                "kind": ep["kind"],
-                "location": loc(ep["file_path"], ep["line_start"]),
-            })
+            results.append(
+                {
+                    "name": ep["qualified_name"] or ep["name"],
+                    "kind": ep["kind"],
+                    "location": loc(ep["file_path"], ep["line_start"]),
+                }
+            )
             if len(results) >= limit:
                 break
 
@@ -826,6 +799,7 @@ def get_file_context(conn, file_id, sym_id):
 # Task-mode: gather extra context based on task intent
 # ---------------------------------------------------------------------------
 
+
 def gather_task_extras(conn, sym, ctx_data, task):
     """Gather task-specific extra context data.
 
@@ -854,7 +828,9 @@ def gather_task_extras(conn, sym, ctx_data, task):
     elif task == "extend":
         extras["similar_symbols"] = get_similar_symbols(conn, sym, limit=10)
         extras["entry_points_reaching"] = get_entry_points_reaching(
-            conn, sym_id, limit=5,
+            conn,
+            sym_id,
+            limit=5,
         )
         extras["graph_centrality"] = get_graph_metrics(conn, sym_id)
 
@@ -877,9 +853,7 @@ def gather_task_extras(conn, sym, ctx_data, task):
         try:
             fid = sym["file_id"]
         except (KeyError, IndexError):
-            fid = conn.execute(
-                "SELECT file_id FROM symbols WHERE id = ?", (sym_id,)
-            ).fetchone()[0]
+            fid = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (sym_id,)).fetchone()[0]
         extras["file_context"] = get_file_context(conn, fid, sym_id)
         extras["_limit_callers"] = 5
         extras["_limit_callees"] = 5
@@ -890,6 +864,7 @@ def gather_task_extras(conn, sym, ctx_data, task):
 # ---------------------------------------------------------------------------
 # Single-symbol context gathering (reusable for batch mode)
 # ---------------------------------------------------------------------------
+
 
 def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=(), use_propagation=True):
     """Gather callers, callees, tests, siblings, and files_to_read for a symbol.
@@ -933,8 +908,7 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
         caller_ids = [c["id"] for c in non_test_callers]
         pr_rows = batched_in(
             conn,
-            "SELECT symbol_id, pagerank FROM graph_metrics "
-            "WHERE symbol_id IN ({ph})",
+            "SELECT symbol_id, pagerank FROM graph_metrics WHERE symbol_id IN ({ph})",
             caller_ids,
         )
         pr_map = {r["symbol_id"]: r["pagerank"] or 0 for r in pr_rows}
@@ -944,9 +918,7 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
         )
 
     # --- Test files that import the symbol's file ---
-    sym_file_row = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (sym["file_path"],)
-    ).fetchone()
+    sym_file_row = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
     test_importers = []
     if sym_file_row:
         importers = conn.execute(
@@ -973,12 +945,14 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
     skipped_callers = 0
     skipped_callees = 0
 
-    files_to_read = [{
-        "path": sym["file_path"],
-        "start": line_start,
-        "end": line_end,
-        "reason": "definition",
-    }]
+    files_to_read = [
+        {
+            "path": sym["file_path"],
+            "start": line_start,
+            "end": line_end,
+            "reason": "definition",
+        }
+    ]
     seen = {sym["file_path"]}
     caller_files = 0
     for c in non_test_callers:
@@ -987,12 +961,14 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
                 skipped_callers += 1
                 continue
             seen.add(c["file_path"])
-            files_to_read.append({
-                "path": c["file_path"],
-                "start": c["line_start"],
-                "end": c["line_end"] or c["line_start"],
-                "reason": "caller",
-            })
+            files_to_read.append(
+                {
+                    "path": c["file_path"],
+                    "start": c["line_start"],
+                    "end": c["line_end"] or c["line_start"],
+                    "reason": "caller",
+                }
+            )
             caller_files += 1
     callee_files = 0
     for c in callees:
@@ -1001,36 +977,46 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
                 skipped_callees += 1
                 continue
             seen.add(c["file_path"])
-            files_to_read.append({
-                "path": c["file_path"],
-                "start": c["line_start"],
-                "end": c["line_end"] or c["line_start"],
-                "reason": "callee",
-            })
+            files_to_read.append(
+                {
+                    "path": c["file_path"],
+                    "start": c["line_start"],
+                    "end": c["line_end"] or c["line_start"],
+                    "reason": "callee",
+                }
+            )
             callee_files += 1
     test_files = 0
     for t in test_callers:
         if t["file_path"] not in seen and test_files < _MAX_TEST_FILES:
             seen.add(t["file_path"])
-            files_to_read.append({
-                "path": t["file_path"],
-                "start": t["line_start"],
-                "end": t["line_end"] or t["line_start"],
-                "reason": "test",
-            })
+            files_to_read.append(
+                {
+                    "path": t["file_path"],
+                    "start": t["line_start"],
+                    "end": t["line_end"] or t["line_start"],
+                    "reason": "test",
+                }
+            )
             test_files += 1
     for ti in test_importers:
         if ti["path"] not in seen and test_files < _MAX_TEST_FILES:
             seen.add(ti["path"])
-            files_to_read.append({
-                "path": ti["path"], "start": 1, "end": None,
-                "reason": "test",
-            })
+            files_to_read.append(
+                {
+                    "path": ti["path"],
+                    "start": 1,
+                    "end": None,
+                    "reason": "test",
+                }
+            )
             test_files += 1
 
     # Compute propagation scores for context-aware ranking
     prop_scores = _get_propagation_scores_for_paths(
-        conn, [sym_id], use_propagation=use_propagation,
+        conn,
+        [sym_id],
+        use_propagation=use_propagation,
     )
 
     files_to_read = _rank_single_files(
@@ -1061,6 +1047,7 @@ def gather_symbol_context(conn, sym, task=None, session_hint="", recent_symbols=
 # ---------------------------------------------------------------------------
 # Batch mode: shared callers + information density scoring
 # ---------------------------------------------------------------------------
+
 
 def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(), use_propagation=True):
     """Compute batch-mode context for multiple symbols.
@@ -1108,8 +1095,7 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
         frow = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
         if frow:
             total = conn.execute(
-                "SELECT COUNT(*) FROM edges e JOIN symbols s ON e.source_id = s.id "
-                "WHERE s.file_id = ?",
+                "SELECT COUNT(*) FROM edges e JOIN symbols s ON e.source_id = s.id WHERE s.file_id = ?",
                 (frow["id"],),
             ).fetchone()[0]
             file_total_edges[path] = max(total, 1)
@@ -1124,16 +1110,20 @@ def batch_context(conn, contexts, task=None, session_hint="", recent_symbols=(),
         if "definition" in reasons:
             relevance = 1.0
 
-        scored_files.append({
-            "path": path,
-            "reasons": sorted(reasons),
-            "relevance": relevance,
-        })
+        scored_files.append(
+            {
+                "path": path,
+                "reasons": sorted(reasons),
+                "relevance": relevance,
+            }
+        )
 
     # Compute propagation scores for context-aware ranking
     batch_sym_ids = [ctx_data["sym"]["id"] for ctx_data in contexts]
     batch_prop_scores = _get_propagation_scores_for_paths(
-        conn, batch_sym_ids, use_propagation=use_propagation,
+        conn,
+        batch_sym_ids,
+        use_propagation=use_propagation,
     )
 
     scored_files = _rank_batch_files(

@@ -2,21 +2,21 @@
 
 from __future__ import annotations
 
-import json
-import os
-
 import networkx as nx
 import pytest
 
 from tests.conftest import (
-    git_init, git_commit, index_in_process, invoke_cli,
-    parse_json_output, assert_json_envelope,
+    assert_json_envelope,
+    git_init,
+    index_in_process,
+    invoke_cli,
+    parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixture: multi-file project for simulation
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def sim_project(tmp_path):
@@ -35,61 +35,61 @@ def sim_project(tmp_path):
     auth = proj / "auth"
     auth.mkdir()
     (auth / "login.py").write_text(
-        'def authenticate(user, password):\n'
+        "def authenticate(user, password):\n"
         '    """Authenticate a user."""\n'
-        '    if not _verify_password(password):\n'
-        '        return None\n'
-        '    return user\n'
-        '\n'
-        'def _verify_password(password):\n'
+        "    if not _verify_password(password):\n"
+        "        return None\n"
+        "    return user\n"
+        "\n"
+        "def _verify_password(password):\n"
         '    """Check password strength."""\n'
-        '    return len(password) >= 8\n'
+        "    return len(password) >= 8\n"
     )
     (auth / "tokens.py").write_text(
-        'from auth.login import authenticate\n'
-        '\n'
-        'def create_token(user, password):\n'
+        "from auth.login import authenticate\n"
+        "\n"
+        "def create_token(user, password):\n"
         '    """Create an auth token."""\n'
-        '    auth_user = authenticate(user, password)\n'
-        '    if auth_user:\n'
+        "    auth_user = authenticate(user, password)\n"
+        "    if auth_user:\n"
         '        return {"token": "abc123", "user": auth_user}\n'
-        '    return None\n'
+        "    return None\n"
     )
 
     billing = proj / "billing"
     billing.mkdir()
     (billing / "charge.py").write_text(
-        'from auth.tokens import create_token\n'
-        '\n'
-        'def process_charge(amount, user, password):\n'
+        "from auth.tokens import create_token\n"
+        "\n"
+        "def process_charge(amount, user, password):\n"
         '    """Process a billing charge."""\n'
-        '    token = create_token(user, password)\n'
-        '    if not token:\n'
+        "    token = create_token(user, password)\n"
+        "    if not token:\n"
         '        raise ValueError("auth failed")\n'
         '    return {"charged": amount, "token": token}\n'
     )
     (billing / "invoice.py").write_text(
-        'def create_invoice(items):\n'
+        "def create_invoice(items):\n"
         '    """Create an invoice from items."""\n'
-        '    total = _calculate_total(items)\n'
+        "    total = _calculate_total(items)\n"
         '    return {"items": items, "total": total}\n'
-        '\n'
-        'def _calculate_total(items):\n'
+        "\n"
+        "def _calculate_total(items):\n"
         '    """Sum up item prices."""\n'
         '    return sum(item["price"] for item in items)\n'
     )
 
     (proj / "api.py").write_text(
-        'from auth.tokens import create_token\n'
-        'from billing.charge import process_charge\n'
-        '\n'
-        'def handle_purchase(user, password, amount):\n'
+        "from auth.tokens import create_token\n"
+        "from billing.charge import process_charge\n"
+        "\n"
+        "def handle_purchase(user, password, amount):\n"
         '    """Handle a purchase request."""\n'
-        '    token = create_token(user, password)\n'
-        '    if not token:\n'
-        '        return None\n'
-        '    result = process_charge(amount, user, password)\n'
-        '    return result\n'
+        "    token = create_token(user, password)\n"
+        "    if not token:\n"
+        "        return None\n"
+        "    result = process_charge(amount, user, password)\n"
+        "    return result\n"
     )
 
     git_init(proj)
@@ -101,6 +101,7 @@ def sim_project(tmp_path):
 # ===========================================================================
 # Core engine tests
 # ===========================================================================
+
 
 class TestComputeGraphMetrics:
     """Test compute_graph_metrics returns correct structure."""
@@ -118,9 +119,17 @@ class TestComputeGraphMetrics:
 
         metrics = compute_graph_metrics(G)
         expected_keys = {
-            "health_score", "nodes", "edges", "cycles", "tangle_ratio",
-            "layer_violations", "modularity", "fiedler", "propagation_cost",
-            "god_components", "bottlenecks",
+            "health_score",
+            "nodes",
+            "edges",
+            "cycles",
+            "tangle_ratio",
+            "layer_violations",
+            "modularity",
+            "fiedler",
+            "propagation_cost",
+            "god_components",
+            "bottlenecks",
         }
         assert expected_keys == set(metrics.keys())
         assert metrics["nodes"] == 3
@@ -260,7 +269,7 @@ class TestTransforms:
         result = apply_extract(G, 1, "new.py")
         assert G.nodes[1]["file_path"] == "new.py"
         assert G.nodes[2]["file_path"] == "new.py"  # private callee moved
-        assert G.nodes[3]["file_path"] == "src.py"   # public callee stays
+        assert G.nodes[3]["file_path"] == "src.py"  # public callee stays
         assert "main_func" in result["extracted"]
         assert "_helper" in result["extracted"]
 
@@ -269,36 +278,32 @@ class TestTransforms:
 # CLI smoke tests
 # ===========================================================================
 
+
 class TestCLISmoke:
     """Smoke tests for CLI subcommands."""
 
     def test_simulate_move_runs(self, sim_project, cli_runner, monkeypatch):
         """simulate move exits 0."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner, ["simulate", "move", "authenticate", "new_auth.py"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "move", "authenticate", "new_auth.py"], cwd=sim_project)
         assert result.exit_code == 0
 
     def test_simulate_extract_runs(self, sim_project, cli_runner, monkeypatch):
         """simulate extract exits 0."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner, ["simulate", "extract", "authenticate", "new_auth.py"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "extract", "authenticate", "new_auth.py"], cwd=sim_project)
         assert result.exit_code == 0
 
     def test_simulate_merge_runs(self, sim_project, cli_runner, monkeypatch):
         """simulate merge exits 0."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "merge", "auth/login.py", "auth/tokens.py"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "merge", "auth/login.py", "auth/tokens.py"], cwd=sim_project)
         assert result.exit_code == 0
 
     def test_simulate_delete_runs(self, sim_project, cli_runner, monkeypatch):
         """simulate delete exits 0."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner, ["simulate", "delete", "_calculate_total"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "delete", "_calculate_total"], cwd=sim_project)
         assert result.exit_code == 0
 
 
@@ -306,33 +311,38 @@ class TestCLISmoke:
 # JSON contract tests
 # ===========================================================================
 
+
 class TestJSONContract:
     """Verify JSON envelope and required fields."""
 
     def test_simulate_move_json(self, sim_project, cli_runner, monkeypatch):
         """Move JSON has valid envelope."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "move", "authenticate", "new_auth.py"],
-                           cwd=sim_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["simulate", "move", "authenticate", "new_auth.py"],
+            cwd=sim_project,
+            json_mode=True,
+        )
         data = parse_json_output(result, "simulate")
         assert_json_envelope(data, "simulate")
 
     def test_simulate_delete_json(self, sim_project, cli_runner, monkeypatch):
         """Delete JSON has valid envelope."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "delete", "_calculate_total"],
-                           cwd=sim_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["simulate", "delete", "_calculate_total"], cwd=sim_project, json_mode=True)
         data = parse_json_output(result, "simulate")
         assert_json_envelope(data, "simulate")
 
     def test_simulate_json_has_metrics(self, sim_project, cli_runner, monkeypatch):
         """JSON output contains metrics dict."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "move", "authenticate", "new_auth.py"],
-                           cwd=sim_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["simulate", "move", "authenticate", "new_auth.py"],
+            cwd=sim_project,
+            json_mode=True,
+        )
         data = parse_json_output(result, "simulate")
         assert "metrics" in data
         metrics = data["metrics"]
@@ -346,13 +356,16 @@ class TestJSONContract:
 # Metric correctness tests
 # ===========================================================================
 
+
 class TestMetricCorrectness:
     """Verify metric changes make sense after transforms."""
 
     def test_delete_reduces_node_count(self):
         """Node count decreases after delete."""
         from roam.graph.simulate import (
-            compute_graph_metrics, clone_graph, apply_delete,
+            apply_delete,
+            clone_graph,
+            compute_graph_metrics,
         )
 
         G = nx.DiGraph()
@@ -371,7 +384,9 @@ class TestMetricCorrectness:
     def test_move_preserves_edge_count(self):
         """Edge count unchanged after move."""
         from roam.graph.simulate import (
-            compute_graph_metrics, clone_graph, apply_move,
+            apply_move,
+            clone_graph,
+            compute_graph_metrics,
         )
 
         G = nx.DiGraph()
@@ -389,7 +404,9 @@ class TestMetricCorrectness:
     def test_delete_reduces_edges(self):
         """Edge count decreases after deleting a connected node."""
         from roam.graph.simulate import (
-            compute_graph_metrics, clone_graph, apply_delete,
+            apply_delete,
+            clone_graph,
+            compute_graph_metrics,
         )
 
         G = nx.DiGraph()
@@ -409,7 +426,10 @@ class TestMetricCorrectness:
     def test_metrics_have_direction(self):
         """Each metric delta has a direction field."""
         from roam.graph.simulate import (
-            compute_graph_metrics, clone_graph, apply_delete, metric_delta,
+            apply_delete,
+            clone_graph,
+            compute_graph_metrics,
+            metric_delta,
         )
 
         G = nx.DiGraph()
@@ -432,30 +452,28 @@ class TestMetricCorrectness:
 # Edge case tests
 # ===========================================================================
 
+
 class TestEdgeCases:
     """Edge cases and error handling."""
 
     def test_simulate_unknown_symbol(self, sim_project, cli_runner, monkeypatch):
         """Graceful error for unknown symbol."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "move", "nonexistent_xyz_42", "target.py"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "move", "nonexistent_xyz_42", "target.py"], cwd=sim_project)
         assert result.exit_code == 0
         assert "not found" in result.output.lower()
 
     def test_simulate_verdict_line(self, sim_project, cli_runner, monkeypatch):
         """Text output starts with VERDICT:."""
         monkeypatch.chdir(sim_project)
-        result = invoke_cli(cli_runner,
-                           ["simulate", "move", "authenticate", "new_auth.py"],
-                           cwd=sim_project)
+        result = invoke_cli(cli_runner, ["simulate", "move", "authenticate", "new_auth.py"], cwd=sim_project)
         assert result.exit_code == 0
         assert result.output.strip().startswith("VERDICT:")
 
     def test_simulate_help(self, cli_runner):
         """--help works for simulate group."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["simulate", "--help"])
         assert result.exit_code == 0
         assert "move" in result.output

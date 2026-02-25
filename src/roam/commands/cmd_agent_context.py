@@ -4,19 +4,25 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import budget_truncate, json_envelope, to_json
 from roam.commands.cmd_agent_plan import build_agent_plan
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import budget_truncate, json_envelope, to_json
 
 
 @click.command("agent-context")
 @click.option(
-    "--agent-id", "agent_id", required=True, type=click.IntRange(1, None),
+    "--agent-id",
+    "agent_id",
+    required=True,
+    type=click.IntRange(1, None),
     help="Worker ID (1-based).",
 )
 @click.option(
-    "--agents", "n_agents", type=click.IntRange(1, None), default=None,
+    "--agents",
+    "n_agents",
+    type=click.IntRange(1, None),
+    default=None,
     help="Total number of agents used for partitioning (default: max(agent-id, 2)).",
 )
 @click.pass_context
@@ -41,20 +47,21 @@ def agent_context(ctx, agent_id, n_agents):
             break
 
     if selected is None:
-        msg = (
-            f"Agent {agent_id} not found in plan with {effective_agents} agents. "
-            "Try a larger --agents value."
-        )
+        msg = f"Agent {agent_id} not found in plan with {effective_agents} agents. Try a larger --agents value."
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "agent-context",
-                summary={
-                    "verdict": msg,
-                    "agent_id": agent_id,
-                    "n_agents": effective_agents,
-                },
-                error=msg,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "agent-context",
+                        summary={
+                            "verdict": msg,
+                            "agent_id": agent_id,
+                            "n_agents": effective_agents,
+                        },
+                        error=msg,
+                    )
+                )
+            )
         else:
             click.echo(msg)
         raise SystemExit(1)
@@ -90,7 +97,8 @@ def agent_context(ctx, agent_id, n_agents):
         "coordination": {
             "merge_sequence": plan["merge_sequence"],
             "handoffs": [
-                h for h in plan["handoffs"]
+                h
+                for h in plan["handoffs"]
                 if int(h["from_partition"]) == int(selected["partition_id"])
                 or int(h["to_partition"]) == int(selected["partition_id"])
             ],
@@ -99,28 +107,31 @@ def agent_context(ctx, agent_id, n_agents):
     }
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "agent-context",
-            summary={
-                "verdict": (
-                    f"context for {selected['agent_id']} "
-                    f"(partition {selected['partition_id']}, phase {selected['phase']})"
-                ),
-                "agent_id": agent_id,
-                "n_agents": effective_agents,
-                "write_files": len(selected["write_files"]),
-                "read_only_dependencies": len(selected["read_only_dependencies"]),
-                "contracts": len(selected["interface_contracts"]),
-                "downstream_partitions": len(selected["downstream_partitions"]),
-            },
-            **payload,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "agent-context",
+                    summary={
+                        "verdict": (
+                            f"context for {selected['agent_id']} "
+                            f"(partition {selected['partition_id']}, phase {selected['phase']})"
+                        ),
+                        "agent_id": agent_id,
+                        "n_agents": effective_agents,
+                        "write_files": len(selected["write_files"]),
+                        "read_only_dependencies": len(selected["read_only_dependencies"]),
+                        "contracts": len(selected["interface_contracts"]),
+                        "downstream_partitions": len(selected["downstream_partitions"]),
+                    },
+                    **payload,
+                )
+            )
+        )
         return
 
     lines = []
     lines.append(
-        f"AGENT CONTEXT: {selected['agent_id']}  "
-        f"(partition P{selected['partition_id']}, phase {selected['phase']})"
+        f"AGENT CONTEXT: {selected['agent_id']}  (partition P{selected['partition_id']}, phase {selected['phase']})"
     )
     lines.append(f"Objective: {selected['objective']}")
     lines.append("")

@@ -8,7 +8,6 @@ from pathlib import Path
 
 from roam.workspace.config import get_workspace_db_path
 
-
 WORKSPACE_SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS ws_repos (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -92,8 +91,15 @@ def open_workspace_db(root: Path, readonly: bool = False):
 # Query helpers
 # ---------------------------------------------------------------------------
 
-def upsert_repo(conn: sqlite3.Connection, name: str, path: str,
-                role: str, db_path: str, last_indexed: float | None = None) -> int:
+
+def upsert_repo(
+    conn: sqlite3.Connection,
+    name: str,
+    path: str,
+    role: str,
+    db_path: str,
+    last_indexed: float | None = None,
+) -> int:
     """Insert or update a repo entry. Returns the repo id."""
     conn.execute(
         "INSERT INTO ws_repos (name, path, role, db_path, last_indexed) "

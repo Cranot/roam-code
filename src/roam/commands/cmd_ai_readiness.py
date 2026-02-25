@@ -22,14 +22,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Severity labels
 # ---------------------------------------------------------------------------
+
 
 def _readiness_label(score: int) -> str:
     if score <= 25:
@@ -48,13 +48,13 @@ def _readiness_label(score: int) -> str:
 # Naming convention patterns per language
 # ---------------------------------------------------------------------------
 
-_SNAKE_CASE = re.compile(r'^[a-z_][a-z0-9_]*$')
-_CAMEL_CASE = re.compile(r'^[a-z][a-zA-Z0-9]*$')
-_PASCAL_CASE = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
-_UPPER_SNAKE = re.compile(r'^[A-Z_][A-Z0-9_]*$')
+_SNAKE_CASE = re.compile(r"^[a-z_][a-z0-9_]*$")
+_CAMEL_CASE = re.compile(r"^[a-z][a-zA-Z0-9]*$")
+_PASCAL_CASE = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
+_UPPER_SNAKE = re.compile(r"^[A-Z_][A-Z0-9_]*$")
 # Go exported: PascalCase; unexported: camelCase or snake_case
-_GO_EXPORTED = re.compile(r'^[A-Z][a-zA-Z0-9]*$')
-_GO_UNEXPORTED = re.compile(r'^[a-z][a-zA-Z0-9_]*$')
+_GO_EXPORTED = re.compile(r"^[A-Z][a-zA-Z0-9]*$")
+_GO_UNEXPORTED = re.compile(r"^[a-z][a-zA-Z0-9_]*$")
 
 # Language -> (function/method pattern, class pattern)
 _NAMING_CONVENTIONS: dict[str, dict[str, re.Pattern]] = {
@@ -126,15 +126,16 @@ _NAMING_CONVENTIONS: dict[str, dict[str, re.Pattern]] = {
 
 # Names that should be excluded from naming checks (framework/dunder/special)
 _NAMING_EXCLUDE = re.compile(
-    r'^(__.*__|setUp|tearDown|setUpClass|tearDownClass|'
-    r'constructor|toString|valueOf|toJSON|main|init|'
-    r'New|Close|String|Error|fmt|from|into|drop|new|default)$'
+    r"^(__.*__|setUp|tearDown|setUpClass|tearDownClass|"
+    r"constructor|toString|valueOf|toJSON|main|init|"
+    r"New|Close|String|Error|fmt|from|into|drop|new|default)$"
 )
 
 
 # ---------------------------------------------------------------------------
 # Dimension 1: Naming consistency
 # ---------------------------------------------------------------------------
+
 
 def _score_naming(conn) -> tuple[int, dict]:
     """Score naming convention consistency (0-100).
@@ -201,6 +202,7 @@ def _score_naming(conn) -> tuple[int, dict]:
 # Dimension 2: Module coupling (via tangle ratio)
 # ---------------------------------------------------------------------------
 
+
 def _score_coupling(conn) -> tuple[int, dict]:
     """Score module coupling (0-100). Lower tangle ratio = better.
 
@@ -213,8 +215,12 @@ def _score_coupling(conn) -> tuple[int, dict]:
 
         G = build_symbol_graph(conn)
         if len(G) == 0:
-            return 100, {"tangle_ratio": 0.0, "symbols_in_cycles": 0,
-                         "total_symbols": 0, "cycle_count": 0}
+            return 100, {
+                "tangle_ratio": 0.0,
+                "symbols_in_cycles": 0,
+                "total_symbols": 0,
+                "cycle_count": 0,
+            }
 
         cycles = find_cycles(G)
         total_symbols = len(G)
@@ -241,6 +247,7 @@ def _score_coupling(conn) -> tuple[int, dict]:
 # Dimension 3: Dead code noise
 # ---------------------------------------------------------------------------
 
+
 def _score_dead_code(conn) -> tuple[int, dict]:
     """Score dead code noise (0-100). Less dead code = better.
 
@@ -261,8 +268,7 @@ def _score_dead_code(conn) -> tuple[int, dict]:
         "JOIN files f ON s.file_id = f.id "
         "WHERE s.kind IN ('function', 'class', 'method') "
         "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
-        "AND s.is_exported = 1 "
-        + _EXCLUDE_SQL
+        "AND s.is_exported = 1 " + _EXCLUDE_SQL
     ).fetchone()[0]
 
     dead = conn.execute(
@@ -271,8 +277,7 @@ def _score_dead_code(conn) -> tuple[int, dict]:
         "WHERE s.kind IN ('function', 'class', 'method') "
         "AND s.name NOT LIKE '\\_%' ESCAPE '\\' "
         "AND s.is_exported = 1 "
-        "AND s.id NOT IN (SELECT target_id FROM edges) "
-        + _EXCLUDE_SQL
+        "AND s.id NOT IN (SELECT target_id FROM edges) " + _EXCLUDE_SQL
     ).fetchone()[0]
 
     total = max(total, 1)
@@ -292,6 +297,7 @@ def _score_dead_code(conn) -> tuple[int, dict]:
 # Dimension 4: Test signal strength
 # ---------------------------------------------------------------------------
 
+
 def _score_test_signal(conn) -> tuple[int, dict]:
     """Score test coverage mapping (0-100).
 
@@ -301,8 +307,7 @@ def _score_test_signal(conn) -> tuple[int, dict]:
 
     # Get all source files
     source_files = conn.execute(
-        "SELECT path, language FROM files "
-        "WHERE file_role = 'source' AND language IS NOT NULL"
+        "SELECT path, language FROM files WHERE file_role = 'source' AND language IS NOT NULL"
     ).fetchall()
 
     if not source_files:
@@ -361,6 +366,7 @@ def _score_test_signal(conn) -> tuple[int, dict]:
 # Dimension 5: Documentation signal
 # ---------------------------------------------------------------------------
 
+
 def _score_documentation(conn, project_root: Path) -> tuple[int, dict]:
     """Score documentation quality (0-100).
 
@@ -373,8 +379,7 @@ def _score_documentation(conn, project_root: Path) -> tuple[int, dict]:
 
     # Check for README (30 points)
     has_readme = False
-    for name in ("README.md", "README.rst", "README.txt", "README",
-                 "readme.md", "Readme.md"):
+    for name in ("README.md", "README.rst", "README.txt", "README", "readme.md", "Readme.md"):
         if (project_root / name).exists():
             has_readme = True
             break
@@ -384,8 +389,14 @@ def _score_documentation(conn, project_root: Path) -> tuple[int, dict]:
 
     # Check for AI agent docs (20 points)
     has_agent_doc = False
-    for name in ("CLAUDE.md", "AGENTS.md", "CONTRIBUTING.md", ".github/copilot-instructions.md",
-                 ".cursorrules", ".clinerules"):
+    for name in (
+        "CLAUDE.md",
+        "AGENTS.md",
+        "CONTRIBUTING.md",
+        ".github/copilot-instructions.md",
+        ".cursorrules",
+        ".clinerules",
+    ):
         if (project_root / name).exists():
             has_agent_doc = True
             break
@@ -394,10 +405,7 @@ def _score_documentation(conn, project_root: Path) -> tuple[int, dict]:
     details["has_agent_doc"] = has_agent_doc
 
     # Docstring ratio for functions/methods (50 points)
-    total_fns = conn.execute(
-        "SELECT COUNT(*) FROM symbols "
-        "WHERE kind IN ('function', 'method')"
-    ).fetchone()[0]
+    total_fns = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind IN ('function', 'method')").fetchone()[0]
 
     fns_with_docstring = conn.execute(
         "SELECT COUNT(*) FROM symbols "
@@ -423,19 +431,17 @@ def _score_documentation(conn, project_root: Path) -> tuple[int, dict]:
 # Dimension 6: Codebase navigability
 # ---------------------------------------------------------------------------
 
+
 def _score_navigability(conn) -> tuple[int, dict]:
     """Score codebase navigability (0-100).
 
     Measures average file size, max directory depth, files per directory.
     Ideal: avg <300 lines, max depth <6, <20 files/dir.
     """
-    files = conn.execute(
-        "SELECT path, line_count FROM files WHERE line_count > 0"
-    ).fetchall()
+    files = conn.execute("SELECT path, line_count FROM files WHERE line_count > 0").fetchall()
 
     if not files:
-        return 100, {"avg_lines": 0, "max_depth": 0, "max_files_per_dir": 0,
-                     "file_count": 0}
+        return 100, {"avg_lines": 0, "max_depth": 0, "max_files_per_dir": 0, "file_count": 0}
 
     # Average file size score (40 points)
     line_counts = [f["line_count"] for f in files]
@@ -497,6 +503,7 @@ def _score_navigability(conn) -> tuple[int, dict]:
 # ---------------------------------------------------------------------------
 # Dimension 7: Architecture clarity
 # ---------------------------------------------------------------------------
+
 
 def _score_architecture(conn) -> tuple[int, dict]:
     """Score architecture clarity (0-100).
@@ -575,8 +582,8 @@ def _compute_composite(dimensions: dict[str, int]) -> int:
 # Recommendations generator
 # ---------------------------------------------------------------------------
 
-def _generate_recommendations(dimensions: dict[str, int],
-                               details: dict[str, dict]) -> list[str]:
+
+def _generate_recommendations(dimensions: dict[str, int], details: dict[str, dict]) -> list[str]:
     """Generate actionable recommendations from dimension scores."""
     recs: list[str] = []
 
@@ -590,65 +597,45 @@ def _generate_recommendations(dimensions: dict[str, int],
         if key == "test_signal_strength":
             d = details.get(key, {})
             rate = d.get("coverage_rate", 0)
-            recs.append(
-                f"Increase test coverage mapping (currently {rate:.0f}%)"
-            )
+            recs.append(f"Increase test coverage mapping (currently {rate:.0f}%)")
         elif key == "module_coupling":
             d = details.get(key, {})
             tr = d.get("tangle_ratio", 0)
-            recs.append(
-                f"Reduce module coupling (tangle ratio: {tr:.1f}%)"
-            )
+            recs.append(f"Reduce module coupling (tangle ratio: {tr:.1f}%)")
         elif key == "dead_code_noise":
             d = details.get(key, {})
             dead = d.get("dead_exports", 0)
             if dead > 0:
-                recs.append(
-                    f"Remove {dead} dead exports to reduce agent confusion"
-                )
+                recs.append(f"Remove {dead} dead exports to reduce agent confusion")
         elif key == "naming_consistency":
             d = details.get(key, {})
             rate = d.get("rate", 0)
-            recs.append(
-                f"Improve naming consistency (currently {rate:.0f}% conforming)"
-            )
+            recs.append(f"Improve naming consistency (currently {rate:.0f}% conforming)")
         elif key == "documentation_signal":
             d = details.get(key, {})
             if not d.get("has_readme"):
                 recs.append("Add a README file")
             if not d.get("has_agent_doc"):
-                recs.append(
-                    "Add CLAUDE.md or AGENTS.md for AI agent guidance"
-                )
+                recs.append("Add CLAUDE.md or AGENTS.md for AI agent guidance")
             dr = d.get("docstring_rate", 0)
             if dr < 50:
-                recs.append(
-                    f"Add docstrings to more functions (currently {dr:.0f}%)"
-                )
+                recs.append(f"Add docstrings to more functions (currently {dr:.0f}%)")
         elif key == "codebase_navigability":
             d = details.get(key, {})
             avg = d.get("avg_lines", 0)
             if avg > 300:
-                recs.append(
-                    f"Reduce average file size ({avg:.0f} lines, target <300)"
-                )
+                recs.append(f"Reduce average file size ({avg:.0f} lines, target <300)")
             depth = d.get("max_depth", 0)
             if depth > 5:
-                recs.append(
-                    f"Flatten directory structure (max depth: {depth}, target <6)"
-                )
+                recs.append(f"Flatten directory structure (max depth: {depth}, target <6)")
         elif key == "architecture_clarity":
             d = details.get(key, {})
             v = d.get("violations", 0)
             c = d.get("cycles", 0)
             if v > 0:
-                recs.append(
-                    f"Fix {v} layer violation{'s' if v != 1 else ''}"
-                )
+                recs.append(f"Fix {v} layer violation{'s' if v != 1 else ''}")
             if c > 0:
-                recs.append(
-                    f"Break {c} dependency cycle{'s' if c != 1 else ''}"
-                )
+                recs.append(f"Break {c} dependency cycle{'s' if c != 1 else ''}")
 
     return recs[:5]  # Cap at 5 recommendations
 
@@ -657,9 +644,14 @@ def _generate_recommendations(dimensions: dict[str, int],
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("ai-readiness")
-@click.option("--threshold", type=int, default=0,
-              help="Fail if AI readiness score is below threshold (0=no gate)")
+@click.option(
+    "--threshold",
+    type=int,
+    default=0,
+    help="Fail if AI readiness score is below threshold (0=no gate)",
+)
 @click.pass_context
 def ai_readiness(ctx, threshold):
     """Estimate how effectively AI agents can work on this codebase (0-100)."""
@@ -705,26 +697,25 @@ def ai_readiness(ctx, threshold):
 
         verdict = f"AI Readiness {composite}/100 -- {label}"
 
-        files_scanned = conn.execute(
-            "SELECT COUNT(*) FROM files"
-        ).fetchone()[0]
+        files_scanned = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
 
         # --- JSON output ---
         if json_mode:
             dim_list = []
             for key in _WEIGHTS:
-                dim_list.append({
-                    "name": key,
-                    "label": _DIMENSION_LABELS[key],
-                    "score": dimensions[key],
-                    "weight": _WEIGHTS[key],
-                    "contribution": round(
-                        dimensions[key] * _WEIGHTS[key] / 100, 1
-                    ),
-                    "details": all_details[key],
-                })
+                dim_list.append(
+                    {
+                        "name": key,
+                        "label": _DIMENSION_LABELS[key],
+                        "score": dimensions[key],
+                        "weight": _WEIGHTS[key],
+                        "contribution": round(dimensions[key] * _WEIGHTS[key] / 100, 1),
+                        "details": all_details[key],
+                    }
+                )
 
-            envelope = json_envelope("ai-readiness",
+            envelope = json_envelope(
+                "ai-readiness",
                 budget=budget,
                 summary={
                     "verdict": verdict,
@@ -740,6 +731,7 @@ def ai_readiness(ctx, threshold):
             # Gate check (below threshold = fail)
             if threshold > 0 and composite < threshold:
                 from roam.exit_codes import EXIT_GATE_FAILURE
+
                 ctx.exit(EXIT_GATE_FAILURE)
             return
 
@@ -754,17 +746,18 @@ def ai_readiness(ctx, threshold):
             score = dimensions[key]
             weight = _WEIGHTS[key]
             contribution = round(score * weight / 100, 1)
-            rows.append([
-                _DIMENSION_LABELS[key],
-                str(score),
-                f"{weight}%",
-                str(contribution),
-            ])
+            rows.append(
+                [
+                    _DIMENSION_LABELS[key],
+                    str(score),
+                    f"{weight}%",
+                    str(contribution),
+                ]
+            )
 
         click.echo(format_table(headers, rows))
         click.echo()
-        click.echo(f"  {composite}/100 AI Readiness "
-                   f"(0=hostile, 100=optimized)")
+        click.echo(f"  {composite}/100 AI Readiness (0=hostile, 100=optimized)")
 
         # Recommendations
         if recommendations:
@@ -776,8 +769,7 @@ def ai_readiness(ctx, threshold):
         # Gate check (below threshold = fail)
         if threshold > 0 and composite < threshold:
             click.echo()
-            click.echo(
-                f"  GATE FAILED: score {composite} below threshold {threshold}"
-            )
+            click.echo(f"  GATE FAILED: score {composite} below threshold {threshold}")
             from roam.exit_codes import EXIT_GATE_FAILURE
+
             ctx.exit(EXIT_GATE_FAILURE)

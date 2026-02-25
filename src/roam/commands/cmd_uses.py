@@ -2,9 +2,9 @@
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 
 @click.command()
@@ -13,8 +13,8 @@ from roam.commands.resolve import ensure_index, symbol_not_found_hint
 @click.pass_context
 def uses(ctx, name, full):
     """Show all consumers of a symbol: callers, importers, inheritors."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -54,10 +54,16 @@ def uses(ctx, name, full):
 
         if not rows:
             if json_mode:
-                click.echo(to_json(json_envelope("uses",
-                    summary={"total_consumers": 0, "total_files": 0},
-                    symbol=name, consumers={},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "uses",
+                            summary={"total_consumers": 0, "total_files": 0},
+                            symbol=name,
+                            consumers={},
+                        )
+                    )
+                )
             else:
                 click.echo(f"No consumers of '{name}' found.")
             return
@@ -88,22 +94,30 @@ def uses(ctx, name, full):
                         seen.add(key)
                         deduped.append(r)
                 json_groups[kind] = [
-                    {"name": r["name"], "kind": r["kind"],
-                     "location": loc(r["path"], r["line_start"])}
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "location": loc(r["path"], r["line_start"]),
+                    }
                     for r in deduped
                 ]
             files = set(r["path"] for r in rows)
             total_consumers = sum(len(v) for v in json_groups.values())
-            click.echo(to_json(json_envelope("uses",
-                summary={
-                    "total_consumers": total_consumers,
-                    "total_files": len(files),
-                },
-                budget=token_budget,
-                symbol=name,
-                consumers=json_groups,
-                total_files=len(files),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "uses",
+                        summary={
+                            "total_consumers": total_consumers,
+                            "total_files": len(files),
+                        },
+                        budget=token_budget,
+                        symbol=name,
+                        consumers=json_groups,
+                        total_files=len(files),
+                    )
+                )
+            )
             return
 
         total = 0
@@ -131,18 +145,22 @@ def uses(ctx, name, full):
 
             table_rows = []
             for r in deduped:
-                table_rows.append([
-                    abbrev_kind(r["kind"]),
-                    r["name"],
-                    loc(r["path"], r["line_start"]),
-                ])
+                table_rows.append(
+                    [
+                        abbrev_kind(r["kind"]),
+                        r["name"],
+                        loc(r["path"], r["line_start"]),
+                    ]
+                )
 
             click.echo(f"-- {label} ({len(deduped)}) --")
-            click.echo(format_table(
-                ["Kind", "Name", "Location"],
-                table_rows,
-                budget=0 if full else 20,
-            ))
+            click.echo(
+                format_table(
+                    ["Kind", "Name", "Location"],
+                    table_rows,
+                    budget=0 if full else 20,
+                )
+            )
             click.echo()
 
         # File summary: which files depend on this symbol

@@ -4,10 +4,10 @@ from datetime import datetime, timezone
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.index.git_stats import get_blame_for_file
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.index.git_stats import get_blame_for_file
+from roam.output.formatter import format_table, json_envelope, to_json
 
 
 def _format_date(epoch: int) -> str:
@@ -52,11 +52,11 @@ def _ownership_for_file(project_root, file_path):
 
 
 @click.command()
-@click.argument('path')
+@click.argument("path")
 @click.pass_context
 def owner(ctx, path):
     """Show code ownership: who owns a file or directory."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     project_root = find_project_root()
     path = path.replace("\\", "/")
@@ -68,9 +68,7 @@ def owner(ctx, path):
         ).fetchall()
 
         if not dir_files:
-            frow = conn.execute(
-                "SELECT id, path FROM files WHERE path = ?", (path,)
-            ).fetchone()
+            frow = conn.execute("SELECT id, path FROM files WHERE path = ?", (path,)).fetchone()
             if frow is None:
                 frow = conn.execute(
                     "SELECT id, path FROM files WHERE path LIKE ? LIMIT 1",
@@ -89,18 +87,26 @@ def owner(ctx, path):
                     data["main_dev"] = info["main_dev"]
                     data["fragmentation"] = info["fragmentation"]
                     data["authors"] = [
-                        {"name": a, "lines": n,
-                         "pct": round(n * 100 / info["total"]),
-                         "last_active": _format_date(info["last_active"].get(a, 0))}
+                        {
+                            "name": a,
+                            "lines": n,
+                            "pct": round(n * 100 / info["total"]),
+                            "last_active": _format_date(info["last_active"].get(a, 0)),
+                        }
                         for a, n in info["authors"]
                     ]
-                click.echo(to_json(json_envelope("owner",
-                    summary={
-                        "main_dev": data.get("main_dev", "?"),
-                        "fragmentation": data.get("fragmentation", 0),
-                    },
-                    **data,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "owner",
+                            summary={
+                                "main_dev": data.get("main_dev", "?"),
+                                "fragmentation": data.get("fragmentation", 0),
+                            },
+                            **data,
+                        )
+                    )
+                )
             else:
                 file_ids = [f["id"] for f in dir_files]
                 ph = ",".join("?" for _ in file_ids)
@@ -115,19 +121,30 @@ def owner(ctx, path):
                         GROUP BY gc.author ORDER BY churn DESC""",
                     file_ids,
                 ).fetchall()
-                click.echo(to_json(json_envelope("owner",
-                    summary={
-                        "file_count": len(dir_files),
-                        "authors": len(rows),
-                    },
-                    path=path, type="directory", file_count=len(dir_files),
-                    authors=[
-                        {"name": r["author"], "commits": r["commits"],
-                         "churn": r["churn"] or 0, "files_touched": r["files_touched"],
-                         "last_active": _format_date(r["last_active"])}
-                        for r in rows
-                    ],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "owner",
+                            summary={
+                                "file_count": len(dir_files),
+                                "authors": len(rows),
+                            },
+                            path=path,
+                            type="directory",
+                            file_count=len(dir_files),
+                            authors=[
+                                {
+                                    "name": r["author"],
+                                    "commits": r["commits"],
+                                    "churn": r["churn"] or 0,
+                                    "files_touched": r["files_touched"],
+                                    "last_active": _format_date(r["last_active"]),
+                                }
+                                for r in rows
+                            ],
+                        )
+                    )
+                )
             return
 
         if len(dir_files) == 1:
@@ -233,19 +250,23 @@ def _show_dir_owner(conn, project_root, path, dir_files):
     for r in rows:
         churn = r["churn"] or 0
         pct = f"{churn * 100 / total_churn:.0f}%" if total_churn else "0%"
-        table_rows.append([
-            r["author"],
-            str(r["commits"]),
-            str(r["files_touched"]),
-            str(churn),
-            pct,
-            _format_date(r["last_active"]),
-        ])
-    click.echo(format_table(
-        ["Author", "Commits", "Files", "Churn", "Pct", "Last active"],
-        table_rows,
-        budget=15,
-    ))
+        table_rows.append(
+            [
+                r["author"],
+                str(r["commits"]),
+                str(r["files_touched"]),
+                str(churn),
+                pct,
+                _format_date(r["last_active"]),
+            ]
+        )
+    click.echo(
+        format_table(
+            ["Author", "Commits", "Files", "Churn", "Pct", "Last active"],
+            table_rows,
+            budget=15,
+        )
+    )
 
     # Top churned files in this directory
     churn_rows = conn.execute(
@@ -261,14 +282,18 @@ def _show_dir_owner(conn, project_root, path, dir_files):
         click.echo("\nTop churned files:")
         tr = []
         for r in churn_rows:
-            tr.append([
-                r["path"],
-                str(r["commit_count"]),
-                str(r["total_churn"]),
-                str(r["distinct_authors"]),
-            ])
-        click.echo(format_table(
-            ["File", "Commits", "Churn", "Authors"],
-            tr,
-            budget=10,
-        ))
+            tr.append(
+                [
+                    r["path"],
+                    str(r["commit_count"]),
+                    str(r["total_churn"]),
+                    str(r["distinct_authors"]),
+                ]
+            )
+        click.echo(
+            format_table(
+                ["File", "Commits", "Churn", "Authors"],
+                tr,
+                budget=10,
+            )
+        )

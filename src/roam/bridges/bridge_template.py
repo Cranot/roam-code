@@ -7,6 +7,7 @@ Resolves cross-references between:
 - Template variable references ({{ var }}) to context dict keys
 - Template includes/extends to other template files
 """
+
 from __future__ import annotations
 
 import os
@@ -14,7 +15,6 @@ import re
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
-
 
 # Template file extensions
 _TEMPLATE_EXTS = frozenset({".html", ".jinja2", ".jinja", ".j2", ".erb", ".hbs", ".mustache"})
@@ -25,31 +25,31 @@ _HOST_EXTS = frozenset({".py", ".rb", ".js", ".ts", ".jsx", ".tsx"})
 # --- Template variable extraction patterns ---
 
 # Jinja2/Django: {{ user.name }}, {{ items }}, {% extends "base.html" %}, {% include "header.html" %}
-_JINJA_VAR_RE = re.compile(r'\{\{\s*(\w+)(?:\.\w+)*\s*\}\}')
+_JINJA_VAR_RE = re.compile(r"\{\{\s*(\w+)(?:\.\w+)*\s*\}\}")
 _JINJA_EXTENDS_RE = re.compile(r'\{%\s*extends\s+["\']([^"\']+)["\']\s*%\}')
 _JINJA_INCLUDE_RE = re.compile(r'\{%\s*include\s+["\']([^"\']+)["\']\s*%\}')
 
 # ERB: <%= @user.name %>, <%= render partial: "header" %>
-_ERB_VAR_RE = re.compile(r'<%=?\s*@?(\w+)(?:\.\w+)*\s*%>')
+_ERB_VAR_RE = re.compile(r"<%=?\s*@?(\w+)(?:\.\w+)*\s*%>")
 _ERB_RENDER_RE = re.compile(r'render\s+(?:partial:\s*)?["\']([^"\']+)["\']')
 
 # Handlebars: {{user.name}}, {{> header}}, {{#each items}}
-_HBS_VAR_RE = re.compile(r'\{\{(?!>|#|/)(\w+)(?:\.\w+)*\}\}')
-_HBS_PARTIAL_RE = re.compile(r'\{\{>\s*(\w+)\s*\}\}')
+_HBS_VAR_RE = re.compile(r"\{\{(?!>|#|/)(\w+)(?:\.\w+)*\}\}")
+_HBS_PARTIAL_RE = re.compile(r"\{\{>\s*(\w+)\s*\}\}")
 
 # --- Host language template rendering patterns ---
 
 # Python: render_template('x.html', user=user), render('x.html', context)
 _PY_RENDER_RE = re.compile(
-    r'''render(?:_template)?\s*\(\s*['"]([\w./]+\.(?:html|jinja2?|j2))['"]\s*(?:,\s*(.+?))?(?:\)|$)''',
+    r"""render(?:_template)?\s*\(\s*['"]([\w./]+\.(?:html|jinja2?|j2))['"]\s*(?:,\s*(.+?))?(?:\)|$)""",
 )
 
 # Python keyword args in render_template calls: user=user, items=items
-_PY_KWARG_RE = re.compile(r'(\w+)\s*=')
+_PY_KWARG_RE = re.compile(r"(\w+)\s*=")
 
 # Express/Handlebars: res.render('template', {user: user})
 _JS_RENDER_RE = re.compile(
-    r'''(?:res|response)\s*\.\s*render\s*\(\s*['"]([\w./]+)['"]\s*(?:,\s*(\{[^}]*\}))?''',
+    r"""(?:res|response)\s*\.\s*render\s*\(\s*['"]([\w./]+)['"]\s*(?:,\s*(\{[^}]*\}))?""",
 )
 
 
@@ -76,8 +76,7 @@ class TemplateBridge(LanguageBridge):
                 return True
         return False
 
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve template references to host language symbols.
 
         Strategies:
@@ -108,45 +107,50 @@ class TemplateBridge(LanguageBridge):
             for render_template_name, context_vars, render_sym_name in render_info:
                 # Strategy 1: Template filename match
                 if self._template_names_match(template_basename, render_template_name):
-                    edges.append({
-                        "source": template_basename,
-                        "target": render_sym_name,
-                        "kind": "x-lang",
-                        "bridge": self.name,
-                        "mechanism": "template-render",
-                        "confidence": 0.9,
-                    })
+                    edges.append(
+                        {
+                            "source": template_basename,
+                            "target": render_sym_name,
+                            "kind": "x-lang",
+                            "bridge": self.name,
+                            "mechanism": "template-render",
+                            "confidence": 0.9,
+                        }
+                    )
 
                     # Strategy 2: Variable matching
                     for tvar in template_vars:
                         if tvar in context_vars:
-                            edges.append({
-                                "source": f"{template_basename}:{tvar}",
-                                "target": render_sym_name,
-                                "kind": "x-lang",
-                                "bridge": self.name,
-                                "mechanism": "template-var",
-                                "confidence": 0.7,
-                            })
+                            edges.append(
+                                {
+                                    "source": f"{template_basename}:{tvar}",
+                                    "target": render_sym_name,
+                                    "kind": "x-lang",
+                                    "bridge": self.name,
+                                    "mechanism": "template-var",
+                                    "confidence": 0.7,
+                                }
+                            )
 
         # Strategy 3: Template includes -> other template files
         for include_name in template_includes:
             for tpath, tsymbols in target_files.items():
                 tbasename = os.path.basename(tpath)
                 if self._template_names_match(tbasename, include_name):
-                    edges.append({
-                        "source": template_basename,
-                        "target": tbasename,
-                        "kind": "x-lang",
-                        "bridge": self.name,
-                        "mechanism": "template-include",
-                        "confidence": 0.9,
-                    })
+                    edges.append(
+                        {
+                            "source": template_basename,
+                            "target": tbasename,
+                            "kind": "x-lang",
+                            "bridge": self.name,
+                            "mechanism": "template-include",
+                            "confidence": 0.9,
+                        }
+                    )
 
         return edges
 
-    def _extract_template_vars(self, symbols: list[dict],
-                                ext: str) -> set[str]:
+    def _extract_template_vars(self, symbols: list[dict], ext: str) -> set[str]:
         """Extract variable names referenced in template symbols."""
         variables: set[str] = set()
         for sym in symbols:
@@ -164,8 +168,7 @@ class TemplateBridge(LanguageBridge):
 
         return variables
 
-    def _extract_template_includes(self, symbols: list[dict],
-                                    ext: str) -> set[str]:
+    def _extract_template_includes(self, symbols: list[dict], ext: str) -> set[str]:
         """Extract included/extended template names."""
         includes: set[str] = set()
         for sym in symbols:
@@ -183,8 +186,7 @@ class TemplateBridge(LanguageBridge):
 
         return includes
 
-    def _extract_render_calls(self, symbols: list[dict],
-                               ext: str) -> list[tuple[str, set[str], str]]:
+    def _extract_render_calls(self, symbols: list[dict], ext: str) -> list[tuple[str, set[str], str]]:
         """Extract render_template calls from host language symbols.
 
         Returns list of (template_name, context_var_names, symbol_qualified_name).
@@ -207,13 +209,12 @@ class TemplateBridge(LanguageBridge):
                     tpl_name = m.group(1)
                     obj_str = m.group(2) or ""
                     # Extract keys from {key: val, ...}
-                    ctx_vars = set(re.findall(r'(\w+)\s*:', obj_str))
+                    ctx_vars = set(re.findall(r"(\w+)\s*:", obj_str))
                     results.append((tpl_name, ctx_vars, qname))
 
         return results
 
-    def _template_names_match(self, template_basename: str,
-                               render_name: str) -> bool:
+    def _template_names_match(self, template_basename: str, render_name: str) -> bool:
         """Check if a template file matches a render call reference.
 
         Handles path variations:

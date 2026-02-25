@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -11,15 +10,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    invoke_cli,
-    parse_json_output,
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
-    roam,
+    invoke_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -29,6 +24,7 @@ from conftest import (
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -43,20 +39,15 @@ def budget_project(tmp_path, monkeypatch):
     src.mkdir()
 
     (src / "models.py").write_text(
-        'class User:\n'
-        '    def __init__(self, name):\n'
-        '        self.name = name\n'
-        '\n'
-        '    def display_name(self):\n'
-        '        return self.name.title()\n'
+        "class User:\n"
+        "    def __init__(self, name):\n"
+        "        self.name = name\n"
+        "\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
     )
 
-    (src / "service.py").write_text(
-        'from models import User\n'
-        '\n'
-        'def create_user(name):\n'
-        '    return User(name)\n'
-    )
+    (src / "service.py").write_text("from models import User\n\ndef create_user(name):\n    return User(name)\n")
 
     git_init(proj)
 
@@ -65,11 +56,12 @@ def budget_project(tmp_path, monkeypatch):
     out, rc = index_in_process(proj)
     assert rc == 0, f"index failed: {out}"
 
-    from roam.cli import cli
     from click.testing import CliRunner
+
+    from roam.cli import cli
+
     runner = CliRunner()
-    result = runner.invoke(cli, ["snapshot", "--tag", "baseline"],
-                           catch_exceptions=False)
+    result = runner.invoke(cli, ["snapshot", "--tag", "baseline"], catch_exceptions=False)
     assert result.exit_code == 0, f"snapshot failed: {result.output}"
 
     return proj
@@ -84,10 +76,7 @@ def budget_no_snapshot(tmp_path, monkeypatch):
 
     src = proj / "src"
     src.mkdir()
-    (src / "app.py").write_text(
-        'def main():\n'
-        '    print("hello")\n'
-    )
+    (src / "app.py").write_text('def main():\n    print("hello")\n')
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -96,6 +85,7 @@ def budget_no_snapshot(tmp_path, monkeypatch):
 
     # Remove any auto-created snapshots
     from roam.db.connection import open_db
+
     with open_db() as conn:
         conn.execute("DELETE FROM snapshots")
         conn.commit()
@@ -121,8 +111,7 @@ class TestBudget:
     def test_budget_json_envelope(self, cli_runner, budget_project, monkeypatch):
         """Valid JSON envelope with command='budget'."""
         monkeypatch.chdir(budget_project)
-        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project, json_mode=True)
         data = json.loads(result.output)
         assert_json_envelope(data, "budget")
 
@@ -165,8 +154,7 @@ class TestBudget:
     def test_budget_no_snapshot_skip(self, cli_runner, budget_no_snapshot, monkeypatch):
         """Without snapshot -> all SKIP."""
         monkeypatch.chdir(budget_no_snapshot)
-        result = invoke_cli(cli_runner, ["budget"], cwd=budget_no_snapshot,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["budget"], cwd=budget_no_snapshot, json_mode=True)
         data = json.loads(result.output)
         assert data["summary"]["skipped"] == data["summary"]["rules_checked"]
         assert data["has_before_snapshot"] is False
@@ -180,16 +168,15 @@ class TestBudget:
         config_path.parent.mkdir(parents=True, exist_ok=True)
         config_path.write_text(
             'version: "1"\n'
-            'budgets:\n'
+            "budgets:\n"
             '  - name: "Health floor"\n'
-            '    metric: health_score\n'
-            '    max_decrease: 5\n'
+            "    metric: health_score\n"
+            "    max_decrease: 5\n"
             '    reason: "Keep health above baseline"\n',
             encoding="utf-8",
         )
 
-        result = invoke_cli(cli_runner, ["budget", "--explain"],
-                            cwd=budget_project)
+        result = invoke_cli(cli_runner, ["budget", "--explain"], cwd=budget_project)
         assert result.exit_code == 0
         assert "reason:" in result.output.lower() or "Keep health" in result.output
 
@@ -203,8 +190,7 @@ class TestBudget:
             if cfg.exists():
                 cfg.unlink()
 
-        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project, json_mode=True)
         data = json.loads(result.output)
         # Default has 6 rules
         assert data["summary"]["rules_checked"] == 6
@@ -221,8 +207,7 @@ class TestBudget:
     def test_budget_json_has_rules_array(self, cli_runner, budget_project, monkeypatch):
         """JSON output has rules array with expected fields."""
         monkeypatch.chdir(budget_project)
-        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project,
-                            json_mode=True)
+        result = invoke_cli(cli_runner, ["budget"], cwd=budget_project, json_mode=True)
         data = json.loads(result.output)
         assert "rules" in data
         assert isinstance(data["rules"], list)
@@ -257,8 +242,7 @@ class TestBudget:
         """max_increase_pct: FAIL if percentage exceeds threshold."""
         from roam.commands.cmd_budget import _evaluate_rule
 
-        rule = {"name": "Complexity", "metric": "avg_complexity",
-                "max_increase_pct": 10}
+        rule = {"name": "Complexity", "metric": "avg_complexity", "max_increase_pct": 10}
         before = {"avg_complexity": 10.0}
         after = {"avg_complexity": 12.0}
         result = _evaluate_rule(rule, before, after)

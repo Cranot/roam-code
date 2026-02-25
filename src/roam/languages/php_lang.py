@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -28,7 +28,7 @@ class PhpExtractor(LanguageExtractor):
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
-        refs.extend(getattr(self, '_pending_inherits', []))
+        refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
 
@@ -46,7 +46,7 @@ class PhpExtractor(LanguageExtractor):
 
     def _qualify(self, name: str) -> str:
         """Prepend current namespace to a name."""
-        ns = getattr(self, '_current_namespace', None)
+        ns = getattr(self, "_current_namespace", None)
         if ns:
             return f"{ns}\\{name}"
         return name
@@ -66,7 +66,12 @@ class PhpExtractor(LanguageExtractor):
 
     def _has_modifier(self, node, source, modifier: str) -> bool:
         for child in node.children:
-            if child.type in ("static_modifier", "readonly_modifier", "abstract_modifier", "final_modifier"):
+            if child.type in (
+                "static_modifier",
+                "readonly_modifier",
+                "abstract_modifier",
+                "final_modifier",
+            ):
                 if modifier in self.node_text(child, source):
                     return True
             if child.type == "visibility_modifier" and modifier in self.node_text(child, source):
@@ -108,14 +113,16 @@ class PhpExtractor(LanguageExtractor):
         name = self.node_text(name_node, source)
         self._current_namespace = name
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="module",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            signature=f"namespace {name}",
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="module",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                signature=f"namespace {name}",
+                is_exported=True,
+            )
+        )
 
         # Walk the namespace body
         body = node.child_by_field_name("body")
@@ -153,18 +160,20 @@ class PhpExtractor(LanguageExtractor):
         if is_final:
             sig = "final " + sig
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind=kind,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
         # Walk class body
         body = node.child_by_field_name("body")
@@ -194,18 +203,20 @@ class PhpExtractor(LanguageExtractor):
                 sig += f" {self.node_text(child, source)}"
                 self._collect_type_refs(child, source, "implements", node.start_point[0] + 1, qualified)
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="enum",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public",
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="enum",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public",
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
         # Walk enum body for cases and methods
         body = node.child_by_field_name("body")
@@ -234,16 +245,18 @@ class PhpExtractor(LanguageExtractor):
         if name_node is None:
             return
         name = self.node_text(name_node, source)
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="constant",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=f"{parent_name}\\{name}",
-            parent_name=parent_name,
-            visibility="public",
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="constant",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=f"{parent_name}\\{name}",
+                parent_name=parent_name,
+                visibility="public",
+                is_exported=True,
+            )
+        )
 
     def _extract_function(self, node, source, symbols, parent_name):
         """Extract top-level function."""
@@ -259,18 +272,20 @@ class PhpExtractor(LanguageExtractor):
             sig += f": {self.node_text(ret, source)}"
 
         qualified = f"{parent_name}\\{name}" if parent_name else self._qualify(name)
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public",
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public",
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_method(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -292,18 +307,20 @@ class PhpExtractor(LanguageExtractor):
         sig = f"{vis} {sig}"
 
         qualified = f"{parent_name}\\{name}" if parent_name else self._qualify(name)
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_property(self, node, source, symbols, parent_name):
         """Extract property declarations, stripping $ prefix."""
@@ -325,17 +342,19 @@ class PhpExtractor(LanguageExtractor):
                     sig = "readonly " + sig
 
                 qualified = f"{parent_name}\\{name}" if parent_name else name
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="property",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=sig,
-                    visibility=vis,
-                    is_exported=vis == "public",
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="property",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=sig,
+                        visibility=vis,
+                        is_exported=vis == "public",
+                        parent_name=parent_name,
+                    )
+                )
             elif child.type == "variable_name":
                 raw_name = self.node_text(child, source)
                 name = raw_name.lstrip("$")
@@ -346,17 +365,19 @@ class PhpExtractor(LanguageExtractor):
                     sig = "readonly " + sig
 
                 qualified = f"{parent_name}\\{name}" if parent_name else name
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="property",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=sig,
-                    visibility=vis,
-                    is_exported=vis == "public",
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="property",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=sig,
+                        visibility=vis,
+                        is_exported=vis == "public",
+                        parent_name=parent_name,
+                    )
+                )
 
     def _extract_const(self, node, source, symbols, parent_name):
         """Extract class or file-level const declarations."""
@@ -368,17 +389,19 @@ class PhpExtractor(LanguageExtractor):
                     continue
                 name = self.node_text(name_node, source)
                 qualified = f"{parent_name}\\{name}" if parent_name else self._qualify(name)
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="constant",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=f"const {name}",
-                    visibility=vis,
-                    is_exported=vis == "public",
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="constant",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=f"const {name}",
+                        visibility=vis,
+                        is_exported=vis == "public",
+                        parent_name=parent_name,
+                    )
+                )
 
     def _extract_promoted_properties(self, body, source, symbols, parent_name):
         """Extract constructor-promoted parameters (PHP 8.0+).
@@ -419,17 +442,19 @@ class PhpExtractor(LanguageExtractor):
                 raw_name = self.node_text(var_node, source)
                 name = raw_name.lstrip("$")
                 qualified = f"{parent_name}\\{name}"
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="property",
-                    line_start=param.start_point[0] + 1,
-                    line_end=param.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=f"promoted {raw_name}",
-                    visibility=vis,
-                    is_exported=vis == "public",
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="property",
+                        line_start=param.start_point[0] + 1,
+                        line_end=param.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=f"promoted {raw_name}",
+                        visibility=vis,
+                        is_exported=vis == "public",
+                        parent_name=parent_name,
+                    )
+                )
 
     def _collect_type_refs(self, node, source, kind, line, source_name):
         """Recursively collect name/qualified_name nodes as references."""
@@ -438,12 +463,14 @@ class PhpExtractor(LanguageExtractor):
                 target = self.node_text(child, source)
                 # Use last segment for matching
                 short = target.rsplit("\\", 1)[-1] if "\\" in target else target
-                self._pending_inherits.append(self._make_reference(
-                    target_name=short,
-                    kind=kind,
-                    line=line,
-                    source_name=source_name,
-                ))
+                self._pending_inherits.append(
+                    self._make_reference(
+                        target_name=short,
+                        kind=kind,
+                        line=line,
+                        source_name=source_name,
+                    )
+                )
             else:
                 self._collect_type_refs(child, source, kind, line, source_name)
 
@@ -475,8 +502,12 @@ class PhpExtractor(LanguageExtractor):
                     n = child.child_by_field_name("name")
                     if n:
                         new_scope = self.node_text(n, source)
-                elif ntype in ("class_declaration", "interface_declaration",
-                               "trait_declaration", "enum_declaration"):
+                elif ntype in (
+                    "class_declaration",
+                    "interface_declaration",
+                    "trait_declaration",
+                    "enum_declaration",
+                ):
                     n = child.child_by_field_name("name")
                     if n:
                         cname = self.node_text(n, source)
@@ -515,10 +546,15 @@ class PhpExtractor(LanguageExtractor):
             if child.type == "namespace_use_clause":
                 target, path = self._use_clause_target(child, source)
                 if target:
-                    refs.append(self._make_reference(
-                        target_name=target, kind="import", line=line,
-                        source_name=scope_name, import_path=path,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=target,
+                            kind="import",
+                            line=line,
+                            source_name=scope_name,
+                            import_path=path,
+                        )
+                    )
             elif child.type == "namespace_use_group":
                 prefix = ""
                 for sub in node.children:
@@ -530,17 +566,27 @@ class PhpExtractor(LanguageExtractor):
                         target, short_path = self._use_clause_target(sub, source)
                         if target:
                             full_path = f"{prefix}\\{short_path}" if prefix else (short_path or "")
-                            refs.append(self._make_reference(
-                                target_name=target, kind="import", line=line,
-                                source_name=scope_name, import_path=full_path,
-                            ))
+                            refs.append(
+                                self._make_reference(
+                                    target_name=target,
+                                    kind="import",
+                                    line=line,
+                                    source_name=scope_name,
+                                    import_path=full_path,
+                                )
+                            )
             elif child.type in ("qualified_name", "name"):
                 path = self.node_text(child, source)
                 target = path.rsplit("\\", 1)[-1] if "\\" in path else path
-                refs.append(self._make_reference(
-                    target_name=target, kind="import", line=line,
-                    source_name=scope_name, import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=target,
+                        kind="import",
+                        line=line,
+                        source_name=scope_name,
+                        import_path=path,
+                    )
+                )
 
     def _extract_trait_use(self, node, source, refs, scope_name):
         """Extract `use HasFactory, SoftDeletes;` inside class body."""
@@ -548,12 +594,14 @@ class PhpExtractor(LanguageExtractor):
             if child.type in ("name", "qualified_name"):
                 target = self.node_text(child, source)
                 short = target.rsplit("\\", 1)[-1] if "\\" in target else target
-                refs.append(self._make_reference(
-                    target_name=short,
-                    kind="uses_trait",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=short,
+                        kind="uses_trait",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
 
     def _extract_member_call(self, node, source, refs, scope_name):
         """Extract $obj->method() calls."""
@@ -561,12 +609,14 @@ class PhpExtractor(LanguageExtractor):
         if name_node is None:
             return
         name = self.node_text(name_node, source)
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         # Recurse into arguments
         args = node.child_by_field_name("arguments")
         if args:
@@ -583,12 +633,14 @@ class PhpExtractor(LanguageExtractor):
             scope_text = self.node_text(scope_node, source)
             if scope_text not in ("self", "static", "parent"):
                 name = f"{scope_text}.{name}"
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)
@@ -600,12 +652,14 @@ class PhpExtractor(LanguageExtractor):
             if child.type in ("name", "qualified_name"):
                 target = self.node_text(child, source)
                 short = target.rsplit("\\", 1)[-1] if "\\" in target else target
-                refs.append(self._make_reference(
-                    target_name=short,
-                    kind="call",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=short,
+                        kind="call",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
                 break
         args = node.child_by_field_name("arguments")
         if args:
@@ -621,12 +675,14 @@ class PhpExtractor(LanguageExtractor):
         if name.startswith("$"):
             return
         short = name.rsplit("\\", 1)[-1] if "\\" in name else name
-        refs.append(self._make_reference(
-            target_name=short,
-            kind="call",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=short,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         args = node.child_by_field_name("arguments")
         if args:
             self._walk_refs(args, source, refs, scope_name)

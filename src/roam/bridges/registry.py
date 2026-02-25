@@ -1,8 +1,8 @@
 """Bridge registry -- discovers and manages cross-language bridges."""
+
 from __future__ import annotations
 
 from roam.bridges.base import LanguageBridge
-
 
 _BRIDGES: list[LanguageBridge] = []
 

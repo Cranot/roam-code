@@ -115,11 +115,7 @@ def cli_surface_counts() -> dict:
 
 
 def _is_tool_decorator(node: ast.expr) -> bool:
-    return (
-        isinstance(node, ast.Call)
-        and isinstance(node.func, ast.Name)
-        and node.func.id == "_tool"
-    )
+    return isinstance(node, ast.Call) and isinstance(node.func, ast.Name) and node.func.id == "_tool"
 
 
 def mcp_surface_counts() -> dict:

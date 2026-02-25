@@ -11,7 +11,6 @@ import re
 
 from .base import LanguageExtractor
 
-
 # Map XML root tags to symbol kinds
 _TAG_TO_KIND = {
     "apexclass": "class",
@@ -45,14 +44,24 @@ _TAG_TO_KIND = {
 }
 
 # Tags that contain references to other metadata
-_REF_TAGS = frozenset({
-    "apexclass", "controller", "extensions", "template",
-    "field", "referenceto", "lookupfilter", "customobject",
-    "targetobject", "relatedlist", "sobjecttype",
-})
+_REF_TAGS = frozenset(
+    {
+        "apexclass",
+        "controller",
+        "extensions",
+        "template",
+        "field",
+        "referenceto",
+        "lookupfilter",
+        "customobject",
+        "targetobject",
+        "relatedlist",
+        "sobjecttype",
+    }
+)
 
 # Formula field pattern
-_FORMULA_IDENT_RE = re.compile(r'\b([A-Z]\w+(?:__c|__r)?)\b')
+_FORMULA_IDENT_RE = re.compile(r"\b([A-Z]\w+(?:__c|__r)?)\b")
 
 
 class SfxmlExtractor(LanguageExtractor):
@@ -75,6 +84,7 @@ class SfxmlExtractor(LanguageExtractor):
         # e.g. "AccountService.cls-meta.xml" → "AccountService"
         # e.g. "Account.object-meta.xml" → "Account"
         import os
+
         basename = os.path.basename(file_path)
         # Strip -meta.xml suffix, then get the name before the extension
         name = basename.replace("-meta.xml", "")
@@ -89,15 +99,17 @@ class SfxmlExtractor(LanguageExtractor):
         if meta_type.lower() in ("cls", "trigger", "page", "component"):
             return symbols
 
-        symbols.append(self._make_symbol(
-            name=meta_name,
-            kind=kind,
-            line_start=1,
-            line_end=text.count("\n") + 1,
-            qualified_name=f"{meta_type}.{meta_name}",
-            signature=f"{meta_type} {meta_name}",
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=meta_name,
+                kind=kind,
+                line_start=1,
+                line_end=text.count("\n") + 1,
+                qualified_name=f"{meta_type}.{meta_name}",
+                signature=f"{meta_type} {meta_name}",
+                is_exported=True,
+            )
+        )
 
         # Extract child elements as nested symbols (fields, rules, etc.)
         self._walk_xml_symbols(tree.root_node, source, symbols, meta_name)
@@ -127,22 +139,29 @@ class SfxmlExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "element":
                 tag = self._get_tag_name(child, source)
-                if tag and tag.lower() in ("fields", "validationrules",
-                                           "fieldsets", "listviews",
-                                           "weblinks", "recordtypes"):
+                if tag and tag.lower() in (
+                    "fields",
+                    "validationrules",
+                    "fieldsets",
+                    "listviews",
+                    "weblinks",
+                    "recordtypes",
+                ):
                     # Find the <fullName> child for the element name
                     full_name = self._find_child_element_text(child, source, "fullname")
                     if full_name:
                         kind = "field" if tag.lower() == "fields" else "rule"
-                        symbols.append(self._make_symbol(
-                            name=full_name,
-                            kind=kind,
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{parent_name}.{full_name}",
-                            parent_name=parent_name,
-                            is_exported=True,
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=full_name,
+                                kind=kind,
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{parent_name}.{full_name}",
+                                parent_name=parent_name,
+                                is_exported=True,
+                            )
+                        )
             self._walk_xml_symbols(child, source, symbols, parent_name, _depth + 1)
 
     def _walk_xml_refs(self, node, source, refs, _depth=0):
@@ -155,40 +174,58 @@ class SfxmlExtractor(LanguageExtractor):
                 if tag and tag.lower() in _REF_TAGS:
                     text = self._get_element_text(child, source)
                     if text and len(text) < 200 and not text.startswith("<"):
-                        refs.append(self._make_reference(
-                            target_name=text.strip(),
-                            kind="metadata_ref",
-                            line=child.start_point[0] + 1,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=text.strip(),
+                                kind="metadata_ref",
+                                line=child.start_point[0] + 1,
+                            )
+                        )
             self._walk_xml_refs(child, source, refs, _depth + 1)
 
     def _scan_formulas(self, text: str, refs: list):
         """Scan for formula field references."""
         # Look for <formula> elements
-        formula_re = re.compile(r'<formula>(.*?)</formula>', re.DOTALL | re.IGNORECASE)
+        formula_re = re.compile(r"<formula>(.*?)</formula>", re.DOTALL | re.IGNORECASE)
         for m in formula_re.finditer(text):
             formula = m.group(1)
-            line = text[:m.start()].count("\n") + 1
+            line = text[: m.start()].count("\n") + 1
             for ident_m in _FORMULA_IDENT_RE.finditer(formula):
                 name = ident_m.group(1)
-                if name not in ("IF", "AND", "OR", "NOT", "TRUE", "FALSE",
-                                "NULL", "ISBLANK", "TEXT", "VALUE", "TODAY",
-                                "NOW", "YEAR", "MONTH", "DAY"):
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="formula_ref",
-                        line=line,
-                    ))
+                if name not in (
+                    "IF",
+                    "AND",
+                    "OR",
+                    "NOT",
+                    "TRUE",
+                    "FALSE",
+                    "NULL",
+                    "ISBLANK",
+                    "TEXT",
+                    "VALUE",
+                    "TODAY",
+                    "NOW",
+                    "YEAR",
+                    "MONTH",
+                    "DAY",
+                ):
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="formula_ref",
+                            line=line,
+                        )
+                    )
 
     def _extract_flow_refs(self, text: str, refs: list):
         """Extract Flow action call references to Apex classes."""
         # Split into individual <actionCalls> blocks to prevent cross-block matching
         block_re = re.compile(
-            r'<actionCalls>(.*?)</actionCalls>',
+            r"<actionCalls>(.*?)</actionCalls>",
             re.DOTALL | re.IGNORECASE,
         )
-        type_re = re.compile(r'<actionType>\s*(apex)\s*</actionType>', re.IGNORECASE)
-        name_re = re.compile(r'<actionName>\s*(\w+)\s*</actionName>', re.IGNORECASE)
+        type_re = re.compile(r"<actionType>\s*(apex)\s*</actionType>", re.IGNORECASE)
+        name_re = re.compile(r"<actionName>\s*(\w+)\s*</actionName>", re.IGNORECASE)
 
         for block_m in block_re.finditer(text):
             block_content = block_m.group(1)
@@ -198,12 +235,14 @@ class SfxmlExtractor(LanguageExtractor):
             if not name_m:
                 continue
             action_name = name_m.group(1)
-            line = text[:block_m.start()].count("\n") + 1
-            refs.append(self._make_reference(
-                target_name=action_name,
-                kind="call",
-                line=line,
-            ))
+            line = text[: block_m.start()].count("\n") + 1
+            refs.append(
+                self._make_reference(
+                    target_name=action_name,
+                    kind="call",
+                    line=line,
+                )
+            )
 
     def _get_tag_name(self, element_node, source) -> str | None:
         """Get the tag name from an HTML element node."""

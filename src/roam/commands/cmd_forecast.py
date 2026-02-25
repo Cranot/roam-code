@@ -10,22 +10,21 @@ import os
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Thresholds for aggregate snapshot metrics
 # ---------------------------------------------------------------------------
 
 _THRESHOLDS = {
-    "health_score":   {"warning": 60, "critical": 40, "higher_is_better": True},
+    "health_score": {"warning": 60, "critical": 40, "higher_is_better": True},
     "avg_complexity": {"warning": 20, "critical": 30, "higher_is_better": False},
-    "cycles":         {"warning": 5,  "critical": 10, "higher_is_better": False},
-    "brain_methods":  {"warning": 5,  "critical": 10, "higher_is_better": False},
-    "god_components": {"warning": 3,  "critical": 5,  "higher_is_better": False},
-    "dead_exports":   {"warning": 20, "critical": 50, "higher_is_better": False},
+    "cycles": {"warning": 5, "critical": 10, "higher_is_better": False},
+    "brain_methods": {"warning": 5, "critical": 10, "higher_is_better": False},
+    "god_components": {"warning": 3, "critical": 5, "higher_is_better": False},
+    "dead_exports": {"warning": 20, "critical": 50, "higher_is_better": False},
 }
 
 # Minimum absolute slope to consider a metric "trending" at all.
@@ -35,6 +34,7 @@ _MIN_ABS_SLOPE = 0.05
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _classify_status(current, slope, horizon, metric_cfg):
     """Return one of: stable / trending / warning / alert.
@@ -102,14 +102,16 @@ def _aggregate_forecasts(conn, horizon):
             current = values[-1] if values else None
             if current is None:
                 continue
-            results.append({
-                "metric": metric,
-                "current": round(float(current), 2),
-                "slope": 0.0,
-                "forecast_value": round(float(current), 2),
-                "forecast_horizon": horizon,
-                "status": "stable",
-            })
+            results.append(
+                {
+                    "metric": metric,
+                    "current": round(float(current), 2),
+                    "slope": 0.0,
+                    "forecast_value": round(float(current), 2),
+                    "forecast_horizon": horizon,
+                    "status": "stable",
+                }
+            )
             continue
 
         ts_result = theil_sen_slope(values)
@@ -121,14 +123,16 @@ def _aggregate_forecasts(conn, horizon):
         forecast_val = current + slope * horizon
         status = _classify_status(current, slope, horizon, cfg)
 
-        results.append({
-            "metric": metric,
-            "current": round(float(current), 2),
-            "slope": round(slope, 4),
-            "forecast_value": round(forecast_val, 2),
-            "forecast_horizon": horizon,
-            "status": status,
-        })
+        results.append(
+            {
+                "metric": metric,
+                "current": round(float(current), 2),
+                "slope": round(slope, 4),
+                "forecast_value": round(forecast_val, 2),
+                "forecast_horizon": horizon,
+                "status": status,
+            }
+        )
 
     return results, len(rows)
 
@@ -158,9 +162,7 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
         return []
 
     # Fetch churn per file
-    churn_rows = conn.execute(
-        "SELECT file_id, total_churn FROM file_stats"
-    ).fetchall()
+    churn_rows = conn.execute("SELECT file_id, total_churn FROM file_stats").fetchall()
     churn_map = {r["file_id"]: (r["total_churn"] or 0) for r in churn_rows}
 
     # Fetch file id lookup
@@ -194,16 +196,18 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
         if risk_score < min_slope * 10:
             continue
 
-        results.append({
-            "name": r["name"],
-            "qualified_name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "file": r["path"],
-            "line": r["line_start"],
-            "cognitive_complexity": round(cc, 1),
-            "churn": churn,
-            "risk_score": round(risk_score, 1),
-        })
+        results.append(
+            {
+                "name": r["name"],
+                "qualified_name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "file": r["path"],
+                "line": r["line_start"],
+                "cognitive_complexity": round(cc, 1),
+                "churn": churn,
+                "risk_score": round(risk_score, 1),
+            }
+        )
 
     results.sort(key=lambda x: x["risk_score"], reverse=True)
     return results[:limit]
@@ -213,18 +217,28 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("forecast")
 @click.option("--symbol", default=None, help="Filter to a specific symbol name")
 @click.option(
-    "--horizon", default=30, type=int, show_default=True,
+    "--horizon",
+    default=30,
+    type=int,
+    show_default=True,
     help="Look-ahead window in snapshots/commits",
 )
 @click.option(
-    "--alert-only", "alert_only", is_flag=True,
+    "--alert-only",
+    "alert_only",
+    is_flag=True,
     help="Show only metrics with non-stable status",
 )
 @click.option(
-    "--min-slope", "min_slope", default=0.1, type=float, show_default=True,
+    "--min-slope",
+    "min_slope",
+    default=0.1,
+    type=float,
+    show_default=True,
     help="Minimum slope (or risk coefficient) to report",
 )
 @click.pass_context
@@ -256,17 +270,12 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
         # Apply min-slope filter on aggregate trends
         if min_slope > 0:
-            agg_trends = [
-                t for t in agg_trends
-                if abs(t["slope"]) >= min_slope or t["status"] in ("warning", "alert")
-            ]
+            agg_trends = [t for t in agg_trends if abs(t["slope"]) >= min_slope or t["status"] in ("warning", "alert")]
 
         at_risk = _at_risk_symbols(conn, symbol, min_slope)
 
     # Summary counts
-    metrics_trending = sum(
-        1 for t in agg_trends if t["status"] in ("trending", "warning", "alert")
-    )
+    metrics_trending = sum(1 for t in agg_trends if t["status"] in ("trending", "warning", "alert"))
     symbols_at_risk = len(at_risk)
 
     # Build verdict
@@ -282,9 +291,7 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
         parts.append("all aggregate metrics stable")
 
     if symbols_at_risk:
-        parts.append(
-            f"{symbols_at_risk} symbol{'s' if symbols_at_risk != 1 else ''} at risk"
-        )
+        parts.append(f"{symbols_at_risk} symbol{'s' if symbols_at_risk != 1 else ''} at risk")
     else:
         parts.append("no high-risk symbols found")
 
@@ -292,17 +299,21 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "forecast",
-            summary={
-                "verdict": verdict,
-                "snapshots_available": n_snapshots,
-                "metrics_trending": metrics_trending,
-                "symbols_at_risk": symbols_at_risk,
-            },
-            aggregate_trends=agg_trends,
-            at_risk_symbols=at_risk,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "forecast",
+                    summary={
+                        "verdict": verdict,
+                        "snapshots_available": n_snapshots,
+                        "metrics_trending": metrics_trending,
+                        "symbols_at_risk": symbols_at_risk,
+                    },
+                    aggregate_trends=agg_trends,
+                    at_risk_symbols=at_risk,
+                )
+            )
+        )
         return
 
     # --- Text output ---
@@ -323,18 +334,13 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
         else:
             for t in agg_trends:
                 slope_str = f"{t['slope']:+.4f}/snapshot"
-                forecast_note = (
-                    f"forecast {t['forecast_value']:.1f} in {t['forecast_horizon']} snapshots"
-                )
+                forecast_note = f"forecast {t['forecast_value']:.1f} in {t['forecast_horizon']} snapshots"
                 flag = ""
                 if t["status"] == "warning":
                     flag = "  << WARNING"
                 elif t["status"] == "alert":
                     flag = "  << ALERT"
-                click.echo(
-                    f"  {t['metric']:<18s}  {t['current']:.1f}, "
-                    f"slope {slope_str}, {forecast_note}{flag}"
-                )
+                click.echo(f"  {t['metric']:<18s}  {t['current']:.1f}, slope {slope_str}, {forecast_note}{flag}")
 
     click.echo()
 

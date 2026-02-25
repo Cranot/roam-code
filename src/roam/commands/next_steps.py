@@ -48,7 +48,7 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
             steps.append(f"Run `roam impact{sym_arg}` to see the full blast radius before modifying")
         steps.append(f"Run `roam preflight{sym_arg}` to check blast radius, tests, and fitness in one shot")
         if callers == 0:
-            steps.append(f"Run `roam dead` to confirm whether this symbol is truly unreferenced")
+            steps.append("Run `roam dead` to confirm whether this symbol is truly unreferenced")
         else:
             steps.append(f"Run `roam diagnose{sym_arg}` if this symbol is involved in a bug")
 

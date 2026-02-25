@@ -14,8 +14,6 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import abbrev_kind, budget_truncate, json_envelope, loc, to_json
 from roam.commands.context_helpers import (
     gather_symbol_context,
     get_affected_tests_bfs,
@@ -24,7 +22,8 @@ from roam.commands.context_helpers import (
     get_symbol_metrics,
 )
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
-
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import abbrev_kind, budget_truncate, json_envelope, loc, to_json
 
 _DEFAULT_CALLER_CAP = 8
 _DEFAULT_CALLEE_CAP = 8
@@ -135,13 +134,7 @@ def _risk_score(
 
     layer_component = min(13.0, layer_violation_count * 5.0 + move_sensitive_count * 1.5)
 
-    score = int(round(
-        blast_component
-        + complexity_component
-        + centrality_component
-        + test_component
-        + layer_component
-    ))
+    score = int(round(blast_component + complexity_component + centrality_component + test_component + layer_component))
     score = max(0, min(100, score))
 
     level = _risk_level(score)
@@ -204,17 +197,10 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     current_layer = layers.get(symbol_id)
 
     # Existing formal violations involving this symbol.
-    relevant_violations = [
-        v for v in violations
-        if v["source"] == symbol_id or v["target"] == symbol_id
-    ]
+    relevant_violations = [v for v in violations if v["source"] == symbol_id or v["target"] == symbol_id]
     lookup = {}
     if relevant_violations:
-        ids = sorted({
-            v["source"] for v in relevant_violations
-        } | {
-            v["target"] for v in relevant_violations
-        })
+        ids = sorted({v["source"] for v in relevant_violations} | {v["target"] for v in relevant_violations})
         for r in batched_in(
             conn,
             "SELECT s.id, s.name, s.kind, s.line_start, f.path as file_path "
@@ -228,16 +214,18 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
     for v in relevant_violations[:cap]:
         src = lookup.get(v["source"], {})
         tgt = lookup.get(v["target"], {})
-        formatted_violations.append({
-            "source": src.get("name", f"id={v['source']}"),
-            "source_kind": src.get("kind", ""),
-            "source_layer": v["source_layer"],
-            "target": tgt.get("name", f"id={v['target']}"),
-            "target_kind": tgt.get("kind", ""),
-            "target_layer": v["target_layer"],
-            "layer_distance": v["layer_distance"],
-            "location": loc(src.get("file_path", ""), src.get("line_start")),
-        })
+        formatted_violations.append(
+            {
+                "source": src.get("name", f"id={v['source']}"),
+                "source_kind": src.get("kind", ""),
+                "source_layer": v["source_layer"],
+                "target": tgt.get("name", f"id={v['target']}"),
+                "target_kind": tgt.get("kind", ""),
+                "target_layer": v["target_layer"],
+                "layer_distance": v["layer_distance"],
+                "location": loc(src.get("file_path", ""), src.get("line_start")),
+            }
+        )
 
     # Move-sensitive edges: any edge touching this symbol that crosses >1 layer.
     move_edges = []
@@ -260,15 +248,17 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
         tgt_node = G.nodes.get(tgt, {})
         edge_kind = (G.edges.get((src, tgt), {}) or {}).get("kind", "")
 
-        move_edges.append({
-            "direction": "outgoing" if src == symbol_id else "incoming",
-            "source": src_node.get("name", f"id={src}"),
-            "source_layer": src_layer,
-            "target": tgt_node.get("name", f"id={tgt}"),
-            "target_layer": tgt_layer,
-            "edge_kind": edge_kind,
-            "layer_distance": distance,
-        })
+        move_edges.append(
+            {
+                "direction": "outgoing" if src == symbol_id else "incoming",
+                "source": src_node.get("name", f"id={src}"),
+                "source_layer": src_layer,
+                "target": tgt_node.get("name", f"id={tgt}"),
+                "target_layer": tgt_layer,
+                "edge_kind": edge_kind,
+                "layer_distance": distance,
+            }
+        )
 
     move_edges.sort(
         key=lambda e: (-e["layer_distance"], e["direction"], e["source"], e["target"]),
@@ -333,10 +323,7 @@ def guard(ctx, name):
             key=lambda item: (-item[1], item[0]),
         )
         signal_summary = [f"{k}={v:.1f}" for k, v in major_factors[:3] if v > 0]
-        verdict = (
-            f"{risk_level} breaking-change risk ({risk_score}/100)"
-            f" for {sym['qualified_name'] or sym['name']}"
-        )
+        verdict = f"{risk_level} breaking-change risk ({risk_score}/100) for {sym['qualified_name'] or sym['name']}"
 
         definition = {
             "name": sym["name"],
@@ -433,10 +420,7 @@ def guard(ctx, name):
         layer_line = "Layer analysis:"
         if layers["current_layer"] is not None:
             layer_line += f" current=L{layers['current_layer']}"
-        layer_line += (
-            f", violations={layers['violation_count']}, "
-            f"move-sensitive={layers['move_sensitive_count']}"
-        )
+        layer_line += f", violations={layers['violation_count']}, move-sensitive={layers['move_sensitive_count']}"
         lines.append(layer_line)
         for v in layers["violations"]:
             lines.append(

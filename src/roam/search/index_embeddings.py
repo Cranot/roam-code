@@ -8,12 +8,12 @@ import re
 from typing import Any
 
 from roam.search.framework_packs import search_pack_symbols
-from roam.search.tfidf import tokenize, cosine_similarity
-
+from roam.search.tfidf import cosine_similarity, tokenize
 
 # ---------------------------------------------------------------------------
 # camelCase preprocessing for FTS5 tokenizer
 # ---------------------------------------------------------------------------
+
 
 def _camel_split(text: str) -> str:
     """Insert spaces at camelCase/PascalCase boundaries for FTS5.
@@ -33,12 +33,11 @@ def _camel_split(text: str) -> str:
 # FTS5 availability detection
 # ---------------------------------------------------------------------------
 
+
 def fts5_available(conn) -> bool:
     """Check if the symbol_fts virtual table exists and is usable."""
     try:
-        row = conn.execute(
-            "SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'"
-        ).fetchone()
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
         return row is not None
     except Exception:
         return False
@@ -67,9 +66,7 @@ def tfidf_populated(conn) -> bool:
 def onnx_populated(conn) -> bool:
     """Check if ONNX embedding table has data."""
     try:
-        row = conn.execute(
-            "SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'"
-        ).fetchone()
+        row = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()
         return row is not None and row[0] > 0
     except Exception:
         return False
@@ -100,6 +97,7 @@ def _get_onnx_embedder(project_root=None, settings=None):
 # FTS5 index build (called during `roam index`)
 # ---------------------------------------------------------------------------
 
+
 def build_fts_index(conn, project_root=None):
     """Populate the FTS5 symbol_fts table for BM25-ranked search.
 
@@ -129,14 +127,16 @@ def build_fts_index(conn, project_root=None):
     # Insert with camelCase preprocessing for better tokenization
     batch = []
     for row in rows:
-        batch.append((
-            row["id"],
-            _camel_split(row["name"] or ""),
-            _camel_split(row["qualified_name"] or ""),
-            _camel_split(row["signature"] or ""),
-            row["kind"] or "",
-            row["file_path"] or "",
-        ))
+        batch.append(
+            (
+                row["id"],
+                _camel_split(row["name"] or ""),
+                _camel_split(row["qualified_name"] or ""),
+                _camel_split(row["signature"] or ""),
+                row["kind"] or "",
+                row["file_path"] or "",
+            )
+        )
         if len(batch) >= 500:
             conn.executemany(
                 "INSERT INTO symbol_fts(rowid, name, qualified_name, "
@@ -147,8 +147,7 @@ def build_fts_index(conn, project_root=None):
 
     if batch:
         conn.executemany(
-            "INSERT INTO symbol_fts(rowid, name, qualified_name, "
-            "signature, kind, file_path) VALUES (?, ?, ?, ?, ?, ?)",
+            "INSERT INTO symbol_fts(rowid, name, qualified_name, signature, kind, file_path) VALUES (?, ?, ?, ?, ?, ?)",
             batch,
         )
 
@@ -218,15 +217,17 @@ def search_fts(conn, query: str, top_k: int = 10) -> list[dict]:
 
     results = []
     for row in rows:
-        results.append({
-            "score": round(row["score"], 4),
-            "symbol_id": row["symbol_id"],
-            "name": row["name"],
-            "file_path": row["file_path"],
-            "kind": row["kind"],
-            "line_start": row["line_start"],
-            "line_end": row["line_end"],
-        })
+        results.append(
+            {
+                "score": round(row["score"], 4),
+                "symbol_id": row["symbol_id"],
+                "name": row["name"],
+                "file_path": row["file_path"],
+                "kind": row["kind"],
+                "line_start": row["line_start"],
+                "line_end": row["line_end"],
+            }
+        )
     return results
 
 
@@ -240,7 +241,7 @@ def _build_fts_query(query: str, prefix_only: bool = False) -> str:
     """
     preprocessed = _camel_split(query)
     # Remove FTS5 special syntax chars: ^, *, ", (, ), {, }, :
-    cleaned = re.sub(r'[^\w\s]', ' ', preprocessed)
+    cleaned = re.sub(r"[^\w\s]", " ", preprocessed)
     tokens = cleaned.split()
     tokens = [t for t in tokens if len(t) >= 2]
     if not tokens:
@@ -259,17 +260,14 @@ def _build_fts_query(query: str, prefix_only: bool = False) -> str:
 # Unified search: hybrid BM25 + TF-IDF vector fusion
 # ---------------------------------------------------------------------------
 
+
 def _normalize_scores(results: list[dict]) -> dict[int, float]:
     """Normalize result scores to [0,1] by list max score."""
     if not results:
         return {}
     max_score = max(float(r.get("score", 0.0) or 0.0) for r in results)
     if max_score <= 0:
-        return {
-            int(r["symbol_id"]): 0.0
-            for r in results
-            if r.get("symbol_id") is not None
-        }
+        return {int(r["symbol_id"]): 0.0 for r in results if r.get("symbol_id") is not None}
     return {
         int(r["symbol_id"]): float(r.get("score", 0.0) or 0.0) / max_score
         for r in results
@@ -286,28 +284,14 @@ def _fuse_hybrid_results(
     if not lexical_results and not semantic_results:
         return []
 
-    lex_rank = {
-        int(r["symbol_id"]): idx + 1
-        for idx, r in enumerate(lexical_results)
-        if r.get("symbol_id") is not None
-    }
+    lex_rank = {int(r["symbol_id"]): idx + 1 for idx, r in enumerate(lexical_results) if r.get("symbol_id") is not None}
     sem_rank = {
-        int(r["symbol_id"]): idx + 1
-        for idx, r in enumerate(semantic_results)
-        if r.get("symbol_id") is not None
+        int(r["symbol_id"]): idx + 1 for idx, r in enumerate(semantic_results) if r.get("symbol_id") is not None
     }
     lex_norm = _normalize_scores(lexical_results)
     sem_norm = _normalize_scores(semantic_results)
-    lex_meta = {
-        int(r["symbol_id"]): r
-        for r in lexical_results
-        if r.get("symbol_id") is not None
-    }
-    sem_meta = {
-        int(r["symbol_id"]): r
-        for r in semantic_results
-        if r.get("symbol_id") is not None
-    }
+    lex_meta = {int(r["symbol_id"]): r for r in lexical_results if r.get("symbol_id") is not None}
+    sem_meta = {int(r["symbol_id"]): r for r in semantic_results if r.get("symbol_id") is not None}
 
     max_rrf = 1.0 / (_HYBRID_RRF_K + 1)
     merged: list[dict] = []
@@ -316,32 +300,27 @@ def _fuse_hybrid_results(
         sr = sem_rank.get(sid)
         lex_rrf = (1.0 / (_HYBRID_RRF_K + lr)) if lr else 0.0
         sem_rrf = (1.0 / (_HYBRID_RRF_K + sr)) if sr else 0.0
-        rank_score = (
-            (_HYBRID_LEXICAL_WEIGHT * lex_rrf)
-            + (_HYBRID_SEMANTIC_WEIGHT * sem_rrf)
-        ) / max_rrf
-        signal_score = (
-            (_HYBRID_LEXICAL_WEIGHT * lex_norm.get(sid, 0.0))
-            + (_HYBRID_SEMANTIC_WEIGHT * sem_norm.get(sid, 0.0))
+        rank_score = ((_HYBRID_LEXICAL_WEIGHT * lex_rrf) + (_HYBRID_SEMANTIC_WEIGHT * sem_rrf)) / max_rrf
+        signal_score = (_HYBRID_LEXICAL_WEIGHT * lex_norm.get(sid, 0.0)) + (
+            _HYBRID_SEMANTIC_WEIGHT * sem_norm.get(sid, 0.0)
         )
-        score = (
-            (_HYBRID_RANK_WEIGHT * rank_score)
-            + ((1.0 - _HYBRID_RANK_WEIGHT) * signal_score)
-        )
+        score = (_HYBRID_RANK_WEIGHT * rank_score) + ((1.0 - _HYBRID_RANK_WEIGHT) * signal_score)
 
         meta = lex_meta.get(sid) or sem_meta.get(sid)
         if not meta:
             continue
-        merged.append({
-            "score": round(score, 4),
-            "symbol_id": sid,
-            "name": meta["name"],
-            "file_path": meta["file_path"],
-            "kind": meta["kind"],
-            "line_start": meta["line_start"],
-            "line_end": meta.get("line_end"),
-            "_rank_sort": min(lr or 10_000, sr or 10_000),
-        })
+        merged.append(
+            {
+                "score": round(score, 4),
+                "symbol_id": sid,
+                "name": meta["name"],
+                "file_path": meta["file_path"],
+                "kind": meta["kind"],
+                "line_start": meta["line_start"],
+                "line_end": meta.get("line_end"),
+                "_rank_sort": min(lr or 10_000, sr or 10_000),
+            }
+        )
 
     merged.sort(
         key=lambda r: (
@@ -441,6 +420,7 @@ def search_stored(
 # created by ensure_schema() during open_db().  The helper below is kept for
 # callers that operate on standalone connections (e.g. tests, external tools).
 
+
 def ensure_tfidf_table(conn):
     """Ensure the symbol_tfidf table exists.
 
@@ -448,6 +428,7 @@ def ensure_tfidf_table(conn):
     source of truth for the table definition.
     """
     from roam.db.schema import SCHEMA_SQL
+
     conn.executescript(SCHEMA_SQL)
 
 
@@ -507,9 +488,7 @@ def build_and_store_onnx_embeddings(conn, project_root=None) -> dict[str, Any]:
     if embedder is None:
         return {"enabled": False, "reason": "embedder-unavailable"}
 
-    rows = conn.execute(
-        "SELECT id, name, qualified_name, signature, kind, docstring FROM symbols"
-    ).fetchall()
+    rows = conn.execute("SELECT id, name, qualified_name, signature, kind, docstring FROM symbols").fetchall()
     if not rows:
         return {"enabled": True, "stored": 0, "dims": 0}
 
@@ -555,9 +534,7 @@ def build_and_store_onnx_embeddings(conn, project_root=None) -> dict[str, Any]:
 
 def load_onnx_vectors(conn) -> dict[int, list[float]]:
     """Load stored ONNX vectors from DB."""
-    rows = conn.execute(
-        "SELECT symbol_id, vector FROM symbol_embeddings WHERE provider='onnx'"
-    ).fetchall()
+    rows = conn.execute("SELECT symbol_id, vector FROM symbol_embeddings WHERE provider='onnx'").fetchall()
     result: dict[int, list[float]] = {}
     for row in rows:
         try:
@@ -641,15 +618,17 @@ def _search_onnx_stored(
         row = meta.get(sid)
         if not row:
             continue
-        results.append({
-            "score": round(score, 4),
-            "symbol_id": sid,
-            "name": row["name"],
-            "file_path": row["file_path"],
-            "kind": row["kind"],
-            "line_start": row["line_start"],
-            "line_end": row["line_end"],
-        })
+        results.append(
+            {
+                "score": round(score, 4),
+                "symbol_id": sid,
+                "name": row["name"],
+                "file_path": row["file_path"],
+                "kind": row["kind"],
+                "line_start": row["line_start"],
+                "line_end": row["line_end"],
+            }
+        )
     return results
 
 
@@ -679,9 +658,7 @@ def _merge_semantic_results(*branches: list[dict], top_k: int) -> list[dict]:
 def load_tfidf_vectors(conn) -> dict[int, dict[str, float]]:
     """Load stored TF-IDF vectors from DB."""
     ensure_tfidf_table(conn)
-    rows = conn.execute(
-        "SELECT symbol_id, terms FROM symbol_tfidf"
-    ).fetchall()
+    rows = conn.execute("SELECT symbol_id, terms FROM symbol_tfidf").fetchall()
 
     result: dict[int, dict[str, float]] = {}
     for row in rows:
@@ -740,14 +717,16 @@ def _search_tfidf_stored(conn, query: str, top_k: int = 10) -> list[dict]:
         m = meta.get(sid)
         if not m:
             continue
-        results.append({
-            "score": round(score, 4),
-            "symbol_id": sid,
-            "name": m["name"],
-            "file_path": m["file_path"],
-            "kind": m["kind"],
-            "line_start": m["line_start"],
-            "line_end": m["line_end"],
-        })
+        results.append(
+            {
+                "score": round(score, 4),
+                "symbol_id": sid,
+                "name": m["name"],
+                "file_path": m["file_path"],
+                "kind": m["kind"],
+                "line_start": m["line_start"],
+                "line_end": m["line_end"],
+            }
+        )
 
     return results

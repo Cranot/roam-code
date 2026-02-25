@@ -1,39 +1,72 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
-
 # Common node types across many tree-sitter grammars
-_FUNCTION_TYPES = frozenset({
-    "function_definition", "function_declaration", "method_definition",
-    "method_declaration", "function_item", "fn_item",
-    "function", "singleton_method", "method",
-})
+_FUNCTION_TYPES = frozenset(
+    {
+        "function_definition",
+        "function_declaration",
+        "method_definition",
+        "method_declaration",
+        "function_item",
+        "fn_item",
+        "function",
+        "singleton_method",
+        "method",
+    }
+)
 
-_CLASS_TYPES = frozenset({
-    "class_definition", "class_declaration", "class_specifier",
-    "class", "module", "struct_item", "struct_specifier",
-})
+_CLASS_TYPES = frozenset(
+    {
+        "class_definition",
+        "class_declaration",
+        "class_specifier",
+        "class",
+        "module",
+        "struct_item",
+        "struct_specifier",
+    }
+)
 
-_INTERFACE_TYPES = frozenset({
-    "interface_declaration", "trait_item", "protocol_declaration",
-    "trait_declaration",  # PHP traits
-})
+_INTERFACE_TYPES = frozenset(
+    {
+        "interface_declaration",
+        "trait_item",
+        "protocol_declaration",
+        "trait_declaration",  # PHP traits
+    }
+)
 
-_ENUM_TYPES = frozenset({
-    "enum_declaration", "enum_specifier", "enum_item",
-})
+_ENUM_TYPES = frozenset(
+    {
+        "enum_declaration",
+        "enum_specifier",
+        "enum_item",
+    }
+)
 
-_MODULE_TYPES = frozenset({
-    "module_definition", "module_declaration", "mod_item",
-    "namespace_definition", "package_declaration",
-})
+_MODULE_TYPES = frozenset(
+    {
+        "module_definition",
+        "module_declaration",
+        "mod_item",
+        "namespace_definition",
+        "package_declaration",
+    }
+)
 
 # Node types whose children form a class body (used to detect context)
-_CLASS_BODY_TYPES = frozenset({
-    "declaration_list", "class_body", "block", "body",
-    "field_declaration_list", "enum_body",
-})
+_CLASS_BODY_TYPES = frozenset(
+    {
+        "declaration_list",
+        "class_body",
+        "block",
+        "body",
+        "field_declaration_list",
+        "enum_body",
+    }
+)
 
 # ---- Inheritance config: extends / superclass ----
 # Maps language -> how to find the parent class(es) from a class declaration node.
@@ -47,8 +80,8 @@ _EXTENDS_CONFIG = {
     "typescript": {"parent_type": "extends_clause", "name_child": "identifier"},
     "tsx": {"parent_type": "extends_clause", "name_child": "identifier"},
     "javascript": {"parent_type": "class_heritage", "name_child": "identifier"},
-    "go": None,       # handled specially via embedded structs
-    "rust": None,     # handled via impl blocks
+    "go": None,  # handled specially via embedded structs
+    "rust": None,  # handled via impl blocks
     "kotlin": {"parent_type": "delegation_specifier", "name_child": "user_type"},
     "ruby": {"parent_type": "superclass", "name_child": "constant"},
 }
@@ -73,7 +106,11 @@ _TRAIT_CONFIG = {
 # name_child: a child node type to search for (via iteration)
 # context: "class_block" means only extract when directly inside a class body
 _PROPERTY_CONFIG = {
-    "php": {"node_type": "property_declaration", "name_field": "variable_name", "value_field": "property_element"},
+    "php": {
+        "node_type": "property_declaration",
+        "name_field": "variable_name",
+        "value_field": "property_element",
+    },
     "python": {"node_type": "assignment", "context": "class_block"},
     "java": {"node_type": "field_declaration", "name_child": "variable_declarator"},
     "typescript": {"node_type": "public_field_definition", "name_child": "property_identifier"},
@@ -84,14 +121,31 @@ _PROPERTY_CONFIG = {
 }
 
 # Simple literal node types whose text we extract as default_value
-_LITERAL_TYPES = frozenset({
-    "string", "encapsed_string", "string_content", "string_literal",
-    "interpreted_string_literal", "raw_string_literal",
-    "number", "integer", "float", "integer_literal", "float_literal",
-    "decimal_integer_literal", "decimal_floating_point_literal",
-    "true", "false", "boolean", "null", "nil", "none", "None",
-    "number_literal",
-})
+_LITERAL_TYPES = frozenset(
+    {
+        "string",
+        "encapsed_string",
+        "string_content",
+        "string_literal",
+        "interpreted_string_literal",
+        "raw_string_literal",
+        "number",
+        "integer",
+        "float",
+        "integer_literal",
+        "float_literal",
+        "decimal_integer_literal",
+        "decimal_floating_point_literal",
+        "true",
+        "false",
+        "boolean",
+        "null",
+        "nil",
+        "none",
+        "None",
+        "number_literal",
+    }
+)
 
 
 class GenericExtractor(LanguageExtractor):
@@ -130,7 +184,7 @@ class GenericExtractor(LanguageExtractor):
             # Strip common comment prefixes
             for prefix in ("/**", "/*", "///", "//!", "//", "#"):
                 if text.startswith(prefix):
-                    text = text[len(prefix):]
+                    text = text[len(prefix) :]
                     break
             if text.endswith("*/"):
                 text = text[:-2]
@@ -146,8 +200,13 @@ class GenericExtractor(LanguageExtractor):
 
         # Try first identifier child
         for child in node.children:
-            if child.type in ("identifier", "type_identifier", "constant",
-                              "property_identifier", "field_identifier"):
+            if child.type in (
+                "identifier",
+                "type_identifier",
+                "constant",
+                "property_identifier",
+                "field_identifier",
+            ):
                 return self.node_text(child, source)
 
         return None
@@ -174,14 +233,18 @@ class GenericExtractor(LanguageExtractor):
                 if name:
                     qualified = f"{parent_name}.{name}" if parent_name else name
                     sig = self.get_signature(child, source)
-                    symbols.append(self._make_symbol(
-                        name=name, kind=kind,
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=qualified, signature=sig,
-                        docstring=self.get_docstring(child, source),
-                        parent_name=parent_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind=kind,
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            docstring=self.get_docstring(child, source),
+                            parent_name=parent_name,
+                        )
+                    )
                     if kind in ("class", "interface", "module", "struct", "enum"):
                         body = self._find_class_body(child) or child
                         self._extract_properties(body, source, symbols, qualified)
@@ -246,18 +309,20 @@ class GenericExtractor(LanguageExtractor):
                 visibility = self._get_property_visibility(child, source)
 
             qualified = f"{class_name}.{name}" if class_name else name
-            symbols.append(self._make_symbol(
-                name=name,
-                kind="property",
-                line_start=child.start_point[0] + 1,
-                line_end=child.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=None,
-                docstring=self.get_docstring(child, source),
-                parent_name=class_name,
-                visibility=visibility,
-                default_value=value,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind="property",
+                    line_start=child.start_point[0] + 1,
+                    line_end=child.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=None,
+                    docstring=self.get_docstring(child, source),
+                    parent_name=class_name,
+                    visibility=visibility,
+                    default_value=value,
+                )
+            )
 
     def _find_name_by_field(self, node, source, name_field) -> str | None:
         """Search for property name via field name (2-level deep search)."""
@@ -288,8 +353,12 @@ class GenericExtractor(LanguageExtractor):
                 if inner_name:
                     return self.node_text(inner_name, source)
                 for sub in child.children:
-                    if sub.type in ("identifier", "field_identifier",
-                                    "property_identifier", "variable_name"):
+                    if sub.type in (
+                        "identifier",
+                        "field_identifier",
+                        "property_identifier",
+                        "variable_name",
+                    ):
                         text = self.node_text(sub, source)
                         if text.startswith("$"):
                             text = text[1:]
@@ -363,8 +432,13 @@ class GenericExtractor(LanguageExtractor):
             if len(text) <= 200:
                 return text
         # Handle quoted strings that tree-sitter wraps
-        if node.type in ("string", "encapsed_string", "string_literal",
-                         "interpreted_string_literal", "raw_string_literal"):
+        if node.type in (
+            "string",
+            "encapsed_string",
+            "string_literal",
+            "interpreted_string_literal",
+            "raw_string_literal",
+        ):
             # Get the content child if it exists
             for child in node.children:
                 if child.type == "string_content":
@@ -402,18 +476,25 @@ class GenericExtractor(LanguageExtractor):
                 if func is None:
                     # Try first child
                     for sub in child.children:
-                        if sub.type in ("identifier", "member_expression", "attribute",
-                                        "scoped_identifier", "field_expression"):
+                        if sub.type in (
+                            "identifier",
+                            "member_expression",
+                            "attribute",
+                            "scoped_identifier",
+                            "field_expression",
+                        ):
                             func = sub
                             break
                 if func:
                     name = self.node_text(func, source)
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="call",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="call",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
             else:
                 new_scope = scope_name
                 kind = self._classify_node(child)
@@ -466,23 +547,27 @@ class GenericExtractor(LanguageExtractor):
                         if sub.type in name_children_types:
                             target = self.node_text(sub, source)
                             if target:
-                                refs.append(self._make_reference(
-                                    target_name=target,
-                                    kind="inherits",
-                                    line=class_node.start_point[0] + 1,
-                                    source_name=class_name,
-                                ))
+                                refs.append(
+                                    self._make_reference(
+                                        target_name=target,
+                                        kind="inherits",
+                                        line=class_node.start_point[0] + 1,
+                                        source_name=class_name,
+                                    )
+                                )
                 else:
                     # Single inheritance
                     name_child_type = cfg.get("name_child")
                     target = self._find_child_text(child, source, name_child_type)
                     if target:
-                        refs.append(self._make_reference(
-                            target_name=target,
-                            kind="inherits",
-                            line=class_node.start_point[0] + 1,
-                            source_name=class_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="inherits",
+                                line=class_node.start_point[0] + 1,
+                                source_name=class_name,
+                            )
+                        )
 
     def _trait_refs_from_body(self, class_node, source, refs, class_name, cfg):
         """Pattern A: Extract uses_trait refs from node_type inside class body."""
@@ -499,10 +584,14 @@ class GenericExtractor(LanguageExtractor):
                 if child.type == node_type:
                     target = self._find_child_text(child, source, name_child_type)
                     if target:
-                        refs.append(self._make_reference(
-                            target_name=target, kind="uses_trait",
-                            line=child.start_point[0] + 1, source_name=class_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="uses_trait",
+                                line=child.start_point[0] + 1,
+                                source_name=class_name,
+                            )
+                        )
 
     def _trait_refs_from_parent(self, class_node, source, refs, class_name, cfg):
         """Pattern B: Extract implements refs from parent_type child of class."""
@@ -515,20 +604,26 @@ class GenericExtractor(LanguageExtractor):
                         if sub.type in name_children_types:
                             target = self.node_text(sub, source)
                             if target:
-                                refs.append(self._make_reference(
-                                    target_name=target, kind="implements",
-                                    line=class_node.start_point[0] + 1,
-                                    source_name=class_name,
-                                ))
+                                refs.append(
+                                    self._make_reference(
+                                        target_name=target,
+                                        kind="implements",
+                                        line=class_node.start_point[0] + 1,
+                                        source_name=class_name,
+                                    )
+                                )
                 else:
                     name_child_type = cfg.get("name_child")
                     target = self._find_child_text(child, source, name_child_type)
                     if target:
-                        refs.append(self._make_reference(
-                            target_name=target, kind="implements",
-                            line=class_node.start_point[0] + 1,
-                            source_name=class_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="implements",
+                                line=class_node.start_point[0] + 1,
+                                source_name=class_name,
+                            )
+                        )
 
     def _extract_trait_refs(self, class_node, source, refs, class_name, cfg):
         """Extract 'implements' or 'uses_trait' references."""
@@ -555,12 +650,14 @@ class GenericExtractor(LanguageExtractor):
                                 type_name = self.node_text(sub, source)
                         # No field_identifier means it's an embedded type
                         if not has_name and type_name:
-                            refs.append(self._make_reference(
-                                target_name=type_name,
-                                kind="inherits",
-                                line=field.start_point[0] + 1,
-                                source_name=class_name,
-                            ))
+                            refs.append(
+                                self._make_reference(
+                                    target_name=type_name,
+                                    kind="inherits",
+                                    line=field.start_point[0] + 1,
+                                    source_name=class_name,
+                                )
+                            )
 
     def _extract_rust_impl_refs(self, node, source, refs):
         """Extract Rust impl Trait for Type references."""
@@ -575,12 +672,14 @@ class GenericExtractor(LanguageExtractor):
                 if trait_node and type_name:
                     trait_name = self.node_text(trait_node, source)
                     if trait_name:
-                        refs.append(self._make_reference(
-                            target_name=trait_name,
-                            kind="implements",
-                            line=child.start_point[0] + 1,
-                            source_name=type_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=trait_name,
+                                kind="implements",
+                                line=child.start_point[0] + 1,
+                                source_name=type_name,
+                            )
+                        )
 
     def _find_child_text(self, node, source, child_type) -> str | None:
         """Find first child of given type and return its text."""

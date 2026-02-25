@@ -6,6 +6,7 @@ import logging
 import os
 import re
 import struct
+
 from .base import LanguageExtractor
 
 log = logging.getLogger(__name__)
@@ -20,9 +21,20 @@ log = logging.getLogger(__name__)
 # Simplified Chinese, cp949 Korean, cp950 Traditional Chinese, etc.).
 # Latin-1 (iso-8859-1) is the final fallback — it maps every byte 0x00-0xFF
 # to a codepoint, so it never raises UnicodeDecodeError.
-_FALLBACK_CODEPAGES = ("cp1252", "cp1251", "cp1250", "cp1253", "cp1254",
-                       "cp1255", "cp1256", "cp932", "cp936", "cp949",
-                       "cp950", "latin-1")
+_FALLBACK_CODEPAGES = (
+    "cp1252",
+    "cp1251",
+    "cp1250",
+    "cp1253",
+    "cp1254",
+    "cp1255",
+    "cp1256",
+    "cp932",
+    "cp936",
+    "cp949",
+    "cp950",
+    "latin-1",
+)
 
 
 def _decode_source(source: bytes) -> str:
@@ -77,6 +89,7 @@ def _decode_source(source: bytes) -> str:
 
 
 # ── Preprocessing helpers ─────────────────────────────────────────────
+
 
 def _preprocess(source: bytes) -> tuple[list[str], dict[int, int]]:
     """Join continuation lines, strip comments, build line map.
@@ -147,8 +160,8 @@ def _strip_inline_comment(line: str) -> str:
             in_single = not in_single
         elif ch == '"' and not in_single:
             in_double = not in_double
-        elif ch == '&' and not in_single and not in_double:
-            if i + 1 < len(line) and line[i + 1] == '&':
+        elif ch == "&" and not in_single and not in_double:
+            if i + 1 < len(line) and line[i + 1] == "&":
                 return line[:i].rstrip()
         i += 1
     return line
@@ -235,86 +248,374 @@ _RE_METHOD_CALL = re.compile(
 # VFP built-in functions — comprehensive list from VFP9 language reference.
 # Used to exclude built-in calls from reference extraction (reduces noise).
 # Source: hackfox.github.io/section4/, vfphelp.com VFP9 docs
-_VFP_BUILTINS = frozenset({
-    # ── Math ──
-    "ABS", "ACOS", "ASIN", "ATN2", "CEILING", "COS", "EXP", "FLOOR",
-    "FV", "INT", "LOG", "LOG10", "MAX", "MIN", "MOD", "PI", "PV",
-    "RAND", "ROUND", "SIGN", "SIN", "SQRT", "TAN", "VAL",
-    # ── String ──
-    "ALLTRIM", "ASC", "AT", "ATC", "ATCC", "ATCLINE", "ATLINE", "AT_C",
-    "CHR", "CHRTRAN", "CHRTRANC", "CMONTH", "CDOW", "DIFFERENCE",
-    "GETWORDCOUNT", "GETWORDNUM", "LEFT", "LEFTC", "LEN", "LENC",
-    "LIKE", "LIKEC", "LOWER", "LTRIM", "MLINE", "MEMLINES", "OCCURS",
-    "PADL", "PADC", "PADR", "PROPER", "RAT", "RATC", "RATLINE",
-    "REPLICATE", "RIGHT", "RIGHTC", "RTRIM", "SOUNDEX", "SPACE",
-    "STR", "STRCONV", "STREXTRACT", "STRTRAN", "STUFF", "STUFFC",
-    "SUBSTR", "SUBSTRC", "TEXTMERGE", "TRANSFORM", "TRIM", "UPPER",
-    # ── Date / Time ──
-    "CDOW", "CMONTH", "CTOD", "CTOT", "DATE", "DATETIME", "DAY",
-    "DMY", "DOW", "DTOC", "DTOR", "DTOS", "DTOT", "GOMONTH",
-    "HOUR", "MDY", "MINUTE", "MONTH", "QUARTER", "SEC", "SECONDS",
-    "TIME", "TTOC", "TTOD", "WEEK", "YEAR",
-    # ── Type / Conversion ──
-    "BINTOC", "CAST", "CTOBIN", "CPCONVERT", "CPCURRENT",
-    "EMPTY", "EVALUATE", "EVL", "IIF", "ICASE",
-    "ISALPHA", "ISBLANK", "ISDIGIT", "ISLEADBYTE", "ISLOWER",
-    "ISNULL", "ISUPPER", "NVL", "TYPE", "VARTYPE",
-    # ── File I/O ──
-    "ADDBS", "CURDIR", "DEFAULTEXT", "DIRECTORY", "DRIVETYPE",
-    "FCHSIZE", "FCLOSE", "FCOUNT", "FCREATE", "FDATE", "FEOF",
-    "FERROR", "FFLUSH", "FGETS", "FILE", "FILETOSTR", "FLDCOUNT",
-    "FLOCK", "FOPEN", "FORCEEXT", "FORCEPATH", "FPUTS", "FREAD",
-    "FSEEK", "FSIZE", "FTIME", "FULLPATH", "FWRITE",
-    "GETDIR", "GETFILE", "HOME", "JUSTDRIVE", "JUSTEXT",
-    "JUSTFNAME", "JUSTPATH", "JUSTSTEM", "LOCFILE", "PUTFILE",
-    "STRTOFILE",
-    # ── Cursor / Table ──
-    "ALIAS", "BOF", "CANDIDATE", "CDX", "CPDBF", "CURSORGETPROP",
-    "CURSORSETPROP", "CURSORTOXML", "CURVAL", "DBF", "DBGETPROP",
-    "DBSETPROP", "DBUSED", "DBC", "EOF", "FIELD", "FILTER", "FOUND",
-    "GETFLDSTATE", "GETNEXTMODIFIED", "HEADER", "IDXCOLLATE", "INDBC",
-    "INDEXSEEK", "ISEXCLUSIVE", "ISFLOCKED", "ISMARKED", "ISREADONLY",
-    "ISRLOCKED", "KEY", "KEYMATCH", "LOCK", "LOOKUP", "LUPDATE",
-    "MTON", "NTOM", "OLDVAL", "ORDER", "RECCOUNT", "RECNO", "RECSIZE",
-    "RELATION", "REQUERY", "RLOCK", "SEEK", "SELECT", "SETFLDSTATE",
-    "TABLEUPDATE", "TABLEREVERT", "TAG", "TAGCOUNT", "TAGNO", "TARGET",
-    "TXNLEVEL", "USED", "XMLTOCURSOR", "XMLUPDATEGRAM",
-    # ── Array ──
-    "ACOPY", "ADATABASES", "ADBOBJECTS", "ADEL", "ADIR", "AELEMENT",
-    "AERROR", "AFIELDS", "AFONT", "AGETCLASS", "AGETFILEVERSION",
-    "AINS", "AINSTANCE", "ALANGUAGE", "ALEN", "ALINES", "AMEMBERS",
-    "ANETRESOURCES", "APRINTERS", "APROCINFO", "ASCAN", "ASELOBJ",
-    "ASESSIONS", "ASORT", "ASTACKINFO", "ASUBSCRIPT", "AUSED",
-    "AVCXCLASSES",
-    # ── Object / Class ──
-    "ACLASS", "COMPOBJ", "COMPROP", "CREATEOBJECT", "DODEFAULT",
-    "GETINTERFACE", "GETOBJECT", "GETPEM", "NEWOBJECT",
-    "PEMSTATUS",
-    # ── UI / Display ──
-    "BAR", "BARCOUNT", "BARPROMPT", "CAPSLOCK", "CNTBAR", "CNTPAD",
-    "FONTMETRIC", "GETCOLOR", "GETCP", "GETEXPR", "GETFONT",
-    "GETPICT", "GETPRINTER", "INKEY", "INPUTBOX", "INSMODE",
-    "LASTKEY", "MCOL", "MDOWN", "MESSAGEBOX", "MROW", "MWINDOW",
-    "NUMLOCK", "OBJNUM", "OBJTOCLIENT", "OBJVAR", "PAD", "PRMBAR",
-    "PRMPAD", "PROMPT", "PRTINFO", "RGB", "RGBSCHEME", "ROW",
-    "SCHEME", "SCOLS", "SKPBAR", "SKPPAD", "SROWS", "SYSMETRIC",
-    "TXTWIDTH", "WBORDER", "WCHILD", "WCOLS", "WDOCKABLE", "WEXIST",
-    "WFONT", "WLAST", "WLCOL", "WLROW", "WMAXIMUM", "WMINIMUM",
-    "WONTOP", "WOUTPUT", "WPARENT", "WREAD", "WROWS", "WTITLE",
-    "WVISIBLE",
-    # ── System / Environment ──
-    "DISKSPACE", "EXECSCRIPT", "GETENV", "GETHOST", "LINENO",
-    "MEMORY", "MESSAGE", "ON", "OS", "PARAMETERS", "PCOUNT",
-    "PRINTSTATUS", "PROGRAM", "RDLEVEL", "SET", "SYS", "VERSION",
-    # ── Bitwise ──
-    "BITAND", "BITCLEAR", "BITLSHIFT", "BITNOT", "BITOR",
-    "BITRSHIFT", "BITSET", "BITTEST", "BITXOR",
-    # ── Event binding ──
-    "BINDEVENT", "RAISEEVENT", "UNBINDEVENTS",
-    # ── Miscellaneous ──
-    "ANSITOOEM", "BETWEEN", "CHRSAW", "INLIST", "OEMTOANSI",
-    "TEXTWIDTH", "VARREAD",
-})
+_VFP_BUILTINS = frozenset(
+    {
+        # ── Math ──
+        "ABS",
+        "ACOS",
+        "ASIN",
+        "ATN2",
+        "CEILING",
+        "COS",
+        "EXP",
+        "FLOOR",
+        "FV",
+        "INT",
+        "LOG",
+        "LOG10",
+        "MAX",
+        "MIN",
+        "MOD",
+        "PI",
+        "PV",
+        "RAND",
+        "ROUND",
+        "SIGN",
+        "SIN",
+        "SQRT",
+        "TAN",
+        "VAL",
+        # ── String ──
+        "ALLTRIM",
+        "ASC",
+        "AT",
+        "ATC",
+        "ATCC",
+        "ATCLINE",
+        "ATLINE",
+        "AT_C",
+        "CHR",
+        "CHRTRAN",
+        "CHRTRANC",
+        "CMONTH",
+        "CDOW",
+        "DIFFERENCE",
+        "GETWORDCOUNT",
+        "GETWORDNUM",
+        "LEFT",
+        "LEFTC",
+        "LEN",
+        "LENC",
+        "LIKE",
+        "LIKEC",
+        "LOWER",
+        "LTRIM",
+        "MLINE",
+        "MEMLINES",
+        "OCCURS",
+        "PADL",
+        "PADC",
+        "PADR",
+        "PROPER",
+        "RAT",
+        "RATC",
+        "RATLINE",
+        "REPLICATE",
+        "RIGHT",
+        "RIGHTC",
+        "RTRIM",
+        "SOUNDEX",
+        "SPACE",
+        "STR",
+        "STRCONV",
+        "STREXTRACT",
+        "STRTRAN",
+        "STUFF",
+        "STUFFC",
+        "SUBSTR",
+        "SUBSTRC",
+        "TEXTMERGE",
+        "TRANSFORM",
+        "TRIM",
+        "UPPER",
+        # ── Date / Time ──
+        "CDOW",
+        "CMONTH",
+        "CTOD",
+        "CTOT",
+        "DATE",
+        "DATETIME",
+        "DAY",
+        "DMY",
+        "DOW",
+        "DTOC",
+        "DTOR",
+        "DTOS",
+        "DTOT",
+        "GOMONTH",
+        "HOUR",
+        "MDY",
+        "MINUTE",
+        "MONTH",
+        "QUARTER",
+        "SEC",
+        "SECONDS",
+        "TIME",
+        "TTOC",
+        "TTOD",
+        "WEEK",
+        "YEAR",
+        # ── Type / Conversion ──
+        "BINTOC",
+        "CAST",
+        "CTOBIN",
+        "CPCONVERT",
+        "CPCURRENT",
+        "EMPTY",
+        "EVALUATE",
+        "EVL",
+        "IIF",
+        "ICASE",
+        "ISALPHA",
+        "ISBLANK",
+        "ISDIGIT",
+        "ISLEADBYTE",
+        "ISLOWER",
+        "ISNULL",
+        "ISUPPER",
+        "NVL",
+        "TYPE",
+        "VARTYPE",
+        # ── File I/O ──
+        "ADDBS",
+        "CURDIR",
+        "DEFAULTEXT",
+        "DIRECTORY",
+        "DRIVETYPE",
+        "FCHSIZE",
+        "FCLOSE",
+        "FCOUNT",
+        "FCREATE",
+        "FDATE",
+        "FEOF",
+        "FERROR",
+        "FFLUSH",
+        "FGETS",
+        "FILE",
+        "FILETOSTR",
+        "FLDCOUNT",
+        "FLOCK",
+        "FOPEN",
+        "FORCEEXT",
+        "FORCEPATH",
+        "FPUTS",
+        "FREAD",
+        "FSEEK",
+        "FSIZE",
+        "FTIME",
+        "FULLPATH",
+        "FWRITE",
+        "GETDIR",
+        "GETFILE",
+        "HOME",
+        "JUSTDRIVE",
+        "JUSTEXT",
+        "JUSTFNAME",
+        "JUSTPATH",
+        "JUSTSTEM",
+        "LOCFILE",
+        "PUTFILE",
+        "STRTOFILE",
+        # ── Cursor / Table ──
+        "ALIAS",
+        "BOF",
+        "CANDIDATE",
+        "CDX",
+        "CPDBF",
+        "CURSORGETPROP",
+        "CURSORSETPROP",
+        "CURSORTOXML",
+        "CURVAL",
+        "DBF",
+        "DBGETPROP",
+        "DBSETPROP",
+        "DBUSED",
+        "DBC",
+        "EOF",
+        "FIELD",
+        "FILTER",
+        "FOUND",
+        "GETFLDSTATE",
+        "GETNEXTMODIFIED",
+        "HEADER",
+        "IDXCOLLATE",
+        "INDBC",
+        "INDEXSEEK",
+        "ISEXCLUSIVE",
+        "ISFLOCKED",
+        "ISMARKED",
+        "ISREADONLY",
+        "ISRLOCKED",
+        "KEY",
+        "KEYMATCH",
+        "LOCK",
+        "LOOKUP",
+        "LUPDATE",
+        "MTON",
+        "NTOM",
+        "OLDVAL",
+        "ORDER",
+        "RECCOUNT",
+        "RECNO",
+        "RECSIZE",
+        "RELATION",
+        "REQUERY",
+        "RLOCK",
+        "SEEK",
+        "SELECT",
+        "SETFLDSTATE",
+        "TABLEUPDATE",
+        "TABLEREVERT",
+        "TAG",
+        "TAGCOUNT",
+        "TAGNO",
+        "TARGET",
+        "TXNLEVEL",
+        "USED",
+        "XMLTOCURSOR",
+        "XMLUPDATEGRAM",
+        # ── Array ──
+        "ACOPY",
+        "ADATABASES",
+        "ADBOBJECTS",
+        "ADEL",
+        "ADIR",
+        "AELEMENT",
+        "AERROR",
+        "AFIELDS",
+        "AFONT",
+        "AGETCLASS",
+        "AGETFILEVERSION",
+        "AINS",
+        "AINSTANCE",
+        "ALANGUAGE",
+        "ALEN",
+        "ALINES",
+        "AMEMBERS",
+        "ANETRESOURCES",
+        "APRINTERS",
+        "APROCINFO",
+        "ASCAN",
+        "ASELOBJ",
+        "ASESSIONS",
+        "ASORT",
+        "ASTACKINFO",
+        "ASUBSCRIPT",
+        "AUSED",
+        "AVCXCLASSES",
+        # ── Object / Class ──
+        "ACLASS",
+        "COMPOBJ",
+        "COMPROP",
+        "CREATEOBJECT",
+        "DODEFAULT",
+        "GETINTERFACE",
+        "GETOBJECT",
+        "GETPEM",
+        "NEWOBJECT",
+        "PEMSTATUS",
+        # ── UI / Display ──
+        "BAR",
+        "BARCOUNT",
+        "BARPROMPT",
+        "CAPSLOCK",
+        "CNTBAR",
+        "CNTPAD",
+        "FONTMETRIC",
+        "GETCOLOR",
+        "GETCP",
+        "GETEXPR",
+        "GETFONT",
+        "GETPICT",
+        "GETPRINTER",
+        "INKEY",
+        "INPUTBOX",
+        "INSMODE",
+        "LASTKEY",
+        "MCOL",
+        "MDOWN",
+        "MESSAGEBOX",
+        "MROW",
+        "MWINDOW",
+        "NUMLOCK",
+        "OBJNUM",
+        "OBJTOCLIENT",
+        "OBJVAR",
+        "PAD",
+        "PRMBAR",
+        "PRMPAD",
+        "PROMPT",
+        "PRTINFO",
+        "RGB",
+        "RGBSCHEME",
+        "ROW",
+        "SCHEME",
+        "SCOLS",
+        "SKPBAR",
+        "SKPPAD",
+        "SROWS",
+        "SYSMETRIC",
+        "TXTWIDTH",
+        "WBORDER",
+        "WCHILD",
+        "WCOLS",
+        "WDOCKABLE",
+        "WEXIST",
+        "WFONT",
+        "WLAST",
+        "WLCOL",
+        "WLROW",
+        "WMAXIMUM",
+        "WMINIMUM",
+        "WONTOP",
+        "WOUTPUT",
+        "WPARENT",
+        "WREAD",
+        "WROWS",
+        "WTITLE",
+        "WVISIBLE",
+        # ── System / Environment ──
+        "DISKSPACE",
+        "EXECSCRIPT",
+        "GETENV",
+        "GETHOST",
+        "LINENO",
+        "MEMORY",
+        "MESSAGE",
+        "ON",
+        "OS",
+        "PARAMETERS",
+        "PCOUNT",
+        "PRINTSTATUS",
+        "PROGRAM",
+        "RDLEVEL",
+        "SET",
+        "SYS",
+        "VERSION",
+        # ── Bitwise ──
+        "BITAND",
+        "BITCLEAR",
+        "BITLSHIFT",
+        "BITNOT",
+        "BITOR",
+        "BITRSHIFT",
+        "BITSET",
+        "BITTEST",
+        "BITXOR",
+        # ── Event binding ──
+        "BINDEVENT",
+        "RAISEEVENT",
+        "UNBINDEVENTS",
+        # ── Miscellaneous ──
+        "ANSITOOEM",
+        "BETWEEN",
+        "CHRSAW",
+        "INLIST",
+        "OEMTOANSI",
+        "TEXTWIDTH",
+        "VARREAD",
+    }
+)
 
 # Keywords that look like DO but aren't file calls
 # Note: FORM is NOT here — DO FORM is handled separately by _RE_DO_FORM
@@ -326,13 +627,14 @@ _DO_KEYWORDS = frozenset({"CASE", "WHILE"})
 # .SCT = FPT (memo) format storing actual text/binary content
 # Packed together by parse_file as: 4-byte-big-endian-scx-length + scx + sct
 
+
 def _unpack_scx_sct(source: bytes) -> tuple[bytes, bytes]:
     """Split packed bytes back into (scx_bytes, sct_bytes)."""
     if len(source) < 4:
         return source, b""
     scx_len = struct.unpack(">I", source[:4])[0]
-    scx_bytes = source[4:4 + scx_len]
-    sct_bytes = source[4 + scx_len:]
+    scx_bytes = source[4 : 4 + scx_len]
+    sct_bytes = source[4 + scx_len :]
     return scx_bytes, sct_bytes
 
 
@@ -351,14 +653,14 @@ def _read_fpt_memo(sct_bytes: bytes, block_num: int, block_size: int) -> bytes |
     offset = block_num * block_size
     if offset + 8 > len(sct_bytes):
         return None
-    header = sct_bytes[offset:offset + 8]
+    header = sct_bytes[offset : offset + 8]
     data_len = struct.unpack(">I", header[4:8])[0]
     if data_len == 0 or data_len > 10_000_000:
         return None
     end = offset + 8 + data_len
     if end > len(sct_bytes):
         return None
-    return sct_bytes[offset + 8:end]
+    return sct_bytes[offset + 8 : end]
 
 
 def _read_fpt_memo_text(sct_bytes: bytes, block_num: int, block_size: int) -> str:
@@ -390,7 +692,7 @@ def _scx_get_memo_ref(rec_data, fields, name):
         start = fi["offset"]
         if start + 4 <= len(rec_data):
             try:
-                return struct.unpack("<I", rec_data[start:start + 4])[0]
+                return struct.unpack("<I", rec_data[start : start + 4])[0]
             except struct.error:
                 return 0
     return 0
@@ -404,8 +706,7 @@ def _scx_get_memo_text(rec_data, fields, name, sct_bytes, block_size, has_sct):
     return _read_fpt_memo_text(sct_bytes, ref, block_size)
 
 
-def _parse_single_scx_record(rec_num, rec_data, fields, sct_bytes,
-                              block_size, has_sct):
+def _parse_single_scx_record(rec_num, rec_data, fields, sct_bytes, block_size, has_sct):
     """Parse a single SCX record from raw bytes."""
     deleted = rec_data[0] == ord("*")
     platform = _scx_get_char(rec_data, fields, "PLATFORM")
@@ -438,8 +739,22 @@ def _parse_scx_records(scx_bytes: bytes, sct_bytes: bytes) -> list[dict]:
 
     # DBF header
     version = scx_bytes[0]
-    valid_versions = {0x02, 0x03, 0x04, 0x05, 0x30, 0x31, 0x32,
-                      0x43, 0x63, 0x83, 0x8B, 0xCB, 0xF5, 0xFB}
+    valid_versions = {
+        0x02,
+        0x03,
+        0x04,
+        0x05,
+        0x30,
+        0x31,
+        0x32,
+        0x43,
+        0x63,
+        0x83,
+        0x8B,
+        0xCB,
+        0xF5,
+        0xFB,
+    }
     if version not in valid_versions:
         return []
 
@@ -465,9 +780,9 @@ def _parse_scx_records(scx_bytes: bytes, sct_bytes: bytes) -> list[dict]:
         if scx_bytes[pos] == 0x0D:
             break
         try:
-            name = scx_bytes[pos:pos + 11].split(b"\x00")[0].decode("ascii", errors="replace")
+            name = scx_bytes[pos : pos + 11].split(b"\x00")[0].decode("ascii", errors="replace")
             ftype = chr(scx_bytes[pos + 11])
-            displacement = struct.unpack("<I", scx_bytes[pos + 12:pos + 16])[0]
+            displacement = struct.unpack("<I", scx_bytes[pos + 12 : pos + 16])[0]
             size = scx_bytes[pos + 16]
         except (struct.error, IndexError):
             break
@@ -483,10 +798,9 @@ def _parse_scx_records(scx_bytes: bytes, sct_bytes: bytes) -> list[dict]:
         rec_offset = header_size + rec_num * record_size
         if rec_offset + record_size > len(scx_bytes):
             break
-        rec_data = scx_bytes[rec_offset:rec_offset + record_size]
+        rec_data = scx_bytes[rec_offset : rec_offset + record_size]
         try:
-            rec = _parse_single_scx_record(rec_num, rec_data, fields, sct_bytes,
-                                           block_size, has_sct)
+            rec = _parse_single_scx_record(rec_num, rec_data, fields, sct_bytes, block_size, has_sct)
             records.append(rec)
         except Exception as exc:
             log.debug("Skipping SCX record %d: %s", rec_num, exc)
@@ -512,11 +826,13 @@ def _extract_procedures(methods_text: str) -> list[dict]:
         upper = stripped.upper()
         if upper.startswith("PROCEDURE ") or upper.startswith("FUNCTION "):
             if current_name is not None:
-                procedures.append({
-                    "type": current_type,
-                    "name": current_name,
-                    "code": "\n".join(current_lines),
-                })
+                procedures.append(
+                    {
+                        "type": current_type,
+                        "name": current_name,
+                        "code": "\n".join(current_lines),
+                    }
+                )
             parts = stripped.split(None, 1)
             current_type = parts[0].upper()
             current_name = parts[1] if len(parts) > 1 else ""
@@ -524,11 +840,13 @@ def _extract_procedures(methods_text: str) -> list[dict]:
         elif upper.startswith("ENDPROC") or upper.startswith("ENDFUNC"):
             if current_name is not None:
                 current_lines.append(line)
-                procedures.append({
-                    "type": current_type,
-                    "name": current_name,
-                    "code": "\n".join(current_lines),
-                })
+                procedures.append(
+                    {
+                        "type": current_type,
+                        "name": current_name,
+                        "code": "\n".join(current_lines),
+                    }
+                )
                 current_name = None
                 current_type = None
                 current_lines = []
@@ -538,11 +856,13 @@ def _extract_procedures(methods_text: str) -> list[dict]:
 
     # Handle last procedure (may lack ENDPROC)
     if current_name is not None:
-        procedures.append({
-            "type": current_type,
-            "name": current_name,
-            "code": "\n".join(current_lines),
-        })
+        procedures.append(
+            {
+                "type": current_type,
+                "name": current_name,
+                "code": "\n".join(current_lines),
+            }
+        )
     return procedures
 
 
@@ -582,17 +902,19 @@ class FoxProExtractor(LanguageExtractor):
                     qn = f"{current_class}.{current_func}"
                     parent = current_class
                 sig_keyword = (current_func_kind or "FUNCTION").upper()
-                symbols.append(self._make_symbol(
-                    name=current_func,
-                    kind=kind,
-                    line_start=current_func_start,
-                    line_end=end_line,
-                    qualified_name=qn,
-                    signature=f"{sig_keyword} {current_func}",
-                    visibility="public",
-                    is_exported=True,
-                    parent_name=parent,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=current_func,
+                        kind=kind,
+                        line_start=current_func_start,
+                        line_end=end_line,
+                        qualified_name=qn,
+                        signature=f"{sig_keyword} {current_func}",
+                        visibility="public",
+                        is_exported=True,
+                        parent_name=parent,
+                    )
+                )
             current_func = None
             current_func_start = None
             current_func_kind = None
@@ -607,15 +929,17 @@ class FoxProExtractor(LanguageExtractor):
             if _RE_ENDDEFINE.match(stripped):
                 _close_func_at(orig)
                 if current_class and current_class_start is not None:
-                    symbols.append(self._make_symbol(
-                        name=current_class,
-                        kind="class",
-                        line_start=current_class_start,
-                        line_end=orig,
-                        signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
-                        visibility="public",
-                        is_exported=True,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=current_class,
+                            kind="class",
+                            line_start=current_class_start,
+                            line_end=orig,
+                            signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
+                            visibility="public",
+                            is_exported=True,
+                        )
+                    )
                 current_class = None
                 current_class_start = None
                 current_class_base = None
@@ -658,15 +982,17 @@ class FoxProExtractor(LanguageExtractor):
             # #DEFINE constant
             m = _RE_DEFINE_CONST.match(stripped)
             if m:
-                symbols.append(self._make_symbol(
-                    name=m.group(1),
-                    kind="constant",
-                    line_start=orig,
-                    line_end=orig,
-                    signature=f"#DEFINE {m.group(1)} {m.group(2).strip()[:60]}",
-                    visibility="public",
-                    is_exported=True,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=m.group(1),
+                        kind="constant",
+                        line_start=orig,
+                        line_end=orig,
+                        signature=f"#DEFINE {m.group(1)} {m.group(2).strip()[:60]}",
+                        visibility="public",
+                        is_exported=True,
+                    )
+                )
                 continue
 
             # Property assignment inside class body (not inside a method)
@@ -676,21 +1002,35 @@ class FoxProExtractor(LanguageExtractor):
                     prop_name = m.group(1)
                     # Skip keywords that look like assignments
                     if prop_name.upper() not in (
-                        "IF", "DO", "FOR", "SET", "LOCAL", "PRIVATE",
-                        "PUBLIC", "STORE", "RETURN", "ENDFOR", "ENDIF",
-                        "ENDDO", "ELSE", "OTHERWISE", "CASE",
+                        "IF",
+                        "DO",
+                        "FOR",
+                        "SET",
+                        "LOCAL",
+                        "PRIVATE",
+                        "PUBLIC",
+                        "STORE",
+                        "RETURN",
+                        "ENDFOR",
+                        "ENDIF",
+                        "ENDDO",
+                        "ELSE",
+                        "OTHERWISE",
+                        "CASE",
                     ):
-                        symbols.append(self._make_symbol(
-                            name=prop_name,
-                            kind="property",
-                            line_start=orig,
-                            line_end=orig,
-                            qualified_name=f"{current_class}.{prop_name}" if current_class else prop_name,
-                            signature=f"{prop_name} = {m.group(2).strip()[:40]}",
-                            visibility="public",
-                            is_exported=True,
-                            parent_name=current_class,
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=prop_name,
+                                kind="property",
+                                line_start=orig,
+                                line_end=orig,
+                                qualified_name=f"{current_class}.{prop_name}" if current_class else prop_name,
+                                signature=f"{prop_name} = {m.group(2).strip()[:40]}",
+                                visibility="public",
+                                is_exported=True,
+                                parent_name=current_class,
+                            )
+                        )
 
         # Close any still-open function
         if current_func:
@@ -698,30 +1038,34 @@ class FoxProExtractor(LanguageExtractor):
 
         # Close any still-open class (missing ENDDEFINE)
         if current_class and current_class_start is not None:
-            symbols.append(self._make_symbol(
-                name=current_class,
-                kind="class",
-                line_start=current_class_start,
-                line_end=line_map.get(len(lines) - 1, len(lines)),
-                signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
-                visibility="public",
-                is_exported=True,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=current_class,
+                    kind="class",
+                    line_start=current_class_start,
+                    line_end=line_map.get(len(lines) - 1, len(lines)),
+                    signature=f"DEFINE CLASS {current_class} AS {current_class_base or 'Custom'}",
+                    visibility="public",
+                    is_exported=True,
+                )
+            )
 
         # Implicit file function: if .prg has no top-level routines,
         # treat the entire file as a single function named after the file
         if not has_top_level_routine and lines:
             stem = os.path.splitext(os.path.basename(file_path))[0]
             last_line = line_map.get(len(lines) - 1, len(lines))
-            symbols.append(self._make_symbol(
-                name=stem,
-                kind="function",
-                line_start=1,
-                line_end=last_line,
-                signature=f"DO {stem}",
-                visibility="public",
-                is_exported=True,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=stem,
+                    kind="function",
+                    line_start=1,
+                    line_end=last_line,
+                    signature=f"DO {stem}",
+                    visibility="public",
+                    is_exported=True,
+                )
+            )
 
         return symbols
 
@@ -747,21 +1091,40 @@ class FoxProExtractor(LanguageExtractor):
                 current_class = m.group(1)
                 base = m.group(2)
                 # Inheritance reference (skip generic bases)
-                if base.upper() not in ("CUSTOM", "SESSION", "FORM",
-                                         "COMMANDBUTTON", "TEXTBOX",
-                                         "LABEL", "CONTAINER", "PAGE",
-                                         "PAGEFRAME", "GRID", "COLUMN",
-                                         "HEADER", "COMBOBOX", "LISTBOX",
-                                         "EDITBOX", "SPINNER", "TIMER",
-                                         "IMAGE", "SHAPE", "LINE",
-                                         "COMMANDGROUP", "OPTIONGROUP",
-                                         "CHECKBOX", "OPTIONBUTTON"):
-                    refs.append(self._make_reference(
-                        target_name=base,
-                        kind="inherits",
-                        line=orig,
-                        source_name=m.group(1),
-                    ))
+                if base.upper() not in (
+                    "CUSTOM",
+                    "SESSION",
+                    "FORM",
+                    "COMMANDBUTTON",
+                    "TEXTBOX",
+                    "LABEL",
+                    "CONTAINER",
+                    "PAGE",
+                    "PAGEFRAME",
+                    "GRID",
+                    "COLUMN",
+                    "HEADER",
+                    "COMBOBOX",
+                    "LISTBOX",
+                    "EDITBOX",
+                    "SPINNER",
+                    "TIMER",
+                    "IMAGE",
+                    "SHAPE",
+                    "LINE",
+                    "COMMANDGROUP",
+                    "OPTIONGROUP",
+                    "CHECKBOX",
+                    "OPTIONBUTTON",
+                ):
+                    refs.append(
+                        self._make_reference(
+                            target_name=base,
+                            kind="inherits",
+                            line=orig,
+                            source_name=m.group(1),
+                        )
+                    )
                 continue
 
             m = _RE_FUNC.match(stripped)
@@ -789,13 +1152,15 @@ class FoxProExtractor(LanguageExtractor):
             if m:
                 proc = m.group(1)
                 lib = m.group(2).strip("'\"")
-                refs.append(self._make_reference(
-                    target_name=proc,
-                    kind="call",
-                    line=orig,
-                    source_name=scope,
-                    import_path=lib,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=proc,
+                        kind="call",
+                        line=orig,
+                        source_name=scope,
+                        import_path=lib,
+                    )
+                )
                 continue
 
             # DO FORM formname — links to .scx form file
@@ -803,12 +1168,14 @@ class FoxProExtractor(LanguageExtractor):
             if m:
                 target = m.group(1).strip("'\"")
                 target = os.path.splitext(target)[0]  # strip .scx if present
-                refs.append(self._make_reference(
-                    target_name=target,
-                    kind="call",
-                    line=orig,
-                    source_name=scope,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=target,
+                        kind="call",
+                        line=orig,
+                        source_name=scope,
+                    )
+                )
                 continue
 
             # DO filename (not DO CASE / DO WHILE)
@@ -816,82 +1183,96 @@ class FoxProExtractor(LanguageExtractor):
             if m:
                 target = m.group(1)
                 if target.upper() not in _DO_KEYWORDS:
-                    refs.append(self._make_reference(
-                        target_name=target,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=target,
+                            kind="call",
+                            line=orig,
+                            source_name=scope,
+                        )
+                    )
                     continue
 
             # SET PROCEDURE TO
             m = _RE_SET_PROC.match(stripped)
             if m:
                 path = m.group(1).strip("'\"")
-                refs.append(self._make_reference(
-                    target_name=os.path.splitext(os.path.basename(path))[0],
-                    kind="import",
-                    line=orig,
-                    source_name=scope,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=os.path.splitext(os.path.basename(path))[0],
+                        kind="import",
+                        line=orig,
+                        source_name=scope,
+                        import_path=path,
+                    )
+                )
                 continue
 
             # SET CLASSLIB TO
             m = _RE_SET_CLASSLIB.match(stripped)
             if m:
                 path = m.group(1).strip("'\"")
-                refs.append(self._make_reference(
-                    target_name=os.path.splitext(os.path.basename(path))[0],
-                    kind="import",
-                    line=orig,
-                    source_name=scope,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=os.path.splitext(os.path.basename(path))[0],
+                        kind="import",
+                        line=orig,
+                        source_name=scope,
+                        import_path=path,
+                    )
+                )
                 continue
 
             # #INCLUDE
             m = _RE_INCLUDE.match(stripped)
             if m:
                 path = m.group(1).strip()
-                refs.append(self._make_reference(
-                    target_name=os.path.splitext(os.path.basename(path))[0],
-                    kind="import",
-                    line=orig,
-                    source_name=scope,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=os.path.splitext(os.path.basename(path))[0],
+                        kind="import",
+                        line=orig,
+                        source_name=scope,
+                        import_path=path,
+                    )
+                )
                 continue
 
             # CREATEOBJECT("class") — mid-line search
             for cm in _RE_CREATEOBJ.finditer(stripped):
-                refs.append(self._make_reference(
-                    target_name=cm.group(1),
-                    kind="call",
-                    line=orig,
-                    source_name=scope,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=cm.group(1),
+                        kind="call",
+                        line=orig,
+                        source_name=scope,
+                    )
+                )
 
             # NEWOBJECT("class", "lib") — mid-line search
             for nm in _RE_NEWOBJ.finditer(stripped):
-                refs.append(self._make_reference(
-                    target_name=nm.group(1),
-                    kind="call",
-                    line=orig,
-                    source_name=scope,
-                    import_path=nm.group(2),
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=nm.group(1),
+                        kind="call",
+                        line=orig,
+                        source_name=scope,
+                        import_path=nm.group(2),
+                    )
+                )
 
             # DECLARE func IN dll
             m = _RE_DECLARE.match(stripped)
             if m:
-                refs.append(self._make_reference(
-                    target_name=m.group(1),
-                    kind="call",
-                    line=orig,
-                    source_name=scope,
-                    import_path=m.group(2).strip("'\""),
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=m.group(1),
+                        kind="call",
+                        line=orig,
+                        source_name=scope,
+                        import_path=m.group(2).strip("'\""),
+                    )
+                )
                 continue
 
             # =funcname(args) — expression-style function call
@@ -899,12 +1280,14 @@ class FoxProExtractor(LanguageExtractor):
             if m:
                 fname = m.group(1)
                 if fname.upper() not in _VFP_BUILTINS:
-                    refs.append(self._make_reference(
-                        target_name=fname,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=fname,
+                            kind="call",
+                            line=orig,
+                            source_name=scope,
+                        )
+                    )
 
             # obj.method(args) — method calls (THIS.x(), THISFORM.x(), var.x())
             for mc in _RE_METHOD_CALL.finditer(stripped):
@@ -916,20 +1299,24 @@ class FoxProExtractor(LanguageExtractor):
                 # Skip known noise patterns
                 if obj_name.upper() in ("M", "THIS", "THISFORM", "THISFORMSET"):
                     # THIS.method() — target is the method name
-                    refs.append(self._make_reference(
-                        target_name=method_name,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=method_name,
+                            kind="call",
+                            line=orig,
+                            source_name=scope,
+                        )
+                    )
                 else:
                     # variable.method() — target is the method name
-                    refs.append(self._make_reference(
-                        target_name=method_name,
-                        kind="call",
-                        line=orig,
-                        source_name=scope,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=method_name,
+                            kind="call",
+                            line=orig,
+                            source_name=scope,
+                        )
+                    )
 
         return refs
 
@@ -955,15 +1342,17 @@ class FoxProExtractor(LanguageExtractor):
         symbols: list[dict] = []
 
         # Form-level class symbol
-        symbols.append(self._make_symbol(
-            name=form_name,
-            kind="class",
-            line_start=1,
-            line_end=max(len(records) * 1000, 1),
-            signature=f"FORM {form_name}",
-            visibility="public",
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=form_name,
+                kind="class",
+                line_start=1,
+                line_end=max(len(records) * 1000, 1),
+                signature=f"FORM {form_name}",
+                visibility="public",
+                is_exported=True,
+            )
+        )
 
         for rec in records:
             if rec["deleted"] or rec["platform"].strip() == "COMMENT":
@@ -991,17 +1380,19 @@ class FoxProExtractor(LanguageExtractor):
                 qn = f"{form_name}.{control_path}.{proc_name}" if control_path else f"{form_name}.{proc_name}"
                 parent_name = f"{form_name}.{control_path}" if control_path else form_name
 
-                symbols.append(self._make_symbol(
-                    name=proc_name,
-                    kind="method",
-                    line_start=syn_line,
-                    line_end=syn_line + len(proc["code"].split("\n")),
-                    qualified_name=qn,
-                    signature=f"{proc['type']} {proc_name}",
-                    visibility="public",
-                    is_exported=True,
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=proc_name,
+                        kind="method",
+                        line_start=syn_line,
+                        line_end=syn_line + len(proc["code"].split("\n")),
+                        qualified_name=qn,
+                        signature=f"{proc['type']} {proc_name}",
+                        visibility="public",
+                        is_exported=True,
+                        parent_name=parent_name,
+                    )
+                )
 
         return symbols
 
@@ -1012,20 +1403,28 @@ class FoxProExtractor(LanguageExtractor):
         if m:
             target = m.group(1).strip("'\"")
             target = os.path.splitext(target)[0]
-            refs.append(self._make_reference(
-                target_name=target, kind="call",
-                line=line_num, source_name=scope,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                )
+            )
             return
 
         # DO proc IN file
         m = _RE_DO_IN.match(stripped)
         if m:
-            refs.append(self._make_reference(
-                target_name=m.group(1), kind="call",
-                line=line_num, source_name=scope,
-                import_path=m.group(2).strip("'\""),
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=m.group(1),
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=m.group(2).strip("'\""),
+                )
+            )
             return
 
         # DO filename
@@ -1033,48 +1432,68 @@ class FoxProExtractor(LanguageExtractor):
         if m:
             target = m.group(1)
             if target.upper() not in _DO_KEYWORDS:
-                refs.append(self._make_reference(
-                    target_name=target, kind="call",
-                    line=line_num, source_name=scope,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=target,
+                        kind="call",
+                        line=line_num,
+                        source_name=scope,
+                    )
+                )
                 return
 
         # SET PROCEDURE TO
         m = _RE_SET_PROC.match(stripped)
         if m:
             path = m.group(1).strip("'\"")
-            refs.append(self._make_reference(
-                target_name=os.path.splitext(os.path.basename(path))[0],
-                kind="import", line=line_num, source_name=scope,
-                import_path=path,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=os.path.splitext(os.path.basename(path))[0],
+                    kind="import",
+                    line=line_num,
+                    source_name=scope,
+                    import_path=path,
+                )
+            )
             return
 
         # CREATEOBJECT
         for cm in _RE_CREATEOBJ.finditer(stripped):
-            refs.append(self._make_reference(
-                target_name=cm.group(1), kind="call",
-                line=line_num, source_name=scope,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=cm.group(1),
+                    kind="call",
+                    line=line_num,
+                    source_name=scope,
+                )
+            )
 
         # =funcname()
         m = _RE_EXPR_CALL.match(stripped)
         if m:
             fname = m.group(1)
             if fname.upper() not in _VFP_BUILTINS:
-                refs.append(self._make_reference(
-                    target_name=fname, kind="call",
-                    line=line_num, source_name=scope,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=fname,
+                        kind="call",
+                        line=line_num,
+                        source_name=scope,
+                    )
+                )
 
         # obj.method()
         for mc in _RE_METHOD_CALL.finditer(stripped):
             method_name = mc.group(2)
             if method_name.upper() not in _VFP_BUILTINS:
-                refs.append(self._make_reference(
-                    target_name=method_name, kind="call",
-                    line=line_num, source_name=scope,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=method_name,
+                        kind="call",
+                        line=line_num,
+                        source_name=scope,
+                    )
+                )
 
     def _extract_scx_references(self, source: bytes, file_path: str) -> list[dict]:
         """Extract references from VFP code inside .scx form controls."""
@@ -1103,11 +1522,15 @@ class FoxProExtractor(LanguageExtractor):
             classloc = rec["classloc"]
             if classloc:
                 lib_name = os.path.splitext(os.path.basename(classloc))[0]
-                refs.append(self._make_reference(
-                    target_name=lib_name, kind="import",
-                    line=record_num * 1000, source_name=form_name,
-                    import_path=classloc,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=lib_name,
+                        kind="import",
+                        line=record_num * 1000,
+                        source_name=form_name,
+                        import_path=classloc,
+                    )
+                )
 
             # Extract references from procedures in this control's methods
             methods_text = rec["methods"]

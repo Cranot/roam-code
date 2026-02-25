@@ -17,8 +17,6 @@ Commands tested:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -26,12 +24,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
-
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -45,6 +43,7 @@ def cli_runner():
 # ============================================================================
 # search command
 # ============================================================================
+
 
 class TestSearch:
     """Tests for `roam search <pattern>` -- fuzzy symbol search."""
@@ -133,6 +132,7 @@ class TestSearch:
 # grep command
 # ============================================================================
 
+
 class TestGrep:
     """Tests for `roam grep <pattern>` -- context-enriched text search."""
 
@@ -211,6 +211,7 @@ class TestGrep:
 # ============================================================================
 # file command
 # ============================================================================
+
 
 class TestFile:
     """Tests for `roam file <path>` -- file skeleton."""
@@ -292,6 +293,7 @@ class TestFile:
 # symbol command
 # ============================================================================
 
+
 class TestSymbol:
     """Tests for `roam symbol <name>` -- symbol details."""
 
@@ -370,6 +372,7 @@ class TestSymbol:
 # trace command
 # ============================================================================
 
+
 class TestTrace:
     """Tests for `roam trace <from> <to>` -- call path between symbols."""
 
@@ -432,7 +435,12 @@ class TestTrace:
         """--json with no path returns paths=[] and hops=0."""
         monkeypatch.chdir(indexed_project)
         # format_name and UNUSED_CONSTANT are likely unrelated
-        result = invoke_cli(cli_runner, ["trace", "format_name", "UNUSED_CONSTANT"], cwd=indexed_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["trace", "format_name", "UNUSED_CONSTANT"],
+            cwd=indexed_project,
+            json_mode=True,
+        )
         data = parse_json_output(result, "trace")
         assert_json_envelope(data, "trace")
         # Either has a path or not, but the envelope should be valid
@@ -441,6 +449,7 @@ class TestTrace:
 # ============================================================================
 # deps command
 # ============================================================================
+
 
 class TestDeps:
     """Tests for `roam deps <path>` -- file import/imported-by relationships."""
@@ -508,6 +517,7 @@ class TestDeps:
 # uses command
 # ============================================================================
 
+
 class TestUses:
     """Tests for `roam uses <name>` -- symbol consumers."""
 
@@ -573,6 +583,7 @@ class TestUses:
 # ============================================================================
 # fan command
 # ============================================================================
+
 
 class TestFan:
     """Tests for `roam fan [symbol|file]` -- fan-in/fan-out metrics."""
@@ -654,6 +665,7 @@ class TestFan:
 # ============================================================================
 # impact command
 # ============================================================================
+
 
 class TestImpact:
     """Tests for `roam impact <name>` -- blast radius analysis."""
@@ -743,6 +755,7 @@ class TestImpact:
 # ============================================================================
 # Cross-command integration tests
 # ============================================================================
+
 
 class TestExplorationIntegration:
     """Cross-command integration tests for exploration commands."""

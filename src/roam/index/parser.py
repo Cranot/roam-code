@@ -107,7 +107,7 @@ GRAMMAR_ALIASES = {
     "c_sharp": "csharp",
     # Salesforce
     "apex": "java",
-    "sfxml": "html",          # SF metadata XML → HTML parser (close enough for structure)
+    "sfxml": "html",  # SF metadata XML → HTML parser (close enough for structure)
     "aura": "html",
     "visualforce": "html",
     # JSONC (JSON with comments) → json grammar
@@ -222,7 +222,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
 
     # Find all <script...>...</script> regions
     script_pattern = re.compile(
-        r'<script(\s[^>]*)?>.*?</script>',
+        r"<script(\s[^>]*)?>.*?</script>",
         re.DOTALL,
     )
 
@@ -235,7 +235,7 @@ def _preprocess_vue(source: bytes) -> tuple[bytes, str]:
             effective_lang = "typescript"
 
         # Find the line range for the script content (excluding the tags)
-        block_start = text[:match.start()].count("\n")
+        block_start = text[: match.start()].count("\n")
 
         # Find the opening tag end line and closing tag start line
         inner_text = match.group(0)
@@ -324,7 +324,7 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
     text = source.decode("utf-8", errors="replace")
 
     # Find the outer <template...> open tag (the SFC root template)
-    outer_open = re.search(r'<template(\s[^>]*)?>',  text)
+    outer_open = re.search(r"<template(\s[^>]*)?>", text)
     if not outer_open:
         return None
 
@@ -333,10 +333,10 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
 
     # Scan for all <template...> and </template> tags after the outer open
     # Use non-greedy [^>]*? so that self-closing / isn't consumed by attributes
-    tag_re = re.compile(r'<(/?)template\b([^>]*?)(/?)>')
+    tag_re = re.compile(r"<(/?)template\b([^>]*?)(/?)>")
     for m in tag_re.finditer(text, pos=content_start):
-        is_closing = m.group(1) == '/'
-        is_self_closing = m.group(3) == '/'
+        is_closing = m.group(1) == "/"
+        is_self_closing = m.group(3) == "/"
 
         if is_self_closing:
             continue  # <template ... /> doesn't affect depth
@@ -344,7 +344,7 @@ def extract_vue_template(source: bytes) -> tuple[str, int] | None:
             depth -= 1
             if depth == 0:
                 # Found the matching close for the outer template
-                content = text[content_start:m.start()]
+                content = text[content_start : m.start()]
                 start_line = text[:content_start].count("\n") + 1
                 return content, start_line
         else:
@@ -373,16 +373,16 @@ def scan_template_references(
     # Directives: v-if="expression", v-for="expr", v-show="expr", etc.
     # Event handlers: @event="handler" or v-on:event="handler"
     expr_patterns = [
-        re.compile(r'\{\{(.*?)\}\}', re.DOTALL),           # {{ expr }}
-        re.compile(r'(?::|v-bind:)[\w.-]+="([^"]*)"'),     # :attr="expr"
-        re.compile(r'v-[\w-]+="([^"]*)"'),                  # v-directive="expr"
-        re.compile(r'(?:@|v-on:)[\w.-]+="([^"]*)"'),       # @event="handler"
+        re.compile(r"\{\{(.*?)\}\}", re.DOTALL),  # {{ expr }}
+        re.compile(r'(?::|v-bind:)[\w.-]+="([^"]*)"'),  # :attr="expr"
+        re.compile(r'v-[\w-]+="([^"]*)"'),  # v-directive="expr"
+        re.compile(r'(?:@|v-on:)[\w.-]+="([^"]*)"'),  # @event="handler"
     ]
     # Identifier pattern
-    ident_re = re.compile(r'\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b')
+    ident_re = re.compile(r"\b([a-zA-Z_$][a-zA-Z0-9_$]*)\b")
 
     # Also detect PascalCase component names: <MyComponent> → MyComponent
-    component_re = re.compile(r'<([A-Z][a-zA-Z0-9]+)')
+    component_re = re.compile(r"<([A-Z][a-zA-Z0-9]+)")
 
     refs = []
     seen = set()
@@ -394,18 +394,20 @@ def scan_template_references(
         for match in pattern.finditer(template_content):
             expr = match.group(1)
             # Compute line number from match position
-            line_num = start_line + template_content[:match.start()].count("\n")
+            line_num = start_line + template_content[: match.start()].count("\n")
             for ident_match in ident_re.finditer(expr):
                 name = ident_match.group(1)
                 if name in known_symbols and name not in seen:
                     seen.add(name)
-                    refs.append({
-                        "source_name": None,
-                        "target_name": name,
-                        "kind": "template",
-                        "line": line_num,
-                        "source_file": file_path,
-                    })
+                    refs.append(
+                        {
+                            "source_name": None,
+                            "target_name": name,
+                            "kind": "template",
+                            "line": line_num,
+                            "source_file": file_path,
+                        }
+                    )
 
     # Pass 2: Detect PascalCase component usage (per-line — tags don't span lines)
     lines = template_content.split("\n")
@@ -415,13 +417,15 @@ def scan_template_references(
             name = match.group(1)
             if name in known_symbols and name not in seen:
                 seen.add(name)
-                refs.append({
-                    "source_name": None,
-                    "target_name": name,
-                    "kind": "template",
-                    "line": line_num,
-                    "source_file": file_path,
-                })
+                refs.append(
+                    {
+                        "source_name": None,
+                        "target_name": name,
+                        "kind": "template",
+                        "line": line_num,
+                        "source_file": file_path,
+                    }
+                )
 
     return refs
 

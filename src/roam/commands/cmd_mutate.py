@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _format_changes_text(result: dict) -> list[str]:
@@ -42,13 +42,14 @@ def _format_changes_text(result: dict) -> list[str]:
 def _truncate(text: str, max_len: int) -> str:
     """Truncate text with ellipsis if needed."""
     if len(text) > max_len:
-        return text[:max_len - 3] + "..."
+        return text[: max_len - 3] + "..."
     return text
 
 
 # ---------------------------------------------------------------------------
 # Click group
 # ---------------------------------------------------------------------------
+
 
 @click.group("mutate")
 @click.pass_context
@@ -66,47 +67,74 @@ def mutate(ctx):
 # Subcommands
 # ---------------------------------------------------------------------------
 
+
 @mutate.command("move")
 @click.argument("symbol")
 @click.argument("target_file")
-@click.option("--apply", "apply_changes", is_flag=True, default=False,
-              help="Write changes to disk (default: dry-run preview).")
-@click.option("--dry-run", is_flag=True, default=False,
-              help="Preview changes without writing (this is the default).")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Write changes to disk (default: dry-run preview).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview changes without writing (this is the default).",
+)
 @click.pass_context
 def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
     """Move a symbol to a different file."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     from roam.refactor.transforms import move_symbol
 
     with open_db(readonly=True) as conn:
-        result = move_symbol(conn, symbol, target_file,
-                             dry_run=(not apply_changes))
+        result = move_symbol(conn, symbol, target_file, dry_run=(not apply_changes))
 
     if result.get("error"):
         if json_mode:
-            click.echo(to_json(json_envelope("mutate",
-                summary={"verdict": result["error"], "operation": "move",
-                         "files_modified": 0, "conflicts": 0},
-                changes=[], warnings=result.get("warnings", []),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mutate",
+                        summary={
+                            "verdict": result["error"],
+                            "operation": "move",
+                            "files_modified": 0,
+                            "conflicts": 0,
+                        },
+                        changes=[],
+                        warnings=result.get("warnings", []),
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {result['error']}")
         return
 
     n_files = len(result.get("files_modified", []))
-    verdict = (f"move {result.get('symbol', symbol)} -- "
-               f"{n_files} files modified, 0 conflicts")
+    verdict = f"move {result.get('symbol', symbol)} -- {n_files} files modified, 0 conflicts"
 
     if json_mode:
-        click.echo(to_json(json_envelope("mutate",
-            summary={"verdict": verdict, "operation": "move",
-                     "files_modified": n_files, "conflicts": 0},
-            changes=result.get("files_modified", []),
-            warnings=result.get("warnings", []),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mutate",
+                    summary={
+                        "verdict": verdict,
+                        "operation": "move",
+                        "files_modified": n_files,
+                        "conflicts": 0,
+                    },
+                    changes=result.get("files_modified", []),
+                    warnings=result.get("warnings", []),
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -121,44 +149,70 @@ def mutate_move(ctx, symbol, target_file, apply_changes, dry_run):
 @mutate.command("rename")
 @click.argument("symbol")
 @click.argument("new_name")
-@click.option("--apply", "apply_changes", is_flag=True, default=False,
-              help="Write changes to disk (default: dry-run preview).")
-@click.option("--dry-run", is_flag=True, default=False,
-              help="Preview changes without writing (this is the default).")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Write changes to disk (default: dry-run preview).",
+)
+@click.option(
+    "--dry-run",
+    is_flag=True,
+    default=False,
+    help="Preview changes without writing (this is the default).",
+)
 @click.pass_context
 def mutate_rename(ctx, symbol, new_name, apply_changes, dry_run):
     """Rename a symbol across the codebase."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     from roam.refactor.transforms import rename_symbol
 
     with open_db(readonly=True) as conn:
-        result = rename_symbol(conn, symbol, new_name,
-                               dry_run=(not apply_changes))
+        result = rename_symbol(conn, symbol, new_name, dry_run=(not apply_changes))
 
     if result.get("error"):
         if json_mode:
-            click.echo(to_json(json_envelope("mutate",
-                summary={"verdict": result["error"], "operation": "rename",
-                         "files_modified": 0, "conflicts": 0},
-                changes=[], warnings=result.get("warnings", []),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mutate",
+                        summary={
+                            "verdict": result["error"],
+                            "operation": "rename",
+                            "files_modified": 0,
+                            "conflicts": 0,
+                        },
+                        changes=[],
+                        warnings=result.get("warnings", []),
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {result['error']}")
         return
 
     n_files = len(result.get("files_modified", []))
-    verdict = (f"rename {result.get('symbol', symbol)} -> {new_name} -- "
-               f"{n_files} files modified, 0 conflicts")
+    verdict = f"rename {result.get('symbol', symbol)} -> {new_name} -- {n_files} files modified, 0 conflicts"
 
     if json_mode:
-        click.echo(to_json(json_envelope("mutate",
-            summary={"verdict": verdict, "operation": "rename",
-                     "files_modified": n_files, "conflicts": 0},
-            changes=result.get("files_modified", []),
-            warnings=result.get("warnings", []),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mutate",
+                    summary={
+                        "verdict": verdict,
+                        "operation": "rename",
+                        "files_modified": n_files,
+                        "conflicts": 0,
+                    },
+                    changes=result.get("files_modified", []),
+                    warnings=result.get("warnings", []),
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -171,33 +225,44 @@ def mutate_rename(ctx, symbol, new_name, apply_changes, dry_run):
 
 
 @mutate.command("add-call")
-@click.option("--from", "from_symbol", required=True,
-              help="The calling symbol.")
-@click.option("--to", "to_symbol", required=True,
-              help="The callee symbol.")
-@click.option("--args", "call_args", default="",
-              help="Arguments for the call (e.g. 'data, config').")
-@click.option("--apply", "apply_changes", is_flag=True, default=False,
-              help="Write changes to disk (default: dry-run preview).")
+@click.option("--from", "from_symbol", required=True, help="The calling symbol.")
+@click.option("--to", "to_symbol", required=True, help="The callee symbol.")
+@click.option("--args", "call_args", default="", help="Arguments for the call (e.g. 'data, config').")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Write changes to disk (default: dry-run preview).",
+)
 @click.pass_context
 def mutate_add_call(ctx, from_symbol, to_symbol, call_args, apply_changes):
     """Add a call from one symbol to another."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     from roam.refactor.transforms import add_call
 
     with open_db(readonly=True) as conn:
-        result = add_call(conn, from_symbol, to_symbol, call_args,
-                          dry_run=(not apply_changes))
+        result = add_call(conn, from_symbol, to_symbol, call_args, dry_run=(not apply_changes))
 
     if result.get("error"):
         if json_mode:
-            click.echo(to_json(json_envelope("mutate",
-                summary={"verdict": result["error"], "operation": "add-call",
-                         "files_modified": 0, "conflicts": 0},
-                changes=[], warnings=result.get("warnings", []),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mutate",
+                        summary={
+                            "verdict": result["error"],
+                            "operation": "add-call",
+                            "files_modified": 0,
+                            "conflicts": 0,
+                        },
+                        changes=[],
+                        warnings=result.get("warnings", []),
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {result['error']}")
         return
@@ -205,16 +270,24 @@ def mutate_add_call(ctx, from_symbol, to_symbol, call_args, apply_changes):
     n_files = len(result.get("files_modified", []))
     from_name = result.get("from_symbol", from_symbol)
     to_name = result.get("to_symbol", to_symbol)
-    verdict = (f"add-call {from_name} -> {to_name} -- "
-               f"{n_files} files modified, 0 conflicts")
+    verdict = f"add-call {from_name} -> {to_name} -- {n_files} files modified, 0 conflicts"
 
     if json_mode:
-        click.echo(to_json(json_envelope("mutate",
-            summary={"verdict": verdict, "operation": "add-call",
-                     "files_modified": n_files, "conflicts": 0},
-            changes=result.get("files_modified", []),
-            warnings=result.get("warnings", []),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mutate",
+                    summary={
+                        "verdict": verdict,
+                        "operation": "add-call",
+                        "files_modified": n_files,
+                        "conflicts": 0,
+                    },
+                    changes=result.get("files_modified", []),
+                    warnings=result.get("warnings", []),
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -228,16 +301,19 @@ def mutate_add_call(ctx, from_symbol, to_symbol, call_args, apply_changes):
 
 @mutate.command("extract")
 @click.argument("symbol")
-@click.option("--lines", required=True,
-              help="Line range to extract (e.g. '5-10').")
-@click.option("--name", "new_name", required=True,
-              help="Name for the new extracted function.")
-@click.option("--apply", "apply_changes", is_flag=True, default=False,
-              help="Write changes to disk (default: dry-run preview).")
+@click.option("--lines", required=True, help="Line range to extract (e.g. '5-10').")
+@click.option("--name", "new_name", required=True, help="Name for the new extracted function.")
+@click.option(
+    "--apply",
+    "apply_changes",
+    is_flag=True,
+    default=False,
+    help="Write changes to disk (default: dry-run preview).",
+)
 @click.pass_context
 def mutate_extract(ctx, symbol, lines, new_name, apply_changes):
     """Extract lines from a symbol into a new function."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     # Parse line range
@@ -248,11 +324,21 @@ def mutate_extract(ctx, symbol, lines, new_name, apply_changes):
     except (ValueError, IndexError):
         msg = f"invalid line range: {lines} (expected START-END)"
         if json_mode:
-            click.echo(to_json(json_envelope("mutate",
-                summary={"verdict": msg, "operation": "extract",
-                         "files_modified": 0, "conflicts": 0},
-                changes=[], warnings=[msg],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mutate",
+                        summary={
+                            "verdict": msg,
+                            "operation": "extract",
+                            "files_modified": 0,
+                            "conflicts": 0,
+                        },
+                        changes=[],
+                        warnings=[msg],
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {msg}")
         return
@@ -260,32 +346,49 @@ def mutate_extract(ctx, symbol, lines, new_name, apply_changes):
     from roam.refactor.transforms import extract_symbol
 
     with open_db(readonly=True) as conn:
-        result = extract_symbol(conn, symbol, line_start, line_end, new_name,
-                                dry_run=(not apply_changes))
+        result = extract_symbol(conn, symbol, line_start, line_end, new_name, dry_run=(not apply_changes))
 
     if result.get("error"):
         if json_mode:
-            click.echo(to_json(json_envelope("mutate",
-                summary={"verdict": result["error"], "operation": "extract",
-                         "files_modified": 0, "conflicts": 0},
-                changes=[], warnings=result.get("warnings", []),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "mutate",
+                        summary={
+                            "verdict": result["error"],
+                            "operation": "extract",
+                            "files_modified": 0,
+                            "conflicts": 0,
+                        },
+                        changes=[],
+                        warnings=result.get("warnings", []),
+                    )
+                )
+            )
             return
         click.echo(f"VERDICT: {result['error']}")
         return
 
     n_files = len(result.get("files_modified", []))
     sym_name = result.get("symbol", symbol)
-    verdict = (f"extract {sym_name}:{lines} -> {new_name} -- "
-               f"{n_files} files modified, 0 conflicts")
+    verdict = f"extract {sym_name}:{lines} -> {new_name} -- {n_files} files modified, 0 conflicts"
 
     if json_mode:
-        click.echo(to_json(json_envelope("mutate",
-            summary={"verdict": verdict, "operation": "extract",
-                     "files_modified": n_files, "conflicts": 0},
-            changes=result.get("files_modified", []),
-            warnings=result.get("warnings", []),
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "mutate",
+                    summary={
+                        "verdict": verdict,
+                        "operation": "extract",
+                        "files_modified": n_files,
+                        "conflicts": 0,
+                    },
+                    changes=result.get("files_modified", []),
+                    warnings=result.get("warnings", []),
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")

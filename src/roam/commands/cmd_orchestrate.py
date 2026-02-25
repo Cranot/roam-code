@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _resolve_target_files(conn, file_args, staged, root):
@@ -17,6 +17,7 @@ def _resolve_target_files(conn, file_args, staged, root):
     """
     if staged:
         from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+
         changed = get_changed_files(root, staged=True)
         if not changed:
             return []
@@ -31,9 +32,7 @@ def _resolve_target_files(conn, file_args, staged, root):
     for arg in file_args:
         arg_norm = arg.replace("\\", "/").rstrip("/")
         # Check if it is an exact file
-        row = conn.execute(
-            "SELECT path FROM files WHERE path = ?", (arg_norm,)
-        ).fetchone()
+        row = conn.execute("SELECT path FROM files WHERE path = ?", (arg_norm,)).fetchone()
         if row:
             target_files.append(row["path"])
             continue
@@ -57,15 +56,21 @@ def _resolve_target_files(conn, file_args, staged, root):
 
 @click.command("orchestrate")
 @click.option(
-    "--agents", "n_agents", required=True, type=int,
+    "--agents",
+    "n_agents",
+    required=True,
+    type=int,
     help="Number of agents to partition work for",
 )
 @click.option(
-    "--files", "file_args", multiple=True,
+    "--files",
+    "file_args",
+    multiple=True,
     help="Restrict to specific files or directories",
 )
 @click.option(
-    "--staged", is_flag=True,
+    "--staged",
+    is_flag=True,
     help="Restrict to files in the git staging area",
 )
 @click.pass_context
@@ -85,18 +90,23 @@ def orchestrate(ctx, n_agents, file_args, staged):
         if target_files is not None and len(target_files) == 0:
             msg = "No matching files found"
             if json_mode:
-                click.echo(to_json(json_envelope("orchestrate",
-                    summary={
-                        "verdict": msg,
-                        "n_agents": n_agents,
-                        "write_conflicts": 0,
-                        "shared_interfaces_count": 0,
-                        "conflict_probability": 0.0,
-                    },
-                    agents=[],
-                    merge_order=[],
-                    shared_interfaces=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "orchestrate",
+                            summary={
+                                "verdict": msg,
+                                "n_agents": n_agents,
+                                "write_conflicts": 0,
+                                "shared_interfaces_count": 0,
+                                "conflict_probability": 0.0,
+                            },
+                            agents=[],
+                            merge_order=[],
+                            shared_interfaces=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {msg}")
             return
@@ -113,24 +123,26 @@ def orchestrate(ctx, n_agents, file_args, staged):
         shared_interfaces = result["shared_interfaces"]
         write_conflicts = result["write_conflicts"]
 
-        verdict = (
-            f"{len(agents)} agents, {write_conflicts} write conflicts, "
-            f"{len(shared_interfaces)} shared interfaces"
-        )
+        verdict = f"{len(agents)} agents, {write_conflicts} write conflicts, {len(shared_interfaces)} shared interfaces"
 
         if json_mode:
-            click.echo(to_json(json_envelope("orchestrate",
-                summary={
-                    "verdict": verdict,
-                    "n_agents": len(agents),
-                    "write_conflicts": write_conflicts,
-                    "shared_interfaces_count": len(shared_interfaces),
-                    "conflict_probability": conflict_prob,
-                },
-                agents=agents,
-                merge_order=merge_order,
-                shared_interfaces=shared_interfaces,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "orchestrate",
+                        summary={
+                            "verdict": verdict,
+                            "n_agents": len(agents),
+                            "write_conflicts": write_conflicts,
+                            "shared_interfaces_count": len(shared_interfaces),
+                            "conflict_probability": conflict_prob,
+                        },
+                        agents=agents,
+                        merge_order=merge_order,
+                        shared_interfaces=shared_interfaces,
+                    )
+                )
+            )
             return
 
         # ── Text output (verdict first) ───────────────────────────
@@ -138,18 +150,12 @@ def orchestrate(ctx, n_agents, file_args, staged):
         click.echo()
 
         for agent in agents:
-            click.echo(
-                f"Agent {agent['id']}: {agent['cluster_label']} "
-                f"(cluster: {agent['cluster_label']})"
-            )
+            click.echo(f"Agent {agent['id']}: {agent['cluster_label']} (cluster: {agent['cluster_label']})")
             if agent["write_files"]:
                 files_str = ", ".join(agent["write_files"][:8])
                 if len(agent["write_files"]) > 8:
                     files_str += f" (+{len(agent['write_files']) - 8} more)"
-                click.echo(
-                    f"  Writes: {files_str} "
-                    f"({agent['symbols_owned']} symbols)"
-                )
+                click.echo(f"  Writes: {files_str} ({agent['symbols_owned']} symbols)")
             else:
                 click.echo("  Writes: (none)")
 
@@ -170,10 +176,5 @@ def orchestrate(ctx, n_agents, file_args, staged):
         click.echo(f"Merge order: {order_str}")
 
         # Conflict probability
-        boundary_count = int(
-            conflict_prob * len(list(G.edges)) if G.edges else 0
-        )
-        click.echo(
-            f"Conflict probability: {conflict_prob:.2f} "
-            f"({boundary_count} symbol(s) in conductance boundary)"
-        )
+        boundary_count = int(conflict_prob * len(list(G.edges)) if G.edges else 0)
+        click.echo(f"Conflict probability: {conflict_prob:.2f} ({boundary_count} symbol(s) in conductance boundary)")

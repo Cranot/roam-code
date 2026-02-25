@@ -3,16 +3,13 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process
-
+from conftest import git_init, index_in_process
 
 # ---------------------------------------------------------------------------
 # Parser tests
@@ -34,14 +31,7 @@ class TestParseCodeowners:
 
     def test_comments_and_blank_lines(self, tmp_path):
         co = tmp_path / "CODEOWNERS"
-        co.write_text(
-            "# This is a comment\n"
-            "\n"
-            "*.py @alice\n"
-            "# Another comment\n"
-            "\n"
-            "*.go @bob\n"
-        )
+        co.write_text("# This is a comment\n\n*.py @alice\n# Another comment\n\n*.go @bob\n")
         from roam.commands.cmd_codeowners import parse_codeowners
 
         rules = parse_codeowners(str(co))
@@ -331,21 +321,9 @@ def _make_project_with_codeowners(tmp_path, codeowners_content, codeowners_loc="
     # Source files
     src = repo / "src"
     src.mkdir()
-    (src / "models.py").write_text(
-        "class User:\n"
-        "    def __init__(self, name):\n"
-        "        self.name = name\n"
-    )
-    (src / "service.py").write_text(
-        "from models import User\n"
-        "\n"
-        "def create_user(name):\n"
-        "    return User(name)\n"
-    )
-    (src / "utils.py").write_text(
-        "def helper():\n"
-        "    return 42\n"
-    )
+    (src / "models.py").write_text("class User:\n    def __init__(self, name):\n        self.name = name\n")
+    (src / "service.py").write_text("from models import User\n\ndef create_user(name):\n    return User(name)\n")
+    (src / "utils.py").write_text("def helper():\n    return 42\n")
 
     docs = repo / "docs"
     docs.mkdir()
@@ -470,9 +448,7 @@ class TestCodeownersCommand:
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["--json", "codeowners", "--unowned"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["--json", "codeowners", "--unowned"], catch_exceptions=False)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "codeowners"
@@ -491,9 +467,7 @@ class TestCodeownersCommand:
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["codeowners", "--owner", "@backend-team"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["codeowners", "--owner", "@backend-team"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "@backend-team" in result.output
 
@@ -510,7 +484,8 @@ class TestCodeownersCommand:
 
         runner = CliRunner()
         result = runner.invoke(
-            cli, ["--json", "codeowners", "--owner", "@backend-team"],
+            cli,
+            ["--json", "codeowners", "--owner", "@backend-team"],
             catch_exceptions=False,
         )
         assert result.exit_code == 0
@@ -587,9 +562,7 @@ class TestCodeownersCommand:
         from roam.cli import cli
 
         runner = CliRunner()
-        result = runner.invoke(
-            cli, ["codeowners", "--owner", "@nonexistent"], catch_exceptions=False
-        )
+        result = runner.invoke(cli, ["codeowners", "--owner", "@nonexistent"], catch_exceptions=False)
         assert result.exit_code == 0
         assert "No files found" in result.output or "0 files" in result.output
 

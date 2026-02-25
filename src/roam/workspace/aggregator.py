@@ -11,8 +11,7 @@ from typing import Any
 from roam.workspace.db import get_cross_edges
 
 
-def aggregate_understand(ws_conn: sqlite3.Connection,
-                         repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate_understand(ws_conn: sqlite3.Connection, repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a unified workspace understand report.
 
     Queries each repo's own DB for stats and combines with
@@ -43,8 +42,7 @@ def aggregate_understand(ws_conn: sqlite3.Connection,
     }
 
 
-def aggregate_health(ws_conn: sqlite3.Connection,
-                     repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
+def aggregate_health(ws_conn: sqlite3.Connection, repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a unified workspace health report."""
     repos_health = []
     scores = []
@@ -73,9 +71,9 @@ def aggregate_health(ws_conn: sqlite3.Connection,
     }
 
 
-def cross_repo_context(ws_conn: sqlite3.Connection,
-                       symbol_name: str,
-                       repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
+def cross_repo_context(
+    ws_conn: sqlite3.Connection, symbol_name: str, repo_infos: list[dict[str, Any]]
+) -> dict[str, Any]:
     """Find a symbol across repos and return cross-repo context.
 
     Searches each repo DB for the symbol, then augments with
@@ -121,27 +119,37 @@ def cross_repo_context(ws_conn: sqlite3.Connection,
                     (row["id"],),
                 ).fetchall()
 
-                found_in.append({
-                    "repo": info["name"],
-                    "symbol_id": row["id"],
-                    "name": row["name"],
-                    "qualified_name": row["qualified_name"],
-                    "kind": row["kind"],
-                    "signature": row["signature"],
-                    "file_path": row["file_path"],
-                    "line_start": row["line_start"],
-                    "line_end": row["line_end"],
-                    "callers": [
-                        {"name": c["name"], "kind": c["kind"],
-                         "file": c["path"], "line": c["line"]}
-                        for c in callers
-                    ],
-                    "callees": [
-                        {"name": c["name"], "kind": c["kind"],
-                         "file": c["path"], "line": c["line"]}
-                        for c in callees
-                    ],
-                })
+                found_in.append(
+                    {
+                        "repo": info["name"],
+                        "symbol_id": row["id"],
+                        "name": row["name"],
+                        "qualified_name": row["qualified_name"],
+                        "kind": row["kind"],
+                        "signature": row["signature"],
+                        "file_path": row["file_path"],
+                        "line_start": row["line_start"],
+                        "line_end": row["line_end"],
+                        "callers": [
+                            {
+                                "name": c["name"],
+                                "kind": c["kind"],
+                                "file": c["path"],
+                                "line": c["line"],
+                            }
+                            for c in callers
+                        ],
+                        "callees": [
+                            {
+                                "name": c["name"],
+                                "kind": c["kind"],
+                                "file": c["path"],
+                                "line": c["line"],
+                            }
+                            for c in callees
+                        ],
+                    }
+                )
 
                 # Cross-repo edges for this symbol
                 ws_edges = ws_conn.execute(
@@ -158,13 +166,15 @@ def cross_repo_context(ws_conn: sqlite3.Connection,
 
                 for edge in ws_edges:
                     meta = json.loads(edge["metadata"]) if edge["metadata"] else {}
-                    cross_edges_for_symbol.append({
-                        "source_repo": edge["source_repo_name"],
-                        "target_repo": edge["target_repo_name"],
-                        "kind": edge["kind"],
-                        "url_pattern": meta.get("url_pattern", ""),
-                        "http_method": meta.get("http_method", ""),
-                    })
+                    cross_edges_for_symbol.append(
+                        {
+                            "source_repo": edge["source_repo_name"],
+                            "target_repo": edge["target_repo_name"],
+                            "kind": edge["kind"],
+                            "url_pattern": meta.get("url_pattern", ""),
+                            "http_method": meta.get("http_method", ""),
+                        }
+                    )
         finally:
             conn.close()
 
@@ -175,10 +185,12 @@ def cross_repo_context(ws_conn: sqlite3.Connection,
     }
 
 
-def cross_repo_trace(ws_conn: sqlite3.Connection,
-                     source_name: str,
-                     target_name: str,
-                     repo_infos: list[dict[str, Any]]) -> dict[str, Any]:
+def cross_repo_trace(
+    ws_conn: sqlite3.Connection,
+    source_name: str,
+    target_name: str,
+    repo_infos: list[dict[str, Any]],
+) -> dict[str, Any]:
     """Trace a path between symbols that may be in different repos.
 
     First tries intra-repo traces, then looks for cross-repo edges
@@ -200,11 +212,15 @@ def cross_repo_trace(ws_conn: sqlite3.Connection,
                 "WHERE s.name=? OR s.qualified_name=?",
                 (source_name, source_name),
             ).fetchall():
-                source_locations.append({
-                    "repo": info["name"], "id": row["id"],
-                    "name": row["name"], "kind": row["kind"],
-                    "file": row["path"],
-                })
+                source_locations.append(
+                    {
+                        "repo": info["name"],
+                        "id": row["id"],
+                        "name": row["name"],
+                        "kind": row["kind"],
+                        "file": row["path"],
+                    }
+                )
 
             for row in conn.execute(
                 "SELECT s.id, s.name, s.kind, f.path "
@@ -212,11 +228,15 @@ def cross_repo_trace(ws_conn: sqlite3.Connection,
                 "WHERE s.name=? OR s.qualified_name=?",
                 (target_name, target_name),
             ).fetchall():
-                target_locations.append({
-                    "repo": info["name"], "id": row["id"],
-                    "name": row["name"], "kind": row["kind"],
-                    "file": row["path"],
-                })
+                target_locations.append(
+                    {
+                        "repo": info["name"],
+                        "id": row["id"],
+                        "name": row["name"],
+                        "kind": row["kind"],
+                        "file": row["path"],
+                    }
+                )
         finally:
             conn.close()
 
@@ -229,23 +249,21 @@ def cross_repo_trace(ws_conn: sqlite3.Connection,
         # Check if this edge connects source -> target
         for src in source_locations:
             for tgt in target_locations:
-                if (edge["source_repo_name"] == src["repo"]
-                        and edge["target_repo_name"] == tgt["repo"]):
-                    bridge_edges.append({
-                        "source_repo": edge["source_repo_name"],
-                        "source_symbol_id": edge["source_symbol_id"],
-                        "target_repo": edge["target_repo_name"],
-                        "target_symbol_id": edge["target_symbol_id"],
-                        "kind": edge["kind"],
-                        "url_pattern": meta.get("url_pattern", ""),
-                        "http_method": meta.get("http_method", ""),
-                    })
+                if edge["source_repo_name"] == src["repo"] and edge["target_repo_name"] == tgt["repo"]:
+                    bridge_edges.append(
+                        {
+                            "source_repo": edge["source_repo_name"],
+                            "source_symbol_id": edge["source_symbol_id"],
+                            "target_repo": edge["target_repo_name"],
+                            "target_symbol_id": edge["target_symbol_id"],
+                            "kind": edge["kind"],
+                            "url_pattern": meta.get("url_pattern", ""),
+                            "http_method": meta.get("http_method", ""),
+                        }
+                    )
 
     # Same repo? Use the repo's own trace capabilities
-    same_repo = (
-        source_locations and target_locations
-        and source_locations[0]["repo"] == target_locations[0]["repo"]
-    )
+    same_repo = source_locations and target_locations and source_locations[0]["repo"] == target_locations[0]["repo"]
 
     return {
         "source": {"name": source_name, "locations": source_locations},
@@ -259,6 +277,7 @@ def cross_repo_trace(ws_conn: sqlite3.Connection,
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _query_repo_stats(info: dict[str, Any]) -> dict[str, Any]:
     """Query basic stats from a repo's own DB."""
@@ -291,9 +310,7 @@ def _query_repo_stats(info: dict[str, Any]) -> dict[str, Any]:
             "WHERE language IS NOT NULL "
             "GROUP BY language ORDER BY cnt DESC LIMIT 5"
         ).fetchall()
-        result["languages"] = [
-            {"language": r["language"], "files": r["cnt"]} for r in langs
-        ]
+        result["languages"] = [{"language": r["language"], "files": r["cnt"]} for r in langs]
 
         # Key symbols (by PageRank)
         try:
@@ -304,9 +321,7 @@ def _query_repo_stats(info: dict[str, Any]) -> dict[str, Any]:
                 "ORDER BY gm.pagerank DESC LIMIT 5"
             ).fetchall()
             result["key_symbols"] = [
-                {"name": r["name"], "kind": r["kind"],
-                 "pagerank": round(r["pagerank"], 6)}
-                for r in top
+                {"name": r["name"], "kind": r["kind"], "pagerank": round(r["pagerank"], 6)} for r in top
             ]
         except sqlite3.OperationalError:
             pass
@@ -342,10 +357,7 @@ def _query_repo_health(info: dict[str, Any]) -> dict[str, Any]:
 
         # Try to get the latest snapshot health score
         try:
-            snap = conn.execute(
-                "SELECT health_score, cycles FROM snapshots "
-                "ORDER BY timestamp DESC LIMIT 1"
-            ).fetchone()
+            snap = conn.execute("SELECT health_score, cycles FROM snapshots ORDER BY timestamp DESC LIMIT 1").fetchone()
             if snap:
                 result["health_score"] = snap["health_score"]
                 result["cycles"] = snap["cycles"] or 0
@@ -373,25 +385,28 @@ def _group_cross_edges(cross_edges: list[sqlite3.Row]) -> list[dict[str, Any]]:
             by_kind[e["kind"]] = by_kind.get(e["kind"], 0) + 1
             if len(sample_edges) < 5:
                 meta = json.loads(e["metadata"]) if e["metadata"] else {}
-                sample_edges.append({
-                    "kind": e["kind"],
-                    "url_pattern": meta.get("url_pattern", ""),
-                    "http_method": meta.get("http_method", ""),
-                })
+                sample_edges.append(
+                    {
+                        "kind": e["kind"],
+                        "url_pattern": meta.get("url_pattern", ""),
+                        "http_method": meta.get("http_method", ""),
+                    }
+                )
 
-        result.append({
-            "source_repo": src_repo,
-            "target_repo": tgt_repo,
-            "edge_count": len(edges),
-            "by_kind": by_kind,
-            "samples": sample_edges,
-        })
+        result.append(
+            {
+                "source_repo": src_repo,
+                "target_repo": tgt_repo,
+                "edge_count": len(edges),
+                "by_kind": by_kind,
+                "samples": sample_edges,
+            }
+        )
 
     return result
 
 
-def _trace_verdict(source_locs: list, target_locs: list,
-                   bridges: list) -> str:
+def _trace_verdict(source_locs: list, target_locs: list, bridges: list) -> str:
     """Generate a human-readable trace verdict."""
     if not source_locs:
         return "Source symbol not found in any repo"
@@ -406,12 +421,6 @@ def _trace_verdict(source_locs: list, target_locs: list,
         return f"Both symbols in same repo ({', '.join(common)}); use `roam trace` within that repo"
 
     if bridges:
-        return (
-            f"Cross-repo path: {source_locs[0]['repo']} -> "
-            f"{target_locs[0]['repo']} via {len(bridges)} API edge(s)"
-        )
+        return f"Cross-repo path: {source_locs[0]['repo']} -> {target_locs[0]['repo']} via {len(bridges)} API edge(s)"
 
-    return (
-        f"No direct cross-repo path found between "
-        f"{', '.join(src_repos)} and {', '.join(tgt_repos)}"
-    )
+    return f"No direct cross-repo path found between {', '.join(src_repos)} and {', '.join(tgt_repos)}"

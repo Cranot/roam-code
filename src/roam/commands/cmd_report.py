@@ -7,10 +7,9 @@ import time
 
 import click
 
-from roam.db.connection import find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Built-in presets
@@ -31,8 +30,14 @@ PRESETS = {
         "description": "Security audit — risk analysis, coverage gaps, secret scan",
         "sections": [
             {"title": "Risk", "command": ["risk", "-n", "20"]},
-            {"title": "Coverage Gaps", "command": ["coverage-gaps", "--gate-pattern", "auth|permission|guard"]},
-            {"title": "Secret Scan", "command": ["grep", "password|secret|token|api.key", "--source-only", "-n", "30"]},
+            {
+                "title": "Coverage Gaps",
+                "command": ["coverage-gaps", "--gate-pattern", "auth|permission|guard"],
+            },
+            {
+                "title": "Secret Scan",
+                "command": ["grep", "password|secret|token|api.key", "--source-only", "-n", "30"],
+            },
         ],
     },
     "pre-pr": {
@@ -53,16 +58,16 @@ PRESETS = {
         ],
     },
     "guardian": {
-        "description": (
-            "Continuous architecture guardian baseline — snapshot, gates, trends, "
-            "ownership drift"
-        ),
+        "description": ("Continuous architecture guardian baseline — snapshot, gates, trends, ownership drift"),
         "sections": [
             {"title": "Snapshot", "command": ["snapshot", "--tag", "guardian"]},
             {"title": "Health Gate", "command": ["health", "--gate"]},
             {"title": "Trend Analysis", "command": ["trend", "--analyze", "--range", "20"]},
             {"title": "Metric Trends", "command": ["trends", "--days", "30"]},
-            {"title": "Ownership Drift", "command": ["drift", "--threshold", "0.5", "--limit", "20"]},
+            {
+                "title": "Ownership Drift",
+                "command": ["drift", "--threshold", "0.5", "--limit", "20"],
+            },
         ],
     },
 }
@@ -98,9 +103,7 @@ def _load_custom_presets(config_path: str) -> dict:
             raise click.BadParameter(f"Preset '{name}' sections must be a list")
         for i, section in enumerate(preset["sections"]):
             if "title" not in section or "command" not in section:
-                raise click.BadParameter(
-                    f"Preset '{name}' section {i} needs 'title' and 'command' keys"
-                )
+                raise click.BadParameter(f"Preset '{name}' section {i} needs 'title' and 'command' keys")
         # Add default description if missing
         if "description" not in preset:
             preset["description"] = f"Custom preset: {name}"
@@ -116,8 +119,13 @@ def _run_section(section, root):
     cmd = [sys.executable, "-m", "roam", "--json"] + section["command"]
     try:
         result = subprocess.run(
-            cmd, cwd=str(root), capture_output=True, text=True,
-            timeout=180, encoding="utf-8", errors="replace",
+            cmd,
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=180,
+            encoding="utf-8",
+            errors="replace",
         )
         output = result.stdout.strip()
         try:
@@ -171,15 +179,19 @@ def _format_markdown(preset_name, results):
 @click.option("--list", "list_presets", is_flag=True, help="List available presets")
 @click.option("--strict", is_flag=True, help="Exit non-zero if any section fails")
 @click.option("--md", "markdown", is_flag=True, help="Output GitHub-compatible markdown")
-@click.option("--config", "config_path", type=click.Path(exists=True),
-              help="Load custom presets from a JSON file")
+@click.option(
+    "--config",
+    "config_path",
+    type=click.Path(exists=True),
+    help="Load custom presets from a JSON file",
+)
 @click.pass_context
 def report(ctx, preset, list_presets, strict, markdown, config_path):
     """Run a compound report preset — multiple commands in one shot.
 
     Built-in presets: first-contact, security, pre-pr, refactor, guardian.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
 
     all_presets = dict(PRESETS)  # copy built-in
     if config_path:
@@ -188,10 +200,15 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
 
     if list_presets:
         if json_mode:
-            click.echo(to_json(json_envelope("report",
-                summary={"presets": len(all_presets)},
-                presets={name: p["description"] for name, p in all_presets.items()},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "report",
+                        summary={"presets": len(all_presets)},
+                        presets={name: p["description"] for name, p in all_presets.items()},
+                    )
+                )
+            )
         else:
             click.echo("=== Available Report Presets ===\n")
             for name, p in all_presets.items():
@@ -232,24 +249,29 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
         return
 
     if json_mode:
-        click.echo(to_json(json_envelope("report",
-            summary={
-                "preset": preset,
-                "sections_ok": ok_count,
-                "sections_failed": fail_count,
-                "elapsed_s": round(elapsed, 1),
-            },
-            preset=preset,
-            sections=[
-                {
-                    "title": title,
-                    "success": success,
-                    "data": data,
-                    "error": stderr if not success else None,
-                }
-                for title, success, data, stderr in results
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "report",
+                    summary={
+                        "preset": preset,
+                        "sections_ok": ok_count,
+                        "sections_failed": fail_count,
+                        "elapsed_s": round(elapsed, 1),
+                    },
+                    preset=preset,
+                    sections=[
+                        {
+                            "title": title,
+                            "success": success,
+                            "data": data,
+                            "error": stderr if not success else None,
+                        }
+                        for title, success, data, stderr in results
+                    ],
+                )
+            )
+        )
         if strict and fail_count > 0:
             raise SystemExit(1)
         return

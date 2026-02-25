@@ -13,6 +13,7 @@ Supported conventions:
   - Salesforce Apex: *Test.cls, *_Test.cls
   - C#: separate test projects (*.Tests, *.UnitTests, etc.)
 """
+
 from __future__ import annotations
 
 import os
@@ -48,10 +49,12 @@ class TestConvention(ABC):
 
 class PythonConvention(TestConvention):
     @property
-    def name(self): return "python"
+    def name(self):
+        return "python"
 
     @property
-    def languages(self): return frozenset({"python"})
+    def languages(self):
+        return frozenset({"python"})
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -105,17 +108,21 @@ class PythonConvention(TestConvention):
 
     def is_test_file(self, path):
         base = os.path.basename(path)
-        return (base.startswith("test_") and base.endswith(".py")) or \
-               (base.endswith("_test.py")) or \
-               (base == "conftest.py")
+        return (
+            (base.startswith("test_") and base.endswith(".py"))
+            or (base.endswith("_test.py"))
+            or (base == "conftest.py")
+        )
 
 
 class GoConvention(TestConvention):
     @property
-    def name(self): return "go"
+    def name(self):
+        return "go"
 
     @property
-    def languages(self): return frozenset({"go"})
+    def languages(self):
+        return frozenset({"go"})
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -136,10 +143,12 @@ class GoConvention(TestConvention):
 
 class JavaScriptConvention(TestConvention):
     @property
-    def name(self): return "javascript"
+    def name(self):
+        return "javascript"
 
     @property
-    def languages(self): return frozenset({"javascript", "typescript"})
+    def languages(self):
+        return frozenset({"javascript", "typescript"})
 
     _TEST_PATTERN = re.compile(r"^.*\.(test|spec)\.[jt]sx?$")
 
@@ -185,10 +194,12 @@ class JavaScriptConvention(TestConvention):
 
 class JavaMavenConvention(TestConvention):
     @property
-    def name(self): return "java-maven"
+    def name(self):
+        return "java-maven"
 
     @property
-    def languages(self): return frozenset({"java"})
+    def languages(self):
+        return frozenset({"java"})
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -215,16 +226,17 @@ class JavaMavenConvention(TestConvention):
 
     def is_test_file(self, path):
         base = os.path.basename(path)
-        return (base.endswith("Test.java") or base.endswith("Tests.java")) and \
-               "src/test/" in path.replace("\\", "/")
+        return (base.endswith("Test.java") or base.endswith("Tests.java")) and "src/test/" in path.replace("\\", "/")
 
 
 class RubyConvention(TestConvention):
     @property
-    def name(self): return "ruby"
+    def name(self):
+        return "ruby"
 
     @property
-    def languages(self): return frozenset({"ruby"})
+    def languages(self):
+        return frozenset({"ruby"})
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -249,10 +261,12 @@ class RubyConvention(TestConvention):
 
 class ApexConvention(TestConvention):
     @property
-    def name(self): return "apex"
+    def name(self):
+        return "apex"
 
     @property
-    def languages(self): return frozenset({"apex"})
+    def languages(self):
+        return frozenset({"apex"})
 
     def source_to_test_paths(self, source_path):
         p = source_path.replace("\\", "/")
@@ -281,10 +295,12 @@ class ApexConvention(TestConvention):
 
 class CSharpConvention(TestConvention):
     @property
-    def name(self): return "csharp"
+    def name(self):
+        return "csharp"
 
     @property
-    def languages(self): return frozenset({"c_sharp", "csharp", "c#"})
+    def languages(self):
+        return frozenset({"c_sharp", "csharp", "c#"})
 
     def source_to_test_paths(self, source_path):
         """Map C# source files to potential test file paths.
@@ -318,7 +334,7 @@ class CSharpConvention(TestConvention):
             if src_idx + 1 < len(parts):
                 project_name = parts[src_idx + 1]
                 if src_idx + 2 < len(parts):
-                    relative_subdir = "/".join(parts[src_idx + 2:])
+                    relative_subdir = "/".join(parts[src_idx + 2 :])
         elif len(parts) > 0:
             # no src/ dir, first part might be project name
             project_name = parts[0]
@@ -394,7 +410,7 @@ class CSharpConvention(TestConvention):
 
                 # everything after the test project is the relative subdir
                 if i + 1 < len(parts):
-                    relative_subdir = "/".join(parts[i + 1:])
+                    relative_subdir = "/".join(parts[i + 1 :])
                 break
 
         src_file = f"{src_name}.cs"

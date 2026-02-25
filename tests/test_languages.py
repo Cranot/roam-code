@@ -11,7 +11,6 @@ Languages covered: Python, JavaScript, TypeScript, Java, Go, Rust, C, PHP, C#.
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -19,12 +18,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output
-
+from conftest import invoke_cli
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -39,14 +38,16 @@ def cli_runner():
 # Helper: parse source text using tree-sitter + language extractor
 # ---------------------------------------------------------------------------
 
+
 def _parse_and_extract(source_text: str, file_path: str, language: str = None):
     """Parse source text and extract symbols + references.
 
     Returns (symbols, references) lists.
     """
-    from roam.index.parser import detect_language, GRAMMAR_ALIASES
-    from roam.languages.registry import get_extractor
     from tree_sitter_language_pack import get_parser
+
+    from roam.index.parser import GRAMMAR_ALIASES, detect_language
+    from roam.languages.registry import get_extractor
 
     if language is None:
         language = detect_language(file_path)
@@ -67,20 +68,23 @@ def _parse_and_extract(source_text: str, file_path: str, language: str = None):
 # PYTHON TESTS
 # ===========================================================================
 
+
 class TestPythonExtraction:
     """Tests for Python symbol and reference extraction."""
 
     def test_python_class_extraction(self, project_factory, cli_runner, monkeypatch):
         """Class with methods should be extracted with correct names and kinds."""
-        proj = project_factory({
-            "app.py": (
-                "class MyClass:\n"
-                "    def method_one(self):\n"
-                "        pass\n"
-                "    def method_two(self, x):\n"
-                "        return x * 2\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "app.py": (
+                    "class MyClass:\n"
+                    "    def method_one(self):\n"
+                    "        pass\n"
+                    "    def method_two(self, x):\n"
+                    "        return x * 2\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "app.py"])
         data = json.loads(result.output)
@@ -97,13 +101,7 @@ class TestPythonExtraction:
 
     def test_python_function_extraction(self):
         """Standalone functions should be extracted as 'function' kind."""
-        source = (
-            "def add(a, b):\n"
-            "    return a + b\n"
-            "\n"
-            "def multiply(x, y):\n"
-            "    return x * y\n"
-        )
+        source = "def add(a, b):\n    return a + b\n\ndef multiply(x, y):\n    return x * y\n"
         symbols, _ = _parse_and_extract(source, "math_utils.py")
         func_names = [s["name"] for s in symbols if s["kind"] == "function"]
         assert "add" in func_names
@@ -111,19 +109,12 @@ class TestPythonExtraction:
 
     def test_python_import_resolution(self, project_factory, cli_runner, monkeypatch):
         """Imports should create references that lead to edges after indexing."""
-        proj = project_factory({
-            "models.py": (
-                "class User:\n"
-                "    def __init__(self, name):\n"
-                "        self.name = name\n"
-            ),
-            "service.py": (
-                "from models import User\n"
-                "\n"
-                "def create_user(name):\n"
-                "    return User(name)\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "models.py": ("class User:\n    def __init__(self, name):\n        self.name = name\n"),
+                "service.py": ("from models import User\n\ndef create_user(name):\n    return User(name)\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "search", "User"])
         data = json.loads(result.output)
@@ -185,11 +176,7 @@ class TestPythonExtraction:
 
     def test_python_docstring(self):
         """Docstrings should be captured on symbols."""
-        source = (
-            "def documented():\n"
-            '    """This is the docstring."""\n'
-            "    pass\n"
-        )
+        source = 'def documented():\n    """This is the docstring."""\n    pass\n'
         symbols, _ = _parse_and_extract(source, "docs.py")
         func = next(s for s in symbols if s["name"] == "documented")
         assert func["docstring"] is not None
@@ -197,13 +184,7 @@ class TestPythonExtraction:
 
     def test_python_visibility(self):
         """Private (_prefix) functions should have 'private' visibility."""
-        source = (
-            "def public_func():\n"
-            "    pass\n"
-            "\n"
-            "def _private_func():\n"
-            "    pass\n"
-        )
+        source = "def public_func():\n    pass\n\ndef _private_func():\n    pass\n"
         symbols, _ = _parse_and_extract(source, "vis.py")
         pub = next(s for s in symbols if s["name"] == "public_func")
         priv = next(s for s in symbols if s["name"] == "_private_func")
@@ -214,6 +195,7 @@ class TestPythonExtraction:
 # ===========================================================================
 # JAVASCRIPT TESTS
 # ===========================================================================
+
 
 class TestJavaScriptExtraction:
     """Tests for JavaScript symbol and reference extraction."""
@@ -256,21 +238,12 @@ class TestJavaScriptExtraction:
 
     def test_js_import_export(self, project_factory, cli_runner, monkeypatch):
         """Import/export should create cross-file references."""
-        proj = project_factory({
-            "lib.js": (
-                "function helper() {\n"
-                "    return 42;\n"
-                "}\n"
-                "module.exports = { helper };\n"
-            ),
-            "app.js": (
-                'const { helper } = require("./lib");\n'
-                "\n"
-                "function main() {\n"
-                "    return helper();\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "lib.js": ("function helper() {\n    return 42;\n}\nmodule.exports = { helper };\n"),
+                "app.js": ('const { helper } = require("./lib");\n\nfunction main() {\n    return helper();\n}\n'),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "search", "helper"])
         data = json.loads(result.output)
@@ -279,26 +252,14 @@ class TestJavaScriptExtraction:
 
     def test_js_default_export(self):
         """Default export class should be extracted."""
-        source = (
-            "export default class Router {\n"
-            "    route(path) {\n"
-            "        return path;\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "export default class Router {\n    route(path) {\n        return path;\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "router.js")
         names = [s["name"] for s in symbols]
         assert "Router" in names
 
     def test_js_const_arrow(self):
         """const with arrow function should be extracted as function/variable."""
-        source = (
-            "const createApp = () => {\n"
-            "    return { name: 'app' };\n"
-            "};\n"
-            "\n"
-            "const API_KEY = 'abc123';\n"
-        )
+        source = "const createApp = () => {\n    return { name: 'app' };\n};\n\nconst API_KEY = 'abc123';\n"
         symbols, _ = _parse_and_extract(source, "app.js")
         names = [s["name"] for s in symbols]
         assert "createApp" in names
@@ -307,11 +268,7 @@ class TestJavaScriptExtraction:
     def test_js_destructuring_import(self):
         """Named imports via require destructuring should create references."""
         source = (
-            'const { readFile, writeFile } = require("fs");\n'
-            "\n"
-            "function process() {\n"
-            "    readFile('test.txt');\n"
-            "}\n"
+            "const { readFile, writeFile } = require(\"fs\");\n\nfunction process() {\n    readFile('test.txt');\n}\n"
         )
         symbols, refs = _parse_and_extract(source, "io.js")
         ref_targets = [r["target_name"] for r in refs if r["kind"] == "import"]
@@ -322,17 +279,13 @@ class TestJavaScriptExtraction:
 # TYPESCRIPT TESTS
 # ===========================================================================
 
+
 class TestTypeScriptExtraction:
     """Tests for TypeScript symbol and reference extraction."""
 
     def test_ts_interface(self):
         """Interface extraction should capture interface name and methods."""
-        source = (
-            "export interface Serializable {\n"
-            "    serialize(): string;\n"
-            "    deserialize(data: string): void;\n"
-            "}\n"
-        )
+        source = "export interface Serializable {\n    serialize(): string;\n    deserialize(data: string): void;\n}\n"
         symbols, _ = _parse_and_extract(source, "types.ts")
         names = [s["name"] for s in symbols]
         assert "Serializable" in names
@@ -341,10 +294,7 @@ class TestTypeScriptExtraction:
 
     def test_ts_type_alias(self):
         """Type aliases should be extracted."""
-        source = (
-            'type UserRole = "admin" | "user" | "guest";\n'
-            "type Callback = (data: any) => void;\n"
-        )
+        source = 'type UserRole = "admin" | "user" | "guest";\ntype Callback = (data: any) => void;\n'
         symbols, _ = _parse_and_extract(source, "aliases.ts")
         names = [s["name"] for s in symbols]
         assert "UserRole" in names
@@ -352,14 +302,7 @@ class TestTypeScriptExtraction:
 
     def test_ts_enum(self):
         """Enums should be extracted."""
-        source = (
-            "enum Direction {\n"
-            "    Up,\n"
-            "    Down,\n"
-            "    Left,\n"
-            "    Right,\n"
-            "}\n"
-        )
+        source = "enum Direction {\n    Up,\n    Down,\n    Left,\n    Right,\n}\n"
         symbols, _ = _parse_and_extract(source, "direction.ts")
         names = [s["name"] for s in symbols]
         assert "Direction" in names
@@ -430,6 +373,7 @@ class TestTypeScriptExtraction:
 # JAVA TESTS
 # ===========================================================================
 
+
 class TestJavaExtraction:
     """Tests for Java symbol and reference extraction."""
 
@@ -466,11 +410,7 @@ class TestJavaExtraction:
 
     def test_java_interface(self):
         """Java interface should be extracted as 'interface' kind."""
-        source = (
-            "public interface Comparable {\n"
-            "    int compareTo(Object other);\n"
-            "}\n"
-        )
+        source = "public interface Comparable {\n    int compareTo(Object other);\n}\n"
         symbols, _ = _parse_and_extract(source, "Comparable.java")
         names = [s["name"] for s in symbols]
         assert "Comparable" in names
@@ -479,11 +419,7 @@ class TestJavaExtraction:
 
     def test_java_enum(self):
         """Java enum should be extracted as 'enum' kind."""
-        source = (
-            "public enum Color {\n"
-            "    RED, GREEN, BLUE;\n"
-            "}\n"
-        )
+        source = "public enum Color {\n    RED, GREEN, BLUE;\n}\n"
         symbols, _ = _parse_and_extract(source, "Color.java")
         names = [s["name"] for s in symbols]
         assert "Color" in names
@@ -503,7 +439,7 @@ class TestJavaExtraction:
             "\n"
             "public class Dog extends Animal implements Speakable {\n"
             "    public String speak() {\n"
-            "        return \"Woof\";\n"
+            '        return "Woof";\n'
             "    }\n"
             "}\n"
         )
@@ -556,6 +492,7 @@ class TestJavaExtraction:
 # GO TESTS
 # ===========================================================================
 
+
 class TestGoExtraction:
     """Tests for Go symbol and reference extraction."""
 
@@ -579,15 +516,7 @@ class TestGoExtraction:
 
     def test_go_struct(self):
         """Go struct declarations should be extracted as 'class' kind."""
-        source = (
-            "package store\n"
-            "\n"
-            "type Config struct {\n"
-            "    MaxSize  int\n"
-            "    Timeout  int\n"
-            "    Verbose  bool\n"
-            "}\n"
-        )
+        source = "package store\n\ntype Config struct {\n    MaxSize  int\n    Timeout  int\n    Verbose  bool\n}\n"
         symbols, _ = _parse_and_extract(source, "config.go")
         names = [s["name"] for s in symbols]
         assert "Config" in names
@@ -643,12 +572,7 @@ class TestGoExtraction:
 
     def test_go_exported(self):
         """Exported (uppercase) identifiers should be marked as exported."""
-        source = (
-            "package pkg\n"
-            "\n"
-            "func Exported() {}\n"
-            "func unexported() {}\n"
-        )
+        source = "package pkg\n\nfunc Exported() {}\nfunc unexported() {}\n"
         symbols, _ = _parse_and_extract(source, "api.go")
         exp = next(s for s in symbols if s["name"] == "Exported")
         unexp = next(s for s in symbols if s["name"] == "unexported")
@@ -657,18 +581,7 @@ class TestGoExtraction:
 
     def test_go_import(self):
         """Go import statements should create references."""
-        source = (
-            "package main\n"
-            "\n"
-            'import (\n'
-            '    "fmt"\n'
-            '    "os"\n'
-            ')\n'
-            "\n"
-            "func main() {\n"
-            "    fmt.Println(os.Args)\n"
-            "}\n"
-        )
+        source = 'package main\n\nimport (\n    "fmt"\n    "os"\n)\n\nfunc main() {\n    fmt.Println(os.Args)\n}\n'
         symbols, refs = _parse_and_extract(source, "main.go")
         import_refs = [r for r in refs if r["kind"] == "import"]
         import_targets = {r["target_name"] for r in import_refs}
@@ -680,20 +593,13 @@ class TestGoExtraction:
 # RUST TESTS
 # ===========================================================================
 
+
 class TestRustExtraction:
     """Tests for Rust symbol and reference extraction."""
 
     def test_rust_function(self):
         """Rust fn items should be extracted as 'function' kind."""
-        source = (
-            "pub fn add(a: i32, b: i32) -> i32 {\n"
-            "    a + b\n"
-            "}\n"
-            "\n"
-            "fn internal_helper() -> bool {\n"
-            "    true\n"
-            "}\n"
-        )
+        source = "pub fn add(a: i32, b: i32) -> i32 {\n    a + b\n}\n\nfn internal_helper() -> bool {\n    true\n}\n"
         symbols, _ = _parse_and_extract(source, "lib.rs")
         func_names = [s["name"] for s in symbols if s["kind"] == "function"]
         assert "add" in func_names
@@ -705,12 +611,7 @@ class TestRustExtraction:
 
     def test_rust_struct(self):
         """Rust struct items should be extracted."""
-        source = (
-            "pub struct Point {\n"
-            "    pub x: f64,\n"
-            "    pub y: f64,\n"
-            "}\n"
-        )
+        source = "pub struct Point {\n    pub x: f64,\n    pub y: f64,\n}\n"
         symbols, _ = _parse_and_extract(source, "geom.rs")
         names = [s["name"] for s in symbols]
         assert "Point" in names
@@ -745,12 +646,7 @@ class TestRustExtraction:
 
     def test_rust_trait(self):
         """Rust trait items should be extracted as 'trait' kind."""
-        source = (
-            "pub trait Shape {\n"
-            "    fn area(&self) -> f64;\n"
-            "    fn perimeter(&self) -> f64;\n"
-            "}\n"
-        )
+        source = "pub trait Shape {\n    fn area(&self) -> f64;\n    fn perimeter(&self) -> f64;\n}\n"
         symbols, _ = _parse_and_extract(source, "shapes.rs")
         names = [s["name"] for s in symbols]
         assert "Shape" in names
@@ -762,14 +658,7 @@ class TestRustExtraction:
 
     def test_rust_enum(self):
         """Rust enum items should be extracted as 'enum' kind."""
-        source = (
-            "pub enum Direction {\n"
-            "    North,\n"
-            "    South,\n"
-            "    East,\n"
-            "    West,\n"
-            "}\n"
-        )
+        source = "pub enum Direction {\n    North,\n    South,\n    East,\n    West,\n}\n"
         symbols, _ = _parse_and_extract(source, "nav.rs")
         names = [s["name"] for s in symbols]
         assert "Direction" in names
@@ -796,20 +685,13 @@ class TestRustExtraction:
 # C TESTS
 # ===========================================================================
 
+
 class TestCExtraction:
     """Tests for C symbol and reference extraction."""
 
     def test_c_function(self):
         """C function definitions should be extracted."""
-        source = (
-            "int add(int a, int b) {\n"
-            "    return a + b;\n"
-            "}\n"
-            "\n"
-            "void print_hello() {\n"
-            "    printf(\"Hello\\n\");\n"
-            "}\n"
-        )
+        source = 'int add(int a, int b) {\n    return a + b;\n}\n\nvoid print_hello() {\n    printf("Hello\\n");\n}\n'
         symbols, _ = _parse_and_extract(source, "math.c")
         func_names = [s["name"] for s in symbols if s["kind"] == "function"]
         assert "add" in func_names
@@ -836,13 +718,7 @@ class TestCExtraction:
     def test_c_include(self):
         """C #include directives should create import references."""
         source = (
-            '#include <stdio.h>\n'
-            '#include "myheader.h"\n'
-            "\n"
-            "int main() {\n"
-            '    printf("Hello\\n");\n'
-            "    return 0;\n"
-            "}\n"
+            '#include <stdio.h>\n#include "myheader.h"\n\nint main() {\n    printf("Hello\\n");\n    return 0;\n}\n'
         )
         symbols, refs = _parse_and_extract(source, "main.c")
         import_refs = [r for r in refs if r["kind"] == "import"]
@@ -852,39 +728,41 @@ class TestCExtraction:
 
     def test_c_prototype(self, project_factory, cli_runner, monkeypatch):
         """Header file prototypes and implementation should both be indexed."""
-        proj = project_factory({
-            "list.h": (
-                "#ifndef LIST_H\n"
-                "#define LIST_H\n"
-                "\n"
-                "struct Node {\n"
-                "    int value;\n"
-                "    struct Node* next;\n"
-                "};\n"
-                "\n"
-                "struct Node* list_create(int value);\n"
-                "void list_push(struct Node** head, int value);\n"
-                "\n"
-                "#endif\n"
-            ),
-            "list.c": (
-                '#include "list.h"\n'
-                "#include <stdlib.h>\n"
-                "\n"
-                "struct Node* list_create(int value) {\n"
-                "    struct Node* node = malloc(sizeof(struct Node));\n"
-                "    node->value = value;\n"
-                "    node->next = NULL;\n"
-                "    return node;\n"
-                "}\n"
-                "\n"
-                "void list_push(struct Node** head, int value) {\n"
-                "    struct Node* node = list_create(value);\n"
-                "    node->next = *head;\n"
-                "    *head = node;\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "list.h": (
+                    "#ifndef LIST_H\n"
+                    "#define LIST_H\n"
+                    "\n"
+                    "struct Node {\n"
+                    "    int value;\n"
+                    "    struct Node* next;\n"
+                    "};\n"
+                    "\n"
+                    "struct Node* list_create(int value);\n"
+                    "void list_push(struct Node** head, int value);\n"
+                    "\n"
+                    "#endif\n"
+                ),
+                "list.c": (
+                    '#include "list.h"\n'
+                    "#include <stdlib.h>\n"
+                    "\n"
+                    "struct Node* list_create(int value) {\n"
+                    "    struct Node* node = malloc(sizeof(struct Node));\n"
+                    "    node->value = value;\n"
+                    "    node->next = NULL;\n"
+                    "    return node;\n"
+                    "}\n"
+                    "\n"
+                    "void list_push(struct Node** head, int value) {\n"
+                    "    struct Node* node = list_create(value);\n"
+                    "    node->next = *head;\n"
+                    "    *head = node;\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "search", "list_create"])
         data = json.loads(result.output)
@@ -895,6 +773,7 @@ class TestCExtraction:
 # ===========================================================================
 # PHP TESTS
 # ===========================================================================
+
 
 class TestPhpExtraction:
     """Tests for PHP symbol and reference extraction."""
@@ -947,11 +826,7 @@ class TestPhpExtraction:
     def test_php_interface(self):
         """PHP interface should be extracted as 'interface' kind."""
         source = (
-            "<?php\n"
-            "interface Cacheable {\n"
-            "    public function getCacheKey();\n"
-            "    public function getCacheTTL();\n"
-            "}\n"
+            "<?php\ninterface Cacheable {\n    public function getCacheKey();\n    public function getCacheTTL();\n}\n"
         )
         symbols, _ = _parse_and_extract(source, "Cacheable.php")
         names = [s["name"] for s in symbols]
@@ -984,18 +859,13 @@ class TestPhpExtraction:
 # ADDITIONAL PYTHON TESTS
 # ===========================================================================
 
+
 class TestPythonExtractionExtra:
     """Additional Python extraction tests for edge cases."""
 
     def test_python_class_inheritance_ref(self):
         """Class inheritance should create 'inherits' references."""
-        source = (
-            "class Base:\n"
-            "    pass\n"
-            "\n"
-            "class Child(Base):\n"
-            "    pass\n"
-        )
+        source = "class Base:\n    pass\n\nclass Child(Base):\n    pass\n"
         symbols, refs = _parse_and_extract(source, "inherit.py")
         inherits = [r for r in refs if r["kind"] == "inherits"]
         assert any(r["target_name"] == "Base" for r in inherits)
@@ -1037,11 +907,7 @@ class TestPythonExtractionExtra:
 
     def test_python_constants(self):
         """Module-level variable assignments should be extracted."""
-        source = (
-            "MAX_RETRIES = 3\n"
-            "TIMEOUT = 30\n"
-            "API_URL = 'https://example.com'\n"
-        )
+        source = "MAX_RETRIES = 3\nTIMEOUT = 30\nAPI_URL = 'https://example.com'\n"
         symbols, _ = _parse_and_extract(source, "constants.py")
         names = [s["name"] for s in symbols]
         assert "MAX_RETRIES" in names or "TIMEOUT" in names
@@ -1066,17 +932,13 @@ class TestPythonExtractionExtra:
 # ADDITIONAL JAVASCRIPT TESTS
 # ===========================================================================
 
+
 class TestJavaScriptExtractionExtra:
     """Additional JavaScript extraction tests."""
 
     def test_js_generator_function(self):
         """Generator functions should be extracted."""
-        source = (
-            "function* idGenerator() {\n"
-            "    let id = 0;\n"
-            "    while (true) yield id++;\n"
-            "}\n"
-        )
+        source = "function* idGenerator() {\n    let id = 0;\n    while (true) yield id++;\n}\n"
         symbols, _ = _parse_and_extract(source, "gen.js")
         names = [s["name"] for s in symbols]
         assert "idGenerator" in names
@@ -1115,6 +977,7 @@ class TestJavaScriptExtractionExtra:
 # ===========================================================================
 # ADDITIONAL TYPESCRIPT TESTS
 # ===========================================================================
+
 
 class TestTypeScriptExtractionExtra:
     """Additional TypeScript extraction tests."""
@@ -1155,10 +1018,7 @@ class TestTypeScriptExtractionExtra:
 
     def test_ts_namespace_export(self):
         """Exported functions should be marked as exported."""
-        source = (
-            "export function publicFn(): void {}\n"
-            "function privateFn(): void {}\n"
-        )
+        source = "export function publicFn(): void {}\nfunction privateFn(): void {}\n"
         symbols, _ = _parse_and_extract(source, "mod.ts")
         pub = next(s for s in symbols if s["name"] == "publicFn")
         assert pub["is_exported"] is True
@@ -1167,6 +1027,7 @@ class TestTypeScriptExtractionExtra:
 # ===========================================================================
 # ADDITIONAL JAVA TESTS
 # ===========================================================================
+
 
 class TestJavaExtractionExtra:
     """Additional Java extraction tests."""
@@ -1226,42 +1087,27 @@ class TestJavaExtractionExtra:
 # ADDITIONAL GO TESTS
 # ===========================================================================
 
+
 class TestGoExtractionExtra:
     """Additional Go extraction tests."""
 
     def test_go_constants(self):
         """Go const declarations should be extracted."""
-        source = (
-            "package config\n"
-            "\n"
-            "const (\n"
-            "    MaxRetries = 3\n"
-            "    Timeout    = 30\n"
-            ")\n"
-        )
+        source = "package config\n\nconst (\n    MaxRetries = 3\n    Timeout    = 30\n)\n"
         symbols, _ = _parse_and_extract(source, "config.go")
         names = [s["name"] for s in symbols]
         assert "MaxRetries" in names or "Timeout" in names
 
     def test_go_variable_declaration(self):
         """Go var declarations should be extracted."""
-        source = (
-            "package main\n"
-            "\n"
-            "var DefaultTimeout = 30\n"
-            "var Version = \"1.0.0\"\n"
-        )
+        source = 'package main\n\nvar DefaultTimeout = 30\nvar Version = "1.0.0"\n'
         symbols, _ = _parse_and_extract(source, "vars.go")
         names = [s["name"] for s in symbols]
         assert "DefaultTimeout" in names or "Version" in names
 
     def test_go_package_extraction(self):
         """Go package clause should be extracted."""
-        source = (
-            "package mypackage\n"
-            "\n"
-            "func DoWork() {}\n"
-        )
+        source = "package mypackage\n\nfunc DoWork() {}\n"
         symbols, _ = _parse_and_extract(source, "work.go")
         names = [s["name"] for s in symbols]
         # Package symbol should be present
@@ -1272,25 +1118,20 @@ class TestGoExtractionExtra:
 # ADDITIONAL RUST TESTS
 # ===========================================================================
 
+
 class TestRustExtractionExtra:
     """Additional Rust extraction tests."""
 
     def test_rust_const_item(self):
         """Rust const items should be extracted."""
-        source = (
-            "pub const MAX_SIZE: usize = 1024;\n"
-            "const INTERNAL_LIMIT: u32 = 100;\n"
-        )
+        source = "pub const MAX_SIZE: usize = 1024;\nconst INTERNAL_LIMIT: u32 = 100;\n"
         symbols, _ = _parse_and_extract(source, "consts.rs")
         names = [s["name"] for s in symbols]
         assert "MAX_SIZE" in names
 
     def test_rust_type_alias(self):
         """Rust type aliases should be extracted."""
-        source = (
-            "type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;\n"
-            "pub type Id = u64;\n"
-        )
+        source = "type Result<T> = std::result::Result<T, Box<dyn std::error::Error>>;\npub type Id = u64;\n"
         symbols, _ = _parse_and_extract(source, "types.rs")
         names = [s["name"] for s in symbols]
         assert "Result" in names or "Id" in names
@@ -1324,18 +1165,13 @@ class TestRustExtractionExtra:
 # ADDITIONAL C TESTS
 # ===========================================================================
 
+
 class TestCExtractionExtra:
     """Additional C extraction tests."""
 
     def test_c_enum(self):
         """C enum definitions should be extracted."""
-        source = (
-            "typedef enum {\n"
-            "    RED,\n"
-            "    GREEN,\n"
-            "    BLUE\n"
-            "} Color;\n"
-        )
+        source = "typedef enum {\n    RED,\n    GREEN,\n    BLUE\n} Color;\n"
         symbols, _ = _parse_and_extract(source, "colors.c")
         names = [s["name"] for s in symbols]
         assert "Color" in names
@@ -1360,6 +1196,7 @@ class TestCExtractionExtra:
 # ADDITIONAL PHP TESTS
 # ===========================================================================
 
+
 class TestPhpExtractionExtra:
     """Additional PHP extraction tests."""
 
@@ -1382,14 +1219,7 @@ class TestPhpExtractionExtra:
 
     def test_php_trait(self):
         """PHP trait should be extracted."""
-        source = (
-            "<?php\n"
-            "trait Loggable {\n"
-            "    public function log($message) {\n"
-            "        echo $message;\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "<?php\ntrait Loggable {\n    public function log($message) {\n        echo $message;\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "Loggable.php")
         names = [s["name"] for s in symbols]
         assert "Loggable" in names
@@ -1422,17 +1252,18 @@ class TestPhpExtractionExtra:
 # LINE NUMBER TESTS
 # ===========================================================================
 
+
 class TestLineNumbers:
     """Verify that extracted symbols have correct line number ranges."""
 
     def test_python_line_numbers(self):
         """Python symbols should have correct line_start and line_end."""
         source = (
-            "def first():\n"     # line 1
-            "    pass\n"         # line 2
-            "\n"                 # line 3
-            "def second():\n"    # line 4
-            "    return 42\n"    # line 5
+            "def first():\n"  # line 1
+            "    pass\n"  # line 2
+            "\n"  # line 3
+            "def second():\n"  # line 4
+            "    return 42\n"  # line 5
         )
         symbols, _ = _parse_and_extract(source, "lines.py")
         first = next(s for s in symbols if s["name"] == "first")
@@ -1444,13 +1275,13 @@ class TestLineNumbers:
     def test_java_line_numbers(self):
         """Java symbols should have correct line_start."""
         source = (
-            "public class Example {\n"   # line 1
-            "    public void foo() {\n"   # line 2
-            "    }\n"                     # line 3
-            "\n"                          # line 4
-            "    public void bar() {\n"   # line 5
-            "    }\n"                     # line 6
-            "}\n"                         # line 7
+            "public class Example {\n"  # line 1
+            "    public void foo() {\n"  # line 2
+            "    }\n"  # line 3
+            "\n"  # line 4
+            "    public void bar() {\n"  # line 5
+            "    }\n"  # line 6
+            "}\n"  # line 7
         )
         symbols, _ = _parse_and_extract(source, "Example.java")
         foo = next(s for s in symbols if s["name"] == "foo")
@@ -1461,13 +1292,13 @@ class TestLineNumbers:
     def test_go_line_numbers(self):
         """Go symbols should have correct line_start."""
         source = (
-            "package main\n"             # line 1
-            "\n"                          # line 2
-            "func Alpha() {\n"            # line 3
-            "}\n"                         # line 4
-            "\n"                          # line 5
-            "func Beta() {\n"             # line 6
-            "}\n"                         # line 7
+            "package main\n"  # line 1
+            "\n"  # line 2
+            "func Alpha() {\n"  # line 3
+            "}\n"  # line 4
+            "\n"  # line 5
+            "func Beta() {\n"  # line 6
+            "}\n"  # line 7
         )
         symbols, _ = _parse_and_extract(source, "main.go")
         alpha = next(s for s in symbols if s["name"] == "Alpha")
@@ -1480,15 +1311,13 @@ class TestLineNumbers:
 # SIGNATURE TESTS
 # ===========================================================================
 
+
 class TestSignatures:
     """Verify that extracted symbols have meaningful signatures."""
 
     def test_python_function_signature(self):
         """Python function signature should include parameter names."""
-        source = (
-            "def calculate(a, b, *, mode='add'):\n"
-            "    pass\n"
-        )
+        source = "def calculate(a, b, *, mode='add'):\n    pass\n"
         symbols, _ = _parse_and_extract(source, "calc.py")
         func = next(s for s in symbols if s["name"] == "calculate")
         sig = func["signature"]
@@ -1497,13 +1326,7 @@ class TestSignatures:
 
     def test_java_method_signature(self):
         """Java method signature should include return type and params."""
-        source = (
-            "public class Calc {\n"
-            "    public int add(int a, int b) {\n"
-            "        return a + b;\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "public class Calc {\n    public int add(int a, int b) {\n        return a + b;\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "Calc.java")
         method = next(s for s in symbols if s["name"] == "add")
         sig = method["signature"]
@@ -1511,13 +1334,7 @@ class TestSignatures:
 
     def test_go_function_signature(self):
         """Go function signature should include func keyword and params."""
-        source = (
-            "package main\n"
-            "\n"
-            "func Process(input string, count int) (string, error) {\n"
-            '    return "", nil\n'
-            "}\n"
-        )
+        source = 'package main\n\nfunc Process(input string, count int) (string, error) {\n    return "", nil\n}\n'
         symbols, _ = _parse_and_extract(source, "proc.go")
         func = next(s for s in symbols if s["name"] == "Process")
         sig = func["signature"]
@@ -1529,24 +1346,27 @@ class TestSignatures:
 # INTEGRATION: CLI round-trip tests per language
 # ===========================================================================
 
+
 class TestPythonCLI:
     """CLI integration tests for Python extraction."""
 
     def test_python_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct Python skeleton."""
-        proj = project_factory({
-            "models.py": (
-                "class User:\n"
-                '    """A user model."""\n'
-                "    def __init__(self, name):\n"
-                "        self.name = name\n"
-                "    def greet(self):\n"
-                '        return f"Hello {self.name}"\n'
-                "    @property\n"
-                "    def display_name(self):\n"
-                "        return self.name.title()\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "models.py": (
+                    "class User:\n"
+                    '    """A user model."""\n'
+                    "    def __init__(self, name):\n"
+                    "        self.name = name\n"
+                    "    def greet(self):\n"
+                    '        return f"Hello {self.name}"\n'
+                    "    @property\n"
+                    "    def display_name(self):\n"
+                    "        return self.name.title()\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "models.py"])
         data = json.loads(result.output)
@@ -1563,24 +1383,26 @@ class TestJavaScriptCLI:
 
     def test_js_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct JS skeleton."""
-        proj = project_factory({
-            "server.js": (
-                "class Server {\n"
-                "    constructor(port) {\n"
-                "        this.port = port;\n"
-                "    }\n"
-                "    start() {\n"
-                "        console.log('started');\n"
-                "    }\n"
-                "}\n"
-                "\n"
-                "const DEFAULT_PORT = 3000;\n"
-                "\n"
-                "function createServer(port) {\n"
-                "    return new Server(port || DEFAULT_PORT);\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "server.js": (
+                    "class Server {\n"
+                    "    constructor(port) {\n"
+                    "        this.port = port;\n"
+                    "    }\n"
+                    "    start() {\n"
+                    "        console.log('started');\n"
+                    "    }\n"
+                    "}\n"
+                    "\n"
+                    "const DEFAULT_PORT = 3000;\n"
+                    "\n"
+                    "function createServer(port) {\n"
+                    "    return new Server(port || DEFAULT_PORT);\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "server.js"])
         data = json.loads(result.output)
@@ -1596,25 +1418,27 @@ class TestTypeScriptCLI:
 
     def test_ts_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct TS skeleton."""
-        proj = project_factory({
-            "types.ts": (
-                "export interface Config {\n"
-                "    host: string;\n"
-                "    port: number;\n"
-                "}\n"
-                "\n"
-                "export type LogLevel = 'debug' | 'info' | 'error';\n"
-                "\n"
-                "export class AppConfig implements Config {\n"
-                "    host: string = 'localhost';\n"
-                "    port: number = 8080;\n"
-                "\n"
-                "    validate(): boolean {\n"
-                "        return this.port > 0;\n"
-                "    }\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "types.ts": (
+                    "export interface Config {\n"
+                    "    host: string;\n"
+                    "    port: number;\n"
+                    "}\n"
+                    "\n"
+                    "export type LogLevel = 'debug' | 'info' | 'error';\n"
+                    "\n"
+                    "export class AppConfig implements Config {\n"
+                    "    host: string = 'localhost';\n"
+                    "    port: number = 8080;\n"
+                    "\n"
+                    "    validate(): boolean {\n"
+                    "        return this.port > 0;\n"
+                    "    }\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "types.ts"])
         data = json.loads(result.output)
@@ -1631,25 +1455,27 @@ class TestJavaCLI:
 
     def test_java_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct Java skeleton."""
-        proj = project_factory({
-            "App.java": (
-                "public class App {\n"
-                "    private String name;\n"
-                "\n"
-                "    public App(String name) {\n"
-                "        this.name = name;\n"
-                "    }\n"
-                "\n"
-                "    public String getName() {\n"
-                "        return name;\n"
-                "    }\n"
-                "\n"
-                "    public static void main(String[] args) {\n"
-                '        App app = new App("test");\n'
-                "    }\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "App.java": (
+                    "public class App {\n"
+                    "    private String name;\n"
+                    "\n"
+                    "    public App(String name) {\n"
+                    "        this.name = name;\n"
+                    "    }\n"
+                    "\n"
+                    "    public String getName() {\n"
+                    "        return name;\n"
+                    "    }\n"
+                    "\n"
+                    "    public static void main(String[] args) {\n"
+                    '        App app = new App("test");\n'
+                    "    }\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "App.java"])
         data = json.loads(result.output)
@@ -1666,23 +1492,25 @@ class TestGoCLI:
 
     def test_go_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct Go skeleton."""
-        proj = project_factory({
-            "handler.go": (
-                "package main\n"
-                "\n"
-                "type Handler struct {\n"
-                "    Name string\n"
-                "}\n"
-                "\n"
-                "func (h *Handler) Handle(req string) string {\n"
-                '    return "handled: " + req\n'
-                "}\n"
-                "\n"
-                "func NewHandler(name string) *Handler {\n"
-                "    return &Handler{Name: name}\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "handler.go": (
+                    "package main\n"
+                    "\n"
+                    "type Handler struct {\n"
+                    "    Name string\n"
+                    "}\n"
+                    "\n"
+                    "func (h *Handler) Handle(req string) string {\n"
+                    '    return "handled: " + req\n'
+                    "}\n"
+                    "\n"
+                    "func NewHandler(name string) *Handler {\n"
+                    "    return &Handler{Name: name}\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "handler.go"])
         data = json.loads(result.output)
@@ -1699,27 +1527,29 @@ class TestRustCLI:
 
     def test_rust_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct Rust skeleton."""
-        proj = project_factory({
-            "lib.rs": (
-                "pub struct Calculator {\n"
-                "    value: f64,\n"
-                "}\n"
-                "\n"
-                "impl Calculator {\n"
-                "    pub fn new() -> Self {\n"
-                "        Calculator { value: 0.0 }\n"
-                "    }\n"
-                "\n"
-                "    pub fn add(&mut self, x: f64) {\n"
-                "        self.value += x;\n"
-                "    }\n"
-                "}\n"
-                "\n"
-                "pub trait Resettable {\n"
-                "    fn reset(&mut self);\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "lib.rs": (
+                    "pub struct Calculator {\n"
+                    "    value: f64,\n"
+                    "}\n"
+                    "\n"
+                    "impl Calculator {\n"
+                    "    pub fn new() -> Self {\n"
+                    "        Calculator { value: 0.0 }\n"
+                    "    }\n"
+                    "\n"
+                    "    pub fn add(&mut self, x: f64) {\n"
+                    "        self.value += x;\n"
+                    "    }\n"
+                    "}\n"
+                    "\n"
+                    "pub trait Resettable {\n"
+                    "    fn reset(&mut self);\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "lib.rs"])
         data = json.loads(result.output)
@@ -1736,22 +1566,24 @@ class TestCCLI:
 
     def test_c_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct C skeleton."""
-        proj = project_factory({
-            "utils.c": (
-                "typedef struct {\n"
-                "    int length;\n"
-                "    int* data;\n"
-                "} Array;\n"
-                "\n"
-                "Array* array_create(int length) {\n"
-                "    return NULL;\n"
-                "}\n"
-                "\n"
-                "void array_free(Array* arr) {\n"
-                "    free(arr);\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "utils.c": (
+                    "typedef struct {\n"
+                    "    int length;\n"
+                    "    int* data;\n"
+                    "} Array;\n"
+                    "\n"
+                    "Array* array_create(int length) {\n"
+                    "    return NULL;\n"
+                    "}\n"
+                    "\n"
+                    "void array_free(Array* arr) {\n"
+                    "    free(arr);\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "utils.c"])
         data = json.loads(result.output)
@@ -1767,29 +1599,31 @@ class TestPhpCLI:
 
     def test_php_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct PHP skeleton."""
-        proj = project_factory({
-            "api.php": (
-                "<?php\n"
-                "interface Repository {\n"
-                "    public function find($id);\n"
-                "    public function save($entity);\n"
-                "}\n"
-                "\n"
-                "class UserRepository implements Repository {\n"
-                "    public function find($id) {\n"
-                "        return null;\n"
-                "    }\n"
-                "\n"
-                "    public function save($entity) {\n"
-                "        return true;\n"
-                "    }\n"
-                "}\n"
-                "\n"
-                "function create_repo() {\n"
-                "    return new UserRepository();\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "api.php": (
+                    "<?php\n"
+                    "interface Repository {\n"
+                    "    public function find($id);\n"
+                    "    public function save($entity);\n"
+                    "}\n"
+                    "\n"
+                    "class UserRepository implements Repository {\n"
+                    "    public function find($id) {\n"
+                    "        return null;\n"
+                    "    }\n"
+                    "\n"
+                    "    public function save($entity) {\n"
+                    "        return true;\n"
+                    "    }\n"
+                    "}\n"
+                    "\n"
+                    "function create_repo() {\n"
+                    "    return new UserRepository();\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "api.php"])
         data = json.loads(result.output)
@@ -1805,23 +1639,18 @@ class TestPhpCLI:
 # CROSS-LANGUAGE: Multi-file project tests
 # ===========================================================================
 
+
 class TestMultiLanguageProject:
     """Tests that verify multi-language projects index correctly."""
 
     def test_polyglot_search(self, project_factory, cli_runner, monkeypatch):
         """Search should find symbols across different languages."""
-        proj = project_factory({
-            "main.py": (
-                "class Handler:\n"
-                "    def handle(self):\n"
-                "        pass\n"
-            ),
-            "utils.js": (
-                "function Handler() {\n"
-                "    return { process: () => {} };\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "main.py": ("class Handler:\n    def handle(self):\n        pass\n"),
+                "utils.js": ("function Handler() {\n    return { process: () => {} };\n}\n"),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "search", "Handler"])
         data = json.loads(result.output)
@@ -1831,16 +1660,18 @@ class TestMultiLanguageProject:
 
     def test_language_detection_correct(self, project_factory, cli_runner, monkeypatch):
         """Each file should be detected with the correct language."""
-        proj = project_factory({
-            "app.py": "def main(): pass\n",
-            "app.js": "function main() {}\n",
-            "App.java": "public class App { void main() {} }\n",
-            "app.go": "package main\nfunc main() {}\n",
-            "app.rs": "fn main() {}\n",
-            "app.c": "int main() { return 0; }\n",
-            "app.php": "<?php\nfunction main() {}\n",
-            "app.ts": "function main(): void {}\n",
-        })
+        proj = project_factory(
+            {
+                "app.py": "def main(): pass\n",
+                "app.js": "function main() {}\n",
+                "App.java": "public class App { void main() {} }\n",
+                "app.go": "package main\nfunc main() {}\n",
+                "app.rs": "fn main() {}\n",
+                "app.c": "int main() { return 0; }\n",
+                "app.php": "<?php\nfunction main() {}\n",
+                "app.ts": "function main(): void {}\n",
+            }
+        )
         monkeypatch.chdir(proj)
 
         expected = {
@@ -1857,14 +1688,13 @@ class TestMultiLanguageProject:
         for path, lang in expected.items():
             result = invoke_cli(cli_runner, ["--json", "file", path])
             data = json.loads(result.output)
-            assert data["language"] == lang, (
-                f"Expected {path} to be {lang}, got {data['language']}"
-            )
+            assert data["language"] == lang, f"Expected {path} to be {lang}, got {data['language']}"
 
 
 # ===========================================================================
 # C# TESTS
 # ===========================================================================
+
 
 class TestCSharpExtraction:
     """Tests for C# symbol and reference extraction."""
@@ -1924,13 +1754,7 @@ class TestCSharpExtraction:
 
     def test_csharp_struct(self):
         """Struct should be extracted as 'struct' kind."""
-        source = (
-            "public struct Point\n"
-            "{\n"
-            "    public int X;\n"
-            "    public int Y;\n"
-            "}\n"
-        )
+        source = "public struct Point\n{\n    public int X;\n    public int Y;\n}\n"
         symbols, _ = _parse_and_extract(source, "Point.cs")
         names = [s["name"] for s in symbols]
         assert "Point" in names
@@ -1939,14 +1763,7 @@ class TestCSharpExtraction:
 
     def test_csharp_enum(self):
         """Enum with members should be extracted."""
-        source = (
-            "public enum Color\n"
-            "{\n"
-            "    Red,\n"
-            "    Green,\n"
-            "    Blue\n"
-            "}\n"
-        )
+        source = "public enum Color\n{\n    Red,\n    Green,\n    Blue\n}\n"
         symbols, _ = _parse_and_extract(source, "Color.cs")
         names = [s["name"] for s in symbols]
         assert "Color" in names
@@ -2058,7 +1875,7 @@ class TestCSharpExtraction:
             "{\n"
             "    public void Run()\n"
             "    {\n"
-            "        Console.WriteLine(\"hello\");\n"
+            '        Console.WriteLine("hello");\n'
             "        DoWork();\n"
             "    }\n"
             "\n"
@@ -2109,7 +1926,7 @@ class TestCSharpExtraction:
             "    public object Create()\n"
             "    {\n"
             "        var list = new List<string>();\n"
-            "        return new User(\"test\");\n"
+            '        return new User("test");\n'
             "    }\n"
             "}\n"
         )
@@ -2121,14 +1938,7 @@ class TestCSharpExtraction:
 
     def test_csharp_file_scoped_namespace(self):
         """File-scoped namespace (C# 10) should qualify types correctly."""
-        source = (
-            "namespace MyApp.Models;\n"
-            "\n"
-            "public class Order\n"
-            "{\n"
-            "    public int Id { get; set; }\n"
-            "}\n"
-        )
+        source = "namespace MyApp.Models;\n\npublic class Order\n{\n    public int Id { get; set; }\n}\n"
         symbols, _ = _parse_and_extract(source, "Order.cs")
         ns = next(s for s in symbols if s["kind"] == "module")
         assert ns["name"] == "MyApp.Models"
@@ -2137,15 +1947,7 @@ class TestCSharpExtraction:
 
     def test_csharp_nested_type_visibility(self):
         """Nested types should default to private visibility."""
-        source = (
-            "public class Outer\n"
-            "{\n"
-            "    class Inner\n"
-            "    {\n"
-            "        void Method() { }\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "public class Outer\n{\n    class Inner\n    {\n        void Method() { }\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "Nested.cs")
         inner = next(s for s in symbols if s["name"] == "Inner")
         assert inner["visibility"] == "private"
@@ -2155,13 +1957,7 @@ class TestCSharpExtraction:
 
     def test_csharp_interface_member_visibility(self):
         """Interface members should default to public visibility."""
-        source = (
-            "public interface IService\n"
-            "{\n"
-            "    void Execute();\n"
-            "    string Name { get; }\n"
-            "}\n"
-        )
+        source = "public interface IService\n{\n    void Execute();\n    string Name { get; }\n}\n"
         symbols, _ = _parse_and_extract(source, "IService.cs")
         method = next(s for s in symbols if s["name"] == "Execute")
         assert method["visibility"] == "public"
@@ -2189,11 +1985,7 @@ class TestCSharpExtractionExtra:
 
     def test_csharp_record_implementing_interface(self):
         """Record implementing interface should be extracted as class with implements ref."""
-        source = (
-            "public interface IBar { }\n"
-            "\n"
-            "public record Foo(string Name) : IBar;\n"
-        )
+        source = "public interface IBar { }\n\npublic record Foo(string Name) : IBar;\n"
         symbols, refs = _parse_and_extract(source, "RecordImpl.cs")
         foo = next(s for s in symbols if s["name"] == "Foo")
         assert foo["kind"] == "class"
@@ -2203,9 +1995,7 @@ class TestCSharpExtractionExtra:
 
     def test_csharp_record_struct(self):
         """Record struct should be extracted as struct kind."""
-        source = (
-            "public record struct Point(int X, int Y);\n"
-        )
+        source = "public record struct Point(int X, int Y);\n"
         symbols, _ = _parse_and_extract(source, "Point.cs")
         point = next(s for s in symbols if s["name"] == "Point")
         assert point["kind"] == "struct"
@@ -2231,15 +2021,7 @@ class TestCSharpExtractionExtra:
 
     def test_csharp_nested_namespaces(self):
         """Nested block-scoped namespaces should accumulate qualified names."""
-        source = (
-            "namespace Outer\n"
-            "{\n"
-            "    namespace Inner\n"
-            "    {\n"
-            "        public class Deep { }\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "namespace Outer\n{\n    namespace Inner\n    {\n        public class Deep { }\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "Nested.cs")
         modules = [s for s in symbols if s["kind"] == "module"]
         module_names = {s["qualified_name"] for s in modules}
@@ -2257,7 +2039,7 @@ class TestCSharpExtractionExtra:
             "public class Documented\n"
             "{\n"
             "    /// <summary>returns a greeting</summary>\n"
-            "    public string Greet() { return \"hi\"; }\n"
+            '    public string Greet() { return "hi"; }\n'
             "}\n"
         )
         symbols, _ = _parse_and_extract(source, "Documented.cs")
@@ -2317,22 +2099,23 @@ class TestCSharpExtractionExtra:
 # C# LINE NUMBERS AND SIGNATURES
 # ===========================================================================
 
+
 class TestCSharpLineNumbers:
     """Verify C# symbols have correct line numbers."""
 
     def test_csharp_line_numbers(self):
         """C# symbols should have correct line_start."""
         source = (
-            "public class Example\n"         # line 1
-            "{\n"                             # line 2
-            "    public void Foo()\n"         # line 3
-            "    {\n"                         # line 4
-            "    }\n"                         # line 5
-            "\n"                              # line 6
-            "    public void Bar()\n"         # line 7
-            "    {\n"                         # line 8
-            "    }\n"                         # line 9
-            "}\n"                             # line 10
+            "public class Example\n"  # line 1
+            "{\n"  # line 2
+            "    public void Foo()\n"  # line 3
+            "    {\n"  # line 4
+            "    }\n"  # line 5
+            "\n"  # line 6
+            "    public void Bar()\n"  # line 7
+            "    {\n"  # line 8
+            "    }\n"  # line 9
+            "}\n"  # line 10
         )
         symbols, _ = _parse_and_extract(source, "Example.cs")
         foo = next(s for s in symbols if s["name"] == "Foo")
@@ -2346,15 +2129,7 @@ class TestCSharpSignatures:
 
     def test_csharp_method_signature(self):
         """C# method signature should include return type and params."""
-        source = (
-            "public class Calc\n"
-            "{\n"
-            "    public int Add(int a, int b)\n"
-            "    {\n"
-            "        return a + b;\n"
-            "    }\n"
-            "}\n"
-        )
+        source = "public class Calc\n{\n    public int Add(int a, int b)\n    {\n        return a + b;\n    }\n}\n"
         symbols, _ = _parse_and_extract(source, "Calc.cs")
         method = next(s for s in symbols if s["name"] == "Add")
         assert method["signature"] is not None
@@ -2366,38 +2141,41 @@ class TestCSharpSignatures:
 # C# CLI INTEGRATION TESTS
 # ===========================================================================
 
+
 class TestCSharpCLI:
     """CLI integration tests for C# extraction."""
 
     def test_csharp_file_skeleton(self, project_factory, cli_runner, monkeypatch):
         """roam --json file should return correct C# skeleton."""
-        proj = project_factory({
-            "Models.cs": (
-                "namespace App.Models;\n"
-                "\n"
-                "public interface IEntity\n"
-                "{\n"
-                "    int Id { get; }\n"
-                "}\n"
-                "\n"
-                "public class User : IEntity\n"
-                "{\n"
-                "    public int Id { get; set; }\n"
-                "    public string Name { get; set; }\n"
-                "\n"
-                "    public User(int id, string name)\n"
-                "    {\n"
-                "        Id = id;\n"
-                "        Name = name;\n"
-                "    }\n"
-                "\n"
-                "    public string GetDisplayName()\n"
-                "    {\n"
-                "        return Name;\n"
-                "    }\n"
-                "}\n"
-            ),
-        })
+        proj = project_factory(
+            {
+                "Models.cs": (
+                    "namespace App.Models;\n"
+                    "\n"
+                    "public interface IEntity\n"
+                    "{\n"
+                    "    int Id { get; }\n"
+                    "}\n"
+                    "\n"
+                    "public class User : IEntity\n"
+                    "{\n"
+                    "    public int Id { get; set; }\n"
+                    "    public string Name { get; set; }\n"
+                    "\n"
+                    "    public User(int id, string name)\n"
+                    "    {\n"
+                    "        Id = id;\n"
+                    "        Name = name;\n"
+                    "    }\n"
+                    "\n"
+                    "    public string GetDisplayName()\n"
+                    "    {\n"
+                    "        return Name;\n"
+                    "    }\n"
+                    "}\n"
+                ),
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["--json", "file", "Models.cs"])
         data = json.loads(result.output)
@@ -2412,6 +2190,7 @@ class TestCSharpCLI:
 # ===========================================================================
 # C# ADDITIONAL REFERENCE EXTRACTION
 # ===========================================================================
+
 
 class TestCSharpReferenceExtraction:
     """Tests for additional C# reference extraction (catch, typeof, is/as, attributes)."""
@@ -2456,13 +2235,7 @@ class TestCSharpReferenceExtraction:
     def test_csharp_typeof_ref(self):
         """typeof(SomeType) should create a type_ref."""
         source = (
-            "public class Reflector\n"
-            "{\n"
-            "    public Type GetType()\n"
-            "    {\n"
-            "        return typeof(MyService);\n"
-            "    }\n"
-            "}\n"
+            "public class Reflector\n{\n    public Type GetType()\n    {\n        return typeof(MyService);\n    }\n}\n"
         )
         _, refs = _parse_and_extract(source, "Reflector.cs")
         type_refs = [r for r in refs if r["kind"] == "type_ref"]

@@ -14,7 +14,6 @@ Covers:
 from __future__ import annotations
 
 import json
-import os
 import sqlite3
 import sys
 from pathlib import Path
@@ -22,8 +21,7 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process, invoke_cli
-
+from conftest import git_commit, git_init, index_in_process, invoke_cli
 
 # ===========================================================================
 # Ticket 2 fixes: direct function-call tests (no CLI fixtures needed)
@@ -40,11 +38,11 @@ class TestSchemaPrefix:
         mig = tmp_path / "migrations" / "001.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'{$schema}.users\', function($table) {\n'
-            '    $table->id();\n'
-            '    $table->string(\'email\')->index();\n'
-            '});\n',
+            "<?php\n"
+            "Schema::create('{$schema}.users', function($table) {\n"
+            "    $table->id();\n"
+            "    $table->string('email')->index();\n"
+            "});\n",
             encoding="utf-8",
         )
 
@@ -62,11 +60,11 @@ class TestSchemaPrefix:
         mig = tmp_path / "migrations" / "002.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'orders\', function($table) {\n'
-            '    $table->id();\n'
-            '    $table->index([\'user_id\', \'created_at\']);\n'
-            '});\n',
+            "<?php\n"
+            "Schema::create('orders', function($table) {\n"
+            "    $table->id();\n"
+            "    $table->index(['user_id', 'created_at']);\n"
+            "});\n",
             encoding="utf-8",
         )
 
@@ -81,11 +79,11 @@ class TestSchemaPrefix:
         mig = tmp_path / "migrations" / "003.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'mydb.users\', function($table) {\n'
-            '    $table->id();\n'
-            '    $table->string(\'name\')->index();\n'
-            '});\n',
+            "<?php\n"
+            "Schema::create('mydb.users', function($table) {\n"
+            "    $table->id();\n"
+            "    $table->string('name')->index();\n"
+            "});\n",
             encoding="utf-8",
         )
 
@@ -104,12 +102,12 @@ class TestRawCreateIndex:
         mig = tmp_path / "migrations" / "004.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'orders\', function($table) {\n'
-            '    $table->id();\n'
-            '});\n'
-            '\n'
-            'DB::statement(\'CREATE INDEX idx_orders_status ON orders(status)\');\n',
+            "<?php\n"
+            "Schema::create('orders', function($table) {\n"
+            "    $table->id();\n"
+            "});\n"
+            "\n"
+            "DB::statement('CREATE INDEX idx_orders_status ON orders(status)');\n",
             encoding="utf-8",
         )
 
@@ -124,12 +122,12 @@ class TestRawCreateIndex:
         mig = tmp_path / "migrations" / "005.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'users\', function($table) {\n'
-            '    $table->id();\n'
-            '});\n'
-            '\n'
-            'DB::statement(\'CREATE UNIQUE INDEX idx_users_email ON users(email)\');\n',
+            "<?php\n"
+            "Schema::create('users', function($table) {\n"
+            "    $table->id();\n"
+            "});\n"
+            "\n"
+            "DB::statement('CREATE UNIQUE INDEX idx_users_email ON users(email)');\n",
             encoding="utf-8",
         )
 
@@ -144,12 +142,12 @@ class TestRawCreateIndex:
         mig = tmp_path / "migrations" / "006.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'orders\', function($table) {\n'
-            '    $table->id();\n'
-            '});\n'
-            '\n'
-            'DB::statement(\'CREATE INDEX idx_orders_multi ON orders(user_id, status)\');\n',
+            "<?php\n"
+            "Schema::create('orders', function($table) {\n"
+            "    $table->id();\n"
+            "});\n"
+            "\n"
+            "DB::statement('CREATE INDEX idx_orders_multi ON orders(user_id, status)');\n",
             encoding="utf-8",
         )
 
@@ -165,12 +163,12 @@ class TestRawCreateIndex:
         mig = tmp_path / "migrations" / "007.php"
         mig.parent.mkdir(parents=True)
         mig.write_text(
-            '<?php\n'
-            'Schema::create(\'items\', function($table) {\n'
-            '    $table->id();\n'
-            '});\n'
-            '\n'
-            'DB::statement(\'CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku)\');\n',
+            "<?php\n"
+            "Schema::create('items', function($table) {\n"
+            "    $table->id();\n"
+            "});\n"
+            "\n"
+            "DB::statement('CREATE INDEX IF NOT EXISTS idx_items_sku ON items(sku)');\n",
             encoding="utf-8",
         )
 
@@ -187,15 +185,15 @@ class TestInfoSchemaGuard:
         from roam.commands.cmd_migration_safety import _check_drop_column
 
         lines = [
-            '<?php\n',
-            'public function up() {\n',
-            '    $exists = DB::select("SELECT * FROM information_schema.columns WHERE column_name = \'old_col\'");\n',
-            '    if ($exists) {\n',
-            '        Schema::table(\'users\', function($table) {\n',
-            '            $table->dropColumn(\'old_col\');\n',
-            '        });\n',
-            '    }\n',
-            '}\n',
+            "<?php\n",
+            "public function up() {\n",
+            "    $exists = DB::select(\"SELECT * FROM information_schema.columns WHERE column_name = 'old_col'\");\n",
+            "    if ($exists) {\n",
+            "        Schema::table('users', function($table) {\n",
+            "            $table->dropColumn('old_col');\n",
+            "        });\n",
+            "    }\n",
+            "}\n",
         ]
         findings = _check_drop_column(lines, up_start=2, up_end=9)
         assert len(findings) == 0
@@ -205,12 +203,12 @@ class TestInfoSchemaGuard:
         from roam.commands.cmd_migration_safety import _check_drop_column
 
         lines = [
-            '<?php\n',
-            'public function up() {\n',
-            '    Schema::table(\'users\', function($table) {\n',
-            '        $table->dropColumn(\'old_col\');\n',
-            '    });\n',
-            '}\n',
+            "<?php\n",
+            "public function up() {\n",
+            "    Schema::table('users', function($table) {\n",
+            "        $table->dropColumn('old_col');\n",
+            "    });\n",
+            "}\n",
         ]
         findings = _check_drop_column(lines, up_start=2, up_end=6)
         assert len(findings) == 1
@@ -221,15 +219,15 @@ class TestInfoSchemaGuard:
         from roam.commands.cmd_migration_safety import _check_add_column
 
         lines = [
-            '<?php\n',
-            'public function up() {\n',
-            '    $exists = DB::select("SELECT * FROM information_schema.columns WHERE column_name = \'new_col\'");\n',
-            '    if (!$exists) {\n',
-            '        Schema::table(\'users\', function($table) {\n',
-            '            $table->string(\'new_col\');\n',
-            '        });\n',
-            '    }\n',
-            '}\n',
+            "<?php\n",
+            "public function up() {\n",
+            "    $exists = DB::select(\"SELECT * FROM information_schema.columns WHERE column_name = 'new_col'\");\n",
+            "    if (!$exists) {\n",
+            "        Schema::table('users', function($table) {\n",
+            "            $table->string('new_col');\n",
+            "        });\n",
+            "    }\n",
+            "}\n",
         ]
         findings = _check_add_column(lines, up_start=2, up_end=9)
         assert len(findings) == 0
@@ -239,15 +237,15 @@ class TestInfoSchemaGuard:
         from roam.commands.cmd_migration_safety import _check_index_creation
 
         lines = [
-            '<?php\n',
-            'public function up() {\n',
-            '    $exists = DB::select("SELECT * FROM information_schema.statistics WHERE index_name = \'idx_email\'");\n',
-            '    if (!$exists) {\n',
-            '        Schema::table(\'users\', function($table) {\n',
-            '            $table->index(\'email\');\n',
-            '        });\n',
-            '    }\n',
-            '}\n',
+            "<?php\n",
+            "public function up() {\n",
+            "    $exists = DB::select(\"SELECT * FROM information_schema.statistics WHERE index_name = 'idx_email'\");\n",
+            "    if (!$exists) {\n",
+            "        Schema::table('users', function($table) {\n",
+            "            $table->index('email');\n",
+            "        });\n",
+            "    }\n",
+            "}\n",
         ]
         findings = _check_index_creation(lines, up_start=2, up_end=9)
         assert len(findings) == 0
@@ -257,13 +255,13 @@ class TestInfoSchemaGuard:
         from roam.commands.cmd_migration_safety import _check_index_creation
 
         lines = [
-            '<?php\n',
-            'public function up() {\n',
-            '    $exists = DB::select("SELECT * FROM information_schema.statistics WHERE index_name = \'idx_email\'");\n',
-            '    if (!$exists) {\n',
+            "<?php\n",
+            "public function up() {\n",
+            "    $exists = DB::select(\"SELECT * FROM information_schema.statistics WHERE index_name = 'idx_email'\");\n",
+            "    if (!$exists) {\n",
             '        DB::statement("CREATE INDEX idx_email ON users(email)");\n',
-            '    }\n',
-            '}\n',
+            "    }\n",
+            "}\n",
         ]
         findings = _check_index_creation(lines, up_start=2, up_end=7)
         assert len(findings) == 0
@@ -284,16 +282,10 @@ def annotated_project(tmp_path):
     src = proj / "src"
     src.mkdir()
     (src / "auth.py").write_text(
-        'class User:\n'
-        '    def login(self, password):\n'
-        '        pass\n'
-        '\n'
-        'def create_user(name):\n'
-        '    return User()\n',
+        "class User:\n    def login(self, password):\n        pass\n\ndef create_user(name):\n    return User()\n",
     )
     (src / "utils.py").write_text(
-        'def helper():\n'
-        '    return 42\n',
+        "def helper():\n    return 42\n",
     )
 
     git_init(proj)
@@ -307,27 +299,52 @@ class TestAnnotateCommand:
 
     def test_annotate_symbol(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        result = invoke_cli(cli_runner, [
-            "annotate", "User", "Auth bypass risk via mass assignment",
-            "--tag", "security", "--author", "claude",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "Auth bypass risk via mass assignment",
+                "--tag",
+                "security",
+                "--author",
+                "claude",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Annotation saved" in result.output
 
     def test_annotate_file(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        result = invoke_cli(cli_runner, [
-            "annotate", "src/auth.py", "Needs refactor before v2",
-            "--tag", "wip",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "src/auth.py",
+                "Needs refactor before v2",
+                "--tag",
+                "wip",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Annotation saved" in result.output
 
     def test_annotate_json(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        result = invoke_cli(cli_runner, [
-            "annotate", "User", "test note", "--tag", "review",
-        ], cwd=annotated_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "test note",
+                "--tag",
+                "review",
+            ],
+            cwd=annotated_project,
+            json_mode=True,
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "annotate"
@@ -337,9 +354,15 @@ class TestAnnotateCommand:
     def test_annotate_unresolved_target(self, annotated_project, cli_runner, monkeypatch):
         """Annotating a non-existent symbol stores as qualified_name for future linking."""
         monkeypatch.chdir(annotated_project)
-        result = invoke_cli(cli_runner, [
-            "annotate", "FutureClass", "Placeholder note",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "FutureClass",
+                "Placeholder note",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Annotation saved" in result.output
 
@@ -356,55 +379,118 @@ class TestAnnotationsCommand:
     def test_read_after_write(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
         # Write
-        invoke_cli(cli_runner, [
-            "annotate", "User", "Important note", "--tag", "gotcha",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "Important note",
+                "--tag",
+                "gotcha",
+            ],
+            cwd=annotated_project,
+        )
         # Read
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Important note" in result.output
         assert "[gotcha]" in result.output
 
     def test_filter_by_tag(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "security issue", "--tag", "security",
-        ], cwd=annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "perf issue", "--tag", "performance",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "security issue",
+                "--tag",
+                "security",
+            ],
+            cwd=annotated_project,
+        )
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "perf issue",
+                "--tag",
+                "performance",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "annotations", "--tag", "security",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "--tag",
+                "security",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "security issue" in result.output
         assert "perf issue" not in result.output
 
     def test_expired_annotations_hidden(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "expired note",
-            "--expires", "2020-01-01",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "expired note",
+                "--expires",
+                "2020-01-01",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "expired note" not in result.output
 
     def test_annotations_json(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "json test", "--tag", "review", "--author", "bot",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "json test",
+                "--tag",
+                "review",
+                "--author",
+                "bot",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+            json_mode=True,
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["command"] == "annotations"
@@ -417,12 +503,28 @@ class TestAnnotationsCommand:
 
     def test_all_annotations(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "note1", "--tag", "security",
-        ], cwd=annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "src/auth.py", "note2", "--tag", "wip",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "note1",
+                "--tag",
+                "security",
+            ],
+            cwd=annotated_project,
+        )
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "src/auth.py",
+                "note2",
+                "--tag",
+                "wip",
+            ],
+            cwd=annotated_project,
+        )
 
         result = invoke_cli(cli_runner, ["annotations"], cwd=annotated_project)
         assert result.exit_code == 0
@@ -434,39 +536,80 @@ class TestContextAnnotationIntegration:
 
     def test_context_text_shows_annotations(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "Watch out for mass assignment",
-            "--tag", "security",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "Watch out for mass assignment",
+                "--tag",
+                "security",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "context", "User", "--task", "review",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "context",
+                "User",
+                "--task",
+                "review",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Annotations" in result.output
         assert "Watch out for mass assignment" in result.output
 
     def test_context_default_mode_shows_annotations(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "Default mode note",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "Default mode note",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "context", "User",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "context",
+                "User",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "Default mode note" in result.output
 
     def test_context_json_includes_annotations(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "JSON mode note", "--tag", "gotcha",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "JSON mode note",
+                "--tag",
+                "gotcha",
+            ],
+            cwd=annotated_project,
+        )
 
-        result = invoke_cli(cli_runner, [
-            "context", "User", "--task", "debug",
-        ], cwd=annotated_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "context",
+                "User",
+                "--task",
+                "debug",
+            ],
+            cwd=annotated_project,
+            json_mode=True,
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "annotations" in data
@@ -479,48 +622,84 @@ class TestReindexSurvival:
 
     def test_annotations_survive_incremental(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "survives incremental",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "survives incremental",
+            ],
+            cwd=annotated_project,
+        )
 
         # Add a new file and reindex
         (annotated_project / "src" / "new.py").write_text("def new_func(): pass\n")
         git_commit(annotated_project, "add new file")
         index_in_process(annotated_project)
 
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "survives incremental" in result.output
 
     def test_annotations_survive_force_reindex(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "survives force reindex", "--tag", "important",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "survives force reindex",
+                "--tag",
+                "important",
+            ],
+            cwd=annotated_project,
+        )
 
         # Force reindex (deletes and recreates DB)
         index_in_process(annotated_project, "--force")
 
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+        )
         assert result.exit_code == 0
         assert "survives force reindex" in result.output
 
     def test_annotation_relinked_after_force(self, annotated_project, cli_runner, monkeypatch):
         monkeypatch.chdir(annotated_project)
-        invoke_cli(cli_runner, [
-            "annotate", "User", "relinked note",
-        ], cwd=annotated_project)
+        invoke_cli(
+            cli_runner,
+            [
+                "annotate",
+                "User",
+                "relinked note",
+            ],
+            cwd=annotated_project,
+        )
 
         index_in_process(annotated_project, "--force")
 
         # Verify via JSON that symbol_id is populated (re-linked)
-        result = invoke_cli(cli_runner, [
-            "annotations", "User",
-        ], cwd=annotated_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            [
+                "annotations",
+                "User",
+            ],
+            cwd=annotated_project,
+            json_mode=True,
+        )
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert data["summary"]["count"] >= 1
@@ -587,10 +766,7 @@ class TestGatherAnnotationsHelper:
             "INSERT INTO annotations (symbol_id, qualified_name, content, expires_at) "
             "VALUES (1, 'MyClass', 'expired', '2020-01-01')"
         )
-        conn.execute(
-            "INSERT INTO annotations (symbol_id, qualified_name, content) "
-            "VALUES (1, 'MyClass', 'active')"
-        )
+        conn.execute("INSERT INTO annotations (symbol_id, qualified_name, content) VALUES (1, 'MyClass', 'active')")
         conn.commit()
 
         sym = {"id": 1, "qualified_name": "MyClass", "name": "MyClass"}

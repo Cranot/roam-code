@@ -5,16 +5,33 @@ from __future__ import annotations
 from collections import Counter
 
 import click
-
-from roam.db.connection import open_db, batched_in
-from roam.graph.builder import build_symbol_graph
-from roam.graph.layers import detect_layers, find_violations, format_layers
-from roam.output.formatter import abbrev_kind, loc, format_table, truncate_lines, to_json, json_envelope, summary_envelope
-from roam.output.mermaid import sanitize_id, node as mnode, edge as medge, subgraph as msubgraph, diagram as mdiagram
-from roam.commands.resolve import ensure_index
-
 import networkx as nx
 
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, open_db
+from roam.graph.builder import build_symbol_graph
+from roam.graph.layers import detect_layers, find_violations, format_layers
+from roam.output.formatter import (
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    summary_envelope,
+    to_json,
+    truncate_lines,
+)
+from roam.output.mermaid import (
+    diagram as mdiagram,
+)
+from roam.output.mermaid import (
+    edge as medge,
+)
+from roam.output.mermaid import (
+    node as mnode,
+)
+from roam.output.mermaid import (
+    subgraph as msubgraph,
+)
 
 _DIR_SQL = (
     "SELECT CASE WHEN INSTR(REPLACE(f.path, '\\', '/'), '/') > 0 "
@@ -52,15 +69,14 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations, mermaid=None
         if len(l["symbols"]) > 50:
             dir_counts = _layer_dir_breakdown(conn, layer_map, l["layer"])
             if dir_counts:
-                layer_dirs[l["layer"]] = [
-                    {"dir": d, "count": c} for d, c in dir_counts
-                ]
+                layer_dirs[l["layer"]] = [{"dir": d, "count": c} for d, c in dir_counts]
 
     extra = {}
     if mermaid is not None:
         extra["mermaid"] = mermaid
 
-    envelope = json_envelope("layers",
+    envelope = json_envelope(
+        "layers",
         summary={
             "total_layers": max_layer + 1,
             "violations": len(violations),
@@ -72,10 +88,7 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations, mermaid=None
                 "layer": l["layer"],
                 "symbol_count": len(l["symbols"]),
                 "directories": layer_dirs.get(l["layer"], []),
-                "symbols": [
-                    {"name": s["name"], "kind": s["kind"]}
-                    for s in l["symbols"][:50]
-                ],
+                "symbols": [{"name": s["name"], "kind": s["kind"]} for s in l["symbols"][:50]],
             }
             for l in formatted
         ],
@@ -193,8 +206,7 @@ def _layers_mermaid(conn, G, layer_map, formatted, max_layer):
             "GROUP BY f.path ORDER BY pr DESC",
             sym_ids,
         )
-        top_files = [{"path": r["path"].replace("\\", "/"), "pr": r["pr"]}
-                     for r in rows[:files_per_layer]]
+        top_files = [{"path": r["path"].replace("\\", "/"), "pr": r["pr"]} for r in rows[:files_per_layer]]
         if top_files:
             layer_files[layer_num] = top_files
 
@@ -260,31 +272,35 @@ def _print_violations(conn, violations):
     for v in violations[:30]:
         src = lookup.get(v["source"], {})
         tgt = lookup.get(v["target"], {})
-        v_rows.append([
-            src.get("name", "?"),
-            f"L{v['source_layer']}",
-            "->",
-            tgt.get("name", "?"),
-            f"L{v['target_layer']}",
-            loc(src.get("file_path", "?")),
-        ])
-    click.echo(format_table(
-        ["Source", "Layer", "", "Target", "Layer", "File"],
-        v_rows,
-        budget=30,
-    ))
+        v_rows.append(
+            [
+                src.get("name", "?"),
+                f"L{v['source_layer']}",
+                "->",
+                tgt.get("name", "?"),
+                f"L{v['target_layer']}",
+                loc(src.get("file_path", "?")),
+            ]
+        )
+    click.echo(
+        format_table(
+            ["Source", "Layer", "", "Target", "Layer", "File"],
+            v_rows,
+            budget=30,
+        )
+    )
     if len(violations) > 30:
         click.echo(f"  (+{len(violations) - 30} more)")
 
 
 @click.command()
-@click.option('--mermaid', 'mermaid_mode', is_flag=True, help='Output Mermaid diagram')
+@click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.pass_context
 def layers(ctx, mermaid_mode):
     """Show dependency layers and violations."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    detail = ctx.obj.get('detail', False) if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
@@ -292,11 +308,17 @@ def layers(ctx, mermaid_mode):
 
         if not layer_map:
             if json_mode:
-                click.echo(to_json(json_envelope("layers",
-                    summary={"total_layers": 0, "violations": 0},
-                    budget=token_budget,
-                    layers=[], violations=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "layers",
+                            summary={"total_layers": 0, "violations": 0},
+                            budget=token_budget,
+                            layers=[],
+                            violations=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No layers detected (graph is empty).")
             return
@@ -308,14 +330,30 @@ def layers(ctx, mermaid_mode):
         if mermaid_mode:
             mermaid_text = _layers_mermaid(conn, G, layer_map, formatted, max_layer)
             if json_mode:
-                _layers_json(conn, formatted, layer_map, max_layer, violations,
-                             mermaid=mermaid_text, detail=detail, token_budget=token_budget)
+                _layers_json(
+                    conn,
+                    formatted,
+                    layer_map,
+                    max_layer,
+                    violations,
+                    mermaid=mermaid_text,
+                    detail=detail,
+                    token_budget=token_budget,
+                )
             else:
                 click.echo(mermaid_text)
             return
 
         if json_mode:
-            _layers_json(conn, formatted, layer_map, max_layer, violations, detail=detail, token_budget=token_budget)
+            _layers_json(
+                conn,
+                formatted,
+                layer_map,
+                max_layer,
+                violations,
+                detail=detail,
+                token_budget=token_budget,
+            )
             return
 
         total_symbols = sum(len(l["symbols"]) for l in formatted)

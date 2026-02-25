@@ -3,6 +3,7 @@
 Provides reusable adjacency-list builders and BFS helpers used by
 cmd_coverage_gaps, cmd_entry_points, cmd_context, and cmd_safe_zones.
 """
+
 from __future__ import annotations
 
 from collections import defaultdict, deque

@@ -12,12 +12,10 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    parse_json_output,
     assert_json_envelope,
-    index_in_process,
     git_init,
+    index_in_process,
 )
-
 
 # ===========================================================================
 # Helper: invoke the invariants command directly (not via cli.py)
@@ -39,9 +37,7 @@ def run_invariants(proj, args=None, json_mode=False):
     try:
         os.chdir(str(proj))
         obj = {"json": json_mode}
-        result = runner.invoke(
-            invariants, full_args, obj=obj, catch_exceptions=False
-        )
+        result = runner.invoke(invariants, full_args, obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result
@@ -99,9 +95,7 @@ def invariants_project(tmp_path):
         "    return []\n"
     )
     (proj / "admin.py").write_text(
-        "from service import create_user\n\n"
-        "def admin_create(name, email):\n"
-        "    return create_user(name, email)\n"
+        "from service import create_user\n\ndef admin_create(name, email):\n    return create_user(name, email)\n"
     )
 
     git_init(proj)
@@ -118,13 +112,10 @@ def invariants_project(tmp_path):
 
 
 class TestInvariantsCommand:
-
     def test_invariants_runs(self, invariants_project):
         """Command exits 0 when given a valid target symbol."""
         result = run_invariants(invariants_project, ["create_user"])
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
 
     def test_invariants_json_envelope(self, invariants_project):
         """JSON output follows the roam envelope contract."""
@@ -168,9 +159,7 @@ class TestInvariantsCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         sym = data["symbols"][0]
-        assert sym["caller_count"] >= 2, (
-            f"Expected create_user to have >= 2 callers, got {sym['caller_count']}"
-        )
+        assert sym["caller_count"] >= 2, f"Expected create_user to have >= 2 callers, got {sym['caller_count']}"
 
     def test_invariants_file_spread(self, invariants_project):
         """create_user is used across at least 2 distinct files."""
@@ -178,18 +167,14 @@ class TestInvariantsCommand:
         assert result.exit_code == 0
         data = json.loads(result.output)
         sym = data["symbols"][0]
-        assert sym["file_spread"] >= 2, (
-            f"Expected create_user file_spread >= 2, got {sym['file_spread']}"
-        )
+        assert sym["file_spread"] >= 2, f"Expected create_user file_spread >= 2, got {sym['file_spread']}"
 
     def test_invariants_public_api_flag(self, invariants_project):
         """--public-api returns multiple symbols from the project."""
         result = run_invariants(invariants_project, ["--public-api"], json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
-        assert len(data["symbols"]) > 1, (
-            f"Expected multiple symbols with --public-api, got {len(data['symbols'])}"
-        )
+        assert len(data["symbols"]) > 1, f"Expected multiple symbols with --public-api, got {len(data['symbols'])}"
 
     def test_invariants_breaking_risk_flag(self, invariants_project):
         """--breaking-risk returns symbols sorted by breaking_risk descending."""
@@ -200,9 +185,7 @@ class TestInvariantsCommand:
         assert len(symbols) >= 1
         # Verify descending order
         risks = [s["breaking_risk"] for s in symbols]
-        assert risks == sorted(risks, reverse=True), (
-            f"Expected breaking_risk sorted descending, got {risks}"
-        )
+        assert risks == sorted(risks, reverse=True), f"Expected breaking_risk sorted descending, got {risks}"
 
     def test_invariants_verdict_line(self, invariants_project):
         """Text output starts with 'VERDICT:'."""
@@ -215,15 +198,11 @@ class TestInvariantsCommand:
     def test_invariants_no_target(self, invariants_project):
         """Running with no target and no flags gives a non-zero exit code."""
         result = run_invariants(invariants_project, [])
-        assert result.exit_code != 0, (
-            "Expected non-zero exit code when no target/flag given"
-        )
+        assert result.exit_code != 0, "Expected non-zero exit code when no target/flag given"
 
     def test_invariants_not_found(self, invariants_project):
         """Unknown symbol name gives exit 0 with a 'no symbols' verdict."""
-        result = run_invariants(
-            invariants_project, ["totally_unknown_symbol_xyz"], json_mode=True
-        )
+        result = run_invariants(invariants_project, ["totally_unknown_symbol_xyz"], json_mode=True)
         # Should exit 0 but report 0 symbols
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -239,9 +218,7 @@ class TestInvariantsCommand:
         # create_user has a signature -> SIGNATURE invariant should be present
         # (only when signature column is populated by the indexer)
         if sym.get("signature"):
-            assert "SIGNATURE" in inv_types, (
-                f"Expected SIGNATURE invariant for symbol with signature, got {inv_types}"
-            )
+            assert "SIGNATURE" in inv_types, f"Expected SIGNATURE invariant for symbol with signature, got {inv_types}"
 
     def test_invariants_file_target(self, invariants_project):
         """Passing a file path as target returns invariants for all symbols in that file."""
@@ -250,13 +227,10 @@ class TestInvariantsCommand:
         data = json.loads(result.output)
         # service.py has create_user, get_display, _private_helper (3 functions)
         assert data["summary"]["symbols_analyzed"] >= 2, (
-            f"Expected >= 2 symbols from service.py file target,"
-            f" got {data['summary']['symbols_analyzed']}"
+            f"Expected >= 2 symbols from service.py file target, got {data['summary']['symbols_analyzed']}"
         )
         names = [s["name"] for s in data["symbols"]]
-        assert any("create_user" in n for n in names), (
-            f"Expected create_user in symbols from service.py, got {names}"
-        )
+        assert any("create_user" in n for n in names), f"Expected create_user in symbols from service.py, got {names}"
 
     def test_invariants_summary_fields(self, invariants_project):
         """JSON summary contains required fields: verdict, symbols_analyzed, total_invariants, high_risk_count."""

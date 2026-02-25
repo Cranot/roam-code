@@ -19,20 +19,18 @@ Covers:
 """
 
 import json
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit, index_in_process
-
+from conftest import git_commit, git_init, index_in_process, roam
 
 # ============================================================================
 # Shared fixture: indexed project for v7 tests
 # ============================================================================
+
 
 @pytest.fixture(scope="module")
 def v7_project(tmp_path_factory):
@@ -40,74 +38,74 @@ def v7_project(tmp_path_factory):
     proj = tmp_path_factory.mktemp("v7features")
 
     (proj / "models.py").write_text(
-        'class User:\n'
+        "class User:\n"
         '    """A user model."""\n'
-        '    def __init__(self, name: str, email: str):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        '    def display(self):\n'
+        "    def __init__(self, name: str, email: str):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "    def display(self):\n"
         '        return f"{self.name} <{self.email}>"\n'
-        '\n'
-        'class Role:\n'
+        "\n"
+        "class Role:\n"
         '    """A role model."""\n'
-        '    def __init__(self, title):\n'
-        '        self.title = title\n'
+        "    def __init__(self, title):\n"
+        "        self.title = title\n"
     )
 
     (proj / "utils.py").write_text(
-        'def validate_email(email: str) -> bool:\n'
+        "def validate_email(email: str) -> bool:\n"
         '    """Check if email is valid."""\n'
         '    return "@" in email\n'
-        '\n'
-        'def format_name(first: str, last: str) -> str:\n'
+        "\n"
+        "def format_name(first: str, last: str) -> str:\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        'def unused_helper():\n'
+        "\n"
+        "def unused_helper():\n"
         '    """This function is never called."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
     (proj / "service.py").write_text(
-        'from models import User, Role\n'
-        'from utils import validate_email, format_name\n'
-        '\n'
-        'def create_user(name: str, email: str) -> User:\n'
+        "from models import User, Role\n"
+        "from utils import validate_email, format_name\n"
+        "\n"
+        "def create_user(name: str, email: str) -> User:\n"
         '    """Create and validate a user."""\n'
-        '    if not validate_email(email):\n'
+        "    if not validate_email(email):\n"
         '        raise ValueError("Invalid email")\n'
-        '    return User(name, email)\n'
-        '\n'
-        'def get_user_role(user: User) -> Role:\n'
+        "    return User(name, email)\n"
+        "\n"
+        "def get_user_role(user: User) -> Role:\n"
         '    """Get the role for a user."""\n'
         '    return Role("member")\n'
-        '\n'
-        'def list_users():\n'
+        "\n"
+        "def list_users():\n"
         '    """List all users."""\n'
-        '    return []\n'
+        "    return []\n"
     )
 
     (proj / "main.py").write_text(
-        'from service import create_user, list_users\n'
-        '\n'
-        'def main():\n'
+        "from service import create_user, list_users\n"
+        "\n"
+        "def main():\n"
         '    """Application entry point."""\n'
         '    user = create_user("Alice", "alice@example.com")\n'
-        '    print(user.display())\n'
-        '    print(list_users())\n'
-        '\n'
+        "    print(user.display())\n"
+        "    print(list_users())\n"
+        "\n"
         'if __name__ == "__main__":\n'
-        '    main()\n'
+        "    main()\n"
     )
 
     # Create test file for test detection
     tests_dir = proj / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_service.py").write_text(
-        'from service import create_user\n'
-        '\n'
-        'def test_create_user():\n'
+        "from service import create_user\n"
+        "\n"
+        "def test_create_user():\n"
         '    user = create_user("Bob", "bob@test.com")\n'
         '    assert user.name == "Bob"\n'
     )
@@ -116,23 +114,23 @@ def v7_project(tmp_path_factory):
 
     # Second commit for git history
     (proj / "service.py").write_text(
-        'from models import User, Role\n'
-        'from utils import validate_email, format_name\n'
-        '\n'
-        'def create_user(name: str, email: str) -> User:\n'
+        "from models import User, Role\n"
+        "from utils import validate_email, format_name\n"
+        "\n"
+        "def create_user(name: str, email: str) -> User:\n"
         '    """Create and validate a user."""\n'
-        '    if not validate_email(email):\n'
+        "    if not validate_email(email):\n"
         '        raise ValueError("Invalid email")\n'
         '    full = format_name(name, "")\n'
-        '    return User(full, email)\n'
-        '\n'
-        'def get_user_role(user: User) -> Role:\n'
+        "    return User(full, email)\n"
+        "\n"
+        "def get_user_role(user: User) -> Role:\n"
         '    """Get the role for a user."""\n'
         '    return Role("member")\n'
-        '\n'
-        'def list_users():\n'
+        "\n"
+        "def list_users():\n"
         '    """List all users."""\n'
-        '    return []\n'
+        "    return []\n"
     )
     git_commit(proj, "refactor service")
 
@@ -144,6 +142,7 @@ def v7_project(tmp_path_factory):
 # ============================================================================
 # SARIF Output Module
 # ============================================================================
+
 
 class TestSARIF:
     def test_sarif_dead_to_sarif(self):
@@ -172,8 +171,20 @@ class TestSARIF:
         from roam.output.sarif import complexity_to_sarif
 
         symbols = [
-            {"name": "simple_fn", "kind": "function", "file": "a.py", "line": 1, "cognitive_complexity": 5},
-            {"name": "complex_fn", "kind": "function", "file": "b.py", "line": 10, "cognitive_complexity": 30},
+            {
+                "name": "simple_fn",
+                "kind": "function",
+                "file": "a.py",
+                "line": 1,
+                "cognitive_complexity": 5,
+            },
+            {
+                "name": "complex_fn",
+                "kind": "function",
+                "file": "b.py",
+                "line": 10,
+                "cognitive_complexity": 30,
+            },
         ]
         sarif = complexity_to_sarif(symbols, threshold=20)
 
@@ -186,8 +197,18 @@ class TestSARIF:
         from roam.output.sarif import fitness_to_sarif
 
         violations = [
-            {"rule": "No test imports", "type": "dependency", "message": "foo -> bar", "source": "src/a.py:5"},
-            {"rule": "Max complexity", "type": "metric", "message": "cc=30", "source": "src/b.py:10"},
+            {
+                "rule": "No test imports",
+                "type": "dependency",
+                "message": "foo -> bar",
+                "source": "src/a.py:5",
+            },
+            {
+                "rule": "Max complexity",
+                "type": "metric",
+                "message": "cc=30",
+                "source": "src/b.py:10",
+            },
         ]
         sarif = fitness_to_sarif(violations)
 
@@ -202,10 +223,21 @@ class TestSARIF:
 
         issues = {
             "cycles": [
-                {"size": 3, "severity": "HIGH", "symbols": ["a", "b", "c"], "files": ["f1.py", "f2.py"]},
+                {
+                    "size": 3,
+                    "severity": "HIGH",
+                    "symbols": ["a", "b", "c"],
+                    "files": ["f1.py", "f2.py"],
+                },
             ],
             "god_components": [
-                {"name": "God", "kind": "class", "degree": 50, "file": "god.py", "severity": "CRITICAL"},
+                {
+                    "name": "God",
+                    "kind": "class",
+                    "degree": 50,
+                    "file": "god.py",
+                    "severity": "CRITICAL",
+                },
             ],
             "bottlenecks": [],
             "layer_violations": [],
@@ -223,9 +255,25 @@ class TestSARIF:
 
         changes = {
             "removed": [{"name": "old_fn", "kind": "function", "file": "a.py", "line": 5}],
-            "signature_changed": [{"name": "changed_fn", "kind": "function", "file": "b.py", "line": 10,
-                                   "old_signature": "(a)", "new_signature": "(a, b)"}],
-            "renamed": [{"old_name": "foo", "new_name": "bar", "kind": "function", "file": "c.py", "line": 15}],
+            "signature_changed": [
+                {
+                    "name": "changed_fn",
+                    "kind": "function",
+                    "file": "b.py",
+                    "line": 10,
+                    "old_signature": "(a)",
+                    "new_signature": "(a, b)",
+                }
+            ],
+            "renamed": [
+                {
+                    "old_name": "foo",
+                    "new_name": "bar",
+                    "kind": "function",
+                    "file": "c.py",
+                    "line": 15,
+                }
+            ],
         }
         sarif = breaking_to_sarif(changes)
 
@@ -241,8 +289,14 @@ class TestSARIF:
         from roam.output.sarif import conventions_to_sarif
 
         violations = [
-            {"name": "badName", "kind": "function", "actual_style": "camelCase",
-             "expected_style": "snake_case", "file": "a.py", "line": 5},
+            {
+                "name": "badName",
+                "kind": "function",
+                "actual_style": "camelCase",
+                "expected_style": "snake_case",
+                "file": "a.py",
+                "line": 5,
+            },
         ]
         sarif = conventions_to_sarif(violations)
 
@@ -267,6 +321,7 @@ class TestSARIF:
 # ============================================================================
 # roam init
 # ============================================================================
+
 
 class TestInit:
     def test_init_creates_files(self, tmp_path):
@@ -330,6 +385,7 @@ class TestInit:
 # roam digest
 # ============================================================================
 
+
 class TestDigest:
     def test_digest_no_snapshots(self, v7_project):
         """roam digest should explain when no snapshots exist."""
@@ -368,6 +424,7 @@ class TestDigest:
 # roam describe --agent-prompt
 # ============================================================================
 
+
 class TestDescribeAgentPrompt:
     def test_agent_prompt_text(self, v7_project):
         """roam describe --agent-prompt should produce compact text output."""
@@ -397,17 +454,18 @@ class TestDescribeAgentPrompt:
 # roam fitness --explain with reason/link
 # ============================================================================
 
+
 class TestFitnessReasonLink:
     def test_fitness_with_reason(self, v7_project):
         """Fitness rules with reason field should display in output."""
         config = v7_project / ".roam" / "fitness.yaml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(
-            'rules:\n'
+            "rules:\n"
             '  - name: "Max complexity"\n'
-            '    type: metric\n'
-            '    metric: cognitive_complexity\n'
-            '    max: 1\n'
+            "    type: metric\n"
+            "    metric: cognitive_complexity\n"
+            "    max: 1\n"
             '    reason: "Keep functions simple"\n'
             '    link: "https://example.com/rules"\n'
         )
@@ -420,11 +478,11 @@ class TestFitnessReasonLink:
         config = v7_project / ".roam" / "fitness.yaml"
         config.parent.mkdir(parents=True, exist_ok=True)
         config.write_text(
-            'rules:\n'
+            "rules:\n"
             '  - name: "Test rule"\n'
-            '    type: metric\n'
-            '    metric: cognitive_complexity\n'
-            '    max: 1\n'
+            "    type: metric\n"
+            "    metric: cognitive_complexity\n"
+            "    max: 1\n"
             '    reason: "Test reason"\n'
             '    link: "https://test.com"\n'
         )
@@ -440,6 +498,7 @@ class TestFitnessReasonLink:
 # ============================================================================
 # roam file multi-file mode
 # ============================================================================
+
 
 class TestFileMulti:
     def test_file_multi(self, v7_project):
@@ -470,6 +529,7 @@ class TestFileMulti:
 # roam context --for-file
 # ============================================================================
 
+
 class TestContextForFile:
     def test_context_for_file_text(self, v7_project):
         """roam context --for-file should show file-level context."""
@@ -494,6 +554,7 @@ class TestContextForFile:
 # ============================================================================
 # roam bus-factor --brain-methods / entropy
 # ============================================================================
+
 
 class TestBusFactorEnhanced:
     def test_bus_factor_has_entropy(self, v7_project):
@@ -524,6 +585,7 @@ class TestBusFactorEnhanced:
 # --compact flag
 # ============================================================================
 
+
 class TestCompactMode:
     def test_compact_flag_accepted(self, v7_project):
         """roam --compact should be accepted as a valid CLI flag."""
@@ -546,6 +608,7 @@ class TestCompactMode:
 # ============================================================================
 # --gate expressions
 # ============================================================================
+
 
 class TestGateExpressions:
     def test_gate_check_function(self):
@@ -580,6 +643,7 @@ class TestGateExpressions:
 # Categorized --help
 # ============================================================================
 
+
 class TestCategorizedHelp:
     def test_help_has_categories(self):
         """roam --help should show categorized command groups."""
@@ -599,6 +663,7 @@ class TestCategorizedHelp:
 # elif complexity fix (SonarSource spec)
 # ============================================================================
 
+
 class TestElifComplexityFix:
     def test_elif_no_nesting_penalty(self, tmp_path):
         """elif chains should get +1 per branch, NOT +depth."""
@@ -608,14 +673,14 @@ class TestElifComplexityFix:
         # This function has: if (+1) + elif (+1) + elif (+1) + else (+1) = 4
         # NOT: if (+1) + elif (+2 with depth) + elif (+3 with depth) + else (+4 with depth)
         (proj / "classify.py").write_text(
-            'def classify(x):\n'
-            '    if x > 100:\n'
+            "def classify(x):\n"
+            "    if x > 100:\n"
             '        return "big"\n'
-            '    elif x > 50:\n'
+            "    elif x > 50:\n"
             '        return "medium"\n'
-            '    elif x > 10:\n'
+            "    elif x > 10:\n"
             '        return "small"\n'
-            '    else:\n'
+            "    else:\n"
             '        return "tiny"\n'
         )
         git_init(proj)
@@ -646,11 +711,11 @@ class TestElifComplexityFix:
 
         # if (+1) + elif (+1) + nested if inside elif (+1+1 depth) = 4
         (proj / "nested.py").write_text(
-            'def check(x, y):\n'
-            '    if x > 0:\n'
+            "def check(x, y):\n"
+            "    if x > 0:\n"
             '        return "positive"\n'
-            '    elif x < 0:\n'
-            '        if y > 0:\n'
+            "    elif x < 0:\n"
+            "        if y > 0:\n"
             '            return "mixed"\n'
             '        return "negative"\n'
         )
@@ -676,6 +741,7 @@ class TestElifComplexityFix:
 # ============================================================================
 # Composite health score + tangle ratio
 # ============================================================================
+
 
 class TestCompositeHealth:
     def test_health_shows_tangle(self, v7_project):
@@ -706,6 +772,7 @@ class TestCompositeHealth:
 # Snapshot new fields
 # ============================================================================
 
+
 class TestSnapshotNewFields:
     def test_snapshot_stores_new_fields(self, v7_project):
         """Snapshot should include tangle_ratio, avg_complexity, brain_methods."""
@@ -727,10 +794,12 @@ class TestSnapshotNewFields:
 # Per-file health score
 # ============================================================================
 
+
 class TestPerFileHealth:
     def test_file_health_scores_computed(self, v7_project):
         """After indexing, file_stats should have health_score values."""
         import sqlite3
+
         from roam.db.connection import get_db_path
 
         db_path = get_db_path(Path(v7_project))
@@ -755,10 +824,12 @@ class TestPerFileHealth:
 # Co-change entropy
 # ============================================================================
 
+
 class TestCoChangeEntropy:
     def test_cochange_entropy_stored(self, v7_project):
         """After indexing, file_stats should have cochange_entropy values."""
         import sqlite3
+
         from roam.db.connection import get_db_path
 
         db_path = get_db_path(Path(v7_project))
@@ -782,12 +853,14 @@ class TestCoChangeEntropy:
 # collect_metrics (used by snapshot/trend)
 # ============================================================================
 
+
 class TestCollectMetrics:
     def test_collect_metrics_returns_new_fields(self, v7_project):
         """collect_metrics should return tangle_ratio, avg_complexity, brain_methods."""
         import sqlite3
-        from roam.db.connection import get_db_path
+
         from roam.commands.metrics_history import collect_metrics
+        from roam.db.connection import get_db_path
 
         db_path = get_db_path(Path(v7_project))
         conn = sqlite3.connect(str(db_path))
@@ -807,10 +880,12 @@ class TestCollectMetrics:
 # DB migrations
 # ============================================================================
 
+
 class TestDBMigrations:
     def test_safe_alter_idempotent(self):
         """_safe_alter should not fail when column already exists."""
         import sqlite3
+
         from roam.db.connection import _safe_alter
 
         conn = sqlite3.connect(":memory:")
@@ -828,27 +903,32 @@ class TestDBMigrations:
 # Contribution entropy (bus-factor helper)
 # ============================================================================
 
+
 class TestContributionEntropy:
     def test_single_author(self):
         """Single author should have entropy 0."""
         from roam.commands.cmd_bus_factor import _contribution_entropy
+
         assert _contribution_entropy([1.0]) == 0.0
 
     def test_equal_distribution(self):
         """Equal distribution should have entropy 1.0."""
         from roam.commands.cmd_bus_factor import _contribution_entropy
+
         entropy = _contribution_entropy([0.5, 0.5])
         assert abs(entropy - 1.0) < 0.01
 
     def test_skewed_distribution(self):
         """Skewed distribution should have low entropy."""
         from roam.commands.cmd_bus_factor import _contribution_entropy
+
         entropy = _contribution_entropy([0.9, 0.05, 0.05])
         assert entropy < 0.7
 
     def test_knowledge_risk_labels(self):
         """Knowledge risk labels should map correctly."""
         from roam.commands.cmd_bus_factor import _knowledge_risk_label
+
         assert _knowledge_risk_label(0.1) == "CRITICAL"
         assert _knowledge_risk_label(0.4) == "HIGH"
         assert _knowledge_risk_label(0.6) == "MEDIUM"
@@ -859,10 +939,12 @@ class TestContributionEntropy:
 # SARIF internal helpers
 # ============================================================================
 
+
 class TestSARIFHelpers:
     def test_parse_loc_string(self):
         """_parse_loc_string should split path:line."""
         from roam.output.sarif import _parse_loc_string
+
         path, line = _parse_loc_string("src/foo.py:42")
         assert path == "src/foo.py"
         assert line == 42
@@ -870,6 +952,7 @@ class TestSARIFHelpers:
     def test_parse_loc_string_no_line(self):
         """_parse_loc_string should handle path without line."""
         from roam.output.sarif import _parse_loc_string
+
         path, line = _parse_loc_string("src/foo.py")
         assert path == "src/foo.py"
         assert line is None
@@ -877,6 +960,7 @@ class TestSARIFHelpers:
     def test_slugify(self):
         """_slugify should produce URL-safe strings."""
         from roam.output.sarif import _slugify
+
         assert _slugify("No Test Imports") == "no-test-imports"
         assert _slugify("Max Complexity!") == "max-complexity"
 
@@ -885,10 +969,12 @@ class TestSARIFHelpers:
 # Formatter compact helpers
 # ============================================================================
 
+
 class TestFormatterCompact:
     def test_compact_json_envelope(self):
         """compact_json_envelope should produce minimal output."""
         from roam.output.formatter import compact_json_envelope
+
         result = compact_json_envelope("health", score=85)
         assert result["command"] == "health"
         assert result["score"] == 85
@@ -900,6 +986,7 @@ class TestFormatterCompact:
     def test_format_table_compact(self):
         """format_table_compact should produce TSV output."""
         from roam.output.formatter import format_table_compact
+
         result = format_table_compact(["a", "b"], [["1", "2"], ["3", "4"]])
         lines = result.split("\n")
         assert lines[0] == "a\tb"
@@ -909,6 +996,7 @@ class TestFormatterCompact:
     def test_format_table_compact_budget(self):
         """format_table_compact with budget should truncate."""
         from roam.output.formatter import format_table_compact
+
         rows = [["1", "a"], ["2", "b"], ["3", "c"], ["4", "d"]]
         result = format_table_compact(["x", "y"], rows, budget=2)
         assert "(+2 more)" in result
@@ -916,4 +1004,5 @@ class TestFormatterCompact:
     def test_format_table_compact_empty(self):
         """format_table_compact with empty rows should return (none)."""
         from roam.output.formatter import format_table_compact
+
         assert format_table_compact(["a"], []) == "(none)"

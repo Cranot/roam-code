@@ -38,9 +38,7 @@ def detect_clusters(G: nx.DiGraph) -> dict[int, int]:
     return mapping
 
 
-def label_clusters(
-    clusters: dict[int, int], conn: sqlite3.Connection
-) -> dict[int, str]:
+def label_clusters(clusters: dict[int, int], conn: sqlite3.Connection) -> dict[int, str]:
     """Generate human-readable labels for clusters.
 
     Strategy:
@@ -79,7 +77,8 @@ def label_clusters(
     for r in rows:
         id_to_path[r["id"]] = r["path"]
         id_to_info[r["id"]] = {
-            "name": r["name"], "kind": r["kind"],
+            "name": r["name"],
+            "kind": r["kind"],
             "pagerank": r["pagerank"],
         }
 
@@ -88,10 +87,7 @@ def label_clusters(
 
     for cid, members in groups.items():
         # Determine directory distribution
-        dirs = [
-            os.path.dirname(id_to_path[m]).replace("\\", "/")
-            for m in members if m in id_to_path
-        ]
+        dirs = [os.path.dirname(id_to_path[m]).replace("\\", "/") for m in members if m in id_to_path]
         dir_counts = Counter(dirs) if dirs else Counter()
         most_common_dir = dir_counts.most_common(1)[0][0] if dir_counts else ""
         short_dir = most_common_dir.rstrip("/").rsplit("/", 1)[-1] if most_common_dir else ""
@@ -129,8 +125,9 @@ def label_clusters(
 
         # Fallback: use most common anchor name
         if best_name is None:
-            stems = [id_to_info[m]["name"] for m in members
-                     if m in id_to_info and id_to_info[m]["kind"] in _ANCHOR_KINDS]
+            stems = [
+                id_to_info[m]["name"] for m in members if m in id_to_info and id_to_info[m]["kind"] in _ANCHOR_KINDS
+            ]
             if not stems:
                 stems = [id_to_info[m]["name"] for m in members if m in id_to_info]
             if stems:
@@ -148,9 +145,7 @@ def label_clusters(
     return labels
 
 
-def cluster_quality(
-    G: nx.DiGraph, clusters: dict[int, int]
-) -> dict:
+def cluster_quality(G: nx.DiGraph, clusters: dict[int, int]) -> dict:
     """Compute quality metrics for the detected community structure.
 
     Returns a dict with:
@@ -228,13 +223,9 @@ def store_clusters(
     if not clusters:
         return 0
 
-    rows = [
-        (node_id, cid, labels.get(cid, f"cluster-{cid}"))
-        for node_id, cid in clusters.items()
-    ]
+    rows = [(node_id, cid, labels.get(cid, f"cluster-{cid}")) for node_id, cid in clusters.items()]
     conn.executemany(
-        "INSERT OR REPLACE INTO clusters (symbol_id, cluster_id, cluster_label) "
-        "VALUES (?, ?, ?)",
+        "INSERT OR REPLACE INTO clusters (symbol_id, cluster_id, cluster_label) VALUES (?, ?, ?)",
         rows,
     )
     conn.commit()
@@ -282,12 +273,14 @@ def compare_with_directories(conn: sqlite3.Connection) -> list[dict]:
             dir_counts = Counter(info["dirs"])
             majority_count = dir_counts.most_common(1)[0][1]
             mismatch_count = len(info["dirs"]) - majority_count
-            result.append({
-                "cluster_id": cid,
-                "cluster_label": info["label"],
-                "directories": unique_dirs,
-                "mismatch_count": mismatch_count,
-            })
+            result.append(
+                {
+                    "cluster_id": cid,
+                    "cluster_label": info["label"],
+                    "directories": unique_dirs,
+                    "mismatch_count": mismatch_count,
+                }
+            )
 
     result.sort(key=lambda r: r["mismatch_count"], reverse=True)
     return result

@@ -9,38 +9,108 @@ import subprocess
 from pathlib import Path
 
 # Extensions that are not source code
-SKIP_EXTENSIONS = frozenset({
-    ".lock", ".min.js", ".min.css", ".map",
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
-    ".pyc", ".pyo", ".class", ".jar",
-    ".db", ".sqlite", ".sqlite3",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
-    ".bin", ".dat", ".pak", ".wasm",
-    # Visual FoxPro companion files (read as part of .scx processing)
-    ".sct",
-})
+SKIP_EXTENSIONS = frozenset(
+    {
+        ".lock",
+        ".min.js",
+        ".min.css",
+        ".map",
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".webp",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".o",
+        ".a",
+        ".lib",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".jar",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".bin",
+        ".dat",
+        ".pak",
+        ".wasm",
+        # Visual FoxPro companion files (read as part of .scx processing)
+        ".sct",
+    }
+)
 
 # Filenames to always skip
-SKIP_NAMES = frozenset({
-    "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
-    "Cargo.lock", "poetry.lock", "composer.lock",
-    "Gemfile.lock", "Pipfile.lock",
-})
+SKIP_NAMES = frozenset(
+    {
+        "package-lock.json",
+        "yarn.lock",
+        "pnpm-lock.yaml",
+        "Cargo.lock",
+        "poetry.lock",
+        "composer.lock",
+        "Gemfile.lock",
+        "Pipfile.lock",
+    }
+)
 
 # Directories to skip during os.walk fallback
-SKIP_DIRS = frozenset({
-    ".git", ".hg", ".svn", "node_modules", "__pycache__",
-    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "venv", ".venv", "env", ".env",
-    "dist", "build", ".eggs", "*.egg-info",
-    ".next", ".nuxt", ".output",
-    "target", "bin", "obj",
-    ".roam",
-})
+SKIP_DIRS = frozenset(
+    {
+        ".git",
+        ".hg",
+        ".svn",
+        "node_modules",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "venv",
+        ".venv",
+        "env",
+        ".env",
+        "dist",
+        "build",
+        ".eggs",
+        "*.egg-info",
+        ".next",
+        ".nuxt",
+        ".output",
+        "target",
+        "bin",
+        "obj",
+        ".roam",
+    }
+)
 
 MAX_FILE_SIZE = 1_000_000  # 1MB
 
@@ -191,10 +261,7 @@ def _walk_files(root: Path) -> list[str]:
     result = []
     for dirpath, dirnames, filenames in os.walk(root):
         # Filter out skippable directories in place
-        dirnames[:] = [
-            d for d in dirnames
-            if d not in SKIP_DIRS and not d.startswith(".")
-        ]
+        dirnames[:] = [d for d in dirnames if d not in SKIP_DIRS and not d.startswith(".")]
         for fname in filenames:
             full = os.path.join(dirpath, fname)
             try:
@@ -262,7 +329,8 @@ def discover_files(root: Path, include_excluded: bool = False) -> list[str]:
 
     exclude_patterns = load_exclude_patterns(root)
     filtered = _filter_files(
-        raw, root,
+        raw,
+        root,
         exclude_patterns=exclude_patterns,
         include_excluded=include_excluded,
     )

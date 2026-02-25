@@ -8,10 +8,10 @@ Covers:
 
 from __future__ import annotations
 
-
 # ===========================================================================
 # 1. I.10.3 - _infer_table_from_context stops at semicolon boundaries
 # ===========================================================================
+
 
 class TestInferTableStopsAtSemicolon:
     """Cross-model attribution should not bleed across statement boundaries."""
@@ -85,6 +85,7 @@ class TestInferTableStopsAtSemicolon:
 # ===========================================================================
 # 2. I.10.6 - ServiceProvider route registration detection
 # ===========================================================================
+
 
 class TestAuthGapsServiceProvider:
     """ServiceProvider boot() routes wrapped in auth middleware should mark
@@ -190,28 +191,33 @@ class ApiServiceProvider extends ServiceProvider
 # 3. JSONC / MDX grammar aliases
 # ===========================================================================
 
+
 class TestJsoncExtension:
     """JSONC files should be recognized by the language registry."""
 
     def test_jsonc_extension_detected(self):
         """A .jsonc file should be detected as the 'jsonc' language."""
         from roam.languages.registry import get_language_for_file
+
         lang = get_language_for_file("tsconfig.jsonc")
         assert lang == "jsonc"
 
     def test_jsonc_in_supported_languages(self):
         """jsonc should be in the set of supported languages."""
         from roam.languages.registry import get_supported_languages
+
         assert "jsonc" in get_supported_languages()
 
     def test_jsonc_grammar_alias(self):
         """jsonc should alias to the json tree-sitter grammar."""
         from roam.index.parser import GRAMMAR_ALIASES
+
         assert GRAMMAR_ALIASES.get("jsonc") == "json"
 
     def test_jsonc_in_extension_map(self):
         """The .jsonc extension should appear in supported extensions."""
         from roam.languages.registry import get_supported_extensions
+
         assert ".jsonc" in get_supported_extensions()
 
 
@@ -221,20 +227,24 @@ class TestMdxExtension:
     def test_mdx_extension_detected(self):
         """A .mdx file should be detected as the 'mdx' language."""
         from roam.languages.registry import get_language_for_file
+
         lang = get_language_for_file("page.mdx")
         assert lang == "mdx"
 
     def test_mdx_in_supported_languages(self):
         """mdx should be in the set of supported languages."""
         from roam.languages.registry import get_supported_languages
+
         assert "mdx" in get_supported_languages()
 
     def test_mdx_grammar_alias(self):
         """mdx should alias to the markdown tree-sitter grammar."""
         from roam.index.parser import GRAMMAR_ALIASES
+
         assert GRAMMAR_ALIASES.get("mdx") == "markdown"
 
     def test_mdx_in_extension_map(self):
         """The .mdx extension should appear in supported extensions."""
         from roam.languages.registry import get_supported_extensions
+
         assert ".mdx" in get_supported_extensions()

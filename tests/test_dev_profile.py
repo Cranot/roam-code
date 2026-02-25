@@ -2,18 +2,12 @@
 
 from __future__ import annotations
 
-import json
-import math
-import os
 import subprocess
-from collections import Counter
-from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
-from tests.conftest import git_init, git_commit, invoke_cli, parse_json_output, assert_json_envelope
-
+from tests.conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ===========================================================================
 # Unit tests for Gini coefficient
@@ -25,20 +19,24 @@ class TestGiniCoefficient:
 
     def test_empty_returns_zero(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         assert gini_coefficient([]) == 0.0
 
     def test_all_zeros_returns_zero(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         assert gini_coefficient([0, 0, 0]) == 0.0
 
     def test_perfectly_equal_returns_zero(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         # All same values → perfect equality → Gini = 0
         result = gini_coefficient([5, 5, 5, 5])
         assert abs(result) < 1e-9
 
     def test_perfectly_concentrated_returns_one(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         # All weight in one element → maximum concentration → Gini ≈ 1
         result = gini_coefficient([0, 0, 0, 0, 100])
         # With 5 elements and all weight in the last: Gini = (n-1)/n
@@ -47,15 +45,18 @@ class TestGiniCoefficient:
 
     def test_single_value_returns_zero(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         assert gini_coefficient([42]) == 0.0
 
     def test_two_equal_returns_zero(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         result = gini_coefficient([10, 10])
         assert abs(result) < 1e-9
 
     def test_two_unequal_moderate(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         # [1, 3]: sorted = [1,3], n=2, sum=4
         # cumulative = (2*0 - 2+1)*1 + (2*1 - 2+1)*3 = (-1)*1 + (1)*3 = 2
         # gini = 2 / (2 * 4) = 0.25
@@ -64,6 +65,7 @@ class TestGiniCoefficient:
 
     def test_higher_concentration_higher_gini(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         equal = gini_coefficient([5, 5, 5, 5])
         moderate = gini_coefficient([1, 2, 3, 10])
         concentrated = gini_coefficient([1, 1, 1, 100])
@@ -71,6 +73,7 @@ class TestGiniCoefficient:
 
     def test_known_value(self):
         from roam.commands.cmd_dev_profile import gini_coefficient
+
         # [1, 2, 3, 4]: sorted, n=4, sum=10
         # cumulative = (-3)*1 + (-1)*2 + (1)*3 + (3)*4 = -3 -2 +3 +12 = 10
         # gini = 10 / (4 * 10) = 0.25
@@ -88,12 +91,14 @@ class TestHourDistribution:
 
     def test_empty_timestamps(self):
         from roam.commands.cmd_dev_profile import hour_distribution
+
         result = hour_distribution([])
         assert result == [0] * 24
         assert len(result) == 24
 
     def test_single_midnight_utc(self):
         from roam.commands.cmd_dev_profile import hour_distribution
+
         # 2024-01-01 00:00:00 UTC
         ts = 1704067200
         result = hour_distribution([ts])
@@ -102,6 +107,7 @@ class TestHourDistribution:
 
     def test_single_noon_utc(self):
         from roam.commands.cmd_dev_profile import hour_distribution
+
         # 2024-01-01 12:00:00 UTC
         ts = 1704067200 + 12 * 3600
         result = hour_distribution([ts])
@@ -110,6 +116,7 @@ class TestHourDistribution:
 
     def test_multiple_same_hour(self):
         from roam.commands.cmd_dev_profile import hour_distribution
+
         # Three commits in hour 15
         base = 1704067200 + 15 * 3600
         result = hour_distribution([base, base + 60, base + 120])
@@ -118,6 +125,7 @@ class TestHourDistribution:
 
     def test_distribution_length(self):
         from roam.commands.cmd_dev_profile import hour_distribution
+
         result = hour_distribution([1704067200])
         assert len(result) == 24
 
@@ -132,16 +140,19 @@ class TestDayDistribution:
 
     def test_empty_timestamps(self):
         from roam.commands.cmd_dev_profile import day_distribution
+
         result = day_distribution([])
         assert result == [0] * 7
 
     def test_distribution_length(self):
         from roam.commands.cmd_dev_profile import day_distribution
+
         result = day_distribution([1704067200])
         assert len(result) == 7
 
     def test_known_monday(self):
         from roam.commands.cmd_dev_profile import day_distribution
+
         # 2024-01-01 is a Monday
         ts = 1704067200  # 2024-01-01 00:00:00 UTC
         result = day_distribution([ts])
@@ -158,6 +169,7 @@ class TestBurstDetection:
 
     def test_empty_timestamps(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         result = detect_bursts([])
         assert result["max_in_window"] == 0
         assert result["burst_score"] == 1.0
@@ -165,12 +177,14 @@ class TestBurstDetection:
 
     def test_single_commit_no_burst(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         result = detect_bursts([1704067200])
         assert result["max_in_window"] == 1
         assert result["burst_score"] == 1.0
 
     def test_spread_out_commits_low_burst(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         # Commits spaced 2 hours apart — no burst
         base = 1704067200
         timestamps = [base + i * 7200 for i in range(10)]
@@ -180,6 +194,7 @@ class TestBurstDetection:
 
     def test_clustered_commits_high_burst(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         # 5 commits in 10 minutes, then nothing for a day
         base = 1704067200
         clustered = [base + i * 120 for i in range(5)]  # 5 commits in 8 min
@@ -190,6 +205,7 @@ class TestBurstDetection:
 
     def test_burst_windows_detected(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         # 4 commits clustered in a window
         base = 1704067200
         clustered = [base + i * 60 for i in range(4)]
@@ -199,6 +215,7 @@ class TestBurstDetection:
 
     def test_burst_windows_capped(self):
         from roam.commands.cmd_dev_profile import detect_bursts
+
         # Many burst windows — should be capped at 10
         base = 1704067200
         # Create 20 separate bursts 2h apart, each with 3 rapid commits
@@ -220,17 +237,20 @@ class TestSessionDetection:
 
     def test_empty_timestamps(self):
         from roam.commands.cmd_dev_profile import detect_sessions
+
         result = detect_sessions([])
         assert result["session_count"] == 0
         assert result["avg_session_length_minutes"] == 0.0
 
     def test_single_commit_one_session(self):
         from roam.commands.cmd_dev_profile import detect_sessions
+
         result = detect_sessions([1704067200])
         assert result["session_count"] == 1
 
     def test_commits_within_gap_single_session(self):
         from roam.commands.cmd_dev_profile import detect_sessions
+
         base = 1704067200
         # Commits 10 min apart — default gap 30min → single session
         timestamps = [base + i * 600 for i in range(5)]
@@ -240,6 +260,7 @@ class TestSessionDetection:
 
     def test_commits_across_gap_multiple_sessions(self):
         from roam.commands.cmd_dev_profile import detect_sessions
+
         base = 1704067200
         # Two groups with a 2-hour gap between them
         session1 = [base + i * 600 for i in range(3)]
@@ -249,6 +270,7 @@ class TestSessionDetection:
 
     def test_session_length_computed(self):
         from roam.commands.cmd_dev_profile import detect_sessions
+
         base = 1704067200
         # Session spanning exactly 30 minutes
         timestamps = [base, base + 1800]
@@ -267,40 +289,47 @@ class TestRiskScore:
 
     def test_zero_risk_all_normal(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         result = risk_score(0.0, 0.0, 0.0, 1.0)
         assert result == 0
 
     def test_high_late_night_elevates_risk(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         low = risk_score(0.0, 0.0, 0.0, 1.0)
         high = risk_score(100.0, 0.0, 0.0, 1.0)
         assert high > low
 
     def test_high_weekend_elevates_risk(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         low = risk_score(0.0, 0.0, 0.0, 1.0)
         high = risk_score(0.0, 100.0, 0.0, 1.0)
         assert high > low
 
     def test_high_scatter_elevates_risk(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         low = risk_score(0.0, 0.0, 0.0, 1.0)
         high = risk_score(0.0, 0.0, 1.0, 1.0)
         assert high > low
 
     def test_high_burst_elevates_risk(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         low = risk_score(0.0, 0.0, 0.0, 1.0)
         high = risk_score(0.0, 0.0, 0.0, 5.0)
         assert high > low
 
     def test_capped_at_100(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         result = risk_score(100.0, 100.0, 1.0, 5.0)
         assert result <= 100
 
     def test_is_integer(self):
         from roam.commands.cmd_dev_profile import risk_score
+
         result = risk_score(30.0, 20.0, 0.5, 2.0)
         assert isinstance(result, int)
 
@@ -315,11 +344,13 @@ class TestGitLogParsing:
 
     def test_empty_string(self):
         from roam.commands.cmd_dev_profile import parse_git_log
+
         result = parse_git_log("")
         assert result == []
 
     def test_single_commit_no_files(self):
         from roam.commands.cmd_dev_profile import parse_git_log
+
         raw = "abc123def456abc123def456abc123def456abc12|alice@example.com|2024-01-15T10:00:00+00:00|fix bug\n"
         result = parse_git_log(raw)
         assert len(result) == 1
@@ -328,6 +359,7 @@ class TestGitLogParsing:
 
     def test_single_commit_with_files(self):
         from roam.commands.cmd_dev_profile import parse_git_log
+
         raw = (
             "abc123def456abc123def456abc123def456abc12|alice@example.com|2024-01-15T10:00:00+00:00|fix bug\n"
             "\n"
@@ -343,6 +375,7 @@ class TestGitLogParsing:
 
     def test_multiple_commits(self):
         from roam.commands.cmd_dev_profile import parse_git_log
+
         raw = (
             "aaaa00000000000000000000000000000000aaaa|alice@example.com|2024-01-15T10:00:00+00:00|first\n"
             "5\t0\tfile_a.py\n"
@@ -357,6 +390,7 @@ class TestGitLogParsing:
 
     def test_binary_files_handled(self):
         from roam.commands.cmd_dev_profile import parse_git_log
+
         # numstat outputs "-" for binary files
         raw = (
             "abc123def456abc123def456abc123def456abc12|alice@example.com|2024-01-15T10:00:00+00:00|add image\n"
@@ -370,12 +404,14 @@ class TestGitLogParsing:
 
     def test_iso8601_parsing(self):
         from roam.commands.cmd_dev_profile import _parse_iso8601
+
         # 2024-01-01 00:00:00 UTC
         ts = _parse_iso8601("2024-01-01T00:00:00+00:00")
         assert ts == 1704067200
 
     def test_iso8601_parsing_with_offset(self):
         from roam.commands.cmd_dev_profile import _parse_iso8601
+
         # Same moment, +05:30 offset = UTC-5:30 offset means 2023-12-31 18:30 UTC
         ts = _parse_iso8601("2024-01-01T00:00:00+05:30")
         expected = 1704067200 - (5 * 3600 + 30 * 60)
@@ -383,6 +419,7 @@ class TestGitLogParsing:
 
     def test_iso8601_invalid_returns_zero(self):
         from roam.commands.cmd_dev_profile import _parse_iso8601
+
         assert _parse_iso8601("not-a-date") == 0
 
 
@@ -396,6 +433,7 @@ class TestAuthorProfile:
 
     def test_empty_commits_returns_minimal_profile(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         profile = build_author_profile("alice@example.com", [])
         assert profile["author"] == "alice@example.com"
         assert profile["commit_count"] == 0
@@ -403,6 +441,7 @@ class TestAuthorProfile:
 
     def test_basic_profile_fields(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         commits = [
             {
                 "hash": "abc" * 14,
@@ -429,6 +468,7 @@ class TestAuthorProfile:
 
     def test_late_night_detection(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         # Commit at 2 AM UTC = late night
         ts_2am = 1704067200 + 2 * 3600  # 2024-01-01 02:00:00 UTC
         commits = [
@@ -447,6 +487,7 @@ class TestAuthorProfile:
 
     def test_noon_commit_not_late_night(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         ts_noon = 1704067200 + 12 * 3600  # 2024-01-01 12:00:00 UTC
         commits = [
             {
@@ -464,6 +505,7 @@ class TestAuthorProfile:
 
     def test_risk_indicators_populated(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         # All commits at 3 AM → high late_night_pct → risk indicator
         ts_3am = 1704067200 + 3 * 3600
         commits = [
@@ -484,6 +526,7 @@ class TestAuthorProfile:
 
     def test_top_directories(self):
         from roam.commands.cmd_dev_profile import build_author_profile
+
         commits = [
             {
                 "hash": "d" * 40,
@@ -521,9 +564,9 @@ def dev_profile_repo(tmp_path):
     (repo / "README.md").write_text("# Test\n")
     subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
     subprocess.run(
-        ["git", "commit", "-m", "init",
-         "--author", "Setup User <setup@test.com>"],
-        cwd=repo, capture_output=True,
+        ["git", "commit", "-m", "init", "--author", "Setup User <setup@test.com>"],
+        cwd=repo,
+        capture_output=True,
     )
 
     # Alice: focused developer (src/ only)
@@ -531,9 +574,16 @@ def dev_profile_repo(tmp_path):
         (repo / f"feature_{i}.py").write_text(f"def feat_{i}(): pass\n")
         subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", f"feat: feature {i}",
-             "--author", "Alice Smith <alice@example.com>"],
-            cwd=repo, capture_output=True,
+            [
+                "git",
+                "commit",
+                "-m",
+                f"feat: feature {i}",
+                "--author",
+                "Alice Smith <alice@example.com>",
+            ],
+            cwd=repo,
+            capture_output=True,
         )
 
     # Bob: scattered developer (many different files)
@@ -541,9 +591,9 @@ def dev_profile_repo(tmp_path):
         (repo / f"module_{i}.py").write_text(f"x = {i}\n")
         subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", f"fix: module {i}",
-             "--author", "Bob Jones <bob@example.com>"],
-            cwd=repo, capture_output=True,
+            ["git", "commit", "-m", f"fix: module {i}", "--author", "Bob Jones <bob@example.com>"],
+            cwd=repo,
+            capture_output=True,
         )
 
     return repo
@@ -628,10 +678,7 @@ class TestDevProfileCLI:
     def test_filter_by_author(self, dev_profile_repo):
         """Filtering by author email substring should return only matching profiles."""
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["dev-profile", "alice@example.com"],
-            cwd=dev_profile_repo, json_mode=True
-        )
+        result = invoke_cli(runner, ["dev-profile", "alice@example.com"], cwd=dev_profile_repo, json_mode=True)
         data = parse_json_output(result, "dev-profile")
         profiles = data["profiles"]
         assert all("alice" in p["author"] for p in profiles)
@@ -639,20 +686,14 @@ class TestDevProfileCLI:
     def test_filter_by_author_no_match(self, dev_profile_repo):
         """Filtering by non-existent author should return empty profiles."""
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["dev-profile", "nonexistent@nowhere.com"],
-            cwd=dev_profile_repo, json_mode=True
-        )
+        result = invoke_cli(runner, ["dev-profile", "nonexistent@nowhere.com"], cwd=dev_profile_repo, json_mode=True)
         assert result.exit_code == 0
         data = parse_json_output(result, "dev-profile")
         assert data["profiles"] == []
 
     def test_custom_days_flag(self, dev_profile_repo):
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["dev-profile", "--days", "7"],
-            cwd=dev_profile_repo, json_mode=True
-        )
+        result = invoke_cli(runner, ["dev-profile", "--days", "7"], cwd=dev_profile_repo, json_mode=True)
         data = parse_json_output(result, "dev-profile")
         assert data["summary"]["days"] == 7
 
@@ -674,10 +715,7 @@ class TestDevProfileCLI:
 
     def test_limit_flag_respected(self, dev_profile_repo):
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["dev-profile", "--limit", "1"],
-            cwd=dev_profile_repo, json_mode=True
-        )
+        result = invoke_cli(runner, ["dev-profile", "--limit", "1"], cwd=dev_profile_repo, json_mode=True)
         data = parse_json_output(result, "dev-profile")
         assert len(data["profiles"]) <= 1
 
@@ -710,17 +748,22 @@ class TestEmptyGitHistory:
         (repo / "f.py").write_text("x=1\n")
         subprocess.run(["git", "add", "."], cwd=repo, capture_output=True)
         subprocess.run(
-            ["git", "commit", "-m", "init",
-             "--date", "2020-01-01T00:00:00",
-             "--author", "Old Dev <old@dev.com>"],
-            cwd=repo, capture_output=True,
+            [
+                "git",
+                "commit",
+                "-m",
+                "init",
+                "--date",
+                "2020-01-01T00:00:00",
+                "--author",
+                "Old Dev <old@dev.com>",
+            ],
+            cwd=repo,
+            capture_output=True,
         )
 
         runner = CliRunner()
-        result = invoke_cli(
-            runner, ["dev-profile", "--days", "1"],
-            cwd=repo, json_mode=True
-        )
+        result = invoke_cli(runner, ["dev-profile", "--days", "1"], cwd=repo, json_mode=True)
         assert result.exit_code == 0
         data = parse_json_output(result, "dev-profile")
         assert_json_envelope(data, "dev-profile")
@@ -746,17 +789,20 @@ class TestTopDirs:
 
     def test_empty_files(self):
         from roam.commands.cmd_dev_profile import _top_dirs
+
         result = _top_dirs([])
         assert result == []
 
     def test_files_without_slash_use_dot(self):
         from roam.commands.cmd_dev_profile import _top_dirs
+
         result = _top_dirs(["README.md", "setup.py"])
         assert len(result) == 1
         assert result[0]["directory"] == "."
 
     def test_groups_by_top_level_dir(self):
         from roam.commands.cmd_dev_profile import _top_dirs
+
         files = ["src/a.py", "src/b.py", "tests/c.py"]
         result = _top_dirs(files)
         dirs = {d["directory"]: d["file_count"] for d in result}
@@ -765,12 +811,14 @@ class TestTopDirs:
 
     def test_respects_top_n(self):
         from roam.commands.cmd_dev_profile import _top_dirs
+
         files = [f"dir{i}/file.py" for i in range(10)]
         result = _top_dirs(files, top_n=3)
         assert len(result) <= 3
 
     def test_sorted_by_count(self):
         from roam.commands.cmd_dev_profile import _top_dirs
+
         files = ["a/x.py", "a/y.py", "a/z.py", "b/w.py"]
         result = _top_dirs(files, top_n=5)
         assert result[0]["directory"] == "a"
@@ -787,16 +835,20 @@ class TestMCPToolRegistration:
 
     def test_mcp_tool_function_exists(self):
         from roam.mcp_server import roam_dev_profile
+
         assert callable(roam_dev_profile)
 
     def test_mcp_tool_accepts_author_arg(self):
         import inspect
+
         from roam.mcp_server import roam_dev_profile
+
         sig = inspect.signature(roam_dev_profile)
         assert "author" in sig.parameters
         assert "days" in sig.parameters
 
     def test_mcp_tool_has_docstring(self):
         from roam.mcp_server import roam_dev_profile
+
         assert roam_dev_profile.__doc__ is not None
         assert len(roam_dev_profile.__doc__.strip()) > 0

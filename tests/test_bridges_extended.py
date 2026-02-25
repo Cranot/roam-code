@@ -7,24 +7,23 @@ Covers:
 - Schema migrations for bridge/confidence columns on edges
 - x-lang CLI command integration
 """
+
 from __future__ import annotations
 
 import json
-import os
 
 import pytest
 
 from roam.bridges import registry as bridge_registry
+from roam.bridges.bridge_config import ConfigBridge
 from roam.bridges.bridge_rest_api import RestApiBridge
 from roam.bridges.bridge_template import TemplateBridge
-from roam.bridges.bridge_config import ConfigBridge
-
-from tests.conftest import invoke_cli, parse_json_output, index_in_process, git_init
-
+from tests.conftest import invoke_cli
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _reset_registry():
     """Clear the global bridge registry for isolation."""
@@ -35,56 +34,62 @@ def _reset_registry():
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def rest_api_project(project_factory):
-    return project_factory({
-        "frontend/app.js": "fetch('/api/users').then(r => r.json())\nfetch('/api/orders')\n",
-        "backend/routes.py": (
-            "from flask import Flask\n"
-            "app = Flask(__name__)\n"
-            "@app.route('/api/users')\n"
-            "def get_users(): pass\n"
-            "@app.route('/api/orders')\n"
-            "def get_orders(): pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "frontend/app.js": "fetch('/api/users').then(r => r.json())\nfetch('/api/orders')\n",
+            "backend/routes.py": (
+                "from flask import Flask\n"
+                "app = Flask(__name__)\n"
+                "@app.route('/api/users')\n"
+                "def get_users(): pass\n"
+                "@app.route('/api/orders')\n"
+                "def get_orders(): pass\n"
+            ),
+        }
+    )
 
 
 @pytest.fixture
 def template_project(project_factory):
-    return project_factory({
-        "templates/users.html": "<h1>{{ user }}</h1>\n<p>{{ items }}</p>\n",
-        "app.py": (
-            "from flask import render_template\n"
-            "def show_users():\n"
-            "    return render_template('users.html', user=current_user)\n"
-        ),
-    })
+    return project_factory(
+        {
+            "templates/users.html": "<h1>{{ user }}</h1>\n<p>{{ items }}</p>\n",
+            "app.py": (
+                "from flask import render_template\n"
+                "def show_users():\n"
+                "    return render_template('users.html', user=current_user)\n"
+            ),
+        }
+    )
 
 
 @pytest.fixture
 def config_project(project_factory):
-    return project_factory({
-        ".env": "DATABASE_URL=postgres://localhost/db\nSECRET_KEY=abc123\n",
-        "app.py": (
-            "import os\n"
-            "db_url = os.environ.get('DATABASE_URL')\n"
-            "secret = os.getenv('SECRET_KEY')\n"
-        ),
-    })
+    return project_factory(
+        {
+            ".env": "DATABASE_URL=postgres://localhost/db\nSECRET_KEY=abc123\n",
+            "app.py": ("import os\ndb_url = os.environ.get('DATABASE_URL')\nsecret = os.getenv('SECRET_KEY')\n"),
+        }
+    )
 
 
 @pytest.fixture
 def pure_python_project(project_factory):
-    return project_factory({
-        "main.py": "def main(): pass\n",
-        "utils.py": "def helper(): return 42\n",
-    })
+    return project_factory(
+        {
+            "main.py": "def main(): pass\n",
+            "utils.py": "def helper(): return 42\n",
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # RestApiBridge tests
 # ---------------------------------------------------------------------------
+
 
 class TestRestApiBridge:
     def setup_method(self):
@@ -134,6 +139,7 @@ class TestRestApiBridge:
 # TemplateBridge tests
 # ---------------------------------------------------------------------------
 
+
 class TestTemplateBridge:
     def setup_method(self):
         self.bridge = TemplateBridge()
@@ -179,6 +185,7 @@ class TestTemplateBridge:
 # ---------------------------------------------------------------------------
 # ConfigBridge tests
 # ---------------------------------------------------------------------------
+
 
 class TestConfigBridge:
     def setup_method(self):
@@ -227,6 +234,7 @@ class TestConfigBridge:
 # ---------------------------------------------------------------------------
 # Edge metadata tests
 # ---------------------------------------------------------------------------
+
 
 class TestEdgeMetadata:
     def test_bridge_edge_has_bridge_field(self):
@@ -286,10 +294,12 @@ class TestEdgeMetadata:
 # Schema migration tests
 # ---------------------------------------------------------------------------
 
+
 class TestSchemaMigration:
     def test_schema_has_bridge_column(self, tmp_path):
         """Edges table has a 'bridge' column after schema migration."""
-        from roam.db.connection import get_connection, ensure_schema
+        from roam.db.connection import ensure_schema, get_connection
+
         db_path = tmp_path / "test.db"
         conn = get_connection(db_path, readonly=False)
         try:
@@ -303,7 +313,8 @@ class TestSchemaMigration:
 
     def test_schema_has_confidence_column(self, tmp_path):
         """Edges table has a 'confidence' column after schema migration."""
-        from roam.db.connection import get_connection, ensure_schema
+        from roam.db.connection import ensure_schema, get_connection
+
         db_path = tmp_path / "test.db"
         conn = get_connection(db_path, readonly=False)
         try:
@@ -318,6 +329,7 @@ class TestSchemaMigration:
 # ---------------------------------------------------------------------------
 # CLI integration tests
 # ---------------------------------------------------------------------------
+
 
 class TestXLangCommand:
     def test_xlang_command_runs(self, rest_api_project, cli_runner):

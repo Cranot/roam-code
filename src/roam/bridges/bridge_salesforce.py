@@ -6,6 +6,7 @@ Resolves cross-references between:
 - @AuraEnabled methods in Apex and Lightning component calls
 - Apex classes referenced via controller="" attributes in markup
 """
+
 from __future__ import annotations
 
 import os
@@ -14,9 +15,8 @@ import re
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
 
-
 # Pattern to detect @AuraEnabled annotation on symbols
-_AURA_ENABLED_RE = re.compile(r'@AuraEnabled', re.IGNORECASE)
+_AURA_ENABLED_RE = re.compile(r"@AuraEnabled", re.IGNORECASE)
 
 # Apex source extensions
 _APEX_EXTS = frozenset({".cls", ".trigger"})
@@ -54,8 +54,7 @@ class SalesforceBridge(LanguageBridge):
                 return True
         return False
 
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve Apex-to-markup cross-language links.
 
         Resolution strategies:
@@ -96,13 +95,15 @@ class SalesforceBridge(LanguageBridge):
             if self._names_match(apex_class_name, target_basename):
                 controller_targets.append((tpath, tsymbols))
                 # Create edge from Apex class to the component
-                edges.append({
-                    "source": apex_class_name,
-                    "target": target_basename,
-                    "kind": "x-lang",
-                    "bridge": self.name,
-                    "mechanism": "naming-convention",
-                })
+                edges.append(
+                    {
+                        "source": apex_class_name,
+                        "target": target_basename,
+                        "kind": "x-lang",
+                        "bridge": self.name,
+                        "mechanism": "naming-convention",
+                    }
+                )
 
         # Strategy 2: Match @AuraEnabled methods to components that reference
         # this controller. Any component whose controller is this Apex class
@@ -112,13 +113,15 @@ class SalesforceBridge(LanguageBridge):
         for method_name, method_qname in aura_enabled_methods:
             for tpath, tsymbols in controller_targets:
                 target_basename = os.path.basename(tpath).rsplit(".", 1)[0]
-                edges.append({
-                    "source": method_qname,
-                    "target": target_basename,
-                    "kind": "x-lang",
-                    "bridge": self.name,
-                    "mechanism": "aura-enabled",
-                })
+                edges.append(
+                    {
+                        "source": method_qname,
+                        "target": target_basename,
+                        "kind": "x-lang",
+                        "bridge": self.name,
+                        "mechanism": "aura-enabled",
+                    }
+                )
 
         # Strategy 3: Check for Visualforce controller references
         # Visualforce pages specify controller="ClassName" in <apex:page>

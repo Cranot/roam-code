@@ -23,18 +23,15 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process
+from conftest import git_init, index_in_process
 
 from roam.cli import cli
-
 
 # ===========================================================================
 # Helpers
@@ -82,7 +79,7 @@ def _invoke(proj: Path, *args, json_mode: bool = False) -> object:
 # Sample source files
 # ===========================================================================
 
-FLASK_APP = '''\
+FLASK_APP = """\
 from flask import Flask
 
 app = Flask(__name__)
@@ -106,9 +103,9 @@ def get_user(user_id):
 @app.delete('/api/users/<int:user_id>')
 def delete_user(user_id):
     return '', 204
-'''
+"""
 
-FASTAPI_APP = '''\
+FASTAPI_APP = """\
 from fastapi import FastAPI, APIRouter
 
 app = FastAPI()
@@ -128,9 +125,9 @@ async def create_item(item: dict):
 @router.put('/items/{item_id}')
 async def update_item(item_id: int, item: dict):
     return item
-'''
+"""
 
-DJANGO_URLS = '''\
+DJANGO_URLS = """\
 from django.urls import path, include
 from . import views
 
@@ -139,9 +136,9 @@ urlpatterns = [
     path('/api/users/<int:pk>/', views.UserDetailView.as_view()),
     path('/api/posts/', views.PostListView.as_view()),
 ]
-'''
+"""
 
-EXPRESS_APP = '''\
+EXPRESS_APP = """\
 const express = require('express');
 const app = express();
 const router = express.Router();
@@ -152,9 +149,9 @@ router.put('/api/products/:id', updateProduct);
 router.delete('/api/products/:id', deleteProduct);
 
 app.use('/api', router);
-'''
+"""
 
-GO_HTTP = '''\
+GO_HTTP = """\
 package main
 
 import (
@@ -169,9 +166,9 @@ func main() {
 
 func handleUsers(w http.ResponseWriter, r *http.Request) {}
 func handleHealth(w http.ResponseWriter, r *http.Request) {}
-'''
+"""
 
-SPRING_CONTROLLER = '''\
+SPRING_CONTROLLER = """\
 package com.example.api;
 
 import org.springframework.web.bind.annotation.*;
@@ -200,9 +197,9 @@ public class OrderController {
         orderService.delete(id);
     }
 }
-'''
+"""
 
-LARAVEL_ROUTES = '''\
+LARAVEL_ROUTES = """\
 <?php
 
 use Illuminate\\Support\\Facades\\Route;
@@ -215,9 +212,9 @@ Route::get('/api/users/{id}', [UserController::class, 'show']);
 Route::put('/api/users/{id}', [UserController::class, 'update']);
 Route::delete('/api/users/{id}', [UserController::class, 'destroy']);
 Route::get('/api/posts', PostController::class);
-'''
+"""
 
-GRAPHQL_SCHEMA = '''\
+GRAPHQL_SCHEMA = """\
 type Query {
     users: [User!]!
     user(id: ID!): User
@@ -239,9 +236,9 @@ type User {
     name: String!
     email: String!
 }
-'''
+"""
 
-GRPC_PROTO = '''\
+GRPC_PROTO = """\
 syntax = "proto3";
 
 package user;
@@ -258,18 +255,19 @@ message User {
     string name = 2;
     string email = 3;
 }
-'''
+"""
 
-EMPTY_PY = '''\
+EMPTY_PY = """\
 # No routes here
 x = 1
 y = 2
-'''
+"""
 
 
 # ===========================================================================
 # 1. Flask route detection
 # ===========================================================================
+
 
 class TestFlaskDetection:
     def test_flask_routes_detected(self, tmp_path):
@@ -306,6 +304,7 @@ class TestFlaskDetection:
 # 2. FastAPI route detection
 # ===========================================================================
 
+
 class TestFastAPIDetection:
     def test_fastapi_routes_detected(self, tmp_path):
         proj = _make_project(tmp_path, {"main.py": FASTAPI_APP})
@@ -329,6 +328,7 @@ class TestFastAPIDetection:
 # 3. Django detection
 # ===========================================================================
 
+
 class TestDjangoDetection:
     def test_django_paths_detected(self, tmp_path):
         proj = _make_project(tmp_path, {"urls.py": DJANGO_URLS})
@@ -342,6 +342,7 @@ class TestDjangoDetection:
 # ===========================================================================
 # 4. Express.js route detection
 # ===========================================================================
+
 
 class TestExpressDetection:
     def test_express_routes_detected(self, tmp_path):
@@ -369,6 +370,7 @@ class TestExpressDetection:
 # 5. Go net/http detection
 # ===========================================================================
 
+
 class TestGoDetection:
     def test_go_handlefunc_detected(self, tmp_path):
         proj = _make_project(tmp_path, {"main.go": GO_HTTP})
@@ -387,6 +389,7 @@ class TestGoDetection:
 # ===========================================================================
 # 6. Java Spring detection
 # ===========================================================================
+
 
 class TestSpringDetection:
     def test_spring_mappings_detected(self, tmp_path):
@@ -415,6 +418,7 @@ class TestSpringDetection:
 # 7. Laravel detection
 # ===========================================================================
 
+
 class TestLaravelDetection:
     def test_laravel_routes_detected(self, tmp_path):
         proj = _make_project(tmp_path, {"routes/api.php": LARAVEL_ROUTES})
@@ -433,6 +437,7 @@ class TestLaravelDetection:
 # ===========================================================================
 # 8. GraphQL detection
 # ===========================================================================
+
 
 class TestGraphQLDetection:
     def test_graphql_queries_detected(self, tmp_path):
@@ -466,6 +471,7 @@ class TestGraphQLDetection:
 # 9. gRPC detection
 # ===========================================================================
 
+
 class TestGRPCDetection:
     def test_grpc_rpc_detected(self, tmp_path):
         proj = _make_project(tmp_path, {"user.proto": GRPC_PROTO})
@@ -490,6 +496,7 @@ class TestGRPCDetection:
 # ===========================================================================
 # 10. JSON output format
 # ===========================================================================
+
 
 class TestJsonOutput:
     def test_json_envelope_structure(self, tmp_path):
@@ -548,44 +555,52 @@ class TestJsonOutput:
         data = json.loads(result.output)
         assert data["summary"]["count"] == 0
         assert "no endpoint" in data["summary"]["verdict"].lower()
-        assert data.get("endpoints") == [] or data.get("endpoints") is None or \
-               len(data.get("endpoints", [])) == 0
+        assert data.get("endpoints") == [] or data.get("endpoints") is None or len(data.get("endpoints", [])) == 0
 
 
 # ===========================================================================
 # 11. --framework filter
 # ===========================================================================
 
+
 class TestFrameworkFilter:
     def test_filter_flask(self, tmp_path):
         """--framework flask shows only flask endpoints."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "server.js": EXPRESS_APP,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "server.js": EXPRESS_APP,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, "--framework", "flask", json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         ep_list = data.get("endpoints", [])
         frameworks = {e["framework"] for e in ep_list}
-        assert all("flask" in f.lower() or "fastapi" in f.lower() or "python" in f.lower()
-                   for f in frameworks), f"Unexpected frameworks: {frameworks}"
+        assert all("flask" in f.lower() or "fastapi" in f.lower() or "python" in f.lower() for f in frameworks), (
+            f"Unexpected frameworks: {frameworks}"
+        )
 
     def test_filter_express(self, tmp_path):
         """--framework express shows only express endpoints."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "server.js": EXPRESS_APP,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "server.js": EXPRESS_APP,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, "--framework", "express", json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         ep_list = data.get("endpoints", [])
         frameworks = {e["framework"] for e in ep_list}
-        assert all("express" in f.lower() or "javascript" in f.lower()
-                   for f in frameworks), f"Unexpected frameworks: {frameworks}"
+        assert all("express" in f.lower() or "javascript" in f.lower() for f in frameworks), (
+            f"Unexpected frameworks: {frameworks}"
+        )
 
     def test_filter_no_match(self, tmp_path):
         """--framework with no matches returns count=0."""
@@ -601,6 +616,7 @@ class TestFrameworkFilter:
 # 12. --method filter
 # ===========================================================================
 
+
 class TestMethodFilter:
     def test_filter_get_method(self, tmp_path):
         """--method GET shows only GET endpoints."""
@@ -610,8 +626,7 @@ class TestMethodFilter:
         assert result.exit_code == 0
         data = json.loads(result.output)
         ep_list = data.get("endpoints", [])
-        assert all(e["method"] == "GET" for e in ep_list), \
-            f"Non-GET methods found: {[e['method'] for e in ep_list]}"
+        assert all(e["method"] == "GET" for e in ep_list), f"Non-GET methods found: {[e['method'] for e in ep_list]}"
 
     def test_filter_post_method(self, tmp_path):
         """--method POST shows only POST endpoints."""
@@ -637,6 +652,7 @@ class TestMethodFilter:
 # 13. --group-by option
 # ===========================================================================
 
+
 class TestGroupBy:
     def test_group_by_framework(self, tmp_path):
         """Default group-by=framework groups by framework name."""
@@ -649,10 +665,13 @@ class TestGroupBy:
 
     def test_group_by_file(self, tmp_path):
         """--group-by file groups by file path."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "server.js": EXPRESS_APP,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "server.js": EXPRESS_APP,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, "--group-by", "file")
         assert result.exit_code == 0
@@ -673,6 +692,7 @@ class TestGroupBy:
 # ===========================================================================
 # 14. Empty project
 # ===========================================================================
+
 
 class TestEmptyProject:
     def test_no_endpoints_text(self, tmp_path):
@@ -697,13 +717,17 @@ class TestEmptyProject:
 # 15. Mixed project (multiple frameworks)
 # ===========================================================================
 
+
 class TestMixedProject:
     def test_multi_framework_count(self, tmp_path):
         """Multiple framework files contribute separate endpoint groups."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "server.js": EXPRESS_APP,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "server.js": EXPRESS_APP,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, json_mode=True)
         assert result.exit_code == 0
@@ -712,10 +736,13 @@ class TestMixedProject:
         assert data["summary"]["framework_count"] >= 1
 
     def test_multi_framework_text(self, tmp_path):
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "server.js": EXPRESS_APP,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "server.js": EXPRESS_APP,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj)
         assert result.exit_code == 0
@@ -725,10 +752,13 @@ class TestMixedProject:
 
     def test_graphql_and_rest(self, tmp_path):
         """GraphQL and REST endpoints can coexist."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "schema.graphql": GRAPHQL_SCHEMA,
-        })
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "schema.graphql": GRAPHQL_SCHEMA,
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, json_mode=True)
         data = json.loads(result.output)
@@ -741,6 +771,7 @@ class TestMixedProject:
 # 16. Verdict-first text output
 # ===========================================================================
 
+
 class TestVerdictFirst:
     def test_verdict_is_first_line(self, tmp_path):
         """VERDICT: is the first non-empty line of text output."""
@@ -749,8 +780,7 @@ class TestVerdictFirst:
         result = _invoke(proj)
         assert result.exit_code == 0
         lines = [l for l in result.output.splitlines() if l.strip()]
-        assert lines[0].startswith("VERDICT:"), \
-            f"First line is not VERDICT: — got: {lines[0]!r}"
+        assert lines[0].startswith("VERDICT:"), f"First line is not VERDICT: — got: {lines[0]!r}"
 
     def test_verdict_contains_count(self, tmp_path):
         """VERDICT line mentions endpoint count."""
@@ -775,6 +805,7 @@ class TestVerdictFirst:
 # 17. File/line number accuracy
 # ===========================================================================
 
+
 class TestFileLineInfo:
     def test_flask_file_reference(self, tmp_path):
         """Each endpoint references the correct source file."""
@@ -783,10 +814,13 @@ class TestFileLineInfo:
         result = _invoke(proj, json_mode=True)
         data = json.loads(result.output)
         ep_list = data.get("endpoints", [])
-        flask_eps = [e for e in ep_list
-                     if "flask" in e.get("framework", "").lower()
-                     or "fastapi" in e.get("framework", "").lower()
-                     or "python" in e.get("framework", "").lower()]
+        flask_eps = [
+            e
+            for e in ep_list
+            if "flask" in e.get("framework", "").lower()
+            or "fastapi" in e.get("framework", "").lower()
+            or "python" in e.get("framework", "").lower()
+        ]
         if flask_eps:
             for ep in flask_eps:
                 assert "api.py" in ep["file"]
@@ -800,8 +834,9 @@ class TestFileLineInfo:
         result = _invoke(proj, json_mode=True)
         data = json.loads(result.output)
         ep_list = data.get("endpoints", [])
-        go_eps = [e for e in ep_list if "go" in e.get("framework", "").lower()
-                  or "net/http" in e.get("framework", "").lower()]
+        go_eps = [
+            e for e in ep_list if "go" in e.get("framework", "").lower() or "net/http" in e.get("framework", "").lower()
+        ]
         for ep in go_eps:
             assert ep["line"] >= 1
 
@@ -810,20 +845,24 @@ class TestFileLineInfo:
 # 18. Test files are excluded by default
 # ===========================================================================
 
+
 class TestFileExclusion:
     def test_test_files_excluded(self, tmp_path):
         """Route definitions in test files are not reported by default."""
-        proj = _make_project(tmp_path, {
-            "app.py": FLASK_APP,
-            "tests/test_app.py": '''\
+        proj = _make_project(
+            tmp_path,
+            {
+                "app.py": FLASK_APP,
+                "tests/test_app.py": """\
 import pytest
 from app import app
 
 def test_get_users():
     # This simulates calling app.get('/test/route', ...) in a test helper
     pass
-''',
-        })
+""",
+            },
+        )
         _index_project(proj)
         result = _invoke(proj, json_mode=True)
         data = json.loads(result.output)

@@ -19,7 +19,6 @@ from roam.rules.ast_match import (
 )
 from roam.rules.dataflow import collect_dataflow_findings
 
-
 # ---------------------------------------------------------------------------
 # YAML loading with fallback
 # ---------------------------------------------------------------------------
@@ -126,12 +125,14 @@ def load_rules(rules_dir: Path) -> list[dict]:
             continue
         data = _load_yaml(p)
         if data is None:
-            rules.append({
-                "name": p.name,
-                "severity": "error",
-                "_error": f"failed to parse {p.name}",
-                "_file": str(p),
-            })
+            rules.append(
+                {
+                    "name": p.name,
+                    "severity": "error",
+                    "_error": f"failed to parse {p.name}",
+                    "_file": str(p),
+                }
+            )
             continue
         data["_file"] = str(p)
         rules.append(data)
@@ -325,12 +326,14 @@ def _evaluate_path_match(rule: dict, conn) -> dict:
         if _is_exempt(tgt_name, tgt_file, exempt):
             continue
 
-        violations.append({
-            "symbol": src_name,
-            "file": src_file,
-            "line": row["src_line"],
-            "reason": f"{src_name} ({src_file}) -> {tgt_name} ({tgt_file})",
-        })
+        violations.append(
+            {
+                "symbol": src_name,
+                "file": src_file,
+                "line": row["src_line"],
+                "reason": f"{src_name} ({src_file}) -> {tgt_name} ({tgt_file})",
+            }
+        )
 
     name = rule.get("name", "unnamed")
     severity = rule.get("severity", "error")
@@ -387,12 +390,14 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                 "name": rule.get("name", "unnamed"),
                 "severity": rule.get("severity", "error"),
                 "passed": False,
-                "violations": [{
-                    "symbol": "",
-                    "file": rule.get("_file", ""),
-                    "line": None,
-                    "reason": "invalid require.name_regex: {}".format(exc),
-                }],
+                "violations": [
+                    {
+                        "symbol": "",
+                        "file": rule.get("_file", ""),
+                        "line": None,
+                        "reason": "invalid require.name_regex: {}".format(exc),
+                    }
+                ],
             }
 
     # Build the base query
@@ -465,16 +470,18 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
     rows = conn.execute(query, params).fetchall()
 
-    has_requirements = any([
-        require_has_test,
-        compiled_name_regex is not None,
-        require_max_params is not None,
-        require_min_params is not None,
-        require_max_symbol_lines is not None,
-        require_min_symbol_lines is not None,
-        require_max_file_lines is not None,
-        require_min_file_lines is not None,
-    ])
+    has_requirements = any(
+        [
+            require_has_test,
+            compiled_name_regex is not None,
+            require_max_params is not None,
+            require_min_params is not None,
+            require_max_symbol_lines is not None,
+            require_min_symbol_lines is not None,
+            require_max_file_lines is not None,
+            require_min_file_lines is not None,
+        ]
+    )
 
     violations: list[dict] = []
     for row in rows:
@@ -506,38 +513,26 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                 reasons.append("{} has no test coverage".format(symbol_name))
 
             if compiled_name_regex and not compiled_name_regex.search(symbol_name):
-                reasons.append(
-                    "name '{}' does not match {}".format(symbol_name, compiled_name_regex.pattern)
-                )
+                reasons.append("name '{}' does not match {}".format(symbol_name, compiled_name_regex.pattern))
 
             if require_max_params is not None:
                 if param_count is None:
                     reasons.append("parameter count unavailable")
                 elif param_count > require_max_params:
-                    reasons.append(
-                        "parameter count {:.0f} exceeds {:.0f}".format(
-                            param_count, require_max_params
-                        )
-                    )
+                    reasons.append("parameter count {:.0f} exceeds {:.0f}".format(param_count, require_max_params))
 
             if require_min_params is not None:
                 if param_count is None:
                     reasons.append("parameter count unavailable")
                 elif param_count < require_min_params:
-                    reasons.append(
-                        "parameter count {:.0f} is below {:.0f}".format(
-                            param_count, require_min_params
-                        )
-                    )
+                    reasons.append("parameter count {:.0f} is below {:.0f}".format(param_count, require_min_params))
 
             if require_max_symbol_lines is not None:
                 if symbol_line_count is None:
                     reasons.append("symbol line count unavailable")
                 elif symbol_line_count > require_max_symbol_lines:
                     reasons.append(
-                        "symbol line count {:.0f} exceeds {:.0f}".format(
-                            symbol_line_count, require_max_symbol_lines
-                        )
+                        "symbol line count {:.0f} exceeds {:.0f}".format(symbol_line_count, require_max_symbol_lines)
                     )
 
             if require_min_symbol_lines is not None:
@@ -545,9 +540,7 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                     reasons.append("symbol line count unavailable")
                 elif symbol_line_count < require_min_symbol_lines:
                     reasons.append(
-                        "symbol line count {:.0f} is below {:.0f}".format(
-                            symbol_line_count, require_min_symbol_lines
-                        )
+                        "symbol line count {:.0f} is below {:.0f}".format(symbol_line_count, require_min_symbol_lines)
                     )
 
             if require_max_file_lines is not None:
@@ -555,9 +548,7 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                     reasons.append("file line count unavailable")
                 elif file_line_count > require_max_file_lines:
                     reasons.append(
-                        "file line count {:.0f} exceeds {:.0f}".format(
-                            file_line_count, require_max_file_lines
-                        )
+                        "file line count {:.0f} exceeds {:.0f}".format(file_line_count, require_max_file_lines)
                     )
 
             if require_min_file_lines is not None:
@@ -565,28 +556,30 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                     reasons.append("file line count unavailable")
                 elif file_line_count < require_min_file_lines:
                     reasons.append(
-                        "file line count {:.0f} is below {:.0f}".format(
-                            file_line_count, require_min_file_lines
-                        )
+                        "file line count {:.0f} is below {:.0f}".format(file_line_count, require_min_file_lines)
                     )
 
             if not reasons:
                 continue
 
-            violations.append({
-                "symbol": symbol_name,
-                "file": file_path,
-                "line": row["line_start"],
-                "reason": "; ".join(reasons),
-            })
+            violations.append(
+                {
+                    "symbol": symbol_name,
+                    "file": file_path,
+                    "line": row["line_start"],
+                    "reason": "; ".join(reasons),
+                }
+            )
         else:
             # If no requirements are set, the match itself is the violation.
-            violations.append({
-                "symbol": symbol_name,
-                "file": file_path,
-                "line": row["line_start"],
-                "reason": f"{symbol_name} matches rule criteria",
-            })
+            violations.append(
+                {
+                    "symbol": symbol_name,
+                    "file": file_path,
+                    "line": row["line_start"],
+                    "reason": f"{symbol_name} matches rule criteria",
+                }
+            )
 
     name = rule.get("name", "unnamed")
     severity = rule.get("severity", "error")
@@ -602,14 +595,17 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
 def _symbol_has_test(conn, symbol_id: int) -> bool:
     """Check if a symbol has edges from test files."""
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         SELECT 1 FROM edges e
         JOIN symbols s ON e.source_id = s.id
         JOIN files f ON s.file_id = f.id
         WHERE e.target_id = ?
           AND (f.file_role = 'test' OR f.path LIKE '%%test%%')
         LIMIT 1
-    """, (symbol_id,)).fetchall()
+    """,
+        (symbol_id,),
+    ).fetchall()
     return len(rows) > 0
 
 
@@ -663,12 +659,14 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
             "name": name,
             "severity": severity,
             "passed": False,
-            "violations": [{
-                "symbol": "",
-                "file": rule.get("_file", ""),
-                "line": None,
-                "reason": "ast_match rule missing non-empty match.ast pattern",
-            }],
+            "violations": [
+                {
+                    "symbol": "",
+                    "file": rule.get("_file", ""),
+                    "line": None,
+                    "reason": "ast_match rule missing non-empty match.ast pattern",
+                }
+            ],
         }
 
     try:
@@ -712,12 +710,14 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
                     "name": name,
                     "severity": severity,
                     "passed": False,
-                    "violations": [{
-                        "symbol": "",
-                        "file": rule.get("_file", ""),
-                        "line": None,
-                        "reason": "AST pattern compile failed: {}".format(exc),
-                    }],
+                    "violations": [
+                        {
+                            "symbol": "",
+                            "file": rule.get("_file", ""),
+                            "line": None,
+                            "reason": "AST pattern compile failed: {}".format(exc),
+                        }
+                    ],
                 }
             compiled_cache[active_lang] = compiled
 
@@ -739,13 +739,15 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
             if cap_text:
                 reason += " ({})".format(cap_text)
 
-            violations.append({
-                "symbol": "",
-                "file": rel_path,
-                "line": m.get("line"),
-                "reason": reason,
-                "captures": m.get("captures", {}),
-            })
+            violations.append(
+                {
+                    "symbol": "",
+                    "file": rel_path,
+                    "line": m.get("line"),
+                    "reason": reason,
+                    "captures": m.get("captures", {}),
+                }
+            )
 
             if max_matches > 0 and len(violations) >= max_matches:
                 break
@@ -880,8 +882,14 @@ def evaluate_rule(rule: dict, conn, G=None) -> dict:
             "name": rule.get("name", "unknown"),
             "severity": rule.get("severity", "error"),
             "passed": False,
-            "violations": [{"symbol": "", "file": rule.get("_file", ""),
-                            "line": None, "reason": rule["_error"]}],
+            "violations": [
+                {
+                    "symbol": "",
+                    "file": rule.get("_file", ""),
+                    "line": None,
+                    "reason": rule["_error"],
+                }
+            ],
         }
 
     rule_type = _detect_rule_type(rule)

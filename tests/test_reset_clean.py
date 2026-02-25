@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import os
 import sys
 from pathlib import Path
 
@@ -11,13 +10,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    invoke_cli,
-    parse_json_output,
     assert_json_envelope,
     git_init,
     index_in_process,
+    invoke_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -27,6 +24,7 @@ from conftest import (
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -36,17 +34,8 @@ def indexed_project(tmp_path, monkeypatch):
     proj = tmp_path / "repo"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "main.py").write_text(
-        "def greet(name):\n"
-        '    return f"Hello, {name}"\n'
-        "\n"
-        "def add(a, b):\n"
-        "    return a + b\n"
-    )
-    (proj / "util.py").write_text(
-        "def format_output(value):\n"
-        '    return str(value)\n'
-    )
+    (proj / "main.py").write_text('def greet(name):\n    return f"Hello, {name}"\n\ndef add(a, b):\n    return a + b\n')
+    (proj / "util.py").write_text("def format_output(value):\n    return str(value)\n")
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj, "--force")
@@ -137,9 +126,7 @@ class TestResetWithForce:
     def test_reset_force_json_envelope(self, indexed_project, cli_runner, monkeypatch):
         """JSON output from reset --force should be a valid roam envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(
-            cli_runner, ["reset", "--force"], cwd=indexed_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["reset", "--force"], cwd=indexed_project, json_mode=True)
         assert result.exit_code == 0, f"reset failed:\n{result.output}"
         data = json.loads(result.output)
         assert data["command"] == "reset"
@@ -249,6 +236,7 @@ class TestCleanOrphanDetection:
 
         # Verify the file is indexed
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             rows = conn.execute("SELECT id FROM files WHERE path LIKE '%util.py'").fetchall()
         assert len(rows) > 0, "util.py should be in the index"
@@ -262,9 +250,7 @@ class TestCleanOrphanDetection:
 
         data = json.loads(result.output)
         summary = data["summary"]
-        assert summary["files_removed"] >= 1, (
-            f"Expected at least 1 file removed, got {summary['files_removed']}"
-        )
+        assert summary["files_removed"] >= 1, f"Expected at least 1 file removed, got {summary['files_removed']}"
 
     def test_clean_reports_orphaned_path(self, indexed_project, cli_runner, monkeypatch):
         """The orphaned file's path should appear in orphaned_paths."""
@@ -278,9 +264,7 @@ class TestCleanOrphanDetection:
 
         data = json.loads(result.output)
         orphaned = data.get("orphaned_paths", [])
-        assert any("util" in p for p in orphaned), (
-            f"Expected util.py in orphaned_paths, got: {orphaned}"
-        )
+        assert any("util" in p for p in orphaned), f"Expected util.py in orphaned_paths, got: {orphaned}"
 
     def test_clean_removes_symbols_of_orphaned_file(self, indexed_project, cli_runner, monkeypatch):
         """Symbols belonging to the deleted file should also be removed."""
@@ -288,6 +272,7 @@ class TestCleanOrphanDetection:
 
         # Get symbol count before deletion
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
             before = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
 
@@ -341,9 +326,7 @@ class TestCleanOrphanDetection:
 
         data = json.loads(result.output)
         summary = data["summary"]
-        assert summary["files_removed"] >= 2, (
-            f"Expected >= 2 files removed, got {summary['files_removed']}"
-        )
+        assert summary["files_removed"] >= 2, f"Expected >= 2 files removed, got {summary['files_removed']}"
         assert len(data["orphaned_paths"]) >= 2
 
 
@@ -375,10 +358,9 @@ class TestCleanIndexIntegrity:
         invoke_cli(cli_runner, ["clean"], cwd=indexed_project)
 
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT id FROM files WHERE path LIKE '%util.py'"
-            ).fetchall()
+            rows = conn.execute("SELECT id FROM files WHERE path LIKE '%util.py'").fetchall()
         assert len(rows) == 0, "util.py should be removed from the index after clean"
 
     def test_surviving_files_still_indexed(self, indexed_project, cli_runner, monkeypatch):
@@ -390,10 +372,9 @@ class TestCleanIndexIntegrity:
         invoke_cli(cli_runner, ["clean"], cwd=indexed_project)
 
         from roam.db.connection import open_db
+
         with open_db(readonly=True) as conn:
-            rows = conn.execute(
-                "SELECT id FROM files WHERE path LIKE '%main.py'"
-            ).fetchall()
+            rows = conn.execute("SELECT id FROM files WHERE path LIKE '%main.py'").fetchall()
         assert len(rows) > 0, "main.py should still be in the index after clean"
 
 
@@ -480,6 +461,7 @@ class TestCommandRegistration:
     def test_reset_is_registered(self, cli_runner):
         """roam reset should appear in the CLI command list."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "reset" in result.output
@@ -487,6 +469,7 @@ class TestCommandRegistration:
     def test_clean_is_registered(self, cli_runner):
         """roam clean should appear in the CLI command list."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["--help"])
         assert result.exit_code == 0
         assert "clean" in result.output
@@ -494,6 +477,7 @@ class TestCommandRegistration:
     def test_reset_help_mentions_force(self, cli_runner):
         """roam reset --help should document the --force flag."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["reset", "--help"])
         assert result.exit_code == 0
         assert "--force" in result.output
@@ -501,5 +485,6 @@ class TestCommandRegistration:
     def test_clean_has_help(self, cli_runner):
         """roam clean --help should return exit code 0."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["clean", "--help"])
         assert result.exit_code == 0

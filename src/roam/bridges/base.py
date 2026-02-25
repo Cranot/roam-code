@@ -1,4 +1,5 @@
 """Abstract base class for cross-language bridges."""
+
 from __future__ import annotations
 
 from abc import ABC, abstractmethod
@@ -34,8 +35,7 @@ class LanguageBridge(ABC):
         """Return True if this bridge is relevant for the given file set."""
 
     @abstractmethod
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve cross-language symbol links.
 
         Args:

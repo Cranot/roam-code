@@ -6,19 +6,17 @@ from collections import Counter
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command()
-@click.option('-n', 'limit', default=30, help='Max pairs to show')
-@click.option('--min-npmi', default=0.3, type=float, show_default=True,
-              help='Minimum NPMI threshold')
-@click.option('--min-cochanges', default=3, type=int, show_default=True,
-              help='Minimum co-change count')
-@click.option('--explain', is_flag=True, help='Add hypothesis for each pair')
-@click.option('--category', is_flag=True, help='Group output by hypothesis category')
+@click.option("-n", "limit", default=30, help="Max pairs to show")
+@click.option("--min-npmi", default=0.3, type=float, show_default=True, help="Minimum NPMI threshold")
+@click.option("--min-cochanges", default=3, type=int, show_default=True, help="Minimum co-change count")
+@click.option("--explain", is_flag=True, help="Add hypothesis for each pair")
+@click.option("--category", is_flag=True, help="Group output by hypothesis category")
 @click.pass_context
 def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
     """Detect dark matter: file pairs that co-change but have no structural link.
@@ -27,10 +25,10 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
     event buses, config keys, or copy-paste patterns. Use --explain to see
     hypothesized reasons for each coupling.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    from roam.graph.dark_matter import dark_matter_edges, HypothesisEngine
+    from roam.graph.dark_matter import HypothesisEngine, dark_matter_edges
 
     with open_db(readonly=True) as conn:
         pairs = dark_matter_edges(conn, min_cochanges=min_cochanges, min_npmi=min_npmi)
@@ -55,21 +53,30 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
             if parts:
                 verdict += f" ({', '.join(parts)})"
 
-            click.echo(to_json(json_envelope("dark-matter",
-                summary={"verdict": verdict, "total_dark_matter_edges": total, "by_category": dict(by_cat)},
-                dark_matter_pairs=[
-                    {
-                        "file_a": p["path_a"],
-                        "file_b": p["path_b"],
-                        "npmi": p["npmi"],
-                        "lift": p["lift"],
-                        "strength": p["strength"],
-                        "cochange_count": p["cochange_count"],
-                        "hypothesis": p.get("hypothesis"),
-                    }
-                    for p in pairs
-                ],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "dark-matter",
+                        summary={
+                            "verdict": verdict,
+                            "total_dark_matter_edges": total,
+                            "by_category": dict(by_cat),
+                        },
+                        dark_matter_pairs=[
+                            {
+                                "file_a": p["path_a"],
+                                "file_b": p["path_b"],
+                                "npmi": p["npmi"],
+                                "lift": p["lift"],
+                                "strength": p["strength"],
+                                "cochange_count": p["cochange_count"],
+                                "hypothesis": p.get("hypothesis"),
+                            }
+                            for p in pairs
+                        ],
+                    )
+                )
+            )
             return
 
         total = len(pairs)
@@ -102,7 +109,9 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
                 for p in groups[cat]:
                     detail = p.get("hypothesis", {}).get("detail", "")
                     click.echo(f"    {p['path_a']} <-> {p['path_b']}")
-                    click.echo(f"      NPMI: {p['npmi']:.2f} | Lift: {p['lift']:.1f} | Co-changes: {p['cochange_count']}")
+                    click.echo(
+                        f"      NPMI: {p['npmi']:.2f} | Lift: {p['lift']:.1f} | Co-changes: {p['cochange_count']}"
+                    )
                     if detail:
                         click.echo(f"      Hypothesis: {cat} ({detail})")
                 click.echo()

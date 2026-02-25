@@ -10,9 +10,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Secret patterns — compiled once at module level for performance
@@ -21,79 +21,207 @@ from roam.commands.resolve import ensure_index
 _SECRET_PATTERN_DEFS: list[dict] = [
     # --- API Keys ---
     {"name": "AWS Access Key", "pattern": r"AKIA[0-9A-Z]{16}", "severity": "high"},
-    {"name": "AWS Secret Key", "pattern": r"(?i)aws_secret_access_key\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}", "severity": "high"},
+    {
+        "name": "AWS Secret Key",
+        "pattern": r"(?i)aws_secret_access_key\s*[=:]\s*['\"]?[A-Za-z0-9/+=]{40}",
+        "severity": "high",
+    },
     {"name": "GitHub Token", "pattern": r"gh[pousr]_[A-Za-z0-9_]{36,255}", "severity": "high"},
-    {"name": "GitHub Personal Access Token (classic)", "pattern": r"ghp_[A-Za-z0-9]{36}", "severity": "high"},
+    {
+        "name": "GitHub Personal Access Token (classic)",
+        "pattern": r"ghp_[A-Za-z0-9]{36}",
+        "severity": "high",
+    },
     {"name": "GitLab Token", "pattern": r"glpat-[A-Za-z0-9\-]{20,}", "severity": "high"},
-    {"name": "Slack Bot Token", "pattern": r"xoxb-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}", "severity": "high"},
-    {"name": "Slack Webhook", "pattern": r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+", "severity": "medium"},
+    {
+        "name": "Slack Bot Token",
+        "pattern": r"xoxb-[0-9]{10,13}-[0-9]{10,13}-[a-zA-Z0-9]{24}",
+        "severity": "high",
+    },
+    {
+        "name": "Slack Webhook",
+        "pattern": r"https://hooks\.slack\.com/services/T[A-Z0-9]+/B[A-Z0-9]+/[a-zA-Z0-9]+",
+        "severity": "medium",
+    },
     {"name": "Stripe Secret Key", "pattern": r"sk_live_[0-9a-zA-Z]{24,}", "severity": "high"},
     {"name": "Stripe Publishable Key", "pattern": r"pk_live_[0-9a-zA-Z]{24,}", "severity": "low"},
     {"name": "Google API Key", "pattern": r"AIza[0-9A-Za-z\-_]{35}", "severity": "high"},
-    {"name": "Google OAuth Secret", "pattern": r"(?i)client_secret.*['\"][A-Za-z0-9\-_]{24}['\"]", "severity": "high"},
-    {"name": "Heroku API Key", "pattern": r"(?i)heroku.*['\"][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['\"]", "severity": "high"},
+    {
+        "name": "Google OAuth Secret",
+        "pattern": r"(?i)client_secret.*['\"][A-Za-z0-9\-_]{24}['\"]",
+        "severity": "high",
+    },
+    {
+        "name": "Heroku API Key",
+        "pattern": r"(?i)heroku.*['\"][0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}['\"]",
+        "severity": "high",
+    },
     {"name": "NPM Token", "pattern": r"npm_[A-Za-z0-9]{36}", "severity": "high"},
     {"name": "PyPI Token", "pattern": r"pypi-[A-Za-z0-9\-_]{100,}", "severity": "high"},
-    {"name": "SendGrid API Key", "pattern": r"SG\.[A-Za-z0-9\-_]{22}\.[A-Za-z0-9\-_]{43}", "severity": "high"},
+    {
+        "name": "SendGrid API Key",
+        "pattern": r"SG\.[A-Za-z0-9\-_]{22}\.[A-Za-z0-9\-_]{43}",
+        "severity": "high",
+    },
     {"name": "Twilio API Key", "pattern": r"SK[0-9a-fA-F]{32}", "severity": "medium"},
     {"name": "Mailgun API Key", "pattern": r"key-[0-9a-zA-Z]{32}", "severity": "high"},
-
     # --- Generic Secrets ---
-    {"name": "Private Key", "pattern": r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----", "severity": "high"},
-    {"name": "Generic Password Assignment", "pattern": r"(?i)(?:password|passwd|pwd)\s*[=:]\s*['\"][^\s'\"]{8,}['\"]", "severity": "medium"},
-    {"name": "Generic Secret Assignment", "pattern": r"(?i)(?:secret|token|api_key|apikey|access_key)\s*[=:]\s*['\"][^\s'\"]{8,}['\"]", "severity": "medium"},
-    {"name": "Generic Bearer Token", "pattern": r"(?i)bearer\s+[a-zA-Z0-9\-_.~+/]+=*", "severity": "medium"},
-    {"name": "JWT Token", "pattern": r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.+/=]+", "severity": "medium"},
-    {"name": "Base64 Encoded Secret", "pattern": r"(?i)(?:secret|password|token).*base64.*[A-Za-z0-9+/]{40,}={0,2}", "severity": "low"},
-
+    {
+        "name": "Private Key",
+        "pattern": r"-----BEGIN (?:RSA |EC |DSA |OPENSSH )?PRIVATE KEY-----",
+        "severity": "high",
+    },
+    {
+        "name": "Generic Password Assignment",
+        "pattern": r"(?i)(?:password|passwd|pwd)\s*[=:]\s*['\"][^\s'\"]{8,}['\"]",
+        "severity": "medium",
+    },
+    {
+        "name": "Generic Secret Assignment",
+        "pattern": r"(?i)(?:secret|token|api_key|apikey|access_key)\s*[=:]\s*['\"][^\s'\"]{8,}['\"]",
+        "severity": "medium",
+    },
+    {
+        "name": "Generic Bearer Token",
+        "pattern": r"(?i)bearer\s+[a-zA-Z0-9\-_.~+/]+=*",
+        "severity": "medium",
+    },
+    {
+        "name": "JWT Token",
+        "pattern": r"eyJ[A-Za-z0-9\-_]+\.eyJ[A-Za-z0-9\-_]+\.[A-Za-z0-9\-_.+/=]+",
+        "severity": "medium",
+    },
+    {
+        "name": "Base64 Encoded Secret",
+        "pattern": r"(?i)(?:secret|password|token).*base64.*[A-Za-z0-9+/]{40,}={0,2}",
+        "severity": "low",
+    },
     # --- Database ---
-    {"name": "Database Connection String", "pattern": r"(?i)(?:mysql|postgres|postgresql|mongodb|redis)://[^\s'\"]{10,}", "severity": "high"},
-
+    {
+        "name": "Database Connection String",
+        "pattern": r"(?i)(?:mysql|postgres|postgresql|mongodb|redis)://[^\s'\"]{10,}",
+        "severity": "high",
+    },
     # --- High Entropy String (post-filtered by Shannon entropy) ---
-    {"name": "High Entropy String", "pattern": r"(?i)(?:key|secret|token|password|api_key|apikey|access_key|auth)\s*[=:]\s*['\"]([A-Za-z0-9+/=\-_]{20,})['\"]", "severity": "low"},
+    {
+        "name": "High Entropy String",
+        "pattern": r"(?i)(?:key|secret|token|password|api_key|apikey|access_key|auth)\s*[=:]\s*['\"]([A-Za-z0-9+/=\-_]{20,})['\"]",
+        "severity": "low",
+    },
 ]
 
 # Compile all regexes once
 _COMPILED_PATTERNS: list[dict] = []
 for _pdef in _SECRET_PATTERN_DEFS:
-    _COMPILED_PATTERNS.append({
-        "name": _pdef["name"],
-        "regex": re.compile(_pdef["pattern"]),
-        "severity": _pdef["severity"],
-    })
+    _COMPILED_PATTERNS.append(
+        {
+            "name": _pdef["name"],
+            "regex": re.compile(_pdef["pattern"]),
+            "severity": _pdef["severity"],
+        }
+    )
 
 # Severity ordering for filtering
 _SEVERITY_RANK = {"high": 3, "medium": 2, "low": 1}
 
 # Words in a line that indicate example/placeholder values (case-insensitive)
-_PLACEHOLDER_WORDS = frozenset({
-    "example", "placeholder", "changeme", "your_", "xxx",
-    "dummy", "fake", "sample", "todo", "fixme", "replace_me",
-    "insert_", "your-", "<your", "xxxxxx",
-})
+_PLACEHOLDER_WORDS = frozenset(
+    {
+        "example",
+        "placeholder",
+        "changeme",
+        "your_",
+        "xxx",
+        "dummy",
+        "fake",
+        "sample",
+        "todo",
+        "fixme",
+        "replace_me",
+        "insert_",
+        "your-",
+        "<your",
+        "xxxxxx",
+    }
+)
 
 # Directories to always skip during scanning
-_SKIP_DIRS = frozenset({
-    ".git", "node_modules", "vendor", "__pycache__",
-    ".tox", ".mypy_cache", ".pytest_cache", ".ruff_cache",
-    "venv", ".venv", "env", ".env",
-    "dist", "build", ".eggs",
-    ".next", ".nuxt",
-    ".roam",
-})
+_SKIP_DIRS = frozenset(
+    {
+        ".git",
+        "node_modules",
+        "vendor",
+        "__pycache__",
+        ".tox",
+        ".mypy_cache",
+        ".pytest_cache",
+        ".ruff_cache",
+        "venv",
+        ".venv",
+        "env",
+        ".env",
+        "dist",
+        "build",
+        ".eggs",
+        ".next",
+        ".nuxt",
+        ".roam",
+    }
+)
 
 # Binary file extensions to skip
-_BINARY_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".bmp", ".ico", ".svg", ".webp",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
-    ".pyc", ".pyo", ".class", ".jar",
-    ".db", ".sqlite", ".sqlite3",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx",
-    ".mp3", ".mp4", ".wav", ".avi", ".mov",
-    ".bin", ".dat", ".pak", ".wasm",
-})
+_BINARY_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".bmp",
+        ".ico",
+        ".svg",
+        ".webp",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".o",
+        ".a",
+        ".lib",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".jar",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".avi",
+        ".mov",
+        ".bin",
+        ".dat",
+        ".pak",
+        ".wasm",
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Environment-variable patterns — lines matching these are NOT hardcoded
@@ -114,9 +242,17 @@ _ENV_VAR_INDICATORS = (
 # Test/fixture/docs path patterns — suppressed by default
 # ---------------------------------------------------------------------------
 
-_TEST_DIR_SEGMENTS = frozenset({
-    "tests", "test", "__tests__", "spec", "fixtures", "docs", "examples",
-})
+_TEST_DIR_SEGMENTS = frozenset(
+    {
+        "tests",
+        "test",
+        "__tests__",
+        "spec",
+        "fixtures",
+        "docs",
+        "examples",
+    }
+)
 
 # File-level patterns (basename matching)
 _TEST_FILE_RE = re.compile(
@@ -162,6 +298,7 @@ _REMEDIATION: dict[str, str] = {
 # ---------------------------------------------------------------------------
 # Shannon entropy helper
 # ---------------------------------------------------------------------------
+
 
 def _shannon_entropy(s: str) -> float:
     """Calculate Shannon entropy in bits per character."""
@@ -242,8 +379,7 @@ def mask_secret(matched_text: str) -> str:
     return matched_text[:4] + "..."
 
 
-def scan_file(file_path: str, patterns: list[dict] | None = None,
-              min_severity: str = "all") -> list[dict]:
+def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: str = "all") -> list[dict]:
     """Scan a single file for secret patterns.
 
     Returns a list of finding dicts with keys:
@@ -276,23 +412,30 @@ def scan_file(file_path: str, patterns: list[dict] | None = None,
                             value = match.group(1) if match.lastindex else match.group()
                             if _shannon_entropy(value) < _ENTROPY_THRESHOLD:
                                 continue
-                        findings.append({
-                            "file": file_path,
-                            "line": line_num,
-                            "severity": pat["severity"],
-                            "pattern_name": pat["name"],
-                            "matched_text": mask_secret(match.group()),
-                            "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
-                        })
+                        findings.append(
+                            {
+                                "file": file_path,
+                                "line": line_num,
+                                "severity": pat["severity"],
+                                "pattern_name": pat["name"],
+                                "matched_text": mask_secret(match.group()),
+                                "remediation": _REMEDIATION.get(
+                                    pat["name"], "Move to environment variable or secrets manager"
+                                ),
+                            }
+                        )
     except (OSError, UnicodeDecodeError):
         pass
 
     return findings
 
 
-def scan_project(project_root: Path, min_severity: str = "all",
-                 use_index: bool = True,
-                 include_tests: bool = False) -> list[dict]:
+def scan_project(
+    project_root: Path,
+    min_severity: str = "all",
+    use_index: bool = True,
+    include_tests: bool = False,
+) -> list[dict]:
     """Scan all indexed files in a project for secrets.
 
     If use_index is True, reads file paths from the roam index DB.
@@ -337,9 +480,7 @@ def scan_project(project_root: Path, min_severity: str = "all",
         all_findings.extend(file_findings)
 
     # Sort: high severity first, then by file path, then line number
-    all_findings.sort(
-        key=lambda f: (-_SEVERITY_RANK.get(f["severity"], 0), f["file"], f["line"])
-    )
+    all_findings.sort(key=lambda f: (-_SEVERITY_RANK.get(f["severity"], 0), f["file"], f["line"]))
     return all_findings
 
 
@@ -359,12 +500,19 @@ def _walk_for_files(root: Path) -> list[str]:
 
 
 @click.command("secrets")
-@click.option("--severity", type=click.Choice(["all", "high", "medium", "low"]),
-              default="all", help="Show only findings at or above this severity level")
-@click.option("--fail-on-found", is_flag=True,
-              help="Exit with code 5 if any secrets are found (for CI)")
-@click.option("--include-tests", is_flag=True, default=False,
-              help="Include test files, fixtures, docs, and examples in scan")
+@click.option(
+    "--severity",
+    type=click.Choice(["all", "high", "medium", "low"]),
+    default="all",
+    help="Show only findings at or above this severity level",
+)
+@click.option("--fail-on-found", is_flag=True, help="Exit with code 5 if any secrets are found (for CI)")
+@click.option(
+    "--include-tests",
+    is_flag=True,
+    default=False,
+    help="Include test files, fixtures, docs, and examples in scan",
+)
 @click.pass_context
 def secrets(ctx, severity, fail_on_found, include_tests):
     """Scan for hardcoded secrets, API keys, tokens, and passwords."""
@@ -374,8 +522,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     ensure_index()
 
     project_root = find_project_root()
-    findings = scan_project(project_root, min_severity=severity,
-                            include_tests=include_tests)
+    findings = scan_project(project_root, min_severity=severity, include_tests=include_tests)
 
     # Compute summary stats
     total = len(findings)
@@ -400,10 +547,12 @@ def secrets(ctx, severity, fail_on_found, include_tests):
     # --- SARIF output ---
     if sarif_mode:
         from roam.output.sarif import secrets_to_sarif, write_sarif
+
         sarif = secrets_to_sarif(findings)
         click.echo(write_sarif(sarif))
         if fail_on_found and total > 0:
             from roam.exit_codes import GateFailureError
+
             raise GateFailureError(verdict)
         return
 
@@ -433,6 +582,7 @@ def secrets(ctx, severity, fail_on_found, include_tests):
         click.echo(to_json(envelope))
         if fail_on_found and total > 0:
             from roam.exit_codes import GateFailureError
+
             raise GateFailureError(verdict)
         return
 
@@ -447,13 +597,14 @@ def secrets(ctx, severity, fail_on_found, include_tests):
             sev = f["severity"].upper()
             rows.append([loc_str, sev, f["pattern_name"], f["matched_text"]])
 
-        click.echo(format_table(
-            ["Location", "Severity", "Pattern", "Match"],
-            rows,
-        ))
+        click.echo(
+            format_table(
+                ["Location", "Severity", "Pattern", "Match"],
+                rows,
+            )
+        )
         click.echo()
-        click.echo(f"  {total} secrets, {files_affected} files, "
-                    f"{by_severity['high']} high severity")
+        click.echo(f"  {total} secrets, {files_affected} files, {by_severity['high']} high severity")
         click.echo()
 
         # Per-finding remediation
@@ -481,4 +632,5 @@ def secrets(ctx, severity, fail_on_found, include_tests):
 
     if fail_on_found and total > 0:
         from roam.exit_codes import GateFailureError
+
         raise GateFailureError(verdict)

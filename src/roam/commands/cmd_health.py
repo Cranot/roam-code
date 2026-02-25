@@ -6,65 +6,165 @@ import math
 
 import click
 
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
+from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
-from roam.db.connection import open_db, batched_in
-from roam.db.queries import TOP_BY_DEGREE, TOP_BY_BETWEENNESS
+from roam.db.connection import batched_in, open_db
+from roam.db.queries import TOP_BY_BETWEENNESS, TOP_BY_DEGREE
 from roam.graph.builder import build_symbol_graph
-from roam.graph.cycles import find_cycles, find_weakest_edge, format_cycles, propagation_cost, algebraic_connectivity
+from roam.graph.cycles import (
+    algebraic_connectivity,
+    find_cycles,
+    find_weakest_edge,
+    format_cycles,
+    propagation_cost,
+)
 from roam.graph.layers import detect_layers, find_violations
 from roam.output.formatter import (
-    abbrev_kind, loc, format_table, to_json,
-    json_envelope, budget_truncate, summary_envelope,
+    abbrev_kind,
+    format_table,
+    json_envelope,
+    loc,
+    summary_envelope,
+    to_json,
 )
-from roam.commands.resolve import ensure_index
-from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
 
-
-_FRAMEWORK_NAMES = frozenset({
-    # Python dunders
-    "__init__", "__str__", "__repr__", "__new__", "__del__", "__enter__",
-    "__exit__", "__getattr__", "__setattr__", "__getitem__", "__setitem__",
-    "__len__", "__iter__", "__next__", "__call__", "__hash__", "__eq__",
-    # JS/TS generic
-    "constructor", "render", "toString", "valueOf", "toJSON",
-    "setUp", "tearDown", "setup", "teardown",
-    "configure", "register", "bootstrap", "main",
-    # Vue
-    "computed", "ref", "reactive", "watch", "watchEffect",
-    "defineProps", "defineEmits", "defineExpose", "defineSlots",
-    "onMounted", "onUnmounted", "onBeforeMount", "onBeforeUnmount",
-    "onActivated", "onDeactivated", "onUpdated", "onBeforeUpdate",
-    "provide", "inject", "toRef", "toRefs", "unref", "isRef",
-    "shallowRef", "shallowReactive", "readonly", "shallowReadonly",
-    "nextTick", "h", "resolveComponent", "emit", "emits", "props",
-    # React
-    "useState", "useEffect", "useCallback", "useMemo", "useRef",
-    "useContext", "useReducer", "useLayoutEffect",
-    # Angular
-    "ngOnInit", "ngOnDestroy", "ngOnChanges", "ngAfterViewInit",
-    # Go
-    "init", "New", "Close", "String", "Error",
-    # Rust
-    "new", "default", "fmt", "from", "into", "drop",
-})
+_FRAMEWORK_NAMES = frozenset(
+    {
+        # Python dunders
+        "__init__",
+        "__str__",
+        "__repr__",
+        "__new__",
+        "__del__",
+        "__enter__",
+        "__exit__",
+        "__getattr__",
+        "__setattr__",
+        "__getitem__",
+        "__setitem__",
+        "__len__",
+        "__iter__",
+        "__next__",
+        "__call__",
+        "__hash__",
+        "__eq__",
+        # JS/TS generic
+        "constructor",
+        "render",
+        "toString",
+        "valueOf",
+        "toJSON",
+        "setUp",
+        "tearDown",
+        "setup",
+        "teardown",
+        "configure",
+        "register",
+        "bootstrap",
+        "main",
+        # Vue
+        "computed",
+        "ref",
+        "reactive",
+        "watch",
+        "watchEffect",
+        "defineProps",
+        "defineEmits",
+        "defineExpose",
+        "defineSlots",
+        "onMounted",
+        "onUnmounted",
+        "onBeforeMount",
+        "onBeforeUnmount",
+        "onActivated",
+        "onDeactivated",
+        "onUpdated",
+        "onBeforeUpdate",
+        "provide",
+        "inject",
+        "toRef",
+        "toRefs",
+        "unref",
+        "isRef",
+        "shallowRef",
+        "shallowReactive",
+        "readonly",
+        "shallowReadonly",
+        "nextTick",
+        "h",
+        "resolveComponent",
+        "emit",
+        "emits",
+        "props",
+        # React
+        "useState",
+        "useEffect",
+        "useCallback",
+        "useMemo",
+        "useRef",
+        "useContext",
+        "useReducer",
+        "useLayoutEffect",
+        # Angular
+        "ngOnInit",
+        "ngOnDestroy",
+        "ngOnChanges",
+        "ngAfterViewInit",
+        # Go
+        "init",
+        "New",
+        "Close",
+        "String",
+        "Error",
+        # Rust
+        "new",
+        "default",
+        "fmt",
+        "from",
+        "into",
+        "drop",
+    }
+)
 
 
 # ---- Location-aware utility detection ----
 
 _UTILITY_PATH_PATTERNS = (
-    "composables/", "utils/", "services/", "lib/", "helpers/",
-    "shared/", "config/", "core/", "hooks/", "stores/",
-    "output/", "db/", "common/", "internal/", "infra/",
+    "composables/",
+    "utils/",
+    "services/",
+    "lib/",
+    "helpers/",
+    "shared/",
+    "config/",
+    "core/",
+    "hooks/",
+    "stores/",
+    "output/",
+    "db/",
+    "common/",
+    "internal/",
+    "infra/",
 )
 
 _UTILITY_FILE_PATTERNS = (
-    "resolve.py", "helpers.py", "common.py", "base.py",
+    "resolve.py",
+    "helpers.py",
+    "common.py",
+    "base.py",
 )
 
 # Paths that are NOT production code — treat as expected utilities
 _NON_PRODUCTION_PATH_PATTERNS = (
-    "tests/", "test/", "__tests__/", "spec/",
-    "dev/", "scripts/", "bin/", "benchmark/",
+    "tests/",
+    "test/",
+    "__tests__/",
+    "spec/",
+    "dev/",
+    "scripts/",
+    "bin/",
+    "benchmark/",
     "conftest.py",
 )
 
@@ -109,20 +209,48 @@ def _unique_dirs(file_paths):
     return dirs
 
 
+def _parse_simple_yaml(text: str) -> dict:
+    """Parse a flat YAML file with one top-level section (no PyYAML needed)."""
+    result: dict[str, dict] = {}
+    current_section = None
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line[0].isspace() and stripped.endswith(":"):
+            current_section = stripped[:-1]
+            result[current_section] = {}
+        elif current_section and ":" in stripped:
+            key, _, val = stripped.partition(":")
+            val = val.strip()
+            # Try numeric conversion
+            try:
+                val = int(val)
+            except ValueError:
+                try:
+                    val = float(val)
+                except ValueError:
+                    pass
+            result[current_section][key.strip()] = val
+    return result
+
+
 def _load_gate_config() -> dict:
     """Load quality gate thresholds from .roam-gates.yml or use defaults."""
     defaults = {"health_min": 60}
-    try:
-        import yaml
-    except ImportError:
-        return defaults
     from pathlib import Path
+
     config_path = Path(".roam-gates.yml")
     if not config_path.exists():
         return defaults
     try:
-        with open(config_path) as f:
-            data = yaml.safe_load(f)
+        text = config_path.read_text(encoding="utf-8")
+        try:
+            import yaml
+
+            data = yaml.safe_load(text)
+        except ImportError:
+            data = _parse_simple_yaml(text)
         if data and "health" in data:
             defaults.update(data["health"])
         return defaults
@@ -131,17 +259,19 @@ def _load_gate_config() -> dict:
 
 
 @click.command()
-@click.option('--no-framework', is_flag=True,
-              help='Filter out framework/boilerplate symbols from god components and bottlenecks')
-@click.option('--gate', is_flag=True,
-              help='Run quality gate checks (exit 5 on failure)')
+@click.option(
+    "--no-framework",
+    is_flag=True,
+    help="Filter out framework/boilerplate symbols from god components and bottlenecks",
+)
+@click.option("--gate", is_flag=True, help="Run quality gate checks (exit 5 on failure)")
 @click.pass_context
 def health(ctx, no_framework, gate):
     """Show code health: cycles, god components, bottlenecks."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    sarif_mode = ctx.obj.get('sarif') if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
-    detail = ctx.obj.get('detail', False) if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    detail = ctx.obj.get("detail", False) if ctx.obj else False
     ensure_index()
     with open_db(readonly=True) as conn:
         G = build_symbol_graph(conn)
@@ -161,14 +291,16 @@ def health(ctx, no_framework, gate):
             src_id, tgt_id, reason = result
             src_name = G.nodes[src_id].get("name", "?") if src_id in G else "?"
             tgt_name = G.nodes[tgt_id].get("name", "?") if tgt_id in G else "?"
-            break_suggestions.append({
-                "source_id": src_id,
-                "target_id": tgt_id,
-                "source_name": src_name,
-                "target_name": tgt_name,
-                "reason": reason,
-                "scc_size": len(scc),
-            })
+            break_suggestions.append(
+                {
+                    "source_id": src_id,
+                    "target_id": tgt_id,
+                    "source_name": src_name,
+                    "target_name": tgt_name,
+                    "reason": reason,
+                    "scc_size": len(scc),
+                }
+            )
 
         # --- God components ---
         degree_rows = conn.execute(TOP_BY_DEGREE, (50,)).fetchall()
@@ -176,19 +308,21 @@ def health(ctx, no_framework, gate):
         for r in degree_rows:
             total = (r["in_degree"] or 0) + (r["out_degree"] or 0)
             if total > 20:
-                god_items.append({
-                    "name": r["name"], "kind": r["kind"],
-                    "degree": total, "file": r["file_path"],
-                })
+                god_items.append(
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "degree": total,
+                        "file": r["file_path"],
+                    }
+                )
 
         # --- Bottlenecks (percentile-based severity) ---
         # Fetch all non-zero betweenness values to compute percentile thresholds.
         # Raw betweenness is unnormalized (shortest-path counts), so absolute
         # thresholds don't scale across codebase sizes. Percentiles do.
         all_bw = sorted(
-            r[0] for r in conn.execute(
-                "SELECT betweenness FROM graph_metrics WHERE betweenness > 0"
-            ).fetchall()
+            r[0] for r in conn.execute("SELECT betweenness FROM graph_metrics WHERE betweenness > 0").fetchall()
         )
         bn_p70 = _percentile(all_bw, 70)
         bn_p90 = _percentile(all_bw, 90)
@@ -198,10 +332,14 @@ def health(ctx, no_framework, gate):
         for r in bw_rows:
             bw = r["betweenness"] or 0
             if bw > 0.5:
-                bn_items.append({
-                    "name": r["name"], "kind": r["kind"],
-                    "betweenness": round(bw, 1), "file": r["file_path"],
-                })
+                bn_items.append(
+                    {
+                        "name": r["name"],
+                        "kind": r["kind"],
+                        "betweenness": round(bw, 1),
+                        "file": r["file_path"],
+                    }
+                )
 
         # --- Framework filtering ---
         filtered_count = 0
@@ -268,10 +406,12 @@ def health(ctx, no_framework, gate):
             sev_counts[g["severity"]] += 1
 
         # Sort: actionable first, then utilities; within each group by degree desc
-        god_items.sort(key=lambda g: (
-            0 if g["category"] == "actionable" else 1,
-            -g["degree"],
-        ))
+        god_items.sort(
+            key=lambda g: (
+                0 if g["category"] == "actionable" else 1,
+                -g["degree"],
+            )
+        )
 
         # Bottleneck severity: percentile-based thresholds.
         # Utilities get 1.5x multiplied thresholds (higher bar for severity).
@@ -295,10 +435,12 @@ def health(ctx, no_framework, gate):
             sev_counts[b["severity"]] += 1
 
         # Sort: actionable first, then utilities; within each group by betweenness desc
-        bn_items.sort(key=lambda b: (
-            0 if b["category"] == "actionable" else 1,
-            -b["betweenness"],
-        ))
+        bn_items.sort(
+            key=lambda b: (
+                0 if b["category"] == "actionable" else 1,
+                -b["betweenness"],
+            )
+        )
 
         for v in violations:
             v["severity"] = "WARNING"
@@ -340,10 +482,10 @@ def health(ctx, no_framework, gate):
 
         # Base factors (weights sum to 1.0 before optional imported coverage).
         base_factors = [
-            (_health_factor(tangle_ratio, 10), 0.30),      # tangle ratio
-            (_health_factor(god_signal, 5), 0.20),          # god components
-            (_health_factor(bn_signal, 4), 0.15),           # bottlenecks
-            (_health_factor(len(violations), 5), 0.15),     # layer violations
+            (_health_factor(tangle_ratio, 10), 0.30),  # tangle ratio
+            (_health_factor(god_signal, 5), 0.20),  # god components
+            (_health_factor(bn_signal, 4), 0.15),  # bottlenecks
+            (_health_factor(len(violations), 5), 0.15),  # layer violations
         ]
         # File-level health: map avg [0-10] to a factor
         try:
@@ -360,10 +502,7 @@ def health(ctx, no_framework, gate):
         # Imported test coverage (#134): when available, reserve 10% score weight
         # and scale existing weights to 90%. This avoids over-dominance while
         # still penalizing high-centrality codebases with low real coverage.
-        if (
-            coverage_import.get("coverable_lines", 0) > 0
-            and coverage_import.get("coverage_pct") is not None
-        ):
+        if coverage_import.get("coverable_lines", 0) > 0 and coverage_import.get("coverage_pct") is not None:
             cov_factor = min(1.0, max(0.05, coverage_import["coverage_pct"] / 100.0))
             _health_factors = [(h, w * 0.90) for h, w in base_factors]
             _health_factors.append((cov_factor, 0.10))
@@ -401,30 +540,55 @@ def health(ctx, no_framework, gate):
             c_max = gate_config.get("complexity_max")
             if c_max is not None:
                 try:
-                    max_cc = conn.execute("SELECT MAX(complexity) FROM symbols WHERE complexity IS NOT NULL").fetchone()[0] or 0
+                    max_cc = (
+                        conn.execute("SELECT MAX(complexity) FROM symbols WHERE complexity IS NOT NULL").fetchone()[0]
+                        or 0
+                    )
                 except Exception:
                     max_cc = 0
                 passed = max_cc <= c_max
-                gate_results.append({"gate": "complexity_max", "threshold": c_max, "actual": max_cc, "passed": passed})
+                gate_results.append(
+                    {
+                        "gate": "complexity_max",
+                        "threshold": c_max,
+                        "actual": max_cc,
+                        "passed": passed,
+                    }
+                )
                 if not passed:
                     all_passed = False
 
             cyc_max = gate_config.get("cycle_max")
             if cyc_max is not None:
                 passed = len(cycles) <= cyc_max
-                gate_results.append({"gate": "cycle_max", "threshold": cyc_max, "actual": len(cycles), "passed": passed})
+                gate_results.append(
+                    {
+                        "gate": "cycle_max",
+                        "threshold": cyc_max,
+                        "actual": len(cycles),
+                        "passed": passed,
+                    }
+                )
                 if not passed:
                     all_passed = False
 
             t_max = gate_config.get("tangle_max")
             if t_max is not None:
                 passed = tangle_ratio <= t_max
-                gate_results.append({"gate": "tangle_max", "threshold": t_max, "actual": tangle_ratio, "passed": passed})
+                gate_results.append(
+                    {
+                        "gate": "tangle_max",
+                        "threshold": t_max,
+                        "actual": tangle_ratio,
+                        "passed": passed,
+                    }
+                )
                 if not passed:
                     all_passed = False
 
             if json_mode:
-                envelope = json_envelope("health",
+                envelope = json_envelope(
+                    "health",
                     budget=token_budget,
                     summary={
                         "verdict": verdict,
@@ -440,6 +604,7 @@ def health(ctx, no_framework, gate):
                 click.echo(to_json(envelope))
                 if not all_passed:
                     from roam.exit_codes import GateFailureError
+
                     raise GateFailureError("Quality gate failed")
                 return
 
@@ -456,11 +621,13 @@ def health(ctx, no_framework, gate):
                 failed = [g["gate"] for g in gate_results if not g["passed"]]
                 click.echo(f"\nFailed gates: {', '.join(failed)}")
                 from roam.exit_codes import GateFailureError
+
                 raise GateFailureError(f"Quality gate failed: {', '.join(failed)}")
             return
 
         if sarif_mode:
             from roam.output.sarif import health_to_sarif, write_sarif
+
             issues = {
                 "cycles": [
                     {
@@ -508,12 +675,16 @@ def health(ctx, no_framework, gate):
 
         if json_mode:
             j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
-            next_steps = suggest_next_steps("health", {
-                "score": health_score,
-                "critical_issues": sev_counts["CRITICAL"],
-                "cycles": len(cycles),
-            })
-            envelope = json_envelope("health",
+            next_steps = suggest_next_steps(
+                "health",
+                {
+                    "score": health_score,
+                    "critical_issues": sev_counts["CRITICAL"],
+                    "cycles": len(cycles),
+                },
+            )
+            envelope = json_envelope(
+                "health",
                 budget=token_budget,
                 summary={
                     "verdict": verdict,
@@ -541,10 +712,13 @@ def health(ctx, no_framework, gate):
                 actionable_count=actionable_count,
                 utility_count=utility_count,
                 cycles=[
-                    {"size": c["size"], "severity": c["severity"],
-                     "directories": c["directories"],
-                     "symbols": [s["name"] for s in c["symbols"]],
-                     "files": c["files"]}
+                    {
+                        "size": c["size"],
+                        "severity": c["severity"],
+                        "directories": c["directories"],
+                        "symbols": [s["name"] for s in c["symbols"]],
+                        "files": c["files"],
+                    }
                     for c in formatted_cycles
                 ],
                 cycle_break_suggestions=[
@@ -556,20 +730,14 @@ def health(ctx, no_framework, gate):
                     }
                     for bs in break_suggestions
                 ],
-                god_components=[
-                    {**g, "severity": g["severity"], "category": g["category"]}
-                    for g in god_items
-                ],
+                god_components=[{**g, "severity": g["severity"], "category": g["category"]} for g in god_items],
                 bottleneck_thresholds={
                     "p70": round(bn_p70, 1),
                     "p90": round(bn_p90, 1),
                     "utility_multiplier": _BN_UTIL_MULT,
                     "population": len(all_bw),
                 },
-                bottlenecks=[
-                    {**b, "severity": b["severity"], "category": b["category"]}
-                    for b in bn_items
-                ],
+                bottlenecks=[{**b, "severity": b["severity"], "category": b["category"]} for b in bn_items],
                 layer_violations=[
                     {
                         "severity": "WARNING",
@@ -602,10 +770,11 @@ def health(ctx, no_framework, gate):
             parts.append(bn_detail)
         if violations:
             parts.append(f"{len(violations)} layer violation{'s' if len(violations) != 1 else ''}")
-        click.echo(f"Health Score: {health_score}/100  |  "
-                   f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)")
-        click.echo(f"Propagation Cost: {prop_cost:.1%}  |  "
-                   f"Algebraic Connectivity: {fiedler:.4f}")
+        click.echo(
+            f"Health Score: {health_score}/100  |  "
+            f"Tangle: {tangle_ratio}% ({len(cycle_symbol_ids)}/{total_symbols} symbols in cycles)"
+        )
+        click.echo(f"Propagation Cost: {prop_cost:.1%}  |  Algebraic Connectivity: {fiedler:.4f}")
         if coverage_import.get("coverable_lines", 0) > 0:
             click.echo(
                 f"Imported Coverage: {coverage_import['coverage_pct']}% "
@@ -623,9 +792,8 @@ def health(ctx, no_framework, gate):
                 sev_parts.append(f"{sev_counts['WARNING']} WARNING")
             if sev_counts["INFO"]:
                 sev_parts.append(f"{sev_counts['INFO']} INFO")
-            click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} "
-                        f"— {', '.join(sev_parts)}")
-            detail_str = ', '.join(parts)
+            click.echo(f"Health: {issue_count} issue{'s' if issue_count != 1 else ''} — {', '.join(sev_parts)}")
+            detail_str = ", ".join(parts)
             if filtered_count:
                 detail_str += f"; {filtered_count} framework symbols filtered"
             click.echo(f"  ({detail_str})")
@@ -634,7 +802,8 @@ def health(ctx, no_framework, gate):
         # --- Summary mode (no --detail): only show top 3 issues ---
         if not detail:
             top_critical = [
-                item for item_list in [
+                item
+                for item_list in [
                     [(c, "cycle") for c in formatted_cycles if c.get("severity") == "CRITICAL"],
                     [(g, "god") for g in god_items if g.get("severity") == "CRITICAL"],
                     [(b, "bottleneck") for b in bn_items if b.get("severity") == "CRITICAL"],
@@ -648,11 +817,17 @@ def health(ctx, no_framework, gate):
                         names = [s["name"] for s in item["symbols"][:3]]
                         click.echo(f"  cycle ({item['size']} symbols): {', '.join(names)}")
                     elif kind == "god":
-                        click.echo(f"  god component: {item['name']} ({abbrev_kind(item['kind'])}, degree={item['degree']})")
+                        click.echo(
+                            f"  god component: {item['name']} ({abbrev_kind(item['kind'])}, degree={item['degree']})"
+                        )
                     elif kind == "bottleneck":
-                        click.echo(f"  bottleneck: {item['name']} ({abbrev_kind(item['kind'])}, betweenness={item['betweenness']})")
+                        click.echo(
+                            f"  bottleneck: {item['name']} ({abbrev_kind(item['kind'])}, betweenness={item['betweenness']})"
+                        )
             else:
-                click.echo("(use --detail for full breakdown of cycles, god components, bottlenecks, and layer violations)")
+                click.echo(
+                    "(use --detail for full breakdown of cycles, god components, bottlenecks, and layer violations)"
+                )
             return
 
         click.echo("=== Cycles ===")
@@ -671,22 +846,25 @@ def health(ctx, no_framework, gate):
                 click.echo("  Cycle break suggestions:")
                 for bs in break_suggestions:
                     click.echo(
-                        f"    Break: remove dependency "
-                        f"{bs['source_name']} -> {bs['target_name']} "
-                        f"({bs['reason']})"
+                        f"    Break: remove dependency {bs['source_name']} -> {bs['target_name']} ({bs['reason']})"
                     )
         else:
             click.echo("  (none)")
 
         click.echo("\n=== God Components (degree > 20) ===")
         if god_items:
-            god_rows = [[g["severity"], g["name"], abbrev_kind(g["kind"]),
-                         str(g["degree"]),
-                         "util" if g["category"] == "utility" else "act",
-                         loc(g["file"])]
-                        for g in god_items]
-            click.echo(format_table(["Sev", "Name", "Kind", "Degree", "Cat", "File"],
-                                    god_rows, budget=20))
+            god_rows = [
+                [
+                    g["severity"],
+                    g["name"],
+                    abbrev_kind(g["kind"]),
+                    str(g["degree"]),
+                    "util" if g["category"] == "utility" else "act",
+                    loc(g["file"]),
+                ]
+                for g in god_items
+            ]
+            click.echo(format_table(["Sev", "Name", "Kind", "Degree", "Cat", "File"], god_rows, budget=20))
         else:
             click.echo("  (none)")
 
@@ -695,12 +873,17 @@ def health(ctx, no_framework, gate):
             bn_rows = []
             for b in bn_items:
                 bw_str = f"{b['betweenness']:.0f}" if b["betweenness"] >= 10 else f"{b['betweenness']:.1f}"
-                bn_rows.append([b["severity"], b["name"], abbrev_kind(b["kind"]),
-                                bw_str,
-                                "util" if b["category"] == "utility" else "act",
-                                loc(b["file"])])
-            click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "Cat", "File"],
-                                    bn_rows, budget=15))
+                bn_rows.append(
+                    [
+                        b["severity"],
+                        b["name"],
+                        abbrev_kind(b["kind"]),
+                        bw_str,
+                        "util" if b["category"] == "utility" else "act",
+                        loc(b["file"]),
+                    ]
+                )
+            click.echo(format_table(["Sev", "Name", "Kind", "Betweenness", "Cat", "File"], bn_rows, budget=15))
         else:
             click.echo("  (none)")
 
@@ -710,10 +893,14 @@ def health(ctx, no_framework, gate):
             for v in violations[:20]:
                 src = v_lookup.get(v["source"], {})
                 tgt = v_lookup.get(v["target"], {})
-                v_rows.append([
-                    src.get("name", "?"), f"L{v['source_layer']}",
-                    tgt.get("name", "?"), f"L{v['target_layer']}",
-                ])
+                v_rows.append(
+                    [
+                        src.get("name", "?"),
+                        f"L{v['source_layer']}",
+                        tgt.get("name", "?"),
+                        f"L{v['target_layer']}",
+                    ]
+                )
             click.echo(format_table(["Source", "Layer", "Target", "Layer"], v_rows, budget=20))
             if len(violations) > 20:
                 click.echo(f"  (+{len(violations) - 20} more)")
@@ -722,11 +909,14 @@ def health(ctx, no_framework, gate):
         else:
             click.echo("  (no layers detected)")
 
-        next_steps = suggest_next_steps("health", {
-            "score": health_score,
-            "critical_issues": sev_counts["CRITICAL"],
-            "cycles": len(cycles),
-        })
+        next_steps = suggest_next_steps(
+            "health",
+            {
+                "score": health_score,
+                "critical_issues": sev_counts["CRITICAL"],
+                "cycles": len(cycles),
+            },
+        )
         ns_text = format_next_steps_text(next_steps)
         if ns_text:
             click.echo(ns_text)

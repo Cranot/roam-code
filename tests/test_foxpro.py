@@ -3,11 +3,9 @@
 from __future__ import annotations
 
 import os
+import shutil
 import struct
 import tempfile
-import shutil
-
-import pytest
 
 from roam.languages.foxpro_lang import FoxProExtractor
 
@@ -22,6 +20,7 @@ def _extract_foxpro(source_text: str, file_path: str = "test.prg"):
 
 
 # ── Symbol extraction ─────────────────────────────────────────────────
+
 
 class TestFoxProSymbols:
     def test_function(self):
@@ -187,6 +186,7 @@ FUNCTION Second
 
 
 # ── Reference extraction ──────────────────────────────────────────────
+
 
 class TestFoxProReferences:
     def test_do_filename(self):
@@ -396,6 +396,7 @@ ENDFUNC
 
 # ── Encoding detection ────────────────────────────────────────────────
 
+
 class TestFoxProEncoding:
     def test_utf8(self):
         """UTF-8 source should decode correctly."""
@@ -439,17 +440,17 @@ class TestFoxProEncoding:
 
 # ── Case-insensitive resolution ──────────────────────────────────────
 
+
 class TestFoxProCaseInsensitiveResolution:
     def test_case_insensitive_cross_file_edge(self):
         """DO BACKUP (uppercase) should resolve to FUNCTION backup (lowercase)."""
         tmpdir = tempfile.mkdtemp()
         try:
             import subprocess
+
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"],
-                           cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
             # caller.prg uses uppercase: DO BACKUP
             with open(os.path.join(tmpdir, "caller.prg"), "w", encoding="utf-8") as f:
@@ -460,15 +461,17 @@ class TestFoxProCaseInsensitiveResolution:
                 f.write("FUNCTION backup\n  RETURN .T.\nENDFUNC\n")
 
             subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
+
+            from pathlib import Path
 
             from roam.index.indexer import Indexer
-            from pathlib import Path
+
             indexer = Indexer(project_root=Path(tmpdir))
             indexer.run(force=True)
 
             from roam.db.connection import open_db
+
             with open_db(project_root=Path(tmpdir), readonly=True) as conn:
                 edges = conn.execute("SELECT * FROM edges WHERE kind = 'call'").fetchall()
                 # The case-insensitive fallback should resolve DO BACKUP -> backup
@@ -479,10 +482,11 @@ class TestFoxProCaseInsensitiveResolution:
 
 # ── Integration test ──────────────────────────────────────────────────
 
+
 class TestFoxProIntegration:
     def test_pipeline_integration(self):
         """Test that FoxPro files pass through the indexing pipeline."""
-        from roam.index.parser import parse_file, REGEX_ONLY_LANGUAGES
+        from roam.index.parser import REGEX_ONLY_LANGUAGES, parse_file
         from roam.languages.registry import get_extractor
 
         assert "foxpro" in REGEX_ONLY_LANGUAGES
@@ -495,6 +499,7 @@ class TestFoxProIntegration:
                 f.write("FUNCTION Hello\n  RETURN 1\nENDFUNC\n")
 
             from pathlib import Path
+
             tree, source, lang = parse_file(Path(prg), "foxpro")
             assert tree is None  # No tree-sitter tree
             assert source is not None  # Source bytes available
@@ -504,7 +509,8 @@ class TestFoxProIntegration:
             assert extractor is not None
             assert extractor.language_name == "foxpro"
 
-            from roam.index.symbols import extract_symbols, extract_references
+            from roam.index.symbols import extract_references, extract_symbols
+
             syms = extract_symbols(tree, source, "test.prg", extractor)
             assert len(syms) == 1
             assert syms[0]["name"] == "Hello"
@@ -520,11 +526,10 @@ class TestFoxProIntegration:
         try:
             # Create git repo
             import subprocess
+
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"],
-                           cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
             # Create .prg files
             with open(os.path.join(tmpdir, "main.prg"), "w", encoding="utf-8") as f:
@@ -538,17 +543,19 @@ class TestFoxProIntegration:
 
             # Add files to git
             subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
 
             # Run indexer
-            from roam.index.indexer import Indexer
             from pathlib import Path
+
+            from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=Path(tmpdir))
             indexer.run(force=True)
 
             # Verify results
             from roam.db.connection import open_db
+
             with open_db(project_root=Path(tmpdir), readonly=True) as conn:
                 files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
                 assert len(files) == 2
@@ -567,6 +574,7 @@ class TestFoxProIntegration:
 
 
 # ── SCX/SCT synthetic binary builder ─────────────────────────────────
+
 
 class _FPTBuilder:
     """Builds a minimal FPT (memo) file for testing."""
@@ -658,9 +666,14 @@ def _build_synthetic_scx_sct(controls: list[dict]) -> tuple[bytes, bytes]:
     char_fields = {"platform": 1, "uniqueid": 9}  # displacement for PLATFORM, UNIQUEID
     # Map from control dict key -> displacement for memo fields
     memo_map = {
-        "class_name": 19, "classloc": 23, "baseclass": 27,
-        "objname": 31, "parent": 35, "properties": 39,
-        "protected": 43, "methods": 47,
+        "class_name": 19,
+        "classloc": 23,
+        "baseclass": 27,
+        "objname": 31,
+        "parent": 35,
+        "properties": 39,
+        "protected": 43,
+        "methods": 47,
     }
 
     for ctrl in controls:
@@ -694,6 +707,7 @@ def _pack_for_extractor(scx_bytes: bytes, sct_bytes: bytes) -> bytes:
 
 
 # ── DO FORM reference tests ──────────────────────────────────────────
+
 
 class TestDoFormReference:
     def test_do_form_produces_call(self):
@@ -771,12 +785,15 @@ ENDFUNC
 
 # ── SCX parsing tests ────────────────────────────────────────────────
 
+
 class TestSCXParsing:
     def test_form_symbol(self):
         """A basic SCX form should produce a class symbol named after the file."""
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "myform.scx")
@@ -787,10 +804,16 @@ class TestSCXParsing:
     def test_method_extraction(self):
         """Methods in controls should be extracted as method symbols."""
         methods = "PROCEDURE Init\n  THIS.Caption = 'Hello'\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form",
-             "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {
+                    "platform": "WINDOWS",
+                    "objname": "MyForm",
+                    "baseclass": "form",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "myform.scx")
@@ -801,11 +824,18 @@ class TestSCXParsing:
     def test_qualified_names(self):
         """Method symbols should have FormName.Control.MethodName qualified names."""
         methods = "PROCEDURE Click\n  RETURN\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "cmdSave", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdSave",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "testform.scx")
@@ -817,10 +847,12 @@ class TestSCXParsing:
     def test_comment_record_skipped(self):
         """Records with platform='COMMENT' should be skipped."""
         methods = "PROCEDURE Init\n  RETURN\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "COMMENT", "objname": "Header", "methods": methods},
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "COMMENT", "objname": "Header", "methods": methods},
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "test.scx")
@@ -831,11 +863,18 @@ class TestSCXParsing:
     def test_deleted_record_skipped(self):
         """Deleted records (deletion flag = '*') should be skipped."""
         methods = "PROCEDURE Init\n  RETURN\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "OldCtrl", "baseclass": "textbox",
-             "methods": methods, "deleted": True},
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {
+                    "platform": "WINDOWS",
+                    "objname": "OldCtrl",
+                    "baseclass": "textbox",
+                    "methods": methods,
+                    "deleted": True,
+                },
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "test.scx")
@@ -844,9 +883,11 @@ class TestSCXParsing:
 
     def test_missing_sct_graceful_degradation(self):
         """If .sct is missing (empty), form symbol should still be created."""
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+            ]
+        )
         # Pack with empty sct to simulate missing companion file
         packed = struct.pack(">I", len(scx)) + scx  # No sct bytes
         ext = FoxProExtractor()
@@ -860,13 +901,25 @@ class TestSCXParsing:
         """Multiple controls each with methods should all be extracted."""
         methods1 = "PROCEDURE Click\n  DO backup\nENDPROC\n"
         methods2 = "PROCEDURE Init\n  THIS.Value = 0\nENDPROC\nPROCEDURE Destroy\n  RETURN\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "cmdSave", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods1},
-            {"platform": "WINDOWS", "objname": "txtAmount", "parent": "MyForm",
-             "baseclass": "textbox", "methods": methods2},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdSave",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods1,
+                },
+                {
+                    "platform": "WINDOWS",
+                    "objname": "txtAmount",
+                    "parent": "MyForm",
+                    "baseclass": "textbox",
+                    "methods": methods2,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "test.scx")
@@ -877,16 +930,22 @@ class TestSCXParsing:
     def test_synthetic_line_numbers(self):
         """Synthetic line numbers should be record_num * 1000 + proc_idx."""
         methods = "PROCEDURE Init\n  RETURN\nENDPROC\nPROCEDURE Click\n  RETURN\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "btn", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "btn",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         syms = ext.extract_symbols(None, packed, "test.scx")
-        meths = sorted([s for s in syms if s["kind"] == "method"],
-                       key=lambda s: s["line_start"])
+        meths = sorted([s for s in syms if s["kind"] == "method"], key=lambda s: s["line_start"])
         # Record 1 (second record, idx 1): methods at line 1000+0, 1000+1
         assert meths[0]["name"] == "Init"
         assert meths[0]["line_start"] == 1000  # record_num=1, proc_idx=0
@@ -896,15 +955,23 @@ class TestSCXParsing:
 
 # ── SCX reference extraction tests ───────────────────────────────────
 
+
 class TestSCXReferences:
     def test_do_in_scx_methods(self):
         """DO filename inside SCX methods should produce call references."""
         methods = "PROCEDURE Click\n  DO backup\n  DO cleanup WITH 'test'\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "cmdSave", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdSave",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         refs = ext.extract_references(None, packed, "test.scx")
@@ -916,11 +983,18 @@ class TestSCXReferences:
     def test_do_form_in_scx_methods(self):
         """DO FORM inside SCX methods should produce call references."""
         methods = "PROCEDURE Click\n  DO FORM otherform\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "cmdOpen", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdOpen",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         refs = ext.extract_references(None, packed, "test.scx")
@@ -931,10 +1005,16 @@ class TestSCXReferences:
     def test_createobject_in_scx(self):
         """CREATEOBJECT inside SCX methods should produce call references."""
         methods = 'PROCEDURE Init\n  oHelper = CREATEOBJECT("MyHelper")\nENDPROC\n'
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form",
-             "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {
+                    "platform": "WINDOWS",
+                    "objname": "MyForm",
+                    "baseclass": "form",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         refs = ext.extract_references(None, packed, "test.scx")
@@ -944,27 +1024,40 @@ class TestSCXReferences:
 
     def test_classloc_import(self):
         """Controls with classloc should produce import references."""
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "oGrid", "parent": "MyForm",
-             "baseclass": "grid", "classloc": "mylibs.vcx",
-             "class_name": "CustomGrid"},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "oGrid",
+                    "parent": "MyForm",
+                    "baseclass": "grid",
+                    "classloc": "mylibs.vcx",
+                    "class_name": "CustomGrid",
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         refs = ext.extract_references(None, packed, "test.scx")
         imports = [r for r in refs if r["kind"] == "import"]
-        assert any(r["target_name"] == "mylibs" and r["import_path"] == "mylibs.vcx"
-                   for r in imports)
+        assert any(r["target_name"] == "mylibs" and r["import_path"] == "mylibs.vcx" for r in imports)
 
     def test_scope_in_scx_references(self):
         """References inside SCX methods should have correct scope."""
         methods = "PROCEDURE Click\n  DO helper\nENDPROC\n"
-        scx, sct = _build_synthetic_scx_sct([
-            {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-            {"platform": "WINDOWS", "objname": "cmdRun", "parent": "MyForm",
-             "baseclass": "commandbutton", "methods": methods},
-        ])
+        scx, sct = _build_synthetic_scx_sct(
+            [
+                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                {
+                    "platform": "WINDOWS",
+                    "objname": "cmdRun",
+                    "parent": "MyForm",
+                    "baseclass": "commandbutton",
+                    "methods": methods,
+                },
+            ]
+        )
         packed = _pack_for_extractor(scx, sct)
         ext = FoxProExtractor()
         refs = ext.extract_references(None, packed, "test.scx")
@@ -975,17 +1068,17 @@ class TestSCXReferences:
 
 # ── SCX integration tests ────────────────────────────────────────────
 
+
 class TestSCXIntegration:
     def test_full_pipeline_prg_to_scx(self):
         """Integration: .prg -> DO FORM -> .scx -> DO backup -> .prg"""
         tmpdir = tempfile.mkdtemp()
         try:
             import subprocess
+
             subprocess.run(["git", "init"], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.email", "test@test.com"],
-                           cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "config", "user.name", "Test"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.email", "test@test.com"], cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "config", "user.name", "Test"], cwd=tmpdir, capture_output=True)
 
             # main.prg calls DO FORM myform
             with open(os.path.join(tmpdir, "main.prg"), "w", encoding="utf-8") as f:
@@ -997,33 +1090,40 @@ class TestSCXIntegration:
 
             # myform.scx/sct — form with a button that calls DO backup
             methods = "PROCEDURE Click\n  DO backup\nENDPROC\n"
-            scx, sct = _build_synthetic_scx_sct([
-                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
-                {"platform": "WINDOWS", "objname": "cmdSave", "parent": "MyForm",
-                 "baseclass": "commandbutton", "methods": methods},
-            ])
+            scx, sct = _build_synthetic_scx_sct(
+                [
+                    {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form"},
+                    {
+                        "platform": "WINDOWS",
+                        "objname": "cmdSave",
+                        "parent": "MyForm",
+                        "baseclass": "commandbutton",
+                        "methods": methods,
+                    },
+                ]
+            )
             with open(os.path.join(tmpdir, "myform.scx"), "wb") as f:
                 f.write(scx)
             with open(os.path.join(tmpdir, "myform.sct"), "wb") as f:
                 f.write(sct)
 
             subprocess.run(["git", "add", "."], cwd=tmpdir, capture_output=True)
-            subprocess.run(["git", "commit", "-m", "init"],
-                           cwd=tmpdir, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "init"], cwd=tmpdir, capture_output=True)
 
             # Run indexer
-            from roam.index.indexer import Indexer
             from pathlib import Path
+
+            from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=Path(tmpdir))
             indexer.run(force=True)
 
             # Verify
             from roam.db.connection import open_db
+
             with open_db(project_root=Path(tmpdir), readonly=True) as conn:
                 # Should have 3 foxpro files: main.prg, backup.prg, myform.scx
-                files = conn.execute(
-                    "SELECT * FROM files WHERE language = 'foxpro'"
-                ).fetchall()
+                files = conn.execute("SELECT * FROM files WHERE language = 'foxpro'").fetchall()
                 file_paths = {f["path"] for f in files}
                 assert "main.prg" in file_paths
                 assert "backup.prg" in file_paths
@@ -1046,16 +1146,23 @@ class TestSCXIntegration:
 
     def test_scx_pipeline_parse_file(self):
         """parse_file should pack SCX+SCT into length-prefixed format."""
-        from roam.index.parser import parse_file
         from pathlib import Path
+
+        from roam.index.parser import parse_file
 
         tmpdir = tempfile.mkdtemp()
         try:
             methods = "PROCEDURE Init\n  RETURN\nENDPROC\n"
-            scx, sct = _build_synthetic_scx_sct([
-                {"platform": "WINDOWS", "objname": "MyForm", "baseclass": "form",
-                 "methods": methods},
-            ])
+            scx, sct = _build_synthetic_scx_sct(
+                [
+                    {
+                        "platform": "WINDOWS",
+                        "objname": "MyForm",
+                        "baseclass": "form",
+                        "methods": methods,
+                    },
+                ]
+            )
             with open(os.path.join(tmpdir, "test.scx"), "wb") as f:
                 f.write(scx)
             with open(os.path.join(tmpdir, "test.sct"), "wb") as f:

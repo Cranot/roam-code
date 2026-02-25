@@ -16,7 +16,6 @@ work before cli.py registration is complete.
 
 from __future__ import annotations
 
-import json
 import os
 import sys
 from pathlib import Path
@@ -25,13 +24,11 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    parse_json_output,
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
+    parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local helper: invoke path-coverage directly (bypasses CLI group)
@@ -43,7 +40,6 @@ def invoke_path_coverage(runner, args=None, cwd=None, json_mode=False):
 
     Bypasses the CLI group so the command works before cli.py registration.
     """
-    from click.testing import CliRunner
     from roam.commands.cmd_path_coverage import path_coverage
 
     full_args = list(args or [])
@@ -53,9 +49,7 @@ def invoke_path_coverage(runner, args=None, cwd=None, json_mode=False):
     try:
         if cwd:
             os.chdir(str(cwd))
-        result = runner.invoke(
-            path_coverage, full_args, obj=obj, catch_exceptions=False
-        )
+        result = runner.invoke(path_coverage, full_args, obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result
@@ -69,6 +63,7 @@ def invoke_path_coverage(runner, args=None, cwd=None, json_mode=False):
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -87,34 +82,27 @@ def path_cov_project(tmp_path, monkeypatch):
 
     # Entry point (no callers, calls service)
     (proj / "handler.py").write_text(
-        'from service import process\n\n'
-        'def handle_request(data):\n'
-        '    return process(data)\n'
+        "from service import process\n\ndef handle_request(data):\n    return process(data)\n"
     )
 
     # Middle layer — calls save (sink)
     (proj / "service.py").write_text(
-        'from db import save\n\n'
-        'def process(data):\n'
-        '    result = transform(data)\n'
-        '    save(result)\n'
-        '    return result\n\n'
-        'def transform(data):\n'
-        '    return data\n'
+        "from db import save\n\n"
+        "def process(data):\n"
+        "    result = transform(data)\n"
+        "    save(result)\n"
+        "    return result\n\n"
+        "def transform(data):\n"
+        "    return data\n"
     )
 
     # Sink (DB write — leaf node with no outgoing edges)
     (proj / "db.py").write_text(
-        'def save(record):\n'
-        '    conn.execute("INSERT INTO t VALUES (?)", (record,))\n'
-        '    conn.commit()\n'
+        'def save(record):\n    conn.execute("INSERT INTO t VALUES (?)", (record,))\n    conn.commit()\n'
     )
 
     # Pure utility — forms no entry-to-sink chain
-    (proj / "utils.py").write_text(
-        'def format_name(n):\n'
-        '    return n.title()\n'
-    )
+    (proj / "utils.py").write_text("def format_name(n):\n    return n.title()\n")
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -135,19 +123,16 @@ def no_paths_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
 
     (proj / "math_utils.py").write_text(
-        'def add(a, b):\n'
-        '    return a + b\n\n'
-        'def multiply(a, b):\n'
-        '    return a * b\n\n'
-        'def subtract(a, b):\n'
-        '    return a - b\n'
+        "def add(a, b):\n"
+        "    return a + b\n\n"
+        "def multiply(a, b):\n"
+        "    return a * b\n\n"
+        "def subtract(a, b):\n"
+        "    return a - b\n"
     )
 
     (proj / "string_utils.py").write_text(
-        'def upper(s):\n'
-        '    return s.upper()\n\n'
-        'def lower(s):\n'
-        '    return s.lower()\n'
+        "def upper(s):\n    return s.upper()\n\ndef lower(s):\n    return s.lower()\n"
     )
 
     git_init(proj)
@@ -164,31 +149,22 @@ def tested_project(tmp_path, monkeypatch):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "api.py").write_text(
-        'from worker import do_work\n\n'
-        'def api_handler(req):\n'
-        '    return do_work(req)\n'
-    )
+    (proj / "api.py").write_text("from worker import do_work\n\ndef api_handler(req):\n    return do_work(req)\n")
 
     (proj / "worker.py").write_text(
-        'from store import write_record\n\n'
-        'def do_work(req):\n'
-        '    write_record(req)\n'
-        '    return True\n'
+        "from store import write_record\n\ndef do_work(req):\n    write_record(req)\n    return True\n"
     )
 
     (proj / "store.py").write_text(
-        'def write_record(data):\n'
-        '    conn.execute("INSERT INTO records VALUES (?)", (data,))\n'
-        '    conn.commit()\n'
+        'def write_record(data):\n    conn.execute("INSERT INTO records VALUES (?)", (data,))\n    conn.commit()\n'
     )
 
     # Test file that calls api_handler — this covers the entry point
     (proj / "test_api.py").write_text(
-        'from api import api_handler\n\n'
-        'def test_api_handler():\n'
+        "from api import api_handler\n\n"
+        "def test_api_handler():\n"
         '    result = api_handler("payload")\n'
-        '    assert result is True\n'
+        "    assert result is True\n"
     )
 
     git_init(proj)
@@ -204,13 +180,10 @@ def tested_project(tmp_path, monkeypatch):
 
 
 class TestPathCoverage:
-
     def test_path_coverage_runs(self, path_cov_project, cli_runner):
         """Command exits with code 0 on a valid indexed project."""
         result = invoke_path_coverage(cli_runner, cwd=path_cov_project)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
 
     def test_path_coverage_json_envelope(self, path_cov_project, cli_runner):
         """JSON output follows the standard roam envelope contract."""
@@ -223,9 +196,7 @@ class TestPathCoverage:
         result = invoke_path_coverage(cli_runner, cwd=path_cov_project)
         assert result.exit_code == 0
         first_line = result.output.strip().splitlines()[0]
-        assert first_line.startswith("VERDICT:"), (
-            f"Expected output to start with VERDICT:, got: {first_line!r}"
-        )
+        assert first_line.startswith("VERDICT:"), f"Expected output to start with VERDICT:, got: {first_line!r}"
 
     def test_path_coverage_finds_entry_points(self, path_cov_project, cli_runner):
         """JSON output reports at least one entry point found."""
@@ -273,16 +244,16 @@ class TestPathCoverage:
                 assert "name" in node, f"Node missing 'name': {node}"
                 assert "file" in node, f"Node missing 'file': {node}"
                 assert "tested" in node, f"Node missing 'tested': {node}"
-                assert isinstance(node["tested"], bool), (
-                    f"Node 'tested' should be bool, got {type(node['tested'])}"
-                )
+                assert isinstance(node["tested"], bool), f"Node 'tested' should be bool, got {type(node['tested'])}"
 
     def test_path_coverage_from_filter(self, path_cov_project, cli_runner):
         """--from filter restricts entry points to matching file glob."""
         # Filter to handler.py (which contains handle_request)
         result = invoke_path_coverage(
-            cli_runner, ["--from", "handler.py"],
-            cwd=path_cov_project, json_mode=True,
+            cli_runner,
+            ["--from", "handler.py"],
+            cwd=path_cov_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = parse_json_output(result, "path-coverage")
@@ -298,8 +269,10 @@ class TestPathCoverage:
         """--to filter restricts sinks to matching file glob."""
         # Filter to db.py sinks
         result = invoke_path_coverage(
-            cli_runner, ["--to", "db.py"],
-            cwd=path_cov_project, json_mode=True,
+            cli_runner,
+            ["--to", "db.py"],
+            cwd=path_cov_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = parse_json_output(result, "path-coverage")
@@ -309,12 +282,8 @@ class TestPathCoverage:
     def test_path_coverage_no_paths_project(self, no_paths_project, cli_runner):
         """Project with no entry-to-sink chains exits 0 with graceful message."""
         result = invoke_path_coverage(cli_runner, cwd=no_paths_project)
-        assert result.exit_code == 0, (
-            f"Expected exit 0 for no-paths project, got {result.exit_code}:\n{result.output}"
-        )
-        assert "VERDICT:" in result.output, (
-            f"Expected VERDICT: line in output:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0 for no-paths project, got {result.exit_code}:\n{result.output}"
+        assert "VERDICT:" in result.output, f"Expected VERDICT: line in output:\n{result.output}"
 
     def test_path_coverage_no_paths_project_json(self, no_paths_project, cli_runner):
         """Project with no paths returns valid JSON envelope with total_paths=0."""
@@ -333,17 +302,17 @@ class TestPathCoverage:
         assert "untested_paths" in summary, "summary missing 'untested_paths'"
         assert isinstance(summary["total_paths"], int)
         assert isinstance(summary["untested_paths"], int)
-        assert summary["total_paths"] >= summary["untested_paths"], (
-            "untested_paths cannot exceed total_paths"
-        )
+        assert summary["total_paths"] >= summary["untested_paths"], "untested_paths cannot exceed total_paths"
         assert "critical" in summary, "summary missing 'critical'"
         assert "high" in summary, "summary missing 'high'"
 
     def test_path_coverage_max_depth(self, path_cov_project, cli_runner):
         """--max-depth 1 limits path length to at most 1 hop (2 nodes)."""
         result = invoke_path_coverage(
-            cli_runner, ["--max-depth", "1"],
-            cwd=path_cov_project, json_mode=True,
+            cli_runner,
+            ["--max-depth", "1"],
+            cwd=path_cov_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = parse_json_output(result, "path-coverage")
@@ -361,9 +330,7 @@ class TestPathCoverage:
             assert "symbol" in suggestion, f"Suggestion missing 'symbol': {suggestion}"
             assert "file" in suggestion, f"Suggestion missing 'file': {suggestion}"
             assert "line" in suggestion, f"Suggestion missing 'line': {suggestion}"
-            assert "paths_covered" in suggestion, (
-                f"Suggestion missing 'paths_covered': {suggestion}"
-            )
+            assert "paths_covered" in suggestion, f"Suggestion missing 'paths_covered': {suggestion}"
             assert isinstance(suggestion["paths_covered"], int)
             assert suggestion["paths_covered"] >= 1
 
@@ -373,9 +340,7 @@ class TestPathCoverage:
         result = invoke_path_coverage(cli_runner, cwd=path_cov_project, json_mode=True)
         data = parse_json_output(result, "path-coverage")
         for path in data.get("paths", []):
-            assert path["risk"] in valid_risks, (
-                f"Unexpected risk label: {path['risk']!r}. Valid: {valid_risks}"
-            )
+            assert path["risk"] in valid_risks, f"Unexpected risk label: {path['risk']!r}. Valid: {valid_risks}"
 
     def test_path_coverage_tested_project_lower_risk(self, tested_project, cli_runner):
         """A project with test coverage should have valid output with lower untested counts."""

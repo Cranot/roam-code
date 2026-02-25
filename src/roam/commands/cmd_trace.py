@@ -2,9 +2,9 @@
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
 def _classify_coupling(hops):
@@ -110,13 +110,13 @@ def _build_hops(path_ids, annotated, G):
 
 
 @click.command()
-@click.argument('source')
-@click.argument('target')
-@click.option('-k', 'k_paths', default=3, help='Number of alternative paths to find')
+@click.argument("source")
+@click.argument("target")
+@click.option("-k", "k_paths", default=3, help="Number of alternative paths to find")
 @click.pass_context
 def trace(ctx, source, target, k_paths):
     """Show shortest path between two symbols."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     from roam.graph.builder import build_symbol_graph
@@ -176,14 +176,19 @@ def trace(ctx, source, target, k_paths):
 
         if not unique_paths:
             if json_mode:
-                click.echo(to_json(json_envelope("trace",
-                    summary={"hops": 0, "paths": 0},
-                    source=source,
-                    target=target,
-                    path=None,
-                    paths=[],
-                    coupling_summary="none — no dependency path exists",
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "trace",
+                            summary={"hops": 0, "paths": 0},
+                            source=source,
+                            target=target,
+                            path=None,
+                            paths=[],
+                            coupling_summary="none — no dependency path exists",
+                        )
+                    )
+                )
             else:
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
                 click.echo("These symbols are independent — changes to one cannot affect the other.")
@@ -206,13 +211,15 @@ def trace(ctx, source, target, k_paths):
                     hops[i]["is_hub"] = True
                     hops[i]["hub_degree"] = hub_degrees[node_id]
 
-            annotated_paths.append({
-                "path_ids": path_ids,
-                "hops": hops,
-                "coupling": coupling,
-                "quality": round(quality, 2),
-                "hub_count": len(hubs),
-            })
+            annotated_paths.append(
+                {
+                    "path_ids": path_ids,
+                    "hops": hops,
+                    "coupling": coupling,
+                    "quality": round(quality, 2),
+                    "hub_count": len(hubs),
+                }
+            )
 
         # Sort by quality (desc), then length (asc)
         annotated_paths.sort(key=lambda ap: (-ap["quality"], len(ap["hops"])))
@@ -236,28 +243,33 @@ def trace(ctx, source, target, k_paths):
         if json_mode:
             # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
             first = annotated_paths[0]
-            click.echo(to_json(json_envelope("trace",
-                summary={
-                    "hops": len(first["hops"]),
-                    "paths": len(annotated_paths),
-                    "coupling": coupling_summary,
-                },
-                source=source,
-                target=target,
-                hops=len(first["hops"]),
-                path=first["hops"],
-                coupling_summary=coupling_summary,
-                paths=[
-                    {
-                        "hops": len(ap["hops"]),
-                        "coupling": ap["coupling"],
-                        "quality": ap["quality"],
-                        "hub_count": ap["hub_count"],
-                        "path": ap["hops"],
-                    }
-                    for ap in annotated_paths
-                ],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "trace",
+                        summary={
+                            "hops": len(first["hops"]),
+                            "paths": len(annotated_paths),
+                            "coupling": coupling_summary,
+                        },
+                        source=source,
+                        target=target,
+                        hops=len(first["hops"]),
+                        path=first["hops"],
+                        coupling_summary=coupling_summary,
+                        paths=[
+                            {
+                                "hops": len(ap["hops"]),
+                                "coupling": ap["coupling"],
+                                "quality": ap["quality"],
+                                "hub_count": ap["hub_count"],
+                                "path": ap["hops"],
+                            }
+                            for ap in annotated_paths
+                        ],
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -269,9 +281,11 @@ def trace(ctx, source, target, k_paths):
         else:
             for idx, ap in enumerate(annotated_paths, 1):
                 hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""
-                click.echo(f"\n=== Path {idx} of {len(annotated_paths)} "
-                           f"({len(ap['hops'])} hops, quality={ap['quality']}, "
-                           f"{ap['coupling']}{hub_note}) ===")
+                click.echo(
+                    f"\n=== Path {idx} of {len(annotated_paths)} "
+                    f"({len(ap['hops'])} hops, quality={ap['quality']}, "
+                    f"{ap['coupling']}{hub_note}) ==="
+                )
                 _print_path(ap["hops"])
 
         click.echo(f"\nCoupling: {coupling_summary}")

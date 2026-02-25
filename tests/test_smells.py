@@ -11,33 +11,33 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
-from roam.cli import cli
 from roam.catalog.smells import (
     ALL_DETECTORS,
-    run_all_detectors,
-    file_health_scores,
+    _parse_param_count,
     detect_brain_method,
-    detect_deep_nesting,
-    detect_long_params,
-    detect_large_class,
-    detect_god_class,
-    detect_feature_envy,
-    detect_shotgun_surgery,
     detect_data_clumps,
     detect_dead_params,
+    detect_deep_nesting,
+    detect_duplicate_conditionals,
     detect_empty_catch,
+    detect_feature_envy,
+    detect_god_class,
+    detect_large_class,
+    detect_long_params,
     detect_low_cohesion,
     detect_message_chain,
-    detect_refused_bequest,
     detect_primitive_obsession,
-    detect_duplicate_conditionals,
-    _parse_param_count,
+    detect_refused_bequest,
+    detect_shotgun_surgery,
+    file_health_scores,
+    run_all_detectors,
 )
-
+from roam.cli import cli
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_db(tmp_path: Path) -> sqlite3.Connection:
     db_path = tmp_path / ".roam" / "index.db"
@@ -109,25 +109,18 @@ def _git_init(path: Path):
 
 def _populate_brain_method(conn):
     """Insert a brain method: high complexity, long function."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/engine.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/engine.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'process_everything', 'function', 10, 200, '(data, config, opts)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 75, 6)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 75, 6)")
     conn.commit()
 
 
 def _populate_god_class(conn):
     """Insert a god class with 35 methods and 1200 LOC."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/monolith.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/monolith.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (1, 1, 'GodManager', 'class', 1, 1201)"
@@ -135,8 +128,7 @@ def _populate_god_class(conn):
     # Insert 35 methods inside the class
     for i in range(35):
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (?, 1, ?, 'method', ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 1, ?, 'method', ?, ?)",
             (100 + i, f"method_{i}", 10 + i * 30, 10 + i * 30 + 25),
         )
     conn.commit()
@@ -144,25 +136,18 @@ def _populate_god_class(conn):
 
 def _populate_deep_nesting(conn):
     """Insert a function with deep nesting."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/nested.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/nested.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (1, 1, 'deeply_nested', 'function', 1, 50)"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-        "VALUES (1, 15, 7)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 15, 7)")
     conn.commit()
 
 
 def _populate_long_params(conn):
     """Insert a function with many parameters."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/api.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/api.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'create_report', 'function', 1, 30, "
@@ -173,33 +158,23 @@ def _populate_long_params(conn):
 
 def _populate_shotgun_surgery(conn):
     """Insert a symbol with high in_degree."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/utils.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/utils.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (1, 1, 'helper_fn', 'function', 1, 10)"
     )
-    conn.execute(
-        "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) "
-        "VALUES (1, 12, 2)"
-    )
+    conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 12, 2)")
     conn.commit()
 
 
 def _populate_message_chain(conn):
     """Insert a function with high out_degree."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/handler.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/handler.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (1, 1, 'handle_request', 'function', 1, 40)"
     )
-    conn.execute(
-        "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) "
-        "VALUES (1, 2, 15)"
-    )
+    conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (1, 2, 15)")
     conn.commit()
 
 
@@ -215,8 +190,7 @@ def _populate_feature_envy(conn):
     # Targets in file 2
     for i in range(5):
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (?, 2, ?, 'function', ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 2, ?, 'function', ?, ?)",
             (10 + i, f"model_fn_{i}", i * 10, i * 10 + 5),
         )
         conn.execute(
@@ -228,26 +202,19 @@ def _populate_feature_envy(conn):
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
         "VALUES (20, 1, 'local_helper', 'function', 30, 40)"
     )
-    conn.execute(
-        "INSERT INTO edges (source_id, target_id, kind) VALUES (1, 20, 'call')"
-    )
+    conn.execute("INSERT INTO edges (source_id, target_id, kind) VALUES (1, 20, 'call')")
     conn.commit()
 
 
 def _populate_dead_params(conn):
     """Insert a function with many params but low complexity."""
-    conn.execute(
-        "INSERT INTO files (id, path) VALUES (1, 'src/stubs.py')"
-    )
+    conn.execute("INSERT INTO files (id, path) VALUES (1, 'src/stubs.py')")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
         "VALUES (1, 1, 'stub_handler', 'function', 1, 5, "
         "'(request, response, context, logger, config)')"
     )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity) "
-        "VALUES (1, 0)"
-    )
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity) VALUES (1, 0)")
     conn.commit()
 
 
@@ -260,8 +227,7 @@ def _populate_large_class(conn):
     )
     for i in range(25):
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (?, 1, ?, 'method', ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 1, ?, 'method', ?, ?)",
             (100 + i, f"process_{i}", 5 + i * 20, 5 + i * 20 + 15),
         )
     conn.commit()
@@ -274,8 +240,7 @@ def _populate_data_clumps(conn):
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
             "VALUES (?, 1, ?, 'function', ?, ?, ?)",
-            (i + 1, f"do_thing_{i}", i * 10, i * 10 + 8,
-             f"(host, port, timeout, extra_{i})"),
+            (i + 1, f"do_thing_{i}", i * 10, i * 10 + 8, f"(host, port, timeout, extra_{i})"),
         )
     conn.commit()
 
@@ -289,8 +254,7 @@ def _populate_low_cohesion(conn):
     )
     for i in range(6):
         conn.execute(
-            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
-            "VALUES (?, 1, ?, 'method', ?, ?)",
+            "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) VALUES (?, 1, ?, 'method', ?, ?)",
             (10 + i, f"isolated_method_{i}", 10 + i * 30, 10 + i * 30 + 25),
         )
     # No edges between the methods
@@ -300,6 +264,7 @@ def _populate_low_cohesion(conn):
 # ---------------------------------------------------------------------------
 # Tests: _parse_param_count
 # ---------------------------------------------------------------------------
+
 
 class TestParseParamCount:
     def test_empty(self):
@@ -339,6 +304,7 @@ class TestParseParamCount:
 # Tests: individual detectors
 # ---------------------------------------------------------------------------
 
+
 class TestBrainMethod:
     def test_detects_brain_method(self, tmp_path):
         conn = _make_db(tmp_path)
@@ -357,9 +323,7 @@ class TestBrainMethod:
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (1, 1, 'simple_fn', 'function', 1, 50)"
         )
-        conn.execute(
-            "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity) VALUES (1, 30)"
-        )
+        conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity) VALUES (1, 30)")
         conn.commit()
         results = detect_brain_method(conn)
         assert len(results) == 0
@@ -536,6 +500,7 @@ class TestPlaceholders:
 # Tests: ALL_DETECTORS registry
 # ---------------------------------------------------------------------------
 
+
 class TestAllDetectors:
     def test_has_15_entries(self):
         assert len(ALL_DETECTORS) == 15
@@ -552,6 +517,7 @@ class TestAllDetectors:
 # ---------------------------------------------------------------------------
 # Tests: run_all_detectors
 # ---------------------------------------------------------------------------
+
 
 class TestRunAllDetectors:
     def test_returns_list(self, tmp_path):
@@ -575,19 +541,13 @@ class TestRunAllDetectors:
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, signature) "
             "VALUES (1, 1, 'mega_fn', 'function', 1, 200, '(a, b, c, d, e, f, g)')"
         )
-        conn.execute(
-            "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-            "VALUES (1, 80, 8)"
-        )
+        conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 80, 8)")
         # Shotgun surgery target
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (2, 1, 'helper', 'function', 210, 220)"
         )
-        conn.execute(
-            "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) "
-            "VALUES (2, 15, 1)"
-        )
+        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (2, 15, 1)")
         conn.commit()
         results = run_all_detectors(conn)
         smell_ids = [r["smell_id"] for r in results]
@@ -604,28 +564,19 @@ class TestRunAllDetectors:
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (1, 1, 'brain_fn', 'function', 1, 200)"
         )
-        conn.execute(
-            "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-            "VALUES (1, 80, 3)"
-        )
+        conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (1, 80, 3)")
         # Deep nesting = warning
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (2, 1, 'nested_fn', 'function', 210, 250)"
         )
-        conn.execute(
-            "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-            "VALUES (2, 10, 6)"
-        )
+        conn.execute("INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (2, 10, 6)")
         # Message chain = info
         conn.execute(
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (3, 1, 'chatty_fn', 'function', 260, 300)"
         )
-        conn.execute(
-            "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) "
-            "VALUES (3, 1, 12)"
-        )
+        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (3, 1, 12)")
         conn.commit()
         results = run_all_detectors(conn)
         severities = [r["severity"] for r in results]
@@ -640,8 +591,16 @@ class TestRunAllDetectors:
         _populate_brain_method(conn)
         results = run_all_detectors(conn)
         assert len(results) >= 1
-        required = {"smell_id", "severity", "symbol_name", "kind", "location",
-                     "metric_value", "threshold", "description"}
+        required = {
+            "smell_id",
+            "severity",
+            "symbol_name",
+            "kind",
+            "location",
+            "metric_value",
+            "threshold",
+            "description",
+        }
         for r in results:
             assert required.issubset(set(r.keys())), f"Missing fields: {required - set(r.keys())}"
         conn.close()
@@ -650,6 +609,7 @@ class TestRunAllDetectors:
 # ---------------------------------------------------------------------------
 # Tests: file_health_scores
 # ---------------------------------------------------------------------------
+
 
 class TestFileHealthScores:
     def test_returns_dict(self, tmp_path):
@@ -688,8 +648,7 @@ class TestFileHealthScores:
                 (i + 1, f"bad_fn_{i}", i * 200, i * 200 + 180),
             )
             conn.execute(
-                "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) "
-                "VALUES (?, 90, 3)",
+                "INSERT INTO symbol_metrics (symbol_id, cognitive_complexity, nesting_depth) VALUES (?, 90, 3)",
                 (i + 1,),
             )
         conn.commit()
@@ -706,10 +665,7 @@ class TestFileHealthScores:
             "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end) "
             "VALUES (10, 2, 'helper_fn', 'function', 1, 10)"
         )
-        conn.execute(
-            "INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) "
-            "VALUES (10, 12, 2)"
-        )
+        conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree, out_degree) VALUES (10, 12, 2)")
         conn.commit()
         scores = file_health_scores(conn)
         for path, score in scores.items():
@@ -720,6 +676,7 @@ class TestFileHealthScores:
 # ---------------------------------------------------------------------------
 # Tests: CLI integration
 # ---------------------------------------------------------------------------
+
 
 class TestSmellsCLI:
     @pytest.fixture()

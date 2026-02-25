@@ -4,20 +4,23 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command("pr-diff")
 @click.option("--staged", is_flag=True, help="Analyse staged changes only.")
-@click.option("--range", "commit_range", default=None,
-              help="Git range, e.g. main..HEAD.")
-@click.option("--format", "fmt", type=click.Choice(["text", "markdown"]),
-              default="text", help="Output format.")
-@click.option("--fail-on-degradation", is_flag=True,
-              help="Exit 1 if health score degraded.")
+@click.option("--range", "commit_range", default=None, help="Git range, e.g. main..HEAD.")
+@click.option(
+    "--format",
+    "fmt",
+    type=click.Choice(["text", "markdown"]),
+    default="text",
+    help="Output format.",
+)
+@click.option("--fail-on-degradation", is_flag=True, help="Exit 1 if health score degraded.")
 @click.pass_context
 def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     """Show structural impact of pending changes.
@@ -34,23 +37,36 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     changed = get_changed_files(root, staged=staged, commit_range=commit_range)
     if not changed:
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "pr-diff",
-                summary={"verdict": "no changes detected",
-                         "footprint_pct": 0.0,
-                         "metric_deltas_available": False,
-                         "health_delta": None,
-                         "new_issues": 0},
-                changed_files=[],
-                metric_deltas={},
-                edge_analysis={"total_from_changed": 0,
-                               "cross_cluster": [],
-                               "layer_violations": []},
-                symbol_changes={"added": [], "removed": [], "modified": []},
-                footprint={"files_changed": 0, "files_total": 0,
-                           "files_pct": 0.0, "symbols_changed": 0,
-                           "symbols_total": 0, "symbols_pct": 0.0},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "pr-diff",
+                        summary={
+                            "verdict": "no changes detected",
+                            "footprint_pct": 0.0,
+                            "metric_deltas_available": False,
+                            "health_delta": None,
+                            "new_issues": 0,
+                        },
+                        changed_files=[],
+                        metric_deltas={},
+                        edge_analysis={
+                            "total_from_changed": 0,
+                            "cross_cluster": [],
+                            "layer_violations": [],
+                        },
+                        symbol_changes={"added": [], "removed": [], "modified": []},
+                        footprint={
+                            "files_changed": 0,
+                            "files_total": 0,
+                            "files_pct": 0.0,
+                            "symbols_changed": 0,
+                            "symbols_total": 0,
+                            "symbols_pct": 0.0,
+                        },
+                    )
+                )
+            )
         else:
             click.echo("No changed files detected.")
         return
@@ -60,14 +76,14 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     if commit_range and ".." in commit_range:
         base_ref = commit_range.split("..")[0]
 
+    from roam.commands.metrics_history import collect_metrics
     from roam.graph.diff import (
+        compute_footprint,
+        edge_analysis,
         find_before_snapshot,
         metric_delta,
-        edge_analysis,
         symbol_changes,
-        compute_footprint,
     )
-    from roam.commands.metrics_history import collect_metrics
 
     with open_db(readonly=True) as conn:
         file_map = resolve_changed_to_db(conn, changed)
@@ -103,7 +119,7 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
             new_issues += int(deltas[m]["delta"])
 
     # Verdict
-    health_degraded = (health_delta is not None and health_delta < 0)
+    health_degraded = health_delta is not None and health_delta < 0
     has_layer_violations = len(edges.get("layer_violations", [])) > 0
     has_cross_cluster = len(edges.get("cross_cluster", [])) > 0
     fp_pct = footprint["files_pct"]
@@ -117,32 +133,37 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "pr-diff",
-            summary={
-                "verdict": verdict,
-                "footprint_pct": fp_pct,
-                "metric_deltas_available": deltas_available,
-                "health_delta": health_delta,
-                "new_issues": new_issues,
-            },
-            changed_files=changed,
-            metric_deltas=deltas,
-            edge_analysis=edges,
-            symbol_changes=sym_changes,
-            footprint=footprint,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "pr-diff",
+                    summary={
+                        "verdict": verdict,
+                        "footprint_pct": fp_pct,
+                        "metric_deltas_available": deltas_available,
+                        "health_delta": health_delta,
+                        "new_issues": new_issues,
+                    },
+                    changed_files=changed,
+                    metric_deltas=deltas,
+                    edge_analysis=edges,
+                    symbol_changes=sym_changes,
+                    footprint=footprint,
+                )
+            )
+        )
         if fail_on_degradation and health_degraded:
             from roam.exit_codes import EXIT_GATE_FAILURE
+
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
     # --- Markdown output ---
     if fmt == "markdown":
-        _emit_markdown(verdict, deltas, deltas_available, edges,
-                       sym_changes, footprint, changed)
+        _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footprint, changed)
         if fail_on_degradation and health_degraded:
             from roam.exit_codes import EXIT_GATE_FAILURE
+
             ctx.exit(EXIT_GATE_FAILURE)
         return
 
@@ -187,10 +208,7 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     if lvs:
         click.echo("LAYER VIOLATIONS:")
         for lv in lvs:
-            click.echo(
-                f"  {lv['source']} (L{lv['source_layer']}) -> "
-                f"{lv['target']} (L{lv['target_layer']})"
-            )
+            click.echo(f"  {lv['source']} (L{lv['source_layer']}) -> {lv['target']} (L{lv['target_layer']})")
         click.echo()
 
     # Symbol changes
@@ -210,11 +228,11 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
 
     if fail_on_degradation and health_degraded:
         from roam.exit_codes import EXIT_GATE_FAILURE
+
         ctx.exit(EXIT_GATE_FAILURE)
 
 
-def _emit_markdown(verdict, deltas, deltas_available, edges,
-                   sym_changes, footprint, changed):
+def _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footprint, changed):
     """Emit GitHub/GitLab compatible markdown output."""
     click.echo("## PR Structural Diff")
     click.echo()
@@ -231,8 +249,7 @@ def _emit_markdown(verdict, deltas, deltas_available, edges,
             label = metric.replace("_", " ").title()
             direction = d["direction"].upper()
             click.echo(
-                f"| {label} | {d['before']} | {d['after']} | "
-                f"{d['delta']:+g} ({d['pct_change']:+.1f}%) | {direction} |"
+                f"| {label} | {d['before']} | {d['after']} | {d['delta']:+g} ({d['pct_change']:+.1f}%) | {direction} |"
             )
         click.echo()
     else:
@@ -253,10 +270,7 @@ def _emit_markdown(verdict, deltas, deltas_available, edges,
         click.echo("### Layer Violations")
         click.echo()
         for lv in lvs:
-            click.echo(
-                f"- `{lv['source']}` (L{lv['source_layer']}) -> "
-                f"`{lv['target']}` (L{lv['target_layer']})"
-            )
+            click.echo(f"- `{lv['source']}` (L{lv['source_layer']}) -> `{lv['target']}` (L{lv['target_layer']})")
         click.echo()
 
     # Symbol changes
@@ -272,11 +286,7 @@ def _emit_markdown(verdict, deltas, deltas_available, edges,
     # Footprint
     click.echo("### Footprint")
     click.echo()
+    click.echo(f"- Files: {footprint['files_changed']} / {footprint['files_total']} ({footprint['files_pct']}%)")
     click.echo(
-        f"- Files: {footprint['files_changed']} / {footprint['files_total']} "
-        f"({footprint['files_pct']}%)"
-    )
-    click.echo(
-        f"- Symbols: {footprint['symbols_changed']} / {footprint['symbols_total']} "
-        f"({footprint['symbols_pct']}%)"
+        f"- Symbols: {footprint['symbols_changed']} / {footprint['symbols_total']} ({footprint['symbols_pct']}%)"
     )

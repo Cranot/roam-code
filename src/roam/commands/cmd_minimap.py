@@ -9,10 +9,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Sentinel markers
@@ -51,11 +50,29 @@ Add bullet points below -- they appear in every `roam minimap` output.
 
 # Top-level directories that are not part of the main source and can be
 # collapsed immediately to keep the minimap focused on the codebase.
-_COLLAPSE_AT_ROOT = frozenset({
-    "benchmarks", "bench", ".github", "node_modules", "vendor",
-    "dist", "build", "coverage", ".next", ".nuxt", "out", "target",
-    ".cache", "tmp", "temp", "docs", "doc", ".idea", ".vscode",
-})
+_COLLAPSE_AT_ROOT = frozenset(
+    {
+        "benchmarks",
+        "bench",
+        ".github",
+        "node_modules",
+        "vendor",
+        "dist",
+        "build",
+        "coverage",
+        ".next",
+        ".nuxt",
+        "out",
+        "target",
+        ".cache",
+        "tmp",
+        "temp",
+        "docs",
+        "doc",
+        ".idea",
+        ".vscode",
+    }
+)
 
 
 def _count_files_in_tree(subtree: dict) -> int:
@@ -76,7 +93,7 @@ def _build_tree(file_paths: list[str]) -> dict:
         node = tree
         for part in parts[:-1]:
             node = node.setdefault(part, {})
-        node[parts[-1]] = path   # leaf = original DB path
+        node[parts[-1]] = path  # leaf = original DB path
     return tree
 
 
@@ -138,6 +155,7 @@ def _render_tree(
 # Data helpers
 # ---------------------------------------------------------------------------
 
+
 def _get_file_annotations(conn) -> dict[str, str]:
     """Top 2 exported symbols by in_degree per file."""
     rows = conn.execute("""
@@ -169,44 +187,63 @@ def _get_stack(conn) -> str:
         LIMIT 6
     """).fetchall()
     nice = {
-        "python": "Python", "javascript": "JavaScript", "typescript": "TypeScript",
-        "go": "Go", "rust": "Rust", "java": "Java", "csharp": "C#",
-        "cpp": "C++", "c": "C", "php": "PHP", "ruby": "Ruby",
-        "swift": "Swift", "kotlin": "Kotlin", "yaml": "YAML", "hcl": "HCL",
-        "foxpro": "FoxPro", "apex": "Apex",
+        "python": "Python",
+        "javascript": "JavaScript",
+        "typescript": "TypeScript",
+        "go": "Go",
+        "rust": "Rust",
+        "java": "Java",
+        "csharp": "C#",
+        "cpp": "C++",
+        "c": "C",
+        "php": "PHP",
+        "ruby": "Ruby",
+        "swift": "Swift",
+        "kotlin": "Kotlin",
+        "yaml": "YAML",
+        "hcl": "HCL",
+        "foxpro": "FoxPro",
+        "apex": "Apex",
     }
     return " · ".join(nice.get(r["language"], r["language"].title()) for r in rows)
 
 
 def _get_key_symbols(conn, limit: int = 5) -> list[str]:
     """Top symbols by PageRank (most central to the call graph)."""
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         SELECT s.name, gm.pagerank
         FROM symbols s
         JOIN graph_metrics gm ON s.id = gm.symbol_id
         WHERE s.is_exported = 1 AND gm.pagerank > 0
         ORDER BY gm.pagerank DESC
         LIMIT ?
-    """, (limit,)).fetchall()
+    """,
+        (limit,),
+    ).fetchall()
     return [f"`{r['name']}`" for r in rows]
 
 
 def _get_touch_carefully(conn, min_in_degree: int = 15) -> list[str]:
     """Exported symbols with high fan-in — dangerous to rename or change signature."""
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         SELECT s.name, gm.in_degree
         FROM symbols s
         JOIN graph_metrics gm ON s.id = gm.symbol_id
         WHERE gm.in_degree >= ? AND s.is_exported = 1
         ORDER BY gm.in_degree DESC
         LIMIT 8
-    """, (min_in_degree,)).fetchall()
+    """,
+        (min_in_degree,),
+    ).fetchall()
     return [f"`{r['name']}` ({r['in_degree']} callers)" for r in rows]
 
 
 def _get_hotspots(conn, limit: int = 5) -> list[str]:
     """Files with highest churn * complexity score."""
-    rows = conn.execute("""
+    rows = conn.execute(
+        """
         SELECT f.path,
                COALESCE(fs.total_churn, 0) * COALESCE(fs.complexity, 1.0) AS score
         FROM files f
@@ -214,7 +251,9 @@ def _get_hotspots(conn, limit: int = 5) -> list[str]:
         WHERE COALESCE(fs.total_churn, 0) > 0
         ORDER BY score DESC
         LIMIT ?
-    """, (limit,)).fetchall()
+    """,
+        (limit,),
+    ).fetchall()
     result = []
     for r in rows:
         if r["score"] > 0:
@@ -225,16 +264,11 @@ def _get_hotspots(conn, limit: int = 5) -> list[str]:
 
 def _get_conventions(conn) -> str:
     """Detect dominant naming conventions from the symbol table."""
-    snake = conn.execute(
-        "SELECT COUNT(*) FROM symbols WHERE kind='function' AND name LIKE '%_%'"
-    ).fetchone()[0]
+    snake = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind='function' AND name LIKE '%_%'").fetchone()[0]
     camel = conn.execute(
-        "SELECT COUNT(*) FROM symbols "
-        "WHERE kind='function' AND name GLOB '*[A-Z]*' AND name NOT LIKE '%_%'"
+        "SELECT COUNT(*) FROM symbols WHERE kind='function' AND name GLOB '*[A-Z]*' AND name NOT LIKE '%_%'"
     ).fetchone()[0]
-    total_cls = conn.execute(
-        "SELECT COUNT(*) FROM symbols WHERE kind='class'"
-    ).fetchone()[0]
+    total_cls = conn.execute("SELECT COUNT(*) FROM symbols WHERE kind='class'").fetchone()[0]
     pascal_cls = conn.execute(
         "SELECT COUNT(*) FROM symbols "
         "WHERE kind='class' AND LENGTH(name)>1 "
@@ -272,6 +306,7 @@ def _get_project_notes(root: Path) -> list[str]:
 # Minimap renderer
 # ---------------------------------------------------------------------------
 
+
 def _render_minimap(conn, root: Path) -> str:
     """Assemble the full minimap content (no sentinel wrappers)."""
     out: list[str] = []
@@ -283,9 +318,7 @@ def _render_minimap(conn, root: Path) -> str:
         out.append("")
 
     # Annotated directory tree
-    paths = [
-        r["path"] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()
-    ]
+    paths = [r["path"] for r in conn.execute("SELECT path FROM files ORDER BY path").fetchall()]
     annotations = _get_file_annotations(conn)
     tree = _build_tree(paths)
     tree_lines = _render_tree(tree, annotations)
@@ -336,6 +369,7 @@ def _render_minimap(conn, root: Path) -> str:
 # Sentinel helpers
 # ---------------------------------------------------------------------------
 
+
 def _wrap_sentinels(content: str) -> str:
     today = date.today().isoformat()
     return f"<!-- roam:minimap generated={today} -->\n{content}\n{_SENTINEL_END}"
@@ -360,17 +394,27 @@ def _upsert_file(filepath: Path, block: str) -> str:
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("minimap")
 @click.option(
-    "--update", "update_claude", is_flag=True, default=False,
+    "--update",
+    "update_claude",
+    is_flag=True,
+    default=False,
     help="Update CLAUDE.md in-place (replaces sentinel block or appends).",
 )
 @click.option(
-    "-o", "--output", "output_file", default=None, metavar="FILE",
+    "-o",
+    "--output",
+    "output_file",
+    default=None,
+    metavar="FILE",
     help="Write/update sentinel block in FILE (overrides --update target).",
 )
 @click.option(
-    "--init-notes", is_flag=True, default=False,
+    "--init-notes",
+    is_flag=True,
+    default=False,
     help="Scaffold .roam/minimap-notes.md for project-specific gotchas.",
 )
 @click.pass_context
@@ -403,18 +447,28 @@ def minimap(ctx, update_claude, output_file, init_notes):
         (root / ".roam").mkdir(exist_ok=True)
         if notes_path.exists():
             if json_mode:
-                click.echo(to_json(json_envelope("minimap",
-                    summary={"verdict": "exists", "path": str(notes_path)},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "minimap",
+                            summary={"verdict": "exists", "path": str(notes_path)},
+                        )
+                    )
+                )
             else:
                 click.echo(f"Already exists: {notes_path}")
                 click.echo("Edit it to add project-specific gotchas for AI agents.")
         else:
             notes_path.write_text(_NOTES_TEMPLATE, encoding="utf-8")
             if json_mode:
-                click.echo(to_json(json_envelope("minimap",
-                    summary={"verdict": "created", "path": str(notes_path)},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "minimap",
+                            summary={"verdict": "created", "path": str(notes_path)},
+                        )
+                    )
+                )
             else:
                 click.echo(f"Created: {notes_path}")
                 click.echo("Edit it to add project-specific gotchas for AI agents.")
@@ -438,18 +492,28 @@ def minimap(ctx, update_claude, output_file, init_notes):
     if target is not None:
         verb = _upsert_file(target, block)
         if json_mode:
-            click.echo(to_json(json_envelope("minimap",
-                summary={"verdict": "ok", "action": verb.lower(), "file": str(target)},
-                file=str(target),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "minimap",
+                        summary={"verdict": "ok", "action": verb.lower(), "file": str(target)},
+                        file=str(target),
+                    )
+                )
+            )
         else:
             click.echo(f"{verb}: {target}")
     else:
         # Print to stdout
         if json_mode:
-            click.echo(to_json(json_envelope("minimap",
-                summary={"verdict": "ok"},
-                content=block,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "minimap",
+                        summary={"verdict": "ok"},
+                        content=block,
+                    )
+                )
+            )
         else:
             click.echo(block)

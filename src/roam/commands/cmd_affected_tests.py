@@ -5,16 +5,15 @@ from collections import deque
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index, find_symbol
 from roam.commands.changed_files import (
     get_changed_files,
-    resolve_changed_to_db,
     is_test_file,
+    resolve_changed_to_db,
 )
+from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.index.test_conventions import find_test_candidates
-
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 _MAX_HOPS = 10
 
@@ -22,6 +21,7 @@ _MAX_HOPS = 10
 # ---------------------------------------------------------------------------
 # BFS reverse-edge walker
 # ---------------------------------------------------------------------------
+
 
 def _bfs_reverse_callers(conn, start_ids):
     """Walk reverse edges (callers) via BFS up to _MAX_HOPS.
@@ -46,10 +46,7 @@ def _bfs_reverse_callers(conn, start_ids):
             continue
 
         callers = conn.execute(
-            "SELECT e.source_id, s.name "
-            "FROM edges e "
-            "JOIN symbols s ON e.source_id = s.id "
-            "WHERE e.target_id = ?",
+            "SELECT e.source_id, s.name FROM edges e JOIN symbols s ON e.source_id = s.id WHERE e.target_id = ?",
             (current_id,),
         ).fetchall()
 
@@ -72,6 +69,7 @@ def _bfs_reverse_callers(conn, start_ids):
 # Colocated test detection
 # ---------------------------------------------------------------------------
 
+
 def _find_colocated_tests(conn, file_paths):
     """Find test files colocated with the given source files.
 
@@ -89,9 +87,7 @@ def _find_colocated_tests(conn, file_paths):
     colocated = []
     for d in dirs:
         pattern = f"{d}/%"
-        rows = conn.execute(
-            "SELECT path FROM files WHERE path LIKE ?", (pattern,)
-        ).fetchall()
+        rows = conn.execute("SELECT path FROM files WHERE path LIKE ?", (pattern,)).fetchall()
         for r in rows:
             p = r["path"]
             if is_test_file(p) and p not in file_paths:
@@ -101,9 +97,7 @@ def _find_colocated_tests(conn, file_paths):
     convention_tests = []
     for fp in file_paths:
         # get the language for this file
-        row = conn.execute(
-            "SELECT language FROM files WHERE path = ?", (fp,)
-        ).fetchone()
+        row = conn.execute("SELECT language FROM files WHERE path = ?", (fp,)).fetchone()
 
         if row and row["language"]:
             language = row["language"]
@@ -112,9 +106,7 @@ def _find_colocated_tests(conn, file_paths):
 
             # check which candidates exist in the database
             for candidate in candidates:
-                existing = conn.execute(
-                    "SELECT path FROM files WHERE path = ?", (candidate,)
-                ).fetchone()
+                existing = conn.execute("SELECT path FROM files WHERE path = ?", (candidate,)).fetchone()
 
                 if existing:
                     test_path = existing["path"]
@@ -127,6 +119,7 @@ def _find_colocated_tests(conn, file_paths):
 # ---------------------------------------------------------------------------
 # Core: gather affected tests for a set of symbol IDs
 # ---------------------------------------------------------------------------
+
 
 def _gather_affected_tests(conn, target_sym_ids, target_file_paths):
     """Return a sorted list of affected test entries.
@@ -206,6 +199,7 @@ def _gather_affected_tests(conn, target_sym_ids, target_file_paths):
 # Resolve targets -> (symbol_ids, file_paths)
 # ---------------------------------------------------------------------------
 
+
 def _resolve_file_symbols(conn, path):
     """Return all symbol IDs and the canonical path for a file."""
     frow = conn.execute("SELECT id, path FROM files WHERE path = ?", (path,)).fetchone()
@@ -217,9 +211,7 @@ def _resolve_file_symbols(conn, path):
     if frow is None:
         return set(), set()
 
-    syms = conn.execute(
-        "SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)
-    ).fetchall()
+    syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (frow["id"],)).fetchall()
     return {s["id"] for s in syms}, {frow["path"]}
 
 
@@ -232,11 +224,14 @@ def _looks_like_file(target):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("affected-tests")
 @click.argument("target", required=False, default=None)
 @click.option("--staged", is_flag=True, help="Find tests for staged changes")
 @click.option(
-    "--command", "show_command", is_flag=True,
+    "--command",
+    "show_command",
+    is_flag=True,
     help="Output a runnable pytest command",
 )
 @click.pass_context
@@ -271,9 +266,7 @@ def affected_tests(ctx, target, staged, show_command):
                 return
             for path, fid in file_map.items():
                 all_file_paths.add(path)
-                syms = conn.execute(
-                    "SELECT id FROM symbols WHERE file_id = ?", (fid,)
-                ).fetchall()
+                syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
                 all_sym_ids.update(s["id"] for s in syms)
             target_label = f"staged changes ({len(file_map)} files)"
 
@@ -323,28 +316,33 @@ def affected_tests(ctx, target, staged, show_command):
             transitive_count = sum(1 for r in results if r["kind"] == "TRANSITIVE")
             colocated_count = sum(1 for r in results if r["kind"] == "COLOCATED")
 
-            click.echo(to_json(json_envelope("affected-tests",
-                summary={
-                    "target": target_label,
-                    "total_tests": len(results),
-                    "direct": direct_count,
-                    "transitive": transitive_count,
-                    "colocated": colocated_count,
-                    "test_files": len(seen_order),
-                },
-                tests=[
-                    {
-                        "file": r["file"],
-                        "symbol": r["symbol"],
-                        "kind": r["kind"],
-                        "hops": r["hops"],
-                        "via": r["via"],
-                    }
-                    for r in results
-                ],
-                pytest_command=pytest_cmd,
-                test_files=seen_order,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "affected-tests",
+                        summary={
+                            "target": target_label,
+                            "total_tests": len(results),
+                            "direct": direct_count,
+                            "transitive": transitive_count,
+                            "colocated": colocated_count,
+                            "test_files": len(seen_order),
+                        },
+                        tests=[
+                            {
+                                "file": r["file"],
+                                "symbol": r["symbol"],
+                                "kind": r["kind"],
+                                "hops": r["hops"],
+                                "via": r["via"],
+                            }
+                            for r in results
+                        ],
+                        pytest_command=pytest_cmd,
+                        test_files=seen_order,
+                    )
+                )
+            )
             return
 
         # Text output

@@ -31,16 +31,18 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
     # Build runtime ranking (1-based)
     runtime_ranked = []
     for rank, row in enumerate(runtime_rows, 1):
-        runtime_ranked.append({
-            "symbol_id": row[0],
-            "symbol_name": row[1],
-            "file_path": row[2],
-            "call_count": row[3],
-            "p50_latency_ms": row[4],
-            "p99_latency_ms": row[5],
-            "error_rate": row[6],
-            "runtime_rank": rank,
-        })
+        runtime_ranked.append(
+            {
+                "symbol_id": row[0],
+                "symbol_name": row[1],
+                "file_path": row[2],
+                "call_count": row[3],
+                "p50_latency_ms": row[4],
+                "p99_latency_ms": row[5],
+                "error_rate": row[6],
+                "runtime_rank": rank,
+            }
+        )
 
     # Build static ranking for matched symbols
     # Use a composite score: churn * complexity * pagerank
@@ -111,24 +113,26 @@ def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:
         else:
             classification = "CONFIRMED"
 
-        hotspots.append({
-            "symbol_name": item["symbol_name"],
-            "file_path": item["file_path"],
-            "symbol_id": sid,
-            "static_rank": static_rank,
-            "runtime_rank": runtime_rank,
-            "classification": classification,
-            "runtime_stats": {
-                "call_count": item["call_count"],
-                "p50_latency_ms": item["p50_latency_ms"],
-                "p99_latency_ms": item["p99_latency_ms"],
-                "error_rate": item["error_rate"],
-            },
-            "static_stats": {
-                "pagerank": static_info.get("pagerank", 0),
-                "complexity": static_info.get("complexity", 0),
-                "churn": static_info.get("churn", 0),
-            },
-        })
+        hotspots.append(
+            {
+                "symbol_name": item["symbol_name"],
+                "file_path": item["file_path"],
+                "symbol_id": sid,
+                "static_rank": static_rank,
+                "runtime_rank": runtime_rank,
+                "classification": classification,
+                "runtime_stats": {
+                    "call_count": item["call_count"],
+                    "p50_latency_ms": item["p50_latency_ms"],
+                    "p99_latency_ms": item["p99_latency_ms"],
+                    "error_rate": item["error_rate"],
+                },
+                "static_stats": {
+                    "pagerank": static_info.get("pagerank", 0),
+                    "complexity": static_info.get("complexity", 0),
+                    "churn": static_info.get("churn", 0),
+                },
+            }
+        )
 
     return hotspots

@@ -13,13 +13,12 @@ Example:
 
 from __future__ import annotations
 
-from dataclasses import dataclass
 import re
+from dataclasses import dataclass
 
 from tree_sitter_language_pack import get_parser
 
 from roam.index.parser import GRAMMAR_ALIASES
-
 
 _METAVAR_RE = re.compile(r"\$([A-Za-z_][A-Za-z0-9_]*)")
 _WHITESPACE_RE = re.compile(r"\s+")
@@ -76,7 +75,7 @@ def _normalize_text(text: str) -> str:
 
 
 def _node_text(node, source: bytes) -> str:
-    return source[node.start_byte:node.end_byte].decode("utf-8", errors="replace")
+    return source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
 
 
 def _rewrite_metavars(pattern: str) -> tuple[str, dict[str, str]]:
@@ -224,14 +223,14 @@ def find_ast_matches(
         if not _match_nodes(compiled.pattern_root, node, compiled, code_source, captures):
             continue
 
-        visible_captures = {
-            name: data["text"] for name, data in captures.items()
-        }
-        results.append({
-            "line": node.start_point[0] + 1,
-            "snippet": _node_text(node, code_source),
-            "captures": visible_captures,
-        })
+        visible_captures = {name: data["text"] for name, data in captures.items()}
+        results.append(
+            {
+                "line": node.start_point[0] + 1,
+                "snippet": _node_text(node, code_source),
+                "captures": visible_captures,
+            }
+        )
 
         if max_matches > 0 and len(results) >= max_matches:
             break

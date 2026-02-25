@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 
 @click.command()
@@ -34,12 +34,12 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
     ensure_index()
 
     from roam.runtime.trace_ingest import (
-        ingest_otel_trace,
-        ingest_jaeger_trace,
-        ingest_zipkin_trace,
-        ingest_generic_trace,
         auto_detect_format,
         ensure_runtime_table,
+        ingest_generic_trace,
+        ingest_jaeger_trace,
+        ingest_otel_trace,
+        ingest_zipkin_trace,
     )
 
     # Determine which file and format to use
@@ -60,6 +60,7 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
     else:
         click.echo("Error: provide a trace file (positional or via --otel/--jaeger/--zipkin/--generic)")
         from roam.exit_codes import EXIT_USAGE
+
         ctx.exit(EXIT_USAGE)
         return
 
@@ -82,30 +83,35 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
     verdict = f"{total} spans ingested, {matched} matched to symbols, {unmatched} unmatched"
 
     if json_mode:
-        click.echo(to_json(json_envelope("ingest-trace",
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "matched": matched,
-                "unmatched": unmatched,
-                "format": fmt,
-            },
-            spans=[
-                {
-                    "symbol_name": r["symbol_name"],
-                    "file_path": r["file_path"],
-                    "call_count": r["call_count"],
-                    "p50_latency_ms": r["p50_latency_ms"],
-                    "p99_latency_ms": r["p99_latency_ms"],
-                    "error_rate": r["error_rate"],
-                    "otel_db_system": r.get("otel_db_system"),
-                    "otel_db_operation": r.get("otel_db_operation"),
-                    "otel_db_statement_type": r.get("otel_db_statement_type"),
-                    "matched": r["matched"],
-                }
-                for r in results
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "ingest-trace",
+                    summary={
+                        "verdict": verdict,
+                        "total": total,
+                        "matched": matched,
+                        "unmatched": unmatched,
+                        "format": fmt,
+                    },
+                    spans=[
+                        {
+                            "symbol_name": r["symbol_name"],
+                            "file_path": r["file_path"],
+                            "call_count": r["call_count"],
+                            "p50_latency_ms": r["p50_latency_ms"],
+                            "p99_latency_ms": r["p99_latency_ms"],
+                            "error_rate": r["error_rate"],
+                            "otel_db_system": r.get("otel_db_system"),
+                            "otel_db_operation": r.get("otel_db_operation"),
+                            "otel_db_statement_type": r.get("otel_db_statement_type"),
+                            "matched": r["matched"],
+                        }
+                        for r in results
+                    ],
+                )
+            )
+        )
         return
 
     # Text output
@@ -118,16 +124,20 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
             p99_str = f"p99={r['p99_latency_ms']:.0f}ms" if r["p99_latency_ms"] is not None else "p99=n/a"
             status = "MATCHED" if r["matched"] else "UNMATCHED"
             file_str = r["file_path"] or "-"
-            rows.append([
-                r["symbol_name"],
-                file_str,
-                f"{r['call_count']} calls",
-                p99_str,
-                f"err={err_pct}",
-                status,
-            ])
-        click.echo(format_table(
-            ["Name", "File", "Calls", "P99", "Errors", "Status"],
-            rows,
-            budget=30,
-        ))
+            rows.append(
+                [
+                    r["symbol_name"],
+                    file_str,
+                    f"{r['call_count']} calls",
+                    p99_str,
+                    f"err={err_pct}",
+                    status,
+                ]
+            )
+        click.echo(
+            format_table(
+                ["Name", "File", "Calls", "P99", "Errors", "Status"],
+                rows,
+                budget=30,
+            )
+        )

@@ -64,11 +64,13 @@ def parse_git_log(project_root: Path, max_commits: int = 5000) -> list[dict]:
     """
     result = _run_git(
         [
-            "git", "log",
+            "git",
+            "log",
             "--numstat",
             "--pretty=format:COMMIT:%H|%an|%at|%s",
             "--no-merges",
-            "-n", str(max_commits),
+            "-n",
+            str(max_commits),
         ],
         cwd=project_root,
     )
@@ -86,7 +88,7 @@ def parse_git_log(project_root: Path, max_commits: int = 5000) -> list[dict]:
             if current is not None:
                 commits.append(current)
 
-            parts = line[len(_COMMIT_SEP):].split("|", 3)
+            parts = line[len(_COMMIT_SEP) :].split("|", 3)
             if len(parts) < 4:
                 current = None
                 continue
@@ -129,11 +131,13 @@ def parse_git_log(project_root: Path, max_commits: int = 5000) -> list[dict]:
         # Normalize path separators and handle renames ("{old => new}"")
         path = _normalize_numstat_path(path)
         if path:
-            current["files"].append({
-                "path": path,
-                "lines_added": lines_added,
-                "lines_removed": lines_removed,
-            })
+            current["files"].append(
+                {
+                    "path": path,
+                    "lines_added": lines_added,
+                    "lines_removed": lines_removed,
+                }
+            )
 
     # Flush last commit
     if current is not None:
@@ -154,9 +158,9 @@ def _normalize_numstat_path(raw: str) -> str:
         # Extract prefix, old=>new, suffix
         brace_start = raw.index("{")
         brace_end = raw.index("}")
-        inner = raw[brace_start + 1:brace_end]
+        inner = raw[brace_start + 1 : brace_end]
         prefix = raw[:brace_start]
-        suffix = raw[brace_end + 1:]
+        suffix = raw[brace_end + 1 :]
         _old, new = inner.split(" => ", 1)
         raw = prefix + new + suffix
     return raw.replace("\\", "/")
@@ -180,15 +184,12 @@ def store_commits(conn: sqlite3.Connection, commits: list[dict]):
     with conn:
         for commit in commits:
             conn.execute(
-                "INSERT OR IGNORE INTO git_commits (hash, author, timestamp, message) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT OR IGNORE INTO git_commits (hash, author, timestamp, message) VALUES (?, ?, ?, ?)",
                 (commit["hash"], commit["author"], commit["timestamp"], commit["message"]),
             )
 
             # Retrieve the commit ID (may have existed already)
-            row = conn.execute(
-                "SELECT id FROM git_commits WHERE hash = ?", (commit["hash"],)
-            ).fetchone()
+            row = conn.execute("SELECT id FROM git_commits WHERE hash = ?", (commit["hash"],)).fetchone()
             if row is None:
                 continue
             commit_id = row[0] if not isinstance(row, sqlite3.Row) else row["id"]
@@ -218,9 +219,7 @@ def compute_cochange(conn: sqlite3.Connection):
     the co-change count.
     """
     # Gather commit_id -> set of file_ids
-    rows = conn.execute(
-        "SELECT commit_id, file_id FROM git_file_changes WHERE file_id IS NOT NULL"
-    ).fetchall()
+    rows = conn.execute("SELECT commit_id, file_id FROM git_file_changes WHERE file_id IS NOT NULL").fetchall()
 
     commit_files: dict[int, set[int]] = defaultdict(set)
     for row in rows:
@@ -245,15 +244,13 @@ def compute_cochange(conn: sqlite3.Connection):
             batch.append((a, b, count))
             if len(batch) >= _COCHANGE_CHUNK:
                 conn.executemany(
-                    "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
                     batch,
                 )
                 batch.clear()
         if batch:
             conn.executemany(
-                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO git_cochange (file_id_a, file_id_b, cochange_count) VALUES (?, ?, ?)",
                 batch,
             )
 
@@ -340,9 +337,7 @@ def _populate_hyperedges(
                 continue
 
             sorted_ids = sorted(file_ids)
-            sig = hashlib.sha256(
-                "|".join(str(fid) for fid in sorted_ids).encode()
-            ).hexdigest()[:16]
+            sig = hashlib.sha256("|".join(str(fid) for fid in sorted_ids).encode()).hexdigest()[:16]
 
             edge_id += 1
             edge_batch.append((edge_id, commit_id, n, sig))
@@ -352,13 +347,11 @@ def _populate_hyperedges(
 
             if len(edge_batch) >= 500:
                 conn.executemany(
-                    "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) "
-                    "VALUES (?, ?, ?, ?)",
+                    "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) VALUES (?, ?, ?, ?)",
                     edge_batch,
                 )
                 conn.executemany(
-                    "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) "
-                    "VALUES (?, ?, ?)",
+                    "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) VALUES (?, ?, ?)",
                     member_batch,
                 )
                 edge_batch.clear()
@@ -366,14 +359,12 @@ def _populate_hyperedges(
 
         if edge_batch:
             conn.executemany(
-                "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) "
-                "VALUES (?, ?, ?, ?)",
+                "INSERT INTO git_hyperedges (id, commit_id, file_count, sig_hash) VALUES (?, ?, ?, ?)",
                 edge_batch,
             )
         if member_batch:
             conn.executemany(
-                "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) "
-                "VALUES (?, ?, ?)",
+                "INSERT INTO git_hyperedge_members (hyperedge_id, file_id, ordinal) VALUES (?, ?, ?)",
                 member_batch,
             )
 
@@ -454,9 +445,7 @@ def compute_complexity(conn: sqlite3.Connection, project_root: Path):
                 (complexity, fid),
             )
             # If the row doesn't exist yet, create it
-            if conn.execute(
-                "SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)
-            ).fetchone() is None:
+            if conn.execute("SELECT 1 FROM file_stats WHERE file_id = ?", (fid,)).fetchone() is None:
                 conn.execute(
                     "INSERT INTO file_stats (file_id, complexity) VALUES (?, ?)",
                     (fid, complexity),
@@ -503,9 +492,7 @@ def _measure_indent_complexity(path: Path) -> float | None:
 # ---------------------------------------------------------------------------
 
 
-def get_blame_for_file(
-    project_root: Path, file_path: str
-) -> list[dict]:
+def get_blame_for_file(project_root: Path, file_path: str) -> list[dict]:
     """Run ``git blame --line-porcelain`` on a file and parse the output.
 
     Returns a list of dicts, one per source line::
@@ -533,20 +520,22 @@ def get_blame_for_file(
                 current_hash = token
 
         if line.startswith("author "):
-            current_author = line[len("author "):]
+            current_author = line[len("author ") :]
         elif line.startswith("author-time "):
             try:
-                current_ts = int(line[len("author-time "):])
+                current_ts = int(line[len("author-time ") :])
             except ValueError:
                 current_ts = 0
         elif line.startswith("\t"):
             # The actual source line (tab-prefixed)
-            entries.append({
-                "author": current_author,
-                "timestamp": current_ts,
-                "line": line[1:],  # strip leading tab
-                "commit_hash": current_hash,
-            })
+            entries.append(
+                {
+                    "author": current_author,
+                    "timestamp": current_ts,
+                    "line": line[1:],  # strip leading tab
+                    "commit_hash": current_hash,
+                }
+            )
 
     return entries
 
@@ -565,9 +554,7 @@ def _is_git_repo(path: Path) -> bool:
     return result is not None and result.stdout.strip() == "true"
 
 
-def _run_git(
-    cmd: list[str], *, cwd: Path, timeout: int = 120
-) -> subprocess.CompletedProcess | None:
+def _run_git(cmd: list[str], *, cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess | None:
     """Run a git command, returning *None* on failure."""
     try:
         result = subprocess.run(

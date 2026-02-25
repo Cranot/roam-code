@@ -7,9 +7,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope, format_table
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 
 def _format_pct_list(pcts: list[float]) -> str:
@@ -18,11 +18,21 @@ def _format_pct_list(pcts: list[float]) -> str:
 
 
 @click.command()
-@click.option('--compact', is_flag=True, help='Single-line summary output')
-@click.option('--export', 'export_path', type=click.Path(), default=None,
-              help='Write fingerprint JSON to file')
-@click.option('--compare', 'compare_path', type=click.Path(exists=True), default=None,
-              help='Compare with a saved fingerprint JSON file')
+@click.option("--compact", is_flag=True, help="Single-line summary output")
+@click.option(
+    "--export",
+    "export_path",
+    type=click.Path(),
+    default=None,
+    help="Write fingerprint JSON to file",
+)
+@click.option(
+    "--compare",
+    "compare_path",
+    type=click.Path(exists=True),
+    default=None,
+    help="Compare with a saved fingerprint JSON file",
+)
 @click.pass_context
 def fingerprint(ctx, compact, export_path, compare_path):
     """Topology fingerprint for cross-repo comparison.
@@ -33,12 +43,12 @@ def fingerprint(ctx, compact, export_path, compare_path):
 
     Use --export to save and --compare to diff against another repo.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.fingerprint import compute_fingerprint, compare_fingerprints
+        from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
 
         G = build_symbol_graph(conn)
         fp = compute_fingerprint(conn, G)
@@ -49,25 +59,18 @@ def fingerprint(ctx, compact, export_path, compare_path):
         fiedler = topo["fiedler"]
         tangle = topo["tangle_ratio"]
 
-        verdict = (
-            f"{n_layers} layers, modularity {modularity:.2f}, "
-            f"fiedler {fiedler:.3f}, tangle {int(tangle * 100)}%"
-        )
+        verdict = f"{n_layers} layers, modularity {modularity:.2f}, fiedler {fiedler:.3f}, tangle {int(tangle * 100)}%"
 
         # -- Export --
         if export_path:
-            Path(export_path).write_text(
-                _json.dumps(fp, indent=2, default=str), encoding="utf-8"
-            )
+            Path(export_path).write_text(_json.dumps(fp, indent=2, default=str), encoding="utf-8")
             if not json_mode and not compact:
                 click.echo(f"Fingerprint written to {export_path}")
 
         # -- Compare --
         comparison = None
         if compare_path:
-            other_fp = _json.loads(
-                Path(compare_path).read_text(encoding="utf-8")
-            )
+            other_fp = _json.loads(Path(compare_path).read_text(encoding="utf-8"))
             comparison = compare_fingerprints(fp, other_fp)
 
         # -- JSON output --
@@ -121,17 +124,21 @@ def fingerprint(ctx, compact, export_path, compare_path):
             click.echo(f"\nCLUSTERS (top {min(5, len(clusters))}):")
             table_rows = []
             for c in clusters[:5]:
-                table_rows.append([
-                    c["label"],
-                    f"{c['size_pct']:.0f}%",
-                    f"{c['conductance']:.2f}",
-                    str(c["layer"]),
-                    c["pattern"],
-                ])
-            click.echo(format_table(
-                ["Label", "Size", "Conductance", "Layer", "Pattern"],
-                table_rows,
-            ))
+                table_rows.append(
+                    [
+                        c["label"],
+                        f"{c['size_pct']:.0f}%",
+                        f"{c['conductance']:.2f}",
+                        str(c["layer"]),
+                        c["pattern"],
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Label", "Size", "Conductance", "Layer", "Pattern"],
+                    table_rows,
+                )
+            )
 
         # Signature section
         click.echo("\nSIGNATURE:")
@@ -148,14 +155,18 @@ def fingerprint(ctx, compact, export_path, compare_path):
             click.echo("\nCOMPARISON:")
             cmp_rows = []
             for name, m in comparison["per_metric"].items():
-                delta_str = f"{m['delta']:+.4f}" if isinstance(m['delta'], float) else f"{m['delta']:+d}"
-                cmp_rows.append([
-                    name,
-                    str(round(m["this"], 4)),
-                    str(round(m["other"], 4)),
-                    delta_str,
-                ])
-            click.echo(format_table(
-                ["Metric", "This repo", "Other repo", "Delta"],
-                cmp_rows,
-            ))
+                delta_str = f"{m['delta']:+.4f}" if isinstance(m["delta"], float) else f"{m['delta']:+d}"
+                cmp_rows.append(
+                    [
+                        name,
+                        str(round(m["this"], 4)),
+                        str(round(m["other"], 4)),
+                        delta_str,
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Metric", "This repo", "Other repo", "Delta"],
+                    cmp_rows,
+                )
+            )

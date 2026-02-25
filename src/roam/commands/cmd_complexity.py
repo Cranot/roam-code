@@ -9,9 +9,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import loc, abbrev_kind, to_json, json_envelope
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
 def _safe_metric(row, key, default=0.0):
@@ -43,15 +43,20 @@ def _severity_icon(sev: str) -> str:
 @click.argument("target", required=False, default=None)
 @click.option("--limit", "-n", default=20, help="Number of results to show")
 @click.option(
-    "--threshold", "-t", type=float, default=None,
+    "--threshold",
+    "-t",
+    type=float,
+    default=None,
     help="Minimum cognitive complexity to include",
 )
 @click.option(
-    "--by-file", is_flag=True,
+    "--by-file",
+    is_flag=True,
     help="Group results by file and show per-file summary",
 )
 @click.option(
-    "--bumpy-road", is_flag=True,
+    "--bumpy-road",
+    is_flag=True,
     help="Detect bumpy-road pattern: files with multiple medium-complexity functions",
 )
 @click.pass_context
@@ -90,9 +95,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
 
         if target:
             # Filter by file path or symbol name
-            where_parts.append(
-                "(f.path LIKE ? OR s.name LIKE ? OR s.qualified_name LIKE ?)"
-            )
+            where_parts.append("(f.path LIKE ? OR s.name LIKE ? OR s.qualified_name LIKE ?)")
             pattern = f"%{target}%"
             params.extend([pattern, pattern, pattern])
 
@@ -117,6 +120,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
         if not rows:
             if sarif_mode:
                 from roam.output.sarif import complexity_to_sarif, write_sarif
+
                 sarif = complexity_to_sarif([], threshold=threshold or 0)
                 click.echo(write_sarif(sarif))
                 return
@@ -125,6 +129,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
 
         if sarif_mode:
             from roam.output.sarif import complexity_to_sarif, write_sarif
+
             complex_symbols = [
                 {
                     "name": r["qualified_name"] or r["name"],
@@ -146,8 +151,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
 
         # Compute distribution stats
         all_scores = conn.execute(
-            "SELECT cognitive_complexity FROM symbol_metrics "
-            "ORDER BY cognitive_complexity DESC"
+            "SELECT cognitive_complexity FROM symbol_metrics ORDER BY cognitive_complexity DESC"
         ).fetchall()
         scores = [r[0] for r in all_scores]
         total = len(scores)
@@ -157,39 +161,44 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
         high_count = sum(1 for s in scores if 15 <= s < 25)
 
         if json_mode:
-            click.echo(to_json(json_envelope("complexity",
-                summary={
-                    "total_analyzed": total,
-                    "average_complexity": round(avg, 1),
-                    "p90_complexity": round(p90, 1),
-                    "critical_count": critical_count,
-                    "high_count": high_count,
-                    "showing": len(rows),
-                },
-                budget=token_budget,
-                symbols=[
-                    {
-                        "name": r["qualified_name"] or r["name"],
-                        "kind": r["kind"],
-                        "file": r["file_path"],
-                        "line": r["line_start"],
-                        "cognitive_complexity": r["cognitive_complexity"],
-                        "nesting_depth": r["nesting_depth"],
-                        "param_count": r["param_count"],
-                        "line_count": r["line_count"],
-                        "return_count": r["return_count"],
-                        "bool_op_count": r["bool_op_count"],
-                        "callback_depth": r["callback_depth"],
-                        "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
-                        "halstead_volume": _safe_metric(r, "halstead_volume"),
-                        "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
-                        "halstead_effort": _safe_metric(r, "halstead_effort"),
-                        "halstead_bugs": _safe_metric(r, "halstead_bugs"),
-                        "severity": _severity(r["cognitive_complexity"]),
-                    }
-                    for r in rows
-                ],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "complexity",
+                        summary={
+                            "total_analyzed": total,
+                            "average_complexity": round(avg, 1),
+                            "p90_complexity": round(p90, 1),
+                            "critical_count": critical_count,
+                            "high_count": high_count,
+                            "showing": len(rows),
+                        },
+                        budget=token_budget,
+                        symbols=[
+                            {
+                                "name": r["qualified_name"] or r["name"],
+                                "kind": r["kind"],
+                                "file": r["file_path"],
+                                "line": r["line_start"],
+                                "cognitive_complexity": r["cognitive_complexity"],
+                                "nesting_depth": r["nesting_depth"],
+                                "param_count": r["param_count"],
+                                "line_count": r["line_count"],
+                                "return_count": r["return_count"],
+                                "bool_op_count": r["bool_op_count"],
+                                "callback_depth": r["callback_depth"],
+                                "cyclomatic_density": _safe_metric(r, "cyclomatic_density"),
+                                "halstead_volume": _safe_metric(r, "halstead_volume"),
+                                "halstead_difficulty": _safe_metric(r, "halstead_difficulty"),
+                                "halstead_effort": _safe_metric(r, "halstead_effort"),
+                                "halstead_bugs": _safe_metric(r, "halstead_bugs"),
+                                "severity": _severity(r["cognitive_complexity"]),
+                            }
+                            for r in rows
+                        ],
+                    )
+                )
+            )
             return
 
         # Text output
@@ -226,10 +235,7 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
 
             factor_str = f" ({', '.join(factors)})" if factors else ""
 
-            click.echo(
-                f"  {icon}{r['cognitive_complexity']:5.0f}  "
-                f"{name:<45s} {kind} {location}{factor_str}"
-            )
+            click.echo(f"  {icon}{r['cognitive_complexity']:5.0f}  {name:<45s} {kind} {location}{factor_str}")
 
 
 def _by_file_output(conn, rows, json_mode):
@@ -243,31 +249,38 @@ def _by_file_output(conn, rows, json_mode):
     file_summaries = []
     for fpath, syms in sorted(by_file.items()):
         scores = [s["cognitive_complexity"] for s in syms]
-        file_summaries.append({
-            "file": fpath,
-            "symbols": len(syms),
-            "max_complexity": max(scores),
-            "avg_complexity": round(sum(scores) / len(scores), 1),
-            "total_complexity": round(sum(scores), 1),
-            "items": syms,
-        })
+        file_summaries.append(
+            {
+                "file": fpath,
+                "symbols": len(syms),
+                "max_complexity": max(scores),
+                "avg_complexity": round(sum(scores) / len(scores), 1),
+                "total_complexity": round(sum(scores), 1),
+                "items": syms,
+            }
+        )
 
     file_summaries.sort(key=lambda f: f["total_complexity"], reverse=True)
 
     if json_mode:
-        click.echo(to_json(json_envelope("complexity",
-            summary={"files": len(file_summaries)},
-            files=[
-                {
-                    "file": fs["file"],
-                    "symbol_count": fs["symbols"],
-                    "max_complexity": fs["max_complexity"],
-                    "avg_complexity": fs["avg_complexity"],
-                    "total_complexity": fs["total_complexity"],
-                }
-                for fs in file_summaries
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "complexity",
+                    summary={"files": len(file_summaries)},
+                    files=[
+                        {
+                            "file": fs["file"],
+                            "symbol_count": fs["symbols"],
+                            "max_complexity": fs["max_complexity"],
+                            "avg_complexity": fs["avg_complexity"],
+                            "total_complexity": fs["total_complexity"],
+                        }
+                        for fs in file_summaries
+                    ],
+                )
+            )
+        )
         return
 
     for fs in file_summaries:
@@ -279,9 +292,7 @@ def _by_file_output(conn, rows, json_mode):
         for s in sorted(fs["items"], key=lambda x: x["cognitive_complexity"], reverse=True):
             sev = _severity(s["cognitive_complexity"])
             icon = _severity_icon(sev)
-            click.echo(
-                f"    {icon}{s['cognitive_complexity']:5.0f}  {s['name']}"
-            )
+            click.echo(f"    {icon}{s['cognitive_complexity']:5.0f}  {s['name']}")
         click.echo()
 
 
@@ -316,30 +327,33 @@ def _bumpy_road(conn, json_mode, limit, threshold):
         return
 
     if json_mode:
-        click.echo(to_json(json_envelope("complexity",
-            summary={
-                "mode": "bumpy-road",
-                "threshold": min_score,
-                "files_found": len(rows),
-            },
-            files=[
-                {
-                    "file": r["path"],
-                    "complex_functions": r["func_count"],
-                    "total_complexity": round(r["total"], 1),
-                    "avg_complexity": round(r["avg_cc"], 1),
-                    "max_complexity": round(r["max_cc"], 1),
-                    "max_nesting": r["max_nest"],
-                    "bumpy_score": round(r["func_count"] * r["avg_cc"], 1),
-                }
-                for r in rows
-            ],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "complexity",
+                    summary={
+                        "mode": "bumpy-road",
+                        "threshold": min_score,
+                        "files_found": len(rows),
+                    },
+                    files=[
+                        {
+                            "file": r["path"],
+                            "complex_functions": r["func_count"],
+                            "total_complexity": round(r["total"], 1),
+                            "avg_complexity": round(r["avg_cc"], 1),
+                            "max_complexity": round(r["max_cc"], 1),
+                            "max_nesting": r["max_nest"],
+                            "bumpy_score": round(r["func_count"] * r["avg_cc"], 1),
+                        }
+                        for r in rows
+                    ],
+                )
+            )
+        )
         return
 
-    click.echo(
-        f"Bumpy-road files (3+ functions with complexity >= {min_score}):\n"
-    )
+    click.echo(f"Bumpy-road files (3+ functions with complexity >= {min_score}):\n")
     for r in rows:
         bumpy = r["func_count"] * r["avg_cc"]
         click.echo(

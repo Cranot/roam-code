@@ -2,11 +2,10 @@
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.metrics_history import collect_metrics, get_snapshots
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Alert levels
@@ -25,7 +24,7 @@ _LEVEL_ORDER = {CRITICAL: 0, WARNING: 1, INFO: 2}
 
 _THRESHOLDS = {
     "health_score": {"op": "<", "value": 60, "level": CRITICAL},
-    "cycles":       {"op": ">", "value": 10, "level": WARNING},
+    "cycles": {"op": ">", "value": 10, "level": WARNING},
     "god_components": {"op": ">", "value": 5, "level": WARNING},
     "layer_violations": {"op": ">", "value": 0, "level": INFO},
 }
@@ -33,8 +32,7 @@ _THRESHOLDS = {
 _RATE_OF_CHANGE_PCT = 20  # alert if metric changes more than 20%
 
 # Metrics where an increase means degradation
-_WORSE_WHEN_HIGHER = {"cycles", "god_components", "bottlenecks",
-                      "dead_exports", "layer_violations"}
+_WORSE_WHEN_HIGHER = {"cycles", "god_components", "bottlenecks", "dead_exports", "layer_violations"}
 # Metrics where a decrease means degradation
 _WORSE_WHEN_LOWER = {"health_score"}
 
@@ -52,8 +50,8 @@ _TREND_LABELS = {
 # Alert construction helpers
 # ---------------------------------------------------------------------------
 
-def _make_alert(level, metric, message, current_value,
-                trend_direction=None):
+
+def _make_alert(level, metric, message, current_value, trend_direction=None):
     alert = {
         "level": level,
         "metric": metric,
@@ -78,6 +76,7 @@ def _mann_kendall_s(values):
     Reference: Mann (1945), Kendall (1975).
     """
     import math
+
     n = len(values)
     s = 0
     for i in range(n):
@@ -153,6 +152,7 @@ def _is_monotonic_worsening(values, metric):
 # Detection routines
 # ---------------------------------------------------------------------------
 
+
 def _check_thresholds(current):
     """Check current metrics against absolute thresholds."""
     alerts = []
@@ -172,11 +172,14 @@ def _check_thresholds(current):
             triggered = True
         if triggered:
             msg = f"below {threshold} threshold" if op == "<" else f"above {threshold} threshold"
-            alerts.append(_make_alert(
-                level, metric,
-                f"{metric}={val} ({msg})",
-                val,
-            ))
+            alerts.append(
+                _make_alert(
+                    level,
+                    metric,
+                    f"{metric}={val} ({msg})",
+                    val,
+                )
+            )
     return alerts
 
 
@@ -202,12 +205,15 @@ def _check_trends(snapshots_chrono):
                 # Sen's slope: robust rate of change per snapshot
                 slope = _sens_slope(tail)
                 slope_str = f", rate={slope:+.1f}/snapshot" if abs(slope) >= 0.1 else ""
-                alerts.append(_make_alert(
-                    WARNING, metric,
-                    f"{label}: {arrow} over {window} snapshots{slope_str}",
-                    current,
-                    trend_direction="up" if metric in _WORSE_WHEN_HIGHER else "down",
-                ))
+                alerts.append(
+                    _make_alert(
+                        WARNING,
+                        metric,
+                        f"{label}: {arrow} over {window} snapshots{slope_str}",
+                        current,
+                        trend_direction="up" if metric in _WORSE_WHEN_HIGHER else "down",
+                    )
+                )
                 break  # largest matching window is enough
     return alerts
 
@@ -230,19 +236,25 @@ def _check_rate_of_change(snapshots_chrono):
             # Can't compute percentage change from zero.
             # But if the metric appeared from nothing, that is notable.
             if curr_val > 0 and metric in _WORSE_WHEN_HIGHER:
-                alerts.append(_make_alert(
-                    INFO, metric,
-                    f"{metric}={curr_val} (new since last snapshot)",
-                    curr_val,
-                    trend_direction="up",
-                ))
+                alerts.append(
+                    _make_alert(
+                        INFO,
+                        metric,
+                        f"{metric}={curr_val} (new since last snapshot)",
+                        curr_val,
+                        trend_direction="up",
+                    )
+                )
             elif curr_val < prev_val and metric in _WORSE_WHEN_LOWER:
-                alerts.append(_make_alert(
-                    INFO, metric,
-                    f"{metric}={curr_val} (new since last snapshot)",
-                    curr_val,
-                    trend_direction="down",
-                ))
+                alerts.append(
+                    _make_alert(
+                        INFO,
+                        metric,
+                        f"{metric}={curr_val} (new since last snapshot)",
+                        curr_val,
+                        trend_direction="down",
+                    )
+                )
             continue
 
         pct = abs(curr_val - prev_val) / abs(prev_val) * 100
@@ -258,18 +270,22 @@ def _check_rate_of_change(snapshots_chrono):
 
         if worsening:
             direction = "increased" if curr_val > prev_val else "decreased"
-            alerts.append(_make_alert(
-                WARNING, metric,
-                f"{metric}={curr_val} ({direction} {pct:.0f}% since last snapshot)",
-                curr_val,
-                trend_direction="up" if curr_val > prev_val else "down",
-            ))
+            alerts.append(
+                _make_alert(
+                    WARNING,
+                    metric,
+                    f"{metric}={curr_val} ({direction} {pct:.0f}% since last snapshot)",
+                    curr_val,
+                    trend_direction="up" if curr_val > prev_val else "down",
+                )
+            )
     return alerts
 
 
 # ---------------------------------------------------------------------------
 # Deduplication
 # ---------------------------------------------------------------------------
+
 
 def _deduplicate(alerts):
     """Remove duplicate alerts for the same metric, keeping the highest severity."""
@@ -285,6 +301,7 @@ def _deduplicate(alerts):
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
+
 
 @click.command()
 @click.pass_context
@@ -308,18 +325,20 @@ def alerts(ctx):
         # Build chronological list of snapshot dicts (oldest first)
         snap_dicts = []
         for s in reversed(snaps_raw):
-            snap_dicts.append({
-                "timestamp": s["timestamp"],
-                "files": s["files"],
-                "symbols": s["symbols"],
-                "edges": s["edges"],
-                "cycles": s["cycles"],
-                "god_components": s["god_components"],
-                "bottlenecks": s["bottlenecks"],
-                "dead_exports": s["dead_exports"],
-                "layer_violations": s["layer_violations"],
-                "health_score": s["health_score"],
-            })
+            snap_dicts.append(
+                {
+                    "timestamp": s["timestamp"],
+                    "files": s["files"],
+                    "symbols": s["symbols"],
+                    "edges": s["edges"],
+                    "cycles": s["cycles"],
+                    "god_components": s["god_components"],
+                    "bottlenecks": s["bottlenecks"],
+                    "dead_exports": s["dead_exports"],
+                    "layer_violations": s["layer_violations"],
+                    "health_score": s["health_score"],
+                }
+            )
 
         if snap_dicts:
             # Use the most recent snapshot as "current" metrics
@@ -349,16 +368,21 @@ def alerts(ctx):
 
     # --- JSON output ---
     if json_mode:
-        click.echo(to_json(json_envelope("alerts",
-            summary={
-                "total": len(all_alerts),
-                "critical": counts[CRITICAL],
-                "warning": counts[WARNING],
-                "info": counts[INFO],
-                "snapshots_analyzed": len(snap_dicts),
-            },
-            alerts=all_alerts,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "alerts",
+                    summary={
+                        "total": len(all_alerts),
+                        "critical": counts[CRITICAL],
+                        "warning": counts[WARNING],
+                        "info": counts[INFO],
+                        "snapshots_analyzed": len(snap_dicts),
+                    },
+                    alerts=all_alerts,
+                )
+            )
+        )
         return
 
     # --- Text output ---

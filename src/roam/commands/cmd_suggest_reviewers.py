@@ -11,11 +11,10 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Signal weights
@@ -30,6 +29,7 @@ _W_BREADTH = 0.15
 # ---------------------------------------------------------------------------
 # CODEOWNERS parsing
 # ---------------------------------------------------------------------------
+
 
 def _find_codeowners(project_root: Path) -> Path | None:
     """Locate the CODEOWNERS file (GitHub/GitLab conventions)."""
@@ -219,9 +219,7 @@ def _compute_breadth(conn, file_ids: list[int], changed_dirs: set[str]) -> dict[
             (sfid,),
         ).fetchall()
         # Get this sibling file's dir
-        frow = conn.execute(
-            "SELECT path FROM files WHERE id = ?", (sfid,)
-        ).fetchone()
+        frow = conn.execute("SELECT path FROM files WHERE id = ?", (sfid,)).fetchone()
         if frow:
             fdir = os.path.dirname(frow["path"].replace("\\", "/"))
             for r in rows:
@@ -233,10 +231,7 @@ def _compute_breadth(conn, file_ids: list[int], changed_dirs: set[str]) -> dict[
         return {}
 
     total_dirs = len(changed_dirs)
-    return {
-        author: len(dirs & changed_dirs) / total_dirs
-        for author, dirs in author_dirs.items()
-    }
+    return {author: len(dirs & changed_dirs) / total_dirs for author, dirs in author_dirs.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -259,10 +254,7 @@ def _aggregate_reviewer_scores(
         now = int(time.time())
 
     file_ids = list(changed_files.values())
-    changed_dirs = {
-        os.path.dirname(p.replace("\\", "/"))
-        for p in changed_files.keys()
-    }
+    changed_dirs = {os.path.dirname(p.replace("\\", "/")) for p in changed_files.keys()}
 
     # Per-candidate accumulators: {author: {signal: [per-file scores]}}
     candidates: dict[str, dict[str, list[float]]] = defaultdict(
@@ -321,22 +313,21 @@ def _aggregate_reviewer_scores(
         )
 
         # Count files this reviewer covers (has non-zero ownership or is codeowner)
-        files_covered = sum(
-            1 for o, c in zip(signals["ownership"], signals["codeowners"])
-            if o > 0 or c > 0
-        )
+        files_covered = sum(1 for o, c in zip(signals["ownership"], signals["codeowners"]) if o > 0 or c > 0)
 
-        ranked.append({
-            "name": author,
-            "score": round(total, 2),
-            "signals": {
-                "ownership": round(ownership_avg, 2),
-                "codeowners": round(codeowners_avg, 2),
-                "recency": round(recency_avg, 2),
-                "breadth": round(breadth_avg, 2),
-            },
-            "files_covered": files_covered,
-        })
+        ranked.append(
+            {
+                "name": author,
+                "score": round(total, 2),
+                "signals": {
+                    "ownership": round(ownership_avg, 2),
+                    "codeowners": round(codeowners_avg, 2),
+                    "recency": round(recency_avg, 2),
+                    "breadth": round(breadth_avg, 2),
+                },
+                "files_covered": files_covered,
+            }
+        )
 
     ranked.sort(key=lambda x: x["score"], reverse=True)
 
@@ -356,12 +347,14 @@ def _aggregate_reviewer_scores(
 
 @click.command("suggest-reviewers")
 @click.argument("files", nargs=-1)
-@click.option("--top", "top_n", type=int, default=3,
-              help="Number of reviewers to suggest (default: 3)")
-@click.option("--exclude", "excludes", multiple=True,
-              help="Exclude a developer (repeatable, e.g. --exclude alice)")
-@click.option("--changed", "use_changed", is_flag=True,
-              help="Use git diff HEAD to detect changed files")
+@click.option("--top", "top_n", type=int, default=3, help="Number of reviewers to suggest (default: 3)")
+@click.option(
+    "--exclude",
+    "excludes",
+    multiple=True,
+    help="Exclude a developer (repeatable, e.g. --exclude alice)",
+)
+@click.option("--changed", "use_changed", is_flag=True, help="Use git diff HEAD to detect changed files")
 @click.pass_context
 def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
     """Suggest optimal code reviewers for changed files.
@@ -387,12 +380,17 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
 
     if not changed:
         if json_mode:
-            click.echo(to_json(json_envelope("suggest-reviewers",
-                summary={"verdict": "No changed files found"},
-                reviewers=[],
-                coverage={"covered": 0, "total": 0, "uncovered_files": []},
-                changed_files=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "suggest-reviewers",
+                        summary={"verdict": "No changed files found"},
+                        reviewers=[],
+                        coverage={"covered": 0, "total": 0, "uncovered_files": []},
+                        changed_files=[],
+                    )
+                )
+            )
         else:
             click.echo("VERDICT: No changed files found")
         return
@@ -402,12 +400,17 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
 
         if not file_map:
             if json_mode:
-                click.echo(to_json(json_envelope("suggest-reviewers",
-                    summary={"verdict": "Changed files not in index"},
-                    reviewers=[],
-                    coverage={"covered": 0, "total": 0, "uncovered_files": changed},
-                    changed_files=changed,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "suggest-reviewers",
+                            summary={"verdict": "Changed files not in index"},
+                            reviewers=[],
+                            coverage={"covered": 0, "total": 0, "uncovered_files": changed},
+                            changed_files=changed,
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: Changed files not in index. Run `roam index` first.")
             return
@@ -419,7 +422,10 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
         exclude_set = set(excludes)
 
         ranked, coverage_info = _aggregate_reviewer_scores(
-            file_map, conn, codeowners_entries, exclude_set,
+            file_map,
+            conn,
+            codeowners_entries,
+            exclude_set,
         )
 
         top = ranked[:top_n]
@@ -431,16 +437,21 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
             verdict = f"No reviewers found for {n_changed} changed file{'s' if n_changed != 1 else ''}"
 
         if json_mode:
-            click.echo(to_json(json_envelope("suggest-reviewers",
-                summary={
-                    "verdict": verdict,
-                    "reviewers_suggested": len(top),
-                    "changed_files": n_changed,
-                },
-                reviewers=top,
-                coverage=coverage_info,
-                changed_files=list(file_map.keys()),
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "suggest-reviewers",
+                        summary={
+                            "verdict": verdict,
+                            "reviewers_suggested": len(top),
+                            "changed_files": n_changed,
+                        },
+                        reviewers=top,
+                        coverage=coverage_info,
+                        changed_files=list(file_map.keys()),
+                    )
+                )
+            )
             return
 
         # Text output
@@ -457,16 +468,20 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
                     f"recency({sig['recency']:.2f}) "
                     f"breadth({sig['breadth']:.2f})"
                 )
-                rows.append([
-                    str(i),
-                    r["name"],
-                    f"{r['score']:.2f}",
-                    signals_str,
-                ])
-            click.echo(format_table(
-                ["RANK", "REVIEWER", "SCORE", "SIGNALS"],
-                rows,
-            ))
+                rows.append(
+                    [
+                        str(i),
+                        r["name"],
+                        f"{r['score']:.2f}",
+                        signals_str,
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["RANK", "REVIEWER", "SCORE", "SIGNALS"],
+                    rows,
+                )
+            )
             click.echo()
 
         cov = coverage_info

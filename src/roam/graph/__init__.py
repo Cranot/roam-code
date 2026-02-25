@@ -12,10 +12,10 @@ from roam.graph.cycles import (
     find_weakest_edge,
     format_cycles,
 )
+from roam.graph.dark_matter import HypothesisEngine, dark_matter_edges
+from roam.graph.diff import find_before_snapshot, metric_delta
 from roam.graph.layers import detect_layers, find_violations, format_layers
 from roam.graph.pagerank import compute_centrality, compute_pagerank, store_metrics
-from roam.graph.dark_matter import dark_matter_edges, HypothesisEngine
-from roam.graph.diff import find_before_snapshot, metric_delta
 from roam.graph.pathfinding import find_symbol_id, format_path
 
 __all__ = [

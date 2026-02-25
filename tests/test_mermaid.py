@@ -11,8 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -21,7 +19,6 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import invoke_cli, parse_json_output
-
 
 # ===========================================================================
 # Helper function unit tests
@@ -33,40 +30,49 @@ class TestSanitizeId:
 
     def test_basic_path(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("src/utils.py") == "src_utils_py"
 
     def test_dashes_replaced(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("my-module") == "my_module"
 
     def test_dots_replaced(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("file.name.ext") == "file_name_ext"
 
     def test_leading_digit(self):
         from roam.output.mermaid import sanitize_id
+
         result = sanitize_id("123abc")
         assert not result[0].isdigit()
         assert result == "_123abc"
 
     def test_spaces_replaced(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("my file") == "my_file"
 
     def test_colons_replaced(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("path:line") == "path_line"
 
     def test_empty_string(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("") == ""
 
     def test_already_valid(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("valid_id") == "valid_id"
 
     def test_backslash_replaced(self):
         from roam.output.mermaid import sanitize_id
+
         assert sanitize_id("src\\utils.py") == "src_utils_py"
 
 
@@ -75,16 +81,19 @@ class TestNode:
 
     def test_basic_node(self):
         from roam.output.mermaid import node
+
         result = node("src/utils.py", "utils.py")
         assert 'src_utils_py["utils.py"]' in result
 
     def test_node_indented(self):
         from roam.output.mermaid import node
+
         result = node("foo", "bar")
         assert result.startswith("    ")
 
     def test_quotes_escaped(self):
         from roam.output.mermaid import node
+
         result = node("foo", 'say "hello"')
         assert '"' not in result.split("[")[1].replace("'", "").rstrip('"]') or "'" in result
 
@@ -94,11 +103,13 @@ class TestEdge:
 
     def test_basic_edge(self):
         from roam.output.mermaid import edge
+
         result = edge("src/a.py", "src/b.py")
         assert "src_a_py --> src_b_py" in result
 
     def test_edge_indented(self):
         from roam.output.mermaid import edge
+
         result = edge("a", "b")
         assert result.startswith("    ")
 
@@ -107,7 +118,8 @@ class TestSubgraph:
     """Tests for subgraph()."""
 
     def test_basic_subgraph(self):
-        from roam.output.mermaid import subgraph, node
+        from roam.output.mermaid import node, subgraph
+
         nodes = [node("a", "A"), node("b", "B")]
         result = subgraph("My Group", nodes)
         assert 'subgraph "My Group"' in result
@@ -117,6 +129,7 @@ class TestSubgraph:
 
     def test_subgraph_quotes_in_name(self):
         from roam.output.mermaid import subgraph
+
         result = subgraph('Layer "0"', [])
         assert "subgraph" in result
         assert "'" in result  # Quotes should be escaped to single quotes
@@ -126,7 +139,8 @@ class TestDiagram:
     """Tests for diagram()."""
 
     def test_basic_diagram(self):
-        from roam.output.mermaid import diagram, node, edge
+        from roam.output.mermaid import diagram, edge, node
+
         elements = [node("a", "A"), node("b", "B"), edge("a", "b")]
         result = diagram("TD", elements)
         assert result.startswith("graph TD")
@@ -135,6 +149,7 @@ class TestDiagram:
 
     def test_lr_direction(self):
         from roam.output.mermaid import diagram
+
         result = diagram("LR", [])
         assert result.startswith("graph LR")
 
@@ -181,8 +196,7 @@ class TestLayersMermaid:
     def test_layers_mermaid_json(self, cli_runner, indexed_project, monkeypatch):
         """--mermaid --json includes mermaid field in JSON envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["layers", "--mermaid"],
-                            cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["layers", "--mermaid"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "layers")
         assert "mermaid" in data, f"Missing 'mermaid' key in JSON envelope: {list(data.keys())}"
         assert data["mermaid"].startswith("graph"), "mermaid field should start with 'graph'"
@@ -217,10 +231,9 @@ class TestClustersMermaid:
     def test_clusters_mermaid_json(self, cli_runner, indexed_project, monkeypatch):
         """--mermaid --json includes mermaid field in JSON envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["clusters", "--mermaid"],
-                            cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["clusters", "--mermaid"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "clusters")
-        assert "mermaid" in data, f"Missing 'mermaid' key in JSON envelope"
+        assert "mermaid" in data, "Missing 'mermaid' key in JSON envelope"
         assert data["mermaid"].startswith("graph")
 
     def test_clusters_mermaid_deterministic(self, cli_runner, indexed_project, monkeypatch):
@@ -253,10 +266,9 @@ class TestTourMermaid:
     def test_tour_mermaid_json(self, cli_runner, indexed_project, monkeypatch):
         """--mermaid --json includes mermaid field in JSON envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["tour", "--mermaid"],
-                            cwd=indexed_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["tour", "--mermaid"], cwd=indexed_project, json_mode=True)
         data = parse_json_output(result, "tour")
-        assert "mermaid" in data, f"Missing 'mermaid' key in JSON envelope"
+        assert "mermaid" in data, "Missing 'mermaid' key in JSON envelope"
         assert data["mermaid"].startswith("graph")
 
     def test_tour_mermaid_deterministic(self, cli_runner, indexed_project, monkeypatch):
@@ -272,9 +284,11 @@ class TestMermaidNoArrows:
 
     def test_layers_mermaid_empty_project(self, cli_runner, project_factory, monkeypatch):
         """--mermaid on a project with minimal structure still succeeds."""
-        proj = project_factory({
-            "single.py": "x = 1\n",
-        })
+        proj = project_factory(
+            {
+                "single.py": "x = 1\n",
+            }
+        )
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["layers", "--mermaid"], cwd=proj)
         # Might be empty graph or "No layers detected" -- either is fine
@@ -298,7 +312,7 @@ class TestMermaidValidSyntax:
             # Extract the label between ["..."]
             start = stripped.index("[")
             end = stripped.rindex("]")
-            label_section = stripped[start:end + 1]
+            label_section = stripped[start : end + 1]
             # Count quotes -- should be exactly 2 (opening and closing)
             quote_count = label_section.count('"')
             assert quote_count == 2, f"Unexpected quotes in: {stripped}"
@@ -311,6 +325,4 @@ class TestMermaidValidSyntax:
         lines = result.output.strip().split("\n")
         subgraph_count = sum(1 for l in lines if l.strip().startswith("subgraph"))
         end_count = sum(1 for l in lines if l.strip() == "end")
-        assert subgraph_count == end_count, (
-            f"Unbalanced subgraph/end: {subgraph_count} subgraphs, {end_count} ends"
-        )
+        assert subgraph_count == end_count, f"Unbalanced subgraph/end: {subgraph_count} subgraphs, {end_count} ends"

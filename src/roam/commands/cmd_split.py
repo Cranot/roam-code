@@ -8,17 +8,31 @@ from collections import Counter
 import click
 import networkx as nx
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index, file_not_found_hint
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
 def _label_group(symbols):
     """Generate a descriptive label for a group of symbols."""
-    _split_re = re.compile(r'[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
+    _split_re = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
     _stop = {
-        "get", "set", "use", "handle", "on", "is", "has", "can", "do",
-        "the", "for", "with", "from", "init", "new", "run",
+        "get",
+        "set",
+        "use",
+        "handle",
+        "on",
+        "is",
+        "has",
+        "can",
+        "do",
+        "the",
+        "for",
+        "with",
+        "from",
+        "init",
+        "new",
+        "run",
     }
     word_counts: dict[str, int] = {}
     for s in symbols:
@@ -37,10 +51,24 @@ def _label_group(symbols):
 
 def _label_suffix(symbols, exclude_word):
     """Find next most descriptive word for disambiguation."""
-    _split_re = re.compile(r'[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)')
+    _split_re = re.compile(r"[A-Z][a-z]+|[a-z]+|[A-Z]+(?=[A-Z][a-z]|\b)")
     _stop = {
-        "get", "set", "use", "handle", "on", "is", "has", "can", "do",
-        "the", "for", "with", "from", "init", "new", "run",
+        "get",
+        "set",
+        "use",
+        "handle",
+        "on",
+        "is",
+        "has",
+        "can",
+        "do",
+        "the",
+        "for",
+        "with",
+        "from",
+        "init",
+        "new",
+        "run",
     }
     word_counts: dict[str, int] = {}
     for s in symbols:
@@ -56,9 +84,8 @@ def _label_suffix(symbols, exclude_word):
 
 
 @click.command()
-@click.argument('path')
-@click.option('--min-group', default=2, show_default=True,
-              help='Minimum symbols per group')
+@click.argument("path")
+@click.option("--min-group", default=2, show_default=True, help="Minimum symbols per group")
 @click.pass_context
 def split(ctx, path, min_group):
     """Analyze a file's internal structure and suggest how to split it.
@@ -66,15 +93,13 @@ def split(ctx, path, min_group):
     Shows natural symbol groups within a file based on call/reference
     patterns, with coupling metrics and extraction suggestions.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     path = path.replace("\\", "/")
 
     with open_db(readonly=True) as conn:
-        frow = conn.execute(
-            "SELECT * FROM files WHERE path = ?", (path,)
-        ).fetchone()
+        frow = conn.execute("SELECT * FROM files WHERE path = ?", (path,)).fetchone()
         if frow is None:
             frow = conn.execute(
                 "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
@@ -97,11 +122,17 @@ def split(ctx, path, min_group):
 
         if len(symbols) < 3:
             if json_mode:
-                click.echo(to_json(json_envelope("split",
-                    summary={"groups": 0, "total_symbols": len(symbols)},
-                    path=frow["path"], groups=[],
-                    message="Too few symbols to analyze",
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "split",
+                            summary={"groups": 0, "total_symbols": len(symbols)},
+                            path=frow["path"],
+                            groups=[],
+                            message="Too few symbols to analyze",
+                        )
+                    )
+                )
             else:
                 click.echo(f"File has only {len(symbols)} symbols — too few to analyze.")
             return
@@ -113,15 +144,14 @@ def split(ctx, path, min_group):
         ph = ",".join("?" for _ in sym_ids)
         id_list = list(sym_ids)
         all_edges = conn.execute(
-            f"SELECT source_id, target_id, kind FROM edges "
-            f"WHERE source_id IN ({ph}) OR target_id IN ({ph})",
+            f"SELECT source_id, target_id, kind FROM edges WHERE source_id IN ({ph}) OR target_id IN ({ph})",
             id_list + id_list,
         ).fetchall()
 
         # Classify edges
-        intra_edges = []   # both endpoints in this file
+        intra_edges = []  # both endpoints in this file
         external_out = []  # source in file, target outside
-        external_in = []   # source outside, target in file
+        external_in = []  # source outside, target in file
         for e in all_edges:
             s_in = e["source_id"] in sym_ids
             t_in = e["target_id"] in sym_ids
@@ -170,13 +200,11 @@ def split(ctx, path, min_group):
             comm_syms.sort(key=lambda s: -(s["pagerank"] or 0))
 
             # Count edges within this community
-            internal = sum(
-                1 for e in intra_edges
-                if e["source_id"] in comm and e["target_id"] in comm
-            )
+            internal = sum(1 for e in intra_edges if e["source_id"] in comm and e["target_id"] in comm)
             # Count edges to other communities (within file)
             cross_community = sum(
-                1 for e in intra_edges
+                1
+                for e in intra_edges
                 if (e["source_id"] in comm) != (e["target_id"] in comm)
                 and (e["source_id"] in comm or e["target_id"] in comm)
             )
@@ -189,16 +217,18 @@ def split(ctx, path, min_group):
             total_edges = internal + cross_community
             isolation = internal * 100 / total_edges if total_edges else 100
 
-            group_data.append({
-                "id": i,
-                "label": label,
-                "symbols": comm_syms,
-                "symbol_ids": comm,
-                "internal_edges": internal,
-                "cross_edges": cross_community,
-                "external_edges": external,
-                "isolation_pct": isolation,
-            })
+            group_data.append(
+                {
+                    "id": i,
+                    "label": label,
+                    "symbols": comm_syms,
+                    "symbol_ids": comm,
+                    "internal_edges": internal,
+                    "cross_edges": cross_community,
+                    "external_edges": external,
+                    "isolation_pct": isolation,
+                }
+            )
 
         # Disambiguate duplicate labels
         label_counts = Counter(g["label"] for g in group_data)
@@ -222,9 +252,7 @@ def split(ctx, path, min_group):
         # Good candidate: high isolation (>60%), multiple symbols, low cross-community edges
         extractable = []
         for g in group_data:
-            if (len(g["symbols"]) >= 3
-                    and g["isolation_pct"] >= 50
-                    and g["cross_edges"] <= g["internal_edges"]):
+            if len(g["symbols"]) >= 3 and g["isolation_pct"] >= 50 and g["cross_edges"] <= g["internal_edges"]:
                 extractable.append(g)
         extractable.sort(key=lambda g: -g["isolation_pct"])
 
@@ -251,71 +279,83 @@ def split(ctx, path, min_group):
                 pair = (min(sg["id"], tg["id"]), max(sg["id"], tg["id"]))
                 src_name = sym_by_id[e["source_id"]]["name"]
                 tgt_name = sym_by_id[e["target_id"]]["name"]
-                cross_detail.setdefault(pair, []).append(
-                    {"source": src_name, "target": tgt_name, "kind": e["kind"]}
-                )
+                cross_detail.setdefault(pair, []).append({"source": src_name, "target": tgt_name, "kind": e["kind"]})
 
         if json_mode:
-            click.echo(to_json(json_envelope("split",
-                summary={
-                    "groups": len(group_data),
-                    "total_symbols": len(symbols),
-                    "extractable": len(extractable),
-                },
-                path=frow["path"],
-                total_symbols=len(symbols),
-                total_intra_edges=len(intra_edges),
-                total_external_edges=len(external_out) + len(external_in),
-                cross_group_coupling_pct=round(cross_pct),
-                groups=[
-                    {
-                        "label": g["label"],
-                        "size": len(g["symbols"]),
-                        "symbols": [
-                            {"name": s["name"], "kind": s["kind"],
-                             "line": s["line_start"],
-                             "pagerank": round(s["pagerank"], 4)}
-                            for s in g["symbols"]
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "split",
+                        summary={
+                            "groups": len(group_data),
+                            "total_symbols": len(symbols),
+                            "extractable": len(extractable),
+                        },
+                        path=frow["path"],
+                        total_symbols=len(symbols),
+                        total_intra_edges=len(intra_edges),
+                        total_external_edges=len(external_out) + len(external_in),
+                        cross_group_coupling_pct=round(cross_pct),
+                        groups=[
+                            {
+                                "label": g["label"],
+                                "size": len(g["symbols"]),
+                                "symbols": [
+                                    {
+                                        "name": s["name"],
+                                        "kind": s["kind"],
+                                        "line": s["line_start"],
+                                        "pagerank": round(s["pagerank"], 4),
+                                    }
+                                    for s in g["symbols"]
+                                ],
+                                "internal_edges": g["internal_edges"],
+                                "cross_edges": g["cross_edges"],
+                                "external_edges": g["external_edges"],
+                                "isolation_pct": round(g["isolation_pct"]),
+                                "extractable": g in extractable,
+                            }
+                            for g in group_data
                         ],
-                        "internal_edges": g["internal_edges"],
-                        "cross_edges": g["cross_edges"],
-                        "external_edges": g["external_edges"],
-                        "isolation_pct": round(g["isolation_pct"]),
-                        "extractable": g in extractable,
-                    }
-                    for g in group_data
-                ],
-                ungrouped_count=len(ungrouped),
-                ungrouped_breakdown={k: c for k, c in ungrouped_kinds.most_common()},
-                cross_group_edges=[
-                    {
-                        "groups": [
-                            next(g["label"] for g in group_data if g["id"] == a),
-                            next(g["label"] for g in group_data if g["id"] == b),
+                        ungrouped_count=len(ungrouped),
+                        ungrouped_breakdown={k: c for k, c in ungrouped_kinds.most_common()},
+                        cross_group_edges=[
+                            {
+                                "groups": [
+                                    next(g["label"] for g in group_data if g["id"] == a),
+                                    next(g["label"] for g in group_data if g["id"] == b),
+                                ],
+                                "count": len(edges),
+                                "edges": [
+                                    {
+                                        "source": e["source"],
+                                        "target": e["target"],
+                                        "kind": e["kind"],
+                                    }
+                                    for e in edges[:10]
+                                ],
+                            }
+                            for (a, b), edges in sorted(cross_detail.items())
                         ],
-                        "count": len(edges),
-                        "edges": [
-                            {"source": e["source"], "target": e["target"], "kind": e["kind"]}
-                            for e in edges[:10]
+                        suggestions=[
+                            {
+                                "group": g["label"],
+                                "symbols": [s["name"] for s in g["symbols"][:10]],
+                                "isolation_pct": round(g["isolation_pct"]),
+                            }
+                            for g in extractable
                         ],
-                    }
-                    for (a, b), edges in sorted(cross_detail.items())
-                ],
-                suggestions=[
-                    {
-                        "group": g["label"],
-                        "symbols": [s["name"] for s in g["symbols"][:10]],
-                        "isolation_pct": round(g["isolation_pct"]),
-                    }
-                    for g in extractable
-                ],
-            )))
+                    )
+                )
+            )
             return
 
         # --- Text output ---
         click.echo(f"=== Split analysis: {frow['path']} ===")
-        click.echo(f"  {len(symbols)} symbols, {len(intra_edges)} internal edges, "
-                    f"{len(external_out) + len(external_in)} external edges")
+        click.echo(
+            f"  {len(symbols)} symbols, {len(intra_edges)} internal edges, "
+            f"{len(external_out) + len(external_in)} external edges"
+        )
         click.echo(f"  Cross-group coupling: {cross_pct:.0f}%")
         click.echo()
 
@@ -326,27 +366,26 @@ def split(ctx, path, min_group):
             elif g["isolation_pct"] >= 50:
                 iso_flag = " [candidate]"
 
-            click.echo(f"  Group {g['id'] + 1} ({g['label']}) — "
-                        f"{len(g['symbols'])} symbols, "
-                        f"{g['internal_edges']} internal / "
-                        f"{g['cross_edges']} cross / "
-                        f"{g['external_edges']} external edges "
-                        f"(isolation: {g['isolation_pct']:.0f}%){iso_flag}")
+            click.echo(
+                f"  Group {g['id'] + 1} ({g['label']}) — "
+                f"{len(g['symbols'])} symbols, "
+                f"{g['internal_edges']} internal / "
+                f"{g['cross_edges']} cross / "
+                f"{g['external_edges']} external edges "
+                f"(isolation: {g['isolation_pct']:.0f}%){iso_flag}"
+            )
 
             # Show symbols sorted by PageRank, capped at 10
             for s in g["symbols"][:10]:
                 pr = s["pagerank"] or 0
                 pr_str = f"  PR={pr:.4f}" if pr > 0 else ""
-                click.echo(f"    {abbrev_kind(s['kind'])}  {s['name']:<35s} "
-                            f"L{s['line_start']}{pr_str}")
+                click.echo(f"    {abbrev_kind(s['kind'])}  {s['name']:<35s} L{s['line_start']}{pr_str}")
             if len(g["symbols"]) > 10:
                 click.echo(f"    (+{len(g['symbols']) - 10} more)")
             click.echo()
 
         if ungrouped:
-            kind_str = ", ".join(
-                f"~{c} {k}" for k, c in ungrouped_kinds.most_common()
-            )
+            kind_str = ", ".join(f"~{c} {k}" for k, c in ungrouped_kinds.most_common())
             click.echo(f"  Ungrouped: {len(ungrouped)} symbols ({kind_str})")
             click.echo()
 
@@ -363,18 +402,21 @@ def split(ctx, path, min_group):
                 elif rank == 0:
                     marker = " <- best candidate"
                 click.echo(f"  {rank + 1}. Extract '{g['label']}' group: {names}")
-                click.echo(f"     {g['isolation_pct']:.0f}% isolated, "
-                            f"only {g['cross_edges']} edges to other groups{marker}")
+                click.echo(
+                    f"     {g['isolation_pct']:.0f}% isolated, only {g['cross_edges']} edges to other groups{marker}"
+                )
             click.echo()
-            click.echo(f"  Overall cross-group coupling: {cross_pct:.0f}% — "
-                        f"{'high (tightly woven file)' if cross_pct > 40 else 'moderate (some natural seams)' if cross_pct > 20 else 'low (clear separation)'}")
+            click.echo(
+                f"  Overall cross-group coupling: {cross_pct:.0f}% — "
+                f"{'high (tightly woven file)' if cross_pct > 40 else 'moderate (some natural seams)' if cross_pct > 20 else 'low (clear separation)'}"
+            )
         elif group_data:
             if cross_pct > 50:
-                click.echo("No clear extraction candidates — file is tightly woven "
-                            f"({cross_pct:.0f}% cross-group coupling).")
+                click.echo(
+                    f"No clear extraction candidates — file is tightly woven ({cross_pct:.0f}% cross-group coupling)."
+                )
             else:
-                click.echo("Groups identified but none meet extraction threshold "
-                            "(need ≥3 symbols, ≥50% isolation).")
+                click.echo("Groups identified but none meet extraction threshold (need ≥3 symbols, ≥50% isolation).")
 
         # Cross-group edge detail
         if cross_detail:

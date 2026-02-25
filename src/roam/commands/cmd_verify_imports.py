@@ -8,40 +8,30 @@ import sqlite3
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Import pattern regexes
 # ---------------------------------------------------------------------------
 
 # Python: import X, from X import Y
-_PY_IMPORT = re.compile(
-    r"^\s*import\s+([\w.]+)"
-)
-_PY_FROM_IMPORT = re.compile(
-    r"^\s*from\s+([\w.]+)\s+import\s+([\w*][\w,\s*]*)"
-)
+_PY_IMPORT = re.compile(r"^\s*import\s+([\w.]+)")
+_PY_FROM_IMPORT = re.compile(r"^\s*from\s+([\w.]+)\s+import\s+([\w*][\w,\s*]*)")
 
 # JavaScript / TypeScript: import { X } from 'Y', import X from 'Y', require('X')
-_JS_IMPORT_FROM = re.compile(
-    r"""^\s*import\s+(?:\{([^}]+)\}\s+from|(\w+)\s+from)\s+['"]([^'"]+)['"]"""
-)
-_JS_REQUIRE = re.compile(
-    r"""(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)"""
-)
+_JS_IMPORT_FROM = re.compile(r"""^\s*import\s+(?:\{([^}]+)\}\s+from|(\w+)\s+from)\s+['"]([^'"]+)['"]""")
+_JS_REQUIRE = re.compile(r"""(?:require|import)\s*\(\s*['"]([^'"]+)['"]\s*\)""")
 
 # Go: import "pkg" or import ( "pkg" )
-_GO_IMPORT = re.compile(
-    r"""^\s*(?:import\s+)?["']([^"']+)["']"""
-)
+_GO_IMPORT = re.compile(r"""^\s*(?:import\s+)?["']([^"']+)["']""")
 
 
 # ---------------------------------------------------------------------------
 # Core logic
 # ---------------------------------------------------------------------------
+
 
 def _extract_import_names_from_line(line: str, language: str | None) -> list[str]:
     """Extract imported symbol/module names from a single source line.
@@ -105,9 +95,7 @@ def _extract_import_names_from_line(line: str, language: str | None) -> list[str
 
 def _get_file_language(conn: sqlite3.Connection, file_path: str) -> str | None:
     """Look up language for a file path from the index."""
-    row = conn.execute(
-        "SELECT language FROM files WHERE path = ?", (file_path,)
-    ).fetchone()
+    row = conn.execute("SELECT language FROM files WHERE path = ?", (file_path,)).fetchone()
     return row["language"] if row else None
 
 
@@ -319,10 +307,7 @@ def verify_imports(
         # Check if we already found this import from file scanning
         fp = edge["file_path"]
         line = edge.get("line") or 0
-        already_found = any(
-            i["file"] == fp and i["name"] == target_name
-            for i in all_imports
-        )
+        already_found = any(i["file"] == fp and i["name"] == target_name for i in all_imports)
         if already_found:
             continue
 
@@ -356,9 +341,9 @@ def verify_imports(
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("verify-imports")
-@click.option("--file", "file_path", default=None,
-              help="Restrict verification to a single file path.")
+@click.option("--file", "file_path", default=None, help="Restrict verification to a single file path.")
 @click.pass_context
 def verify_imports_cmd(ctx, file_path):
     """Validate import/require statements against the indexed symbol table.
@@ -387,10 +372,7 @@ def verify_imports_cmd(ctx, file_path):
     elif unresolved == 0:
         verdict = f"All {total} imports resolved across {files_checked} files"
     else:
-        verdict = (
-            f"{unresolved} unresolved imports out of {total} "
-            f"in {files_checked} files"
-        )
+        verdict = f"{unresolved} unresolved imports out of {total} in {files_checked} files"
 
     # --- JSON output ---
     if json_mode:
@@ -435,13 +417,14 @@ def verify_imports_cmd(ctx, file_path):
             suggestions_str = ", ".join(i["suggestions"]) if i["suggestions"] else "-"
             rows.append([loc_str, i["name"], suggestions_str])
 
-        click.echo(format_table(
-            ["Location", "Import", "Suggestions"],
-            rows,
-        ))
+        click.echo(
+            format_table(
+                ["Location", "Import", "Suggestions"],
+                rows,
+            )
+        )
         click.echo()
-        click.echo(f"  {unresolved} unresolved, {resolved} resolved, "
-                    f"{files_checked} files checked")
+        click.echo(f"  {unresolved} unresolved, {resolved} resolved, {files_checked} files checked")
         click.echo()
         click.echo("  Tip: Run `roam search <name>` for more details on a symbol.")
         click.echo("       If recently added, run `roam index` to refresh.")

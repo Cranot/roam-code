@@ -5,9 +5,9 @@ import time
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 def _contribution_entropy(author_shares):
@@ -62,7 +62,7 @@ def _extract_directory(path: str) -> str:
     p = path.replace("\\", "/")
     last_slash = p.rfind("/")
     if last_slash >= 0:
-        return p[:last_slash + 1]
+        return p[: last_slash + 1]
     return "./"
 
 
@@ -122,7 +122,9 @@ def _analyse_bus_factor(conn, stale_months: int):
         author = r["author"]
         if author not in dir_data[d]:
             dir_data[d][author] = {
-                "commits": 0, "churn": 0, "last_active": 0,
+                "commits": 0,
+                "churn": 0,
+                "last_active": 0,
             }
         entry = dir_data[d][author]
         entry["commits"] += r["commits"]
@@ -141,7 +143,9 @@ def _analyse_bus_factor(conn, stale_months: int):
 
         # Sort authors by churn contribution descending
         sorted_authors = sorted(
-            authors.items(), key=lambda x: x[1]["churn"], reverse=True,
+            authors.items(),
+            key=lambda x: x[1]["churn"],
+            reverse=True,
         )
 
         # Bus factor: count of authors contributing >10% of changes
@@ -155,9 +159,7 @@ def _analyse_bus_factor(conn, stale_months: int):
         # Primary author
         primary_name = sorted_authors[0][0]
         primary_data = sorted_authors[0][1]
-        primary_share = (
-            primary_data["churn"] / total_churn if total_churn else 0
-        )
+        primary_share = primary_data["churn"] / total_churn if total_churn else 0
 
         # Knowledge concentration flag
         concentrated = primary_share > 0.70
@@ -182,45 +184,46 @@ def _analyse_bus_factor(conn, stale_months: int):
         top_authors = []
         for name, data in sorted_authors[:5]:
             share = data["churn"] / total_churn if total_churn else 0
-            top_authors.append({
-                "name": name,
-                "commits": data["commits"],
-                "churn": data["churn"],
-                "share": round(share, 3),
-                "share_pct": round(share * 100),
-                "last_active": data["last_active"],
-            })
+            top_authors.append(
+                {
+                    "name": name,
+                    "commits": data["commits"],
+                    "churn": data["churn"],
+                    "share": round(share, 3),
+                    "share_pct": round(share * 100),
+                    "last_active": data["last_active"],
+                }
+            )
 
         stale_primary = staleness > 1.0
 
         # Contribution entropy
-        author_shares = [
-            data["churn"] / total_churn if total_churn else 0
-            for _name, data in sorted_authors
-        ]
+        author_shares = [data["churn"] / total_churn if total_churn else 0 for _name, data in sorted_authors]
         entropy = round(_contribution_entropy(author_shares), 2)
         knowledge_risk = _knowledge_risk_label(entropy)
 
-        results.append({
-            "directory": directory,
-            "bus_factor": bus_factor,
-            "entropy": entropy,
-            "knowledge_risk": knowledge_risk,
-            "total_commits": total_commits,
-            "total_churn": total_churn,
-            "author_count": len(authors),
-            "primary_author": primary_name,
-            "primary_share": round(primary_share, 3),
-            "primary_share_pct": round(primary_share * 100),
-            "primary_last_active": primary_last_active,
-            "concentrated": concentrated,
-            "stale_primary": stale_primary,
-            "staleness_factor": round(staleness, 2),
-            "dir_last_active": dir_last_active,
-            "risk_score": round(risk_score, 3),
-            "risk": _risk_label(risk_score),
-            "top_authors": top_authors,
-        })
+        results.append(
+            {
+                "directory": directory,
+                "bus_factor": bus_factor,
+                "entropy": entropy,
+                "knowledge_risk": knowledge_risk,
+                "total_commits": total_commits,
+                "total_churn": total_churn,
+                "author_count": len(authors),
+                "primary_author": primary_name,
+                "primary_share": round(primary_share, 3),
+                "primary_share_pct": round(primary_share * 100),
+                "primary_last_active": primary_last_active,
+                "concentrated": concentrated,
+                "stale_primary": stale_primary,
+                "staleness_factor": round(staleness, 2),
+                "dir_last_active": dir_last_active,
+                "risk_score": round(risk_score, 3),
+                "risk": _risk_label(risk_score),
+                "top_authors": top_authors,
+            }
+        )
 
     # Sort by risk score descending (highest risk first)
     results.sort(key=lambda r: r["risk_score"], reverse=True)
@@ -252,15 +255,13 @@ def _query_brain_methods(conn):
 
 
 @click.command()
-@click.option('--limit', default=20, help='Number of directories to show')
-@click.option('--stale-months', default=6,
-              help='Months of inactivity before flagging stale knowledge')
-@click.option('--brain-methods', is_flag=True,
-              help='Show disproportionately complex functions')
+@click.option("--limit", default=20, help="Number of directories to show")
+@click.option("--stale-months", default=6, help="Months of inactivity before flagging stale knowledge")
+@click.option("--brain-methods", is_flag=True, help="Show disproportionately complex functions")
 @click.pass_context
 def bus_factor(ctx, limit, stale_months, brain_methods):
     """Detect knowledge loss risk per module (bus factor analysis)."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -288,9 +289,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
         medium_risk = sum(1 for r in results if r["risk"] == "MEDIUM")
         concentrated_count = sum(1 for r in results if r["concentrated"])
         stale_count = sum(1 for r in results if r["stale_primary"])
-        critical_entropy_count = sum(
-            1 for r in results if r["knowledge_risk"] == "CRITICAL"
-        )
+        critical_entropy_count = sum(1 for r in results if r["knowledge_risk"] == "CRITICAL")
 
         if json_mode:
             summary = {
@@ -336,10 +335,12 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
 
         # --- Text output ---
         click.echo("Knowledge risk by module:")
-        click.echo(f"  ({len(results)} directories analysed, "
-                   f"{high_risk} HIGH, {medium_risk} MEDIUM, "
-                   f"{concentrated_count} concentrated, "
-                   f"{stale_count} stale)")
+        click.echo(
+            f"  ({len(results)} directories analysed, "
+            f"{high_risk} HIGH, {medium_risk} MEDIUM, "
+            f"{concentrated_count} concentrated, "
+            f"{stale_count} stale)"
+        )
         click.echo()
 
         for r in limited:
@@ -352,8 +353,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
             kr = r["knowledge_risk"]
             kr_pad = kr.ljust(8)
             click.echo(
-                f"  {r['directory']:<40s} bus={r['bus_factor']}  "
-                f"entropy={r['entropy']:.2f}  {kr_pad} {author_str}"
+                f"  {r['directory']:<40s} bus={r['bus_factor']}  entropy={r['entropy']:.2f}  {kr_pad} {author_str}"
             )
 
             # Primary author line
@@ -375,26 +375,20 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
                 for a in r["top_authors"][:3]:
                     top_parts.append(f"{a['name']} ({a['share_pct']}%)")
                 dir_time = _format_relative_time(r["dir_last_active"])
-                click.echo(
-                    f"    Top: {', '.join(top_parts)}, "
-                    f"last active: {dir_time}"
-                )
+                click.echo(f"    Top: {', '.join(top_parts)}, last active: {dir_time}")
                 if r["stale_primary"]:
                     click.echo(f"    ** STALE: primary author inactive >{stale_months} months **")
 
             click.echo()
 
         if len(results) > limit:
-            click.echo(f"  (+{len(results) - limit} more directories, "
-                       f"use --limit to see more)")
+            click.echo(f"  (+{len(results) - limit} more directories, use --limit to see more)")
 
         # --- Summary ---
         click.echo()
-        click.echo(f"  Knowledge concentration: {critical_entropy_count} modules "
-                   f"with critical entropy (<0.3)")
+        click.echo(f"  Knowledge concentration: {critical_entropy_count} modules with critical entropy (<0.3)")
         if brain_methods:
-            click.echo(f"  Brain methods: {len(brain_list)} functions "
-                       f"with cc>=25 and 50+ lines")
+            click.echo(f"  Brain methods: {len(brain_list)} functions with cc>=25 and 50+ lines")
 
         # --- Brain methods section ---
         if brain_methods and brain_list:
@@ -406,7 +400,4 @@ def _print_brain_methods(brain_list):
     click.echo()
     click.echo("Brain Methods (high complexity + large size):")
     for m in brain_list:
-        click.echo(
-            f"  {m['name']:<20s} cc={m['cognitive_complexity']:<4d} "
-            f"lines={m['line_count']:<5d} {m['path']}"
-        )
+        click.echo(f"  {m['name']:<20s} cc={m['cognitive_complexity']:<4d} lines={m['line_count']:<5d} {m['path']}")
