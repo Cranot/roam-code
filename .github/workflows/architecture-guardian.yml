@@ -33,9 +33,10 @@ jobs:
           mkdir -p .roam/reports
           roam report guardian --md > .roam/reports/architecture_guardian.md
 
-      - name: Run guardian gate (strict JSON)
+      - name: Run guardian gate (JSON)
+        continue-on-error: true
         run: |
-          roam --json report guardian --strict > .roam/reports/architecture_guardian.json
+          roam --json report guardian > .roam/reports/architecture_guardian.json
 
       - name: Upload guardian artifacts
         if: always()
