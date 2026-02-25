@@ -78,8 +78,7 @@ def _insert_symbol_metric(conn, symbol_id, return_count=0, cognitive_complexity=
 def _insert_taint_summary(conn, symbol_id, param_taints_return=None, param_to_sink=None, is_sanitizer=0):
     """Insert a taint_summaries row."""
     conn.execute(
-        "INSERT INTO taint_summaries (symbol_id, param_taints_return, param_to_sink, is_sanitizer) "
-        "VALUES (?, ?, ?, ?)",
+        "INSERT INTO taint_summaries (symbol_id, param_taints_return, param_to_sink, is_sanitizer) VALUES (?, ?, ?, ?)",
         (symbol_id, param_taints_return, param_to_sink, is_sanitizer),
     )
 
@@ -151,9 +150,7 @@ class TestUnusedReturn:
         fid_caller = _insert_file(conn, "src/caller.py")
         fid_target = _insert_file(conn, "src/utils.py")
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=3)
-        sid_compute = _insert_symbol(
-            conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2
-        )
+        sid_compute = _insert_symbol(conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_compute, return_count=1)
         _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
         # Insert a taint summary so the table check passes
@@ -198,9 +195,7 @@ class TestUnusedReturn:
         fid_caller = _insert_file(conn, "src/caller.py")
         fid_target = _insert_file(conn, "src/utils.py")
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=3)
-        sid_compute = _insert_symbol(
-            conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2
-        )
+        sid_compute = _insert_symbol(conn, fid_target, "compute_value", qname="compute_value", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_compute, return_count=1)
         _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
         _insert_taint_summary(conn, sid_compute)
@@ -277,9 +272,7 @@ class TestDeadParamChain:
         conn = _setup_db(tmp_path)
 
         fid = _insert_file(conn, "src/utils.py")
-        sid = _insert_symbol(
-            conn, fid, "identity", qname="identity", kind="function", signature="def identity(x)"
-        )
+        sid = _insert_symbol(conn, fid, "identity", qname="identity", kind="function", signature="def identity(x)")
         _insert_taint_summary(
             conn,
             sid,
@@ -298,9 +291,7 @@ class TestDeadParamChain:
         conn = _setup_db(tmp_path)
 
         fid = _insert_file(conn, "src/utils.py")
-        sid = _insert_symbol(
-            conn, fid, "log_it", qname="log_it", kind="function", signature="def log_it(msg)"
-        )
+        sid = _insert_symbol(conn, fid, "log_it", qname="log_it", kind="function", signature="def log_it(msg)")
         _insert_taint_summary(
             conn,
             sid,
@@ -320,8 +311,7 @@ class TestDeadParamChain:
 
         fid = _insert_file(conn, "src/utils.py")
         sid = _insert_symbol(
-            conn, fid, "method", qname="MyClass.method", kind="method",
-            signature="def method(self, _, data)"
+            conn, fid, "method", qname="MyClass.method", kind="method", signature="def method(self, _, data)"
         )
         # All params have no effect, but self/_ should be skipped
         _insert_taint_summary(
@@ -401,9 +391,7 @@ class TestSideEffectOnly:
         fid_caller = _insert_file(conn, "src/caller.py")
         fid_target = _insert_file(conn, "src/utils.py")
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=2)
-        sid_write = _insert_symbol(
-            conn, fid_target, "write_data", qname="write_data", line_start=1, line_end=2
-        )
+        sid_write = _insert_symbol(conn, fid_target, "write_data", qname="write_data", line_start=1, line_end=2)
         _insert_symbol_metric(conn, sid_write, return_count=1)
         _insert_edge(conn, sid_main, sid_write, kind="calls", line=2)
         _insert_taint_summary(conn, sid_write)
@@ -493,16 +481,22 @@ class TestFindingsSorted:
         fid_target = _insert_file(conn, "src/utils.py")
         sid_main = _insert_symbol(conn, fid_caller, "main", qname="main", line_start=1, line_end=2)
         sid_compute = _insert_symbol(
-            conn, fid_target, "compute", qname="compute",
-            kind="function", signature="def compute(x)",
-            line_start=1, line_end=2,
+            conn,
+            fid_target,
+            "compute",
+            qname="compute",
+            kind="function",
+            signature="def compute(x)",
+            line_start=1,
+            line_end=2,
         )
         _insert_symbol_metric(conn, sid_compute, return_count=1)
         _insert_edge(conn, sid_main, sid_compute, kind="calls", line=2)
 
         # Taint summary with dead param
         _insert_taint_summary(
-            conn, sid_compute,
+            conn,
+            sid_compute,
             param_taints_return=json.dumps({"0": False}),
             param_to_sink=json.dumps({}),
         )

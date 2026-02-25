@@ -826,9 +826,7 @@ def _analyze_dataflow_dead(conn):
                 if caller_file not in file_cache:
                     try:
                         fpath = project_root / caller_file
-                        file_cache[caller_file] = fpath.read_text(
-                            encoding="utf-8", errors="replace"
-                        ).splitlines()
+                        file_cache[caller_file] = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
                     except Exception:
                         file_cache[caller_file] = []
                 lines = file_cache.get(caller_file, [])
@@ -839,9 +837,7 @@ def _analyze_dataflow_dead(conn):
                     if re.search(r"[A-Za-z_]\w*\s*=(?!=)", prefix):
                         all_discard = False
                         break
-                    call_site_info.append(
-                        {"file": caller_file, "line": call_line, "caller": caller["caller_name"]}
-                    )
+                    call_site_info.append({"file": caller_file, "line": call_line, "caller": caller["caller_name"]})
                 else:
                     all_discard = False
                     break
@@ -853,10 +849,7 @@ def _analyze_dataflow_dead(conn):
                         "symbol": func["qname"],
                         "file": func["file_path"],
                         "line": func["line_start"],
-                        "reason": (
-                            f"return value of {func['qname']} is discarded "
-                            f"by all {len(callers)} caller(s)"
-                        ),
+                        "reason": (f"return value of {func['qname']} is discarded by all {len(callers)} caller(s)"),
                         "confidence": 85,
                         "call_sites": call_site_info[:5],
                     }
