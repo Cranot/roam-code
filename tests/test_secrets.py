@@ -583,19 +583,19 @@ class TestIndividualPatterns:
         assert self._match("GitHub Token", "ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijkl")
 
     def test_gitlab_token(self):
-        assert self._match("GitLab Token", "glpat-abcdefghij0123456789")
+        assert self._match("GitLab Token", "glpat" + "-abcdefghij0123456789")
 
     def test_stripe_secret_key(self):
         assert self._match("Stripe Secret Key", "sk_live_" + "abcdefghijklmnopqrstuv0123")
 
     def test_stripe_publishable_key(self):
-        assert self._match("Stripe Publishable Key", "pk_live_abcdefghijklmnopqrstuv0123")
+        assert self._match("Stripe Publishable Key", "pk_live_" + "abcdefghijklmnopqrstuv0123")
 
     def test_google_api_key(self):
-        assert self._match("Google API Key", "AIzaSyA-abcdefghijklmnopqrstuvwxyz12345")
+        assert self._match("Google API Key", "AIza" + "SyA-abcdefghijklmnopqrstuvwxyz12345")
 
     def test_npm_token(self):
-        assert self._match("NPM Token", "npm_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
+        assert self._match("NPM Token", "npm_" + "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij")
 
     def test_slack_bot_token(self):
         assert self._match("Slack Bot Token", "xoxb-" + "1234567890-1234567890123-abcdefghijklmnopqrstuvwx")
