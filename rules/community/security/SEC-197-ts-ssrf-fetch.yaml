@@ -1,0 +1,8 @@
+name: ts-ssrf-fetch
+description: "fetch() with user-supplied URL risks SSRF in TypeScript."
+severity: error
+type: ast_match
+match:
+  ast: "fetch(req.body.$URL)"
+  language: typescript
+  file_glob: "**/*.ts"

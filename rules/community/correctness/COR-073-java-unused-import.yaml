@@ -1,0 +1,8 @@
+name: java-unused-import
+description: "Imported class is never used in this file."
+severity: info
+type: ast_match
+match:
+  ast: "import $PACKAGE.$CLASS"
+  language: java
+  file_glob: "**/*.java"

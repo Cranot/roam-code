@@ -1,0 +1,8 @@
+name: py-mutable-default-set
+description: "Mutable default set argument is shared across calls."
+severity: error
+type: ast_match
+match:
+  ast: "def $FUNC($ARG=set())"
+  language: python
+  file_glob: "**/*.py"

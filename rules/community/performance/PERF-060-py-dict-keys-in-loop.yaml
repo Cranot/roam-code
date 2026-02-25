@@ -1,0 +1,8 @@
+name: py-dict-keys-in-loop
+description: "dict.keys() in loop creates unnecessary view object."
+severity: info
+type: ast_match
+match:
+  ast: "$DICT.keys()"
+  language: python
+  file_glob: "**/*.py"

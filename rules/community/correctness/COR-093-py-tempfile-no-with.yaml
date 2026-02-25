@@ -1,0 +1,8 @@
+name: py-tempfile-no-with
+description: "NamedTemporaryFile should use 'with' for cleanup."
+severity: warning
+type: ast_match
+match:
+  ast: "$TMP = tempfile.NamedTemporaryFile($ARGS)"
+  language: python
+  file_glob: "**/*.py"

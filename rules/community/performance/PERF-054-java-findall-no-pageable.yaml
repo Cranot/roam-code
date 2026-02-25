@@ -1,0 +1,8 @@
+name: java-findall-no-pageable
+description: "findAll() without Pageable loads entire table."
+severity: warning
+type: ast_match
+match:
+  ast: "$REPO.findAll()"
+  language: java
+  file_glob: "**/*.java"

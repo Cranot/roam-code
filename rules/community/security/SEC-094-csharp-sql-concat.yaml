@@ -1,0 +1,8 @@
+name: csharp-sql-concat
+description: "String concatenation in SqlCommand risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "new SqlCommand($A + $B)"
+  language: c_sharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: go-ssrf-http-get
+description: "http.Get with user-supplied URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "http.Get(r.FormValue($KEY))"
+  language: go
+  file_glob: "**/*.go"

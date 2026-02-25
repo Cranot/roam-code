@@ -40,11 +40,11 @@ def test_load_rules_recurses_subdirectories(tmp_path):
     assert names == ["A", "B"]
 
 
-def test_community_pack_has_500_plus_valid_rules():
+def test_community_pack_has_1000_plus_valid_rules():
     rules_dir = _repo_root() / "rules" / "community"
     rules = load_rules(rules_dir)
 
-    assert len(rules) >= 500
+    assert len(rules) >= 1000
     parse_errors = [r for r in rules if "_error" in r]
     assert parse_errors == []
 

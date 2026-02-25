@@ -1,0 +1,8 @@
+name: ts-async-foreach
+description: "forEach does not await async callbacks. Use for...of."
+severity: error
+type: ast_match
+match:
+  ast: "$ARR.forEach(async ($ITEM) => { $BODY })"
+  language: typescript
+  file_glob: "**/*.ts"

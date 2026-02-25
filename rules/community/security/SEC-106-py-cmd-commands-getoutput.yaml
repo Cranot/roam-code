@@ -1,0 +1,8 @@
+name: py-cmd-commands-getoutput
+description: "commands.getoutput is deprecated and risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "commands.getoutput($CMD)"
+  language: python
+  file_glob: "**/*.py"

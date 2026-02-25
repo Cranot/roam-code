@@ -1,0 +1,8 @@
+name: ruby-cmd-system
+description: "Kernel.system with variable input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "system($CMD)"
+  language: ruby
+  file_glob: "**/*.rb"

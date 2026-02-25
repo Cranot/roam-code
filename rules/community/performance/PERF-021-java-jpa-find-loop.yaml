@@ -1,0 +1,8 @@
+name: java-jpa-find-loop
+description: "JPA find inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "entityManager.find($CLASS, $ID)"
+  language: java
+  file_glob: "**/*.java"

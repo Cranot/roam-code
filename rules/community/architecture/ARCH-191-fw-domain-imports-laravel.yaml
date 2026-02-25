@@ -1,0 +1,9 @@
+name: fw-domain-imports-laravel
+description: "Domain layer must not import Laravel Illuminate HTTP."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**/*.php"
+  to:
+    file_glob: "**/vendor/laravel/**"

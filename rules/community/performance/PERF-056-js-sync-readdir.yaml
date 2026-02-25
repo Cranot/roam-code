@@ -1,0 +1,8 @@
+name: js-sync-readdir
+description: "readdirSync blocks the event loop in async context."
+severity: warning
+type: ast_match
+match:
+  ast: "fs.readdirSync($PATH)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: js-delete-array
+description: "delete on array creates sparse hole, use splice instead."
+severity: warning
+type: ast_match
+match:
+  ast: "delete $ARR[$INDEX]"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

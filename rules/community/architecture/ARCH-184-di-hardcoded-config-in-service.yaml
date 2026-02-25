@@ -1,0 +1,8 @@
+name: di-hardcoded-config-in-service
+description: "Service should receive config via injection, not hardcode."
+severity: info
+type: ast_match
+match:
+  ast: "os.environ[$KEY]"
+  language: python
+  file_glob: "**/services/**/*.py"

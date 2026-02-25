@@ -1,0 +1,9 @@
+name: hex-domain-to-infra-cache
+description: "Domain layer must not import infrastructure cache."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+  to:
+    file_glob: "**/infrastructure/cache/**"

@@ -1,0 +1,11 @@
+name: java-cross-fn-deser
+description: "Cross-function insecure deserialization from request."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["request.getInputStream("]
+  sinks: ["ObjectInputStream", "XMLDecoder", "readObject("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.java"

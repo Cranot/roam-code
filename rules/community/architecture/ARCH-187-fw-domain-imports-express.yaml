@@ -1,0 +1,8 @@
+name: fw-domain-imports-express
+description: "Domain layer must not import Express framework."
+severity: error
+type: ast_match
+match:
+  ast: "require('express')"
+  language: javascript
+  file_glob: "**/domain/**/*.{js,mjs}"

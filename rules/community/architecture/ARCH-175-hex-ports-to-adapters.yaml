@@ -1,0 +1,9 @@
+name: hex-ports-to-adapters
+description: "Port interfaces must not depend on adapter implementations."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/ports/**"
+  to:
+    file_glob: "**/adapters/**"

@@ -1,0 +1,11 @@
+name: py-cross-fn-path-traversal
+description: "Cross-function path traversal: user input flows to file open."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["request.args", "request.form"]
+  sinks: ["open(", "send_file(", "os.path.join("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: rust-clone-in-loop
+description: "Unnecessary clone in loop wastes allocations."
+severity: warning
+type: ast_match
+match:
+  ast: "$VAR.clone()"
+  language: rust
+  file_glob: "**/*.rs"

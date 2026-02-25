@@ -1,0 +1,8 @@
+name: ts-promise-no-catch
+description: "Promise without catch handler silently swallows rejections."
+severity: warning
+type: ast_match
+match:
+  ast: "$PROMISE.then($HANDLER)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: py-none-dereference
+description: "Potential None dereference without prior check."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.$ATTR"
+  language: python
+  file_glob: "**/*.py"

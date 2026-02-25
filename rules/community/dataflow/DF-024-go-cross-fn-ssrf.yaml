@@ -1,0 +1,11 @@
+name: go-cross-fn-ssrf
+description: "Cross-function SSRF: request input flows to HTTP call."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["r.FormValue(", "r.URL.Query().Get("]
+  sinks: ["http.Get(", "http.Post(", "http.NewRequest("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

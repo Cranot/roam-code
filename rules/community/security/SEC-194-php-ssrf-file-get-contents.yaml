@@ -1,0 +1,8 @@
+name: php-ssrf-file-get-contents
+description: "file_get_contents with user URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "file_get_contents($_GET[$KEY])"
+  language: php
+  file_glob: "**/*.php"

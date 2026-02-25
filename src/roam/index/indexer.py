@@ -105,6 +105,16 @@ def _try_import_effects():
         return None
 
 
+def _try_import_taint():
+    """Try to import the taint analysis module."""
+    try:
+        from roam.analysis.taint import compute_and_store_taint
+
+        return compute_and_store_taint
+    except ImportError:
+        return None
+
+
 _quiet_mode = False
 
 
@@ -1093,6 +1103,18 @@ class Indexer:
                         self._log(f"  {_format_count(effect_count)} effects classified")
                 except Exception as e:
                     self._log(f"  Effect analysis failed: {e}")
+
+            # Taint analysis (inter-procedural)
+            _taint_fn = _try_import_taint()
+            if _taint_fn is not None:
+                self._log("Computing taint summaries...")
+                try:
+                    _taint_fn(conn, self.root, G)
+                    taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
+                    if taint_count:
+                        self._log(f"  {_format_count(taint_count)} taint findings")
+                except Exception as e:
+                    self._log(f"  Taint analysis failed: {e}")
 
             # Per-file health scores — pass G so cycle detection uses SCC, not SQL self-join
             self._log("Computing health scores...")

@@ -1,0 +1,8 @@
+name: ts-console-assert
+description: "console.assert should not be used for production validation."
+severity: info
+type: ast_match
+match:
+  ast: "console.assert($CONDITION)"
+  language: typescript
+  file_glob: "**/src/**/*.ts"

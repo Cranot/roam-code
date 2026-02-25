@@ -1,0 +1,8 @@
+name: go-sqlx-concat
+description: "SQLX query with string concatenation risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "sqlx.Get($DB, $DEST, $A + $B)"
+  language: go
+  file_glob: "**/*.go"

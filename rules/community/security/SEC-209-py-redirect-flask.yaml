@@ -1,0 +1,8 @@
+name: py-redirect-flask
+description: "Flask redirect with user URL risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "redirect(request.form[$KEY])"
+  language: python
+  file_glob: "**/*.py"

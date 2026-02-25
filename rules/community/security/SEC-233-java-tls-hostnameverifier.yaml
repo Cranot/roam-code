@@ -1,0 +1,8 @@
+name: java-tls-hostnameverifier
+description: "AllowAll HostnameVerifier bypasses hostname check."
+severity: error
+type: ast_match
+match:
+  ast: "HttpsURLConnection.setDefaultHostnameVerifier($VERIFIER)"
+  language: java
+  file_glob: "**/*.java"

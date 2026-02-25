@@ -1,0 +1,8 @@
+name: js-float-equality
+description: "Float equality comparison is unreliable due to precision."
+severity: warning
+type: ast_match
+match:
+  ast: "parseFloat($A) === parseFloat($B)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

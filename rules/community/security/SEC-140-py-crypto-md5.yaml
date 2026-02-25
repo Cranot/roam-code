@@ -1,0 +1,8 @@
+name: py-crypto-md5
+description: "MD5 is cryptographically broken, use SHA-256 or better."
+severity: warning
+type: ast_match
+match:
+  ast: "hashlib.md5($DATA)"
+  language: python
+  file_glob: "**/*.py"

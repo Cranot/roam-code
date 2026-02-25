@@ -1,0 +1,8 @@
+name: rust-lazy-static-large
+description: "Large lazy_static may block first access."
+severity: info
+type: ast_match
+match:
+  ast: "lazy_static! { static ref $NAME: Vec<$T> = vec![$ITEMS]; }"
+  language: rust
+  file_glob: "**/*.rs"

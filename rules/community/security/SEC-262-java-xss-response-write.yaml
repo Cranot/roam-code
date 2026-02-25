@@ -1,0 +1,8 @@
+name: java-xss-response-write
+description: "Writing user input to response without encoding risks XSS."
+severity: error
+type: ast_match
+match:
+  ast: "response.getWriter().write($INPUT)"
+  language: java
+  file_glob: "**/*.java"

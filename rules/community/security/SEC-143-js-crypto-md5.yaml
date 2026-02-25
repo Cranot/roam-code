@@ -1,0 +1,8 @@
+name: js-crypto-md5
+description: "MD5 is cryptographically broken, do not use for security."
+severity: warning
+type: ast_match
+match:
+  ast: "crypto.createHash('md5')"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

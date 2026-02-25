@@ -1,0 +1,8 @@
+name: js-empty-catch
+description: "Empty catch block silently swallows errors."
+severity: warning
+type: ast_match
+match:
+  ast: "catch (e) {}"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

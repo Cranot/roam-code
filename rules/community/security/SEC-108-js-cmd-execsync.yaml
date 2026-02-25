@@ -1,0 +1,8 @@
+name: js-cmd-execsync
+description: "child_process.execSync risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "child_process.execSync($CMD)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

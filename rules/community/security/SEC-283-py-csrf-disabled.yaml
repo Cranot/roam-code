@@ -1,0 +1,8 @@
+name: py-csrf-disabled
+description: "CSRF protection disabled exposes forms to cross-site forgery."
+severity: error
+type: ast_match
+match:
+  ast: "WTF_CSRF_ENABLED = False"
+  language: python
+  file_glob: "**/*.py"

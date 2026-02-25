@@ -1,0 +1,8 @@
+name: csharp-cmd-processstartinfo
+description: "ProcessStartInfo with variable filename risks injection."
+severity: error
+type: ast_match
+match:
+  ast: "new ProcessStartInfo($CMD)"
+  language: c_sharp
+  file_glob: "**/*.cs"

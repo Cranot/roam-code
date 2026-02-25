@@ -1,0 +1,8 @@
+name: py-traceback-response
+description: "Sending traceback in response reveals internal details."
+severity: warning
+type: ast_match
+match:
+  ast: "traceback.format_exc()"
+  language: python
+  file_glob: "**/*.py"

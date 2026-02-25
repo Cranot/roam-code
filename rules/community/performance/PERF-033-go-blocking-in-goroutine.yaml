@@ -1,0 +1,8 @@
+name: go-blocking-in-goroutine
+description: "Blocking call in goroutine can exhaust thread pool."
+severity: info
+type: ast_match
+match:
+  ast: "time.Sleep($DURATION)"
+  language: go
+  file_glob: "**/*.go"

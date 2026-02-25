@@ -1,0 +1,8 @@
+name: py-ssrf-urllib
+description: "urllib.request.urlopen with user URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "urllib.request.urlopen($USER_URL)"
+  language: python
+  file_glob: "**/*.py"

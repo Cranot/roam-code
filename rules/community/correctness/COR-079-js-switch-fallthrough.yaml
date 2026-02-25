@@ -1,0 +1,8 @@
+name: js-switch-fallthrough
+description: "Switch case without break may fall through unintentionally."
+severity: warning
+type: ast_match
+match:
+  ast: "case $VAL: $STMT"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

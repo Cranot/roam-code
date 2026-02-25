@@ -1,0 +1,9 @@
+name: circular-utils-to-domain
+description: "Utils must not import domain layer (circular dependency)."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/utils/**"
+  to:
+    file_glob: "**/domain/**"

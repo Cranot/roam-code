@@ -1,0 +1,8 @@
+name: java-path-paths-get
+description: "Paths.get with request parameter risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "Paths.get(request.getParameter($PARAM))"
+  language: java
+  file_glob: "**/*.java"

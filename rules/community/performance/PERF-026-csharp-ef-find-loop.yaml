@@ -1,0 +1,8 @@
+name: csharp-ef-find-loop
+description: "EF Find inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "context.$DBSET.Find($ID)"
+  language: c_sharp
+  file_glob: "**/*.cs"

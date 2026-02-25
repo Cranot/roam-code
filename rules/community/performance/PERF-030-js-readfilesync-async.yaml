@@ -1,0 +1,8 @@
+name: js-readfilesync-async
+description: "readFileSync in async handler blocks the event loop."
+severity: error
+type: ast_match
+match:
+  ast: "fs.readFileSync($PATH)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: di-new-in-service
+description: "Service layer should not instantiate dependencies directly."
+severity: warning
+type: ast_match
+match:
+  ast: "new $Repository()"
+  language: java
+  file_glob: "**/services/**/*.java"

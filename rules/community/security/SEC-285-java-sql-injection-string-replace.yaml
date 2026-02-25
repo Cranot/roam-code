@@ -1,0 +1,8 @@
+name: java-sql-injection-string-replace
+description: "String replace for SQL sanitization is bypassable."
+severity: error
+type: ast_match
+match:
+  ast: "$INPUT.replace(\"'\", \"''\")"
+  language: java
+  file_glob: "**/*.java"

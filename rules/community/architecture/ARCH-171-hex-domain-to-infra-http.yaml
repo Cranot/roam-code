@@ -1,0 +1,9 @@
+name: hex-domain-to-infra-http
+description: "Domain layer must not import infrastructure HTTP clients."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+  to:
+    file_glob: "**/infrastructure/http/**"

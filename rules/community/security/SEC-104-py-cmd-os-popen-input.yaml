@@ -1,0 +1,8 @@
+name: py-cmd-os-popen-input
+description: "os.popen with variable input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "os.popen($CMD)"
+  language: python
+  file_glob: "**/*.py"

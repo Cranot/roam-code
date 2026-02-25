@@ -1,0 +1,8 @@
+name: ts-loose-inequality
+description: "Use !== instead of != to avoid type coercion."
+severity: warning
+type: ast_match
+match:
+  ast: "$A != $B"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: py-hardcoded-apikey
+description: "Hardcoded API key string detected."
+severity: error
+type: ast_match
+match:
+  ast: "api_key = \"$VALUE\""
+  language: python
+  file_glob: "**/*.py"

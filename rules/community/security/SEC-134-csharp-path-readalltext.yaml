@@ -1,0 +1,8 @@
+name: csharp-path-readalltext
+description: "File.ReadAllText with request input risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "File.ReadAllText(Request.Query[$PARAM])"
+  language: c_sharp
+  file_glob: "**/*.cs"

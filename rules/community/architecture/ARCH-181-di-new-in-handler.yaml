@@ -1,0 +1,8 @@
+name: di-new-in-handler
+description: "Request handlers should not instantiate services directly."
+severity: warning
+type: ast_match
+match:
+  ast: "new $Service()"
+  language: java
+  file_glob: "**/handlers/**/*.java"

@@ -1,0 +1,8 @@
+name: go-file-no-defer-close
+description: "File opened without defer close may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "$F, $ERR := os.Open($PATH)"
+  language: go
+  file_glob: "**/*.go"

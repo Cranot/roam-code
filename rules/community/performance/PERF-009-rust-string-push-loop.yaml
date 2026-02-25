@@ -1,0 +1,8 @@
+name: rust-string-push-loop
+description: "Repeated String push in loop without pre-allocation."
+severity: info
+type: ast_match
+match:
+  ast: "$STR.push_str($PART)"
+  language: rust
+  file_glob: "**/*.rs"

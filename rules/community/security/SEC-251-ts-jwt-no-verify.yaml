@@ -1,0 +1,8 @@
+name: ts-jwt-no-verify
+description: "JWT decode without verification in TypeScript."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.decode($TOKEN)"
+  language: typescript
+  file_glob: "**/*.ts"

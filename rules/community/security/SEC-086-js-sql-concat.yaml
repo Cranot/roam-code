@@ -1,0 +1,8 @@
+name: js-sql-concat
+description: "String concatenation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "connection.query($A + $B)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: js-large-global-array
+description: "Large array at module level wastes memory if rarely used."
+severity: info
+type: ast_match
+match:
+  ast: "const $GLOBAL = [$ITEMS]"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

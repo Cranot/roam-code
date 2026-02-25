@@ -1,0 +1,8 @@
+name: py-mutable-default-dict
+description: "Mutable default dict argument is shared across calls."
+severity: error
+type: ast_match
+match:
+  ast: "def $FUNC($ARG={})"
+  language: python
+  file_glob: "**/*.py"

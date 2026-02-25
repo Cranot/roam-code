@@ -1,0 +1,8 @@
+name: php-path-include
+description: "include with user input risks local file inclusion."
+severity: error
+type: ast_match
+match:
+  ast: "include($_GET[$PARAM])"
+  language: php
+  file_glob: "**/*.php"

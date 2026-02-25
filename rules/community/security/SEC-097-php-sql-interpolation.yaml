@@ -1,0 +1,8 @@
+name: php-sql-interpolation
+description: "Variable interpolation in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "mysqli_query($CONN, \"$QUERY\")"
+  language: php
+  file_glob: "**/*.php"

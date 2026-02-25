@@ -1,0 +1,8 @@
+name: rust-unsafe-block
+description: "Unsafe block bypasses Rust safety guarantees."
+severity: info
+type: ast_match
+match:
+  ast: "unsafe { $BODY }"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: java-string-format-loop
+description: "String.format in loop is slower than StringBuilder."
+severity: info
+type: ast_match
+match:
+  ast: "String.format($FMT, $ARGS)"
+  language: java
+  file_glob: "**/*.java"

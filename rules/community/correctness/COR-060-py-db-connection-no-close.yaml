@@ -1,0 +1,8 @@
+name: py-db-connection-no-close
+description: "Database connection without context manager may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "$CONN = sqlite3.connect($DB)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: java-null-dereference
+description: "Method call on potentially null reference."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.get($KEY).$METHOD()"
+  language: java
+  file_glob: "**/*.java"

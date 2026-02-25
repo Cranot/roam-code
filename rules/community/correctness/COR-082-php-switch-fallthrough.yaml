@@ -1,0 +1,8 @@
+name: php-switch-fallthrough
+description: "Switch case without break may fall through."
+severity: warning
+type: ast_match
+match:
+  ast: "case $VAL: $STMT"
+  language: php
+  file_glob: "**/*.php"

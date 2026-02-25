@@ -1,0 +1,8 @@
+name: java-string-equals-null
+description: "Calling equals on potentially null string causes NPE."
+severity: warning
+type: ast_match
+match:
+  ast: "$STR.equals($OTHER)"
+  language: java
+  file_glob: "**/*.java"

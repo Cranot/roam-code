@@ -1,0 +1,8 @@
+name: py-large-global-dict
+description: "Large dict at module level wastes memory if rarely used."
+severity: info
+type: ast_match
+match:
+  ast: "$GLOBAL = {$ITEMS}"
+  language: python
+  file_glob: "**/*.py"

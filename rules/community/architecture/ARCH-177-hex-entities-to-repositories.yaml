@@ -1,0 +1,9 @@
+name: hex-entities-to-repositories
+description: "Domain entities must not reference repository implementations."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/entities/**"
+  to:
+    file_glob: "**/repositories/**"

@@ -1,0 +1,8 @@
+name: py-django-raw-sql
+description: "Django raw SQL with string formatting risks injection."
+severity: error
+type: ast_match
+match:
+  ast: "Model.objects.raw($A % $B)"
+  language: python
+  file_glob: "**/*.py"

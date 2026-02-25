@@ -1,0 +1,8 @@
+name: csharp-unused-using
+description: "Unused using directive clutters namespace."
+severity: info
+type: ast_match
+match:
+  ast: "using $NAMESPACE"
+  language: c_sharp
+  file_glob: "**/*.cs"

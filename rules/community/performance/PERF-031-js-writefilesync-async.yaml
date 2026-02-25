@@ -1,0 +1,8 @@
+name: js-writefilesync-async
+description: "writeFileSync in async handler blocks the event loop."
+severity: error
+type: ast_match
+match:
+  ast: "fs.writeFileSync($PATH, $DATA)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

@@ -1,0 +1,8 @@
+name: go-jwt-no-validation
+description: "JWT ParseUnverified skips signature validation."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.ParseUnverified($TOKEN, $CLAIMS)"
+  language: go
+  file_glob: "**/*.go"

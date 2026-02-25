@@ -1,0 +1,8 @@
+name: py-unbounded-append
+description: "Append in while loop without size check may exhaust memory."
+severity: warning
+type: ast_match
+match:
+  ast: "$LIST.append($ITEM)"
+  language: python
+  file_glob: "**/*.py"

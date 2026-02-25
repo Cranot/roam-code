@@ -1,0 +1,8 @@
+name: py-crypto-rc4
+description: "RC4/ARC4 cipher is cryptographically broken."
+severity: error
+type: ast_match
+match:
+  ast: "ARC4.new($KEY)"
+  language: python
+  file_glob: "**/*.py"

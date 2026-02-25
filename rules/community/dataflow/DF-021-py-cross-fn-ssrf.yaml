@@ -1,0 +1,11 @@
+name: py-cross-fn-ssrf
+description: "Cross-function SSRF: user input flows to HTTP request."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["request.args", "request.form", "request.json"]
+  sinks: ["requests.get(", "requests.post(", "urllib.request.urlopen("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.py"

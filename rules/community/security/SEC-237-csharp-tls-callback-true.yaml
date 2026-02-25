@@ -1,0 +1,8 @@
+name: csharp-tls-callback-true
+description: "ServerCertificateValidationCallback returning true bypasses TLS."
+severity: error
+type: ast_match
+match:
+  ast: "ServerCertificateValidationCallback = ($A, $B, $C, $D) => true"
+  language: c_sharp
+  file_glob: "**/*.cs"

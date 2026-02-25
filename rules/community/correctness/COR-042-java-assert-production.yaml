@@ -1,0 +1,8 @@
+name: java-assert-production
+description: "Java assert is disabled by default at runtime."
+severity: warning
+type: ast_match
+match:
+  ast: "assert $CONDITION"
+  language: java
+  file_glob: "**/src/**/*.java"

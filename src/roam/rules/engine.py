@@ -766,17 +766,21 @@ def _evaluate_ast_match(rule: dict, conn) -> dict:
 
 
 def _evaluate_dataflow_match(rule: dict, conn) -> dict:
-    """Evaluate a dataflow_match rule using intra-procedural heuristics.
+    """Evaluate a dataflow_match rule using intra- and inter-procedural heuristics.
 
     Rule shape:
 
     type: dataflow_match
     match:
-      patterns: [dead_assignment, unused_param, source_to_sink]
+      patterns: [dead_assignment, unused_param, source_to_sink,
+                 inter_source_to_sink, inter_unused_param, inter_unused_return]
       file_glob: "**/*.py"
       max_matches: 100
       sources: ["input(", "request.args"]
       sinks: ["eval(", "exec("]
+      sanitizers: ["escape(", "sanitize("]
+      max_chain_length: 5
+      min_confidence: 0.5
     """
     match = rule.get("match", {})
     exempt = rule.get("exempt", {})
@@ -793,6 +797,10 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
     sources = match.get("sources")
     sinks = match.get("sinks")
 
+    # New inter-procedural keys
+    max_chain_length = match.get("max_chain_length")
+    min_confidence = match.get("min_confidence")
+
     name = rule.get("name", "unnamed")
     severity = rule.get("severity", "error")
 
@@ -804,6 +812,21 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
         sources=sources,
         sinks=sinks,
     )
+
+    # Apply inter-procedural filters
+    if max_chain_length is not None:
+        try:
+            mcl = int(max_chain_length)
+            findings = [f for f in findings if f.get("chain_length", 1) <= mcl]
+        except (TypeError, ValueError):
+            pass
+
+    if min_confidence is not None:
+        try:
+            mc = float(min_confidence)
+            findings = [f for f in findings if f.get("confidence", 1.0) >= mc]
+        except (TypeError, ValueError):
+            pass
 
     violations: list[dict] = []
     for item in findings:
@@ -824,6 +847,10 @@ def _evaluate_dataflow_match(rule: dict, conn) -> dict:
             violation["source"] = item["source"]
         if "sink" in item:
             violation["sink"] = item["sink"]
+        if "confidence" in item:
+            violation["confidence"] = item["confidence"]
+        if "chain_length" in item:
+            violation["chain_length"] = item["chain_length"]
         violations.append(violation)
 
     if max_matches > 0:

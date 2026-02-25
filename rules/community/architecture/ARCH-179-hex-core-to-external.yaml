@@ -1,0 +1,9 @@
+name: hex-core-to-external
+description: "Core business logic must not import external service clients."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/core/**"
+  to:
+    file_glob: "**/external/**"

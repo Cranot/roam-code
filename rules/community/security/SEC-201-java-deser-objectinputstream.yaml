@@ -1,0 +1,8 @@
+name: java-deser-objectinputstream
+description: "ObjectInputStream.readObject risks insecure deserialization."
+severity: error
+type: ast_match
+match:
+  ast: "new ObjectInputStream($STREAM).readObject()"
+  language: java
+  file_glob: "**/*.java"

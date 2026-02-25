@@ -1,0 +1,8 @@
+name: js-stack-trace-response
+description: "Sending error stack trace in response reveals internals."
+severity: warning
+type: ast_match
+match:
+  ast: "res.send(err.stack)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

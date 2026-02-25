@@ -1,0 +1,8 @@
+name: rust-cmd-command-new
+description: "Command::new with unvalidated input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "Command::new($CMD)"
+  language: rust
+  file_glob: "**/*.rs"

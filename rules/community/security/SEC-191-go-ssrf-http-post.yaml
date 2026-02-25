@@ -1,0 +1,8 @@
+name: go-ssrf-http-post
+description: "http.Post with user-supplied URL risks SSRF."
+severity: error
+type: ast_match
+match:
+  ast: "http.Post(r.FormValue($KEY), $CT, $BODY)"
+  language: go
+  file_glob: "**/*.go"

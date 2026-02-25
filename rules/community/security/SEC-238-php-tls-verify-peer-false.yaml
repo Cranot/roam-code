@@ -1,0 +1,8 @@
+name: php-tls-verify-peer-false
+description: "CURLOPT_SSL_VERIFYPEER=false disables TLS verification."
+severity: error
+type: ast_match
+match:
+  ast: "curl_setopt($CH, CURLOPT_SSL_VERIFYPEER, false)"
+  language: php
+  file_glob: "**/*.php"

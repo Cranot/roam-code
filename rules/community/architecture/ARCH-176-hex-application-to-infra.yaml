@@ -1,0 +1,9 @@
+name: hex-application-to-infra
+description: "Application layer must not import infrastructure directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/application/**"
+  to:
+    file_glob: "**/infrastructure/**"

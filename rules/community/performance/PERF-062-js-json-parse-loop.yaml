@@ -1,0 +1,8 @@
+name: js-json-parse-loop
+description: "JSON.parse inside loop may be avoidable with caching."
+severity: info
+type: ast_match
+match:
+  ast: "JSON.parse($STR)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

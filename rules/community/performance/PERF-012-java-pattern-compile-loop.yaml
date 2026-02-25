@@ -1,0 +1,8 @@
+name: java-pattern-compile-loop
+description: "Pattern.compile() inside loop recompiles on every iteration."
+severity: warning
+type: ast_match
+match:
+  ast: "Pattern.compile($PATTERN)"
+  language: java
+  file_glob: "**/*.java"

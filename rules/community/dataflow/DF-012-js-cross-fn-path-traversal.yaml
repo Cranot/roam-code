@@ -1,0 +1,11 @@
+name: js-cross-fn-path-traversal
+description: "Cross-function path traversal: request input flows to fs."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["req.body", "req.query", "req.params"]
+  sinks: ["fs.readFile(", "fs.createReadStream(", "path.join("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.{js,mjs}"

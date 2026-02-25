@@ -1,0 +1,8 @@
+name: go-unreachable-after-return
+description: "Code after return statement is unreachable."
+severity: warning
+type: ast_match
+match:
+  ast: "return $VAL\n$STMT"
+  language: go
+  file_glob: "**/*.go"

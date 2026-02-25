@@ -1,0 +1,8 @@
+name: py-path-send-file
+description: "send_file with user input risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "send_file(request.args[$KEY])"
+  language: python
+  file_glob: "**/*.py"

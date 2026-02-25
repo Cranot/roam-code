@@ -1,0 +1,8 @@
+name: py-xxe-lxml
+description: "lxml.etree.parse without disabling entities risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "etree.parse($SOURCE)"
+  language: python
+  file_glob: "**/*.py"

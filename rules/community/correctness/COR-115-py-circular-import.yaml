@@ -1,0 +1,8 @@
+name: py-circular-import
+description: "Import inside function body may indicate circular import."
+severity: info
+type: ast_match
+match:
+  ast: "def $FUNC($ARGS): import $MODULE"
+  language: python
+  file_glob: "**/*.py"

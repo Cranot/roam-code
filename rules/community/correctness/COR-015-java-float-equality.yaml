@@ -1,0 +1,8 @@
+name: java-float-equality
+description: "Float equality comparison using == is unreliable."
+severity: warning
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: java
+  file_glob: "**/*.java"

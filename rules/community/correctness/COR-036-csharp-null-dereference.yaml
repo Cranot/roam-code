@@ -1,0 +1,8 @@
+name: csharp-null-dereference
+description: "Potential null reference without null check."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.$PROP.$METHOD()"
+  language: c_sharp
+  file_glob: "**/*.cs"

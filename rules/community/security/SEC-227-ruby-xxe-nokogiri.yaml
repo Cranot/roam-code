@@ -1,0 +1,8 @@
+name: ruby-xxe-nokogiri
+description: "Nokogiri::XML without NONET flag risks XXE."
+severity: warning
+type: ast_match
+match:
+  ast: "Nokogiri::XML($INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

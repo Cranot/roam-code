@@ -1,0 +1,8 @@
+name: go-err-discarded
+description: "Error return completely discarded with blank identifier."
+severity: error
+type: ast_match
+match:
+  ast: "_ = $FUNC($ARGS)"
+  language: go
+  file_glob: "**/*.go"

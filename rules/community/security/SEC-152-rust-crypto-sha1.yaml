@@ -1,0 +1,8 @@
+name: rust-crypto-sha1
+description: "SHA-1 digest is cryptographically weak."
+severity: warning
+type: ast_match
+match:
+  ast: "Sha1::digest($DATA)"
+  language: rust
+  file_glob: "**/*.rs"

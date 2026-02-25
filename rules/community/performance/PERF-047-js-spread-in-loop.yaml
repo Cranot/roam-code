@@ -1,0 +1,8 @@
+name: js-spread-in-loop
+description: "Spread operator in loop creates unnecessary copies."
+severity: warning
+type: ast_match
+match:
+  ast: "[...$ARR, $ITEM]"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

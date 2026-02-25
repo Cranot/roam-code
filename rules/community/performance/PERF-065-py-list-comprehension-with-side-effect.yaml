@@ -1,0 +1,8 @@
+name: py-list-comprehension-side-effect
+description: "List comprehension used only for side effects wastes memory."
+severity: info
+type: ast_match
+match:
+  ast: "[$EXPR for $VAR in $ITER]"
+  language: python
+  file_glob: "**/*.py"

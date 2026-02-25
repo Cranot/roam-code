@@ -1,0 +1,8 @@
+name: go-insecure-random
+description: "math/rand is not cryptographically secure. Use crypto/rand."
+severity: warning
+type: ast_match
+match:
+  ast: "rand.Intn($N)"
+  language: go
+  file_glob: "**/*.go"

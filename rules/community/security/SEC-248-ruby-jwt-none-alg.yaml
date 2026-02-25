@@ -1,0 +1,8 @@
+name: ruby-jwt-none-alg
+description: "JWT with none algorithm allows token forgery."
+severity: error
+type: ast_match
+match:
+  ast: "JWT.decode($TOKEN, nil, false)"
+  language: ruby
+  file_glob: "**/*.rb"

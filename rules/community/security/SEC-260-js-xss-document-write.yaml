@@ -1,0 +1,8 @@
+name: js-xss-document-write
+description: "document.write with user input risks XSS."
+severity: error
+type: ast_match
+match:
+  ast: "document.write($INPUT)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

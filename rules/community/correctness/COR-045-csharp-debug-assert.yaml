@@ -1,0 +1,8 @@
+name: csharp-debug-assert
+description: "Debug.Assert is stripped in release builds."
+severity: warning
+type: ast_match
+match:
+  ast: "Debug.Assert($CONDITION)"
+  language: c_sharp
+  file_glob: "**/src/**/*.cs"

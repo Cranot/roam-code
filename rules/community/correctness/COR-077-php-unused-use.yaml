@@ -1,0 +1,8 @@
+name: php-unused-use
+description: "Unused use statement clutters namespace."
+severity: info
+type: ast_match
+match:
+  ast: "use $NAMESPACE"
+  language: php
+  file_glob: "**/*.php"

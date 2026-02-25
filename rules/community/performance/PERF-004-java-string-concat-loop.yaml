@@ -1,0 +1,8 @@
+name: java-string-concat-loop
+description: "String += in loop creates many objects. Use StringBuilder."
+severity: warning
+type: ast_match
+match:
+  ast: "$STR += $PART"
+  language: java
+  file_glob: "**/*.java"

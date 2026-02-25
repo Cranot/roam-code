@@ -1,0 +1,8 @@
+name: csharp-marshal-copy
+description: "Marshal.Copy without bounds check risks buffer overflow."
+severity: warning
+type: ast_match
+match:
+  ast: "Marshal.Copy($SRC, $DEST, $OFFSET, $LEN)"
+  language: c_sharp
+  file_glob: "**/*.cs"

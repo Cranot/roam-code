@@ -1,0 +1,8 @@
+name: ts-crypto-md5
+description: "MD5 is cryptographically broken in TypeScript code."
+severity: warning
+type: ast_match
+match:
+  ast: "createHash('md5')"
+  language: typescript
+  file_glob: "**/*.ts"

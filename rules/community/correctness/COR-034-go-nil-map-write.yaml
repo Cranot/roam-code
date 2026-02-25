@@ -1,0 +1,8 @@
+name: go-nil-map-write
+description: "Writing to nil map causes panic."
+severity: error
+type: ast_match
+match:
+  ast: "$MAP[$KEY] = $VAL"
+  language: go
+  file_glob: "**/*.go"

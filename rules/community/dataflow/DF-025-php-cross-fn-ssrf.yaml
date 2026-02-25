@@ -1,0 +1,11 @@
+name: php-cross-fn-ssrf
+description: "Cross-function SSRF: user input flows to HTTP request."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ["$_GET[", "$_POST["]
+  sinks: ["curl_setopt(", "file_get_contents(", "fopen("]
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

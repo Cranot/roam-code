@@ -1,0 +1,8 @@
+name: py-path-open-input
+description: "open() with user-controlled path risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "open(request.$ATTR)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: py-regex-compile-loop
+description: "re.compile() inside loop recompiles on every iteration."
+severity: warning
+type: ast_match
+match:
+  ast: "re.compile($PATTERN)"
+  language: python
+  file_glob: "**/*.py"

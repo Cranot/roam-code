@@ -1,0 +1,8 @@
+name: ruby-file-open-no-block
+description: "File.open without block form may not close file."
+severity: warning
+type: ast_match
+match:
+  ast: "$F = File.open($PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: go-crypto-sha1
+description: "crypto/sha1 is cryptographically weak."
+severity: warning
+type: ast_match
+match:
+  ast: "sha1.New()"
+  language: go
+  file_glob: "**/*.go"

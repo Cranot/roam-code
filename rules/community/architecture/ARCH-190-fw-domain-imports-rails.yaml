@@ -1,0 +1,8 @@
+name: fw-domain-imports-rails
+description: "Domain models must not depend on Rails ActionController."
+severity: error
+type: ast_match
+match:
+  ast: "require 'action_controller'"
+  language: ruby
+  file_glob: "**/domain/**/*.rb"

@@ -1,0 +1,8 @@
+name: rust-crypto-md5
+description: "MD5 digest is cryptographically broken."
+severity: warning
+type: ast_match
+match:
+  ast: "Md5::digest($DATA)"
+  language: rust
+  file_glob: "**/*.rs"

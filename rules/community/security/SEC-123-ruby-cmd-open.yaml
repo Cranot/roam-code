@@ -1,0 +1,8 @@
+name: ruby-cmd-open
+description: "Open with pipe prefix risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "open(\"|$CMD\")"
+  language: ruby
+  file_glob: "**/*.rb"

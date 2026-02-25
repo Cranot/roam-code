@@ -1,0 +1,8 @@
+name: csharp-redirect-response
+description: "Response.Redirect with user input risks open redirect."
+severity: warning
+type: ast_match
+match:
+  ast: "Response.Redirect(Request.Query[$KEY])"
+  language: c_sharp
+  file_glob: "**/*.cs"

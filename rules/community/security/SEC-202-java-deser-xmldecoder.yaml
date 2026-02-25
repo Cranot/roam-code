@@ -1,0 +1,8 @@
+name: java-deser-xmldecoder
+description: "XMLDecoder.readObject risks insecure deserialization."
+severity: error
+type: ast_match
+match:
+  ast: "new XMLDecoder($STREAM).readObject()"
+  language: java
+  file_glob: "**/*.java"

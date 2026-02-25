@@ -1,0 +1,8 @@
+name: rust-unbounded-push
+description: "Vec push in loop without capacity hint may reallocate often."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.push($ITEM)"
+  language: rust
+  file_glob: "**/*.rs"

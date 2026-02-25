@@ -1,0 +1,8 @@
+name: go-http-handle-no-auth
+description: "HTTP handler registered without authentication middleware."
+severity: info
+type: ast_match
+match:
+  ast: "http.HandleFunc($PATTERN, $HANDLER)"
+  language: go
+  file_glob: "**/*.go"

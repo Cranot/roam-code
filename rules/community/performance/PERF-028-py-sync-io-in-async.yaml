@@ -1,0 +1,8 @@
+name: py-sync-io-in-async
+description: "Synchronous file I/O in async function blocks event loop."
+severity: warning
+type: ast_match
+match:
+  ast: "open($PATH)"
+  language: python
+  file_glob: "**/*.py"

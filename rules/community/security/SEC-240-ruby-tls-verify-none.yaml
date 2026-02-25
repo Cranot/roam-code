@@ -1,0 +1,8 @@
+name: ruby-tls-verify-none
+description: "OpenSSL::SSL::VERIFY_NONE disables certificate verification."
+severity: error
+type: ast_match
+match:
+  ast: "verify_mode = OpenSSL::SSL::VERIFY_NONE"
+  language: ruby
+  file_glob: "**/*.rb"

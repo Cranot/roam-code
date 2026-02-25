@@ -1,0 +1,8 @@
+name: csharp-xss-htmlraw
+description: "Html.Raw() bypasses Razor auto-encoding risks XSS."
+severity: warning
+type: ast_match
+match:
+  ast: "Html.Raw($INPUT)"
+  language: c_sharp
+  file_glob: "**/*.cs"

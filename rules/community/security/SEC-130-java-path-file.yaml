@@ -1,0 +1,8 @@
+name: java-path-file
+description: "new File with request input risks path traversal."
+severity: error
+type: ast_match
+match:
+  ast: "new File(request.getParameter($PARAM))"
+  language: java
+  file_glob: "**/*.java"

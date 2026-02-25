@@ -1,0 +1,8 @@
+name: py-socket-no-close
+description: "Socket created without context manager may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "$S = socket.socket($ARGS)"
+  language: python
+  file_glob: "**/*.py"

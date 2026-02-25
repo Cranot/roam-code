@@ -1,0 +1,8 @@
+name: go-goroutine-variable-capture
+description: "Loop variable captured by goroutine may have unexpected value."
+severity: error
+type: ast_match
+match:
+  ast: "go func() { $BODY }()"
+  language: go
+  file_glob: "**/*.go"

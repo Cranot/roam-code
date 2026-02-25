@@ -1,0 +1,8 @@
+name: java-shadowed-field
+description: "Local variable shadows class field."
+severity: info
+type: ast_match
+match:
+  ast: "$TYPE $NAME = $VALUE"
+  language: java
+  file_glob: "**/*.java"

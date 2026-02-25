@@ -1,0 +1,8 @@
+name: java-insecure-random
+description: "java.util.Random is not cryptographically secure."
+severity: warning
+type: ast_match
+match:
+  ast: "new Random()"
+  language: java
+  file_glob: "**/*.java"

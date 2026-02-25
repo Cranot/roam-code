@@ -1,0 +1,8 @@
+name: js-sequelize-n1
+description: "Sequelize findOne inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "await $MODEL.findOne($FILTER)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

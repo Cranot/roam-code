@@ -1,0 +1,8 @@
+name: fw-domain-imports-django
+description: "Domain layer must not import Django framework."
+severity: error
+type: ast_match
+match:
+  ast: "from django.$MODULE import $NAME"
+  language: python
+  file_glob: "**/domain/**/*.py"

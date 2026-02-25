@@ -1,0 +1,8 @@
+name: csharp-jwt-no-validation
+description: "JWT token validation disabled allows tampering."
+severity: error
+type: ast_match
+match:
+  ast: "ValidateIssuerSigningKey = false"
+  language: c_sharp
+  file_glob: "**/*.cs"

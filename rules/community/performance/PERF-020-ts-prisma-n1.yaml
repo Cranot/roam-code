@@ -1,0 +1,8 @@
+name: ts-prisma-n1
+description: "Prisma findUnique inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "await prisma.$MODEL.findUnique($FILTER)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: fw-domain-imports-aspnet
+description: "Domain layer must not import ASP.NET MVC."
+severity: error
+type: ast_match
+match:
+  ast: "using Microsoft.AspNetCore.Mvc"
+  language: c_sharp
+  file_glob: "**/domain/**/*.cs"

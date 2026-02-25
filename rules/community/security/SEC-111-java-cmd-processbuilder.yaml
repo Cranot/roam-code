@@ -1,0 +1,8 @@
+name: java-cmd-processbuilder
+description: "ProcessBuilder with unvalidated input risks command injection."
+severity: error
+type: ast_match
+match:
+  ast: "new ProcessBuilder($CMD)"
+  language: java
+  file_glob: "**/*.java"

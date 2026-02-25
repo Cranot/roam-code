@@ -1,0 +1,8 @@
+name: java-crypto-rc4
+description: "RC4 cipher is cryptographically broken."
+severity: error
+type: ast_match
+match:
+  ast: "Cipher.getInstance(\"RC4\")"
+  language: java
+  file_glob: "**/*.java"

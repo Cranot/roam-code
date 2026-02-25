@@ -1,0 +1,8 @@
+name: ruby-deser-marshal-load
+description: "Marshal.load with untrusted data risks code execution."
+severity: error
+type: ast_match
+match:
+  ast: "Marshal.load($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

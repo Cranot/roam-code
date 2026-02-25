@@ -1,0 +1,8 @@
+name: py-pickle-load-file
+description: "pickle.load from file risks arbitrary code execution."
+severity: error
+type: ast_match
+match:
+  ast: "pickle.load($FILE)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: js-unused-import
+description: "Imported binding is never used in this file."
+severity: info
+type: ast_match
+match:
+  ast: "import { $NAME } from '$MODULE'"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

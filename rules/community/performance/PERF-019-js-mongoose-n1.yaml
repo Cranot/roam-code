@@ -1,0 +1,8 @@
+name: js-mongoose-n1
+description: "Mongoose findById inside loop causes N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "await $MODEL.findById($ID)"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

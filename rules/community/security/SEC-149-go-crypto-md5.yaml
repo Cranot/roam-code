@@ -1,0 +1,8 @@
+name: go-crypto-md5
+description: "crypto/md5 is cryptographically broken."
+severity: warning
+type: ast_match
+match:
+  ast: "md5.New()"
+  language: go
+  file_glob: "**/*.go"

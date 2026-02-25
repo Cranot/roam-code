@@ -1,0 +1,8 @@
+name: py-django-n1-query
+description: "ORM query inside loop causes N+1 query problem."
+severity: warning
+type: ast_match
+match:
+  ast: "$MODEL.objects.get($FILTER)"
+  language: python
+  file_glob: "**/*.py"

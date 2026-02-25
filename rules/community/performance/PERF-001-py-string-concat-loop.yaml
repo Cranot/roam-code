@@ -1,0 +1,8 @@
+name: py-string-concat-loop
+description: "String concatenation in loop creates O(n^2) copies. Use join()."
+severity: warning
+type: ast_match
+match:
+  ast: "$S += $PART"
+  language: python
+  file_glob: "**/*.py"

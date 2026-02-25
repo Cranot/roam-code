@@ -1,0 +1,8 @@
+name: js-crypto-sha1
+description: "SHA-1 is cryptographically weak, use SHA-256 or better."
+severity: warning
+type: ast_match
+match:
+  ast: "crypto.createHash('sha1')"
+  language: javascript
+  file_glob: "**/*.{js,mjs}"

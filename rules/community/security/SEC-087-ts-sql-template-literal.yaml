@@ -1,0 +1,8 @@
+name: ts-sql-template-literal
+description: "Template literal in SQL query risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "connection.query(`$QUERY`)"
+  language: typescript
+  file_glob: "**/*.ts"

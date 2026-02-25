@@ -1,0 +1,8 @@
+name: java-sql-createstatement
+description: "Using createStatement with string concat risks SQL injection."
+severity: error
+type: ast_match
+match:
+  ast: "connection.createStatement().executeQuery($A + $B)"
+  language: java
+  file_glob: "**/*.java"

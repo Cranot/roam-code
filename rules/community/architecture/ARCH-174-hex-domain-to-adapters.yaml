@@ -1,0 +1,9 @@
+name: hex-domain-to-adapters
+description: "Domain layer must not import adapter implementations."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+  to:
+    file_glob: "**/adapters/**"

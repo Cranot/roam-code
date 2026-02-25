@@ -1,0 +1,8 @@
+name: ruby-string-concat-loop
+description: "String concatenation in loop. Use << or join instead."
+severity: info
+type: ast_match
+match:
+  ast: "$STR += $PART"
+  language: ruby
+  file_glob: "**/*.rb"

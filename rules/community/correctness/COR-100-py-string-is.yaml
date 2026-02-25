@@ -1,0 +1,8 @@
+name: py-string-is
+description: "Use == for string comparison, not 'is' operator."
+severity: warning
+type: ast_match
+match:
+  ast: "$X is \"$STR\""
+  language: python
+  file_glob: "**/*.py"

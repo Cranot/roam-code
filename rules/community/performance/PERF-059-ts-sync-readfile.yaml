@@ -1,0 +1,8 @@
+name: ts-sync-readfile
+description: "readFileSync blocks the event loop in async handler."
+severity: warning
+type: ast_match
+match:
+  ast: "readFileSync($PATH)"
+  language: typescript
+  file_glob: "**/*.ts"

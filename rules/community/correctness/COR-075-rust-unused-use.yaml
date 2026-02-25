@@ -1,0 +1,8 @@
+name: rust-unused-use
+description: "Unused use statement clutters namespace."
+severity: info
+type: ast_match
+match:
+  ast: "use $CRATE::$MODULE"
+  language: rust
+  file_glob: "**/*.rs"

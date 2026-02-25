@@ -1,0 +1,8 @@
+name: py-jwt-none-alg
+description: "JWT with algorithm none allows token forgery."
+severity: error
+type: ast_match
+match:
+  ast: "jwt.decode($TOKEN, algorithms=[\"none\"])"
+  language: python
+  file_glob: "**/*.py"

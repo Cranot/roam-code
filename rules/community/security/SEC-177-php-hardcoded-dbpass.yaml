@@ -1,0 +1,8 @@
+name: php-hardcoded-dbpass
+description: "Hardcoded database password in PHP."
+severity: error
+type: ast_match
+match:
+  ast: "$db_password = \"$VALUE\""
+  language: php
+  file_glob: "**/*.php"

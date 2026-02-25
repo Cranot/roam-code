@@ -1,0 +1,8 @@
+name: go-panic-production
+description: "panic() in non-test code should be replaced with error return."
+severity: warning
+type: ast_match
+match:
+  ast: "panic($MSG)"
+  language: go
+  file_glob: "**/src/**/*.go"

@@ -1,0 +1,8 @@
+name: java-stream-no-close
+description: "Stream not in try-with-resources may leak."
+severity: warning
+type: ast_match
+match:
+  ast: "new FileInputStream($PATH)"
+  language: java
+  file_glob: "**/*.java"

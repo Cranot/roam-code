@@ -1,0 +1,8 @@
+name: rust-format-in-loop
+description: "format! macro in loop allocates string each iteration."
+severity: info
+type: ast_match
+match:
+  ast: "format!($FMT, $ARGS)"
+  language: rust
+  file_glob: "**/*.rs"

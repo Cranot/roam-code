@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
+import re
 import time as _time
 from collections import defaultdict
 from statistics import median
@@ -757,6 +759,204 @@ def _extended_summary(extended_data):
     }
 
 
+def _analyze_dataflow_dead(conn):
+    """Analyze dataflow-based dead code patterns using taint summaries.
+
+    Returns list of findings: [{type, symbol, file, line, reason, confidence, call_sites}]
+    """
+    findings = []
+    project_root = find_project_root()
+
+    # Check if required tables exist
+    try:
+        conn.execute("SELECT 1 FROM taint_summaries LIMIT 0")
+    except Exception:
+        return findings
+
+    has_effects = True
+    try:
+        conn.execute("SELECT 1 FROM symbol_effects LIMIT 0")
+    except Exception:
+        has_effects = False
+
+    has_metrics = True
+    try:
+        conn.execute("SELECT 1 FROM symbol_metrics LIMIT 0")
+    except Exception:
+        has_metrics = False
+
+    # A. Unused Return Values
+    if has_metrics:
+        funcs_with_return = conn.execute(
+            "SELECT s.id, s.name, COALESCE(s.qualified_name, s.name) AS qname, "
+            "f.path AS file_path, s.line_start, sm.return_count "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+            "WHERE sm.return_count > 0 "
+            "  AND s.kind IN ('function', 'method')"
+        ).fetchall()
+
+        file_cache: dict[str, list[str]] = {}
+
+        for func in funcs_with_return:
+            # Get all callers (edges pointing to this function)
+            callers = conn.execute(
+                "SELECT e.source_id, e.line, s.name AS caller_name, "
+                "f.path AS caller_file, s.line_start AS caller_start "
+                "FROM edges e "
+                "JOIN symbols s ON e.source_id = s.id "
+                "JOIN files f ON s.file_id = f.id "
+                "WHERE e.target_id = ? AND e.kind = 'calls'",
+                (func["id"],),
+            ).fetchall()
+
+            if not callers:
+                continue
+
+            # Check each call site
+            all_discard = True
+            call_site_info = []
+            for caller in callers:
+                call_line = caller["line"]
+                if not call_line:
+                    all_discard = False
+                    break
+                caller_file = caller["caller_file"]
+                if caller_file not in file_cache:
+                    try:
+                        fpath = project_root / caller_file
+                        file_cache[caller_file] = fpath.read_text(
+                            encoding="utf-8", errors="replace"
+                        ).splitlines()
+                    except Exception:
+                        file_cache[caller_file] = []
+                lines = file_cache.get(caller_file, [])
+                if call_line <= len(lines):
+                    line_text = lines[call_line - 1].strip()
+                    # Check if return value is captured (= before function name, but not == or !=)
+                    prefix = line_text.split(func["name"])[0] if func["name"] in line_text else ""
+                    if re.search(r"[A-Za-z_]\w*\s*=(?!=)", prefix):
+                        all_discard = False
+                        break
+                    call_site_info.append(
+                        {"file": caller_file, "line": call_line, "caller": caller["caller_name"]}
+                    )
+                else:
+                    all_discard = False
+                    break
+
+            if all_discard and callers:
+                findings.append(
+                    {
+                        "type": "unused_return",
+                        "symbol": func["qname"],
+                        "file": func["file_path"],
+                        "line": func["line_start"],
+                        "reason": (
+                            f"return value of {func['qname']} is discarded "
+                            f"by all {len(callers)} caller(s)"
+                        ),
+                        "confidence": 85,
+                        "call_sites": call_site_info[:5],
+                    }
+                )
+
+    # B. Dead Parameter Chains
+    param_rows = conn.execute(
+        "SELECT ts.symbol_id, ts.param_taints_return, ts.param_to_sink, "
+        "s.name, COALESCE(s.qualified_name, s.name) AS qname, "
+        "s.signature, f.path AS file_path, s.line_start "
+        "FROM taint_summaries ts "
+        "JOIN symbols s ON ts.symbol_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE ts.is_sanitizer = 0 "
+        "  AND s.kind IN ('function', 'method')"
+    ).fetchall()
+
+    for row in param_rows:
+        try:
+            ptr = json.loads(row["param_taints_return"] or "{}")
+            pts = json.loads(row["param_to_sink"] or "{}")
+        except Exception:
+            continue
+
+        # Parse param names from signature
+        sig = row["signature"] or ""
+        m = re.search(r"\(([^)]*)\)", sig)
+        if not m:
+            continue
+        params_str = m.group(1).strip()
+        if not params_str:
+            continue
+        param_names = []
+        for part in params_str.split(","):
+            token = part.strip().split(":")[0].split("=")[0].strip()
+            while token.startswith("*"):
+                token = token[1:]
+            if token and token not in ("self", "cls", "_"):
+                param_names.append(token)
+
+        for idx, pname in enumerate(param_names):
+            sidx = str(idx)
+            has_return_effect = ptr.get(sidx, False)
+            has_sink_effect = bool(pts.get(sidx))
+            if not has_return_effect and not has_sink_effect:
+                findings.append(
+                    {
+                        "type": "dead_param_chain",
+                        "symbol": row["qname"],
+                        "file": row["file_path"],
+                        "line": row["line_start"],
+                        "variable": pname,
+                        "reason": (
+                            f"parameter '{pname}' of {row['qname']} has no dataflow effect "
+                            f"(not returned, not used in sink)"
+                        ),
+                        "confidence": 75,
+                        "call_sites": [],
+                    }
+                )
+
+    # C. Side-Effect-Only Functions
+    if has_effects:
+        # Find functions where all callers discard return AND effects are only logging/pure
+        for f in findings:
+            if f["type"] != "unused_return":
+                continue
+            sym_id_row = conn.execute(
+                "SELECT id FROM symbols WHERE qualified_name = ? OR name = ? LIMIT 1",
+                (f["symbol"], f["symbol"]),
+            ).fetchone()
+            if not sym_id_row:
+                continue
+            sym_id = sym_id_row["id"]
+            effects = conn.execute(
+                "SELECT DISTINCT effect_type FROM symbol_effects WHERE symbol_id = ?",
+                (sym_id,),
+            ).fetchall()
+            effect_types = {e["effect_type"] for e in effects}
+            benign = {"pure", "logging"}
+            if effect_types and effect_types <= benign:
+                findings.append(
+                    {
+                        "type": "side_effect_only",
+                        "symbol": f["symbol"],
+                        "file": f["file"],
+                        "line": f["line"],
+                        "reason": (
+                            f"{f['symbol']} has only {'/'.join(sorted(effect_types))} effects "
+                            f"and return is always discarded"
+                        ),
+                        "confidence": 70,
+                        "call_sites": f.get("call_sites", []),
+                    }
+                )
+
+    findings.sort(key=lambda f: (-f["confidence"], f["file"], f.get("line") or 0))
+    return findings
+
+
 @click.command()
 @click.option("--all", "show_all", is_flag=True, help="Include low-confidence results")
 @click.option("--by-directory", "by_directory", is_flag=True, help="Group dead symbols by parent directory")
@@ -795,6 +995,7 @@ def _extended_summary(extended_data):
     is_flag=True,
     help="Sort by decay score (most fossilized first)",
 )
+@click.option("--dataflow", "show_dataflow", is_flag=True, help="Include dataflow-based dead code findings")
 @click.pass_context
 def dead(
     ctx,
@@ -810,6 +1011,7 @@ def dead(
     sort_by_age,
     sort_by_effort,
     sort_by_decay,
+    show_dataflow,
 ):
     """Show unreferenced exported symbols (dead code)."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -884,6 +1086,11 @@ def dead(
             max_matches=500,
         )
 
+        # Dataflow-based dead code findings
+        dataflow_dead = []
+        if show_dataflow:
+            dataflow_dead = _analyze_dataflow_dead(conn)
+
         if not all_items:
             if sarif_mode:
                 from roam.output.sarif import dead_to_sarif, write_sarif
@@ -892,19 +1099,22 @@ def dead(
                 click.echo(write_sarif(sarif))
                 return
             if json_mode:
+                summary = {
+                    "safe": 0,
+                    "review": 0,
+                    "intentional": 0,
+                    "unused_assignments": len(unused_assignments),
+                    "dataflow_dead": len(dataflow_dead),
+                }
                 click.echo(
                     to_json(
                         json_envelope(
                             "dead",
-                            summary={
-                                "safe": 0,
-                                "review": 0,
-                                "intentional": 0,
-                                "unused_assignments": len(unused_assignments),
-                            },
+                            summary=summary,
                             high_confidence=[],
                             low_confidence=[],
                             unused_assignments=unused_assignments[:10],
+                            dataflow_dead=dataflow_dead,
                         )
                     )
                 )
@@ -913,6 +1123,16 @@ def dead(
                 click.echo("  (none -- all exports are referenced)")
                 if unused_assignments:
                     click.echo(f"  Intra-procedural unused assignments: {len(unused_assignments)}")
+                if show_dataflow and dataflow_dead:
+                    click.echo(f"\n=== Dataflow Dead Code ({len(dataflow_dead)}) ===")
+                    for finding in dataflow_dead[:20]:
+                        click.echo(
+                            f"  [{finding['type']}] {finding['confidence']}%  "
+                            f"{finding['symbol']}  {loc(finding['file'], finding.get('line'))}"
+                        )
+                        click.echo(f"    {finding['reason']}")
+                    if len(dataflow_dead) > 20:
+                        click.echo(f"  (+{len(dataflow_dead) - 20} more -- use --json for full list)")
             return
 
         # Compute action verdicts
@@ -1052,6 +1272,7 @@ def dead(
                 "review": n_review,
                 "intentional": n_intent,
                 "unused_assignments": len(unused_assignments),
+                "dataflow_dead": len(dataflow_dead),
             }
             if need_extended:
                 summary.update(ext_summary)
@@ -1070,6 +1291,7 @@ def dead(
                 high_confidence=[_build_sym_dict(r, True) for r in high],
                 low_confidence=[_build_sym_dict(r, False) for r in low],
                 unused_assignments=(unused_assignments if detail else unused_assignments[:10]),
+                dataflow_dead=dataflow_dead,
                 next_steps=_next_steps,
             )
             if group_by:
@@ -1116,6 +1338,16 @@ def dead(
                     names = ", ".join(s["name"] for s in cl["symbols"][:5])
                     more = f" +{cl['size'] - 5}" if cl["size"] > 5 else ""
                     click.echo(f"  cluster {i} ({cl['size']} syms): {names}{more}")
+            if show_dataflow and dataflow_dead:
+                click.echo(f"\n=== Dataflow Dead Code ({len(dataflow_dead)}) ===")
+                for finding in dataflow_dead[:20]:
+                    click.echo(
+                        f"  [{finding['type']}] {finding['confidence']}%  "
+                        f"{finding['symbol']}  {loc(finding['file'], finding.get('line'))}"
+                    )
+                    click.echo(f"    {finding['reason']}")
+                if len(dataflow_dead) > 20:
+                    click.echo(f"  (+{len(dataflow_dead) - 20} more -- use --json for full list)")
             return
 
         # --- Text: grouped mode ---
@@ -1146,6 +1378,16 @@ def dead(
                     names = ", ".join(s["name"] for s in cl["symbols"][:6])
                     more = f" +{cl['size'] - 6}" if cl["size"] > 6 else ""
                     click.echo(f"  cluster {i} ({cl['size']} syms): {names}{more}")
+            if show_dataflow and dataflow_dead:
+                click.echo(f"\n=== Dataflow Dead Code ({len(dataflow_dead)}) ===")
+                for finding in dataflow_dead[:20]:
+                    click.echo(
+                        f"  [{finding['type']}] {finding['confidence']}%  "
+                        f"{finding['symbol']}  {loc(finding['file'], finding.get('line'))}"
+                    )
+                    click.echo(f"    {finding['reason']}")
+                if len(dataflow_dead) > 20:
+                    click.echo(f"  (+{len(dataflow_dead) - 20} more -- use --json for full list)")
             return
 
         # --- Text: standard output ---
@@ -1318,6 +1560,18 @@ def dead(
                     click.echo(f"    {abbrev_kind(s['kind'])}  {s['name']}  {s['location']}")
             if len(clusters_data) > 10:
                 click.echo(f"  (+{len(clusters_data) - 10} more clusters)")
+
+        # Dataflow-based dead code
+        if show_dataflow and dataflow_dead:
+            click.echo(f"\n=== Dataflow Dead Code ({len(dataflow_dead)}) ===")
+            for finding in dataflow_dead[:20]:
+                click.echo(
+                    f"  [{finding['type']}] {finding['confidence']}%  "
+                    f"{finding['symbol']}  {loc(finding['file'], finding.get('line'))}"
+                )
+                click.echo(f"    {finding['reason']}")
+            if len(dataflow_dead) > 20:
+                click.echo(f"  (+{len(dataflow_dead) - 20} more -- use --json for full list)")
 
         # Check for files with no extracted symbols
         unparsed = conn.execute(
