@@ -393,30 +393,30 @@ roam --sarif algo > roam-algo.sarif  # SARIF with fingerprints + fixes
 
 ```
 $ roam minimap
-<!-- roam:minimap generated=2026-02-18 -->
+<!-- roam:minimap generated=2026-02-25 -->
 **Stack:** Python · JavaScript · YAML
 
 ```
-.github/  (4 files)
-benchmarks/  (75 files)
+.github/  (CI + Action)
+benchmarks/  (agent-eval + oss-eval)
 src/
   roam/
     bridges/
       base.py                 # LanguageBridge
       registry.py             # register_bridge, detect_bridges
-    commands/  (93 files)  # is_test_file, get_changed_files
+    commands/  (134 files) # is_test_file, get_changed_files
     db/
       connection.py           # find_project_root, batched_in
       schema.py
     graph/
       builder.py              # build_symbol_graph, build_file_graph
       pagerank.py             # compute_pagerank, compute_centrality
-    languages/  (18 files)  # ApexExtractor
+    languages/  (20 files) # ApexExtractor
     output/
       formatter.py            # to_json, json_envelope
     cli.py                    # cli, LazyGroup
     mcp_server.py
-tests/  (70 files)
+tests/  (151 files)
 ` ` `
 
 **Key symbols** (PageRank): `open_db` · `ensure_index` · `json_envelope` · `to_json` · `LanguageExtractor`
@@ -493,7 +493,6 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam metrics <file\|symbol>` | Unified vital signs: complexity, fan-in/out, PageRank, churn, test coverage, dead code risk -- all in one call |
 | `roam search-semantic <query>` | Hybrid semantic search: BM25 + TF-IDF + optional local ONNX vectors (select via `--backend`) with framework/library packs |
 | `roam intent [--staged] [--range R]` | Doc-to-code linking: match documentation to symbols, detect drift |
-| `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
 | `roam x-lang [--bridges] [--edges]` | Cross-language edge browser: inspect bridge-resolved connections |
 
 ### Reports & CI
@@ -1210,13 +1209,13 @@ Tier 2 languages get symbol extraction and basic inheritance via a generic tree-
 
 ### Quality Benchmark
 
-| Repo | Language | Score | Coverage | Edge Density | Commands |
-|------|----------|-------|----------|--------------|----------|
-| Laravel | PHP | **9.55** | 91.2% | 0.97 | 29/29 |
-| Vue | TS | **9.27** | 85.8% | 1.68 | 29/29 |
-| Svelte | TS | **9.04** | 94.7% | 1.19 | 29/29 |
-| Axios | JS | **8.98** | 85.9% | 0.82 | 29/29 |
-| Express | JS | **8.46** | 96.0% | 1.29 | 29/29 |
+| Repo | Language | Score | Coverage | Edge Density |
+|------|----------|-------|----------|--------------|
+| Laravel | PHP | **9.55** | 91.2% | 0.97 |
+| Vue | TS | **9.27** | 85.8% | 1.68 |
+| Svelte | TS | **9.04** | 94.7% | 1.19 |
+| Axios | JS | **8.98** | 85.9% | 0.82 |
+| Express | JS | **8.46** | 96.0% | 1.29 |
 
 ### Token Efficiency
 
@@ -1436,7 +1435,7 @@ roam-code/
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
 │   │   ├── registry.py                # Language detection + aliasing
-│   │   ├── *_lang.py                  # One file per language (17 Tier 1)
+│   │   ├── *_lang.py                  # One file per language (19 dedicated + generic)
 │   │   └── generic_lang.py            # Tier 2 fallback
 │   ├── bridges/
 │   │   ├── base.py, registry.py       # Cross-language bridge framework
@@ -1454,7 +1453,8 @@ roam-code/
 │   │   ├── builder.py, pagerank.py    # DB -> NetworkX, PageRank
 │   │   ├── cycles.py, clusters.py     # Tarjan SCC, propagation cost, Louvain, modularity Q
 │   │   ├── layers.py, pathfinding.py  # Topo layers, k-shortest paths
-│   │   ├── split.py, why.py           # Decomposition, role classification
+│   │   ├── simulate.py, spectral.py   # Architecture simulation, Fiedler bisection
+│   │   ├── partition.py, fingerprint.py # Multi-agent partitioning, topology fingerprints
 │   │   └── anomaly.py                 # Statistical anomaly detection
 │   ├── commands/
 │   │   ├── resolve.py                 # Shared symbol resolution
@@ -1463,12 +1463,16 @@ roam-code/
 │   │   ├── gate_presets.py            # Framework-specific gate rules
 │   │   └── cmd_*.py                   # One module per command
 │   ├── analysis/
-│   │   └── effects.py                 # Side-effect classification engine
+│   │   ├── effects.py                 # Side-effect classification engine
+│   │   └── taint.py                   # Taint analysis
 │   ├── refactor/
 │   │   ├── codegen.py                 # Import generation (Python/JS/Go)
 │   │   └── transforms.py             # move/rename/add-call/extract transforms
 │   ├── rules/
-│   │   └── engine.py                  # YAML rule parser + graph query evaluator
+│   │   ├── engine.py                  # YAML rule parser + graph query evaluator
+│   │   ├── builtin.py                 # 10 built-in governance rules
+│   │   ├── ast_match.py               # AST pattern matching with $METAVAR captures
+│   │   └── dataflow.py                # Intra-procedural dataflow analysis
 │   ├── runtime/
 │   │   ├── trace_ingest.py            # OpenTelemetry/Jaeger/Zipkin ingestion
 │   │   └── hotspots.py                # Runtime hotspot analysis
@@ -1514,14 +1518,12 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 - [x] Multi-agent operations: `partition`, `affected`, `syntax-check`, workspace-aware context and traces.
 - [x] Budget-aware context delivery: `--budget` (partial rollout), PageRank-weighted truncation, conversation-aware ranking.
 
-### Next (v11 Closeout + immediate follow-up)
+### Next
 
-- [x] Terminal demo GIF in README (`#26`).
-- [ ] GitHub repo topics (`#24`).
-- [ ] GitHub Discussions enabled (`#29`).
-- [ ] MCP directory + awesome-list submissions (`#31`).
-- [ ] Optional community launch note (`#32`, post-v11, non-blocking).
-- [ ] Keep roadmap synchronized with shipped state (`#112` recurring hygiene).
+- [x] Terminal demo GIF in README.
+- [ ] GitHub repo topics.
+- [ ] GitHub Discussions enabled.
+- [ ] MCP directory + awesome-list submissions.
 
 ## Contributing
 
