@@ -7,10 +7,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import find_project_root
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Git helpers
@@ -32,11 +31,7 @@ def _git_changed_files(root: Path, ref: str) -> list[str]:
         )
         if result.returncode != 0:
             return []
-        return [
-            p.replace("\\", "/")
-            for p in result.stdout.strip().splitlines()
-            if p.strip()
-        ]
+        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
 
@@ -74,6 +69,7 @@ def _parse_source_bytes(source: bytes, language: str):
 
     try:
         from tree_sitter_language_pack import get_parser
+
         parser = get_parser(grammar)
     except Exception:
         return None, None, None
@@ -91,8 +87,8 @@ def _extract_symbols_from_source(source: bytes, file_path: str) -> list[dict]:
 
     Returns a list of normalised symbol dicts.
     """
-    from roam.languages.registry import get_language_for_file, get_extractor_for_file
     from roam.index.symbols import extract_symbols
+    from roam.languages.registry import get_extractor_for_file, get_language_for_file
 
     language = get_language_for_file(file_path)
     if language is None:
@@ -114,8 +110,8 @@ def _extract_references_from_source(source: bytes, file_path: str) -> list[dict]
 
     Returns a list of normalised reference dicts.
     """
-    from roam.languages.registry import get_language_for_file, get_extractor_for_file
     from roam.index.symbols import extract_references
+    from roam.languages.registry import get_extractor_for_file, get_language_for_file
 
     language = get_language_for_file(file_path)
     if language is None:
@@ -163,7 +159,7 @@ def _extract_params(sig: str | None) -> list[str]:
     end = sig.rfind(")")
     if start < 0 or end <= start:
         return []
-    params_str = sig[start + 1:end].strip()
+    params_str = sig[start + 1 : end].strip()
     if not params_str:
         return []
     # Split by comma and extract parameter names (skip type annotations)
@@ -178,10 +174,10 @@ def _extract_params(sig: str | None) -> list[str]:
         part = part.lstrip("*&.")
         # Remove default values
         if "=" in part:
-            part = part[:part.index("=")].strip()
+            part = part[: part.index("=")].strip()
         # Remove type annotations (e.g. "name: int" -> "name")
         if ":" in part:
-            part = part[:part.index(":")].strip()
+            part = part[: part.index(":")].strip()
         # Take the last word as the name (handles "int name" style)
         tokens = part.split()
         if tokens:
@@ -212,30 +208,39 @@ def _compare_symbols(
     for k in sorted(new_keys - old_keys):
         sym = new_by_key[k]
         lines = _count_lines(sym)
-        added.append({
-            "name": sym["name"],
-            "kind": sym.get("kind", "unknown"),
-            "file": file_path,
-            "line": sym.get("line_start"),
-            "lines": lines,
-        })
+        added.append(
+            {
+                "name": sym["name"],
+                "kind": sym.get("kind", "unknown"),
+                "file": file_path,
+                "line": sym.get("line_start"),
+                "lines": lines,
+            }
+        )
 
     # Removed symbols: in old but not new
     removed = []
     for k in sorted(old_keys - new_keys):
         sym = old_by_key[k]
-        removed.append({
-            "name": sym["name"],
-            "kind": sym.get("kind", "unknown"),
-            "file": file_path,
-            "line": sym.get("line_start"),
-        })
+        removed.append(
+            {
+                "name": sym["name"],
+                "kind": sym.get("kind", "unknown"),
+                "file": file_path,
+                "line": sym.get("line_start"),
+            }
+        )
 
     # Modified symbols: same key, but signature or body changed
     modified = []
     _SIG_KINDS = {
-        "function", "method", "class", "constructor",
-        "interface", "trait", "struct",
+        "function",
+        "method",
+        "class",
+        "constructor",
+        "interface",
+        "trait",
+        "struct",
     }
     for k in sorted(old_keys & new_keys):
         old_sym = old_by_key[k]
@@ -267,13 +272,15 @@ def _compare_symbols(
             }
 
         if changes:
-            modified.append({
-                "name": new_sym["name"],
-                "kind": new_sym.get("kind", "unknown"),
-                "file": file_path,
-                "line": new_sym.get("line_start"),
-                "changes": changes,
-            })
+            modified.append(
+                {
+                    "name": new_sym["name"],
+                    "kind": new_sym.get("kind", "unknown"),
+                    "file": file_path,
+                    "line": new_sym.get("line_start"),
+                    "changes": changes,
+                }
+            )
 
     return added, removed, modified
 
@@ -287,6 +294,7 @@ def _compare_imports(
 
     Returns (imports_added, imports_removed) where each is a list of dicts.
     """
+
     def import_set(refs: list[dict]) -> set[str]:
         result = set()
         for r in refs:
@@ -303,17 +311,21 @@ def _compare_imports(
 
     added = []
     for imp in sorted(new_imports - old_imports):
-        added.append({
-            "file": file_path,
-            "import": imp,
-        })
+        added.append(
+            {
+                "file": file_path,
+                "import": imp,
+            }
+        )
 
     removed = []
     for imp in sorted(old_imports - new_imports):
-        removed.append({
-            "file": file_path,
-            "import": imp,
-        })
+        removed.append(
+            {
+                "file": file_path,
+                "import": imp,
+            }
+        )
 
     return added, removed
 
@@ -338,8 +350,7 @@ def _read_current_file(root: Path, file_path: str) -> bytes | None:
 
 
 @click.command("semantic-diff")
-@click.option("--base", "base_ref", default="HEAD~1",
-              help="Git ref to compare against (default: HEAD~1)")
+@click.option("--base", "base_ref", default="HEAD~1", help="Git ref to compare against (default: HEAD~1)")
 @click.pass_context
 def semantic_diff(ctx, base_ref):
     """Show structural change summary vs a git ref.
@@ -358,24 +369,28 @@ def semantic_diff(ctx, base_ref):
     changed = _git_changed_files(root, base_ref)
     if not changed:
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "semantic-diff",
-                summary={
-                    "verdict": "No changed files",
-                    "files_changed": 0,
-                    "symbols_added": 0,
-                    "symbols_removed": 0,
-                    "symbols_modified": 0,
-                    "imports_added": 0,
-                    "imports_removed": 0,
-                },
-                base_ref=base_ref,
-                symbols_added=[],
-                symbols_removed=[],
-                symbols_modified=[],
-                imports_added=[],
-                imports_removed=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "semantic-diff",
+                        summary={
+                            "verdict": "No changed files",
+                            "files_changed": 0,
+                            "symbols_added": 0,
+                            "symbols_removed": 0,
+                            "symbols_modified": 0,
+                            "imports_added": 0,
+                            "imports_removed": 0,
+                        },
+                        base_ref=base_ref,
+                        symbols_added=[],
+                        symbols_removed=[],
+                        symbols_modified=[],
+                        imports_added=[],
+                        imports_removed=[],
+                    )
+                )
+            )
         else:
             click.echo(f"No changed files vs {base_ref}.")
         return
@@ -425,8 +440,7 @@ def semantic_diff(ctx, base_ref):
     all_modified.sort(key=lambda s: (s["file"], s.get("line") or 0))
 
     total_changes = (
-        len(all_added) + len(all_removed) + len(all_modified)
-        + len(all_imports_added) + len(all_imports_removed)
+        len(all_added) + len(all_removed) + len(all_modified) + len(all_imports_added) + len(all_imports_removed)
     )
 
     verdict = (
@@ -436,24 +450,28 @@ def semantic_diff(ctx, base_ref):
 
     # 3. Output
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "semantic-diff",
-            summary={
-                "verdict": verdict,
-                "files_changed": files_analyzed,
-                "symbols_added": len(all_added),
-                "symbols_removed": len(all_removed),
-                "symbols_modified": len(all_modified),
-                "imports_added": len(all_imports_added),
-                "imports_removed": len(all_imports_removed),
-            },
-            base_ref=base_ref,
-            symbols_added=all_added,
-            symbols_removed=all_removed,
-            symbols_modified=all_modified,
-            imports_added=all_imports_added,
-            imports_removed=all_imports_removed,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "semantic-diff",
+                    summary={
+                        "verdict": verdict,
+                        "files_changed": files_analyzed,
+                        "symbols_added": len(all_added),
+                        "symbols_removed": len(all_removed),
+                        "symbols_modified": len(all_modified),
+                        "imports_added": len(all_imports_added),
+                        "imports_removed": len(all_imports_removed),
+                    },
+                    base_ref=base_ref,
+                    symbols_added=all_added,
+                    symbols_removed=all_removed,
+                    symbols_modified=all_modified,
+                    imports_added=all_imports_added,
+                    imports_removed=all_imports_removed,
+                )
+            )
+        )
         return
 
     # --- Text output ---
@@ -492,10 +510,7 @@ def semantic_diff(ctx, base_ref):
                 for removed_p in p.get("removed", []):
                     param_details.append(f"-{removed_p}")
                 param_str = ", ".join(param_details) if param_details else "reordered"
-                click.echo(
-                    f"    params: {param_str}  "
-                    f"(was: {p['old_count']} params, now: {p['new_count']} params)"
-                )
+                click.echo(f"    params: {param_str}  (was: {p['old_count']} params, now: {p['new_count']} params)")
             if "body_lines" in changes:
                 b = changes["body_lines"]
                 click.echo(f"    body: {b['old']} -> {b['new']} lines")
@@ -519,7 +534,5 @@ def semantic_diff(ctx, base_ref):
     if all_modified:
         parts.append(f"~{len(all_modified)} modified")
     if all_imports_added or all_imports_removed:
-        parts.append(
-            f"+{len(all_imports_added)}/-{len(all_imports_removed)} imports"
-        )
+        parts.append(f"+{len(all_imports_added)}/-{len(all_imports_removed)} imports")
     click.echo(f"SUMMARY: {', '.join(parts)}")

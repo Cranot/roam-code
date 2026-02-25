@@ -16,9 +16,17 @@ _HTTP_METHODS = {"get", "post", "put", "delete", "patch"}
 
 # Frontend API call patterns (method names that indicate HTTP calls)
 _FRONTEND_CALL_NAMES = {
-    "get", "post", "put", "delete", "patch",
-    "fetch", "$fetch", "useFetch", "useLazyFetch",
-    "request", "axios",
+    "get",
+    "post",
+    "put",
+    "delete",
+    "patch",
+    "fetch",
+    "$fetch",
+    "useFetch",
+    "useLazyFetch",
+    "request",
+    "axios",
 }
 
 # Backend route definition patterns per framework
@@ -43,8 +51,7 @@ _PYTHON_ROUTE_RE = re.compile(
 )
 
 
-def scan_frontend_api_calls(repo_db_path: Path,
-                            repo_root: Path) -> list[dict[str, Any]]:
+def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[str, Any]]:
     """Scan a frontend repo DB for API call sites.
 
     Looks for references to HTTP methods (get/post/etc.) and extracts
@@ -71,16 +78,13 @@ def scan_frontend_api_calls(repo_db_path: Path,
             "JOIN symbols s ON s.id = e.source_id "
             "JOIN symbols t ON t.id = e.target_id "
             "JOIN files f ON f.id = s.file_id "
-            "WHERE LOWER(t.name) IN ({ph})".format(
-                ph=",".join("?" for _ in _FRONTEND_CALL_NAMES)
-            ),
+            "WHERE LOWER(t.name) IN ({ph})".format(ph=",".join("?" for _ in _FRONTEND_CALL_NAMES)),
             list(_FRONTEND_CALL_NAMES),
         ).fetchall()
 
         for row in rows:
             method = row["target_name"].lower()
-            if method in ("fetch", "$fetch", "usefetch", "uselazyfetch",
-                          "request", "axios"):
+            if method in ("fetch", "$fetch", "usefetch", "uselazyfetch", "request", "axios"):
                 http_method = None  # determined from context
             else:
                 http_method = method.upper()
@@ -95,24 +99,23 @@ def scan_frontend_api_calls(repo_db_path: Path,
 
             # For fetch-like calls, try to infer method from context
             if http_method is None:
-                http_method = _infer_method_from_context(
-                    repo_root / file_path, line_num
-                )
+                http_method = _infer_method_from_context(repo_root / file_path, line_num)
 
-            results.append({
-                "symbol_id": row["source_id"],
-                "url_pattern": url,
-                "http_method": http_method or "GET",
-                "file_path": file_path,
-                "line": line_num,
-                "symbol_name": row["source_name"],
-            })
+            results.append(
+                {
+                    "symbol_id": row["source_id"],
+                    "url_pattern": url,
+                    "http_method": http_method or "GET",
+                    "file_path": file_path,
+                    "line": line_num,
+                    "symbol_name": row["source_name"],
+                }
+            )
 
         # Also scan for string literals that look like API paths in source
         # This catches patterns like: api.get('/kiniseis/save')
         file_rows = conn.execute(
-            "SELECT id, path FROM files "
-            "WHERE language IN ('typescript', 'javascript', 'vue', 'tsx', 'jsx')"
+            "SELECT id, path FROM files WHERE language IN ('typescript', 'javascript', 'vue', 'tsx', 'jsx')"
         ).fetchall()
 
         seen_urls = {(r["file_path"], r["line"]) for r in results}
@@ -142,8 +145,7 @@ def scan_frontend_api_calls(repo_db_path: Path,
     return results
 
 
-def scan_backend_routes(repo_db_path: Path,
-                        repo_root: Path) -> list[dict[str, Any]]:
+def scan_backend_routes(repo_db_path: Path, repo_root: Path) -> list[dict[str, Any]]:
     """Scan a backend repo for route definitions.
 
     Supports Laravel (Route::get), Express (router.get), and
@@ -162,8 +164,7 @@ def scan_backend_routes(repo_db_path: Path,
     try:
         # Scan all PHP, Python, JS/TS files for route definitions
         file_rows = conn.execute(
-            "SELECT id, path, language FROM files "
-            "WHERE language IN ('php', 'python', 'javascript', 'typescript')"
+            "SELECT id, path, language FROM files WHERE language IN ('php', 'python', 'javascript', 'typescript')"
         ).fetchall()
 
         for file_row in file_rows:
@@ -225,21 +226,31 @@ def match_api_endpoints(
             if not method_match:
                 continue
 
-            score = _match_score(call["url_pattern"], candidate["url_pattern"],
-                                 call.get("http_method"), candidate.get("http_method"))
-            matches.append({
-                "frontend": call,
-                "backend": candidate,
-                "url_pattern": call["url_pattern"],
-                "http_method": call.get("http_method", candidate.get("http_method", "")),
-                "score": score,
-            })
+            score = _match_score(
+                call["url_pattern"],
+                candidate["url_pattern"],
+                call.get("http_method"),
+                candidate.get("http_method"),
+            )
+            matches.append(
+                {
+                    "frontend": call,
+                    "backend": candidate,
+                    "url_pattern": call["url_pattern"],
+                    "http_method": call.get("http_method", candidate.get("http_method", "")),
+                    "score": score,
+                }
+            )
 
     # Deduplicate: keep best score per (frontend_call, backend_route) pair
     seen: dict[tuple, dict] = {}
     for m in matches:
-        key = (m["frontend"]["file_path"], m["frontend"]["line"],
-               m["backend"]["file_path"], m["backend"]["line"])
+        key = (
+            m["frontend"]["file_path"],
+            m["frontend"]["line"],
+            m["backend"]["file_path"],
+            m["backend"]["line"],
+        )
         if key not in seen or m["score"] > seen[key]["score"]:
             seen[key] = m
 
@@ -267,9 +278,15 @@ def build_cross_repo_edges(
             "(repo_id, symbol_id, url_pattern, http_method, kind, "
             " file_path, line, symbol_name) "
             "VALUES (?, ?, ?, ?, 'api_call', ?, ?, ?)",
-            (frontend_repo_id, fe["symbol_id"], fe["url_pattern"],
-             m.get("http_method", ""), fe["file_path"], fe["line"],
-             fe["symbol_name"]),
+            (
+                frontend_repo_id,
+                fe["symbol_id"],
+                fe["url_pattern"],
+                m.get("http_method", ""),
+                fe["file_path"],
+                fe["line"],
+                fe["symbol_name"],
+            ),
         )
 
         # Store route symbols for backend route
@@ -278,24 +295,31 @@ def build_cross_repo_edges(
             "(repo_id, symbol_id, url_pattern, http_method, kind, "
             " file_path, line, symbol_name) "
             "VALUES (?, ?, ?, ?, 'route_definition', ?, ?, ?)",
-            (backend_repo_id, be["symbol_id"], be["url_pattern"],
-             m.get("http_method", ""), be["file_path"], be["line"],
-             be["symbol_name"]),
+            (
+                backend_repo_id,
+                be["symbol_id"],
+                be["url_pattern"],
+                m.get("http_method", ""),
+                be["file_path"],
+                be["line"],
+                be["symbol_name"],
+            ),
         )
 
         # Store cross-repo edge
-        metadata = json.dumps({
-            "url_pattern": m["url_pattern"],
-            "http_method": m.get("http_method", ""),
-            "score": m["score"],
-        })
+        metadata = json.dumps(
+            {
+                "url_pattern": m["url_pattern"],
+                "http_method": m.get("http_method", ""),
+                "score": m["score"],
+            }
+        )
         ws_conn.execute(
             "INSERT INTO ws_cross_edges "
             "(source_repo_id, source_symbol_id, target_repo_id, "
             " target_symbol_id, kind, metadata) "
             "VALUES (?, ?, ?, ?, 'api_call', ?)",
-            (frontend_repo_id, fe["symbol_id"],
-             backend_repo_id, be["symbol_id"], metadata),
+            (frontend_repo_id, fe["symbol_id"], backend_repo_id, be["symbol_id"], metadata),
         )
         count += 1
 
@@ -305,6 +329,7 @@ def build_cross_repo_edges(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
 
 def _extract_url_from_source(file_path: Path, line_num: int | None) -> str | None:
     """Read a source line and extract a URL pattern."""
@@ -340,8 +365,7 @@ def _infer_method_from_context(file_path: Path, line_num: int | None) -> str | N
         return None
 
 
-def _scan_file_for_api_calls(file_path: Path,
-                              rel_path: str) -> list[dict[str, Any]]:
+def _scan_file_for_api_calls(file_path: Path, rel_path: str) -> list[dict[str, Any]]:
     """Scan a source file for API call patterns via regex."""
     results = []
     try:
@@ -360,22 +384,23 @@ def _scan_file_for_api_calls(file_path: Path,
         if not m:
             continue
         http_method = m.group(1).upper()
-        url_m = _URL_RE.search(line[m.end() - 1:])
+        url_m = _URL_RE.search(line[m.end() - 1 :])
         if url_m:
-            results.append({
-                "url_pattern": url_m.group(1),
-                "http_method": http_method,
-                "file_path": rel_path,
-                "line": i,
-                "symbol_id": 0,
-                "symbol_name": "",
-            })
+            results.append(
+                {
+                    "url_pattern": url_m.group(1),
+                    "http_method": http_method,
+                    "file_path": rel_path,
+                    "line": i,
+                    "symbol_id": 0,
+                    "symbol_name": "",
+                }
+            )
 
     return results
 
 
-def _scan_file_for_routes(file_path: Path,
-                           rel_path: str) -> list[dict[str, Any]]:
+def _scan_file_for_routes(file_path: Path, rel_path: str) -> list[dict[str, Any]]:
     """Scan a source file for route definition patterns."""
     results = []
     try:
@@ -395,12 +420,14 @@ def _scan_file_for_routes(file_path: Path,
                 http_method = "ANY"
             else:
                 http_method = method_raw.upper()
-            results.append({
-                "url_pattern": m.group(2),
-                "http_method": http_method,
-                "file_path": rel_path,
-                "line": i,
-            })
+            results.append(
+                {
+                    "url_pattern": m.group(2),
+                    "http_method": http_method,
+                    "file_path": rel_path,
+                    "line": i,
+                }
+            )
             continue
 
         # Express/Fastify
@@ -408,23 +435,27 @@ def _scan_file_for_routes(file_path: Path,
         if m:
             method_raw = m.group(1).lower()
             http_method = "ANY" if method_raw == "all" else method_raw.upper()
-            results.append({
-                "url_pattern": m.group(2),
-                "http_method": http_method,
-                "file_path": rel_path,
-                "line": i,
-            })
+            results.append(
+                {
+                    "url_pattern": m.group(2),
+                    "http_method": http_method,
+                    "file_path": rel_path,
+                    "line": i,
+                }
+            )
             continue
 
         # FastAPI/Flask
         m = _PYTHON_ROUTE_RE.search(line)
         if m:
-            results.append({
-                "url_pattern": m.group(2),
-                "http_method": m.group(1).upper(),
-                "file_path": rel_path,
-                "line": i,
-            })
+            results.append(
+                {
+                    "url_pattern": m.group(2),
+                    "http_method": m.group(1).upper(),
+                    "file_path": rel_path,
+                    "line": i,
+                }
+            )
 
     return results
 
@@ -447,8 +478,7 @@ def _normalize_url(url: str) -> str:
     return normalized.lower()
 
 
-def _fuzzy_url_match(normalized_url: str,
-                      backend_by_url: dict[str, list]) -> list[dict[str, Any]]:
+def _fuzzy_url_match(normalized_url: str, backend_by_url: dict[str, list]) -> list[dict[str, Any]]:
     """Try to match a frontend URL against backend routes with some fuzziness."""
     # Try with/without /api prefix
     candidates = []
@@ -484,8 +514,7 @@ def _urls_equivalent(a: str, b: str) -> bool:
     return True
 
 
-def _match_score(fe_url: str, be_url: str,
-                 fe_method: str | None, be_method: str | None) -> float:
+def _match_score(fe_url: str, be_url: str, fe_method: str | None, be_method: str | None) -> float:
     """Score the quality of a URL match (0.0 - 1.0)."""
     score = 0.5  # base score for a match
 

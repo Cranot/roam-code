@@ -20,12 +20,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process
-
+from conftest import git_init, index_in_process
 
 # ===========================================================================
 # Fixtures
 # ===========================================================================
+
 
 @pytest.fixture
 def cli_runner():
@@ -44,48 +44,48 @@ def well_structured_project(tmp_path):
     src = repo / "src"
     src.mkdir()
     (src / "models.py").write_text(
-        'def create_user(name, email):\n'
+        "def create_user(name, email):\n"
         '    """Create a new user."""\n'
         '    return {"name": name, "email": email}\n'
-        '\n'
-        '\n'
-        'def validate_email(email):\n'
+        "\n"
+        "\n"
+        "def validate_email(email):\n"
         '    """Validate an email address."""\n'
         '    return "@" in email\n'
     )
     (src / "service.py").write_text(
-        'from models import create_user, validate_email\n'
-        '\n'
-        '\n'
-        'def register_user(name, email):\n'
+        "from models import create_user, validate_email\n"
+        "\n"
+        "\n"
+        "def register_user(name, email):\n"
         '    """Register a new user after validation."""\n'
-        '    if validate_email(email):\n'
-        '        return create_user(name, email)\n'
-        '    return None\n'
+        "    if validate_email(email):\n"
+        "        return create_user(name, email)\n"
+        "    return None\n"
     )
 
     tests = repo / "tests"
     tests.mkdir()
     (tests / "test_models.py").write_text(
-        'from src.models import create_user, validate_email\n'
-        '\n'
-        '\n'
-        'def test_create_user():\n'
+        "from src.models import create_user, validate_email\n"
+        "\n"
+        "\n"
+        "def test_create_user():\n"
         '    user = create_user("Alice", "a@b.com")\n'
         '    assert user["name"] == "Alice"\n'
-        '\n'
-        '\n'
-        'def test_validate_email():\n'
+        "\n"
+        "\n"
+        "def test_validate_email():\n"
         '    assert validate_email("a@b.com")\n'
         '    assert not validate_email("invalid")\n'
     )
     (tests / "test_service.py").write_text(
-        'from src.service import register_user\n'
-        '\n'
-        '\n'
-        'def test_register_user():\n'
+        "from src.service import register_user\n"
+        "\n"
+        "\n"
+        "def test_register_user():\n"
         '    user = register_user("Bob", "b@c.com")\n'
-        '    assert user is not None\n'
+        "    assert user is not None\n"
     )
 
     git_init(repo)
@@ -106,20 +106,9 @@ def minimal_project(tmp_path):
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
     (repo / "app.py").write_text(
-        "def main():\n"
-        "    return greet('world')\n"
-        "\n"
-        "\n"
-        "def greet(name):\n"
-        "    return f'Hello, {name}!'\n"
+        "def main():\n    return greet('world')\n\n\ndef greet(name):\n    return f'Hello, {name}!'\n"
     )
-    (repo / "utils.py").write_text(
-        "from app import greet\n"
-        "\n"
-        "\n"
-        "def run():\n"
-        "    return greet('test')\n"
-    )
+    (repo / "utils.py").write_text("from app import greet\n\n\ndef run():\n    return greet('test')\n")
     git_init(repo)
     old_cwd = os.getcwd()
     try:
@@ -134,6 +123,7 @@ def minimal_project(tmp_path):
 # ===========================================================================
 # Helper to invoke the command
 # ===========================================================================
+
 
 def _invoke(runner, project_path, *extra_args, json_mode=False):
     from roam.cli import cli
@@ -156,6 +146,7 @@ def _invoke(runner, project_path, *extra_args, json_mode=False):
 # ===========================================================================
 # Tests: Basic functionality
 # ===========================================================================
+
 
 class TestAiReadinessBasic:
     """Basic command execution and output format."""
@@ -193,9 +184,7 @@ class TestAiReadinessBasic:
         assert "AI Readiness" in result.output
         assert "0=hostile" in result.output
 
-    def test_well_structured_better_than_minimal(
-        self, cli_runner, well_structured_project, minimal_project
-    ):
+    def test_well_structured_better_than_minimal(self, cli_runner, well_structured_project, minimal_project):
         """Well-structured project should score >= minimal project."""
         r1 = _invoke(cli_runner, well_structured_project, json_mode=True)
         r2 = _invoke(cli_runner, minimal_project, json_mode=True)
@@ -208,6 +197,7 @@ class TestAiReadinessBasic:
 # ===========================================================================
 # Tests: JSON output
 # ===========================================================================
+
 
 class TestAiReadinessJSON:
     """JSON output format and envelope contract."""
@@ -277,12 +267,14 @@ class TestAiReadinessJSON:
 # Tests: Scoring
 # ===========================================================================
 
+
 class TestAiReadinessScoring:
     """Composite scoring and severity labels."""
 
     def test_readiness_labels(self):
         """Test readiness label function."""
         from roam.commands.cmd_ai_readiness import _readiness_label
+
         assert _readiness_label(0) == "HOSTILE"
         assert _readiness_label(25) == "HOSTILE"
         assert _readiness_label(26) == "POOR"
@@ -297,6 +289,7 @@ class TestAiReadinessScoring:
     def test_compute_composite_all_zero(self):
         """All zero dimension scores should produce score 0."""
         from roam.commands.cmd_ai_readiness import _compute_composite
+
         dimensions = {
             "naming_consistency": 0,
             "module_coupling": 0,
@@ -311,6 +304,7 @@ class TestAiReadinessScoring:
     def test_compute_composite_all_hundred(self):
         """All 100 dimension scores should produce score 100."""
         from roam.commands.cmd_ai_readiness import _compute_composite
+
         dimensions = {
             "naming_consistency": 100,
             "module_coupling": 100,
@@ -325,14 +319,15 @@ class TestAiReadinessScoring:
     def test_compute_composite_partial(self):
         """Partial scores should produce weighted average."""
         from roam.commands.cmd_ai_readiness import _compute_composite
+
         dimensions = {
-            "naming_consistency": 50,     # 50 * 15 = 750
-            "module_coupling": 50,        # 50 * 20 = 1000
-            "dead_code_noise": 50,        # 50 * 15 = 750
-            "test_signal_strength": 50,   # 50 * 20 = 1000
-            "documentation_signal": 50,   # 50 * 10 = 500
+            "naming_consistency": 50,  # 50 * 15 = 750
+            "module_coupling": 50,  # 50 * 20 = 1000
+            "dead_code_noise": 50,  # 50 * 15 = 750
+            "test_signal_strength": 50,  # 50 * 20 = 1000
+            "documentation_signal": 50,  # 50 * 10 = 500
             "codebase_navigability": 50,  # 50 * 10 = 500
-            "architecture_clarity": 50,   # 50 * 10 = 500
+            "architecture_clarity": 50,  # 50 * 10 = 500
         }
         # Total = 5000 / 100 = 50
         assert _compute_composite(dimensions) == 50
@@ -340,6 +335,7 @@ class TestAiReadinessScoring:
     def test_weights_sum_to_100(self):
         """Weights should sum to 100."""
         from roam.commands.cmd_ai_readiness import _WEIGHTS
+
         assert sum(_WEIGHTS.values()) == 100
 
     def test_score_in_valid_range(self, cli_runner, minimal_project):
@@ -354,12 +350,14 @@ class TestAiReadinessScoring:
 # Tests: Individual dimension scorers
 # ===========================================================================
 
+
 class TestDimensionScorers:
     """Test individual dimension scoring functions."""
 
     def test_naming_score_snake_case(self):
         """Python snake_case names should score well."""
-        from roam.commands.cmd_ai_readiness import _SNAKE_CASE, _PASCAL_CASE
+        from roam.commands.cmd_ai_readiness import _PASCAL_CASE, _SNAKE_CASE
+
         assert _SNAKE_CASE.match("my_function")
         assert _SNAKE_CASE.match("create_user")
         assert not _SNAKE_CASE.match("MyFunction")
@@ -370,6 +368,7 @@ class TestDimensionScorers:
     def test_camel_case_pattern(self):
         """JavaScript camelCase names should match."""
         from roam.commands.cmd_ai_readiness import _CAMEL_CASE
+
         assert _CAMEL_CASE.match("myFunction")
         assert _CAMEL_CASE.match("createUser")
         assert not _CAMEL_CASE.match("my_function")
@@ -379,40 +378,28 @@ class TestDimensionScorers:
         """Naming score should be 0-100."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        naming_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "naming_consistency"
-        )
+        naming_dim = next(d for d in data["dimensions"] if d["name"] == "naming_consistency")
         assert 0 <= naming_dim["score"] <= 100
 
     def test_coupling_score_returns_valid_range(self, cli_runner, minimal_project):
         """Coupling score should be 0-100."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        coupling_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "module_coupling"
-        )
+        coupling_dim = next(d for d in data["dimensions"] if d["name"] == "module_coupling")
         assert 0 <= coupling_dim["score"] <= 100
 
     def test_dead_code_score_returns_valid_range(self, cli_runner, minimal_project):
         """Dead code score should be 0-100."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        dead_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "dead_code_noise"
-        )
+        dead_dim = next(d for d in data["dimensions"] if d["name"] == "dead_code_noise")
         assert 0 <= dead_dim["score"] <= 100
 
     def test_test_signal_with_tests(self, cli_runner, well_structured_project):
         """Project with tests should have higher test signal score."""
         result = _invoke(cli_runner, well_structured_project, json_mode=True)
         data = json.loads(result.output)
-        test_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "test_signal_strength"
-        )
+        test_dim = next(d for d in data["dimensions"] if d["name"] == "test_signal_strength")
         # Well-structured project has test files
         assert test_dim["score"] >= 0
 
@@ -420,10 +407,7 @@ class TestDimensionScorers:
         """Project with README + CLAUDE.md should score well on docs."""
         result = _invoke(cli_runner, well_structured_project, json_mode=True)
         data = json.loads(result.output)
-        doc_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "documentation_signal"
-        )
+        doc_dim = next(d for d in data["dimensions"] if d["name"] == "documentation_signal")
         # Has README.md and CLAUDE.md -> at least 50 points
         assert doc_dim["score"] >= 50
         assert doc_dim["details"]["has_readme"] is True
@@ -433,36 +417,28 @@ class TestDimensionScorers:
         """Project without README should score lower on docs."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        doc_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "documentation_signal"
-        )
+        doc_dim = next(d for d in data["dimensions"] if d["name"] == "documentation_signal")
         assert doc_dim["details"]["has_readme"] is False
 
     def test_navigability_returns_valid_range(self, cli_runner, minimal_project):
         """Navigability score should be 0-100."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        nav_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "codebase_navigability"
-        )
+        nav_dim = next(d for d in data["dimensions"] if d["name"] == "codebase_navigability")
         assert 0 <= nav_dim["score"] <= 100
 
     def test_architecture_returns_valid_range(self, cli_runner, minimal_project):
         """Architecture score should be 0-100."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
-        arch_dim = next(
-            d for d in data["dimensions"]
-            if d["name"] == "architecture_clarity"
-        )
+        arch_dim = next(d for d in data["dimensions"] if d["name"] == "architecture_clarity")
         assert 0 <= arch_dim["score"] <= 100
 
 
 # ===========================================================================
 # Tests: Threshold gate
 # ===========================================================================
+
 
 class TestAiReadinessGate:
     """Threshold / gate failure behavior."""
@@ -493,10 +469,7 @@ class TestAiReadinessGate:
 
     def test_gate_failure_json_mode(self, cli_runner, minimal_project):
         """Gate failure in JSON mode still produces valid JSON."""
-        result = _invoke(
-            cli_runner, minimal_project,
-            "--threshold", "100", json_mode=True
-        )
+        result = _invoke(cli_runner, minimal_project, "--threshold", "100", json_mode=True)
         data = json.loads(result.output)
         assert "summary" in data
         assert isinstance(data["summary"]["score"], int)
@@ -505,6 +478,7 @@ class TestAiReadinessGate:
 # ===========================================================================
 # Tests: Edge cases
 # ===========================================================================
+
 
 class TestAiReadinessEdgeCases:
     """Edge cases and robustness."""
@@ -530,6 +504,7 @@ class TestAiReadinessEdgeCases:
     def test_help_flag(self, cli_runner):
         """--help works for ai-readiness."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["ai-readiness", "--help"])
         assert result.exit_code == 0
         assert "AI" in result.output or "readiness" in result.output
@@ -539,22 +514,16 @@ class TestAiReadinessEdgeCases:
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
         for dim in data["dimensions"]:
-            assert 0 <= dim["score"] <= 100, (
-                f"Dimension {dim['name']} score {dim['score']} out of range"
-            )
+            assert 0 <= dim["score"] <= 100, f"Dimension {dim['name']} score {dim['score']} out of range"
 
-    def test_contributions_sum_near_composite(
-        self, cli_runner, minimal_project
-    ):
+    def test_contributions_sum_near_composite(self, cli_runner, minimal_project):
         """Sum of contributions should approximately equal composite score."""
         result = _invoke(cli_runner, minimal_project, json_mode=True)
         data = json.loads(result.output)
         contribution_sum = sum(d["contribution"] for d in data["dimensions"])
         composite = data["summary"]["score"]
         # Allow rounding tolerance
-        assert abs(contribution_sum - composite) <= 2, (
-            f"Contribution sum {contribution_sum} != composite {composite}"
-        )
+        assert abs(contribution_sum - composite) <= 2, f"Contribution sum {contribution_sum} != composite {composite}"
 
     def test_label_in_verdict(self, cli_runner, minimal_project):
         """Verdict should contain the severity label."""
@@ -563,14 +532,13 @@ class TestAiReadinessEdgeCases:
         label = data["summary"]["label"]
         verdict = data["summary"]["verdict"]
         assert label in verdict
-        assert label in (
-            "HOSTILE", "POOR", "FAIR", "GOOD", "OPTIMIZED"
-        )
+        assert label in ("HOSTILE", "POOR", "FAIR", "GOOD", "OPTIMIZED")
 
 
 # ===========================================================================
 # Tests: Recommendations
 # ===========================================================================
+
 
 class TestRecommendations:
     """Test recommendation generation."""
@@ -586,12 +554,20 @@ class TestRecommendations:
     def test_max_five_recommendations(self):
         """At most 5 recommendations should be generated."""
         from roam.commands.cmd_ai_readiness import _generate_recommendations
+
         # All dimensions score 0 -> many recommendations possible
-        dimensions = {k: 0 for k in [
-            "naming_consistency", "module_coupling", "dead_code_noise",
-            "test_signal_strength", "documentation_signal",
-            "codebase_navigability", "architecture_clarity",
-        ]}
+        dimensions = {
+            k: 0
+            for k in [
+                "naming_consistency",
+                "module_coupling",
+                "dead_code_noise",
+                "test_signal_strength",
+                "documentation_signal",
+                "codebase_navigability",
+                "architecture_clarity",
+            ]
+        }
         details = {k: {} for k in dimensions}
         details["documentation_signal"] = {
             "has_readme": False,
@@ -610,11 +586,19 @@ class TestRecommendations:
     def test_no_recommendations_for_perfect_scores(self):
         """No recommendations when all dimensions score 80+."""
         from roam.commands.cmd_ai_readiness import _generate_recommendations
-        dimensions = {k: 90 for k in [
-            "naming_consistency", "module_coupling", "dead_code_noise",
-            "test_signal_strength", "documentation_signal",
-            "codebase_navigability", "architecture_clarity",
-        ]}
+
+        dimensions = {
+            k: 90
+            for k in [
+                "naming_consistency",
+                "module_coupling",
+                "dead_code_noise",
+                "test_signal_strength",
+                "documentation_signal",
+                "codebase_navigability",
+                "architecture_clarity",
+            ]
+        }
         details = {k: {} for k in dimensions}
         recs = _generate_recommendations(dimensions, details)
         assert len(recs) == 0

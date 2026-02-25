@@ -6,21 +6,20 @@ import json
 
 from roam.output.formatter import (
     abbrev_kind,
-    loc,
-    symbol_line,
-    section,
-    indent,
-    truncate_lines,
-    format_signature,
-    format_edge_kind,
-    format_table,
-    to_json,
     compact_json_envelope,
-    table_to_dicts,
+    format_edge_kind,
+    format_signature,
+    format_table,
     format_table_compact,
+    indent,
+    loc,
+    section,
+    symbol_line,
+    table_to_dicts,
+    to_json,
+    truncate_lines,
     ws_loc,
 )
-
 
 # ── abbrev_kind ──────────────────────────────────────────────────────
 

@@ -24,9 +24,7 @@ class SwiftExtractor(GenericExtractor):
             token_types = {c.type for c in node.children if not c.is_named}
             if "struct" in token_types:
                 return "struct"
-            if "enum" in token_types or any(
-                c.type == "enum_class_body" for c in node.children if c.is_named
-            ):
+            if "enum" in token_types or any(c.type == "enum_class_body" for c in node.children if c.is_named):
                 return "enum"
             return "class"
         if node.type == "init_declaration":

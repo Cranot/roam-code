@@ -6,23 +6,18 @@ minimal projects, and graceful handling of missing data.
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
-
-from roam.cli import cli
-
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 # ============================================================================
 # TestDashboard
 # ============================================================================
+
 
 class TestDashboard:
     """Tests for `roam dashboard`."""
@@ -86,10 +81,7 @@ class TestDashboard:
         result = invoke_cli(cli_runner, ["dashboard"], cwd=indexed_project)
         assert result.exit_code == 0
         lines = result.output.strip().split("\n")
-        assert len(lines) < 50, (
-            f"Dashboard output too long ({len(lines)} lines), "
-            f"expected < 50"
-        )
+        assert len(lines) < 50, f"Dashboard output too long ({len(lines)} lines), expected < 50"
 
     # ---- JSON output ----
 
@@ -160,14 +152,17 @@ class TestDashboard:
 # TestDashboardMinimal
 # ============================================================================
 
+
 class TestDashboardMinimal:
     """Test dashboard with a minimal project."""
 
     def test_dashboard_minimal_project(self, project_factory):
         """Dashboard should work on a project with a single file."""
-        proj = project_factory({
-            "main.py": "def main():\n    return 1\n",
-        })
+        proj = project_factory(
+            {
+                "main.py": "def main():\n    return 1\n",
+            }
+        )
         runner = CliRunner()
         result = invoke_cli(runner, ["dashboard"], cwd=proj)
         assert result.exit_code == 0
@@ -175,9 +170,11 @@ class TestDashboardMinimal:
 
     def test_dashboard_minimal_json(self, project_factory):
         """JSON mode should work on a minimal project."""
-        proj = project_factory({
-            "main.py": "def main():\n    return 1\n",
-        })
+        proj = project_factory(
+            {
+                "main.py": "def main():\n    return 1\n",
+            }
+        )
         runner = CliRunner()
         result = invoke_cli(runner, ["dashboard"], cwd=proj, json_mode=True)
         data = parse_json_output(result, "dashboard")

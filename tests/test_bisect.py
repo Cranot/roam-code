@@ -21,24 +21,23 @@ from __future__ import annotations
 import json
 import os
 import sys
-import time
 from pathlib import Path
 
-import pytest
 import click
+import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    git_init,
     git_commit,
+    git_init,
     index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local CLI shim (bisect is not yet wired into cli.py, so we build our own)
 # ---------------------------------------------------------------------------
+
 
 def _make_local_cli():
     """Return a minimal Click group containing only the bisect command."""
@@ -78,20 +77,17 @@ def _invoke(args, cwd=None, json_mode=False):
 
 def _parse_json(result, cmd="bisect"):
     """Parse JSON from a CliRunner result with a helpful error on failure."""
-    assert result.exit_code == 0, (
-        f"{cmd} exited {result.exit_code}:\n{result.output}"
-    )
+    assert result.exit_code == 0, f"{cmd} exited {result.exit_code}:\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}"
-        )
+        pytest.fail(f"Invalid JSON from {cmd}: {e}\nOutput:\n{result.output[:600]}")
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def bisect_project(tmp_path, monkeypatch):
@@ -105,12 +101,7 @@ def bisect_project(tmp_path, monkeypatch):
     (proj / ".gitignore").write_text(".roam/\n")
 
     # Initial files
-    (proj / "app.py").write_text(
-        "def main():\n"
-        "    return process()\n\n"
-        "def process():\n"
-        "    return 42\n"
-    )
+    (proj / "app.py").write_text("def main():\n    return process()\n\ndef process():\n    return 42\n")
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -118,17 +109,15 @@ def bisect_project(tmp_path, monkeypatch):
     assert rc == 0, f"initial index failed: {out}"
 
     # Create first explicit snapshot (v1)
-    from roam.db.connection import open_db
     from roam.commands.metrics_history import append_snapshot
+    from roam.db.connection import open_db
+
     with open_db() as conn:
         append_snapshot(conn, tag="v1", source="test")
 
     # Add more code and snapshot again (v2)
     (proj / "utils.py").write_text(
-        "def helper_a():\n"
-        "    return helper_b()\n\n"
-        "def helper_b():\n"
-        "    return helper_a()\n"  # creates cycle
+        "def helper_a():\n    return helper_b()\n\ndef helper_b():\n    return helper_a()\n"  # creates cycle
     )
     git_commit(proj, "add utils with cycle")
     out, rc = index_in_process(proj)
@@ -138,12 +127,7 @@ def bisect_project(tmp_path, monkeypatch):
 
     # Add more files and snapshot (v3)
     (proj / "extra.py").write_text(
-        "def extra_func():\n"
-        "    return 1\n\n"
-        "def extra_func2():\n"
-        "    return 2\n\n"
-        "def extra_func3():\n"
-        "    return 3\n"
+        "def extra_func():\n    return 1\n\ndef extra_func2():\n    return 2\n\ndef extra_func3():\n    return 3\n"
     )
     git_commit(proj, "add extra")
     out, rc = index_in_process(proj)
@@ -169,6 +153,7 @@ def bisect_no_snapshots(tmp_path, monkeypatch):
 
     # Remove all snapshots so we exercise the "< 2 snapshots" path
     from roam.db.connection import open_db
+
     with open_db() as conn:
         conn.execute("DELETE FROM snapshots")
         conn.commit()
@@ -191,16 +176,16 @@ def bisect_one_snapshot(tmp_path, monkeypatch):
 
     # Keep only 1 snapshot
     from roam.db.connection import open_db
+
     with open_db() as conn:
         count = conn.execute("SELECT COUNT(*) FROM snapshots").fetchone()[0]
         if count == 0:
             from roam.commands.metrics_history import append_snapshot
+
             append_snapshot(conn, tag="only", source="test")
         elif count > 1:
             # Trim to 1
-            ids = [r[0] for r in conn.execute(
-                "SELECT id FROM snapshots ORDER BY timestamp DESC LIMIT 1"
-            ).fetchall()]
+            ids = [r[0] for r in conn.execute("SELECT id FROM snapshots ORDER BY timestamp DESC LIMIT 1").fetchall()]
             conn.execute(
                 f"DELETE FROM snapshots WHERE id NOT IN ({','.join('?' * len(ids))})",
                 ids,
@@ -214,23 +199,19 @@ def bisect_one_snapshot(tmp_path, monkeypatch):
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestBisectCommand:
 
+class TestBisectCommand:
     def test_bisect_runs(self, bisect_project):
         """Command exits with code 0."""
         result = _invoke(["bisect"], cwd=bisect_project)
-        assert result.exit_code == 0, (
-            f"bisect exited {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"bisect exited {result.exit_code}:\n{result.output}"
 
     def test_bisect_json_envelope(self, bisect_project):
         """JSON output has standard roam envelope keys and command='bisect'."""
         result = _invoke(["bisect"], cwd=bisect_project, json_mode=True)
         data = _parse_json(result)
         assert isinstance(data, dict)
-        assert data.get("command") == "bisect", (
-            f"Expected command='bisect', got {data.get('command')}"
-        )
+        assert data.get("command") == "bisect", f"Expected command='bisect', got {data.get('command')}"
         assert "version" in data
         assert "timestamp" in data.get("_meta", data)
         assert "summary" in data
@@ -260,23 +241,26 @@ class TestBisectCommand:
             pytest.skip("No deltas found — project may have identical snapshots")
 
         required_fields = {
-            "snapshot_id", "timestamp", "tag", "git_commit",
-            "before", "after", "delta", "abs_delta", "direction",
+            "snapshot_id",
+            "timestamp",
+            "tag",
+            "git_commit",
+            "before",
+            "after",
+            "delta",
+            "abs_delta",
+            "direction",
         }
         for d in deltas:
             missing = required_fields - set(d.keys())
-            assert not missing, (
-                f"Delta entry missing fields {missing}: {d}"
-            )
+            assert not missing, f"Delta entry missing fields {missing}: {d}"
 
     def test_bisect_default_metric(self, bisect_project):
         """Default metric is health_score (appears in summary)."""
         result = _invoke(["bisect"], cwd=bisect_project, json_mode=True)
         data = _parse_json(result)
         summary = data.get("summary", {})
-        assert summary.get("metric") == "health_score", (
-            f"Expected metric='health_score', got {summary.get('metric')}"
-        )
+        assert summary.get("metric") == "health_score", f"Expected metric='health_score', got {summary.get('metric')}"
 
     def test_bisect_custom_metric(self, bisect_project):
         """--metric cycles tracks the cycles metric."""
@@ -287,9 +271,7 @@ class TestBisectCommand:
         )
         data = _parse_json(result)
         summary = data.get("summary", {})
-        assert summary.get("metric") == "cycles", (
-            f"Expected metric='cycles', got {summary.get('metric')}"
-        )
+        assert summary.get("metric") == "cycles", f"Expected metric='cycles', got {summary.get('metric')}"
 
     def test_bisect_direction_degraded(self, bisect_project):
         """Default direction='degraded' only returns degraded entries."""
@@ -297,9 +279,7 @@ class TestBisectCommand:
         data = _parse_json(result)
         deltas = data.get("deltas", [])
         for d in deltas:
-            assert d["direction"] == "degraded", (
-                f"Expected direction='degraded' for all entries, got {d['direction']}"
-            )
+            assert d["direction"] == "degraded", f"Expected direction='degraded' for all entries, got {d['direction']}"
 
     def test_bisect_direction_both(self, bisect_project):
         """--direction both returns all non-zero changes (improved + degraded)."""
@@ -329,18 +309,14 @@ class TestBisectCommand:
         )
         data = _parse_json(result)
         deltas = data.get("deltas", [])
-        assert len(deltas) == 0, (
-            f"Expected 0 deltas with threshold=9999, got {len(deltas)}"
-        )
+        assert len(deltas) == 0, f"Expected 0 deltas with threshold=9999, got {len(deltas)}"
 
     def test_bisect_verdict_line(self, bisect_project):
         """Text output begins with 'VERDICT:'."""
         result = _invoke(["bisect"], cwd=bisect_project)
         assert result.exit_code == 0
         first_line = result.output.strip().split("\n")[0]
-        assert first_line.startswith("VERDICT:"), (
-            f"Expected first line to start with 'VERDICT:', got: {first_line!r}"
-        )
+        assert first_line.startswith("VERDICT:"), f"Expected first line to start with 'VERDICT:', got: {first_line!r}"
 
     def test_bisect_no_snapshots(self, bisect_no_snapshots):
         """Advisory message when there are no snapshots at all."""
@@ -363,9 +339,7 @@ class TestBisectCommand:
         """JSON output includes metric_range with 'first' and 'last' keys."""
         result = _invoke(["bisect"], cwd=bisect_project, json_mode=True)
         data = _parse_json(result)
-        assert "metric_range" in data, (
-            f"Expected 'metric_range' key in: {list(data.keys())}"
-        )
+        assert "metric_range" in data, f"Expected 'metric_range' key in: {list(data.keys())}"
         metric_range = data["metric_range"]
         assert "first" in metric_range, "metric_range should have 'first' key"
         assert "last" in metric_range, "metric_range should have 'last' key"
@@ -396,9 +370,7 @@ class TestBisectCommand:
         )
         data = _parse_json(result)
         deltas = data.get("deltas", [])
-        assert len(deltas) <= 1, (
-            f"Expected at most 1 delta with --top 1, got {len(deltas)}"
-        )
+        assert len(deltas) <= 1, f"Expected at most 1 delta with --top 1, got {len(deltas)}"
 
     def test_bisect_summary_has_verdict(self, bisect_project):
         """JSON summary includes a verdict string."""

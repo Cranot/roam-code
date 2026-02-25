@@ -44,9 +44,7 @@ def detect_layers(G: nx.DiGraph) -> dict[int, int]:
     return layers
 
 
-def find_violations(
-    G: nx.DiGraph, layers: dict[int, int]
-) -> list[dict]:
+def find_violations(G: nx.DiGraph, layers: dict[int, int]) -> list[dict]:
     """Find edges that go *upward* from a higher layer to a lower layer.
 
     In a healthy layered architecture, dependencies should flow downward
@@ -74,22 +72,22 @@ def find_violations(
             distance = src_layer - tgt_layer
             # Severity normalized by max possible distance, so it's in [0, 1]
             severity = round(distance / max_layer, 3)
-            violations.append({
-                "source": src,
-                "target": tgt,
-                "source_layer": src_layer,
-                "target_layer": tgt_layer,
-                "layer_distance": distance,
-                "severity": severity,
-            })
+            violations.append(
+                {
+                    "source": src,
+                    "target": tgt,
+                    "source_layer": src_layer,
+                    "target_layer": tgt_layer,
+                    "layer_distance": distance,
+                    "severity": severity,
+                }
+            )
     # Sort for deterministic output (severity desc, then by source/target ID)
     violations.sort(key=lambda v: (-v["severity"], v["source"], v["target"]))
     return violations
 
 
-def format_layers(
-    layers: dict[int, int], conn: sqlite3.Connection
-) -> list[dict]:
+def format_layers(layers: dict[int, int], conn: sqlite3.Connection) -> list[dict]:
     """Annotate layer assignments with symbol metadata.
 
     Returns a list of dicts sorted by layer::
@@ -111,7 +109,7 @@ def format_layers(
     all_ids = list(layers.keys())
     lookup: dict[int, dict] = {}
     for i in range(0, len(all_ids), 500):
-        batch = all_ids[i:i+500]
+        batch = all_ids[i : i + 500]
         placeholders = ",".join("?" for _ in batch)
         rows = conn.execute(
             f"SELECT s.id, s.name, s.kind, f.path AS file_path "

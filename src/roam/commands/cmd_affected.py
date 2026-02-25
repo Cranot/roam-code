@@ -13,19 +13,19 @@ from collections import defaultdict, deque
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import (
     get_changed_files,
-    resolve_changed_to_db,
     is_test_file,
+    resolve_changed_to_db,
 )
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # BFS forward walk with depth tracking
 # ---------------------------------------------------------------------------
+
 
 def _bfs_forward_with_depth(conn, start_sym_ids, max_depth=None):
     """Walk forward edges (dependents/reverse callers) via BFS.
@@ -39,9 +39,7 @@ def _bfs_forward_with_depth(conn, start_sym_ids, max_depth=None):
     """
     # Build file lookup for via labels
     file_lookup = {}
-    for row in conn.execute(
-        "SELECT s.id, f.path FROM symbols s JOIN files f ON s.file_id = f.id"
-    ).fetchall():
+    for row in conn.execute("SELECT s.id, f.path FROM symbols s JOIN files f ON s.file_id = f.id").fetchall():
         file_lookup[row["id"]] = row["path"]
 
     visited = {}  # symbol_id -> (hops, via_file)
@@ -79,6 +77,7 @@ def _bfs_forward_with_depth(conn, start_sym_ids, max_depth=None):
 # Entry point detection (lightweight — reuses graph_metrics)
 # ---------------------------------------------------------------------------
 
+
 def _find_affected_entry_points(conn, affected_sym_ids):
     """Find entry points among the affected symbols.
 
@@ -104,12 +103,14 @@ def _find_affected_entry_points(conn, affected_sym_ids):
     for r in rows:
         in_deg = r["in_degree"] if r["in_degree"] is not None else 0
         if in_deg == 0 and r["kind"] in ("function", "method", "class"):
-            entry_points.append({
-                "name": r["qualified_name"] or r["name"],
-                "kind": r["kind"],
-                "file": r["file_path"],
-                "line": r["line_start"],
-            })
+            entry_points.append(
+                {
+                    "name": r["qualified_name"] or r["name"],
+                    "kind": r["kind"],
+                    "file": r["file_path"],
+                    "line": r["line_start"],
+                }
+            )
 
     # Sort by file then name
     entry_points.sort(key=lambda e: (e["file"], e["name"]))
@@ -119,6 +120,7 @@ def _find_affected_entry_points(conn, affected_sym_ids):
 # ---------------------------------------------------------------------------
 # Module grouping
 # ---------------------------------------------------------------------------
+
 
 def _group_by_module(changed_files, affected_files):
     """Group files into modules (top-level directory or root).
@@ -147,13 +149,22 @@ def _group_by_module(changed_files, affected_files):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("affected")
-@click.option("--base", "base_ref", default="HEAD~1",
-              help="Git ref to diff against (default: HEAD~1)")
-@click.option("--depth", "max_depth", default=None, type=int,
-              help="Maximum dependency depth to trace (default: unlimited)")
-@click.option("--changed", "use_changed", is_flag=True,
-              help="Use git diff to detect changed files (default: working tree)")
+@click.option("--base", "base_ref", default="HEAD~1", help="Git ref to diff against (default: HEAD~1)")
+@click.option(
+    "--depth",
+    "max_depth",
+    default=None,
+    type=int,
+    help="Maximum dependency depth to trace (default: unlimited)",
+)
+@click.option(
+    "--changed",
+    "use_changed",
+    is_flag=True,
+    help="Use git diff to detect changed files (default: working tree)",
+)
 @click.pass_context
 def affected(ctx, base_ref, max_depth, use_changed):
     """Identify affected files/modules from a git diff via dependency graph.
@@ -179,20 +190,25 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
     if not changed:
         if json_mode:
-            click.echo(to_json(json_envelope("affected",
-                summary={
-                    "verdict": "No changes detected",
-                    "total_affected": 0,
-                    "changed_files": 0,
-                },
-                changed_files=[],
-                affected_direct=[],
-                affected_transitive_1=[],
-                affected_transitive_2plus=[],
-                affected_tests=[],
-                affected_entry_points=[],
-                by_module={},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "affected",
+                        summary={
+                            "verdict": "No changes detected",
+                            "total_affected": 0,
+                            "changed_files": 0,
+                        },
+                        changed_files=[],
+                        affected_direct=[],
+                        affected_transitive_1=[],
+                        affected_transitive_2plus=[],
+                        affected_tests=[],
+                        affected_entry_points=[],
+                        by_module={},
+                    )
+                )
+            )
             return
         click.echo("No changes detected.")
         return
@@ -203,25 +219,27 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         if not file_map:
             if json_mode:
-                click.echo(to_json(json_envelope("affected",
-                    summary={
-                        "verdict": "Changed files not in index",
-                        "total_affected": 0,
-                        "changed_files": len(changed),
-                    },
-                    changed_files=changed,
-                    affected_direct=[],
-                    affected_transitive_1=[],
-                    affected_transitive_2plus=[],
-                    affected_tests=[],
-                    affected_entry_points=[],
-                    by_module={},
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "affected",
+                            summary={
+                                "verdict": "Changed files not in index",
+                                "total_affected": 0,
+                                "changed_files": len(changed),
+                            },
+                            changed_files=changed,
+                            affected_direct=[],
+                            affected_transitive_1=[],
+                            affected_transitive_2plus=[],
+                            affected_tests=[],
+                            affected_entry_points=[],
+                            by_module={},
+                        )
+                    )
+                )
                 return
-            click.echo(
-                f"Changed files not found in index ({len(changed)} files).\n"
-                "Try running `roam index` first."
-            )
+            click.echo(f"Changed files not found in index ({len(changed)} files).\nTry running `roam index` first.")
             return
 
         changed_paths = set(file_map.keys())
@@ -229,18 +247,14 @@ def affected(ctx, base_ref, max_depth, use_changed):
         # Collect all symbol IDs in changed files
         start_sym_ids = set()
         for path, fid in file_map.items():
-            syms = conn.execute(
-                "SELECT id FROM symbols WHERE file_id = ?", (fid,)
-            ).fetchall()
+            syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
             start_sym_ids.update(s["id"] for s in syms)
 
         # BFS forward to find all dependents
         reachable = _bfs_forward_with_depth(conn, start_sym_ids, max_depth)
 
         # Resolve all reachable symbols to file paths
-        reachable_ids = [
-            sid for sid in reachable if sid not in start_sym_ids
-        ]
+        reachable_ids = [sid for sid in reachable if sid not in start_sym_ids]
 
         sym_to_file = {}
         if reachable_ids:
@@ -278,10 +292,7 @@ def affected(ctx, base_ref, max_depth, use_changed):
                     affected_t2plus[fpath] = via or "?"
 
         # Identify test files among affected
-        affected_test_files = sorted(
-            f for f in (set(affected_t1) | set(affected_t2plus))
-            if is_test_file(f)
-        )
+        affected_test_files = sorted(f for f in (set(affected_t1) | set(affected_t2plus)) if is_test_file(f))
 
         # Also find colocated test files for changed files
         colocated_tests = _find_colocated_test_files(conn, changed_paths)
@@ -310,14 +321,8 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         # Build structured lists for output
         direct_list = sorted(changed_paths)
-        t1_list = [
-            {"file": f, "reason": f"imports {v}"}
-            for f, v in sorted(affected_t1.items())
-        ]
-        t2_list = [
-            {"file": f, "reason": f"via {v}"}
-            for f, v in sorted(affected_t2plus.items())
-        ]
+        t1_list = [{"file": f, "reason": f"imports {v}"} for f, v in sorted(affected_t1.items())]
+        t2_list = [{"file": f, "reason": f"via {v}"} for f, v in sorted(affected_t2plus.items())]
         ep_list = [
             {
                 "name": e["name"],
@@ -330,25 +335,30 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         # ----- JSON output -----
         if json_mode:
-            click.echo(to_json(json_envelope("affected",
-                summary={
-                    "verdict": verdict,
-                    "total_affected": total_affected,
-                    "changed_files": n_direct,
-                    "transitive_1": n_t1,
-                    "transitive_2plus": n_t2,
-                    "affected_tests": len(affected_test_files),
-                    "affected_entry_points": len(entry_points),
-                },
-                budget=token_budget,
-                changed_files=direct_list,
-                affected_direct=direct_list,
-                affected_transitive_1=t1_list,
-                affected_transitive_2plus=t2_list,
-                affected_tests=affected_test_files,
-                affected_entry_points=ep_list,
-                by_module=by_module,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "affected",
+                        summary={
+                            "verdict": verdict,
+                            "total_affected": total_affected,
+                            "changed_files": n_direct,
+                            "transitive_1": n_t1,
+                            "transitive_2plus": n_t2,
+                            "affected_tests": len(affected_test_files),
+                            "affected_entry_points": len(entry_points),
+                        },
+                        budget=token_budget,
+                        changed_files=direct_list,
+                        affected_direct=direct_list,
+                        affected_transitive_1=t1_list,
+                        affected_transitive_2plus=t2_list,
+                        affected_tests=affected_test_files,
+                        affected_entry_points=ep_list,
+                        by_module=by_module,
+                    )
+                )
+            )
             return
 
         # ----- Text output -----
@@ -357,21 +367,21 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         # Changed (direct)
         if direct_list:
-            click.echo(f"CHANGED (direct):")
+            click.echo("CHANGED (direct):")
             for f in direct_list:
                 click.echo(f"  {f}")
             click.echo()
 
         # Affected (1 hop)
         if t1_list:
-            click.echo(f"AFFECTED (1 hop):")
+            click.echo("AFFECTED (1 hop):")
             for item in t1_list:
                 click.echo(f"  {item['file']} -- {item['reason']}")
             click.echo()
 
         # Affected (2+ hops)
         if t2_list:
-            click.echo(f"AFFECTED (2+ hops):")
+            click.echo("AFFECTED (2+ hops):")
             for item in t2_list:
                 click.echo(f"  {item['file']} -- {item['reason']}")
             click.echo()
@@ -387,25 +397,20 @@ def affected(ctx, base_ref, max_depth, use_changed):
         if entry_points:
             click.echo(f"AFFECTED ENTRY POINTS: {len(entry_points)}")
             for e in entry_points:
-                click.echo(
-                    f"  {abbrev_kind(e['kind'])} {e['name']} "
-                    f"at {loc(e['file'], e['line'])}"
-                )
+                click.echo(f"  {abbrev_kind(e['kind'])} {e['name']} at {loc(e['file'], e['line'])}")
             click.echo()
 
         # By module
         if by_module:
             click.echo("BY MODULE:")
             for mod, counts in by_module.items():
-                click.echo(
-                    f"  {mod}: {counts['changed']} changed, "
-                    f"{counts['affected']} affected"
-                )
+                click.echo(f"  {mod}: {counts['changed']} changed, {counts['affected']} affected")
 
 
 # ---------------------------------------------------------------------------
 # Colocated test detection (lightweight)
 # ---------------------------------------------------------------------------
+
 
 def _find_colocated_test_files(conn, source_paths):
     """Find test files in the same directories as the given source files."""
@@ -418,9 +423,7 @@ def _find_colocated_test_files(conn, source_paths):
     colocated = []
     for d in dirs:
         pattern = f"{d}/%"
-        rows = conn.execute(
-            "SELECT path FROM files WHERE path LIKE ?", (pattern,)
-        ).fetchall()
+        rows = conn.execute("SELECT path FROM files WHERE path LIKE ?", (pattern,)).fetchall()
         for r in rows:
             p = r["path"]
             if is_test_file(p) and p not in source_paths:

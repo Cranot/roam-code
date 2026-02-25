@@ -9,10 +9,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 _HIGHER_IS_BETTER = {
     "health_score": True,
@@ -42,7 +41,7 @@ def _compute_deltas(snapshots, metric):
     higher_is_better = _HIGHER_IS_BETTER.get(metric, False)
 
     for i in range(1, len(snapshots)):
-        prev = snapshots[i]      # older (snapshots are newest-first)
+        prev = snapshots[i]  # older (snapshots are newest-first)
         curr = snapshots[i - 1]  # newer
 
         prev_val = prev.get(metric)
@@ -63,31 +62,39 @@ def _compute_deltas(snapshots, metric):
         else:
             direction = "degraded"
 
-        deltas.append({
-            "snapshot_id": curr.get("id"),
-            "timestamp": curr.get("timestamp"),
-            "tag": curr.get("tag") or "",
-            "git_commit": curr.get("git_commit") or "",
-            "git_branch": curr.get("git_branch") or "",
-            "before": prev_val,
-            "after": curr_val,
-            "delta": round(delta, 2),
-            "abs_delta": round(abs(delta), 2),
-            "direction": direction,
-        })
+        deltas.append(
+            {
+                "snapshot_id": curr.get("id"),
+                "timestamp": curr.get("timestamp"),
+                "tag": curr.get("tag") or "",
+                "git_commit": curr.get("git_commit") or "",
+                "git_branch": curr.get("git_branch") or "",
+                "before": prev_val,
+                "after": curr_val,
+                "delta": round(delta, 2),
+                "abs_delta": round(abs(delta), 2),
+                "direction": direction,
+            }
+        )
 
     return deltas
 
 
 @click.command("bisect")
-@click.option("--metric", default="health_score",
-              type=click.Choice(_VALID_METRICS, case_sensitive=False),
-              help="Metric to track")
-@click.option("--threshold", default=None, type=float,
-              help="Flag deltas exceeding this threshold")
+@click.option(
+    "--metric",
+    default="health_score",
+    type=click.Choice(_VALID_METRICS, case_sensitive=False),
+    help="Metric to track",
+)
+@click.option("--threshold", default=None, type=float, help="Flag deltas exceeding this threshold")
 @click.option("--top", "top_n", default=10, type=int, help="Show top N snapshots")
-@click.option("--direction", type=click.Choice(["degraded", "improved", "both"]),
-              default="degraded", help="Which direction to show")
+@click.option(
+    "--direction",
+    type=click.Choice(["degraded", "improved", "both"]),
+    default="degraded",
+    help="Which direction to show",
+)
 @click.pass_context
 def bisect(ctx, metric, threshold, top_n, direction):
     """Find which snapshots caused architectural degradation.
@@ -113,18 +120,21 @@ def bisect(ctx, metric, threshold, top_n, direction):
         snapshots = [dict(s) for s in snapshots_raw]
 
         if len(snapshots) < 2:
-            verdict = (
-                "Not enough snapshots for bisect (need >= 2). "
-                "Run 'roam snapshot' to create them."
-            )
+            verdict = "Not enough snapshots for bisect (need >= 2). Run 'roam snapshot' to create them."
             if json_mode:
-                click.echo(to_json(json_envelope("bisect",
-                    summary={
-                        "verdict": verdict,
-                        "snapshots": len(snapshots),
-                        "metric": metric,
-                        "deltas": 0,
-                    })))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "bisect",
+                            summary={
+                                "verdict": verdict,
+                                "snapshots": len(snapshots),
+                                "metric": metric,
+                                "deltas": 0,
+                            },
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -148,36 +158,34 @@ def bisect(ctx, metric, threshold, top_n, direction):
         # Build verdict
         if not deltas:
             if direction == "degraded":
-                verdict = (
-                    f"No degradation found for {metric} across {len(snapshots)} snapshots"
-                )
+                verdict = f"No degradation found for {metric} across {len(snapshots)} snapshots"
             else:
-                verdict = (
-                    f"No {direction} changes for {metric} across {len(snapshots)} snapshots"
-                )
+                verdict = f"No {direction} changes for {metric} across {len(snapshots)} snapshots"
         else:
             worst = deltas[0]
             commit_info = f" (commit {worst['git_commit']})" if worst["git_commit"] else ""
-            verdict = (
-                f"{len(deltas)} snapshots with {direction} {metric}, "
-                f"worst: {worst['delta']:+.1f}{commit_info}"
-            )
+            verdict = f"{len(deltas)} snapshots with {direction} {metric}, worst: {worst['delta']:+.1f}{commit_info}"
 
         if json_mode:
-            click.echo(to_json(json_envelope("bisect",
-                summary={
-                    "verdict": verdict,
-                    "metric": metric,
-                    "snapshots": len(snapshots),
-                    "deltas_found": len(deltas),
-                    "direction_filter": direction,
-                },
-                deltas=deltas,
-                metric_range={
-                    "first": snapshots[-1].get(metric),
-                    "last": snapshots[0].get(metric),
-                },
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "bisect",
+                        summary={
+                            "verdict": verdict,
+                            "metric": metric,
+                            "snapshots": len(snapshots),
+                            "deltas_found": len(deltas),
+                            "direction_filter": direction,
+                        },
+                        deltas=deltas,
+                        metric_range={
+                            "first": snapshots[-1].get(metric),
+                            "last": snapshots[0].get(metric),
+                        },
+                    )
+                )
+            )
             return
 
         # Text output
@@ -185,9 +193,7 @@ def bisect(ctx, metric, threshold, top_n, direction):
         click.echo()
 
         if not deltas:
-            click.echo(
-                f"  {metric} has been stable across {len(snapshots)} snapshots."
-            )
+            click.echo(f"  {metric} has been stable across {len(snapshots)} snapshots.")
             return
 
         click.echo(f"BISECT LOG ({metric}, {direction}):")
@@ -207,6 +213,4 @@ def bisect(ctx, metric, threshold, top_n, direction):
         last_val = snapshots[0].get(metric)
         if first_val is not None and last_val is not None:
             total = float(last_val) - float(first_val)
-            click.echo(
-                f"  Overall: {first_val} -> {last_val} (total delta: {total:+.1f})"
-            )
+            click.echo(f"  Overall: {first_val} -> {last_val} (total delta: {total:+.1f})")

@@ -14,7 +14,6 @@ from click.testing import CliRunner
 
 from roam.cli import cli
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
@@ -44,10 +43,7 @@ class TestInstallCheckPass:
 
     def test_exit_code_zero(self):
         result = invoke_check()
-        assert result.exit_code == 0, (
-            f"Expected exit 0 but got {result.exit_code}.\n"
-            f"Output: {result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0 but got {result.exit_code}.\nOutput: {result.output}"
 
     def test_output_contains_ready(self):
         result = invoke_check()
@@ -70,7 +66,6 @@ class TestInstallCheckPass:
 
 
 class TestInstallCheckMissingTreeSitter:
-
     def test_exit_code_one_when_tree_sitter_missing(self):
         with patch.dict(sys.modules, {"tree_sitter": None}):
             result = invoke_check()
@@ -98,7 +93,6 @@ class TestInstallCheckMissingTreeSitter:
 
 
 class TestInstallCheckMissingLanguagePack:
-
     def test_exit_code_one_when_language_pack_missing(self):
         with patch.dict(sys.modules, {"tree_sitter_language_pack": None}):
             result = invoke_check()
@@ -121,7 +115,6 @@ class TestInstallCheckMissingLanguagePack:
 
 
 class TestInstallCheckMissingGit:
-
     def test_exit_code_one_when_git_missing(self):
         with patch("shutil.which", return_value=None):
             result = invoke_check()
@@ -149,7 +142,6 @@ class TestInstallCheckMissingGit:
 
 
 class TestInstallCheckMultipleFailures:
-
     def test_multiple_issues_in_single_line(self):
         """Both missing tree-sitter and git show up in the same output line."""
         with patch.dict(sys.modules, {"tree_sitter": None}):
@@ -176,7 +168,6 @@ class TestInstallCheckMultipleFailures:
 
 
 class TestInstallCheckEagerBehaviour:
-
     def test_check_exits_before_subcommand_processing(self):
         """--check placed before a subcommand still exits before running the command."""
         runner = _make_runner()
@@ -215,7 +206,6 @@ class TestInstallCheckEagerBehaviour:
 
 
 class TestInstallCheckHelpText:
-
     def test_check_registered_as_cli_param(self):
         """--check is registered as a parameter on the main CLI group.
 
@@ -223,9 +213,7 @@ class TestInstallCheckHelpText:
         so we verify registration directly via cli.params instead of help text.
         """
         param_names = [p.name for p in cli.params]
-        assert "check" in param_names, (
-            f"--check not found in cli.params: {param_names}"
-        )
+        assert "check" in param_names, f"--check not found in cli.params: {param_names}"
 
     def test_check_is_eager_flag(self):
         """--check option must be marked eager so it fires before subcommands."""
@@ -254,7 +242,6 @@ class TestInstallCheckHelpText:
 
 
 class TestInstallCheckOutputFormat:
-
     def test_output_is_plain_text_not_json(self):
         """--check always outputs plain text, even if --json is also passed."""
         runner = _make_runner()

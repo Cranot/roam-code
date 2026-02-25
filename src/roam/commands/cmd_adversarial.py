@@ -10,11 +10,10 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope, abbrev_kind, loc
-from roam.commands.resolve import ensure_index
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Severity ordering
@@ -34,6 +33,7 @@ _MIN_SEVERITY = {
 # Challenge builder
 # ---------------------------------------------------------------------------
 
+
 def _challenge(ctype, severity, title, description, question, location=None):
     """Build a challenge dict with all required fields."""
     return {
@@ -49,6 +49,7 @@ def _challenge(ctype, severity, title, description, question, location=None):
 # ---------------------------------------------------------------------------
 # Challenge generators
 # ---------------------------------------------------------------------------
+
 
 def _check_new_cycles(conn, changed_sym_ids):
     """Check if changed symbols are part of any SCC (cycle)."""
@@ -91,21 +92,23 @@ def _check_new_cycles(conn, changed_sym_ids):
         if first_overlap in G.nodes:
             location = G.nodes[first_overlap].get("file_path", "")
 
-        challenges.append(_challenge(
-            "new_cycle",
-            "CRITICAL",
-            f"Cyclic dependency involving {len(scc)} symbols",
-            (
-                f"Changed symbols participate in a cycle: "
-                f"{' -> '.join(names)}{'...' if len(scc) > 5 else ''}. "
-                f"SCC size: {len(scc)} symbols."
-            ),
-            (
-                "With circular dependencies, explain why this won't cause "
-                "infinite recursion or initialization ordering issues."
-            ),
-            location=location,
-        ))
+        challenges.append(
+            _challenge(
+                "new_cycle",
+                "CRITICAL",
+                f"Cyclic dependency involving {len(scc)} symbols",
+                (
+                    f"Changed symbols participate in a cycle: "
+                    f"{' -> '.join(names)}{'...' if len(scc) > 5 else ''}. "
+                    f"SCC size: {len(scc)} symbols."
+                ),
+                (
+                    "With circular dependencies, explain why this won't cause "
+                    "infinite recursion or initialization ordering issues."
+                ),
+                location=location,
+            )
+        )
     return challenges
 
 
@@ -158,21 +161,23 @@ def _check_layer_violations(conn, changed_sym_ids):
             tgt_name = tgt_node.get("name", f"id={tgt}")
             file_path = src_node.get("file_path", "")
 
-            challenges.append(_challenge(
-                "layer_violation",
-                "HIGH",
-                f"Layer skip: L{src_layer} -> L{tgt_layer}",
-                (
-                    f"{src_name} (layer {src_layer}) calls "
-                    f"{tgt_name} (layer {tgt_layer}), "
-                    f"skipping {gap - 1} layer{'s' if gap - 1 != 1 else ''}."
-                ),
-                (
-                    "This dependency skips intermediate layers. Justify the "
-                    "shortcut or route through proper layer interfaces."
-                ),
-                location=file_path,
-            ))
+            challenges.append(
+                _challenge(
+                    "layer_violation",
+                    "HIGH",
+                    f"Layer skip: L{src_layer} -> L{tgt_layer}",
+                    (
+                        f"{src_name} (layer {src_layer}) calls "
+                        f"{tgt_name} (layer {tgt_layer}), "
+                        f"skipping {gap - 1} layer{'s' if gap - 1 != 1 else ''}."
+                    ),
+                    (
+                        "This dependency skips intermediate layers. Justify the "
+                        "shortcut or route through proper layer interfaces."
+                    ),
+                    location=file_path,
+                )
+            )
     return challenges
 
 
@@ -198,9 +203,7 @@ def _check_anti_patterns(conn, changed_file_ids):
         if not sym_id:
             continue
         try:
-            row = conn.execute(
-                "SELECT file_id FROM symbols WHERE id = ?", (sym_id,)
-            ).fetchone()
+            row = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (sym_id,)).fetchone()
         except Exception:
             continue
         if not row or row["file_id"] not in changed_fids:
@@ -213,21 +216,16 @@ def _check_anti_patterns(conn, changed_file_ids):
         location = f.get("location", "")
         suggested = f.get("suggested_way", "")
 
-        challenges.append(_challenge(
-            "anti_pattern",
-            severity,
-            f"Anti-pattern: {detected}",
-            (
-                f"Symbol '{sym_name}' at {location}. "
-                f"Confidence: {confidence}."
-            ),
-            (
-                f"Consider: {suggested}."
-                if suggested
-                else "Review this pattern and consider a better approach."
-            ),
-            location=location,
-        ))
+        challenges.append(
+            _challenge(
+                "anti_pattern",
+                severity,
+                f"Anti-pattern: {detected}",
+                (f"Symbol '{sym_name}' at {location}. Confidence: {confidence}."),
+                (f"Consider: {suggested}." if suggested else "Review this pattern and consider a better approach."),
+                location=location,
+            )
+        )
     return challenges
 
 
@@ -286,27 +284,26 @@ def _check_cross_cluster(conn, changed_sym_ids):
         pairs[key].append((src, tgt))
 
     for (c1, c2), edges in pairs.items():
-        edge_descs = [
-            f"{e[0].get('name', '')} -> {e[1].get('name', '')}"
-            for e in edges[:3]
-        ]
+        edge_descs = [f"{e[0].get('name', '')} -> {e[1].get('name', '')}" for e in edges[:3]]
         location = edges[0][0].get("file_path", "") if edges else ""
 
-        challenges.append(_challenge(
-            "cross_cluster",
-            "WARNING",
-            f"{len(edges)} cross-cluster edge(s) between cluster {c1} and {c2}",
-            (
-                f"Changed code adds edges crossing cluster boundaries: "
-                f"{'; '.join(edge_descs)}"
-                f"{'...' if len(edges) > 3 else ''}."
-            ),
-            (
-                "These clusters were separated by the community detection algorithm. "
-                "Justify the new coupling or extract a shared interface."
-            ),
-            location=location,
-        ))
+        challenges.append(
+            _challenge(
+                "cross_cluster",
+                "WARNING",
+                f"{len(edges)} cross-cluster edge(s) between cluster {c1} and {c2}",
+                (
+                    f"Changed code adds edges crossing cluster boundaries: "
+                    f"{'; '.join(edge_descs)}"
+                    f"{'...' if len(edges) > 3 else ''}."
+                ),
+                (
+                    "These clusters were separated by the community detection algorithm. "
+                    "Justify the new coupling or extract a shared interface."
+                ),
+                location=location,
+            )
+        )
     return challenges
 
 
@@ -318,9 +315,7 @@ def _check_orphaned_symbols(conn, changed_sym_ids):
 
     for sid in changed_sym_ids:
         try:
-            row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM edges WHERE target_id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) as cnt FROM edges WHERE target_id = ?", (sid,)).fetchone()
         except Exception:
             continue
         if not row or row["cnt"] != 0:
@@ -345,32 +340,26 @@ def _check_orphaned_symbols(conn, changed_sym_ids):
         name = sym["name"] or ""
 
         # Skip test files and private symbols
-        is_test = (
-            file_path.startswith("test")
-            or "tests/" in file_path
-            or "test/" in file_path
-            or "spec/" in file_path
-        )
+        is_test = file_path.startswith("test") or "tests/" in file_path or "test/" in file_path or "spec/" in file_path
         if is_test:
             continue
         if name.startswith("_"):
             continue
 
         location = loc(file_path, sym["line_start"])
-        challenges.append(_challenge(
-            "orphaned",
-            "INFO",
-            f"Orphaned symbol: {name}",
-            (
-                f"{name} ({abbrev_kind(sym['kind'])}) at {location} "
-                f"has no callers."
-            ),
-            (
-                "This symbol is not called by anything in the indexed codebase. "
-                "Is it a new entry point, a public API, or was a connection forgotten?"
-            ),
-            location=location,
-        ))
+        challenges.append(
+            _challenge(
+                "orphaned",
+                "INFO",
+                f"Orphaned symbol: {name}",
+                (f"{name} ({abbrev_kind(sym['kind'])}) at {location} has no callers."),
+                (
+                    "This symbol is not called by anything in the indexed codebase. "
+                    "Is it a new entry point, a public API, or was a connection forgotten?"
+                ),
+                location=location,
+            )
+        )
     return challenges
 
 
@@ -384,9 +373,7 @@ def _check_high_fan_out(conn, changed_sym_ids):
 
     for sid in changed_sym_ids:
         try:
-            row = conn.execute(
-                "SELECT COUNT(*) as cnt FROM edges WHERE source_id = ?", (sid,)
-            ).fetchone()
+            row = conn.execute("SELECT COUNT(*) as cnt FROM edges WHERE source_id = ?", (sid,)).fetchone()
         except Exception:
             continue
         if not row or row["cnt"] <= _FAN_OUT_THRESHOLD:
@@ -408,28 +395,31 @@ def _check_high_fan_out(conn, changed_sym_ids):
         name = sym["name"] or ""
         location = loc(file_path, sym["line_start"])
 
-        challenges.append(_challenge(
-            "high_fan_out",
-            "WARNING",
-            f"High fan-out: {name} calls {fan_out} dependencies",
-            (
-                f"{name} ({abbrev_kind(sym['kind'])}) at {location} "
-                f"has {fan_out} outgoing edges, exceeding the threshold of "
-                f"{_FAN_OUT_THRESHOLD}."
-            ),
-            (
-                "High fan-out increases coupling and makes this symbol a "
-                "change magnet. Consider splitting responsibilities or "
-                "introducing a facade/coordinator pattern."
-            ),
-            location=location,
-        ))
+        challenges.append(
+            _challenge(
+                "high_fan_out",
+                "WARNING",
+                f"High fan-out: {name} calls {fan_out} dependencies",
+                (
+                    f"{name} ({abbrev_kind(sym['kind'])}) at {location} "
+                    f"has {fan_out} outgoing edges, exceeding the threshold of "
+                    f"{_FAN_OUT_THRESHOLD}."
+                ),
+                (
+                    "High fan-out increases coupling and makes this symbol a "
+                    "change magnet. Consider splitting responsibilities or "
+                    "introducing a facade/coordinator pattern."
+                ),
+                location=location,
+            )
+        )
     return challenges
 
 
 # ---------------------------------------------------------------------------
 # Output formatters
 # ---------------------------------------------------------------------------
+
 
 def _format_text(challenges, verdict, changed_files_count):
     """Produce plain-text challenge output."""
@@ -444,13 +434,11 @@ def _format_text(challenges, verdict, changed_files_count):
     lines.append("")
 
     for i, c in enumerate(challenges, 1):
-        lines.append(
-            f"CHALLENGE {i} [{c['severity']}] -- {c['title']}"
-        )
+        lines.append(f"CHALLENGE {i} [{c['severity']}] -- {c['title']}")
         lines.append(f"  {c['description']}")
         if c["location"]:
             lines.append(f"  Location: {c['location']}")
-        lines.append(f"  Question: \"{c['question']}\"")
+        lines.append(f'  Question: "{c["question"]}"')
         lines.append("")
 
     return "\n".join(lines)
@@ -468,9 +456,7 @@ def _format_markdown(challenges, verdict, changed_files_count):
     ]
 
     if not challenges:
-        lines.append(
-            "_No architectural challenges found — changes look structurally clean._"
-        )
+        lines.append("_No architectural challenges found — changes look structurally clean._")
         return "\n".join(lines)
 
     # Group by severity
@@ -509,10 +495,13 @@ def _format_markdown(challenges, verdict, changed_files_count):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("adversarial")
 @click.option("--staged", is_flag=True, help="Review staged changes only")
 @click.option(
-    "--range", "commit_range", default=None,
+    "--range",
+    "commit_range",
+    default=None,
     help="Review a commit range (e.g. main..HEAD)",
 )
 @click.option(
@@ -522,11 +511,13 @@ def _format_markdown(challenges, verdict, changed_files_count):
     help="Minimum severity to show (default: low — show all)",
 )
 @click.option(
-    "--fail-on-critical", is_flag=True,
+    "--fail-on-critical",
+    is_flag=True,
     help="Exit 1 if critical challenges found (CI mode)",
 )
 @click.option(
-    "--format", "fmt",
+    "--format",
+    "fmt",
     type=click.Choice(["text", "markdown"]),
     default="text",
     help="Output format (default: text)",
@@ -553,26 +544,28 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # ------------------------------------------------------------------
         # Resolve changed files
         # ------------------------------------------------------------------
-        changed = get_changed_files(
-            root, staged=staged, commit_range=commit_range
-        )
+        changed = get_changed_files(root, staged=staged, commit_range=commit_range)
 
         if not changed:
             verdict = "No changes detected"
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "adversarial",
-                    summary={
-                        "verdict": verdict,
-                        "challenges": 0,
-                        "critical": 0,
-                        "high": 0,
-                        "warning": 0,
-                        "info": 0,
-                        "changed_files": 0,
-                    },
-                    challenges=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "adversarial",
+                            summary={
+                                "verdict": verdict,
+                                "challenges": 0,
+                                "critical": 0,
+                                "high": 0,
+                                "warning": 0,
+                                "info": 0,
+                                "changed_files": 0,
+                            },
+                            challenges=[],
+                        )
+                    )
+                )
             elif fmt == "markdown":
                 click.echo(_format_markdown([], verdict, 0))
             else:
@@ -585,27 +578,29 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         if not file_map:
             verdict = "Changed files not found in index"
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "adversarial",
-                    summary={
-                        "verdict": verdict,
-                        "challenges": 0,
-                        "critical": 0,
-                        "high": 0,
-                        "warning": 0,
-                        "info": 0,
-                        "changed_files": len(changed),
-                    },
-                    challenges=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "adversarial",
+                            summary={
+                                "verdict": verdict,
+                                "challenges": 0,
+                                "critical": 0,
+                                "high": 0,
+                                "warning": 0,
+                                "info": 0,
+                                "changed_files": len(changed),
+                            },
+                            challenges=[],
+                        )
+                    )
+                )
             elif fmt == "markdown":
                 click.echo(_format_markdown([], verdict, len(changed)))
             else:
                 click.echo(f"VERDICT: {verdict}")
                 click.echo(
-                    f"Changed files not found in index "
-                    f"({len(changed)} files changed). "
-                    "Try running `roam index` first."
+                    f"Changed files not found in index ({len(changed)} files changed). Try running `roam index` first."
                 )
             return
 
@@ -618,9 +613,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         for path, fid in file_map.items():
             changed_file_ids.add(fid)
             try:
-                syms = conn.execute(
-                    "SELECT id FROM symbols WHERE file_id = ?", (fid,)
-                ).fetchall()
+                syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
                 changed_sym_ids.update(s["id"] for s in syms)
             except Exception:
                 pass
@@ -640,10 +633,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # Filter by minimum severity
         # ------------------------------------------------------------------
         min_sev = _MIN_SEVERITY.get(severity.lower(), 1)
-        challenges = [
-            c for c in challenges
-            if _SEVERITY_ORDER.get(c["severity"], 0) >= min_sev
-        ]
+        challenges = [c for c in challenges if _SEVERITY_ORDER.get(c["severity"], 0) >= min_sev]
 
         # ------------------------------------------------------------------
         # Sort: critical first, then high, warning, info
@@ -673,21 +663,26 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
         # Output
         # ------------------------------------------------------------------
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "adversarial",
-                summary={
-                    "verdict": verdict,
-                    "challenges": len(challenges),
-                    "critical": critical,
-                    "high": high,
-                    "warning": warning,
-                    "info": info,
-                    "changed_files": len(file_map),
-                },
-                challenges=challenges,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "adversarial",
+                        summary={
+                            "verdict": verdict,
+                            "challenges": len(challenges),
+                            "critical": critical,
+                            "high": high,
+                            "warning": warning,
+                            "info": info,
+                            "changed_files": len(file_map),
+                        },
+                        challenges=challenges,
+                    )
+                )
+            )
             if fail_on_critical and critical > 0:
                 from roam.exit_codes import EXIT_GATE_FAILURE
+
                 ctx.exit(EXIT_GATE_FAILURE)
             return
 
@@ -700,4 +695,5 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
 
         if fail_on_critical and critical > 0:
             from roam.exit_codes import EXIT_GATE_FAILURE
+
             ctx.exit(EXIT_GATE_FAILURE)

@@ -16,14 +16,13 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
+from roam.commands.resolve import ensure_index
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (
     abbrev_kind,
-    to_json,
     json_envelope,
+    to_json,
 )
-from roam.commands.resolve import ensure_index
-
 
 # ---------------------------------------------------------------------------
 # Time-decayed ownership computation
@@ -66,13 +65,11 @@ def compute_file_ownership(conn, file_ids: list[int], now: int | None = None):
     )
 
     # Accumulate weighted churn per (file, author)
-    file_author_weight: dict[int, dict[str, float]] = defaultdict(
-        lambda: defaultdict(float)
-    )
+    file_author_weight: dict[int, dict[str, float]] = defaultdict(lambda: defaultdict(float))
     for r in rows:
         fid = r["file_id"]
         author = r["author"]
-        churn = (r["churn"] or 0)
+        churn = r["churn"] or 0
         w = _decay_weight(r["timestamp"] or 0, now)
         file_author_weight[fid][author] += churn * w
 
@@ -250,9 +247,7 @@ def _analyse_departure(conn, project_root, developers: list[str]):
     now = int(time.time())
 
     # 1. Get all files
-    all_files = conn.execute(
-        "SELECT id, path FROM files ORDER BY path"
-    ).fetchall()
+    all_files = conn.execute("SELECT id, path FROM files ORDER BY path").fetchall()
 
     if not all_files:
         return None
@@ -322,10 +317,7 @@ def _analyse_departure(conn, project_root, developers: list[str]):
         lst.sort(key=lambda x: x["ownership_share"], reverse=True)
 
     # 5. Get PageRank data for at-risk files
-    at_risk_file_ids = [
-        f["file_id"]
-        for f in critical_files + high_risk_files + medium_risk_files
-    ]
+    at_risk_file_ids = [f["file_id"] for f in critical_files + high_risk_files + medium_risk_files]
 
     # Build a mapping of file_id -> list of important symbols
     file_symbols: dict[int, list[dict]] = defaultdict(list)
@@ -343,12 +335,14 @@ def _analyse_departure(conn, project_root, developers: list[str]):
             at_risk_file_ids,
         )
         for r in sym_rows:
-            file_symbols[r["file_id"]].append({
-                "name": r["name"],
-                "kind": r["kind"],
-                "line": r["line_start"],
-                "pagerank": round(r["pagerank"], 4) if r["pagerank"] else 0,
-            })
+            file_symbols[r["file_id"]].append(
+                {
+                    "name": r["name"],
+                    "kind": r["kind"],
+                    "line": r["line_start"],
+                    "pagerank": round(r["pagerank"], 4) if r["pagerank"] else 0,
+                }
+            )
 
     # Annotate file entries with pagerank of top symbol
     for entry in critical_files + high_risk_files + medium_risk_files:
@@ -391,29 +385,36 @@ def _analyse_departure(conn, project_root, developers: list[str]):
         overlap = fids & at_risk_set
         if len(overlap) > 0 and len(overlap) / len(fids) >= 0.3:
             affected_clusters += 1
-            affected_cluster_list.append({
-                "cluster_id": cid,
-                "label": cluster_labels.get(cid, f"cluster-{cid}"),
-                "total_files": len(fids),
-                "at_risk_files": len(overlap),
-            })
+            affected_cluster_list.append(
+                {
+                    "cluster_id": cid,
+                    "label": cluster_labels.get(cid, f"cluster-{cid}"),
+                    "total_files": len(fids),
+                    "at_risk_files": len(overlap),
+                }
+            )
 
-    affected_cluster_list.sort(
-        key=lambda x: x["at_risk_files"], reverse=True
-    )
+    affected_cluster_list.sort(key=lambda x: x["at_risk_files"], reverse=True)
 
     # 8. Generate recommendations
     recommendations = _generate_recommendations(
-        critical_files, high_risk_files, medium_risk_files, affected_clusters,
+        critical_files,
+        high_risk_files,
+        medium_risk_files,
+        affected_clusters,
     )
 
     total_at_risk = len(critical_files) + len(high_risk_files) + len(medium_risk_files)
     verdict_str = _verdict(
-        len(critical_files), len(high_risk_files),
-        len(medium_risk_files), total_at_risk,
+        len(critical_files),
+        len(high_risk_files),
+        len(medium_risk_files),
+        total_at_risk,
     )
     severity = _severity_label(
-        len(critical_files), len(high_risk_files), len(medium_risk_files),
+        len(critical_files),
+        len(high_risk_files),
+        len(medium_risk_files),
     )
 
     return {
@@ -438,34 +439,21 @@ def _generate_recommendations(critical, high, medium, affected_clusters):
 
     if critical:
         top = critical[0]
-        recs.append(
-            f"Pair program on {top['path']} (highest risk, "
-            f"{top['ownership_pct']}% ownership + sole CODEOWNER)"
-        )
+        recs.append(f"Pair program on {top['path']} (highest risk, {top['ownership_pct']}% ownership + sole CODEOWNER)")
         if len(critical) > 1:
-            recs.append(
-                f"Add backup CODEOWNERS for {len(critical)} critical files"
-            )
+            recs.append(f"Add backup CODEOWNERS for {len(critical)} critical files")
 
     if high:
         top = high[0]
-        recs.append(
-            f"Spread knowledge of {top['path']} ({top['ownership_pct']}% ownership)"
-        )
+        recs.append(f"Spread knowledge of {top['path']} ({top['ownership_pct']}% ownership)")
         if len(high) > 3:
-            recs.append(
-                f"Schedule knowledge-transfer sessions for {len(high)} high-risk files"
-            )
+            recs.append(f"Schedule knowledge-transfer sessions for {len(high)} high-risk files")
 
     if affected_clusters > 0:
-        recs.append(
-            f"Document architecture decisions in {affected_clusters} affected modules"
-        )
+        recs.append(f"Document architecture decisions in {affected_clusters} affected modules")
 
     if medium and not critical and not high:
-        recs.append(
-            "Low overall risk -- consider gradual knowledge sharing"
-        )
+        recs.append("Low overall risk -- consider gradual knowledge sharing")
 
     if not critical and not high and not medium:
         recs.append("No significant knowledge concentration detected")
@@ -532,6 +520,7 @@ def simulate_departure(ctx, developers, limit):
 
 def _output_json(result, developers):
     """Emit JSON envelope output."""
+
     def _file_entry(f):
         entry = {
             "path": f["path"],
@@ -558,15 +547,9 @@ def _output_json(result, developers):
                 },
                 developer=", ".join(developers),
                 total_files_at_risk=result["total_files_at_risk"],
-                critical_files=[
-                    _file_entry(f) for f in result["critical_files"]
-                ],
-                high_risk_files=[
-                    _file_entry(f) for f in result["high_risk_files"]
-                ],
-                medium_risk_files=[
-                    _file_entry(f) for f in result["medium_risk_files"]
-                ],
+                critical_files=[_file_entry(f) for f in result["critical_files"]],
+                high_risk_files=[_file_entry(f) for f in result["high_risk_files"]],
+                medium_risk_files=[_file_entry(f) for f in result["medium_risk_files"]],
                 key_symbols=[
                     {
                         "name": s["name"],

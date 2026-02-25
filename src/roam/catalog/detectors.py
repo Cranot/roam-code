@@ -120,7 +120,7 @@ def _read_symbol_source(path: str, line_start: int | None, line_end: int | None)
         return "\n".join(lines)
     ls = max(1, int(line_start))
     le = max(ls, int(line_end))
-    return "\n".join(lines[ls - 1:le])
+    return "\n".join(lines[ls - 1 : le])
 
 
 def _iter_loop_calls(row) -> list[str]:
@@ -146,20 +146,14 @@ _FRAMEWORK_IO_PACKS = {
             "receiver_hints": {"objects", "queryset"},
             "leaves": {"get", "filter", "exclude", "all", "count", "exists"},
             "confidence": "high",
-            "fix": (
-                "Batch ORM fetches with `id__in` and add "
-                "`select_related()/prefetch_related()`."
-            ),
+            "fix": ("Batch ORM fetches with `id__in` and add `select_related()/prefetch_related()`."),
         },
         {
             "framework": "sqlalchemy",
             "receiver_hints": {"session"},
             "leaves": {"execute", "query", "scalars", "get"},
             "confidence": "high",
-            "fix": (
-                "Use one `IN` query and eager loading "
-                "(`selectinload`/`joinedload`) before the loop."
-            ),
+            "fix": ("Use one `IN` query and eager loading (`selectinload`/`joinedload`) before the loop."),
         },
     ],
     "ruby": [
@@ -218,10 +212,7 @@ _FRAMEWORK_IO_PACKS = {
             "receiver_hints": {"repository", "entitymanager", "jdbc", "template"},
             "leaves": {"findbyid", "findall", "query", "execute", "select"},
             "confidence": "high",
-            "fix": (
-                "Preload rows with one repository/JPA query "
-                "(`IN (...)` + fetch join)."
-            ),
+            "fix": ("Preload rows with one repository/JPA query (`IN (...)` + fetch join)."),
         },
     ],
 }
@@ -289,6 +280,7 @@ def _guard_hints_from_source(language: str | None, snippet: str) -> list[str]:
 # Individual detectors
 # ---------------------------------------------------------------------------
 
+
 def detect_manual_sort(conn):
     """Symbols named *sort* with nested loops, comparisons, and subscript
     access (swap pattern).  No call to built-in sort."""
@@ -310,16 +302,19 @@ def detect_manual_sort(conn):
         if _is_test_path(r["file_path"]):
             continue
         calls = _iter_loop_calls(r)
-        if _call_in(calls, {"sort", "sorted", "Arrays.sort", "Collections.sort",
-                            "qsort", "std::sort"}):
+        if _call_in(calls, {"sort", "sorted", "Arrays.sort", "Collections.sort", "qsort", "std::sort"}):
             continue
         # Subscript access in loops strengthens the signal (swap pattern)
         conf = "high" if r["subscript_in_loops"] else "medium"
-        results.append(_finding(
-            "sorting", "manual-sort", r,
-            "Nested loops with comparisons in sort-named function",
-            conf,
-        ))
+        results.append(
+            _finding(
+                "sorting",
+                "manual-sort",
+                r,
+                "Nested loops with comparisons in sort-named function",
+                conf,
+            )
+        )
     return results
 
 
@@ -350,15 +345,28 @@ def detect_linear_search(conn):
         if _is_test_path(r["file_path"]):
             continue
         calls = _iter_loop_calls(r)
-        if _call_in(calls, {"bisect", "bisect_left", "bisect_right",
-                            "binarySearch", "binary_search", "lower_bound",
-                            "upper_bound"}):
+        if _call_in(
+            calls,
+            {
+                "bisect",
+                "bisect_left",
+                "bisect_right",
+                "binarySearch",
+                "binary_search",
+                "lower_bound",
+                "upper_bound",
+            },
+        ):
             continue
-        results.append(_finding(
-            "search-sorted", "linear-scan", r,
-            "Linear scan in function that implies sorted data",
-            "low",
-        ))
+        results.append(
+            _finding(
+                "search-sorted",
+                "linear-scan",
+                r,
+                "Linear scan in function that implies sorted data",
+                "low",
+            )
+        )
     return results
 
 
@@ -386,11 +394,15 @@ def detect_list_membership(conn):
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        results.append(_finding(
-            "membership", "list-scan", r,
-            "Nested loops with comparisons for membership check",
-            "medium",
-        ))
+        results.append(
+            _finding(
+                "membership",
+                "list-scan",
+                r,
+                "Nested loops with comparisons for membership check",
+                "medium",
+            )
+        )
     return results
 
 
@@ -420,18 +432,35 @@ def detect_string_concat_loop(conn):
         has_concat_call = bool(_call_in(calls, {"concat", "strcat", "append", "push"}))
         # Name signal: function name suggests string building
         name_lower = (r["name"] or "").lower()
-        has_name_hint = any(kw in name_lower for kw in
-                           ("concat", "build_str", "build_string",
-                            "format", "render", "serialize",
-                            "to_string", "tostring", "stringify",
-                            "to_csv", "to_html", "to_xml",
-                            "generate_report", "join"))
+        has_name_hint = any(
+            kw in name_lower
+            for kw in (
+                "concat",
+                "build_str",
+                "build_string",
+                "format",
+                "render",
+                "serialize",
+                "to_string",
+                "tostring",
+                "stringify",
+                "to_csv",
+                "to_html",
+                "to_xml",
+                "generate_report",
+                "join",
+            )
+        )
         if has_concat_call or has_name_hint:
-            results.append(_finding(
-                "string-concat", "loop-concat", r,
-                "Loop accumulation in string-building function",
-                "medium",
-            ))
+            results.append(
+                _finding(
+                    "string-concat",
+                    "loop-concat",
+                    r,
+                    "Loop accumulation in string-building function",
+                    "medium",
+                )
+            )
     return results
 
 
@@ -460,11 +489,15 @@ def detect_manual_dedup(conn):
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"set", "Set", "HashSet"}):
             continue
-        results.append(_finding(
-            "unique", "nested-dedup", r,
-            "Nested loops with comparisons in dedup function",
-            "high",
-        ))
+        results.append(
+            _finding(
+                "unique",
+                "nested-dedup",
+                r,
+                "Nested loops with comparisons in dedup function",
+                "high",
+            )
+        )
     return results
 
 
@@ -497,14 +530,17 @@ def detect_manual_maxmin(conn):
         if _is_test_path(r["file_path"]):
             continue
         calls = _iter_loop_calls(r)
-        if _call_in(calls, {"max", "min", "Math.max", "Math.min",
-                            "Collections.max", "Collections.min"}):
+        if _call_in(calls, {"max", "min", "Math.max", "Math.min", "Collections.max", "Collections.min"}):
             continue
-        results.append(_finding(
-            "max-min", "manual-loop", r,
-            "Manual loop with comparisons in max/min function (idiomatic improvement)",
-            "low",
-        ))
+        results.append(
+            _finding(
+                "max-min",
+                "manual-loop",
+                r,
+                "Manual loop with comparisons in max/min function (idiomatic improvement)",
+                "low",
+            )
+        )
     return results
 
 
@@ -534,11 +570,15 @@ def detect_manual_accumulation(conn):
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"sum", "reduce", "aggregate", "prod"}):
             continue
-        results.append(_finding(
-            "accumulation", "manual-sum", r,
-            "Loop with accumulator in sum/total function (idiomatic improvement)",
-            "low",
-        ))
+        results.append(
+            _finding(
+                "accumulation",
+                "manual-sum",
+                r,
+                "Loop with accumulator in sum/total function (idiomatic improvement)",
+                "low",
+            )
+        )
     return results
 
 
@@ -583,11 +623,15 @@ def detect_manual_power(conn):
         if _call_in(calls, {"pow", "Math.pow", "std::pow", "math.pow", "BigInteger.modPow"}):
             continue
         conf = "high" if _row_value(r, "loop_with_multiplication", 0) else "medium"
-        results.append(_finding(
-            "manual-power", "loop-multiply", r,
-            "Loop multiplication used for exponentiation",
-            conf,
-        ))
+        results.append(
+            _finding(
+                "manual-power",
+                "loop-multiply",
+                r,
+                "Loop multiplication used for exponentiation",
+                conf,
+            )
+        )
     return results
 
 
@@ -630,11 +674,15 @@ def detect_manual_gcd(conn):
         conf = "medium"
         if _row_value(r, "loop_with_modulo", 0):
             conf = "high"
-        results.append(_finding(
-            "manual-gcd", "manual-gcd", r,
-            "Manual GCD loop can be replaced with standard gcd helper",
-            conf,
-        ))
+        results.append(
+            _finding(
+                "manual-gcd",
+                "manual-gcd",
+                r,
+                "Manual GCD loop can be replaced with standard gcd helper",
+                conf,
+            )
+        )
     return results
 
 
@@ -672,11 +720,15 @@ def detect_string_reverse(conn):
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"reverse", "reversed", "std::reverse", "StringBuilder.reverse", "strrev"}):
             continue
-        results.append(_finding(
-            "string-reverse", "manual-reverse", r,
-            "Manual character-loop reversal in reverse-named function",
-            "low",
-        ))
+        results.append(
+            _finding(
+                "string-reverse",
+                "manual-reverse",
+                r,
+                "Manual character-loop reversal in reverse-named function",
+                "low",
+            )
+        )
     return results
 
 
@@ -720,13 +772,20 @@ def detect_matrix_mult(conn):
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"dot", "matmul", "gemm", "dgemm", "numpy.dot", "np.matmul"}):
             continue
-        conf = "high" if (_row_value(r, "loop_with_multiplication", 0)
-                          and _row_value(r, "loop_with_accumulator", 0)) else "medium"
-        results.append(_finding(
-            "matrix-mult", "naive-triple", r,
-            "Naive matrix multiplication via nested loops",
-            conf,
-        ))
+        conf = (
+            "high"
+            if (_row_value(r, "loop_with_multiplication", 0) and _row_value(r, "loop_with_accumulator", 0))
+            else "medium"
+        )
+        results.append(
+            _finding(
+                "matrix-mult",
+                "naive-triple",
+                r,
+                "Naive matrix multiplication via nested loops",
+                conf,
+            )
+        )
     return results
 
 
@@ -762,11 +821,15 @@ def detect_naive_fibonacci(conn):
         ).fetchone()
         if memo_edge:
             continue
-        results.append(_finding(
-            "fibonacci", "naive-recursive", r,
-            "Recursive fibonacci without memoization (exponential blowup)",
-            "high",
-        ))
+        results.append(
+            _finding(
+                "fibonacci",
+                "naive-recursive",
+                r,
+                "Recursive fibonacci without memoization (exponential blowup)",
+                "high",
+            )
+        )
     return results
 
 
@@ -793,9 +856,20 @@ def detect_nested_lookup(conn):
     ).fetchall()
 
     # Names that suggest grid/matrix traversal (suppress these)
-    _GRID_NAMES = {"matrix", "grid", "board", "pixel", "cell",
-                   "permut", "combin", "cartesian", "product",
-                   "transpose", "rotate", "convolv"}
+    _GRID_NAMES = {
+        "matrix",
+        "grid",
+        "board",
+        "pixel",
+        "cell",
+        "permut",
+        "combin",
+        "cartesian",
+        "product",
+        "transpose",
+        "rotate",
+        "convolv",
+    }
 
     results = []
     for r in rows:
@@ -805,11 +879,15 @@ def detect_nested_lookup(conn):
         name_lower = (r["name"] or "").lower()
         if any(kw in name_lower for kw in _GRID_NAMES):
             continue
-        results.append(_finding(
-            "nested-lookup", "nested-iteration", r,
-            "Nested loops with subscript access and comparisons (potential O(n*m))",
-            "medium",
-        ))
+        results.append(
+            _finding(
+                "nested-lookup",
+                "nested-iteration",
+                r,
+                "Nested loops with subscript access and comparisons (potential O(n*m))",
+                "medium",
+            )
+        )
     return results
 
 
@@ -840,14 +918,17 @@ def detect_manual_groupby(conn):
         if _is_test_path(r["file_path"]):
             continue
         calls = _iter_loop_calls(r)
-        if _call_in(calls, {"groupby", "group_by", "defaultdict", "setdefault",
-                            "groupingBy", "Collectors"}):
+        if _call_in(calls, {"groupby", "group_by", "defaultdict", "setdefault", "groupingBy", "Collectors"}):
             continue
-        results.append(_finding(
-            "groupby", "manual-check", r,
-            "Manual loop in group-by function (idiomatic improvement)",
-            "low",
-        ))
+        results.append(
+            _finding(
+                "groupby",
+                "manual-check",
+                r,
+                "Manual loop in group-by function (idiomatic improvement)",
+                "low",
+            )
+        )
     return results
 
 
@@ -868,33 +949,48 @@ def detect_busy_wait(conn):
     ).fetchall()
 
     # Intentional polling patterns — suppress these
-    _POLL_NAMES = {"poll", "retry", "health_check", "healthcheck",
-                   "monitor", "wait_for", "wait_until", "watchdog",
-                   "ping", "heartbeat", "keepalive", "backoff"}
+    _POLL_NAMES = {
+        "poll",
+        "retry",
+        "health_check",
+        "healthcheck",
+        "monitor",
+        "wait_for",
+        "wait_until",
+        "watchdog",
+        "ping",
+        "heartbeat",
+        "keepalive",
+        "backoff",
+    }
 
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
         calls = _iter_loop_calls(r)
-        if not _call_in(calls, {"sleep", "time.sleep", "Thread.sleep", "usleep",
-                                "nanosleep", "Sleep"}):
+        if not _call_in(calls, {"sleep", "time.sleep", "Thread.sleep", "usleep", "nanosleep", "Sleep"}):
             continue
         # Suppress intentional polling
         name_lower = (r["name"] or "").lower()
         if any(kw in name_lower for kw in _POLL_NAMES):
             continue
-        results.append(_finding(
-            "busy-wait", "sleep-loop", r,
-            "sleep() called inside a loop (busy-wait pattern)",
-            "high",
-        ))
+        results.append(
+            _finding(
+                "busy-wait",
+                "sleep-loop",
+                r,
+                "sleep() called inside a loop (busy-wait pattern)",
+                "high",
+            )
+        )
     return results
 
 
 # ---------------------------------------------------------------------------
 # New detectors: patterns identified by research
 # ---------------------------------------------------------------------------
+
 
 def detect_regex_in_loop(conn):
     """Regex compilation inside a loop — recompiles on every iteration.
@@ -915,10 +1011,21 @@ def detect_regex_in_loop(conn):
     # Note: call target names are extracted as the last identifier in
     # member expressions (e.g. re.compile -> "compile", re.match -> "match")
     _REGEX_COMPILE_CALLS = {"compile", "Compile", "MustCompile"}
-    _REGEX_CONVENIENCE_CALLS = {"match", "search", "findall", "sub",
-                                "split", "fullmatch", "finditer",
-                                "matches", "Replace", "ReplaceAll",
-                                "Find", "FindAll", "MatchString"}
+    _REGEX_CONVENIENCE_CALLS = {
+        "match",
+        "search",
+        "findall",
+        "sub",
+        "split",
+        "fullmatch",
+        "finditer",
+        "matches",
+        "Replace",
+        "ReplaceAll",
+        "Find",
+        "FindAll",
+        "MatchString",
+    }
 
     results = []
     for r in rows:
@@ -932,18 +1039,25 @@ def detect_regex_in_loop(conn):
         # since these could be on a pre-compiled pattern object
         convenience_calls = _call_in(calls, _REGEX_CONVENIENCE_CALLS)
         if compile_calls:
-            results.append(_finding(
-                "regex-in-loop", "compile-per-iter", r,
-                f"Regex compile ({', '.join(compile_calls[:2])}) inside loop",
-                "high",
-            ))
+            results.append(
+                _finding(
+                    "regex-in-loop",
+                    "compile-per-iter",
+                    r,
+                    f"Regex compile ({', '.join(compile_calls[:2])}) inside loop",
+                    "high",
+                )
+            )
         elif convenience_calls:
-            results.append(_finding(
-                "regex-in-loop", "compile-per-iter", r,
-                f"Regex call ({', '.join(convenience_calls[:2])}) inside loop "
-                "(may recompile per iteration)",
-                "medium",
-            ))
+            results.append(
+                _finding(
+                    "regex-in-loop",
+                    "compile-per-iter",
+                    r,
+                    f"Regex call ({', '.join(convenience_calls[:2])}) inside loop (may recompile per iteration)",
+                    "medium",
+                )
+            )
     return results
 
 
@@ -978,24 +1092,49 @@ def detect_io_in_loop(conn):
 
     # High-confidence calls: strongly indicative DB/API round trips.
     _HIGH_EXACT = {
-        "requests.get", "requests.post", "requests.put", "requests.delete",
-        "requests.patch", "urllib.request.urlopen",
-        "session.execute", "session.query", "cursor.execute",
-        "http.Get", "http.Post",
+        "requests.get",
+        "requests.post",
+        "requests.put",
+        "requests.delete",
+        "requests.patch",
+        "urllib.request.urlopen",
+        "session.execute",
+        "session.query",
+        "cursor.execute",
+        "http.Get",
+        "http.Post",
     }
     _HIGH_EXACT_LOWER = {c.lower() for c in _HIGH_EXACT}
     _HIGH_LEAF = {"execute", "executemany", "query", "urlopen"}
     _AMBIGUOUS_BARE = {"query", "find", "get"}
     _MEDIUM_LEAF = {"fetchone", "fetchall", "fetchmany", "fetch", "find", "get", "open"}
     _IO_RECEIVER_HINTS = {
-        "session", "cursor", "db", "conn", "connection", "repo",
-        "repository", "queryset", "client", "api", "http", "requests",
+        "session",
+        "cursor",
+        "db",
+        "conn",
+        "connection",
+        "repo",
+        "repository",
+        "queryset",
+        "client",
+        "api",
+        "http",
+        "requests",
         "urllib",
     }
 
     # Suppress functions that are intentionally batch/migration wrappers.
-    _IO_WRAPPER_NAMES = {"batch", "bulk", "migrate", "seed", "import",
-                         "export", "sync_all", "backfill"}
+    _IO_WRAPPER_NAMES = {
+        "batch",
+        "bulk",
+        "migrate",
+        "seed",
+        "import",
+        "export",
+        "sync_all",
+        "backfill",
+    }
 
     def _receiver_hint(call: str) -> str:
         if "." not in call:
@@ -1110,17 +1249,21 @@ def detect_io_in_loop(conn):
             if guard_applies:
                 confidence = _lower_confidence(confidence)
                 reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-            results.append(_finding(
-                "io-in-loop", "loop-query", r,
-                f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
-                confidence,
-                evidence={
-                    "io_calls": _dedupe(high_calls + medium_calls)[:6],
-                    "frameworks": sorted(frameworks),
-                    "guard_hints": guard_hints,
-                },
-                fix="; ".join(sorted(fixes)) if fixes else None,
-            ))
+            results.append(
+                _finding(
+                    "io-in-loop",
+                    "loop-query",
+                    r,
+                    f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
+                    confidence,
+                    evidence={
+                        "io_calls": _dedupe(high_calls + medium_calls)[:6],
+                        "frameworks": sorted(frameworks),
+                        "guard_hints": guard_hints,
+                    },
+                    fix="; ".join(sorted(fixes)) if fixes else None,
+                )
+            )
         else:
             reason_calls = _dedupe(medium_calls)[:2]
             reason_suffix = ""
@@ -1130,17 +1273,21 @@ def detect_io_in_loop(conn):
             if guard_applies:
                 confidence = _lower_confidence(confidence)
                 reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-            results.append(_finding(
-                "io-in-loop", "loop-query", r,
-                f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
-                confidence,
-                evidence={
-                    "io_calls": _dedupe(high_calls + medium_calls)[:6],
-                    "frameworks": sorted(frameworks),
-                    "guard_hints": guard_hints,
-                },
-                fix="; ".join(sorted(fixes)) if fixes else None,
-            ))
+            results.append(
+                _finding(
+                    "io-in-loop",
+                    "loop-query",
+                    r,
+                    f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
+                    confidence,
+                    evidence={
+                        "io_calls": _dedupe(high_calls + medium_calls)[:6],
+                        "frameworks": sorted(frameworks),
+                        "guard_hints": guard_hints,
+                    },
+                    fix="; ".join(sorted(fixes)) if fixes else None,
+                )
+            )
     return results
 
 
@@ -1175,20 +1322,28 @@ def detect_list_prepend(conn):
             continue
         # New indexes precompute the exact front-op signal.
         if _row_value(r, "front_ops_in_loop", None) == 1:
-            results.append(_finding(
-                "list-prepend", "insert-front", r,
-                "Front insert/remove inside loop (O(n) shift per operation)",
-                "high",
-            ))
+            results.append(
+                _finding(
+                    "list-prepend",
+                    "insert-front",
+                    r,
+                    "Front insert/remove inside loop (O(n) shift per operation)",
+                    "high",
+                )
+            )
             continue
         # Fallback heuristic (conservative): only explicit front APIs.
         calls = _iter_loop_calls(r)
         if _call_in(calls, {"insert", "unshift", "shift", "appendleft", "popleft"}):
-            results.append(_finding(
-                "list-prepend", "insert-front", r,
-                "Potential front insert/remove inside loop",
-                "medium",
-            ))
+            results.append(
+                _finding(
+                    "list-prepend",
+                    "insert-front",
+                    r,
+                    "Potential front insert/remove inside loop",
+                    "medium",
+                )
+            )
     return results
 
 
@@ -1207,9 +1362,7 @@ def detect_sort_to_select(conn):
         "WHERE s.kind IN ('function', 'method')"
     ).fetchall()
 
-    sorted_index_re = re.compile(
-        r"\bsorted\s*\([^)]*\)\s*\[\s*(?:-?\d+|:\s*[^]\n]+)\s*\]"
-    )
+    sorted_index_re = re.compile(r"\bsorted\s*\([^)]*\)\s*\[\s*(?:-?\d+|:\s*[^]\n]+)\s*\]")
     inplace_sort_index_re = re.compile(
         r"\b([A-Za-z_][A-Za-z0-9_]*)\s*\.\s*sort\s*\([^)]*\).*?"
         r"\b\1\s*\[\s*(?:-?\d+|:\s*[^]\n]+)\s*\]",
@@ -1230,20 +1383,28 @@ def detect_sort_to_select(conn):
 
         # Strong patterns: sorted(...)[0], sorted(... )[:k], arr.sort(); arr[0]
         if sorted_index_re.search(snippet) or inplace_sort_index_re.search(snippet):
-            results.append(_finding(
-                "sort-to-select", "full-sort", r,
-                "Sort used only for first/last/top-k selection",
-                "high",
-            ))
+            results.append(
+                _finding(
+                    "sort-to-select",
+                    "full-sort",
+                    r,
+                    "Sort used only for first/last/top-k selection",
+                    "high",
+                )
+            )
             continue
 
         # Fallback pattern for other languages (sort(...) then index/slice).
         if generic_sort_index_re.search(snippet):
-            results.append(_finding(
-                "sort-to-select", "full-sort", r,
-                "Potential full sort followed by index/slice selection",
-                "medium",
-            ))
+            results.append(
+                _finding(
+                    "sort-to-select",
+                    "full-sort",
+                    r,
+                    "Potential full sort followed by index/slice selection",
+                    "medium",
+                )
+            )
     return results
 
 
@@ -1276,8 +1437,15 @@ def detect_loop_lookup(conn):
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
-    _LOOKUP_CALLS = {"index", "indexOf", "lastIndexOf", "contains",
-                     "includes", "Contains", "IndexOf"}
+    _LOOKUP_CALLS = {
+        "index",
+        "indexOf",
+        "lastIndexOf",
+        "contains",
+        "includes",
+        "Contains",
+        "IndexOf",
+    }
 
     results = []
     for r in rows:
@@ -1285,27 +1453,36 @@ def detect_loop_lookup(conn):
             continue
         lookup_calls = _json_list(_row_value(r, "loop_lookup_calls", ""))
         if lookup_calls:
-            results.append(_finding(
-                "loop-lookup", "method-scan", r,
-                f"Linear lookup ({', '.join(lookup_calls[:2])}) called on invariant collection",
-                "high",
-            ))
+            results.append(
+                _finding(
+                    "loop-lookup",
+                    "method-scan",
+                    r,
+                    f"Linear lookup ({', '.join(lookup_calls[:2])}) called on invariant collection",
+                    "high",
+                )
+            )
             continue
         # Fallback for older indexes: conservative matching only.
         calls = _iter_loop_calls(r)
         fallback_hits = _call_in(calls, _LOOKUP_CALLS)
         if fallback_hits:
-            results.append(_finding(
-                "loop-lookup", "method-scan", r,
-                f"Linear lookup ({', '.join(fallback_hits[:2])}) called inside loop",
-                "low",
-            ))
+            results.append(
+                _finding(
+                    "loop-lookup",
+                    "method-scan",
+                    r,
+                    f"Linear lookup ({', '.join(fallback_hits[:2])}) called inside loop",
+                    "low",
+                )
+            )
     return results
 
 
 # ---------------------------------------------------------------------------
 # Tier 2 detectors: enhanced signals
 # ---------------------------------------------------------------------------
+
 
 def detect_branching_recursion(conn):
     """Functions with 2+ self-call sites and no memoization.
@@ -1337,8 +1514,18 @@ def detect_branching_recursion(conn):
             continue
         # Skip tree/AST walkers — recursive traversal of children is
         # intentional and doesn't have overlapping subproblems
-        _WALKER_NAMES = {"walk", "visit", "traverse", "search", "scan",
-                         "crawl", "descend", "recurse", "dfs", "bfs"}
+        _WALKER_NAMES = {
+            "walk",
+            "visit",
+            "traverse",
+            "search",
+            "scan",
+            "crawl",
+            "descend",
+            "recurse",
+            "dfs",
+            "bfs",
+        }
         if any(kw in name_lower for kw in _WALKER_NAMES):
             continue
         # Check for memoization edge
@@ -1353,11 +1540,15 @@ def detect_branching_recursion(conn):
         ).fetchone()
         if memo_edge:
             continue
-        results.append(_finding(
-            "branching-recursion", "naive-branching", r,
-            f"Branching recursion ({r['self_call_count']} self-calls) without memoization",
-            "high",
-        ))
+        results.append(
+            _finding(
+                "branching-recursion",
+                "naive-branching",
+                r,
+                f"Branching recursion ({r['self_call_count']} self-calls) without memoization",
+                "high",
+            )
+        )
     return results
 
 
@@ -1382,11 +1573,15 @@ def detect_quadratic_string(conn):
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        results.append(_finding(
-            "quadratic-string", "augment-concat", r,
-            "String += in loop (O(n^2) due to immutable reallocation)",
-            "high",
-        ))
+        results.append(
+            _finding(
+                "quadratic-string",
+                "augment-concat",
+                r,
+                "String += in loop (O(n^2) due to immutable reallocation)",
+                "high",
+            )
+        )
     return results
 
 
@@ -1413,29 +1608,94 @@ def detect_loop_invariant_call(conn):
     # Calls that are intentionally per-iteration (suppress)
     _INTENTIONAL_CALLS = {
         # Logging / output
-        "print", "log", "debug", "info", "warn", "warning", "error",
+        "print",
+        "log",
+        "debug",
+        "info",
+        "warn",
+        "warning",
+        "error",
         # Collection mutation
-        "append", "add", "push", "extend", "write", "send",
-        "get", "values", "items", "keys", "update", "pop", "remove",
-        "insert", "setdefault", "discard",
+        "append",
+        "add",
+        "push",
+        "extend",
+        "write",
+        "send",
+        "get",
+        "values",
+        "items",
+        "keys",
+        "update",
+        "pop",
+        "remove",
+        "insert",
+        "setdefault",
+        "discard",
         # String methods (inherently per-item)
-        "startswith", "endswith", "replace", "format", "strip", "split",
-        "join", "lower", "upper", "lstrip", "rstrip", "encode", "decode",
-        "ljust", "rjust", "center", "zfill",
+        "startswith",
+        "endswith",
+        "replace",
+        "format",
+        "strip",
+        "split",
+        "join",
+        "lower",
+        "upper",
+        "lstrip",
+        "rstrip",
+        "encode",
+        "decode",
+        "ljust",
+        "rjust",
+        "center",
+        "zfill",
         # Event / tracking
-        "emit", "track", "record", "increment", "decrement",
+        "emit",
+        "track",
+        "record",
+        "increment",
+        "decrement",
         # Iteration helpers / builtins
-        "enumerate", "zip", "range", "sorted", "reversed",
-        "list", "dict", "set", "tuple", "len", "str", "int", "float",
-        "bool", "bytes", "type",
+        "enumerate",
+        "zip",
+        "range",
+        "sorted",
+        "reversed",
+        "list",
+        "dict",
+        "set",
+        "tuple",
+        "len",
+        "str",
+        "int",
+        "float",
+        "bool",
+        "bytes",
+        "type",
         # Math / comparison builtins (per-item reductions)
-        "max", "min", "sum", "abs", "round", "pow",
-        "isinstance", "issubclass", "hasattr", "getattr", "setattr",
+        "max",
+        "min",
+        "sum",
+        "abs",
+        "round",
+        "pow",
+        "isinstance",
+        "issubclass",
+        "hasattr",
+        "getattr",
+        "setattr",
         # File / IO
-        "resolve", "execute", "fetchone", "fetchall", "read_text",
-        "read_bytes", "open",
+        "resolve",
+        "execute",
+        "fetchone",
+        "fetchall",
+        "read_text",
+        "read_bytes",
+        "open",
         # Control flow
-        "sleep", "yield",
+        "sleep",
+        "yield",
     }
 
     results = []
@@ -1447,11 +1707,15 @@ def detect_loop_invariant_call(conn):
         flagged = [c for c in inv_calls if c.lower() not in _INTENTIONAL_CALLS]
         if not flagged:
             continue
-        results.append(_finding(
-            "loop-invariant-call", "repeated-call", r,
-            f"Loop-invariant call ({', '.join(flagged[:3])}) can be hoisted before loop",
-            "medium",
-        ))
+        results.append(
+            _finding(
+                "loop-invariant-call",
+                "repeated-call",
+                r,
+                f"Loop-invariant call ({', '.join(flagged[:3])}) can be hoisted before loop",
+                "medium",
+            )
+        )
     return results
 
 
@@ -1530,7 +1794,7 @@ _VALID_PROFILES = {
 
 def _chunked(values: list[int], size: int = 500):
     for i in range(0, len(values), size):
-        yield values[i:i + size]
+        yield values[i : i + size]
 
 
 def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
@@ -1676,10 +1940,7 @@ def _build_evidence_path(finding: dict, context: dict) -> list[str]:
     runtime_calls = int(context.get("runtime_call_count", 0) or 0)
     runtime_p99 = context.get("runtime_p99_latency_ms")
     runtime_db_system = context.get("runtime_otel_db_system")
-    runtime_db_operation = (
-        context.get("runtime_otel_db_operation")
-        or context.get("runtime_otel_db_statement_type")
-    )
+    runtime_db_operation = context.get("runtime_otel_db_operation") or context.get("runtime_otel_db_statement_type")
     if runtime_calls > 0:
         if runtime_p99 is not None:
             path.append(f"Runtime impact: {runtime_calls} calls, p99 {runtime_p99:.0f}ms")
@@ -1692,10 +1953,7 @@ def _build_evidence_path(finding: dict, context: dict) -> list[str]:
                     runtime_db_operation or "n/a",
                 )
             )
-    path.append(
-        f"Recommendation: replace `{finding['detected_way']}` "
-        f"with `{finding['suggested_way']}`."
-    )
+    path.append(f"Recommendation: replace `{finding['detected_way']}` with `{finding['suggested_way']}`.")
     return path
 
 
@@ -1718,9 +1976,7 @@ def _impact_score(finding: dict, context: dict) -> float:
     runtime_error = float(context.get("runtime_error_rate", 0.0) or 0.0)
     runtime_db_system = context.get("runtime_otel_db_system")
     runtime_db_operation = (
-        context.get("runtime_otel_db_operation")
-        or context.get("runtime_otel_db_statement_type")
-        or ""
+        context.get("runtime_otel_db_operation") or context.get("runtime_otel_db_statement_type") or ""
     )
     runtime_db_operation = str(runtime_db_operation).upper()
     runtime_multiplier = 0.65
@@ -1767,11 +2023,7 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     runtime_p99 = ctx.get("runtime_p99_latency_ms")
     runtime_error = float(ctx.get("runtime_error_rate", 0.0) or 0.0)
     runtime_db_system = ctx.get("runtime_otel_db_system")
-    runtime_db_operation = (
-        ctx.get("runtime_otel_db_operation")
-        or ctx.get("runtime_otel_db_statement_type")
-        or ""
-    )
+    runtime_db_operation = ctx.get("runtime_otel_db_operation") or ctx.get("runtime_otel_db_statement_type") or ""
     runtime_db_operation = str(runtime_db_operation).upper()
 
     if caller_count >= 5:
@@ -1825,12 +2077,8 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
     if profile == _PROFILE_AGGRESSIVE:
         for f in findings:
             evidence = f.get("evidence", {})
-            if (
-                f.get("confidence") == "low"
-                and (
-                    int(evidence.get("signal_count", 0) or 0) >= 2
-                    or _has_strong_runtime(evidence)
-                )
+            if f.get("confidence") == "low" and (
+                int(evidence.get("signal_count", 0) or 0) >= 2 or _has_strong_runtime(evidence)
             ):
                 f["confidence"] = "medium"
         return findings
@@ -1848,10 +2096,7 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
             if f.get("confidence") == "high":
                 strict_findings.append(f)
                 continue
-            if (
-                int(evidence.get("signal_count", 0) or 0) >= 2
-                or runtime_strong
-            ):
+            if int(evidence.get("signal_count", 0) or 0) >= 2 or runtime_strong:
                 strict_findings.append(f)
         return strict_findings
 
@@ -1863,29 +2108,29 @@ def _apply_profile(findings: list[dict], profile: str) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 _MATH_DETECTORS = [
-    ("sorting",        "manual-sort",       detect_manual_sort),
-    ("search-sorted",  "linear-scan",       detect_linear_search),
-    ("membership",     "list-scan",         detect_list_membership),
-    ("string-concat",  "loop-concat",       detect_string_concat_loop),
-    ("unique",         "nested-dedup",      detect_manual_dedup),
-    ("max-min",        "manual-loop",       detect_manual_maxmin),
-    ("accumulation",   "manual-sum",        detect_manual_accumulation),
-    ("manual-power",   "loop-multiply",     detect_manual_power),
-    ("manual-gcd",     "manual-gcd",        detect_manual_gcd),
-    ("fibonacci",      "naive-recursive",   detect_naive_fibonacci),
-    ("nested-lookup",  "nested-iteration",  detect_nested_lookup),
-    ("groupby",        "manual-check",      detect_manual_groupby),
-    ("string-reverse", "manual-reverse",    detect_string_reverse),
-    ("matrix-mult",    "naive-triple",      detect_matrix_mult),
-    ("busy-wait",      "sleep-loop",        detect_busy_wait),
-    ("regex-in-loop",  "compile-per-iter",  detect_regex_in_loop),
-    ("io-in-loop",     "loop-query",        detect_io_in_loop),
-    ("list-prepend",   "insert-front",      detect_list_prepend),
-    ("sort-to-select", "full-sort",         detect_sort_to_select),
-    ("loop-lookup",    "method-scan",       detect_loop_lookup),
+    ("sorting", "manual-sort", detect_manual_sort),
+    ("search-sorted", "linear-scan", detect_linear_search),
+    ("membership", "list-scan", detect_list_membership),
+    ("string-concat", "loop-concat", detect_string_concat_loop),
+    ("unique", "nested-dedup", detect_manual_dedup),
+    ("max-min", "manual-loop", detect_manual_maxmin),
+    ("accumulation", "manual-sum", detect_manual_accumulation),
+    ("manual-power", "loop-multiply", detect_manual_power),
+    ("manual-gcd", "manual-gcd", detect_manual_gcd),
+    ("fibonacci", "naive-recursive", detect_naive_fibonacci),
+    ("nested-lookup", "nested-iteration", detect_nested_lookup),
+    ("groupby", "manual-check", detect_manual_groupby),
+    ("string-reverse", "manual-reverse", detect_string_reverse),
+    ("matrix-mult", "naive-triple", detect_matrix_mult),
+    ("busy-wait", "sleep-loop", detect_busy_wait),
+    ("regex-in-loop", "compile-per-iter", detect_regex_in_loop),
+    ("io-in-loop", "loop-query", detect_io_in_loop),
+    ("list-prepend", "insert-front", detect_list_prepend),
+    ("sort-to-select", "full-sort", detect_sort_to_select),
+    ("loop-lookup", "method-scan", detect_loop_lookup),
     ("branching-recursion", "naive-branching", detect_branching_recursion),
-    ("quadratic-string",    "augment-concat",  detect_quadratic_string),
-    ("loop-invariant-call", "repeated-call",   detect_loop_invariant_call),
+    ("quadratic-string", "augment-concat", detect_quadratic_string),
+    ("loop-invariant-call", "repeated-call", detect_loop_invariant_call),
 ]
 
 
@@ -1943,11 +2188,13 @@ def run_detectors(
         try:
             hits = detect_fn(conn)
         except Exception as exc:
-            failed_detectors.append({
-                "task_id": task_id,
-                "detector": detect_fn.__name__,
-                "error": str(exc),
-            })
+            failed_detectors.append(
+                {
+                    "task_id": task_id,
+                    "detector": detect_fn.__name__,
+                    "error": str(exc),
+                }
+            )
             continue
         dmeta = _detector_meta(task_id)
         for h in hits:
@@ -1988,9 +2235,7 @@ def run_detectors(
             "failed_detectors": failed_detectors,
             "profile": profile_key,
             "profile_filtered": profile_filtered,
-            "detector_metadata": {
-                task_id: _detector_meta(task_id) for task_id in executed_tasks
-            },
+            "detector_metadata": {task_id: _detector_meta(task_id) for task_id in executed_tasks},
         }
         return findings, meta
 

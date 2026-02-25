@@ -11,14 +11,14 @@ import time
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Lightweight data collection helpers
 # ---------------------------------------------------------------------------
+
 
 def _overview(conn):
     """Basic project stats: files, symbols, edges, clusters, languages."""
@@ -27,16 +27,12 @@ def _overview(conn):
     edges = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
 
     try:
-        cluster_count = conn.execute(
-            "SELECT COUNT(DISTINCT cluster_id) FROM clusters"
-        ).fetchone()[0]
+        cluster_count = conn.execute("SELECT COUNT(DISTINCT cluster_id) FROM clusters").fetchone()[0]
     except Exception:
         cluster_count = 0
 
     lang_rows = conn.execute(
-        "SELECT language, COUNT(*) as cnt FROM files "
-        "WHERE language IS NOT NULL "
-        "GROUP BY language ORDER BY cnt DESC"
+        "SELECT language, COUNT(*) as cnt FROM files WHERE language IS NOT NULL GROUP BY language ORDER BY cnt DESC"
     ).fetchall()
     languages = []
     for r in lang_rows:
@@ -46,6 +42,7 @@ def _overview(conn):
     # Index age
     try:
         from roam.db.connection import get_db_path
+
         db_path = get_db_path()
         if db_path.exists():
             index_age_s = int(time.time() - db_path.stat().st_mtime)
@@ -101,12 +98,14 @@ def _top_hotspots(conn, limit=5):
         # Bus factor: count distinct authors for this file
         authors = r["distinct_authors"] or 1
 
-        results.append({
-            "path": path,
-            "churn": r["total_churn"] or 0,
-            "complexity": round(r["complexity"] or 0, 0),
-            "bus_factor": authors,
-        })
+        results.append(
+            {
+                "path": path,
+                "churn": r["total_churn"] or 0,
+                "complexity": round(r["complexity"] or 0, 0),
+                "bus_factor": authors,
+            }
+        )
         if len(results) >= limit:
             break
 
@@ -119,9 +118,7 @@ def _risk_areas(conn):
 
     # Bus factor 1 files (files with only 1 distinct author)
     try:
-        bf1_count = conn.execute(
-            "SELECT COUNT(*) FROM file_stats WHERE distinct_authors = 1"
-        ).fetchone()[0]
+        bf1_count = conn.execute("SELECT COUNT(*) FROM file_stats WHERE distinct_authors = 1").fetchone()[0]
     except Exception:
         bf1_count = 0
     bf1_pct = round(bf1_count * 100 / total_files, 1)
@@ -129,10 +126,12 @@ def _risk_areas(conn):
     # Dead symbols (high confidence only -- exported symbols with no callers)
     try:
         from roam.db.queries import UNREFERENCED_EXPORTS
+
         dead_rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
         # Filter test files
         dead_count = sum(
-            1 for r in dead_rows
+            1
+            for r in dead_rows
             if not r["file_path"].replace("\\", "/").split("/")[-1].lower().startswith("test_")
             and not r["file_path"].replace("\\", "/").split("/")[-1].lower().endswith("_test.py")
         )
@@ -146,6 +145,7 @@ def _risk_areas(conn):
     try:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.cycles import find_cycles
+
         G = build_symbol_graph(conn)
         cycles = find_cycles(G)
         cycle_count = len(cycles)
@@ -227,6 +227,7 @@ def _health_label(score):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("dashboard")
 @click.pass_context
 def dashboard(ctx):
@@ -241,6 +242,7 @@ def dashboard(ctx):
 
         # -- Health (reuse collect_metrics for consistency with health cmd) --
         from roam.commands.metrics_history import collect_metrics
+
         health = collect_metrics(conn)
 
         # -- Top hotspots --
@@ -262,7 +264,8 @@ def dashboard(ctx):
 
         # -- JSON output --
         if json_mode:
-            envelope = json_envelope("dashboard",
+            envelope = json_envelope(
+                "dashboard",
                 budget=budget,
                 summary={
                     "verdict": verdict,
@@ -312,17 +315,18 @@ def dashboard(ctx):
 
         click.echo("  === Overview ===")
         click.echo(f"  Files: {overview['files']} ({lang_str})")
-        click.echo(f"  Symbols: {overview['symbols']} | Edges: {overview['edges']}"
-                   f" | Clusters: {overview['clusters']}")
+        click.echo(f"  Symbols: {overview['symbols']} | Edges: {overview['edges']} | Clusters: {overview['clusters']}")
         click.echo(f"  Last indexed: {_format_age(overview['index_age_s'])}")
         click.echo()
 
         # === Health ===
         click.echo("  === Health ===")
         click.echo(f"  Score: {hs}/100 ({h_label})")
-        click.echo(f"  Tangle ratio: {health.get('tangle_ratio', 0)}"
-                   f" | Avg complexity: {health.get('avg_complexity', 0)}"
-                   f" | Dead symbols: {risks['dead_symbols']}")
+        click.echo(
+            f"  Tangle ratio: {health.get('tangle_ratio', 0)}"
+            f" | Avg complexity: {health.get('avg_complexity', 0)}"
+            f" | Dead symbols: {risks['dead_symbols']}"
+        )
         click.echo()
 
         # === Top Hotspots ===
@@ -339,10 +343,8 @@ def dashboard(ctx):
 
         # === Risk Areas ===
         click.echo("  === Risk Areas ===")
-        click.echo(f"  Bus factor 1: {risks['bus_factor_1_files']} files"
-                   f" ({risks['bus_factor_1_pct']}%)")
-        click.echo(f"  Dead symbols: {risks['dead_symbols']}"
-                   f" ({risks['dead_pct']}%)")
+        click.echo(f"  Bus factor 1: {risks['bus_factor_1_files']} files ({risks['bus_factor_1_pct']}%)")
+        click.echo(f"  Dead symbols: {risks['dead_symbols']} ({risks['dead_pct']}%)")
         click.echo(f"  Cycles: {risks['cycles']} SCCs")
         click.echo()
 
@@ -354,9 +356,9 @@ def dashboard(ctx):
                 cat_parts.append(f"{cat['name']} ({cat['count']})")
             cats_str = ", ".join(cat_parts) if cat_parts else "none"
             approx_note = " (approximate)" if vibe.get("approximate") else ""
-            click.echo(f"  Score: {vibe['score']}/100 ({vibe['severity']})"
-                       f"{approx_note}"
-                       f" | {vibe['total_issues']} issues")
+            click.echo(
+                f"  Score: {vibe['score']}/100 ({vibe['severity']}){approx_note} | {vibe['total_issues']} issues"
+            )
             click.echo(f"  Top: {cats_str}")
             click.echo()
 

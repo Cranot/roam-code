@@ -7,19 +7,20 @@ Covers:
 - ProtobufBridge: detect(), resolve(), properties
 - detect_bridges() integration
 """
+
 from __future__ import annotations
 
 import pytest
 
-from roam.bridges.base import LanguageBridge
 from roam.bridges import registry as bridge_registry
-from roam.bridges.bridge_salesforce import SalesforceBridge
+from roam.bridges.base import LanguageBridge
 from roam.bridges.bridge_protobuf import ProtobufBridge
-
+from roam.bridges.bridge_salesforce import SalesforceBridge
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _reset_registry():
     """Clear the global bridge registry for isolation."""
@@ -29,6 +30,7 @@ def _reset_registry():
 # ---------------------------------------------------------------------------
 # LanguageBridge ABC
 # ---------------------------------------------------------------------------
+
 
 class TestLanguageBridgeABC:
     def test_cannot_instantiate_directly(self):
@@ -51,6 +53,7 @@ class TestLanguageBridgeABC:
 # ---------------------------------------------------------------------------
 # Bridge registry
 # ---------------------------------------------------------------------------
+
 
 class TestBridgeRegistry:
     def setup_method(self):
@@ -105,6 +108,7 @@ class TestBridgeRegistry:
 # SalesforceBridge
 # ---------------------------------------------------------------------------
 
+
 class TestSalesforceBridge:
     def setup_method(self):
         self.bridge = SalesforceBridge()
@@ -154,8 +158,13 @@ class TestSalesforceBridge:
     def test_resolve_controller_suffix(self):
         """MyComponentController.cls -> MyComponent.cmp via controller suffix."""
         source_path = "classes/MyComponentController.cls"
-        source_symbols = [{"name": "MyComponentController", "kind": "class",
-                           "qualified_name": "MyComponentController"}]
+        source_symbols = [
+            {
+                "name": "MyComponentController",
+                "kind": "class",
+                "qualified_name": "MyComponentController",
+            }
+        ]
         target_files = {
             "aura/MyComponent/MyComponent.cmp": [
                 {"name": "MyComponent", "kind": "component", "qualified_name": "MyComponent"}
@@ -169,8 +178,12 @@ class TestSalesforceBridge:
         source_path = "classes/MyController.cls"
         source_symbols = [
             {"name": "MyController", "kind": "class", "qualified_name": "MyController"},
-            {"name": "getData", "kind": "method", "qualified_name": "MyController.getData",
-             "signature": "@AuraEnabled public static List<Account> getData()"},
+            {
+                "name": "getData",
+                "kind": "method",
+                "qualified_name": "MyController.getData",
+                "signature": "@AuraEnabled public static List<Account> getData()",
+            },
         ]
         target_files = {
             "aura/MyController/MyController.cmp": [
@@ -191,6 +204,7 @@ class TestSalesforceBridge:
 # ---------------------------------------------------------------------------
 # ProtobufBridge
 # ---------------------------------------------------------------------------
+
 
 class TestProtobufBridge:
     def setup_method(self):
@@ -265,10 +279,16 @@ class TestProtobufBridge:
         ]
         target_files = {
             "gen/greeter_pb2.py": [
-                {"name": "GreeterStub", "kind": "class",
-                 "qualified_name": "gen.greeter_pb2.GreeterStub"},
-                {"name": "GreeterServicer", "kind": "class",
-                 "qualified_name": "gen.greeter_pb2.GreeterServicer"},
+                {
+                    "name": "GreeterStub",
+                    "kind": "class",
+                    "qualified_name": "gen.greeter_pb2.GreeterStub",
+                },
+                {
+                    "name": "GreeterServicer",
+                    "kind": "class",
+                    "qualified_name": "gen.greeter_pb2.GreeterServicer",
+                },
             ]
         }
         edges = self.bridge.resolve(source_path, source_symbols, target_files)
@@ -285,8 +305,11 @@ class TestProtobufBridge:
         ]
         target_files = {
             "gen/status_pb2.py": [
-                {"name": "StatusCode", "kind": "class",
-                 "qualified_name": "gen.status_pb2.StatusCode"},
+                {
+                    "name": "StatusCode",
+                    "kind": "class",
+                    "qualified_name": "gen.status_pb2.StatusCode",
+                },
             ]
         }
         edges = self.bridge.resolve(source_path, source_symbols, target_files)

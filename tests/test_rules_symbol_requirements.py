@@ -60,12 +60,8 @@ def test_symbol_match_require_style_thresholds(tmp_path):
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, is_exported) "
         "VALUES (1, 1, 'BadName', 'function', 10, 60, 1)"
     )
-    conn.execute(
-        "INSERT INTO graph_metrics (symbol_id, in_degree) VALUES (1, 4)"
-    )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, param_count, line_count) VALUES (1, 5, 51)"
-    )
+    conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree) VALUES (1, 4)")
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, param_count, line_count) VALUES (1, 5, 51)")
     conn.commit()
 
     rule = {
@@ -102,12 +98,8 @@ def test_symbol_match_require_max_file_lines(tmp_path):
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, is_exported) "
         "VALUES (1, 1, 'helper', 'function', 1, 10, 1)"
     )
-    conn.execute(
-        "INSERT INTO graph_metrics (symbol_id, in_degree) VALUES (1, 1)"
-    )
-    conn.execute(
-        "INSERT INTO symbol_metrics (symbol_id, param_count, line_count) VALUES (1, 1, 10)"
-    )
+    conn.execute("INSERT INTO graph_metrics (symbol_id, in_degree) VALUES (1, 1)")
+    conn.execute("INSERT INTO symbol_metrics (symbol_id, param_count, line_count) VALUES (1, 1, 10)")
     conn.commit()
 
     rule = {
@@ -131,9 +123,7 @@ def test_symbol_match_require_max_file_lines(tmp_path):
 
 def test_symbol_match_invalid_name_regex_fails_rule(tmp_path):
     conn = _make_db(tmp_path)
-    conn.execute(
-        "INSERT INTO files (id, path, file_role, line_count, loc) VALUES (1, 'src/a.py', 'source', 10, 10)"
-    )
+    conn.execute("INSERT INTO files (id, path, file_role, line_count, loc) VALUES (1, 'src/a.py', 'source', 10, 10)")
     conn.execute(
         "INSERT INTO symbols (id, file_id, name, kind, line_start, line_end, is_exported) "
         "VALUES (1, 1, 'ok_name', 'function', 1, 2, 1)"

@@ -5,6 +5,7 @@ Resolves cross-references between:
 - YAML/JSON/TOML/INI config key definitions and code config lookups
 - Settings objects (Django settings.X, process.env.X) and their definitions
 """
+
 from __future__ import annotations
 
 import os
@@ -12,7 +13,6 @@ import re
 
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
-
 
 # Config file extensions
 _CONFIG_EXTS = frozenset({".env", ".yml", ".yaml", ".json", ".toml", ".ini", ".cfg", ".conf"})
@@ -23,43 +23,43 @@ _CODE_EXTS = frozenset({".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".r
 # --- Config key extraction patterns ---
 
 # .env file: KEY=value
-_ENV_KEY_RE = re.compile(r'^([A-Z_][A-Z0-9_]*)\s*=', re.MULTILINE)
+_ENV_KEY_RE = re.compile(r"^([A-Z_][A-Z0-9_]*)\s*=", re.MULTILINE)
 
 # YAML top-level keys: key: value (indentation 0)
-_YAML_KEY_RE = re.compile(r'^([a-zA-Z_]\w*)\s*:', re.MULTILINE)
+_YAML_KEY_RE = re.compile(r"^([a-zA-Z_]\w*)\s*:", re.MULTILINE)
 
 # --- Code config read patterns ---
 
 # Python: os.environ.get('KEY'), os.environ['KEY'], os.getenv('KEY')
 _PY_ENV_RE = re.compile(
-    r'''os\s*\.\s*(?:environ\s*\.\s*get|environ\s*\[|getenv)\s*\(\s*['"]([\w]+)['"]''',
+    r"""os\s*\.\s*(?:environ\s*\.\s*get|environ\s*\[|getenv)\s*\(\s*['"]([\w]+)['"]""",
 )
 
 # Python: config['key'], config.get('key'), settings.KEY
 _PY_CONFIG_RE = re.compile(
-    r'''(?:config|settings|conf|cfg)\s*(?:\[['"](\w+)['"]\]|\.get\s*\(\s*['"](\w+)['"]|\.(\w+))''',
+    r"""(?:config|settings|conf|cfg)\s*(?:\[['"](\w+)['"]\]|\.get\s*\(\s*['"](\w+)['"]|\.(\w+))""",
     re.IGNORECASE,
 )
 
 # JS/TS: process.env.KEY, process.env['KEY']
 _JS_ENV_RE = re.compile(
-    r'''process\s*\.\s*env\s*(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])''',
+    r"""process\s*\.\s*env\s*(?:\.(\w+)|\[\s*['"](\w+)['"]\s*\])""",
 )
 
 # JS/TS: config.get('key'), config.key, config['key']
 _JS_CONFIG_RE = re.compile(
-    r'''config\s*(?:\.get\s*\(\s*['"](\w[\w.]+)['"]|\.(\w+)|\[\s*['"](\w+)['"]\s*\])''',
+    r"""config\s*(?:\.get\s*\(\s*['"](\w[\w.]+)['"]|\.(\w+)|\[\s*['"](\w+)['"]\s*\])""",
     re.IGNORECASE,
 )
 
 # Go: os.Getenv("KEY"), viper.GetString("key")
 _GO_ENV_RE = re.compile(
-    r'''(?:os\.Getenv|viper\.Get\w*)\s*\(\s*["'](\w+)["']''',
+    r"""(?:os\.Getenv|viper\.Get\w*)\s*\(\s*["'](\w+)["']""",
 )
 
 # Java: System.getenv("KEY"), System.getProperty("key")
 _JAVA_ENV_RE = re.compile(
-    r'''System\s*\.\s*(?:getenv|getProperty)\s*\(\s*["'](\w+)["']''',
+    r"""System\s*\.\s*(?:getenv|getProperty)\s*\(\s*["'](\w+)["']""",
 )
 
 
@@ -87,8 +87,7 @@ class ConfigBridge(LanguageBridge):
                 return True
         return False
 
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve config key definitions to code that reads them.
 
         Strategies:
@@ -122,20 +121,21 @@ class ConfigBridge(LanguageBridge):
             for config_key in config_keys:
                 for code_key, sym_qname in code_keys:
                     if self._keys_match(config_key, code_key):
-                        edges.append({
-                            "source": f"{source_file_label}:{config_key}",
-                            "target": sym_qname,
-                            "kind": "x-lang",
-                            "bridge": self.name,
-                            "mechanism": "config-read",
-                            "key": config_key,
-                            "confidence": 0.85,
-                        })
+                        edges.append(
+                            {
+                                "source": f"{source_file_label}:{config_key}",
+                                "target": sym_qname,
+                                "kind": "x-lang",
+                                "bridge": self.name,
+                                "mechanism": "config-read",
+                                "key": config_key,
+                                "confidence": 0.85,
+                            }
+                        )
 
         return edges
 
-    def _extract_config_keys(self, symbols: list[dict], ext: str,
-                              basename: str) -> set[str]:
+    def _extract_config_keys(self, symbols: list[dict], ext: str, basename: str) -> set[str]:
         """Extract configuration key names from config file symbols."""
         keys: set[str] = set()
         for sym in symbols:
@@ -156,8 +156,7 @@ class ConfigBridge(LanguageBridge):
 
         return keys
 
-    def _extract_code_config_reads(self, symbols: list[dict],
-                                    ext: str) -> list[tuple[str, str]]:
+    def _extract_code_config_reads(self, symbols: list[dict], ext: str) -> list[tuple[str, str]]:
         """Extract config key reads from code symbols.
 
         Returns list of (key_name, symbol_qualified_name).

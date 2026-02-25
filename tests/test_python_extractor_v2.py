@@ -10,18 +10,17 @@ Covers:
 
 from __future__ import annotations
 
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper: parse Python source and extract symbols + references
 # ---------------------------------------------------------------------------
 
+
 def _parse_py(source_text: str, file_path: str = "example.py"):
     """Parse Python source and return (symbols, references)."""
+    from tree_sitter_language_pack import get_parser
+
     from roam.index.parser import GRAMMAR_ALIASES
     from roam.languages.registry import get_extractor
-    from tree_sitter_language_pack import get_parser
 
     grammar = GRAMMAR_ALIASES.get("python", "python")
     parser = get_parser(grammar)
@@ -62,6 +61,7 @@ def _ref_targets(refs, kind=None, source_name=None):
 # 1. Instance attribute extraction from __init__
 # ===========================================================================
 
+
 class TestInitAttributes:
     """Test extraction of self.x = ... assignments in __init__."""
 
@@ -82,12 +82,7 @@ class TestInitAttributes:
 
     def test_private_attrs(self):
         """Private self._x attrs should be extracted with private visibility."""
-        src = (
-            "class Conn:\n"
-            "    def __init__(self):\n"
-            "        self._socket = None\n"
-            "        self.__secret = 42\n"
-        )
+        src = "class Conn:\n    def __init__(self):\n        self._socket = None\n        self.__secret = 42\n"
         syms, _ = _parse_py(src)
         props = [s for s in syms if s["kind"] == "property" and s["parent_name"] == "Conn"]
         names = {s["name"]: s["visibility"] for s in props}
@@ -98,11 +93,7 @@ class TestInitAttributes:
 
     def test_qualified_name(self):
         """Instance attrs should have qualified names like ClassName.attr."""
-        src = (
-            "class Foo:\n"
-            "    def __init__(self):\n"
-            "        self.bar = 1\n"
-        )
+        src = "class Foo:\n    def __init__(self):\n        self.bar = 1\n"
         syms, _ = _parse_py(src)
         props = [s for s in syms if s["kind"] == "property" and s["name"] == "bar"]
         assert len(props) == 1
@@ -129,24 +120,14 @@ class TestInitAttributes:
 
     def test_dedup_first_wins(self):
         """If self.x appears twice in __init__, only the first is extracted."""
-        src = (
-            "class Buf:\n"
-            "    def __init__(self):\n"
-            "        self.data = None\n"
-            "        self.data = []\n"
-        )
+        src = "class Buf:\n    def __init__(self):\n        self.data = None\n        self.data = []\n"
         syms, _ = _parse_py(src)
         props = [s for s in syms if s["kind"] == "property" and s["name"] == "data"]
         assert len(props) == 1
 
     def test_skip_nested_attr(self):
         """self.nested.attr should NOT be extracted (not a direct instance attr)."""
-        src = (
-            "class Graph:\n"
-            "    def __init__(self):\n"
-            "        self.nodes = []\n"
-            "        self.meta.version = 2\n"
-        )
+        src = "class Graph:\n    def __init__(self):\n        self.nodes = []\n        self.meta.version = 2\n"
         syms, _ = _parse_py(src)
         props = _sym_names(syms, kind="property", parent="Graph")
         assert "nodes" in props
@@ -162,8 +143,7 @@ class TestInitAttributes:
             "        self.debug = False\n"
         )
         syms, _ = _parse_py(src)
-        props = {s["name"]: s for s in syms
-                 if s["kind"] == "property" and s["parent_name"] == "Config"}
+        props = {s["name"]: s for s in syms if s["kind"] == "property" and s["parent_name"] == "Config"}
         assert props["timeout"]["default_value"] == "30"
         assert props["debug"]["default_value"] == "False"
 
@@ -183,11 +163,7 @@ class TestInitAttributes:
 
     def test_empty_init(self):
         """__init__ with no self.x assignments should produce no extra symbols."""
-        src = (
-            "class Empty:\n"
-            "    def __init__(self):\n"
-            "        pass\n"
-        )
+        src = "class Empty:\n    def __init__(self):\n        pass\n"
         syms, _ = _parse_py(src)
         props = _sym_names(syms, kind="property", parent="Empty")
         assert props == []
@@ -197,17 +173,13 @@ class TestInitAttributes:
 # 2. Self-name detection (Pyan-inspired)
 # ===========================================================================
 
+
 class TestSelfNameDetection:
     """Test that the first __init__ param is used, not hardcoded 'self'."""
 
     def test_cls_as_self(self):
         """Classes using 'cls' as first param should still extract attrs."""
-        src = (
-            "class Meta:\n"
-            "    def __init__(cls, name):\n"
-            "        cls.name = name\n"
-            "        cls.registry = {}\n"
-        )
+        src = "class Meta:\n    def __init__(cls, name):\n        cls.name = name\n        cls.registry = {}\n"
         syms, _ = _parse_py(src)
         props = _sym_names(syms, kind="property", parent="Meta")
         assert "name" in props
@@ -215,22 +187,14 @@ class TestSelfNameDetection:
 
     def test_this_as_self(self):
         """Classes using 'this' as first param should work."""
-        src = (
-            "class Widget:\n"
-            "    def __init__(this):\n"
-            "        this.visible = True\n"
-        )
+        src = "class Widget:\n    def __init__(this):\n        this.visible = True\n"
         syms, _ = _parse_py(src)
         props = _sym_names(syms, kind="property", parent="Widget")
         assert "visible" in props
 
     def test_typed_self_param(self):
         """Typed self param like (self: Self) should still be detected."""
-        src = (
-            "class Typed:\n"
-            "    def __init__(self: 'Typed', val: int):\n"
-            "        self.val = val\n"
-        )
+        src = "class Typed:\n    def __init__(self: 'Typed', val: int):\n        self.val = val\n"
         syms, _ = _parse_py(src)
         props = _sym_names(syms, kind="property", parent="Typed")
         assert "val" in props
@@ -240,20 +204,15 @@ class TestSelfNameDetection:
 # 3. Deduplication with class-level properties
 # ===========================================================================
 
+
 class TestAttrDeduplication:
     """Test that class-level + __init__ attrs don't produce duplicates."""
 
     def test_class_level_wins(self):
         """If class has both x: str and self.x = value, only one property exists."""
-        src = (
-            "class Model:\n"
-            "    name: str\n"
-            "    def __init__(self, name):\n"
-            "        self.name = name\n"
-        )
+        src = "class Model:\n    name: str\n    def __init__(self, name):\n        self.name = name\n"
         syms, _ = _parse_py(src)
-        props = [s for s in syms if s["kind"] == "property" and s["name"] == "name"
-                 and s["parent_name"] == "Model"]
+        props = [s for s in syms if s["kind"] == "property" and s["name"] == "name" and s["parent_name"] == "Model"]
         assert len(props) == 1
 
     def test_mixed_attrs(self):
@@ -277,16 +236,13 @@ class TestAttrDeduplication:
 # 4. Type annotation refs on assignments
 # ===========================================================================
 
+
 class TestAssignmentTypeRefs:
     """Test that type annotations on assignments produce type_ref edges."""
 
     def test_class_field_type_ref(self):
         """Class field `x: Path` should produce type_ref to Path."""
-        src = (
-            "class Config:\n"
-            "    path: Path\n"
-            "    name: str\n"
-        )
+        src = "class Config:\n    path: Path\n    name: str\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Path" in type_refs
@@ -295,11 +251,7 @@ class TestAssignmentTypeRefs:
 
     def test_generic_class_field_type_ref(self):
         """Class field `items: List[Config]` should produce type_ref to both List and Config."""
-        src = (
-            "class Manager:\n"
-            "    items: List[Config]\n"
-            "    cache: Dict[str, Entry] = {}\n"
-        )
+        src = "class Manager:\n    items: List[Config]\n    cache: Dict[str, Entry] = {}\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "List" in type_refs
@@ -309,10 +261,7 @@ class TestAssignmentTypeRefs:
 
     def test_optional_class_field(self):
         """Optional[Config] should produce type_ref to Optional and Config."""
-        src = (
-            "class Node:\n"
-            "    parent: Optional[Node] = None\n"
-        )
+        src = "class Node:\n    parent: Optional[Node] = None\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Optional" in type_refs
@@ -320,10 +269,7 @@ class TestAssignmentTypeRefs:
 
     def test_module_level_annotated_var(self):
         """Module-level `cache: Dict[str, Config] = {}` should produce type_ref."""
-        src = (
-            "cache: Dict[str, Config] = {}\n"
-            "logger: Logger = get_logger()\n"
-        )
+        src = "cache: Dict[str, Config] = {}\nlogger: Logger = get_logger()\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Dict" in type_refs
@@ -332,11 +278,7 @@ class TestAssignmentTypeRefs:
 
     def test_unannotated_assignment_no_type_ref(self):
         """Plain `x = value` (no annotation) should NOT produce type_ref."""
-        src = (
-            "class Foo:\n"
-            "    x = 42\n"
-            "    y = 'hello'\n"
-        )
+        src = "class Foo:\n    x = 42\n    y = 'hello'\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         # No type refs from unannotated assignments
@@ -344,10 +286,7 @@ class TestAssignmentTypeRefs:
 
     def test_type_alias_assignment_rhs_refs(self):
         """`X: TypeAlias = ...` should extract type refs from RHS alias expression."""
-        src = (
-            "from typing import TypeAlias\n"
-            "ServiceMap: TypeAlias = dict[str, Service]\n"
-        )
+        src = "from typing import TypeAlias\nServiceMap: TypeAlias = dict[str, Service]\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         # TypeAlias from annotation + Service from RHS alias expression.
@@ -356,9 +295,7 @@ class TestAssignmentTypeRefs:
 
     def test_pep695_type_alias_statement_refs(self):
         """`type X = ...` should extract type refs from alias target expression."""
-        src = (
-            "type Handler = Callable[[Request], Response]\n"
-        )
+        src = "type Handler = Callable[[Request], Response]\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Callable" in type_refs
@@ -370,25 +307,20 @@ class TestAssignmentTypeRefs:
 # 5. Forward references (string annotations)
 # ===========================================================================
 
+
 class TestForwardReferences:
     """Test that string annotations like 'Config' produce type_ref edges."""
 
     def test_simple_forward_ref(self):
         """Parameter annotation 'Config' should produce type_ref."""
-        src = (
-            "def process(item: 'Config') -> None:\n"
-            "    pass\n"
-        )
+        src = "def process(item: 'Config') -> None:\n    pass\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Config" in type_refs
 
     def test_forward_ref_in_optional(self):
         """Optional['Node'] should produce type_ref to both Optional and Node."""
-        src = (
-            "class Tree:\n"
-            "    parent: Optional['Tree'] = None\n"
-        )
+        src = "class Tree:\n    parent: Optional['Tree'] = None\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "Optional" in type_refs
@@ -396,20 +328,14 @@ class TestForwardReferences:
 
     def test_dotted_forward_ref(self):
         """'module.ClassName' forward ref should be extracted."""
-        src = (
-            "def create() -> 'models.User':\n"
-            "    pass\n"
-        )
+        src = "def create() -> 'models.User':\n    pass\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "models.User" in type_refs
 
     def test_non_identifier_string_skipped(self):
         """Arbitrary strings in annotations should NOT produce type_ref."""
-        src = (
-            "def f(x: 'not a valid type hint 123') -> None:\n"
-            "    pass\n"
-        )
+        src = "def f(x: 'not a valid type hint 123') -> None:\n    pass\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         # The string is not an identifier, should be skipped
@@ -417,10 +343,7 @@ class TestForwardReferences:
 
     def test_builtin_string_skipped(self):
         """Forward ref to builtin like 'int' should be skipped."""
-        src = (
-            "def f(x: 'int') -> 'str':\n"
-            "    pass\n"
-        )
+        src = "def f(x: 'int') -> 'str':\n    pass\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "int" not in type_refs
@@ -428,10 +351,7 @@ class TestForwardReferences:
 
     def test_forward_ref_on_class_field(self):
         """Class field with forward ref annotation should produce type_ref."""
-        src = (
-            "class LinkedList:\n"
-            "    next: 'LinkedList'\n"
-        )
+        src = "class LinkedList:\n    next: 'LinkedList'\n"
         _, refs = _parse_py(src)
         type_refs = _ref_targets(refs, kind="type_ref")
         assert "LinkedList" in type_refs
@@ -440,6 +360,7 @@ class TestForwardReferences:
 # ===========================================================================
 # 6. Integration: all features together
 # ===========================================================================
+
 
 class TestIntegrated:
     """Test all three improvements working together on realistic code."""
@@ -481,7 +402,7 @@ class TestIntegrated:
             "from pathlib import Path\n"
             "\n"
             "class FileProcessor(BaseProcessor):\n"
-            "    \"\"\"Process files.\"\"\"\n"
+            '    """Process files."""\n'
             "    encoding: str = 'utf-8'\n"
             "\n"
             "    def __init__(self, root: Path, strict: bool = False):\n"

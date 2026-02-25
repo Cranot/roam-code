@@ -11,8 +11,7 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import index_in_process, git_init, git_commit, parse_json_output
-
+from conftest import git_commit, git_init, index_in_process
 
 # ===========================================================================
 # Helper: invoke intent directly (avoids cli.py registration requirement)
@@ -60,16 +59,11 @@ def _invoke_intent(args, cwd, json_mode=False):
 
 def _parse_intent_json(result, label="intent"):
     """Parse JSON output from an intent CliRunner result."""
-    assert result.exit_code == 0, (
-        f"intent {label} failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"intent {label} failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from intent {label}: {e}\n"
-            f"Output was:\n{result.output[:500]}"
-        )
+        pytest.fail(f"Invalid JSON from intent {label}: {e}\nOutput was:\n{result.output[:500]}")
 
 
 # ===========================================================================
@@ -113,14 +107,9 @@ def intent_project(tmp_path):
         "The `process_order` function handles order processing.\n"
     )
     (docs / "old-api.md").write_text(
-        "# Old API\n\n"
-        "The `calculate_tax_v2` function was removed in v3.\n"
-        "Use `old_handler` for legacy support.\n"
+        "# Old API\n\nThe `calculate_tax_v2` function was removed in v3.\nUse `old_handler` for legacy support.\n"
     )
-    (proj / "README.md").write_text(
-        "# My Project\n\n"
-        "Main entry: `create_user`\n"
-    )
+    (proj / "README.md").write_text("# My Project\n\nMain entry: `create_user`\n")
 
     git_init(proj)
     git_commit(proj, "add docs")
@@ -138,10 +127,7 @@ def no_docs_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "app.py").write_text(
-        "def main():\n"
-        "    pass\n"
-    )
+    (proj / "app.py").write_text("def main():\n    pass\n")
 
     git_init(proj)
     git_commit(proj, "init")
@@ -163,9 +149,7 @@ class TestIntentBasic:
     def test_intent_runs(self, intent_project):
         """Command exits with code 0."""
         result = _invoke_intent([], cwd=intent_project)
-        assert result.exit_code == 0, (
-            f"intent command failed (exit {result.exit_code}):\n{result.output}"
-        )
+        assert result.exit_code == 0, f"intent command failed (exit {result.exit_code}):\n{result.output}"
 
     def test_intent_json_envelope(self, intent_project):
         """JSON output follows the roam envelope contract."""
@@ -176,9 +160,7 @@ class TestIntentBasic:
         assert "version" in data, "Missing 'version' key in envelope"
         assert "timestamp" in data.get("_meta", data), "Missing 'timestamp' in _meta or envelope"
         assert "summary" in data, "Missing 'summary' key in envelope"
-        assert data["command"] == "intent", (
-            f"Expected command='intent', got {data['command']}"
-        )
+        assert data["command"] == "intent", f"Expected command='intent', got {data['command']}"
         summary = data["summary"]
         assert isinstance(summary, dict), f"summary should be dict, got {type(summary)}"
         assert "verdict" in summary, "summary missing 'verdict'"
@@ -206,9 +188,7 @@ class TestIntentBasic:
         result = _invoke_intent([], cwd=intent_project)
         assert result.exit_code == 0
         first_line = result.output.strip().splitlines()[0]
-        assert first_line.startswith("VERDICT:"), (
-            f"Expected first line to start with VERDICT:, got: {first_line!r}"
-        )
+        assert first_line.startswith("VERDICT:"), f"Expected first line to start with VERDICT:, got: {first_line!r}"
 
     def test_intent_by_doc_grouping(self, intent_project):
         """JSON output groups links by doc file in 'by_doc'."""
@@ -231,22 +211,17 @@ class TestIntentSymbolFilter:
         symbol_names = {lnk["symbol"] for lnk in links}
         # At least one of the key symbols from architecture.md should appear
         assert symbol_names & {"User", "create_user", "process_order"}, (
-            f"Expected to find User, create_user, or process_order in links, "
-            f"got: {symbol_names}"
+            f"Expected to find User, create_user, or process_order in links, got: {symbol_names}"
         )
 
     def test_intent_symbol_filter(self, intent_project):
         """--symbol User finds docs mentioning User."""
-        result = _invoke_intent(
-            ["--symbol", "User"], cwd=intent_project, json_mode=True
-        )
+        result = _invoke_intent(["--symbol", "User"], cwd=intent_project, json_mode=True)
         data = _parse_intent_json(result)
         links = data.get("links", [])
         # All returned links should be for 'User'
         for lnk in links:
-            assert lnk["symbol"] == "User", (
-                f"Expected symbol='User', got {lnk['symbol']!r}"
-            )
+            assert lnk["symbol"] == "User", f"Expected symbol='User', got {lnk['symbol']!r}"
         # Should have found at least one mention in architecture.md
         assert len(links) > 0, "Expected at least one mention of 'User' in docs"
 
@@ -270,19 +245,13 @@ class TestIntentDocFilter:
         )
         data = _parse_intent_json(result)
         links = data.get("links", [])
-        assert len(links) > 0, (
-            "Expected symbols referenced in docs/architecture.md"
-        )
+        assert len(links) > 0, "Expected symbols referenced in docs/architecture.md"
         # All links should reference architecture.md
         for lnk in links:
-            assert "architecture" in lnk["doc"], (
-                f"Expected doc to be architecture.md, got: {lnk['doc']}"
-            )
+            assert "architecture" in lnk["doc"], f"Expected doc to be architecture.md, got: {lnk['doc']}"
         # Should find create_user or process_order or User
         sym_names = {lnk["symbol"] for lnk in links}
-        assert sym_names & {"User", "create_user", "process_order"}, (
-            f"Expected to find known symbols; got: {sym_names}"
-        )
+        assert sym_names & {"User", "create_user", "process_order"}, f"Expected to find known symbols; got: {sym_names}"
 
 
 class TestIntentDrift:
@@ -296,9 +265,7 @@ class TestIntentDrift:
         assert isinstance(drift, list), "'drift' should be a list"
         # calculate_tax_v2 appears in old-api.md but not in the codebase
         drift_symbols = {d["symbol"] for d in drift}
-        assert "calculate_tax_v2" in drift_symbols, (
-            f"Expected 'calculate_tax_v2' in drift, got: {drift_symbols}"
-        )
+        assert "calculate_tax_v2" in drift_symbols, f"Expected 'calculate_tax_v2' in drift, got: {drift_symbols}"
 
     def test_intent_drift_text_output(self, intent_project):
         """--drift text output shows VERDICT and drift section."""
@@ -306,11 +273,7 @@ class TestIntentDrift:
         assert result.exit_code == 0
         assert "VERDICT:" in result.output
         # Either shows DRIFT section or "No drift detected"
-        assert (
-            "DRIFT" in result.output
-            or "drift" in result.output.lower()
-            or "No drift" in result.output
-        )
+        assert "DRIFT" in result.output or "drift" in result.output.lower() or "No drift" in result.output
 
 
 class TestIntentUndocumented:
@@ -337,15 +300,10 @@ class TestIntentEdgeCases:
     def test_intent_no_docs(self, no_docs_project):
         """Project without doc files gives a graceful message."""
         result = _invoke_intent([], cwd=no_docs_project)
-        assert result.exit_code == 0, (
-            f"Expected exit 0, got {result.exit_code}:\n{result.output}"
-        )
+        assert result.exit_code == 0, f"Expected exit 0, got {result.exit_code}:\n{result.output}"
         assert "VERDICT:" in result.output
         # Should mention no docs found
-        assert (
-            "No documentation" in result.output
-            or "no doc" in result.output.lower()
-        )
+        assert "No documentation" in result.output or "no doc" in result.output.lower()
 
     def test_intent_no_docs_json(self, no_docs_project):
         """Project without doc files returns valid JSON with doc_files=0."""
@@ -360,19 +318,10 @@ class TestIntentEdgeCases:
         (proj / ".gitignore").write_text(".roam/\n")
 
         # Code with short and long function names
-        (proj / "app.py").write_text(
-            "def go():\n"
-            "    pass\n\n"
-            "def fn():\n"
-            "    pass\n\n"
-            "def long_func():\n"
-            "    pass\n"
-        )
+        (proj / "app.py").write_text("def go():\n    pass\n\ndef fn():\n    pass\n\ndef long_func():\n    pass\n")
         # Doc that mentions the short names and the long name
         (proj / "README.md").write_text(
-            "# Readme\n\n"
-            "Use `go` and `fn` everywhere.\n"
-            "The `long_func` is the main entry.\n"
+            "# Readme\n\nUse `go` and `fn` everywhere.\nThe `long_func` is the main entry.\n"
         )
 
         git_init(proj)
@@ -387,9 +336,5 @@ class TestIntentEdgeCases:
         links = data.get("links", [])
         sym_names = {lnk["symbol"] for lnk in links}
         # short names "go" and "fn" should NOT appear (length < 3)
-        assert "go" not in sym_names, (
-            "Short symbol 'go' (len=2) should be filtered out, found in links"
-        )
-        assert "fn" not in sym_names, (
-            "Short symbol 'fn' (len=2) should be filtered out, found in links"
-        )
+        assert "go" not in sym_names, "Short symbol 'go' (len=2) should be filtered out, found in links"
+        assert "fn" not in sym_names, "Short symbol 'fn' (len=2) should be filtered out, found in links"

@@ -38,12 +38,7 @@ def _make_project(tmp_path: Path, files: dict[str, str], rules: dict[str, str]) 
 
 def test_dataflow_rule_detects_dead_assignment(tmp_path):
     files = {
-        "src/app.py": (
-            "def compute(a):\n"
-            "    temp = a\n"
-            "    unused = 1\n"
-            "    return temp\n"
-        ),
+        "src/app.py": ("def compute(a):\n    temp = a\n    unused = 1\n    return temp\n"),
     }
     rules = {
         "dead_assign.yaml": (
@@ -73,10 +68,7 @@ def test_dataflow_rule_detects_dead_assignment(tmp_path):
 
 def test_dataflow_rule_detects_unused_param(tmp_path):
     files = {
-        "src/app.py": (
-            "def greet(name, punctuation):\n"
-            "    return f'hello {name}'\n"
-        ),
+        "src/app.py": ("def greet(name, punctuation):\n    return f'hello {name}'\n"),
     }
     rules = {
         "unused_param.yaml": (
@@ -106,12 +98,7 @@ def test_dataflow_rule_detects_unused_param(tmp_path):
 
 def test_dataflow_rule_detects_source_to_sink(tmp_path):
     files = {
-        "src/app.py": (
-            "def run():\n"
-            "    user = input('value: ')\n"
-            "    eval(user)\n"
-            "    return 1\n"
-        ),
+        "src/app.py": ("def run():\n    user = input('value: ')\n    eval(user)\n    return 1\n"),
     }
     rules = {
         "src_sink.yaml": (
@@ -141,12 +128,7 @@ def test_dataflow_rule_detects_source_to_sink(tmp_path):
 
 def test_check_rules_includes_custom_dataflow_rule(tmp_path, monkeypatch):
     files = {
-        "src/app.py": (
-            "def run(x):\n"
-            "    tmp = x\n"
-            "    dead = 42\n"
-            "    return tmp\n"
-        ),
+        "src/app.py": ("def run(x):\n    tmp = x\n    dead = 42\n    return tmp\n"),
     }
     rules = {
         "custom_dataflow.yaml": (

@@ -23,14 +23,14 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # YAML config loading
 # ---------------------------------------------------------------------------
+
 
 def _find_config_path(config_path: str | None) -> str | None:
     """Resolve a config path, searching defaults if not specified."""
@@ -56,6 +56,7 @@ def _load_raw_config(config_path: str | None) -> dict:
 
     try:
         import yaml
+
         with open(resolved, encoding="utf-8") as f:
             data = yaml.safe_load(f)
     except ImportError:
@@ -148,10 +149,10 @@ def _parse_simple_yaml(path: Path) -> dict:
     return result
 
 
-
 # ---------------------------------------------------------------------------
 # Rule resolution
 # ---------------------------------------------------------------------------
+
 
 def _resolve_rules(
     rule_filter: str | None,
@@ -163,8 +164,9 @@ def _resolve_rules(
     Applies user config overrides (enable/disable, threshold changes).
     Filters by rule ID and/or severity as requested.
     """
-    from roam.rules.builtin import BUILTIN_RULES
     import copy
+
+    from roam.rules.builtin import BUILTIN_RULES
 
     # Build override map keyed by rule ID
     override_map: dict[str, dict] = {}
@@ -205,6 +207,7 @@ def _resolve_rules(
 # Verdict calculation
 # ---------------------------------------------------------------------------
 
+
 def _calculate_verdict(results: list[dict]) -> tuple[str, int]:
     """Return (verdict_string, exit_code).
 
@@ -220,9 +223,7 @@ def _calculate_verdict(results: list[dict]) -> tuple[str, int]:
         return "PASS - no rules configured", 0
 
     if errors:
-        verdict = "FAIL - {} error(s), {} warning(s), {} info".format(
-            len(errors), len(warnings), len(infos)
-        )
+        verdict = "FAIL - {} error(s), {} warning(s), {} info".format(len(errors), len(warnings), len(infos))
         return verdict, 1
     elif warnings:
         verdict = "WARN - {} warning(s), {} info".format(len(warnings), len(infos))
@@ -236,6 +237,7 @@ def _calculate_verdict(results: list[dict]) -> tuple[str, int]:
 # SARIF output
 # ---------------------------------------------------------------------------
 
+
 def _results_to_sarif(results: list[dict]) -> dict:
     """Convert check-rules results to SARIF 2.1.0 format."""
     from roam.output.sarif import rules_to_sarif
@@ -243,12 +245,14 @@ def _results_to_sarif(results: list[dict]) -> dict:
     # Transform results to the format rules_to_sarif expects
     sarif_results = []
     for r in results:
-        sarif_results.append({
-            "name": r["id"],
-            "passed": r["passed"],
-            "severity": r["severity"],
-            "violations": r.get("violations", []),
-        })
+        sarif_results.append(
+            {
+                "name": r["id"],
+                "passed": r["passed"],
+                "severity": r["severity"],
+                "violations": r.get("violations", []),
+            }
+        )
     return rules_to_sarif(sarif_results)
 
 
@@ -272,19 +276,20 @@ def _evaluate_custom_rules(conn, rule_filter: str | None, severity_filter: str |
             continue
 
         violations = item.get("violations", [])
-        adapted.append({
-            "id": name,
-            "severity": severity,
-            "description": item.get("description", "Custom rule"),
-            "check": item.get("type", "custom"),
-            "threshold": None,
-            "source": "custom",
-            "passed": len(violations) == 0,
-            "violation_count": len(violations),
-            "violations": violations,
-        })
+        adapted.append(
+            {
+                "id": name,
+                "severity": severity,
+                "description": item.get("description", "Custom rule"),
+                "check": item.get("type", "custom"),
+                "threshold": None,
+                "source": "custom",
+                "passed": len(violations) == 0,
+                "violation_count": len(violations),
+                "violations": violations,
+            }
+        )
     return adapted
-
 
 
 # ---------------------------------------------------------------------------
@@ -294,28 +299,40 @@ def _evaluate_custom_rules(conn, rule_filter: str | None, severity_filter: str |
 
 @click.command("check-rules")
 @click.option(
-    "--rule", "rule_filter", default=None,
+    "--rule",
+    "rule_filter",
+    default=None,
     help="Run only this specific built-in rule ID or custom rule name.",
 )
 @click.option(
-    "--severity", "severity_filter", default=None,
+    "--severity",
+    "severity_filter",
+    default=None,
     type=click.Choice(["error", "warning", "info"]),
     help="Only show rules matching this severity.",
 )
 @click.option(
-    "--config", "config_path", default=None,
+    "--config",
+    "config_path",
+    default=None,
     help="Path to .roam-rules.yml config file.",
 )
 @click.option(
-    "--profile", "profile_name", default=None,
+    "--profile",
+    "profile_name",
+    default=None,
     help="Use a named rule profile (e.g. strict-security, ai-code-review, legacy-maintenance, minimal).",
 )
 @click.option(
-    "--list", "do_list", is_flag=True,
+    "--list",
+    "do_list",
+    is_flag=True,
     help="List all available built-in rules and exit.",
 )
 @click.option(
-    "--list-profiles", "do_list_profiles", is_flag=True,
+    "--list-profiles",
+    "do_list_profiles",
+    is_flag=True,
     help="List all available rule profiles and exit.",
 )
 @click.pass_context
@@ -341,18 +358,26 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     if do_list_profiles:
         profiles = list_profiles()
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "check-rules",
-                summary={"verdict": "profiles listed", "count": len(profiles)},
-                profiles=profiles,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "check-rules",
+                        summary={"verdict": "profiles listed", "count": len(profiles)},
+                        profiles=profiles,
+                    )
+                )
+            )
         else:
             click.echo("Available rule profiles ({}):".format(len(profiles)))
             for p in profiles:
                 extends = " (extends: {})".format(p["extends"]) if p["extends"] else ""
-                click.echo("  {:25s} {}{}".format(
-                    p["name"], p["description"], extends,
-                ))
+                click.echo(
+                    "  {:25s} {}{}".format(
+                        p["name"],
+                        p["description"],
+                        extends,
+                    )
+                )
         return
 
     # --list: print available rules and exit
@@ -368,18 +393,20 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
                 }
                 for r in BUILTIN_RULES
             ]
-            click.echo(to_json(json_envelope(
-                "check-rules",
-                summary={"verdict": "listed", "count": len(rules_list)},
-                rules=rules_list,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "check-rules",
+                        summary={"verdict": "listed", "count": len(rules_list)},
+                        rules=rules_list,
+                    )
+                )
+            )
         else:
             click.echo("Built-in rules ({}):".format(len(BUILTIN_RULES)))
             for r in BUILTIN_RULES:
                 thr = " (threshold={})".format(r.threshold) if r.threshold is not None else ""
-                click.echo("  {:30s} [{:7s}] {}{}".format(
-                    r.id, r.severity, r.description, thr
-                ))
+                click.echo("  {:30s} [{:7s}] {}{}".format(r.id, r.severity, r.description, thr))
         return
 
     ensure_index()
@@ -394,6 +421,7 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
 
     if effective_profile:
         from roam.rules.builtin import resolve_profile
+
         try:
             profile_overrides = resolve_profile(effective_profile)
         except ValueError as e:
@@ -417,6 +445,7 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     with open_db(readonly=True) as conn:
         try:
             from roam.graph.builder import build_symbol_graph
+
             G = build_symbol_graph(conn)
         except Exception:
             G = None
@@ -425,16 +454,18 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         results = []
         for rule in rules_to_run:
             violations = rule.evaluate(conn, G)
-            results.append({
-                "id": rule.id,
-                "severity": rule.severity,
-                "description": rule.description,
-                "check": rule.check,
-                "threshold": rule.threshold,
-                "passed": len(violations) == 0,
-                "violation_count": len(violations),
-                "violations": violations,
-            })
+            results.append(
+                {
+                    "id": rule.id,
+                    "severity": rule.severity,
+                    "description": rule.description,
+                    "check": rule.check,
+                    "threshold": rule.threshold,
+                    "passed": len(violations) == 0,
+                    "violation_count": len(violations),
+                    "violations": violations,
+                }
+            )
 
         # Evaluate custom rules from .roam/rules
         results.extend(_evaluate_custom_rules(conn, rule_filter, severity_filter))
@@ -442,11 +473,15 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     if not results:
         verdict = "no rules matched"
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "check-rules",
-                summary={"verdict": verdict, "passed": 0, "failed": 0, "total": 0},
-                results=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "check-rules",
+                        summary={"verdict": verdict, "passed": 0, "failed": 0, "total": 0},
+                        results=[],
+                    )
+                )
+            )
         else:
             click.echo("VERDICT: {}".format(verdict))
         return
@@ -456,6 +491,7 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     # --- SARIF output ---
     if sarif_mode:
         from roam.output.sarif import write_sarif
+
         sarif = _results_to_sarif(results)
         click.echo(write_sarif(sarif))
         if exit_code != 0:
@@ -504,10 +540,15 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         for r in failed:
             sev = r["severity"].upper()
             count = r["violation_count"]
-            click.echo("  [{}] {} -- {} ({} violation{})".format(
-                "FAIL", r["id"], r["description"],
-                count, "s" if count != 1 else "",
-            ))
+            click.echo(
+                "  [{}] {} -- {} ({} violation{})".format(
+                    "FAIL",
+                    r["id"],
+                    r["description"],
+                    count,
+                    "s" if count != 1 else "",
+                )
+            )
             for v in r["violations"][:5]:
                 loc = v.get("file", "")
                 if v.get("line"):

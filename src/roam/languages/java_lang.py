@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -24,7 +24,7 @@ class JavaExtractor(LanguageExtractor):
         refs = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
         # Collect inheritance refs accumulated during extract_symbols
-        refs.extend(getattr(self, '_pending_inherits', []))
+        refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
 
@@ -113,12 +113,14 @@ class JavaExtractor(LanguageExtractor):
             # Emit inherits reference
             for child in superclass.children:
                 if child.type == "type_identifier":
-                    self._pending_inherits.append(self._make_reference(
-                        target_name=self.node_text(child, source),
-                        kind="inherits",
-                        line=node.start_point[0] + 1,
-                        source_name=qualified,
-                    ))
+                    self._pending_inherits.append(
+                        self._make_reference(
+                            target_name=self.node_text(child, source),
+                            kind="inherits",
+                            line=node.start_point[0] + 1,
+                            source_name=qualified,
+                        )
+                    )
                     break
 
         # Check interfaces
@@ -131,18 +133,20 @@ class JavaExtractor(LanguageExtractor):
         if annotations:
             sig = "\n".join(annotations) + "\n" + sig
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind=kind,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Walk class body
         body = node.child_by_field_name("body")
@@ -158,18 +162,20 @@ class JavaExtractor(LanguageExtractor):
         sig = f"enum {name}"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="enum",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="enum",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # Walk enum body for constants and methods
         body = node.child_by_field_name("body")
@@ -179,16 +185,18 @@ class JavaExtractor(LanguageExtractor):
                     cn = child.child_by_field_name("name")
                     if cn:
                         const_name = self.node_text(cn, source)
-                        symbols.append(self._make_symbol(
-                            name=const_name,
-                            kind="constant",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{qualified}.{const_name}",
-                            parent_name=qualified,
-                            visibility=vis,
-                            is_exported=vis == "public",
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=const_name,
+                                kind="constant",
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{qualified}.{const_name}",
+                                parent_name=qualified,
+                                visibility=vis,
+                                is_exported=vis == "public",
+                            )
+                        )
                 elif child.type == "enum_body_declarations":
                     self._walk_symbols(child, source, symbols, qualified)
 
@@ -224,18 +232,20 @@ class JavaExtractor(LanguageExtractor):
             sig = "\n".join(annotations) + "\n" + sig
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_constructor(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -247,18 +257,20 @@ class JavaExtractor(LanguageExtractor):
         sig = f"{name}({self._params_text(params, source)})"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="constructor",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="constructor",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_field(self, node, source, symbols, parent_name):
         """Extract field declarations."""
@@ -281,28 +293,32 @@ class JavaExtractor(LanguageExtractor):
                         sig = "final " + sig
 
                     qualified = f"{parent_name}.{name}" if parent_name else name
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind=kind,
-                        line_start=node.start_point[0] + 1,
-                        line_end=node.end_point[0] + 1,
-                        qualified_name=qualified,
-                        signature=sig,
-                        visibility=vis,
-                        is_exported=vis == "public",
-                        parent_name=parent_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind=kind,
+                            line_start=node.start_point[0] + 1,
+                            line_end=node.end_point[0] + 1,
+                            qualified_name=qualified,
+                            signature=sig,
+                            visibility=vis,
+                            is_exported=vis == "public",
+                            parent_name=parent_name,
+                        )
+                    )
 
     def _collect_type_refs(self, node, source, kind, line, source_name):
         """Recursively collect type_identifier nodes as references."""
         for child in node.children:
             if child.type == "type_identifier":
-                self._pending_inherits.append(self._make_reference(
-                    target_name=self.node_text(child, source),
-                    kind=kind,
-                    line=line,
-                    source_name=source_name,
-                ))
+                self._pending_inherits.append(
+                    self._make_reference(
+                        target_name=self.node_text(child, source),
+                        kind=kind,
+                        line=line,
+                        source_name=source_name,
+                    )
+                )
             else:
                 self._collect_type_refs(child, source, kind, line, source_name)
 
@@ -310,14 +326,16 @@ class JavaExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "scoped_identifier" or child.type == "identifier":
                 name = self.node_text(child, source)
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="module",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    signature=f"package {name}",
-                    is_exported=True,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="module",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=f"package {name}",
+                        is_exported=True,
+                    )
+                )
                 break
 
     # ---- Reference extraction ----
@@ -349,13 +367,15 @@ class JavaExtractor(LanguageExtractor):
             if child.type == "scoped_identifier" or child.type == "identifier":
                 path = self.node_text(child, source)
                 target = path.rsplit(".", 1)[-1] if "." in path else path
-                refs.append(self._make_reference(
-                    target_name=target,
-                    kind="import",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=target,
+                        kind="import",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                        import_path=path,
+                    )
+                )
                 break
 
     def _extract_method_call(self, node, source, refs, scope_name):
@@ -367,12 +387,14 @@ class JavaExtractor(LanguageExtractor):
         if obj_node:
             name = f"{self.node_text(obj_node, source)}.{name}"
 
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         # Recurse into arguments
         args = node.child_by_field_name("arguments")
         if args:
@@ -382,12 +404,14 @@ class JavaExtractor(LanguageExtractor):
         type_node = node.child_by_field_name("type")
         if type_node:
             name = self.node_text(type_node, source)
-            refs.append(self._make_reference(
-                target_name=name,
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=name,
+                    kind="call",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
         # Recurse into arguments
         args = node.child_by_field_name("arguments")
         if args:

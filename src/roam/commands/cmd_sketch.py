@@ -4,18 +4,18 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, format_signature, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, format_signature, json_envelope, to_json
 
 
 @click.command()
-@click.argument('directory')
-@click.option('--full', is_flag=True, help='Show all symbols, not just exported')
+@click.argument("directory")
+@click.option("--full", is_flag=True, help="Show all symbols, not just exported")
 @click.pass_context
 def sketch(ctx, directory, full):
     """Show compact structural skeleton of a directory."""
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     # Normalise path separators
@@ -61,10 +61,17 @@ def sketch(ctx, directory, full):
 
         if not symbols:
             if json_mode:
-                click.echo(to_json(json_envelope("sketch",
-                    summary={"file_count": 0, "symbol_count": 0},
-                    directory=directory, files={}, symbol_count=0,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "sketch",
+                            summary={"file_count": 0, "symbol_count": 0},
+                            directory=directory,
+                            files={},
+                            symbol_count=0,
+                        )
+                    )
+                )
             else:
                 click.echo(f"No {'symbols' if full else 'exported symbols'} found in: {directory}/")
                 click.echo("Hint: use a path relative to the project root.")
@@ -80,7 +87,8 @@ def sketch(ctx, directory, full):
             for fp in sorted(by_file.keys()):
                 result[fp] = [
                     {
-                        "name": s["name"], "kind": s["kind"],
+                        "name": s["name"],
+                        "kind": s["kind"],
                         "signature": s["signature"] or "",
                         "line_start": s["line_start"],
                         "line_end": s["line_end"],
@@ -88,11 +96,18 @@ def sketch(ctx, directory, full):
                     }
                     for s in by_file[fp]
                 ]
-            click.echo(to_json(json_envelope("sketch",
-                summary={"file_count": len(by_file), "symbol_count": len(symbols)},
-                directory=directory, file_count=len(by_file),
-                symbol_count=len(symbols), files=result,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "sketch",
+                        summary={"file_count": len(by_file), "symbol_count": len(symbols)},
+                        directory=directory,
+                        file_count=len(by_file),
+                        symbol_count=len(symbols),
+                        files=result,
+                    )
+                )
+            )
             return
 
         # Count files and symbols

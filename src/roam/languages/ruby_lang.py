@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -27,7 +27,7 @@ class RubyExtractor(LanguageExtractor):
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs: list[dict] = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
-        refs.extend(getattr(self, '_pending_inherits', []))
+        refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
 
@@ -72,16 +72,18 @@ class RubyExtractor(LanguageExtractor):
         name = self.node_text(name_node, source)
         qualified = f"{parent_name}::{name}" if parent_name else name
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="module",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=f"module {name}",
-            docstring=self.get_docstring(node, source),
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="module",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=f"module {name}",
+                docstring=self.get_docstring(node, source),
+                is_exported=True,
+            )
+        )
 
         # Walk module body
         body = node.child_by_field_name("body")
@@ -108,25 +110,29 @@ class RubyExtractor(LanguageExtractor):
                     sig += f" < {parent_class}"
                     # Record inheritance reference
                     short_name = parent_class.rsplit("::", 1)[-1] if "::" in parent_class else parent_class
-                    self._pending_inherits.append(self._make_reference(
-                        target_name=short_name,
-                        kind="inherits",
-                        line=superclass_node.start_point[0] + 1,
-                        source_name=qualified,
-                    ))
+                    self._pending_inherits.append(
+                        self._make_reference(
+                            target_name=short_name,
+                            kind="inherits",
+                            line=superclass_node.start_point[0] + 1,
+                            source_name=qualified,
+                        )
+                    )
                     break
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="class",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="class",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
         # Walk class body
         body = node.child_by_field_name("body")
@@ -144,18 +150,20 @@ class RubyExtractor(LanguageExtractor):
         params_text = self._params_text(params, source) if params else ""
         sig = f"def {name}({params_text})"
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method" if parent_name else "function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public",
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method" if parent_name else "function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public",
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_singleton_method(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -173,18 +181,20 @@ class RubyExtractor(LanguageExtractor):
         params_text = self._params_text(params, source) if params else ""
         sig = f"def {obj_text}.{name}({params_text})"
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public",
-            is_exported=True,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public",
+                is_exported=True,
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_assignment(self, node, source, symbols, parent_name):
         """Extract UPPER_CASE constant assignments."""
@@ -202,18 +212,20 @@ class RubyExtractor(LanguageExtractor):
         right = node.child_by_field_name("right")
         value_text = self.node_text(right, source)[:60] if right else None
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="constant",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=f"{name} = {value_text}" if value_text else name,
-            visibility="public",
-            is_exported=True,
-            parent_name=parent_name,
-            default_value=value_text,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="constant",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=f"{name} = {value_text}" if value_text else name,
+                visibility="public",
+                is_exported=True,
+                parent_name=parent_name,
+                default_value=value_text,
+            )
+        )
 
     def _maybe_extract_attr(self, node, source, symbols, parent_name):
         """Extract attr_reader/attr_writer/attr_accessor as property symbols."""
@@ -234,17 +246,19 @@ class RubyExtractor(LanguageExtractor):
                 sym_text = self.node_text(child, source)
                 name = sym_text.lstrip(":")
                 qualified = f"{parent_name}#{name}" if parent_name else name
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="property",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=f"{method_name} :{name}",
-                    visibility="public",
-                    is_exported=True,
-                    parent_name=parent_name,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="property",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=f"{method_name} :{name}",
+                        visibility="public",
+                        is_exported=True,
+                        parent_name=parent_name,
+                    )
+                )
 
     # ---- Reference extraction ----
 
@@ -256,23 +270,27 @@ class RubyExtractor(LanguageExtractor):
             elif ntype == "constant":
                 # Standalone constant reference (e.g. using a class name)
                 name = self.node_text(child, source)
-                refs.append(self._make_reference(
-                    target_name=name,
-                    kind="reference",
-                    line=child.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=name,
+                        kind="reference",
+                        line=child.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
             elif ntype == "scope_resolution":
                 # SomeModule::SomeClass
                 name_node = child.child_by_field_name("name")
                 if name_node:
                     name = self.node_text(name_node, source)
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="reference",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="reference",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
             else:
                 new_scope = scope_name
                 if ntype == "module":
@@ -324,27 +342,33 @@ class RubyExtractor(LanguageExtractor):
             # ClassName.new -> treat as call to ClassName
             if method_name == "new" and receiver_node.type in ("constant", "scope_resolution"):
                 class_name = receiver_text.rsplit("::", 1)[-1] if "::" in receiver_text else receiver_text
-                refs.append(self._make_reference(
-                    target_name=class_name,
-                    kind="call",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=class_name,
+                        kind="call",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
             else:
-                refs.append(self._make_reference(
+                refs.append(
+                    self._make_reference(
+                        target_name=method_name,
+                        kind="call",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
+        else:
+            # Free function / method call without receiver
+            refs.append(
+                self._make_reference(
                     target_name=method_name,
                     kind="call",
                     line=node.start_point[0] + 1,
                     source_name=scope_name,
-                ))
-        else:
-            # Free function / method call without receiver
-            refs.append(self._make_reference(
-                target_name=method_name,
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+                )
+            )
 
         # Recurse into arguments and block
         if args_node:
@@ -365,13 +389,15 @@ class RubyExtractor(LanguageExtractor):
                     if sub.type == "string_content":
                         path = self.node_text(sub, source)
                         target = path.rsplit("/", 1)[-1] if "/" in path else path
-                        refs.append(self._make_reference(
-                            target_name=target,
-                            kind="import",
-                            line=node.start_point[0] + 1,
-                            source_name=scope_name,
-                            import_path=path,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=target,
+                                kind="import",
+                                line=node.start_point[0] + 1,
+                                source_name=scope_name,
+                                import_path=path,
+                            )
+                        )
                         return
 
     def _extract_include_extend(self, node, method_name, args_node, source, refs, scope_name):
@@ -381,19 +407,23 @@ class RubyExtractor(LanguageExtractor):
         for child in args_node.children:
             if child.type == "constant":
                 name = self.node_text(child, source)
-                refs.append(self._make_reference(
-                    target_name=name,
-                    kind="import",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
-            elif child.type == "scope_resolution":
-                name_node = child.child_by_field_name("name")
-                if name_node:
-                    name = self.node_text(name_node, source)
-                    refs.append(self._make_reference(
+                refs.append(
+                    self._make_reference(
                         target_name=name,
                         kind="import",
                         line=node.start_point[0] + 1,
                         source_name=scope_name,
-                    ))
+                    )
+                )
+            elif child.type == "scope_resolution":
+                name_node = child.child_by_field_name("name")
+                if name_node:
+                    name = self.node_text(name_node, source)
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="import",
+                            line=node.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )

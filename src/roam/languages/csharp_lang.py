@@ -32,12 +32,14 @@ class CSharpExtractor(LanguageExtractor):
                 kind = "inherits"
             else:
                 kind = "implements"
-            refs.append(self._make_reference(
-                target_name=target,
-                kind=kind,
-                line=entry["_line"],
-                source_name=entry["_source"],
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind=kind,
+                    line=entry["_line"],
+                    source_name=entry["_source"],
+                )
+            )
         self._pending_inherits = []
         return refs
 
@@ -137,16 +139,18 @@ class CSharpExtractor(LanguageExtractor):
             if child.type == "file_scoped_namespace_declaration":
                 ns_name = self._get_namespace_name(child, source)
                 qualified = f"{parent_name}.{ns_name}" if parent_name else ns_name
-                symbols.append(self._make_symbol(
-                    name=ns_name,
-                    kind="module",
-                    line_start=child.start_point[0] + 1,
-                    line_end=child.end_point[0] + 1,
-                    qualified_name=qualified,
-                    signature=f"namespace {ns_name}",
-                    visibility="public",
-                    is_exported=True,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=ns_name,
+                        kind="module",
+                        line_start=child.start_point[0] + 1,
+                        line_end=child.end_point[0] + 1,
+                        qualified_name=qualified,
+                        signature=f"namespace {ns_name}",
+                        visibility="public",
+                        is_exported=True,
+                    )
+                )
                 current_ns = qualified
             elif child.type == "namespace_declaration":
                 self._extract_namespace(child, source, symbols, current_ns)
@@ -173,8 +177,12 @@ class CSharpExtractor(LanguageExtractor):
                 kind = "struct" if is_struct else "class"
                 keyword = "record struct" if is_struct else "record"
                 self._extract_class(
-                    child, source, symbols, current_ns,
-                    kind=kind, sig_keyword=keyword,
+                    child,
+                    source,
+                    symbols,
+                    current_ns,
+                    kind=kind,
+                    sig_keyword=keyword,
                 )
             elif child.type == "event_declaration":
                 self._extract_event(child, source, symbols, current_ns)
@@ -196,22 +204,23 @@ class CSharpExtractor(LanguageExtractor):
         if not name:
             return
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="module",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=f"namespace {name}",
-            visibility="public",
-            is_exported=True,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="module",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=f"namespace {name}",
+                visibility="public",
+                is_exported=True,
+            )
+        )
         body = node.child_by_field_name("body")
         if body:
             self._walk_symbols(body, source, symbols, parent_name=qualified)
 
-    def _extract_class(self, node, source, symbols, parent_name, kind="class",
-                       sig_keyword=None):
+    def _extract_class(self, node, source, symbols, parent_name, kind="class", sig_keyword=None):
         name_node = node.child_by_field_name("name")
         if name_node is None:
             return
@@ -244,18 +253,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += constraints
 
         is_file_scoped = "file" in class_mods
-        symbols.append(self._make_symbol(
-            name=name,
-            kind=kind,
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=not is_file_scoped and vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=not is_file_scoped and vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # primary constructor (C# 12): parameter_list directly on class/struct/record
         # not a named field in tree-sitter, so find by iterating children
@@ -266,17 +277,19 @@ class CSharpExtractor(LanguageExtractor):
                 break
         if primary_params:
             ctor_sig = f"{name}({self._params_text(primary_params, source)})"
-            symbols.append(self._make_symbol(
-                name=name,
-                kind="constructor",
-                line_start=node.start_point[0] + 1,
-                line_end=node.start_point[0] + 1,
-                qualified_name=f"{qualified}.{name}",
-                signature=ctor_sig,
-                visibility=vis,
-                is_exported=vis == "public",
-                parent_name=qualified,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind="constructor",
+                    line_start=node.start_point[0] + 1,
+                    line_end=node.start_point[0] + 1,
+                    qualified_name=f"{qualified}.{name}",
+                    signature=ctor_sig,
+                    visibility=vis,
+                    is_exported=vis == "public",
+                    parent_name=qualified,
+                )
+            )
 
         # walk body for nested types and members
         body = node.child_by_field_name("body")
@@ -300,18 +313,20 @@ class CSharpExtractor(LanguageExtractor):
                 sig += f" {self.node_text(child, source)}"
                 break
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="enum",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="enum",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # enum members
         body = node.child_by_field_name("body")
@@ -326,16 +341,18 @@ class CSharpExtractor(LanguageExtractor):
                                 break
                     if cn:
                         const_name = self.node_text(cn, source)
-                        symbols.append(self._make_symbol(
-                            name=const_name,
-                            kind="constant",
-                            line_start=child.start_point[0] + 1,
-                            line_end=child.end_point[0] + 1,
-                            qualified_name=f"{qualified}.{const_name}",
-                            parent_name=qualified,
-                            visibility="public",
-                            is_exported=vis == "public",
-                        ))
+                        symbols.append(
+                            self._make_symbol(
+                                name=const_name,
+                                kind="constant",
+                                line_start=child.start_point[0] + 1,
+                                line_end=child.end_point[0] + 1,
+                                qualified_name=f"{qualified}.{const_name}",
+                                parent_name=qualified,
+                                visibility="public",
+                                is_exported=vis == "public",
+                            )
+                        )
 
     def _extract_method(self, node, source, symbols, parent_name):
         name_node = node.child_by_field_name("name")
@@ -370,18 +387,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += constraints
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # search body for local functions
         body = node.child_by_field_name("body")
@@ -399,18 +418,20 @@ class CSharpExtractor(LanguageExtractor):
         sig = f"{name}({self._params_text(params, source)})"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="constructor",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="constructor",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
         # search body for local functions
         body = node.child_by_field_name("body")
@@ -460,17 +481,19 @@ class CSharpExtractor(LanguageExtractor):
             sig = " ".join(sig_parts)
 
             qualified = f"{parent_name}.{name}" if parent_name else name
-            symbols.append(self._make_symbol(
-                name=name,
-                kind=kind,
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                visibility=vis,
-                is_exported=vis == "public",
-                parent_name=parent_name,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind=kind,
+                    line_start=node.start_point[0] + 1,
+                    line_end=node.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=sig,
+                    visibility=vis,
+                    is_exported=vis == "public",
+                    parent_name=parent_name,
+                )
+            )
 
     def _extract_property(self, node, source, symbols, parent_name):
         """extract property declaration with accessor info."""
@@ -498,18 +521,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += f" {{ {accessors} }}"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="property",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="property",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_delegate(self, node, source, symbols, parent_name):
         """extract delegate declaration."""
@@ -540,18 +565,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += constraints
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="delegate",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="delegate",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_event(self, node, source, symbols, parent_name):
         """extract event declaration with explicit add/remove accessors."""
@@ -572,18 +599,20 @@ class CSharpExtractor(LanguageExtractor):
         sig += f"event {type_text} {name}"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="event",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="event",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_event_field(self, node, source, symbols, parent_name):
         """extract event field declaration (field-like events)."""
@@ -596,18 +625,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += f"event {type_text} {name}"
 
             qualified = f"{parent_name}.{name}" if parent_name else name
-            symbols.append(self._make_symbol(
-                name=name,
-                kind="event",
-                line_start=node.start_point[0] + 1,
-                line_end=node.end_point[0] + 1,
-                qualified_name=qualified,
-                signature=sig,
-                docstring=self.get_docstring(node, source),
-                visibility=vis,
-                is_exported=vis == "public",
-                parent_name=parent_name,
-            ))
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind="event",
+                    line_start=node.start_point[0] + 1,
+                    line_end=node.end_point[0] + 1,
+                    qualified_name=qualified,
+                    signature=sig,
+                    docstring=self.get_docstring(node, source),
+                    visibility=vis,
+                    is_exported=vis == "public",
+                    parent_name=parent_name,
+                )
+            )
 
     def _extract_indexer(self, node, source, symbols, parent_name):
         """extract indexer declaration as property with name='this'."""
@@ -626,18 +657,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += f" {{ {accessors} }}"
 
         qualified = f"{parent_name}.this" if parent_name else "this"
-        symbols.append(self._make_symbol(
-            name="this",
-            kind="property",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name="this",
+                kind="property",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_local_function(self, node, source, symbols, parent_name):
         """extract local function statement as method with is_exported=False."""
@@ -673,18 +706,20 @@ class CSharpExtractor(LanguageExtractor):
             sig += constraints
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="private",
-            is_exported=False,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="private",
+                is_exported=False,
+                parent_name=parent_name,
+            )
+        )
 
         # recurse into body for nested local functions
         body = node.child_by_field_name("body")
@@ -708,17 +743,19 @@ class CSharpExtractor(LanguageExtractor):
         sig = f"static {type_text} operator {op_text}({self._params_text(params, source)})"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_conversion_operator(self, node, source, symbols, parent_name):
         """extract implicit/explicit conversion operator."""
@@ -741,17 +778,19 @@ class CSharpExtractor(LanguageExtractor):
         sig = f"static {conversion_kind} operator {type_text}({self._params_text(params, source)})"
 
         qualified = f"{parent_name}.{name}" if parent_name else name
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility=vis,
-            is_exported=vis == "public",
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility=vis,
+                is_exported=vis == "public",
+                parent_name=parent_name,
+            )
+        )
 
     def _extract_destructor(self, node, source, symbols, parent_name):
         """extract destructor (~ClassName)."""
@@ -762,17 +801,19 @@ class CSharpExtractor(LanguageExtractor):
 
         sig = f"~{name}()"
         qualified = f"{parent_name}.~{name}" if parent_name else f"~{name}"
-        symbols.append(self._make_symbol(
-            name=f"~{name}",
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            visibility="private",
-            is_exported=False,
-            parent_name=parent_name,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=f"~{name}",
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                visibility="private",
+                is_exported=False,
+                parent_name=parent_name,
+            )
+        )
 
     def _find_local_functions(self, node, source, symbols, parent_name):
         """recursively find local_function_statement nodes in method bodies."""
@@ -824,12 +865,14 @@ class CSharpExtractor(LanguageExtractor):
             name = self._identifier_from_node(child, source)
             if name is None:
                 continue
-            self._pending_inherits.append({
-                "_source": source_name,
-                "_target": name,
-                "_position": position,
-                "_line": line,
-            })
+            self._pending_inherits.append(
+                {
+                    "_source": source_name,
+                    "_target": name,
+                    "_position": position,
+                    "_line": line,
+                }
+            )
             position += 1
 
     # ---- Reference extraction ----
@@ -868,16 +911,23 @@ class CSharpExtractor(LanguageExtractor):
                 if child.type == "namespace_declaration":
                     ns_name = self._get_namespace_name(child, source)
                     new_scope = f"{current_scope}.{ns_name}" if current_scope else ns_name
-                elif child.type in ("class_declaration", "interface_declaration",
-                                    "struct_declaration", "enum_declaration",
-                                    "record_declaration"):
+                elif child.type in (
+                    "class_declaration",
+                    "interface_declaration",
+                    "struct_declaration",
+                    "enum_declaration",
+                    "record_declaration",
+                ):
                     n = child.child_by_field_name("name")
                     if n:
                         cname = self.node_text(n, source)
                         new_scope = f"{current_scope}.{cname}" if current_scope else cname
-                elif child.type in ("method_declaration", "constructor_declaration",
-                                    "local_function_statement",
-                                    "destructor_declaration"):
+                elif child.type in (
+                    "method_declaration",
+                    "constructor_declaration",
+                    "local_function_statement",
+                    "destructor_declaration",
+                ):
                     n = child.child_by_field_name("name")
                     if n:
                         mname = self.node_text(n, source)
@@ -914,13 +964,15 @@ class CSharpExtractor(LanguageExtractor):
         else:
             target = import_path.rsplit(".", 1)[-1] if "." in import_path else import_path
 
-        refs.append(self._make_reference(
-            target_name=target,
-            kind="import",
-            line=node.start_point[0] + 1,
-            source_name=scope_name,
-            import_path=import_path,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=target,
+                kind="import",
+                line=node.start_point[0] + 1,
+                source_name=scope_name,
+                import_path=import_path,
+            )
+        )
 
     def _identifier_from_node(self, node, source) -> str | None:
         """extract the simple identifier name from a node (unwraps generic_name)."""
@@ -948,12 +1000,14 @@ class CSharpExtractor(LanguageExtractor):
                 target = self._identifier_from_node(child, source)
 
         if target:
-            refs.append(self._make_reference(
-                target_name=target,
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
 
         # recurse into all children to catch chained calls and nested expressions
         for child in node.children:
@@ -971,12 +1025,14 @@ class CSharpExtractor(LanguageExtractor):
                 target = self._identifier_from_node(child, source)
 
         if target:
-            refs.append(self._make_reference(
-                target_name=target,
-                kind="call",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=target,
+                    kind="call",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
 
         if arg_list:
             self._walk_refs(arg_list, source, refs, scope_name)
@@ -986,18 +1042,22 @@ class CSharpExtractor(LanguageExtractor):
         for child in node.children:
             if child.type == "attribute":
                 name = next(
-                    (self._identifier_from_node(ac, source)
-                     for ac in child.children
-                     if ac.type in ("identifier", "qualified_name", "generic_name")),
+                    (
+                        self._identifier_from_node(ac, source)
+                        for ac in child.children
+                        if ac.type in ("identifier", "qualified_name", "generic_name")
+                    ),
                     None,
                 )
                 if name:
-                    refs.append(self._make_reference(
-                        target_name=name,
-                        kind="type_ref",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=name,
+                            kind="type_ref",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                        )
+                    )
 
     def _extract_nullable_type_ref(self, node, source, refs, scope_name):
         """unwrap nullable_type (string?, List<int>?) and extract type reference."""
@@ -1005,39 +1065,64 @@ class CSharpExtractor(LanguageExtractor):
             if child.type == "predefined_type":
                 return  # skip builtins (int?, string?, bool?, etc.)
             if child.type == "identifier":
-                refs.append(self._make_reference(
-                    target_name=self.node_text(child, source),
-                    kind="type_ref",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=self.node_text(child, source),
+                        kind="type_ref",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
                 return
             if child.type == "generic_name":
                 for gc in child.children:
                     if gc.type == "identifier":
-                        refs.append(self._make_reference(
-                            target_name=self.node_text(gc, source),
-                            kind="type_ref",
-                            line=node.start_point[0] + 1,
-                            source_name=scope_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=self.node_text(gc, source),
+                                kind="type_ref",
+                                line=node.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
                         return
             if child.type == "qualified_name":
-                refs.append(self._make_reference(
-                    target_name=self.node_text(child, source),
-                    kind="type_ref",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=self.node_text(child, source),
+                        kind="type_ref",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
                 return
 
     # ---- Additional type reference extraction ----
 
-    _BUILTIN_TYPES = frozenset({
-        "int", "string", "bool", "byte", "sbyte", "short", "ushort",
-        "uint", "long", "ulong", "float", "double", "decimal", "char",
-        "object", "void", "dynamic", "var", "nint", "nuint",
-    })
+    _BUILTIN_TYPES = frozenset(
+        {
+            "int",
+            "string",
+            "bool",
+            "byte",
+            "sbyte",
+            "short",
+            "ushort",
+            "uint",
+            "long",
+            "ulong",
+            "float",
+            "double",
+            "decimal",
+            "char",
+            "object",
+            "void",
+            "dynamic",
+            "var",
+            "nint",
+            "nuint",
+        }
+    )
 
     def _type_name_from_node(self, node, source) -> str | None:
         """extract a non-builtin type name from a type node."""
@@ -1062,24 +1147,28 @@ class CSharpExtractor(LanguageExtractor):
         type_node = node.child_by_field_name("type")
         name = self._type_name_from_node(type_node, source)
         if name:
-            refs.append(self._make_reference(
-                target_name=name,
-                kind="type_ref",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=name,
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
 
     def _extract_typeof_ref(self, node, source, refs, scope_name):
         """extract type reference from typeof(SomeType)."""
         for child in node.children:
             name = self._type_name_from_node(child, source)
             if name:
-                refs.append(self._make_reference(
-                    target_name=name,
-                    kind="type_ref",
-                    line=node.start_point[0] + 1,
-                    source_name=scope_name,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=name,
+                        kind="type_ref",
+                        line=node.start_point[0] + 1,
+                        source_name=scope_name,
+                    )
+                )
                 return
 
     def _extract_is_pattern_ref(self, node, source, refs, scope_name):
@@ -1090,12 +1179,14 @@ class CSharpExtractor(LanguageExtractor):
                 for gc in child.children:
                     name = self._type_name_from_node(gc, source)
                     if name:
-                        refs.append(self._make_reference(
-                            target_name=name,
-                            kind="type_ref",
-                            line=node.start_point[0] + 1,
-                            source_name=scope_name,
-                        ))
+                        refs.append(
+                            self._make_reference(
+                                target_name=name,
+                                kind="type_ref",
+                                line=node.start_point[0] + 1,
+                                source_name=scope_name,
+                            )
+                        )
                         return
         # recurse for nested expressions
         self._walk_refs(node, source, refs, scope_name)
@@ -1109,15 +1200,16 @@ class CSharpExtractor(LanguageExtractor):
             # for as_expression: type is the last identifier/generic_name child
             last_type = None
             for child in node.children:
-                if child.type in ("identifier", "generic_name", "qualified_name",
-                                  "nullable_type"):
+                if child.type in ("identifier", "generic_name", "qualified_name", "nullable_type"):
                     last_type = child
             type_node = last_type
         name = self._type_name_from_node(type_node, source)
         if name:
-            refs.append(self._make_reference(
-                target_name=name,
-                kind="type_ref",
-                line=node.start_point[0] + 1,
-                source_name=scope_name,
-            ))
+            refs.append(
+                self._make_reference(
+                    target_name=name,
+                    kind="type_ref",
+                    line=node.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )

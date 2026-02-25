@@ -10,22 +10,17 @@ Covers:
 
 from __future__ import annotations
 
-import math
-import os
-import sqlite3
-
-import pytest
-
-
 # ---------------------------------------------------------------------------
 # Helper: parse Python source and extract symbols + references
 # ---------------------------------------------------------------------------
 
+
 def _parse_py(source_text: str, file_path: str = "example.py"):
     """Parse Python source and return (symbols, references)."""
+    from tree_sitter_language_pack import get_parser
+
     from roam.index.parser import GRAMMAR_ALIASES
     from roam.languages.registry import get_extractor
-    from tree_sitter_language_pack import get_parser
 
     grammar = GRAMMAR_ALIASES.get("python", "python")
     parser = get_parser(grammar)
@@ -53,6 +48,7 @@ def _ref_targets(refs, kind=None, source_name=None):
 # ===========================================================================
 # 1. Python extractor: with-statement context manager references
 # ===========================================================================
+
 
 class TestWithStatement:
     """with-statement context managers should produce call references."""
@@ -104,6 +100,7 @@ def process():
 # 2. Python extractor: raise statement references
 # ===========================================================================
 
+
 class TestRaiseStatement:
     """raise statements should produce call references."""
 
@@ -149,6 +146,7 @@ def check():
 # ===========================================================================
 # 3. Python extractor: except clause type references
 # ===========================================================================
+
 
 class TestExceptClause:
     """except clauses should produce type_ref references."""
@@ -265,20 +263,24 @@ def handle():
 # 4. Metrics history: _is_test_path + geometric mean health score
 # ===========================================================================
 
+
 class TestMetricsHistory:
     """Test metrics_history.py helper functions."""
 
     def test_is_test_path_prefix(self):
         from roam.commands.metrics_history import _is_test_path
+
         assert _is_test_path("tests/test_basic.py") is True
         assert _is_test_path("test_something.py") is True
 
     def test_is_test_path_suffix(self):
         from roam.commands.metrics_history import _is_test_path
+
         assert _is_test_path("my_test.py") is True
 
     def test_is_not_test_path(self):
         from roam.commands.metrics_history import _is_test_path
+
         assert _is_test_path("src/roam/cli.py") is False
         assert _is_test_path("src/roam/commands/cmd_health.py") is False
 
@@ -287,30 +289,36 @@ class TestMetricsHistory:
 # 5. Patterns command: self-detection filter
 # ===========================================================================
 
+
 class TestPatternsFilter:
     """Test _is_test_or_detector_path from cmd_patterns.py."""
 
     def test_filters_test_files(self):
         from roam.commands.cmd_patterns import _is_test_or_detector_path
+
         assert _is_test_or_detector_path("tests/test_basic.py") is True
         assert _is_test_or_detector_path("test_something.py") is True
 
     def test_filters_cmd_patterns_itself(self):
         from roam.commands.cmd_patterns import _is_test_or_detector_path
+
         assert _is_test_or_detector_path("src/roam/commands/cmd_patterns.py") is True
 
     def test_allows_production_files(self):
         from roam.commands.cmd_patterns import _is_test_or_detector_path
+
         assert _is_test_or_detector_path("src/roam/cli.py") is False
         assert _is_test_or_detector_path("src/roam/commands/cmd_health.py") is False
 
     def test_filters_test_directories(self):
         from roam.commands.cmd_patterns import _is_test_or_detector_path
+
         assert _is_test_or_detector_path("tests/integration/test_api.py") is True
         assert _is_test_or_detector_path("spec/models/user_spec.py") is True
 
     def test_handles_backslashes(self):
         from roam.commands.cmd_patterns import _is_test_or_detector_path
+
         assert _is_test_or_detector_path("tests\\test_basic.py") is True
         assert _is_test_or_detector_path("src\\roam\\commands\\cmd_patterns.py") is True
 
@@ -319,31 +327,38 @@ class TestPatternsFilter:
 # 6. Health command: non-production path exclusion
 # ===========================================================================
 
+
 class TestHealthNonProductionPaths:
     """Test _is_utility_path includes non-production paths."""
 
     def test_dev_directory_is_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         assert _is_utility_path("dev/roam-bench.py") is True
 
     def test_tests_directory_is_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         assert _is_utility_path("tests/test_basic.py") is True
 
     def test_scripts_directory_is_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         assert _is_utility_path("scripts/deploy.sh") is True
 
     def test_benchmark_directory_is_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         assert _is_utility_path("benchmark/perf.py") is True
 
     def test_conftest_is_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         assert _is_utility_path("tests/conftest.py") is True
 
     def test_production_code_not_utility(self):
         from roam.commands.cmd_health import _is_utility_path
+
         # Unless it matches OTHER utility patterns, normal production code is not utility
         assert _is_utility_path("src/roam/commands/cmd_search.py") is False
 
@@ -352,16 +367,19 @@ class TestHealthNonProductionPaths:
 # 7. File roles: dev/ is ROLE_SCRIPTS
 # ===========================================================================
 
+
 class TestFileRolesDev:
     """Test that dev/ directory files get ROLE_SCRIPTS."""
 
     def test_dev_file_classified_as_scripts(self):
-        from roam.index.file_roles import classify_file, ROLE_SCRIPTS
+        from roam.index.file_roles import ROLE_SCRIPTS, classify_file
+
         role = classify_file("dev/roam-bench.py")
         assert role == ROLE_SCRIPTS
 
     def test_dev_nested_file(self):
-        from roam.index.file_roles import classify_file, ROLE_SCRIPTS
+        from roam.index.file_roles import ROLE_SCRIPTS, classify_file
+
         role = classify_file("dev/tools/helper.py")
         assert role == ROLE_SCRIPTS
 
@@ -370,31 +388,38 @@ class TestFileRolesDev:
 # 8. Dead code removal: verify functions are gone
 # ===========================================================================
 
+
 class TestDeadCodeRemoval:
     """Verify that dead functions from v8.0.x were removed."""
 
     def test_condense_cycles_removed(self):
         from roam.graph import cycles
+
         assert not hasattr(cycles, "condense_cycles")
 
     def test_layer_balance_removed(self):
         from roam.graph import layers
+
         assert not hasattr(layers, "layer_balance")
 
     def test_find_path_removed(self):
         from roam.graph import pathfinding
+
         assert not hasattr(pathfinding, "find_path")
 
     def test_build_reverse_adj_removed(self):
         from roam.commands import graph_helpers
+
         assert not hasattr(graph_helpers, "build_reverse_adj")
 
     def test_get_symbol_blame_removed(self):
         from roam.index import git_stats
+
         assert not hasattr(git_stats, "get_symbol_blame")
 
     def test_init_exports_clean(self):
         """graph/__init__.py should not export removed functions."""
         from roam.graph import __all__
+
         removed = {"condense_cycles", "layer_balance", "find_path"}
         assert removed.isdisjoint(set(__all__))

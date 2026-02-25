@@ -11,7 +11,6 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
-
 _PUBLIC_SYMBOLS_SQL = """
 SELECT s.id, s.name, s.kind, s.signature,
        s.line_start, s.line_end, s.docstring,
@@ -153,10 +152,7 @@ def docs_coverage(ctx, limit, days, threshold):
                 "stale_docs": len(stale),
                 "threshold": threshold,
                 "gate_passed": gate_passed,
-                "verdict": (
-                    f"{coverage_pct:.1f}% doc coverage "
-                    f"({documented_public}/{total_public} public symbols)"
-                ),
+                "verdict": (f"{coverage_pct:.1f}% doc coverage ({documented_public}/{total_public} public symbols)"),
             },
             missing_docs=display_missing,
             stale_docs=display_stale,
@@ -171,15 +167,8 @@ def docs_coverage(ctx, limit, days, threshold):
         return
 
     click.echo("Documentation coverage\n")
-    click.echo(
-        f"  Public symbols: {total_public}"
-        f"\n  Documented: {documented_public}"
-        f"\n  Coverage: {coverage_pct:.1f}%"
-    )
-    click.echo(
-        f"  Missing docs: {len(missing)}"
-        f"\n  Stale docs (>{days}d): {len(stale)}"
-    )
+    click.echo(f"  Public symbols: {total_public}\n  Documented: {documented_public}\n  Coverage: {coverage_pct:.1f}%")
+    click.echo(f"  Missing docs: {len(missing)}\n  Stale docs (>{days}d): {len(stale)}")
 
     if display_missing:
         click.echo("\nTop undocumented symbols (PageRank-ranked):")
@@ -198,9 +187,7 @@ def docs_coverage(ctx, limit, days, threshold):
             )
 
     if not gate_passed:
-        click.echo(
-            f"\n  GATE FAILED: coverage {coverage_pct:.1f}% below threshold {threshold}%"
-        )
+        click.echo(f"\n  GATE FAILED: coverage {coverage_pct:.1f}% below threshold {threshold}%")
         from roam.exit_codes import EXIT_GATE_FAILURE
 
         ctx.exit(EXIT_GATE_FAILURE)

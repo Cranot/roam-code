@@ -12,12 +12,12 @@ import os
 import pytest
 from click.testing import CliRunner
 
-from tests.conftest import invoke_cli, index_in_process, git_init, git_commit
-
+from tests.conftest import invoke_cli
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def invoke_sarif(runner, args, cwd):
     """Invoke a roam CLI command with --sarif flag."""
@@ -35,15 +35,11 @@ def invoke_sarif(runner, args, cwd):
 
 def parse_sarif(result):
     """Parse SARIF JSON from a CliRunner result."""
-    assert result.exit_code == 0, (
-        f"Command failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"Command failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid SARIF JSON: {e}\nOutput was:\n{result.output[:500]}"
-        )
+        pytest.fail(f"Invalid SARIF JSON: {e}\nOutput was:\n{result.output[:500]}")
 
 
 def assert_valid_sarif(data):
@@ -65,43 +61,44 @@ def assert_valid_sarif(data):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def indexed_proj(project_factory):
     """Create a small indexed Python project for SARIF tests."""
-    return project_factory({
-        "src/models.py": (
-            'class User:\n'
-            '    """A user model."""\n'
-            '    def __init__(self, name, email):\n'
-            '        self.name = name\n'
-            '        self.email = email\n'
-            '\n'
-            '    def display_name(self):\n'
-            '        return self.name.title()\n'
-        ),
-        "src/service.py": (
-            'from models import User\n'
-            '\n'
-            'def create_user(name, email):\n'
-            '    user = User(name, email)\n'
-            '    return user\n'
-            '\n'
-            'def unused_helper():\n'
-            '    """This function is never called."""\n'
-            '    return 42\n'
-        ),
-        "src/utils.py": (
-            'def format_name(first, last):\n'
-            '    return f"{first} {last}"\n'
-            '\n'
-            'UNUSED_CONSTANT = "never_referenced"\n'
-        ),
-    })
+    return project_factory(
+        {
+            "src/models.py": (
+                "class User:\n"
+                '    """A user model."""\n'
+                "    def __init__(self, name, email):\n"
+                "        self.name = name\n"
+                "        self.email = email\n"
+                "\n"
+                "    def display_name(self):\n"
+                "        return self.name.title()\n"
+            ),
+            "src/service.py": (
+                "from models import User\n"
+                "\n"
+                "def create_user(name, email):\n"
+                "    user = User(name, email)\n"
+                "    return user\n"
+                "\n"
+                "def unused_helper():\n"
+                '    """This function is never called."""\n'
+                "    return 42\n"
+            ),
+            "src/utils.py": (
+                'def format_name(first, last):\n    return f"{first} {last}"\n\nUNUSED_CONSTANT = "never_referenced"\n'
+            ),
+        }
+    )
 
 
 # ---------------------------------------------------------------------------
 # Tests
 # ---------------------------------------------------------------------------
+
 
 class TestSarifFlagDead:
     """Test --sarif flag with the dead command."""
@@ -192,6 +189,7 @@ class TestSarifHelp:
     def test_sarif_flag_recognized(self):
         """Verify --sarif is accepted as a global flag (no 'no such option' error)."""
         from roam.cli import cli
+
         runner = CliRunner()
         # Just pass --sarif without a subcommand; should show usage, not an error
         result = runner.invoke(cli, ["--sarif", "--help"])
@@ -230,20 +228,12 @@ class TestSarifNoFindings:
 
     def test_sarif_no_findings(self, project_factory):
         # Create a project where everything is used (no dead code)
-        proj = project_factory({
-            "main.py": (
-                'from helper import do_work\n'
-                '\n'
-                'def main():\n'
-                '    do_work()\n'
-                '\n'
-                'main()\n'
-            ),
-            "helper.py": (
-                'def do_work():\n'
-                '    return 1\n'
-            ),
-        })
+        proj = project_factory(
+            {
+                "main.py": ("from helper import do_work\n\ndef main():\n    do_work()\n\nmain()\n"),
+                "helper.py": ("def do_work():\n    return 1\n"),
+            }
+        )
         runner = CliRunner()
         result = invoke_sarif(runner, ["rules"], cwd=proj)
         data = parse_sarif(result)

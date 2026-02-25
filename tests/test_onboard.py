@@ -11,8 +11,6 @@ Covers:
 
 from __future__ import annotations
 
-import json
-import os
 import sys
 from pathlib import Path
 
@@ -21,18 +19,17 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    invoke_cli,
-    parse_json_output,
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
+    invoke_cli,
+    parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -67,61 +64,61 @@ def small_indexed_project(tmp_path):
     src.mkdir()
 
     (src / "models.py").write_text(
-        'class User:\n'
+        "class User:\n"
         '    """A user model."""\n'
-        '    def __init__(self, name, email):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        '    def display_name(self):\n'
-        '        return self.name.title()\n'
-        '\n'
-        '    def validate_email(self):\n'
+        "    def __init__(self, name, email):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
+        "\n"
+        "    def validate_email(self):\n"
         '        return "@" in self.email\n'
-        '\n'
-        '\n'
-        'class Admin(User):\n'
+        "\n"
+        "\n"
+        "class Admin(User):\n"
         '    """An admin user."""\n'
         '    def __init__(self, name, email, role="admin"):\n'
-        '        super().__init__(name, email)\n'
-        '        self.role = role\n'
-        '\n'
-        '    def promote(self, user):\n'
-        '        pass\n'
+        "        super().__init__(name, email)\n"
+        "        self.role = role\n"
+        "\n"
+        "    def promote(self, user):\n"
+        "        pass\n"
     )
 
     (src / "service.py").write_text(
-        'from models import User, Admin\n'
-        '\n'
-        '\n'
-        'def create_user(name, email):\n'
+        "from models import User, Admin\n"
+        "\n"
+        "\n"
+        "def create_user(name, email):\n"
         '    """Create a new user."""\n'
-        '    user = User(name, email)\n'
-        '    if not user.validate_email():\n'
+        "    user = User(name, email)\n"
+        "    if not user.validate_email():\n"
         '        raise ValueError("Invalid email")\n'
-        '    return user\n'
-        '\n'
-        '\n'
-        'def get_display(user):\n'
+        "    return user\n"
+        "\n"
+        "\n"
+        "def get_display(user):\n"
         '    """Get display name."""\n'
-        '    return user.display_name()\n'
-        '\n'
-        '\n'
-        'def unused_helper():\n'
+        "    return user.display_name()\n"
+        "\n"
+        "\n"
+        "def unused_helper():\n"
         '    """This function is never called."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
     (src / "utils.py").write_text(
-        'def format_name(first, last):\n'
+        "def format_name(first, last):\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        '\n'
-        'def parse_email(raw):\n'
+        "\n"
+        "\n"
+        "def parse_email(raw):\n"
         '    """Parse an email address."""\n'
         '    if "@" not in raw:\n'
-        '        return None\n'
+        "        return None\n"
         '    parts = raw.split("@")\n'
         '    return {"user": parts[0], "domain": parts[1]}\n'
     )
@@ -129,9 +126,9 @@ def small_indexed_project(tmp_path):
     tests_dir = repo / "tests"
     tests_dir.mkdir()
     (tests_dir / "test_models.py").write_text(
-        'from src.models import User\n'
-        '\n'
-        'def test_user_creation():\n'
+        "from src.models import User\n"
+        "\n"
+        "def test_user_creation():\n"
         '    u = User("alice", "a@b.com")\n'
         '    assert u.name == "alice"\n'
     )
@@ -145,6 +142,7 @@ def small_indexed_project(tmp_path):
 # ============================================================================
 # Text output: all sections present
 # ============================================================================
+
 
 class TestOnboardTextSections:
     """Verify all expected sections appear in text output."""
@@ -209,6 +207,7 @@ class TestOnboardTextSections:
 # ============================================================================
 # JSON output structure
 # ============================================================================
+
 
 class TestOnboardJSON:
     """Verify JSON output follows the envelope contract."""
@@ -308,6 +307,7 @@ class TestOnboardJSON:
 # --detail flag levels
 # ============================================================================
 
+
 class TestOnboardDetailLevels:
     """Verify that --detail flag changes output volume."""
 
@@ -344,12 +344,16 @@ class TestOnboardDetailLevels:
     def test_json_brief_has_fewer_entry_points(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         brief_result = invoke_cli(
-            cli_runner, ["onboard", "--detail", "brief"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard", "--detail", "brief"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         full_result = invoke_cli(
-            cli_runner, ["onboard", "--detail", "full"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard", "--detail", "full"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         brief_data = parse_json_output(brief_result, "onboard")
         full_data = parse_json_output(full_result, "onboard")
@@ -360,6 +364,7 @@ class TestOnboardDetailLevels:
 # ============================================================================
 # Empty / minimal project
 # ============================================================================
+
 
 class TestOnboardMinimalProject:
     """Verify graceful handling of minimal or near-empty projects."""
@@ -382,7 +387,8 @@ class TestOnboardMinimalProject:
         monkeypatch.chdir(empty_indexed_project)
         for detail in ("brief", "normal", "full"):
             result = invoke_cli(
-                cli_runner, ["onboard", "--detail", detail],
+                cli_runner,
+                ["onboard", "--detail", detail],
                 cwd=empty_indexed_project,
             )
             assert result.exit_code == 0
@@ -392,14 +398,17 @@ class TestOnboardMinimalProject:
 # Entry points section
 # ============================================================================
 
+
 class TestOnboardEntryPoints:
     """Verify entry points are extracted and shown correctly."""
 
     def test_entry_points_contain_symbols(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         eps = data["entry_points"]
@@ -412,8 +421,10 @@ class TestOnboardEntryPoints:
     def test_entry_points_have_pagerank(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         for ep in data["entry_points"]:
@@ -423,8 +434,10 @@ class TestOnboardEntryPoints:
     def test_entry_points_have_why(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         for ep in data["entry_points"]:
@@ -436,14 +449,17 @@ class TestOnboardEntryPoints:
 # Reading order
 # ============================================================================
 
+
 class TestOnboardReadingOrder:
     """Verify the suggested reading order is generated correctly."""
 
     def test_reading_order_has_entries(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         reading = data["reading_order"]
@@ -455,8 +471,10 @@ class TestOnboardReadingOrder:
     def test_reading_order_has_priorities(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         for item in data["reading_order"]:
@@ -467,8 +485,10 @@ class TestOnboardReadingOrder:
     def test_reading_order_priorities_sequential(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         priorities = [item["priority"] for item in data["reading_order"]]
@@ -481,8 +501,10 @@ class TestOnboardReadingOrder:
     def test_reading_order_no_duplicate_paths(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         paths = [item["path"] for item in data["reading_order"]]
@@ -493,14 +515,17 @@ class TestOnboardReadingOrder:
 # Verdict
 # ============================================================================
 
+
 class TestOnboardVerdict:
     """Verify the verdict is generated."""
 
     def test_verdict_in_json(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(
-            cli_runner, ["onboard"],
-            cwd=small_indexed_project, json_mode=True,
+            cli_runner,
+            ["onboard"],
+            cwd=small_indexed_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "onboard")
         assert "verdict" in data["summary"]

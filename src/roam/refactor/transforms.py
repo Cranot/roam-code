@@ -77,8 +77,7 @@ def _module_name_from_path(path: str) -> str:
     return name
 
 
-def move_symbol(conn, symbol_name: str, target_file: str,
-                dry_run: bool = True) -> dict:
+def move_symbol(conn, symbol_name: str, target_file: str, dry_run: bool = True) -> dict:
     """Move a symbol to a different file.
 
     1. Resolve symbol via find_symbol
@@ -148,39 +147,49 @@ def move_symbol(conn, symbol_name: str, target_file: str,
     insert_at = len(target_lines) + 1
     if target_lines:
         # Add blank line separator
-        target_changes.append({
-            "type": "insert",
-            "line": insert_at,
-            "text": "",
-        })
+        target_changes.append(
+            {
+                "type": "insert",
+                "line": insert_at,
+                "text": "",
+            }
+        )
         insert_at += 1
 
     for i, sl in enumerate(symbol_lines):
-        target_changes.append({
-            "type": "insert",
-            "line": insert_at + i,
-            "text": sl,
-        })
+        target_changes.append(
+            {
+                "type": "insert",
+                "line": insert_at + i,
+                "text": sl,
+            }
+        )
 
     file_action = "CREATE" if not target_lines else "MODIFY"
-    files_modified.append({
-        "path": target_file,
-        "action": file_action,
-        "changes": target_changes,
-    })
+    files_modified.append(
+        {
+            "path": target_file,
+            "action": file_action,
+            "changes": target_changes,
+        }
+    )
 
     # 2. Source file: remove the symbol
-    source_changes = [{
-        "type": "delete",
-        "line_start": line_start,
-        "line_end": line_end,
-        "old_text": "\n".join(symbol_lines),
-    }]
-    files_modified.append({
-        "path": source_file,
-        "action": "MODIFY",
-        "changes": source_changes,
-    })
+    source_changes = [
+        {
+            "type": "delete",
+            "line_start": line_start,
+            "line_end": line_end,
+            "old_text": "\n".join(symbol_lines),
+        }
+    ]
+    files_modified.append(
+        {
+            "path": source_file,
+            "action": "MODIFY",
+            "changes": source_changes,
+        }
+    )
 
     # 3. Caller files: rewrite imports
     referencing_files = _find_files_referencing(conn, sym["id"])
@@ -193,17 +202,21 @@ def move_symbol(conn, symbol_name: str, target_file: str,
             old_line = ref_lines[import_idx]
             new_line = _rewrite_import(old_line, old_module, new_module)
             if old_line != new_line:
-                files_modified.append({
-                    "path": ref_file,
-                    "action": "MODIFY",
-                    "changes": [{
-                        "type": "replace",
-                        "line_start": import_idx + 1,
-                        "line_end": import_idx + 1,
-                        "old_text": old_line,
-                        "new_text": new_line,
-                    }],
-                })
+                files_modified.append(
+                    {
+                        "path": ref_file,
+                        "action": "MODIFY",
+                        "changes": [
+                            {
+                                "type": "replace",
+                                "line_start": import_idx + 1,
+                                "line_end": import_idx + 1,
+                                "old_text": old_line,
+                                "new_text": new_line,
+                            }
+                        ],
+                    }
+                )
 
     result = {
         "operation": "move",
@@ -216,16 +229,38 @@ def move_symbol(conn, symbol_name: str, target_file: str,
     }
 
     if not dry_run:
-        _apply_move(source_file, source_lines, start_idx, end_idx,
-                     target_file, target_lines, symbol_lines,
-                     conn, sym, old_module, new_module, referencing_files)
+        _apply_move(
+            source_file,
+            source_lines,
+            start_idx,
+            end_idx,
+            target_file,
+            target_lines,
+            symbol_lines,
+            conn,
+            sym,
+            old_module,
+            new_module,
+            referencing_files,
+        )
 
     return result
 
 
-def _apply_move(source_file, source_lines, start_idx, end_idx,
-                target_file, target_lines, symbol_lines,
-                conn, sym, old_module, new_module, referencing_files):
+def _apply_move(
+    source_file,
+    source_lines,
+    start_idx,
+    end_idx,
+    target_file,
+    target_lines,
+    symbol_lines,
+    conn,
+    sym,
+    old_module,
+    new_module,
+    referencing_files,
+):
     """Actually write the move changes to disk."""
     # Write symbol to target
     new_target = list(target_lines)
@@ -253,8 +288,7 @@ def _apply_move(source_file, source_lines, start_idx, end_idx,
                 _write_file(ref_file, ref_lines)
 
 
-def rename_symbol(conn, symbol_name: str, new_name: str,
-                  dry_run: bool = True) -> dict:
+def rename_symbol(conn, symbol_name: str, new_name: str, dry_run: bool = True) -> dict:
     """Rename a symbol across the codebase.
 
     1. Resolve symbol
@@ -300,20 +334,24 @@ def rename_symbol(conn, symbol_name: str, new_name: str,
         line = source_lines[i]
         if sym_actual_name in line:
             new_line = line.replace(sym_actual_name, new_name)
-            def_changes.append({
-                "type": "replace",
-                "line_start": i + 1,
-                "line_end": i + 1,
-                "old_text": line,
-                "new_text": new_line,
-            })
+            def_changes.append(
+                {
+                    "type": "replace",
+                    "line_start": i + 1,
+                    "line_end": i + 1,
+                    "old_text": line,
+                    "new_text": new_line,
+                }
+            )
 
     if def_changes:
-        files_modified.append({
-            "path": source_file,
-            "action": "MODIFY",
-            "changes": def_changes,
-        })
+        files_modified.append(
+            {
+                "path": source_file,
+                "action": "MODIFY",
+                "changes": def_changes,
+            }
+        )
 
     # 2. Reference files: rename in each referencing file
     referencing_files = _find_files_referencing(conn, sym["id"])
@@ -323,31 +361,34 @@ def rename_symbol(conn, symbol_name: str, new_name: str,
         for i, line in enumerate(ref_lines):
             if sym_actual_name in line:
                 new_line = line.replace(sym_actual_name, new_name)
-                ref_changes.append({
-                    "type": "replace",
-                    "line_start": i + 1,
-                    "line_end": i + 1,
-                    "old_text": line,
-                    "new_text": new_line,
-                })
+                ref_changes.append(
+                    {
+                        "type": "replace",
+                        "line_start": i + 1,
+                        "line_end": i + 1,
+                        "old_text": line,
+                        "new_text": new_line,
+                    }
+                )
 
         if ref_changes:
             # Avoid duplicating source file
             if ref_file == source_file:
                 # Merge changes with existing definition changes
-                existing = next((f for f in files_modified
-                                 if f["path"] == source_file), None)
+                existing = next((f for f in files_modified if f["path"] == source_file), None)
                 if existing:
                     existing_lines = {c["line_start"] for c in existing["changes"]}
                     for c in ref_changes:
                         if c["line_start"] not in existing_lines:
                             existing["changes"].append(c)
                 continue
-            files_modified.append({
-                "path": ref_file,
-                "action": "MODIFY",
-                "changes": ref_changes,
-            })
+            files_modified.append(
+                {
+                    "path": ref_file,
+                    "action": "MODIFY",
+                    "changes": ref_changes,
+                }
+            )
 
     result = {
         "operation": "rename",
@@ -368,16 +409,14 @@ def _apply_rename(files_modified, old_name, new_name):
     """Actually write rename changes to disk."""
     for fmod in files_modified:
         lines = _read_file(fmod["path"])
-        for change in sorted(fmod["changes"],
-                             key=lambda c: c["line_start"], reverse=True):
+        for change in sorted(fmod["changes"], key=lambda c: c["line_start"], reverse=True):
             idx = change["line_start"] - 1
             if 0 <= idx < len(lines):
                 lines[idx] = lines[idx].replace(old_name, new_name)
         _write_file(fmod["path"], lines)
 
 
-def add_call(conn, from_symbol: str, to_symbol: str, args: str = "",
-             dry_run: bool = True) -> dict:
+def add_call(conn, from_symbol: str, to_symbol: str, args: str = "", dry_run: bool = True) -> dict:
     """Add a call from one symbol to another.
 
     1. Resolve both symbols
@@ -432,7 +471,7 @@ def add_call(conn, from_symbol: str, to_symbol: str, args: str = "",
     warnings = []
 
     # Check if import already exists
-    needs_import = (from_file != to_file)
+    needs_import = from_file != to_file
     if needs_import:
         import_idx = _find_import_line(lines, to_name)
         if import_idx is not None:
@@ -446,30 +485,36 @@ def add_call(conn, from_symbol: str, to_symbol: str, args: str = "",
             stripped = line.strip()
             if stripped.startswith("import ") or stripped.startswith("from "):
                 insert_line = i + 2  # After this import line (1-based)
-        changes.append({
-            "type": "insert",
-            "line": insert_line,
-            "text": import_stmt,
-        })
+        changes.append(
+            {
+                "type": "insert",
+                "line": insert_line,
+                "text": import_stmt,
+            }
+        )
 
     # Generate call statement
     call_stmt = f"    {to_name}({args})"
     from_end = from_sym["line_end"] or (from_sym["line_start"] or 1)
     # Insert before the last line of from_symbol's body
     insert_line = from_end
-    changes.append({
-        "type": "insert",
-        "line": insert_line,
-        "text": call_stmt,
-    })
+    changes.append(
+        {
+            "type": "insert",
+            "line": insert_line,
+            "text": call_stmt,
+        }
+    )
 
     files_modified = []
     if changes:
-        files_modified.append({
-            "path": from_file,
-            "action": "MODIFY",
-            "changes": changes,
-        })
+        files_modified.append(
+            {
+                "path": from_file,
+                "action": "MODIFY",
+                "changes": changes,
+            }
+        )
 
     result = {
         "operation": "add-call",
@@ -491,8 +536,7 @@ def _apply_add_call(file_path, lines, changes):
     """Actually write the add-call changes to disk."""
     new_lines = list(lines)
     # Sort inserts by line in reverse so indices don't shift
-    sorted_changes = sorted(changes, key=lambda c: c.get("line", 0),
-                            reverse=True)
+    sorted_changes = sorted(changes, key=lambda c: c.get("line", 0), reverse=True)
     for change in sorted_changes:
         if change["type"] == "insert":
             idx = change["line"] - 1
@@ -500,8 +544,9 @@ def _apply_add_call(file_path, lines, changes):
     _write_file(file_path, new_lines)
 
 
-def extract_symbol(conn, source_symbol: str, line_start: int, line_end: int,
-                   new_name: str, dry_run: bool = True) -> dict:
+def extract_symbol(
+    conn, source_symbol: str, line_start: int, line_end: int, new_name: str, dry_run: bool = True
+) -> dict:
     """Extract lines from a symbol into a new function.
 
     1. Read the source file
@@ -570,7 +615,7 @@ def extract_symbol(conn, source_symbol: str, line_start: int, line_end: int,
     base_indent = ""
     for el in extracted_lines:
         if el.strip():
-            base_indent = el[:len(el) - len(el.lstrip())]
+            base_indent = el[: len(el) - len(el.lstrip())]
             break
 
     # Build new function definition
@@ -592,13 +637,15 @@ def extract_symbol(conn, source_symbol: str, line_start: int, line_end: int,
     changes = []
 
     # Replace extracted lines with call
-    changes.append({
-        "type": "replace",
-        "line_start": line_start,
-        "line_end": line_end,
-        "old_text": "\n".join(extracted_lines),
-        "new_text": call_stmt,
-    })
+    changes.append(
+        {
+            "type": "replace",
+            "line_start": line_start,
+            "line_end": line_end,
+            "old_text": "\n".join(extracted_lines),
+            "new_text": call_stmt,
+        }
+    )
 
     # Insert new function definition after the containing symbol
     sym_end = sym["line_end"] or len(lines)
@@ -610,17 +657,21 @@ def extract_symbol(conn, source_symbol: str, line_start: int, line_end: int,
     if language in ("javascript", "typescript", "tsx", "go"):
         new_func_lines.append("}")
 
-    changes.append({
-        "type": "insert",
-        "line": insert_at,
-        "text": "\n".join(new_func_lines),
-    })
+    changes.append(
+        {
+            "type": "insert",
+            "line": insert_at,
+            "text": "\n".join(new_func_lines),
+        }
+    )
 
-    files_modified = [{
-        "path": source_file,
-        "action": "MODIFY",
-        "changes": changes,
-    }]
+    files_modified = [
+        {
+            "path": source_file,
+            "action": "MODIFY",
+            "changes": changes,
+        }
+    ]
 
     warnings = []
 
@@ -636,14 +687,12 @@ def extract_symbol(conn, source_symbol: str, line_start: int, line_end: int,
     }
 
     if not dry_run:
-        _apply_extract(source_file, lines, start_idx, end_idx,
-                       call_stmt, new_func_lines, sym_end)
+        _apply_extract(source_file, lines, start_idx, end_idx, call_stmt, new_func_lines, sym_end)
 
     return result
 
 
-def _apply_extract(source_file, lines, start_idx, end_idx,
-                   call_stmt, new_func_lines, sym_end):
+def _apply_extract(source_file, lines, start_idx, end_idx, call_stmt, new_func_lines, sym_end):
     """Actually write the extract changes to disk."""
     new_lines = list(lines)
 

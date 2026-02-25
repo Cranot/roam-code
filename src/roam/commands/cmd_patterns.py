@@ -7,9 +7,9 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
 def _is_test_or_detector_path(file_path):
@@ -30,14 +30,20 @@ def _is_test_or_detector_path(file_path):
 # Pattern detection helpers
 # ---------------------------------------------------------------------------
 
+
 def _detect_singleton(conn):
     """Detect Singleton pattern: class with getInstance/get_instance/shared/default
     plus a class-level self-reference.
     """
     # Find methods named like singleton accessors that belong to a class
     accessor_names = (
-        "getInstance", "get_instance", "shared", "default",
-        "instance", "sharedInstance", "shared_instance",
+        "getInstance",
+        "get_instance",
+        "shared",
+        "default",
+        "instance",
+        "sharedInstance",
+        "shared_instance",
     )
     ph = ",".join("?" for _ in accessor_names)
     rows = conn.execute(
@@ -78,15 +84,17 @@ def _detect_singleton(conn):
         ).fetchone()
 
         seen_parents.add(parent_id)
-        results.append({
-            "pattern": "singleton",
-            "name": parent["qualified_name"] or parent["name"],
-            "kind": parent["kind"],
-            "location": loc(parent["file_path"], parent["line_start"]),
-            "accessor": r["name"],
-            "has_self_ref": bool(self_ref),
-            "confidence": "high" if self_ref else "medium",
-        })
+        results.append(
+            {
+                "pattern": "singleton",
+                "name": parent["qualified_name"] or parent["name"],
+                "kind": parent["kind"],
+                "location": loc(parent["file_path"], parent["line_start"]),
+                "accessor": r["name"],
+                "has_self_ref": bool(self_ref),
+                "confidence": "high" if self_ref else "medium",
+            }
+        )
 
     return results
 
@@ -125,14 +133,16 @@ def _detect_factory(conn):
 
         creates = [t["name"] for t in targets if t["kind"] in ("class", "constructor")]
 
-        results.append({
-            "pattern": "factory",
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "creates": creates[:5],
-            "confidence": "high" if creates else "medium",
-        })
+        results.append(
+            {
+                "pattern": "factory",
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "creates": creates[:5],
+                "confidence": "high" if creates else "medium",
+            }
+        )
 
     return results
 
@@ -142,16 +152,30 @@ def _detect_observer(conn):
     (on_*, addEventListener, subscribe, emit, notify, publish).
     """
     emitter_names = (
-        "emit", "notify", "publish", "dispatch",
-        "fire", "trigger", "broadcast",
+        "emit",
+        "notify",
+        "publish",
+        "dispatch",
+        "fire",
+        "trigger",
+        "broadcast",
     )
     listener_names = (
-        "addEventListener", "subscribe", "on", "addListener",
-        "observe", "watch", "listen",
+        "addEventListener",
+        "subscribe",
+        "on",
+        "addListener",
+        "observe",
+        "watch",
+        "listen",
     )
     remover_names = (
-        "removeEventListener", "unsubscribe", "off", "removeListener",
-        "unobserve", "unwatch",
+        "removeEventListener",
+        "unsubscribe",
+        "off",
+        "removeListener",
+        "unobserve",
+        "unwatch",
     )
 
     all_event_names = emitter_names + listener_names + remover_names
@@ -183,8 +207,11 @@ def _detect_observer(conn):
 
     for parent_id, methods in by_parent.items():
         emitters = [m for m in methods if m["name"] in emitter_names]
-        listeners = [m for m in methods if m["name"] in listener_names
-                     or m["name"].startswith("on_") or m["name"].startswith("handle_")]
+        listeners = [
+            m
+            for m in methods
+            if m["name"] in listener_names or m["name"].startswith("on_") or m["name"].startswith("handle_")
+        ]
 
         if not emitters and not listeners:
             continue
@@ -204,41 +231,43 @@ def _detect_observer(conn):
         listener_count = 0
         for em in emitters:
             cnt = conn.execute(
-                "SELECT COUNT(DISTINCT e.source_id) FROM edges e "
-                "WHERE e.target_id = ?",
+                "SELECT COUNT(DISTINCT e.source_id) FROM edges e WHERE e.target_id = ?",
                 (em["id"],),
             ).fetchone()[0]
             listener_count += cnt
 
-        results.append({
-            "pattern": "observer",
-            "name": parent["qualified_name"] or parent["name"],
-            "kind": parent["kind"],
-            "location": loc(parent["file_path"], parent["line_start"]),
-            "emitters": [m["name"] for m in emitters],
-            "listeners": [m["name"] for m in listeners[:5]],
-            "subscriber_count": listener_count,
-            "confidence": "high" if emitters and listeners else "medium",
-        })
+        results.append(
+            {
+                "pattern": "observer",
+                "name": parent["qualified_name"] or parent["name"],
+                "kind": parent["kind"],
+                "location": loc(parent["file_path"], parent["line_start"]),
+                "emitters": [m["name"] for m in emitters],
+                "listeners": [m["name"] for m in listeners[:5]],
+                "subscriber_count": listener_count,
+                "confidence": "high" if emitters and listeners else "medium",
+            }
+        )
 
     # Standalone emitter functions (e.g. EventBus-style modules)
     for r in standalone:
         if r["name"] in emitter_names:
             listener_count = conn.execute(
-                "SELECT COUNT(DISTINCT e.source_id) FROM edges e "
-                "WHERE e.target_id = ?",
+                "SELECT COUNT(DISTINCT e.source_id) FROM edges e WHERE e.target_id = ?",
                 (r["id"],),
             ).fetchone()[0]
-            results.append({
-                "pattern": "observer",
-                "name": r["qualified_name"] or r["name"],
-                "kind": r["kind"],
-                "location": loc(r["file_path"], r["line_start"]),
-                "emitters": [r["name"]],
-                "listeners": [],
-                "subscriber_count": listener_count,
-                "confidence": "medium",
-            })
+            results.append(
+                {
+                    "pattern": "observer",
+                    "name": r["qualified_name"] or r["name"],
+                    "kind": r["kind"],
+                    "location": loc(r["file_path"], r["line_start"]),
+                    "emitters": [r["name"]],
+                    "listeners": [],
+                    "subscriber_count": listener_count,
+                    "confidence": "medium",
+                }
+            )
 
     return results
 
@@ -281,14 +310,16 @@ def _detect_repository(conn):
 
         dao_methods = [m["name"] for m in methods]
 
-        results.append({
-            "pattern": "repository",
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "data_methods": dao_methods[:8],
-            "confidence": "high" if dao_methods else "medium",
-        })
+        results.append(
+            {
+                "pattern": "repository",
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "data_methods": dao_methods[:8],
+                "confidence": "high" if dao_methods else "medium",
+            }
+        )
 
     return results
 
@@ -343,20 +374,21 @@ def _detect_middleware(conn):
         # multiple middleware siblings in same file)
         chain_members = []
         for c in callees:
-            if any(pat in c["name"].lower() for pat in
-                   ("middleware", "handler", "interceptor", "filter", "pipe")):
+            if any(pat in c["name"].lower() for pat in ("middleware", "handler", "interceptor", "filter", "pipe")):
                 chain_members.append(c["name"])
 
-        results.append({
-            "pattern": "middleware",
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "chain_next": chain_members[:5],
-            "callers": len(callers),
-            "callees": len(callees),
-            "confidence": "high" if chain_members else "medium",
-        })
+        results.append(
+            {
+                "pattern": "middleware",
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "chain_next": chain_members[:5],
+                "callers": len(callers),
+                "callees": len(callees),
+                "confidence": "high" if chain_members else "medium",
+            }
+        )
 
     return results
 
@@ -406,8 +438,7 @@ def _detect_strategy(conn):
         child_methods = {}
         for child in children:
             methods = conn.execute(
-                "SELECT name FROM symbols "
-                "WHERE parent_id = ? AND kind IN ('method', 'function')",
+                "SELECT name FROM symbols WHERE parent_id = ? AND kind IN ('method', 'function')",
                 (child["source_id"],),
             ).fetchall()
             child_methods[child["child_name"]] = {m["name"] for m in methods}
@@ -417,23 +448,24 @@ def _detect_strategy(conn):
             all_method_sets = list(child_methods.values())
             common = set.intersection(*all_method_sets) if all_method_sets else set()
             # Filter out noise: constructors, dunders
-            common = {m for m in common
-                      if not m.startswith("__") and m not in ("constructor", "__init__")}
+            common = {m for m in common if not m.startswith("__") and m not in ("constructor", "__init__")}
         else:
             common = set()
 
         impl_names = [c["child_qname"] or c["child_name"] for c in children]
 
-        results.append({
-            "pattern": "strategy",
-            "name": pinfo["name"],
-            "kind": pinfo["kind"],
-            "location": pinfo["location"],
-            "implementations": impl_names[:10],
-            "implementation_count": len(children),
-            "shared_methods": sorted(common)[:8],
-            "confidence": "high" if len(common) >= 1 else "medium",
-        })
+        results.append(
+            {
+                "pattern": "strategy",
+                "name": pinfo["name"],
+                "kind": pinfo["kind"],
+                "location": pinfo["location"],
+                "implementations": impl_names[:10],
+                "implementation_count": len(children),
+                "shared_methods": sorted(common)[:8],
+                "confidence": "high" if len(common) >= 1 else "medium",
+            }
+        )
 
     return results
 
@@ -462,19 +494,20 @@ def _detect_decorator(conn):
 
         # Count how many symbols this decorator is applied to
         usage_count = conn.execute(
-            "SELECT COUNT(DISTINCT e.source_id) FROM edges e "
-            "WHERE e.target_id = ?",
+            "SELECT COUNT(DISTINCT e.source_id) FROM edges e WHERE e.target_id = ?",
             (r["id"],),
         ).fetchone()[0]
 
-        results.append({
-            "pattern": "decorator",
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "usage_count": usage_count,
-            "confidence": "high",
-        })
+        results.append(
+            {
+                "pattern": "decorator",
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "usage_count": usage_count,
+                "confidence": "high",
+            }
+        )
 
     # Also find functions named with_*, wrap_*, *Decorator, *Wrapper
     wrapper_rows = conn.execute(
@@ -499,19 +532,20 @@ def _detect_decorator(conn):
         seen.add(r["name"])
 
         usage_count = conn.execute(
-            "SELECT COUNT(DISTINCT e.source_id) FROM edges e "
-            "WHERE e.target_id = ?",
+            "SELECT COUNT(DISTINCT e.source_id) FROM edges e WHERE e.target_id = ?",
             (r["id"],),
         ).fetchone()[0]
 
-        results.append({
-            "pattern": "decorator",
-            "name": r["qualified_name"] or r["name"],
-            "kind": r["kind"],
-            "location": loc(r["file_path"], r["line_start"]),
-            "usage_count": usage_count,
-            "confidence": "medium",
-        })
+        results.append(
+            {
+                "pattern": "decorator",
+                "name": r["qualified_name"] or r["name"],
+                "kind": r["kind"],
+                "location": loc(r["file_path"], r["line_start"]),
+                "usage_count": usage_count,
+                "confidence": "medium",
+            }
+        )
 
     return results
 
@@ -521,13 +555,13 @@ def _detect_decorator(conn):
 # ---------------------------------------------------------------------------
 
 _PATTERN_DETECTORS = {
-    "singleton":  ("Singleton",       _detect_singleton),
-    "factory":    ("Factory",         _detect_factory),
-    "observer":   ("Observer/PubSub", _detect_observer),
-    "repository": ("Repository/DAO",  _detect_repository),
-    "middleware":  ("Middleware/Pipeline", _detect_middleware),
-    "strategy":   ("Strategy",        _detect_strategy),
-    "decorator":  ("Decorator/Wrapper", _detect_decorator),
+    "singleton": ("Singleton", _detect_singleton),
+    "factory": ("Factory", _detect_factory),
+    "observer": ("Observer/PubSub", _detect_observer),
+    "repository": ("Repository/DAO", _detect_repository),
+    "middleware": ("Middleware/Pipeline", _detect_middleware),
+    "strategy": ("Strategy", _detect_strategy),
+    "decorator": ("Decorator/Wrapper", _detect_decorator),
 }
 
 _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
@@ -537,10 +571,15 @@ _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
 # CLI
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option("--pattern", "pattern_filter", default=None,
-              type=click.Choice(_VALID_PATTERNS, case_sensitive=False),
-              help="Filter to a specific pattern type")
+@click.option(
+    "--pattern",
+    "pattern_filter",
+    default=None,
+    type=click.Choice(_VALID_PATTERNS, case_sensitive=False),
+    help="Filter to a specific pattern type",
+)
 @click.pass_context
 def patterns(ctx, pattern_filter):
     """Detect common architectural patterns in the codebase.
@@ -548,7 +587,7 @@ def patterns(ctx, pattern_filter):
     Analyzes the symbol graph to find Singleton, Factory, Observer,
     Repository, Middleware, Strategy, and Decorator patterns.
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -575,14 +614,19 @@ def patterns(ctx, pattern_filter):
                     "instances": data["instances"],
                 }
 
-            click.echo(to_json(json_envelope("patterns",
-                summary={
-                    "total_patterns": total,
-                    "pattern_types": len(all_results),
-                    "types_found": list(all_results.keys()),
-                },
-                patterns=patterns_json,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "patterns",
+                        summary={
+                            "total_patterns": total,
+                            "pattern_types": len(all_results),
+                            "types_found": list(all_results.keys()),
+                        },
+                        patterns=patterns_json,
+                    )
+                )
+            )
             return
 
         # --- Text output ---
@@ -640,7 +684,6 @@ def patterns(ctx, pattern_filter):
                     if inst["usage_count"]:
                         detail = f"  used {inst['usage_count']}x"
 
-                click.echo(f"  {abbrev_kind(inst['kind'])}  {name:<40s}  "
-                           f"{location}{conf_tag}{detail}")
+                click.echo(f"  {abbrev_kind(inst['kind'])}  {name:<40s}  {location}{conf_tag}{detail}")
 
             click.echo()

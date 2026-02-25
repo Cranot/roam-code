@@ -23,16 +23,15 @@ Detection algorithm:
 
 from __future__ import annotations
 
-from collections import defaultdict
 import os
 import re
+from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Framework detection helpers
@@ -41,31 +40,50 @@ from roam.commands.resolve import ensure_index
 # Patterns that identify ORM model classes by parent class or trait
 _MODEL_PARENTS = {
     # Laravel / Eloquent
-    "Model", "Eloquent", "Authenticatable",
+    "Model",
+    "Eloquent",
+    "Authenticatable",
     # Django
-    "models.Model", "Model",
+    "models.Model",
+    "Model",
     # Rails / ActiveRecord
-    "ApplicationRecord", "ActiveRecord::Base",
+    "ApplicationRecord",
+    "ActiveRecord::Base",
     # SQLAlchemy
-    "Base", "DeclarativeBase",
+    "Base",
+    "DeclarativeBase",
     # JPA / Hibernate
     "Serializable",
     # TypeScript ORMs
-    "BaseEntity", "Entity",
+    "BaseEntity",
+    "Entity",
 }
 
 # Symbols that indicate "this class is a data/model class"
 _MODEL_INDICATORS = {
     # Laravel
-    "$fillable", "$guarded", "$casts", "$appends", "$table", "$hidden",
+    "$fillable",
+    "$guarded",
+    "$casts",
+    "$appends",
+    "$table",
+    "$hidden",
     # Django
-    "objects", "Meta", "DoesNotExist",
+    "objects",
+    "Meta",
+    "DoesNotExist",
     # Rails
-    "has_many", "belongs_to", "has_one", "scope",
+    "has_many",
+    "belongs_to",
+    "has_one",
+    "scope",
     # SQLAlchemy
-    "__tablename__", "Column", "relationship",
+    "__tablename__",
+    "Column",
+    "relationship",
     # JPA
-    "@Entity", "@Table",
+    "@Entity",
+    "@Table",
 }
 
 # Property/accessor patterns per framework
@@ -81,36 +99,83 @@ _ACCESSOR_PATTERNS = {
 # Relationship access patterns (method calls that trigger lazy loading)
 _RELATIONSHIP_CALLS = {
     # Laravel Eloquent
-    "hasMany", "hasOne", "belongsTo", "belongsToMany",
-    "morphMany", "morphOne", "morphTo", "morphToMany",
+    "hasMany",
+    "hasOne",
+    "belongsTo",
+    "belongsToMany",
+    "morphMany",
+    "morphOne",
+    "morphTo",
+    "morphToMany",
     # Django ORM
-    "all", "filter", "get", "first", "last", "count", "exists",
-    "select_related", "prefetch_related",
+    "all",
+    "filter",
+    "get",
+    "first",
+    "last",
+    "count",
+    "exists",
+    "select_related",
+    "prefetch_related",
     # Rails ActiveRecord
-    "where", "find", "find_by", "pluck",
+    "where",
+    "find",
+    "find_by",
+    "pluck",
     # SQLAlchemy
-    "query", "filter_by",
+    "query",
+    "filter_by",
     # Generic DB
-    "load", "fetch", "findOrFail", "find",
+    "load",
+    "fetch",
+    "findOrFail",
+    "find",
 }
 
 # I/O operations that indicate a DB query or network call
 _IO_INDICATORS = {
     # Database
-    "query", "execute", "select", "where", "find", "findOrFail",
-    "first", "get", "all", "count", "exists", "pluck",
-    "save", "create", "update", "delete",
+    "query",
+    "execute",
+    "select",
+    "where",
+    "find",
+    "findOrFail",
+    "first",
+    "get",
+    "all",
+    "count",
+    "exists",
+    "pluck",
+    "save",
+    "create",
+    "update",
+    "delete",
     # HTTP
-    "fetch", "request", "get", "post", "put",
+    "fetch",
+    "request",
+    "get",
+    "post",
+    "put",
     # File
-    "fopen", "file_get_contents", "read", "readFile",
+    "fopen",
+    "file_get_contents",
+    "read",
+    "readFile",
 }
 
 # Eager loading configuration patterns
 _EAGER_LOAD_PATTERNS = {
-    "with", "eagerLoad", "eager_load", "select_related",
-    "prefetch_related", "includes", "eager_load_relations",
-    "joinedload", "subqueryload", "JOIN FETCH",
+    "with",
+    "eagerLoad",
+    "eager_load",
+    "select_related",
+    "prefetch_related",
+    "includes",
+    "eager_load_relations",
+    "joinedload",
+    "subqueryload",
+    "JOIN FETCH",
 }
 
 
@@ -155,6 +220,7 @@ def _detect_framework(conn) -> str:
 # ---------------------------------------------------------------------------
 # Core detection: find model classes and their computed properties
 # ---------------------------------------------------------------------------
+
 
 def _find_model_classes(conn):
     """Find all ORM model / data classes in the codebase.
@@ -252,8 +318,7 @@ def _find_appends_properties(conn, model_id, model_info):
             "AND s.name IN ('appends', '$appends') "
             "AND s.kind = 'property' "
             "AND s.line_start >= ? AND s.line_start <= ?",
-            (model_id, model_info["line_start"],
-             model_info.get("line_end") or 999999),
+            (model_id, model_info["line_start"], model_info.get("line_end") or 999999),
         ).fetchone()
 
     if not appends_sym:
@@ -270,6 +335,7 @@ def _find_appends_properties(conn, model_id, model_info):
 
     # Resolve to absolute path from project root
     from roam.db.connection import find_project_root
+
     root = find_project_root()
     abs_path = root / file_path if root else None
 
@@ -278,7 +344,7 @@ def _find_appends_properties(conn, model_id, model_info):
             with open(abs_path, encoding="utf-8", errors="replace") as fh:
                 lines = fh.readlines()
             # Extract the appends array from source (line_start is 1-indexed)
-            snippet = "".join(lines[max(0, line_start - 1):line_end])
+            snippet = "".join(lines[max(0, line_start - 1) : line_end])
             return re.findall(r"['\"](\w+)['\"]", snippet)
         except OSError:
             pass
@@ -315,8 +381,7 @@ def _find_accessor_methods(conn, model_id, model_info, appended_names):
             "WHERE s.file_id = (SELECT file_id FROM symbols WHERE id = ?) "
             "AND s.kind = 'method' "
             "AND s.line_start >= ? AND s.line_start <= ?",
-            (model_id, model_info["line_start"],
-             model_info.get("line_end") or 999999),
+            (model_id, model_info["line_start"], model_info.get("line_end") or 999999),
         ).fetchall()
 
     # Build lookup: snake_case appended name → StudlyCase accessor name
@@ -361,21 +426,37 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
         name = callee["name"]
         if name in model_method_names and callee["kind"] == "method":
             sub_callees = conn.execute(
-                "SELECT t.name FROM edges e "
-                "JOIN symbols t ON e.target_id = t.id "
-                "WHERE e.source_id = ?",
+                "SELECT t.name FROM edges e JOIN symbols t ON e.target_id = t.id WHERE e.source_id = ?",
                 (callee["id"],),
             ).fetchall()
             sub_names = {r["name"] for r in sub_callees}
-            rel_methods = sub_names & {"hasMany", "hasOne", "belongsTo",
-                                       "belongsToMany", "morphMany", "morphOne",
-                                       "morphTo", "morphToMany", "hasManyThrough"}
+            rel_methods = sub_names & {
+                "hasMany",
+                "hasOne",
+                "belongsTo",
+                "belongsToMany",
+                "morphMany",
+                "morphOne",
+                "morphTo",
+                "morphToMany",
+                "hasManyThrough",
+            }
             if rel_methods:
                 io_chains.append((name, f"relationship ({', '.join(rel_methods)})"))
                 continue
 
-        if name in ("first", "get", "exists", "count", "pluck", "find",
-                     "findOrFail", "all", "orderBy", "where"):
+        if name in (
+            "first",
+            "get",
+            "exists",
+            "count",
+            "pluck",
+            "find",
+            "findOrFail",
+            "all",
+            "orderBy",
+            "where",
+        ):
             io_chains.append((name, "query builder"))
 
     # --- Strategy 2: Source-based pattern matching ---
@@ -386,6 +467,7 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
         line_end = accessor_info.get("line_end") or line_start + 30
 
         from roam.db.connection import find_project_root
+
         root = find_project_root()
         abs_path = root / file_path if root else None
 
@@ -393,25 +475,29 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
             try:
                 with open(abs_path, encoding="utf-8", errors="replace") as fh:
                     lines = fh.readlines()
-                snippet = "".join(lines[max(0, line_start - 1):line_end])
+                snippet = "".join(lines[max(0, line_start - 1) : line_end])
 
                 # Pattern: $this->someRelation (property access that triggers lazy load)
                 # Matches: $this->branch, $this->lines, $this->attachments()
                 this_accesses = re.findall(
-                    r'\$this->(\w+?)(?:\s*->|\s*\?->|(?:\(\))\s*->|\s*;|\s*\))',
+                    r"\$this->(\w+?)(?:\s*->|\s*\?->|(?:\(\))\s*->|\s*;|\s*\))",
                     snippet,
                 )
 
                 # Also catch: $this->relation()->method() pattern
                 this_method_calls = re.findall(
-                    r'\$this->(\w+)\(\)',
+                    r"\$this->(\w+)\(\)",
                     snippet,
                 )
 
                 # Helper calls to skip (not relationships)
                 _SKIP_METHODS = {
-                    "relationLoaded", "getAttribute", "setAttribute",
-                    "getKey", "toArray", "toJson",
+                    "relationLoaded",
+                    "getAttribute",
+                    "setAttribute",
+                    "getKey",
+                    "toArray",
+                    "toJson",
                 }
 
                 # Check which accessed names are relationship methods on the model
@@ -439,20 +525,34 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
                     ).fetchone()
                     if m_sym_full:
                         m_start = max(0, m_sym_full["line_start"] - 1)
-                        m_end = (m_sym_full["line_end"] or m_start + 15)
+                        m_end = m_sym_full["line_end"] or m_start + 15
                         method_snippet = "".join(lines[m_start:m_end])
                         # Check if method body contains relationship calls
                         _REL_CALLS = (
-                            "hasMany", "hasOne", "belongsTo", "belongsToMany",
-                            "morphMany", "morphOne", "morphTo", "morphToMany",
-                            "hasManyThrough", "hasOneThrough",
+                            "hasMany",
+                            "hasOne",
+                            "belongsTo",
+                            "belongsToMany",
+                            "morphMany",
+                            "morphOne",
+                            "morphTo",
+                            "morphToMany",
+                            "hasManyThrough",
+                            "hasOneThrough",
                         )
                         if any(rc in method_snippet for rc in _REL_CALLS):
                             io_chains.append((accessed, "lazy-load relationship"))
                         # Also check if it calls query builder methods
-                        elif any(qb in method_snippet for qb in
-                                 ("->first()", "->get()", "->exists()",
-                                  "->count()", "->pluck()")):
+                        elif any(
+                            qb in method_snippet
+                            for qb in (
+                                "->first()",
+                                "->get()",
+                                "->exists()",
+                                "->count()",
+                                "->pluck()",
+                            )
+                        ):
                             io_chains.append((accessed, "query builder"))
 
             except OSError:
@@ -477,6 +577,7 @@ def _find_eager_loads(conn, model_name):
     eager_loaded = set()
 
     from roam.db.connection import find_project_root
+
     root = find_project_root()
 
     # --- 1. Check $with property on the model ---
@@ -507,9 +608,7 @@ def _find_eager_loads(conn, model_name):
 
     # --- 2. Check resource config files for eagerLoad ---
     config_files = conn.execute(
-        "SELECT f.path FROM files f "
-        "WHERE f.path LIKE '%config/resources.php' "
-        "  OR f.path LIKE '%config/resources/%'"
+        "SELECT f.path FROM files f WHERE f.path LIKE '%config/resources.php'   OR f.path LIKE '%config/resources/%'"
     ).fetchall()
 
     # Convert model class name to resource key pattern
@@ -534,9 +633,8 @@ def _find_eager_loads(conn, model_name):
                 # Check if this eagerLoad is near the model reference
                 # Look backwards from match for the model class name
                 start = max(0, match.start() - 500)
-                context = content[start:match.end()]
-                if (model_name in context or f"{model_name}::class" in context
-                        or model_lower in context.lower()):
+                context = content[start : match.end()]
+                if model_name in context or f"{model_name}::class" in context or model_lower in context.lower():
                     rels = re.findall(r"['\"](\w+)['\"]", match.group(1))
                     eager_loaded.update(rels)
         except OSError:
@@ -545,8 +643,7 @@ def _find_eager_loads(conn, model_name):
     # --- 3. Check controller with() calls ---
     # Look for Model::with(['rel']) or ->with(['rel']) near model references
     controller_files = conn.execute(
-        "SELECT f.path FROM files f "
-        "WHERE f.path LIKE '%Controller%' AND f.path LIKE '%.php'"
+        "SELECT f.path FROM files f WHERE f.path LIKE '%Controller%' AND f.path LIKE '%.php'"
     ).fetchall()
 
     for cf in controller_files:
@@ -595,18 +692,22 @@ def _find_collection_contexts(conn, model_id, model_name):
         path_lower = ref["file_path"].replace("\\", "/").lower()
         # Controller files are collection contexts
         if "controller" in path_lower or "resource" in path_lower:
-            contexts.append({
-                "location": loc(ref["file_path"], ref["line_start"]),
-                "type": "controller",
-                "symbol": ref["qualified_name"] or ref["name"],
-            })
+            contexts.append(
+                {
+                    "location": loc(ref["file_path"], ref["line_start"]),
+                    "type": "controller",
+                    "symbol": ref["qualified_name"] or ref["name"],
+                }
+            )
         # Service files with pagination
         if "service" in path_lower:
-            contexts.append({
-                "location": loc(ref["file_path"], ref["line_start"]),
-                "type": "service",
-                "symbol": ref["qualified_name"] or ref["name"],
-            })
+            contexts.append(
+                {
+                    "location": loc(ref["file_path"], ref["line_start"]),
+                    "type": "service",
+                    "symbol": ref["qualified_name"] or ref["name"],
+                }
+            )
 
     return contexts
 
@@ -614,6 +715,7 @@ def _find_collection_contexts(conn, model_id, model_name):
 # ---------------------------------------------------------------------------
 # Main analysis: run all detection passes
 # ---------------------------------------------------------------------------
+
 
 def analyze_n1(conn, confidence_filter=None):
     """Run full N+1 implicit I/O analysis.
@@ -644,8 +746,7 @@ def analyze_n1(conn, confidence_filter=None):
         # Get all methods on this model (for relationship detection)
         # Try parent_id first, then fall back to same-file line range
         model_methods = conn.execute(
-            "SELECT s.id, s.name, s.kind FROM symbols s "
-            "WHERE s.parent_id = ? AND s.kind = 'method'",
+            "SELECT s.id, s.name, s.kind FROM symbols s WHERE s.parent_id = ? AND s.kind = 'method'",
             (model_id,),
         ).fetchall()
         if not model_methods:
@@ -653,11 +754,12 @@ def analyze_n1(conn, confidence_filter=None):
                 "SELECT s.id, s.name, s.kind FROM symbols s "
                 "WHERE s.file_id = ? AND s.kind = 'method' "
                 "AND s.line_start >= ? AND s.line_start <= ?",
-                (model_info.get("file_id") or conn.execute(
-                    "SELECT file_id FROM symbols WHERE id = ?", (model_id,)
-                ).fetchone()["file_id"],
-                 model_info["line_start"],
-                 model_info.get("line_end") or 999999),
+                (
+                    model_info.get("file_id")
+                    or conn.execute("SELECT file_id FROM symbols WHERE id = ?", (model_id,)).fetchone()["file_id"],
+                    model_info["line_start"],
+                    model_info.get("line_end") or 999999,
+                ),
             ).fetchall()
 
         # Step 1: Find $appends / virtual properties
@@ -700,24 +802,24 @@ def analyze_n1(conn, confidence_filter=None):
                 # Determine severity based on likely query count
                 severity = "per-item query on serialization"
 
-                suggestion = _build_suggestion(
-                    framework, model_name, rel_name, attr_name, io_type
-                )
+                suggestion = _build_suggestion(framework, model_name, rel_name, attr_name, io_type)
 
-                findings.append({
-                    "model_name": model_info["qualified_name"] or model_name,
-                    "model_location": loc(model_info["file_path"], model_info["line_start"]),
-                    "accessor_name": accessor_info["name"],
-                    "accessor_location": loc(accessor_info["file_path"], accessor_info["line_start"]),
-                    "appended_attribute": attr_name,
-                    "relationship": rel_name,
-                    "io_type": io_type,
-                    "eager_loaded": False,
-                    "confidence": confidence,
-                    "severity": severity,
-                    "collection_contexts": collection_ctxs[:3],  # Top 3
-                    "suggestion": suggestion,
-                })
+                findings.append(
+                    {
+                        "model_name": model_info["qualified_name"] or model_name,
+                        "model_location": loc(model_info["file_path"], model_info["line_start"]),
+                        "accessor_name": accessor_info["name"],
+                        "accessor_location": loc(accessor_info["file_path"], accessor_info["line_start"]),
+                        "appended_attribute": attr_name,
+                        "relationship": rel_name,
+                        "io_type": io_type,
+                        "eager_loaded": False,
+                        "confidence": confidence,
+                        "severity": severity,
+                        "collection_contexts": collection_ctxs[:3],  # Top 3
+                        "suggestion": suggestion,
+                    }
+                )
 
     # Apply confidence filter
     if confidence_filter:
@@ -735,29 +837,25 @@ def _build_suggestion(framework, model_name, rel_name, attr_name, io_type):
             f"or use ::with('{rel_name}') in the controller query"
         )
     if framework == "django":
-        return (
-            f"Add .select_related('{rel_name}') or "
-            f".prefetch_related('{rel_name}') to the QuerySet"
-        )
+        return f"Add .select_related('{rel_name}') or .prefetch_related('{rel_name}') to the QuerySet"
     if framework == "rails":
-        return (
-            f"Add .includes(:{rel_name}) or "
-            f".eager_load(:{rel_name}) to the ActiveRecord query"
-        )
-    return (
-        f"Pre-load '{rel_name}' data before iterating the collection "
-        f"to avoid per-item I/O"
-    )
+        return f"Add .includes(:{rel_name}) or .eager_load(:{rel_name}) to the ActiveRecord query"
+    return f"Pre-load '{rel_name}' data before iterating the collection to avoid per-item I/O"
 
 
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("n1")
-@click.option("--confidence", "confidence_filter", default=None,
-              type=click.Choice(["high", "medium", "low"], case_sensitive=False),
-              help="Filter by confidence level")
+@click.option(
+    "--confidence",
+    "confidence_filter",
+    default=None,
+    type=click.Choice(["high", "medium", "low"], case_sensitive=False),
+    help="Filter by confidence level",
+)
 @click.option("--limit", "-n", default=30, help="Max findings to show")
 @click.option("--verbose", "-v", is_flag=True, help="Show I/O trace chains")
 @click.pass_context
@@ -780,7 +878,7 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
         roam n1 --confidence high  # Only high-confidence findings
         roam n1 -v                 # Show I/O trace details
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
+    json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -800,28 +898,32 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
             by_confidence[f["confidence"]] += 1
 
         total = len(findings)
-        conf_parts = [f"{by_confidence[c]} {c}"
-                      for c in ("high", "medium", "low") if by_confidence.get(c)]
+        conf_parts = [f"{by_confidence[c]} {c}" for c in ("high", "medium", "low") if by_confidence.get(c)]
         conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
         verdict = (
-            f"{total} implicit N+1 pattern{'s' if total != 1 else ''} found "
-            f"({conf_str})"
-            if total else "No implicit N+1 patterns detected"
+            f"{total} implicit N+1 pattern{'s' if total != 1 else ''} found ({conf_str})"
+            if total
+            else "No implicit N+1 patterns detected"
         )
 
         # --- JSON output ---
         if json_mode:
-            click.echo(to_json(json_envelope("n1",
-                summary={
-                    "verdict": verdict,
-                    "total": total,
-                    "framework": framework,
-                    "by_confidence": dict(by_confidence),
-                    "truncated": truncated,
-                },
-                findings=findings,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "n1",
+                        summary={
+                            "verdict": verdict,
+                            "total": total,
+                            "framework": framework,
+                            "by_confidence": dict(by_confidence),
+                            "truncated": truncated,
+                        },
+                        findings=findings,
+                    )
+                )
+            )
             return
 
         # --- Text output ---

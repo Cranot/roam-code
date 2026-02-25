@@ -4,18 +4,16 @@ from __future__ import annotations
 
 import os
 import re
-import tempfile
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 
-
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _make_project(tmp_path: Path) -> Path:
     """Create a minimal Python project and index it."""
@@ -53,9 +51,11 @@ def _make_project(tmp_path: Path) -> Path:
 # Unit tests for tree building
 # ---------------------------------------------------------------------------
 
+
 class TestTreeBuilding:
     def test_build_tree_flat(self):
         from roam.commands.cmd_minimap import _build_tree
+
         paths = ["a.py", "b.py", "c.py"]
         tree = _build_tree(paths)
         assert "a.py" in tree
@@ -63,6 +63,7 @@ class TestTreeBuilding:
 
     def test_build_tree_nested(self):
         from roam.commands.cmd_minimap import _build_tree
+
         paths = ["src/main.py", "src/utils.py", "tests/test_main.py"]
         tree = _build_tree(paths)
         assert "src" in tree
@@ -71,6 +72,7 @@ class TestTreeBuilding:
 
     def test_build_tree_backslash_paths(self):
         from roam.commands.cmd_minimap import _build_tree
+
         paths = ["src\\main.py", "src\\utils.py"]
         tree = _build_tree(paths)
         assert "src" in tree
@@ -78,6 +80,7 @@ class TestTreeBuilding:
 
     def test_render_tree_basic(self):
         from roam.commands.cmd_minimap import _build_tree, _render_tree
+
         paths = ["src/main.py", "src/utils.py"]
         tree = _build_tree(paths)
         lines = _render_tree(tree, {})
@@ -86,6 +89,7 @@ class TestTreeBuilding:
 
     def test_render_tree_annotations(self):
         from roam.commands.cmd_minimap import _build_tree, _render_tree
+
         paths = ["src/main.py"]
         annotations = {"src/main.py": "do_thing, helper"}
         tree = _build_tree(paths)
@@ -95,6 +99,7 @@ class TestTreeBuilding:
 
     def test_render_tree_collapses_large_dirs(self):
         from roam.commands.cmd_minimap import _build_tree, _render_tree
+
         # 10 files in a sub-directory → should be collapsed
         paths = [f"commands/cmd_{i}.py" for i in range(10)]
         tree = _build_tree(paths)
@@ -105,6 +110,7 @@ class TestTreeBuilding:
 
     def test_render_tree_caps_file_list(self):
         from roam.commands.cmd_minimap import _build_tree, _render_tree
+
         # 12 files in root → show first 6 + "... (6 more)"
         paths = [f"file_{i}.py" for i in range(12)]
         tree = _build_tree(paths)
@@ -113,12 +119,14 @@ class TestTreeBuilding:
 
     def test_count_files_in_tree(self):
         from roam.commands.cmd_minimap import _build_tree, _count_files_in_tree
+
         paths = ["a/b/c.py", "a/d.py", "e.py"]
         tree = _build_tree(paths)
         assert _count_files_in_tree(tree) == 3
 
     def test_best_dir_hint(self):
-        from roam.commands.cmd_minimap import _build_tree, _best_dir_hint
+        from roam.commands.cmd_minimap import _best_dir_hint, _build_tree
+
         paths = ["src/utils.py", "src/main.py"]
         ann = {"src/main.py": "do_main"}
         tree = _build_tree(paths)
@@ -130,23 +138,28 @@ class TestTreeBuilding:
 # Unit tests for sentinel helpers
 # ---------------------------------------------------------------------------
 
+
 class TestSentinelHelpers:
     def test_wrap_sentinels_structure(self):
         from roam.commands.cmd_minimap import _wrap_sentinels
+
         block = _wrap_sentinels("hello world")
         assert "<!-- roam:minimap" in block
         assert "<!-- /roam:minimap -->" in block
         assert "hello world" in block
 
     def test_wrap_sentinels_has_date(self):
-        from roam.commands.cmd_minimap import _wrap_sentinels
         from datetime import date
+
+        from roam.commands.cmd_minimap import _wrap_sentinels
+
         block = _wrap_sentinels("content")
         today = date.today().isoformat()
         assert today in block
 
     def test_upsert_file_creates_new(self, tmp_path):
         from roam.commands.cmd_minimap import _upsert_file
+
         target = tmp_path / "CLAUDE.md"
         verb = _upsert_file(target, "<!-- roam:minimap -->\ncontent\n<!-- /roam:minimap -->")
         assert verb == "Created"
@@ -155,12 +168,16 @@ class TestSentinelHelpers:
 
     def test_upsert_file_replaces_sentinel(self, tmp_path):
         from roam.commands.cmd_minimap import _upsert_file
+
         target = tmp_path / "CLAUDE.md"
         target.write_text(
             "# Header\n\n<!-- roam:minimap generated=2024-01-01 -->\nold content\n<!-- /roam:minimap -->\n\n# Footer\n",
             encoding="utf-8",
         )
-        verb = _upsert_file(target, "<!-- roam:minimap generated=2025-01-01 -->\nnew content\n<!-- /roam:minimap -->")
+        verb = _upsert_file(
+            target,
+            "<!-- roam:minimap generated=2025-01-01 -->\nnew content\n<!-- /roam:minimap -->",
+        )
         assert verb == "Updated"
         text = target.read_text()
         assert "new content" in text
@@ -170,6 +187,7 @@ class TestSentinelHelpers:
 
     def test_upsert_file_appends_when_no_sentinel(self, tmp_path):
         from roam.commands.cmd_minimap import _upsert_file
+
         target = tmp_path / "CLAUDE.md"
         target.write_text("# Existing content\n", encoding="utf-8")
         verb = _upsert_file(target, "<!-- roam:minimap -->\ncontent\n<!-- /roam:minimap -->")
@@ -182,6 +200,7 @@ class TestSentinelHelpers:
 # ---------------------------------------------------------------------------
 # Integration tests via CLI
 # ---------------------------------------------------------------------------
+
 
 class TestMinimapCLI:
     def test_init_notes_creates_file(self, tmp_path):
@@ -287,9 +306,7 @@ class TestMinimapCLI:
         old_cwd = os.getcwd()
         os.chdir(proj)
         try:
-            result = runner.invoke(
-                cli, ["minimap", "-o", "AGENTS.md"], catch_exceptions=False
-            )
+            result = runner.invoke(cli, ["minimap", "-o", "AGENTS.md"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
         assert result.exit_code == 0
@@ -307,6 +324,7 @@ class TestMinimapCLI:
             os.chdir(old_cwd)
         assert result.exit_code == 0
         import json
+
         data = json.loads(result.output)
         assert data["command"] == "minimap"
         assert data["summary"]["verdict"] == "ok"
@@ -318,13 +336,12 @@ class TestMinimapCLI:
         old_cwd = os.getcwd()
         os.chdir(proj)
         try:
-            result = runner.invoke(
-                cli, ["--json", "minimap", "--update"], catch_exceptions=False
-            )
+            result = runner.invoke(cli, ["--json", "minimap", "--update"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
         assert result.exit_code == 0
         import json
+
         data = json.loads(result.output)
         assert data["summary"]["verdict"] == "ok"
         assert "file" in data

@@ -12,20 +12,18 @@ from __future__ import annotations
 
 import json
 import math
-import subprocess
 import sys
-import time
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
-
+from conftest import assert_json_envelope, invoke_cli
 
 # ===========================================================================
 # Helpers
 # ===========================================================================
+
 
 def _modify_file(project, rel_path, new_content):
     """Overwrite a file in the project so git diff picks it up."""
@@ -38,27 +36,27 @@ def _make_unstaged_change(project):
     _modify_file(
         project,
         "src/models.py",
-        'class User:\n'
+        "class User:\n"
         '    """A user model (modified for pr-risk)."""\n'
-        '    def __init__(self, name, email):\n'
-        '        self.name = name\n'
-        '        self.email = email\n'
-        '\n'
-        '    def display_name(self):\n'
-        '        return self.name.title()\n'
-        '\n'
-        '    def validate_email(self):\n'
+        "    def __init__(self, name, email):\n"
+        "        self.name = name\n"
+        "        self.email = email\n"
+        "\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
+        "\n"
+        "    def validate_email(self):\n"
         '        return "@" in self.email\n'
-        '\n'
-        '\n'
-        'class Admin(User):\n'
+        "\n"
+        "\n"
+        "class Admin(User):\n"
         '    """An admin user."""\n'
         '    def __init__(self, name, email, role="admin"):\n'
-        '        super().__init__(name, email)\n'
-        '        self.role = role\n'
-        '\n'
-        '    def promote(self, user):\n'
-        '        pass\n'
+        "        super().__init__(name, email)\n"
+        "        self.role = role\n"
+        "\n"
+        "    def promote(self, user):\n"
+        "        pass\n",
     )
 
 
@@ -156,9 +154,13 @@ class TestPrRiskJson:
             if "summary" in data:
                 # These top-level keys should be present
                 for key in [
-                    "risk_score", "risk_level", "blast_radius_pct",
-                    "hotspot_score", "test_coverage_pct",
-                    "bus_factor_risk", "per_file",
+                    "risk_score",
+                    "risk_level",
+                    "blast_radius_pct",
+                    "hotspot_score",
+                    "test_coverage_pct",
+                    "bus_factor_risk",
+                    "per_file",
                 ]:
                     assert key in data, f"Missing key: {key}"
         finally:
@@ -184,9 +186,7 @@ class TestAuthorFamiliarity:
             assert result.exit_code == 0
             data = json.loads(result.output)
             if "summary" in data:
-                assert "familiarity" in data, (
-                    "Expected 'familiarity' key in JSON output"
-                )
+                assert "familiarity" in data, "Expected 'familiarity' key in JSON output"
         finally:
             _restore_file(indexed_project, "src/models.py", original)
 
@@ -198,7 +198,8 @@ class TestAuthorFamiliarity:
         try:
             _make_unstaged_change(indexed_project)
             result = invoke_cli(
-                cli_runner, ["pr-risk", "--author", "Test"],
+                cli_runner,
+                ["pr-risk", "--author", "Test"],
                 json_mode=True,
             )
             assert result.exit_code == 0
@@ -220,7 +221,8 @@ class TestAuthorFamiliarity:
         try:
             _make_unstaged_change(indexed_project)
             result = invoke_cli(
-                cli_runner, ["pr-risk", "--author", "Test"],
+                cli_runner,
+                ["pr-risk", "--author", "Test"],
             )
             assert result.exit_code == 0
             assert "Familiarity" in result.output
@@ -352,9 +354,7 @@ class TestMinorContributor:
             assert result.exit_code == 0
             data = json.loads(result.output)
             if "summary" in data:
-                assert "minor_risk" in data, (
-                    "Expected 'minor_risk' key in JSON output"
-                )
+                assert "minor_risk" in data, "Expected 'minor_risk' key in JSON output"
         finally:
             _restore_file(indexed_project, "src/models.py", original)
 
@@ -402,7 +402,8 @@ class TestMinorContributor:
         try:
             _make_unstaged_change(indexed_project)
             result = invoke_cli(
-                cli_runner, ["pr-risk", "--author", "Test"],
+                cli_runner,
+                ["pr-risk", "--author", "Test"],
             )
             assert result.exit_code == 0
             # Should show either "Minor risk:" line
@@ -454,5 +455,6 @@ class TestPrRiskEdgeCases:
     def test_detect_author_function(self):
         """_detect_author should return a string or None."""
         from roam.commands.cmd_pr_risk import _detect_author
+
         author = _detect_author()
         assert author is None or isinstance(author, str)

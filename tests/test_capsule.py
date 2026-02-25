@@ -11,17 +11,15 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    parse_json_output,
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local invoke helper (capsule is not yet registered in cli.py)
 # ---------------------------------------------------------------------------
+
 
 def _invoke_capsule(runner, args=None, cwd=None, json_mode=False):
     """Invoke the capsule command directly (bypasses LazyGroup registration).
@@ -57,24 +55,22 @@ def _invoke_capsule(runner, args=None, cwd=None, json_mode=False):
 
 def _parse_capsule_json(result):
     """Parse JSON from a capsule CliRunner result."""
-    assert result.exit_code == 0, (
-        f"capsule command failed (exit {result.exit_code}):\n{result.output}"
-    )
+    assert result.exit_code == 0, f"capsule command failed (exit {result.exit_code}):\n{result.output}"
     try:
         return json.loads(result.output)
     except json.JSONDecodeError as e:
-        pytest.fail(
-            f"Invalid JSON from capsule: {e}\nOutput was:\n{result.output[:500]}"
-        )
+        pytest.fail(f"Invalid JSON from capsule: {e}\nOutput was:\n{result.output[:500]}")
 
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -84,16 +80,8 @@ def capsule_project(tmp_path, monkeypatch):
     proj = tmp_path / "repo"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        'def hello():\n'
-        '    return "world"\n\n'
-        'def greet(name):\n'
-        '    return hello() + name\n'
-    )
-    (proj / "utils.py").write_text(
-        'def helper():\n'
-        '    return 42\n'
-    )
+    (proj / "app.py").write_text('def hello():\n    return "world"\n\ndef greet(name):\n    return hello() + name\n')
+    (proj / "utils.py").write_text("def helper():\n    return 42\n")
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj, "--force")
@@ -105,8 +93,8 @@ def capsule_project(tmp_path, monkeypatch):
 # Tests
 # ---------------------------------------------------------------------------
 
-class TestCapsuleCommand:
 
+class TestCapsuleCommand:
     def test_capsule_runs(self, capsule_project, cli_runner):
         """Command exits 0 in default text mode."""
         result = _invoke_capsule(cli_runner, cwd=capsule_project)
@@ -191,9 +179,7 @@ class TestCapsuleCommand:
         health = data["health"]
         assert "score" in health, f"health missing 'score': {health}"
         assert isinstance(health["score"], (int, float))
-        assert 0 <= health["score"] <= 100, (
-            f"health score out of range: {health['score']}"
-        )
+        assert 0 <= health["score"] <= 100, f"health score out of range: {health['score']}"
         assert "cycles" in health, f"health missing 'cycles': {health}"
         assert "god_components" in health, f"health missing 'god_components': {health}"
 
@@ -213,9 +199,7 @@ class TestCapsuleCommand:
         data = json.loads(raw)
 
         # Raw capsule JSON (not an envelope) should have a 'capsule' meta section
-        assert "capsule" in data, (
-            f"Missing 'capsule' meta in file output: {list(data.keys())}"
-        )
+        assert "capsule" in data, f"Missing 'capsule' meta in file output: {list(data.keys())}"
         assert "topology" in data
         assert "symbols" in data
         assert "edges" in data
@@ -242,9 +226,7 @@ class TestCapsuleCommand:
             file_path = sym.get("file", "")
             path_parts = set(file_path.replace("\\", "/").split("/"))
             overlap = path_parts & real_names
-            assert not overlap, (
-                f"Real filename found in redacted path '{file_path}': {overlap}"
-            )
+            assert not overlap, f"Real filename found in redacted path '{file_path}': {overlap}"
 
         # The capsule meta should flag redaction
         capsule_meta = data.get("capsule", {})
@@ -263,9 +245,7 @@ class TestCapsuleCommand:
         assert len(symbols) >= 1
 
         for sym in symbols:
-            assert "signature" not in sym, (
-                f"Found 'signature' in symbol despite --no-signatures: {sym['name']}"
-            )
+            assert "signature" not in sym, f"Found 'signature' in symbol despite --no-signatures: {sym['name']}"
 
         # Meta flag should be set
         capsule_meta = data.get("capsule", {})
@@ -279,15 +259,13 @@ class TestCapsuleCommand:
         # Known body text from our fixture files
         body_snippets = [
             'return "world"',
-            'return hello() + name',
-            'return 42',
+            "return hello() + name",
+            "return 42",
         ]
 
         raw = json.dumps(data)
         for snippet in body_snippets:
-            assert snippet not in raw, (
-                f"Function body text found in capsule: {snippet!r}"
-            )
+            assert snippet not in raw, f"Function body text found in capsule: {snippet!r}"
 
     def test_capsule_has_clusters(self, capsule_project, cli_runner):
         """JSON capsule contains a clusters list (may be empty for tiny projects)."""
@@ -309,9 +287,7 @@ class TestCapsuleCommand:
         data = _parse_capsule_json(result)
         assert "capsule" in data, f"Missing 'capsule' meta key in: {list(data.keys())}"
         meta = data["capsule"]
-        assert meta.get("version") == "1.0", (
-            f"Expected version=1.0, got: {meta.get('version')}"
-        )
+        assert meta.get("version") == "1.0", f"Expected version=1.0, got: {meta.get('version')}"
         assert "generated" in meta, "capsule meta missing 'generated' timestamp"
         assert "tool_version" in meta, "capsule meta missing 'tool_version'"
 

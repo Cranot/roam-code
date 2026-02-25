@@ -14,34 +14,22 @@ from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 @pytest.fixture
 def agent_project(project_factory):
-    return project_factory({
-        "auth/login.py": (
-            "from auth.tokens import create_token\n"
-            "def authenticate(u, p): return create_token(u)\n"
-        ),
-        "auth/tokens.py": (
-            "def create_token(user): return 'tok'\n"
-            "def verify_token(t): return True\n"
-        ),
-        "billing/invoice.py": (
-            "from billing.tax import calc_tax\n"
-            "def create_invoice(order): return calc_tax(order)\n"
-        ),
-        "billing/tax.py": (
-            "def calc_tax(order): return order * 0.1\n"
-        ),
-        "api/routes.py": (
-            "from auth.login import authenticate\n"
-            "from billing.invoice import create_invoice\n"
-            "def handle(r): authenticate(r, r); return create_invoice(r)\n"
-        ),
-        "models.py": (
-            "class User:\n"
-            "    pass\n"
-            "class Order:\n"
-            "    pass\n"
-        ),
-    })
+    return project_factory(
+        {
+            "auth/login.py": ("from auth.tokens import create_token\ndef authenticate(u, p): return create_token(u)\n"),
+            "auth/tokens.py": ("def create_token(user): return 'tok'\ndef verify_token(t): return True\n"),
+            "billing/invoice.py": (
+                "from billing.tax import calc_tax\ndef create_invoice(order): return calc_tax(order)\n"
+            ),
+            "billing/tax.py": ("def calc_tax(order): return order * 0.1\n"),
+            "api/routes.py": (
+                "from auth.login import authenticate\n"
+                "from billing.invoice import create_invoice\n"
+                "def handle(r): authenticate(r, r); return create_invoice(r)\n"
+            ),
+            "models.py": ("class User:\n    pass\nclass Order:\n    pass\n"),
+        }
+    )
 
 
 @pytest.fixture

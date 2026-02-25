@@ -52,8 +52,8 @@ def test_graph_metrics_populates_sna_v2_values(indexed_project):
 
 
 def test_context_helpers_exposes_sna_v2_fields(indexed_project):
-    from roam.db.connection import open_db
     from roam.commands.context_helpers import get_graph_metrics
+    from roam.db.connection import open_db
 
     old_cwd = os.getcwd()
     try:

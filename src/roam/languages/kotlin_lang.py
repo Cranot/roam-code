@@ -24,9 +24,7 @@ class KotlinExtractor(GenericExtractor):
             token_types = {c.type for c in node.children if not c.is_named}
             if "interface" in token_types:
                 return "interface"
-            if "enum" in token_types or any(
-                c.type == "enum_class_body" for c in node.children if c.is_named
-            ):
+            if "enum" in token_types or any(c.type == "enum_class_body" for c in node.children if c.is_named):
                 return "enum"
             return "class"
         if node.type == "function_declaration":
@@ -116,10 +114,7 @@ class KotlinExtractor(GenericExtractor):
                 continue
 
             if kind == "class":
-                has_ctor = any(
-                    c.type == "constructor_invocation"
-                    for c in self._iter_all_descendants(spec)
-                )
+                has_ctor = any(c.type == "constructor_invocation" for c in self._iter_all_descendants(spec))
                 ref_kind = "inherits" if has_ctor else "implements"
             elif kind == "interface":
                 ref_kind = "inherits"

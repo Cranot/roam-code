@@ -8,11 +8,10 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import format_table, to_json, json_envelope
-from roam.commands.resolve import ensure_index
 from roam.commands.cmd_codeowners import find_codeowners, parse_codeowners, resolve_owners
-
+from roam.commands.resolve import ensure_index
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
 # Time-decayed ownership scoring
@@ -175,9 +174,7 @@ def drift(ctx, threshold, limit):
 
     with open_db(readonly=True) as conn:
         # Get all indexed files
-        all_files = conn.execute(
-            "SELECT id, path FROM files ORDER BY path"
-        ).fetchall()
+        all_files = conn.execute("SELECT id, path FROM files ORDER BY path").fetchall()
 
         if not all_files:
             if json_mode:
@@ -253,9 +250,7 @@ def drift(ctx, threshold, limit):
                         "actual_top_share": round(top_share, 4),
                         "drift_score": dscore,
                         "ownership_shares": {
-                            a: round(s, 4) for a, s in sorted(
-                                shares.items(), key=lambda x: x[1], reverse=True
-                            )
+                            a: round(s, 4) for a, s in sorted(shares.items(), key=lambda x: x[1], reverse=True)
                         },
                     }
                 )
@@ -266,46 +261,30 @@ def drift(ctx, threshold, limit):
         total_owned = len(owned_files)
         drift_count = len(drift_entries)
         drift_pct = round(drift_count * 100 / total_owned, 1) if total_owned else 0.0
-        avg_drift = (
-            round(sum(e["drift_score"] for e in drift_entries) / drift_count, 2)
-            if drift_count
-            else 0.0
-        )
+        avg_drift = round(sum(e["drift_score"] for e in drift_entries) / drift_count, 2) if drift_count else 0.0
         highest_entry = drift_entries[0] if drift_entries else None
 
         # Build recommendations
         recommendations: list[str] = []
         if drift_count > 0:
             recommendations.append(
-                f"Update CODEOWNERS for {drift_count} files where "
-                f"declared owners are no longer active"
+                f"Update CODEOWNERS for {drift_count} files where declared owners are no longer active"
             )
             # Group drift files by top contributor to suggest owner additions
             contributor_groups: dict[str, list[str]] = defaultdict(list)
             for de in drift_entries:
                 contributor_groups[de["actual_top_contributor"]].append(de["path"])
-            for contrib, paths in sorted(
-                contributor_groups.items(), key=lambda x: len(x[1]), reverse=True
-            ):
+            for contrib, paths in sorted(contributor_groups.items(), key=lambda x: len(x[1]), reverse=True):
                 if len(paths) >= 2:
                     # Find common directory
                     common = _common_directory(paths)
-                    recommendations.append(
-                        f"{contrib} should be added as owner for "
-                        f"{len(paths)} files in {common}"
-                    )
+                    recommendations.append(f"{contrib} should be added as owner for {len(paths)} files in {common}")
 
         # Build verdict
         if drift_count == 0:
-            verdict = (
-                f"No ownership drift detected (threshold={threshold}, "
-                f"{total_owned} owned files analysed)"
-            )
+            verdict = f"No ownership drift detected (threshold={threshold}, {total_owned} owned files analysed)"
         else:
-            verdict = (
-                f"{drift_count} files with ownership drift "
-                f"({drift_pct}% of {total_owned} owned files)"
-            )
+            verdict = f"{drift_count} files with ownership drift ({drift_pct}% of {total_owned} owned files)"
 
         # --- JSON output ---
         if json_mode:
@@ -346,10 +325,7 @@ def drift(ctx, threshold, limit):
             tbl_rows = []
             for de in drift_entries[:limit]:
                 declared_str = ", ".join(de["declared_owners"])
-                actual_str = (
-                    f"{de['actual_top_contributor']} "
-                    f"({round(de['actual_top_share'] * 100)}%)"
-                )
+                actual_str = f"{de['actual_top_contributor']} ({round(de['actual_top_share'] * 100)}%)"
                 tbl_rows.append(
                     [
                         de["path"],
@@ -374,10 +350,7 @@ def drift(ctx, threshold, limit):
         click.echo(f"    Files with drift: {drift_count} ({drift_pct}%)")
         click.echo(f"    Average drift score: {avg_drift}")
         if highest_entry:
-            click.echo(
-                f"    Highest drift: {highest_entry['path']} "
-                f"({highest_entry['drift_score']:.2f})"
-            )
+            click.echo(f"    Highest drift: {highest_entry['path']} ({highest_entry['drift_score']:.2f})")
         click.echo()
 
         # Recommendations

@@ -51,7 +51,7 @@ def _parse_param_count(signature: str | None) -> int:
     if not signature:
         return 0
     # Extract content between first pair of parentheses
-    m = re.search(r'\(([^)]*)\)', signature)
+    m = re.search(r"\(([^)]*)\)", signature)
     if not m:
         return 0
     params_str = m.group(1).strip()
@@ -62,30 +62,28 @@ def _parse_param_count(signature: str | None) -> int:
     parts: list[str] = []
     current: list[str] = []
     for ch in params_str:
-        if ch in ('(', '[', '<', '{'):
+        if ch in ("(", "[", "<", "{"):
             depth += 1
             current.append(ch)
-        elif ch in (')', ']', '>', '}'):
+        elif ch in (")", "]", ">", "}"):
             depth -= 1
             current.append(ch)
-        elif ch == ',' and depth == 0:
-            parts.append(''.join(current).strip())
+        elif ch == "," and depth == 0:
+            parts.append("".join(current).strip())
             current = []
         else:
             current.append(ch)
     if current:
-        parts.append(''.join(current).strip())
+        parts.append("".join(current).strip())
     # Filter out self/cls and empty parts
-    filtered = [
-        p for p in parts
-        if p and p.split(':')[0].split('=')[0].strip().lower() not in ('self', 'cls', '')
-    ]
+    filtered = [p for p in parts if p and p.split(":")[0].split("=")[0].strip().lower() not in ("self", "cls", "")]
     return len(filtered)
 
 
 # ---------------------------------------------------------------------------
 # Individual detectors
 # ---------------------------------------------------------------------------
+
 
 def detect_brain_method(conn) -> list[dict]:
     """Functions with complexity > 60 AND > 100 LOC."""
@@ -103,12 +101,18 @@ def detect_brain_method(conn) -> list[dict]:
     for r in rows:
         loc_str = _loc(r["file_path"], r["line_start"])
         line_count = (r["line_end"] or 0) - (r["line_start"] or 0)
-        results.append(_finding(
-            "brain-method", "critical",
-            r["name"], r["kind"], loc_str,
-            r["cognitive_complexity"], 60,
-            f"Brain method: complexity {r['cognitive_complexity']:.0f}, {line_count} LOC",
-        ))
+        results.append(
+            _finding(
+                "brain-method",
+                "critical",
+                r["name"],
+                r["kind"],
+                loc_str,
+                r["cognitive_complexity"],
+                60,
+                f"Brain method: complexity {r['cognitive_complexity']:.0f}, {line_count} LOC",
+            )
+        )
     return results
 
 
@@ -126,12 +130,18 @@ def detect_deep_nesting(conn) -> list[dict]:
     results = []
     for r in rows:
         loc_str = _loc(r["file_path"], r["line_start"])
-        results.append(_finding(
-            "deep-nesting", "warning",
-            r["name"], r["kind"], loc_str,
-            r["nesting_depth"], 4,
-            f"Deep nesting: depth {r['nesting_depth']}",
-        ))
+        results.append(
+            _finding(
+                "deep-nesting",
+                "warning",
+                r["name"],
+                r["kind"],
+                loc_str,
+                r["nesting_depth"],
+                4,
+                f"Deep nesting: depth {r['nesting_depth']}",
+            )
+        )
     return results
 
 
@@ -150,12 +160,18 @@ def detect_long_params(conn) -> list[dict]:
         count = _parse_param_count(r["signature"])
         if count > 5:
             loc_str = _loc(r["file_path"], r["line_start"])
-            results.append(_finding(
-                "long-params", "warning",
-                r["name"], r["kind"], loc_str,
-                count, 5,
-                f"Long parameter list: {count} params",
-            ))
+            results.append(
+                _finding(
+                    "long-params",
+                    "warning",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    count,
+                    5,
+                    f"Long parameter list: {count} params",
+                )
+            )
     return results
 
 
@@ -180,12 +196,18 @@ def detect_large_class(conn) -> list[dict]:
         if method_count > 20:
             loc_str = _loc(r["file_path"], r["line_start"])
             line_count = (r["line_end"] or 0) - (r["line_start"] or 0)
-            results.append(_finding(
-                "large-class", "critical",
-                r["name"], r["kind"], loc_str,
-                line_count, 500,
-                f"Large class: {line_count} LOC, {method_count} methods",
-            ))
+            results.append(
+                _finding(
+                    "large-class",
+                    "critical",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    line_count,
+                    500,
+                    f"Large class: {line_count} LOC, {method_count} methods",
+                )
+            )
     return results
 
 
@@ -202,10 +224,7 @@ def detect_god_class(conn) -> list[dict]:
     for r in rows:
         line_count = (r["line_end"] or 0) - (r["line_start"] or 0)
         method_count = conn.execute(
-            "SELECT COUNT(*) FROM symbols "
-            "WHERE file_id = ? "
-            "AND kind = 'method' "
-            "AND line_start >= ? AND line_end <= ?",
+            "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind = 'method' AND line_start >= ? AND line_end <= ?",
             (r["file_id"], r["line_start"] or 0, r["line_end"] or 0),
         ).fetchone()[0]
         if method_count > 30 or line_count > 1000:
@@ -217,12 +236,18 @@ def detect_god_class(conn) -> list[dict]:
                 parts.append(f"{method_count} methods")
             if line_count > 1000:
                 parts.append(f"{line_count} LOC")
-            results.append(_finding(
-                "god-class", "critical",
-                r["name"], r["kind"], loc_str,
-                metric, threshold,
-                f"God class: {', '.join(parts)}",
-            ))
+            results.append(
+                _finding(
+                    "god-class",
+                    "critical",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    metric,
+                    threshold,
+                    f"God class: {', '.join(parts)}",
+                )
+            )
     return results
 
 
@@ -251,12 +276,18 @@ def detect_feature_envy(conn) -> list[dict]:
         ratio = external / total
         if ratio > 0.5:
             loc_str = _loc(r["file_path"], r["line_start"])
-            results.append(_finding(
-                "feature-envy", "warning",
-                r["name"], r["kind"], loc_str,
-                round(ratio * 100, 1), 50,
-                f"Feature envy: {external}/{total} refs ({ratio:.0%}) to other files",
-            ))
+            results.append(
+                _finding(
+                    "feature-envy",
+                    "warning",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    round(ratio * 100, 1),
+                    50,
+                    f"Feature envy: {external}/{total} refs ({ratio:.0%}) to other files",
+                )
+            )
     return results
 
 
@@ -273,12 +304,18 @@ def detect_shotgun_surgery(conn) -> list[dict]:
     results = []
     for r in rows:
         loc_str = _loc(r["file_path"], r["line_start"])
-        results.append(_finding(
-            "shotgun-surgery", "warning",
-            r["name"], r["kind"], loc_str,
-            r["in_degree"], 7,
-            f"Shotgun surgery: {r['in_degree']} incoming dependencies",
-        ))
+        results.append(
+            _finding(
+                "shotgun-surgery",
+                "warning",
+                r["name"],
+                r["kind"],
+                loc_str,
+                r["in_degree"],
+                7,
+                f"Shotgun surgery: {r['in_degree']} incoming dependencies",
+            )
+        )
     return results
 
 
@@ -295,10 +332,11 @@ def detect_data_clumps(conn) -> list[dict]:
 
     # Build param-group map
     from collections import defaultdict
+
     param_groups: dict[str, list[dict]] = defaultdict(list)
     for r in rows:
         sig = r["signature"]
-        m = re.search(r'\(([^)]*)\)', sig or "")
+        m = re.search(r"\(([^)]*)\)", sig or "")
         if not m:
             continue
         params_str = m.group(1).strip()
@@ -309,24 +347,24 @@ def detect_data_clumps(conn) -> list[dict]:
         parts: list[str] = []
         current: list[str] = []
         for ch in params_str:
-            if ch in ('(', '[', '<', '{'):
+            if ch in ("(", "[", "<", "{"):
                 depth += 1
                 current.append(ch)
-            elif ch in (')', ']', '>', '}'):
+            elif ch in (")", "]", ">", "}"):
                 depth -= 1
                 current.append(ch)
-            elif ch == ',' and depth == 0:
-                parts.append(''.join(current).strip())
+            elif ch == "," and depth == 0:
+                parts.append("".join(current).strip())
                 current = []
             else:
                 current.append(ch)
         if current:
-            parts.append(''.join(current).strip())
+            parts.append("".join(current).strip())
         # Extract just param names, skip self/cls
         names = []
         for p in parts:
-            name = p.split(':')[0].split('=')[0].strip().lower()
-            if name and name not in ('self', 'cls', ''):
+            name = p.split(":")[0].split("=")[0].strip().lower()
+            if name and name not in ("self", "cls", ""):
                 names.append(name)
         if len(names) >= 3:
             key = ",".join(sorted(names[:3]))
@@ -341,13 +379,18 @@ def detect_data_clumps(conn) -> list[dict]:
             r = funcs[0]
             loc_str = _loc(r["file_path"], r["line_start"])
             func_names = [f["name"] for f in funcs[:5]]
-            results.append(_finding(
-                "data-clumps", "info",
-                r["name"], r["kind"], loc_str,
-                len(funcs), 3,
-                f"Data clump: params ({key}) repeated in {len(funcs)} functions: "
-                f"{', '.join(func_names)}",
-            ))
+            results.append(
+                _finding(
+                    "data-clumps",
+                    "info",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    len(funcs),
+                    3,
+                    f"Data clump: params ({key}) repeated in {len(funcs)} functions: {', '.join(func_names)}",
+                )
+            )
     return results
 
 
@@ -369,12 +412,18 @@ def detect_dead_params(conn) -> list[dict]:
         count = _parse_param_count(r["signature"])
         if count >= 4:
             loc_str = _loc(r["file_path"], r["line_start"])
-            results.append(_finding(
-                "dead-params", "info",
-                r["name"], r["kind"], loc_str,
-                count, 4,
-                f"Dead params: {count} params but complexity {r['cognitive_complexity']:.0f}",
-            ))
+            results.append(
+                _finding(
+                    "dead-params",
+                    "info",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    count,
+                    4,
+                    f"Dead params: {count} params but complexity {r['cognitive_complexity']:.0f}",
+                )
+            )
     return results
 
 
@@ -396,10 +445,7 @@ def detect_low_cohesion(conn) -> list[dict]:
     for r in rows:
         # Count methods within the class line range
         methods = conn.execute(
-            "SELECT id FROM symbols "
-            "WHERE file_id = ? "
-            "AND kind = 'method' "
-            "AND line_start >= ? AND line_end <= ?",
+            "SELECT id FROM symbols WHERE file_id = ? AND kind = 'method' AND line_start >= ? AND line_end <= ?",
             (r["file_id"], r["line_start"] or 0, r["line_end"] or 0),
         ).fetchall()
         method_count = len(methods)
@@ -411,20 +457,25 @@ def detect_low_cohesion(conn) -> list[dict]:
         # Count internal edges between methods of this class
         ph = ",".join("?" for _ in method_ids)
         internal_edges = conn.execute(
-            f"SELECT COUNT(*) FROM edges "
-            f"WHERE source_id IN ({ph}) AND target_id IN ({ph})",
+            f"SELECT COUNT(*) FROM edges WHERE source_id IN ({ph}) AND target_id IN ({ph})",
             method_ids + method_ids,
         ).fetchone()[0]
         threshold = method_count // 2
         if internal_edges < threshold:
             loc_str = _loc(r["file_path"], r["line_start"])
-            results.append(_finding(
-                "low-cohesion", "warning",
-                r["name"], r["kind"], loc_str,
-                internal_edges, threshold,
-                f"Low cohesion: {method_count} methods but only {internal_edges} internal edges "
-                f"(threshold: {threshold})",
-            ))
+            results.append(
+                _finding(
+                    "low-cohesion",
+                    "warning",
+                    r["name"],
+                    r["kind"],
+                    loc_str,
+                    internal_edges,
+                    threshold,
+                    f"Low cohesion: {method_count} methods but only {internal_edges} internal edges "
+                    f"(threshold: {threshold})",
+                )
+            )
     return results
 
 
@@ -442,12 +493,18 @@ def detect_message_chain(conn) -> list[dict]:
     results = []
     for r in rows:
         loc_str = _loc(r["file_path"], r["line_start"])
-        results.append(_finding(
-            "message-chain", "info",
-            r["name"], r["kind"], loc_str,
-            r["out_degree"], 10,
-            f"Message chain: {r['out_degree']} outgoing calls",
-        ))
+        results.append(
+            _finding(
+                "message-chain",
+                "info",
+                r["name"],
+                r["kind"],
+                loc_str,
+                r["out_degree"],
+                10,
+                f"Message chain: {r['out_degree']} outgoing calls",
+            )
+        )
     return results
 
 

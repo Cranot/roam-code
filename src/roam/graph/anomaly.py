@@ -42,12 +42,14 @@ def modified_z_score(values: list[float | int], threshold: float = 3.5) -> list[
             # 0.6745 is the 0.75th quantile of the standard normal distribution.
             # Scaling by it makes the MAD consistent with std-dev for normal data.
             z = 0.6745 * (v - med) / mad_val
-        results.append({
-            "index": i,
-            "value": v,
-            "z_score": round(z, 4) if math.isfinite(z) else z,
-            "is_anomaly": abs(z) > threshold,
-        })
+        results.append(
+            {
+                "index": i,
+                "value": v,
+                "z_score": round(z, 4) if math.isfinite(z) else z,
+                "is_anomaly": abs(z) > threshold,
+            }
+        )
     return results
 
 
@@ -202,52 +204,62 @@ def western_electric_rules(values: list[float | int]) -> list[dict]:
     # Rule 1: single point beyond 3 sigma
     for i in range(n):
         if abs(z[i]) > 3.0:
-            violations.append({
-                "rule": 1,
-                "description": "single point > 3 sigma from center",
-                "indices": [i],
-                "metric_value": round(abs(z[i]), 4),
-            })
+            violations.append(
+                {
+                    "rule": 1,
+                    "description": "single point > 3 sigma from center",
+                    "indices": [i],
+                    "metric_value": round(abs(z[i]), 4),
+                }
+            )
 
     # Rule 2: 2 of 3 consecutive points beyond 2 sigma on same side
     for i in range(n - 2):
-        window = z[i:i + 3]
+        window = z[i : i + 3]
         above = [j for j, v in enumerate(window) if v > 2.0]
         below = [j for j, v in enumerate(window) if v < -2.0]
         if len(above) >= 2:
-            violations.append({
-                "rule": 2,
-                "description": "2 of 3 points > 2 sigma (same side, above)",
-                "indices": [i + j for j in above],
-                "metric_value": round(max(window), 4),
-            })
+            violations.append(
+                {
+                    "rule": 2,
+                    "description": "2 of 3 points > 2 sigma (same side, above)",
+                    "indices": [i + j for j in above],
+                    "metric_value": round(max(window), 4),
+                }
+            )
         if len(below) >= 2:
-            violations.append({
-                "rule": 2,
-                "description": "2 of 3 points > 2 sigma (same side, below)",
-                "indices": [i + j for j in below],
-                "metric_value": round(min(window), 4),
-            })
+            violations.append(
+                {
+                    "rule": 2,
+                    "description": "2 of 3 points > 2 sigma (same side, below)",
+                    "indices": [i + j for j in below],
+                    "metric_value": round(min(window), 4),
+                }
+            )
 
     # Rule 3: 4 of 5 consecutive points beyond 1 sigma on same side
     for i in range(n - 4):
-        window = z[i:i + 5]
+        window = z[i : i + 5]
         above = [j for j, v in enumerate(window) if v > 1.0]
         below = [j for j, v in enumerate(window) if v < -1.0]
         if len(above) >= 4:
-            violations.append({
-                "rule": 3,
-                "description": "4 of 5 points > 1 sigma (same side, above)",
-                "indices": [i + j for j in above],
-                "metric_value": round(max(window), 4),
-            })
+            violations.append(
+                {
+                    "rule": 3,
+                    "description": "4 of 5 points > 1 sigma (same side, above)",
+                    "indices": [i + j for j in above],
+                    "metric_value": round(max(window), 4),
+                }
+            )
         if len(below) >= 4:
-            violations.append({
-                "rule": 3,
-                "description": "4 of 5 points > 1 sigma (same side, below)",
-                "indices": [i + j for j in below],
-                "metric_value": round(min(window), 4),
-            })
+            violations.append(
+                {
+                    "rule": 3,
+                    "description": "4 of 5 points > 1 sigma (same side, below)",
+                    "indices": [i + j for j in below],
+                    "metric_value": round(min(window), 4),
+                }
+            )
 
     # Rule 4: 8+ consecutive points on same side of mean
     run_start = 0
@@ -256,22 +268,26 @@ def western_electric_rules(values: list[float | int]) -> list[dict]:
         if not same_side or z[i] == 0.0:
             if i - run_start >= 8:
                 indices = list(range(run_start, i))
-                violations.append({
-                    "rule": 4,
-                    "description": f"{len(indices)} consecutive points on same side of center",
-                    "indices": indices,
-                    "metric_value": len(indices),
-                })
+                violations.append(
+                    {
+                        "rule": 4,
+                        "description": f"{len(indices)} consecutive points on same side of center",
+                        "indices": indices,
+                        "metric_value": len(indices),
+                    }
+                )
             run_start = i
     # Check final run
     if n - run_start >= 8:
         indices = list(range(run_start, n))
-        violations.append({
-            "rule": 4,
-            "description": f"{len(indices)} consecutive points on same side of center",
-            "indices": indices,
-            "metric_value": len(indices),
-        })
+        violations.append(
+            {
+                "rule": 4,
+                "description": f"{len(indices)} consecutive points on same side of center",
+                "indices": indices,
+                "metric_value": len(indices),
+            }
+        )
 
     # Rule 5: 6+ consecutive increasing or decreasing points
     if n >= 6:
@@ -281,40 +297,48 @@ def western_electric_rules(values: list[float | int]) -> list[dict]:
             if values[i] <= values[i - 1]:
                 if i - inc_start >= 6:
                     indices = list(range(inc_start, i))
-                    violations.append({
-                        "rule": 5,
-                        "description": f"{len(indices)} consecutive increasing points",
-                        "indices": indices,
-                        "metric_value": len(indices),
-                    })
+                    violations.append(
+                        {
+                            "rule": 5,
+                            "description": f"{len(indices)} consecutive increasing points",
+                            "indices": indices,
+                            "metric_value": len(indices),
+                        }
+                    )
                 inc_start = i
             if values[i] >= values[i - 1]:
                 if i - dec_start >= 6:
                     indices = list(range(dec_start, i))
-                    violations.append({
-                        "rule": 5,
-                        "description": f"{len(indices)} consecutive decreasing points",
-                        "indices": indices,
-                        "metric_value": len(indices),
-                    })
+                    violations.append(
+                        {
+                            "rule": 5,
+                            "description": f"{len(indices)} consecutive decreasing points",
+                            "indices": indices,
+                            "metric_value": len(indices),
+                        }
+                    )
                 dec_start = i
         # Check final runs
         if n - inc_start >= 6:
             indices = list(range(inc_start, n))
-            violations.append({
-                "rule": 5,
-                "description": f"{len(indices)} consecutive increasing points",
-                "indices": indices,
-                "metric_value": len(indices),
-            })
+            violations.append(
+                {
+                    "rule": 5,
+                    "description": f"{len(indices)} consecutive increasing points",
+                    "indices": indices,
+                    "metric_value": len(indices),
+                }
+            )
         if n - dec_start >= 6:
             indices = list(range(dec_start, n))
-            violations.append({
-                "rule": 5,
-                "description": f"{len(indices)} consecutive decreasing points",
-                "indices": indices,
-                "metric_value": len(indices),
-            })
+            violations.append(
+                {
+                    "rule": 5,
+                    "description": f"{len(indices)} consecutive decreasing points",
+                    "indices": indices,
+                    "metric_value": len(indices),
+                }
+            )
 
     # Rule 6: 14+ consecutive alternating up/down points (oscillation)
     if n >= 14:
@@ -328,23 +352,27 @@ def western_electric_rules(values: list[float | int]) -> list[dict]:
                 run_len = i - alt_start + 1
                 if run_len >= 14:
                     indices = list(range(alt_start - 1, i))
-                    violations.append({
-                        "rule": 6,
-                        "description": f"{len(indices)} consecutive alternating points",
-                        "indices": indices,
-                        "metric_value": len(indices),
-                    })
+                    violations.append(
+                        {
+                            "rule": 6,
+                            "description": f"{len(indices)} consecutive alternating points",
+                            "indices": indices,
+                            "metric_value": len(indices),
+                        }
+                    )
                 alt_start = i
         # Check final run
         run_len = n - alt_start + 1
         if run_len >= 14:
             indices = list(range(alt_start - 1, n))
-            violations.append({
-                "rule": 6,
-                "description": f"{len(indices)} consecutive alternating points",
-                "indices": indices,
-                "metric_value": len(indices),
-            })
+            violations.append(
+                {
+                    "rule": 6,
+                    "description": f"{len(indices)} consecutive alternating points",
+                    "indices": indices,
+                    "metric_value": len(indices),
+                }
+            )
 
     return violations
 
@@ -388,19 +416,23 @@ def cusum(
         s_low = max(0.0, s_low - normalized - drift)
 
         if s_high > threshold:
-            signals.append({
-                "index": i,
-                "direction": "up",
-                "cusum_value": round(s_high, 4),
-            })
+            signals.append(
+                {
+                    "index": i,
+                    "direction": "up",
+                    "cusum_value": round(s_high, 4),
+                }
+            )
             s_high = 0.0  # reset after signal
 
         if s_low > threshold:
-            signals.append({
-                "index": i,
-                "direction": "down",
-                "cusum_value": round(s_low, 4),
-            })
+            signals.append(
+                {
+                    "index": i,
+                    "direction": "down",
+                    "cusum_value": round(s_low, 4),
+                }
+            )
             s_low = 0.0  # reset after signal
 
     return signals

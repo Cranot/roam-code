@@ -9,14 +9,14 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db, batched_in
-from roam.output.formatter import loc, format_table, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import batched_in, open_db
+from roam.output.formatter import format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _percentile_rank(value, sorted_values):
     """Return the percentile rank (0.0-1.0) of *value* within *sorted_values*."""
@@ -43,6 +43,7 @@ def _parent_dir(path):
 # ---------------------------------------------------------------------------
 # Per-file debt computation
 # ---------------------------------------------------------------------------
+
 
 def _compute_file_debt(conn):
     """Compute per-file debt scores.
@@ -172,10 +173,10 @@ def _compute_file_debt(conn):
         # Each issue type has an estimated fix time, transforming
         # heterogeneous violations into a common currency (dev-minutes).
         # Reference: Letouzey (2012), "The SQALE Method."
-        _COST_COMPLEXITY_PER_UNIT = 30   # minutes to refactor per unit of normalized complexity
-        _COST_CYCLE_BREAK = 120          # minutes to break a cycle dependency
-        _COST_GOD_SPLIT = 240            # minutes to split a god component
-        _COST_DEAD_REMOVE = 10           # minutes to safely remove a dead export
+        _COST_COMPLEXITY_PER_UNIT = 30  # minutes to refactor per unit of normalized complexity
+        _COST_CYCLE_BREAK = 120  # minutes to break a cycle dependency
+        _COST_GOD_SPLIT = 240  # minutes to split a god component
+        _COST_DEAD_REMOVE = 10  # minutes to safely remove a dead export
 
         remediation_minutes = (
             complexity_norm * _COST_COMPLEXITY_PER_UNIT
@@ -185,39 +186,36 @@ def _compute_file_debt(conn):
         )
 
         # Health penalty: normalized 0-1 for scoring (backwards compat)
-        health_penalty = (
-            complexity_norm * 0.4
-            + cycle_penalty * 0.3
-            + god_penalty * 0.2
-            + dead_ratio * 0.1
-        )
+        health_penalty = complexity_norm * 0.4 + cycle_penalty * 0.3 + god_penalty * 0.2 + dead_ratio * 0.1
 
         # Hotspot factor: churn amplifies health problems (up to 3x)
         hotspot_factor = max(1.0, churn_pctile * 3)
 
         debt_score = health_penalty * hotspot_factor
 
-        results.append({
-            "file_id": fid,
-            "path": path,
-            "debt_score": round(debt_score, 3),
-            "health_penalty": round(health_penalty, 3),
-            "hotspot_factor": round(hotspot_factor, 2),
-            "remediation_minutes": round(remediation_minutes, 0),
-            "complexity_norm": round(complexity_norm, 3),
-            "complexity_raw": round(complexity_raw, 1),
-            "churn_pctile": round(churn_pctile, 3),
-            "churn_raw": churn_raw,
-            "cycle_penalty": cycle_penalty,
-            "god_penalty": god_penalty,
-            "dead_exports": n_dead,
-            "total_exported": n_exported,
-            "dead_ratio": round(dead_ratio, 3),
-            "coupling_avg_degree": round(coupling_avg_degree, 2),
-            "coupling_max_degree": round(coupling_max_degree, 2),
-            "commit_count": info["commit_count"] or 0,
-            "distinct_authors": info["distinct_authors"] or 0,
-        })
+        results.append(
+            {
+                "file_id": fid,
+                "path": path,
+                "debt_score": round(debt_score, 3),
+                "health_penalty": round(health_penalty, 3),
+                "hotspot_factor": round(hotspot_factor, 2),
+                "remediation_minutes": round(remediation_minutes, 0),
+                "complexity_norm": round(complexity_norm, 3),
+                "complexity_raw": round(complexity_raw, 1),
+                "churn_pctile": round(churn_pctile, 3),
+                "churn_raw": churn_raw,
+                "cycle_penalty": cycle_penalty,
+                "god_penalty": god_penalty,
+                "dead_exports": n_dead,
+                "total_exported": n_exported,
+                "dead_ratio": round(dead_ratio, 3),
+                "coupling_avg_degree": round(coupling_avg_degree, 2),
+                "coupling_max_degree": round(coupling_max_degree, 2),
+                "commit_count": info["commit_count"] or 0,
+                "distinct_authors": info["distinct_authors"] or 0,
+            }
+        )
 
     results.sort(key=lambda x: -x["debt_score"])
     return results
@@ -226,6 +224,7 @@ def _compute_file_debt(conn):
 # ---------------------------------------------------------------------------
 # Summary stats
 # ---------------------------------------------------------------------------
+
 
 def _summary_stats(items):
     """Compute aggregate project-level debt statistics."""
@@ -277,18 +276,15 @@ def _improvement_suggestions(items):
         return suggestions
 
     # Top debt files with high hotspot factor
-    hot_complex = [r for r in items[:10]
-                   if r["hotspot_factor"] > 2.0 and r["complexity_norm"] > 0.5]
+    hot_complex = [r for r in items[:10] if r["hotspot_factor"] > 2.0 and r["complexity_norm"] > 0.5]
     if hot_complex:
         names = ", ".join(os.path.basename(r["path"]) for r in hot_complex[:3])
         suggestions.append(
-            f"Refactor hot complex files first: {names} "
-            f"(high churn + high complexity = maximum debt leverage)"
+            f"Refactor hot complex files first: {names} (high churn + high complexity = maximum debt leverage)"
         )
 
     # Cycle-bearing hotspots
-    cycle_hot = [r for r in items[:20]
-                 if r["cycle_penalty"] > 0 and r["hotspot_factor"] > 1.5]
+    cycle_hot = [r for r in items[:20] if r["cycle_penalty"] > 0 and r["hotspot_factor"] > 1.5]
     if cycle_hot:
         suggestions.append(
             f"{len(cycle_hot)} hotspot file(s) participate in dependency cycles "
@@ -296,8 +292,7 @@ def _improvement_suggestions(items):
         )
 
     # Dead exports in high-churn files
-    dead_hot = [r for r in items[:20]
-                if r["dead_exports"] > 0 and r["hotspot_factor"] > 1.5]
+    dead_hot = [r for r in items[:20] if r["dead_exports"] > 0 and r["hotspot_factor"] > 1.5]
     if dead_hot:
         total_dead = sum(r["dead_exports"] for r in dead_hot)
         suggestions.append(
@@ -308,8 +303,7 @@ def _improvement_suggestions(items):
     # General advice based on distribution
     stats = _summary_stats(items)
     if stats["worst_quartile_files"] > 0:
-        pct = (stats["worst_quartile_debt"] / stats["total_debt"] * 100
-               if stats["total_debt"] > 0 else 0)
+        pct = stats["worst_quartile_debt"] / stats["total_debt"] * 100 if stats["total_debt"] > 0 else 0
         suggestions.append(
             f"Worst quartile ({stats['worst_quartile_files']} files) holds "
             f"{pct:.0f}% of total debt -- focus refactoring budget here"
@@ -321,6 +315,7 @@ def _improvement_suggestions(items):
 # ---------------------------------------------------------------------------
 # ROI estimation
 # ---------------------------------------------------------------------------
+
 
 def _estimate_quarterly_touches(item):
     """Estimate per-quarter touch frequency from commit and churn signals."""
@@ -356,7 +351,7 @@ def _estimate_refactoring_roi(items, top_n=10):
             ),
         }, {}
 
-    target = items[:max(1, top_n)]
+    target = items[: max(1, top_n)]
     max_coupling = max((r.get("coupling_avg_degree", 0.0) or 0.0) for r in target)
     if max_coupling <= 0:
         max_coupling = 1.0
@@ -449,6 +444,7 @@ def _estimate_refactoring_roi(items, top_n=10):
 # Grouping
 # ---------------------------------------------------------------------------
 
+
 def _group_by_directory(items):
     """Group debt items by parent directory."""
     groups = defaultdict(list)
@@ -460,14 +456,16 @@ def _group_by_directory(items):
     for d, files in groups.items():
         total_debt = sum(f["debt_score"] for f in files)
         avg_debt = total_debt / len(files) if files else 0
-        result.append({
-            "directory": d,
-            "file_count": len(files),
-            "total_debt": round(total_debt, 1),
-            "avg_debt": round(avg_debt, 3),
-            "max_debt": round(max(f["debt_score"] for f in files), 3),
-            "files": files,
-        })
+        result.append(
+            {
+                "directory": d,
+                "file_count": len(files),
+                "total_debt": round(total_debt, 1),
+                "avg_debt": round(avg_debt, 3),
+                "max_debt": round(max(f["debt_score"] for f in files), 3),
+                "files": files,
+            }
+        )
 
     result.sort(key=lambda x: -x["total_debt"])
     return result
@@ -477,14 +475,12 @@ def _group_by_directory(items):
 # Click command
 # ---------------------------------------------------------------------------
 
+
 @click.command()
-@click.option('--limit', '-n', default=20, help='Number of files to show (default 20)')
-@click.option('--by-kind', 'by_kind', is_flag=True,
-              help='Group results by parent directory')
-@click.option('--threshold', type=float, default=None,
-              help='Only show files above this debt score')
-@click.option('--roi', is_flag=True,
-              help='Estimate refactoring ROI (developer-hours saved/quarter).')
+@click.option("--limit", "-n", default=20, help="Number of files to show (default 20)")
+@click.option("--by-kind", "by_kind", is_flag=True, help="Group results by parent directory")
+@click.option("--threshold", type=float, default=None, help="Only show files above this debt score")
+@click.option("--roi", is_flag=True, help="Estimate refactoring ROI (developer-hours saved/quarter).")
 @click.pass_context
 def debt(ctx, limit, by_kind, threshold, roi):
     """Hotspot-weighted technical debt prioritization.
@@ -500,8 +496,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
     health_penalty = complexity*0.4 + cycles*0.3 + god*0.2 + dead*0.1
     hotspot_factor = max(1.0, churn_percentile * 3)   # up to 3x for hot files
     """
-    json_mode = ctx.obj.get('json') if ctx.obj else False
-    token_budget = ctx.obj.get('budget', 0) if ctx.obj else 0
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -509,10 +505,15 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         if not all_items:
             if json_mode:
-                click.echo(to_json(json_envelope("debt",
-                    summary={"total_files": 0, "total_debt": 0},
-                    items=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "debt",
+                            summary={"total_files": 0, "total_debt": 0},
+                            items=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No file stats available. Run `roam index` first.")
             return
@@ -526,7 +527,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
         roi_summary, roi_by_path = ({}, {})
         if roi:
             roi_summary, roi_by_path = _estimate_refactoring_roi(
-                all_items, top_n=max(limit, 10),
+                all_items,
+                top_n=max(limit, 10),
             )
 
         def _roi_payload(path):
@@ -536,12 +538,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
             return {
                 "estimated_hours_saved_quarter": entry["estimated_hours_saved_quarter"],
                 "estimated_hours_saved_year": entry["estimated_hours_saved_year"],
-                "confidence_low_hours_saved_quarter": (
-                    entry["confidence_low_hours_saved_quarter"]
-                ),
-                "confidence_high_hours_saved_quarter": (
-                    entry["confidence_high_hours_saved_quarter"]
-                ),
+                "confidence_low_hours_saved_quarter": (entry["confidence_low_hours_saved_quarter"]),
+                "confidence_high_hours_saved_quarter": (entry["confidence_high_hours_saved_quarter"]),
                 "confidence": entry["confidence"],
             }
 
@@ -568,11 +566,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                                     "debt_score": f["debt_score"],
                                     "health_penalty": f["health_penalty"],
                                     "hotspot_factor": f["hotspot_factor"],
-                                    **(
-                                        {"roi": _roi_payload(f["path"])}
-                                        if roi and _roi_payload(f["path"])
-                                        else {}
-                                    ),
+                                    **({"roi": _roi_payload(f["path"])} if roi and _roi_payload(f["path"]) else {}),
                                 }
                                 for f in g["files"][:limit]
                             ],
@@ -601,11 +595,13 @@ def debt(ctx, limit, by_kind, threshold, roi):
             click.echo()
 
             for g in groups[:limit]:
-                click.echo(f"  {g['directory']}/  "
-                           f"({g['file_count']} files, "
-                           f"total={g['total_debt']:.1f}, "
-                           f"avg={g['avg_debt']:.3f}, "
-                           f"max={g['max_debt']:.3f})")
+                click.echo(
+                    f"  {g['directory']}/  "
+                    f"({g['file_count']} files, "
+                    f"total={g['total_debt']:.1f}, "
+                    f"avg={g['avg_debt']:.3f}, "
+                    f"max={g['max_debt']:.3f})"
+                )
                 # Show top 5 files per group
                 for f in g["files"][:5]:
                     click.echo(f"    {f['debt_score']:.3f}  {os.path.basename(f['path'])}")
@@ -642,11 +638,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
                         },
                         "commit_count": r["commit_count"],
                         "distinct_authors": r["distinct_authors"],
-                        **(
-                            {"roi": _roi_payload(r["path"])}
-                            if roi and _roi_payload(r["path"])
-                            else {}
-                        ),
+                        **({"roi": _roi_payload(r["path"])} if roi and _roi_payload(r["path"]) else {}),
                     }
                     for r in display
                 ],
@@ -701,10 +693,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
             ]
             if roi:
                 roi_item = _roi_payload(r["path"])
-                row.append(
-                    f"{roi_item['estimated_hours_saved_quarter']:.1f}h"
-                    if roi_item else "-"
-                )
+                row.append(f"{roi_item['estimated_hours_saved_quarter']:.1f}h" if roi_item else "-")
             row.extend([breakdown, loc(r["path"])])
             table_rows.append(row)
 
@@ -722,15 +711,18 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
 def _print_summary(stats, suggestions):
     """Print text summary block."""
-    click.echo(f"  Project: {stats['total_files']} files, "
-               f"total debt = {stats['total_debt']:.1f}, "
-               f"mean = {stats['mean_debt']:.3f}, "
-               f"median = {stats['median_debt']:.3f}")
-    click.echo(f"  Worst quartile: {stats['worst_quartile_files']} files hold "
-               f"{stats['worst_quartile_debt']:.1f} debt")
-    click.echo(f"  Signals: {stats['files_with_cycles']} files in cycles, "
-               f"{stats['files_with_god_components']} with god components, "
-               f"{stats['hotspot_files']} hotspots")
+    click.echo(
+        f"  Project: {stats['total_files']} files, "
+        f"total debt = {stats['total_debt']:.1f}, "
+        f"mean = {stats['mean_debt']:.3f}, "
+        f"median = {stats['median_debt']:.3f}"
+    )
+    click.echo(f"  Worst quartile: {stats['worst_quartile_files']} files hold {stats['worst_quartile_debt']:.1f} debt")
+    click.echo(
+        f"  Signals: {stats['files_with_cycles']} files in cycles, "
+        f"{stats['files_with_god_components']} with god components, "
+        f"{stats['hotspot_files']} hotspots"
+    )
 
     if suggestions:
         click.echo()

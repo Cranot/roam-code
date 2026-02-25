@@ -134,12 +134,7 @@ def _simulation_previews(
         improved = sum(1 for d in deltas.values() if d.get("direction") == "improved")
         degraded = sum(1 for d in deltas.values() if d.get("direction") == "degraded")
 
-        score = (
-            (health_delta * 4)
-            + (improved - degraded)
-            - (max(0, cycles_delta) * 3)
-            - (max(0, layer_delta) * 3)
-        )
+        score = (health_delta * 4) + (improved - degraded) - (max(0, cycles_delta) * 3) - (max(0, layer_delta) * 3)
 
         previews.append(
             {
@@ -181,10 +176,7 @@ def _build_steps(
     steps: list[dict] = [
         {
             "title": "Capture baseline safety snapshot",
-            "details": (
-                "Record pre-change risk, architecture, and metrics so post-change "
-                "regressions are measurable."
-            ),
+            "details": ("Record pre-change risk, architecture, and metrics so post-change regressions are measurable."),
             "command": f"roam guard {symbol_name}",
         },
     ]
@@ -211,8 +203,7 @@ def _build_steps(
             {
                 "title": "Resolve existing layer violations first",
                 "details": (
-                    "Refactoring on top of active layer violations increases "
-                    "the chance of architectural drift."
+                    "Refactoring on top of active layer violations increases the chance of architectural drift."
                 ),
                 "command": f"roam layers --focus {symbol_name}",
             },
@@ -224,10 +215,7 @@ def _build_steps(
         steps.append(
             {
                 "title": f"Apply {op} refactor in small commit slices",
-                "details": (
-                    f"Target file: {target}. Use staged slices to keep "
-                    "rollback and review bounded."
-                ),
+                "details": (f"Target file: {target}. Use staged slices to keep rollback and review bounded."),
                 "command": f"roam simulate {op} {symbol_name} {target}",
             },
         )
@@ -247,8 +235,7 @@ def _build_steps(
             {
                 "title": "Migrate dependents and imports in bounded batches",
                 "details": (
-                    f"{dependent_symbols} downstream symbols in {dependent_files} files "
-                    "depend on this symbol."
+                    f"{dependent_symbols} downstream symbols in {dependent_files} files depend on this symbol."
                 ),
                 "command": f"roam impact {symbol_name}",
             },
@@ -259,10 +246,9 @@ def _build_steps(
             {
                 "title": "Use compatibility shim + deprecation window",
                 "details": (
-                    "High risk score warrants a temporary compatibility layer "
-                    "to avoid abrupt downstream breakage."
+                    "High risk score warrants a temporary compatibility layer to avoid abrupt downstream breakage."
                 ),
-                "command": f"roam breaking HEAD~1..HEAD",
+                "command": "roam breaking HEAD~1..HEAD",
             },
         )
 
@@ -357,9 +343,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
     else:
         strategy = "manual incremental refactor (simulation unavailable)"
 
-    verdict = (
-        f"{risk_level} risk ({risk_score}/100), {len(plan_steps)}-step plan, strategy: {strategy}"
-    )
+    verdict = f"{risk_level} risk ({risk_score}/100), {len(plan_steps)}-step plan, strategy: {strategy}"
 
     definition = {
         "name": sym["name"],

@@ -23,21 +23,18 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    parse_json_output,
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local helper: invoke test-gaps directly (bypasses CLI group)
 # ---------------------------------------------------------------------------
 
+
 def invoke_test_gaps(runner, args=None, cwd=None, json_mode=False):
     """Invoke the test-gaps command directly via its Click command object."""
-    from click.testing import CliRunner
     from roam.commands.cmd_test_gaps import test_gaps
 
     full_args = list(args or [])
@@ -47,9 +44,7 @@ def invoke_test_gaps(runner, args=None, cwd=None, json_mode=False):
     try:
         if cwd:
             os.chdir(str(cwd))
-        result = runner.invoke(
-            test_gaps, full_args, obj=obj, catch_exceptions=False
-        )
+        result = runner.invoke(test_gaps, full_args, obj=obj, catch_exceptions=False)
     finally:
         os.chdir(old_cwd)
     return result
@@ -59,9 +54,11 @@ def invoke_test_gaps(runner, args=None, cwd=None, json_mode=False):
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def cli_runner():
     from click.testing import CliRunner
+
     return CliRunner()
 
 
@@ -84,22 +81,13 @@ def project_with_tests(tmp_path):
     tests.mkdir()
 
     (src / "api.py").write_text(
-        'from helper import helper\n\n'
-        'def process_data(x):\n'
-        '    """Process data."""\n'
-        '    return helper(x) + 1\n'
+        'from helper import helper\n\ndef process_data(x):\n    """Process data."""\n    return helper(x) + 1\n'
     )
 
-    (src / "helper.py").write_text(
-        'def helper(x):\n'
-        '    """A helper function."""\n'
-        '    return x * 2\n'
-    )
+    (src / "helper.py").write_text('def helper(x):\n    """A helper function."""\n    return x * 2\n')
 
     (tests / "test_api.py").write_text(
-        'from api import process_data\n\n'
-        'def test_process():\n'
-        '    assert process_data(5) == 11\n'
+        "from api import process_data\n\ndef test_process():\n    assert process_data(5) == 11\n"
     )
 
     git_init(proj)
@@ -124,20 +112,16 @@ def project_without_tests(tmp_path):
     src.mkdir()
 
     (src / "api.py").write_text(
-        'def process_data(x):\n'
+        "def process_data(x):\n"
         '    """Process data."""\n'
-        '    return x + 1\n'
-        '\n'
-        'def validate_input(data):\n'
+        "    return x + 1\n"
+        "\n"
+        "def validate_input(data):\n"
         '    """Validate input data."""\n'
-        '    return data is not None\n'
+        "    return data is not None\n"
     )
 
-    (src / "utils.py").write_text(
-        'def _internal_helper(x):\n'
-        '    """Private helper."""\n'
-        '    return x * 2\n'
-    )
+    (src / "utils.py").write_text('def _internal_helper(x):\n    """Private helper."""\n    return x * 2\n')
 
     git_init(proj)
     out, rc = index_in_process(proj)
@@ -164,25 +148,19 @@ def project_mixed(tmp_path):
     tests.mkdir()
 
     (src / "api.py").write_text(
-        'def process_data(x):\n'
+        "def process_data(x):\n"
         '    """Process data."""\n'
-        '    return x + 1\n'
-        '\n'
-        'def untested_fn():\n'
+        "    return x + 1\n"
+        "\n"
+        "def untested_fn():\n"
         '    """This has no test."""\n'
-        '    return 42\n'
+        "    return 42\n"
     )
 
-    (src / "private.py").write_text(
-        'def _helper():\n'
-        '    """Private helper, no test."""\n'
-        '    return 99\n'
-    )
+    (src / "private.py").write_text('def _helper():\n    """Private helper, no test."""\n    return 99\n')
 
     (tests / "test_api.py").write_text(
-        'from api import process_data\n\n'
-        'def test_process():\n'
-        '    assert process_data(5) == 6\n'
+        "from api import process_data\n\ndef test_process():\n    assert process_data(5) == 6\n"
     )
 
     git_init(proj)
@@ -203,6 +181,7 @@ class TestNoChangedFiles:
         """With no files and no --changed, prints a helpful message."""
         # Create a minimal project to avoid index errors
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             proj = Path(td) / "repo"
             proj.mkdir()
@@ -219,6 +198,7 @@ class TestNoChangedFiles:
     def test_no_args_json(self, cli_runner):
         """JSON output for no files scenario."""
         import tempfile
+
         with tempfile.TemporaryDirectory() as td:
             proj = Path(td) / "repo"
             proj.mkdir()
@@ -347,11 +327,7 @@ class TestSeverityFilter:
         assert result.exit_code == 0
         data = json.loads(result.output)
         # low filter means everything should be included
-        all_gaps = (
-            data.get("high_gaps", [])
-            + data.get("medium_gaps", [])
-            + data.get("low_gaps", [])
-        )
+        all_gaps = data.get("high_gaps", []) + data.get("medium_gaps", []) + data.get("low_gaps", [])
         # Should find at least the private helper and untested_fn
         gap_names = [g["name"] for g in all_gaps]
         assert "_helper" in gap_names or "untested_fn" in gap_names
@@ -386,19 +362,14 @@ class TestStaleTests:
 
         # Write test first (earlier mtime)
         (tests / "test_api.py").write_text(
-            'from api import process_data\n\n'
-            'def test_process():\n'
-            '    assert process_data(5) == 6\n'
+            "from api import process_data\n\ndef test_process():\n    assert process_data(5) == 6\n"
         )
 
         # Write source second (later mtime) — simulates source changed after test
         import time
+
         time.sleep(0.1)  # Ensure different mtime
-        (src / "api.py").write_text(
-            'def process_data(x):\n'
-            '    """Process data -- MODIFIED."""\n'
-            '    return x + 1\n'
-        )
+        (src / "api.py").write_text('def process_data(x):\n    """Process data -- MODIFIED."""\n    return x + 1\n')
 
         git_init(proj)
         out, rc = index_in_process(proj)
@@ -472,11 +443,7 @@ class TestJsonOutput:
         assert result.exit_code == 0
         data = json.loads(result.output)
 
-        all_gaps = (
-            data.get("high_gaps", [])
-            + data.get("medium_gaps", [])
-            + data.get("low_gaps", [])
-        )
+        all_gaps = data.get("high_gaps", []) + data.get("medium_gaps", []) + data.get("low_gaps", [])
         assert len(all_gaps) > 0, "Expected at least one gap"
         for gap in all_gaps:
             assert "name" in gap
@@ -520,11 +487,7 @@ class TestTextOutput:
         assert result.exit_code == 0
         output = result.output
         # Should have at least one section
-        has_section = (
-            "HIGH" in output
-            or "MEDIUM" in output
-            or "LOW" in output
-        )
+        has_section = "HIGH" in output or "MEDIUM" in output or "LOW" in output
         assert has_section, f"Expected severity section in output:\n{output}"
 
 
@@ -542,11 +505,7 @@ class TestMultipleFiles:
         assert result.exit_code == 0
         data = json.loads(result.output)
 
-        all_gaps = (
-            data.get("high_gaps", [])
-            + data.get("medium_gaps", [])
-            + data.get("low_gaps", [])
-        )
+        all_gaps = data.get("high_gaps", []) + data.get("medium_gaps", []) + data.get("low_gaps", [])
         # Should find gaps from both files
         gap_names = [g["name"] for g in all_gaps]
         # At minimum, process_data or validate_input from api.py

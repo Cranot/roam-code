@@ -6,7 +6,6 @@ unknown symbol, help, rename, delete, counts, edge cases.
 
 from __future__ import annotations
 
-import json
 import sys
 from pathlib import Path
 
@@ -14,14 +13,14 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import invoke_cli, parse_json_output, assert_json_envelope
+from conftest import assert_json_envelope, invoke_cli, parse_json_output
 
 from roam.cli import cli
-
 
 # ---------------------------------------------------------------------------
 # Override cli_runner fixture to handle Click 8.2+ (mix_stderr removed)
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -36,42 +35,45 @@ def cli_runner():
 # Fixture: small project with models -> service -> tests
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def closure_project(project_factory):
     """Create a project with clear call relationships for closure testing."""
-    return project_factory({
-        "models.py": (
-            'class User:\n'
-            '    """A user model."""\n'
-            '    def __init__(self, name, email_address):\n'
-            '        self.name = name\n'
-            '        self.email_address = email_address\n'
-            '\n'
-            '    def validate(self):\n'
-            '        return "@" in self.email_address\n'
-        ),
-        "service.py": (
-            'from models import User\n'
-            '\n'
-            'def create_user(name, email):\n'
-            '    """Create a new user."""\n'
-            '    user = User(name, email)\n'
-            '    if not user.validate():\n'
-            '        raise ValueError("Invalid email")\n'
-            '    return user\n'
-            '\n'
-            'def list_users():\n'
-            '    """List all users."""\n'
-            '    return []\n'
-        ),
-        "tests/test_user.py": (
-            'from service import create_user\n'
-            '\n'
-            'def test_create_user():\n'
-            '    user = create_user("Alice", "a@b.com")\n'
-            '    assert user is not None\n'
-        ),
-    })
+    return project_factory(
+        {
+            "models.py": (
+                "class User:\n"
+                '    """A user model."""\n'
+                "    def __init__(self, name, email_address):\n"
+                "        self.name = name\n"
+                "        self.email_address = email_address\n"
+                "\n"
+                "    def validate(self):\n"
+                '        return "@" in self.email_address\n'
+            ),
+            "service.py": (
+                "from models import User\n"
+                "\n"
+                "def create_user(name, email):\n"
+                '    """Create a new user."""\n'
+                "    user = User(name, email)\n"
+                "    if not user.validate():\n"
+                '        raise ValueError("Invalid email")\n'
+                "    return user\n"
+                "\n"
+                "def list_users():\n"
+                '    """List all users."""\n'
+                "    return []\n"
+            ),
+            "tests/test_user.py": (
+                "from service import create_user\n"
+                "\n"
+                "def test_create_user():\n"
+                '    user = create_user("Alice", "a@b.com")\n'
+                "    assert user is not None\n"
+            ),
+        }
+    )
 
 
 # ============================================================================
@@ -112,8 +114,7 @@ class TestClosure:
     def test_closure_json_envelope(self, cli_runner, closure_project, monkeypatch):
         """JSON output should follow the roam envelope contract."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "User"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         assert_json_envelope(data, "closure")
 
@@ -128,8 +129,7 @@ class TestClosure:
     def test_closure_unknown_symbol(self, cli_runner, closure_project, monkeypatch):
         """Unknown symbol should exit with code 1 and show error."""
         monkeypatch.chdir(closure_project)
-        result = cli_runner.invoke(cli, ["closure", "nonexistent_xyz_42"],
-                                   catch_exceptions=True)
+        result = cli_runner.invoke(cli, ["closure", "nonexistent_xyz_42"], catch_exceptions=True)
         assert result.exit_code != 0 or "not found" in result.output.lower()
 
     def test_closure_help(self, cli_runner):
@@ -141,8 +141,7 @@ class TestClosure:
     def test_closure_rename_flag(self, cli_runner, closure_project, monkeypatch):
         """--rename should activate rename mode."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User", "--rename", "Account"],
-                            cwd=closure_project)
+        result = invoke_cli(cli_runner, ["closure", "User", "--rename", "Account"], cwd=closure_project)
         assert result.exit_code == 0
         out = result.output
         assert "rename" in out.lower()
@@ -150,8 +149,7 @@ class TestClosure:
     def test_closure_delete_flag(self, cli_runner, closure_project, monkeypatch):
         """--delete should activate deletion mode."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User", "--delete"],
-                            cwd=closure_project)
+        result = invoke_cli(cli_runner, ["closure", "User", "--delete"], cwd=closure_project)
         assert result.exit_code == 0
         out = result.output
         assert "delete" in out.lower()
@@ -159,8 +157,7 @@ class TestClosure:
     def test_closure_counts(self, cli_runner, closure_project, monkeypatch):
         """Change and file counts should be positive for a used symbol."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "User"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         assert data["total_changes"] >= 1
         assert data["files_affected"] >= 1
@@ -168,8 +165,7 @@ class TestClosure:
     def test_closure_json_has_changes_list(self, cli_runner, closure_project, monkeypatch):
         """JSON output should contain a 'changes' list."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "User"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         assert "changes" in data
         assert isinstance(data["changes"], list)
@@ -178,8 +174,7 @@ class TestClosure:
     def test_closure_json_has_by_type(self, cli_runner, closure_project, monkeypatch):
         """JSON output should contain a 'by_type' grouping."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "User"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         assert "by_type" in data
         assert isinstance(data["by_type"], dict)
@@ -187,8 +182,7 @@ class TestClosure:
     def test_closure_json_summary_has_verdict(self, cli_runner, closure_project, monkeypatch):
         """JSON summary should contain a verdict field."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "User"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         summary = data.get("summary", {})
         assert "verdict" in summary
@@ -196,8 +190,12 @@ class TestClosure:
     def test_closure_json_rename_mode(self, cli_runner, closure_project, monkeypatch):
         """JSON output should reflect rename mode."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "User", "--rename", "Account"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(
+            cli_runner,
+            ["closure", "User", "--rename", "Account"],
+            cwd=closure_project,
+            json_mode=True,
+        )
         data = parse_json_output(result, "closure")
         assert data.get("mode") == "rename"
         assert data.get("rename_to") == "Account"
@@ -205,8 +203,7 @@ class TestClosure:
     def test_closure_unused_symbol_minimal(self, cli_runner, closure_project, monkeypatch):
         """An unused symbol's closure should be just the definition."""
         monkeypatch.chdir(closure_project)
-        result = invoke_cli(cli_runner, ["closure", "list_users"],
-                            cwd=closure_project, json_mode=True)
+        result = invoke_cli(cli_runner, ["closure", "list_users"], cwd=closure_project, json_mode=True)
         data = parse_json_output(result, "closure")
         # list_users is not called by anything, so closure is just the definition
         assert data["total_changes"] >= 1

@@ -8,86 +8,72 @@ import os
 import pytest
 from click.testing import CliRunner
 
-from tests.conftest import index_in_process, git_init
-
+from tests.conftest import git_init, index_in_process
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
 
+
 @pytest.fixture
 def secrets_project(project_factory):
     """Create a project with deliberately planted fake secrets for testing."""
-    return project_factory({
-        "app.py": (
-            "def main():\n"
-            "    pass\n"
-        ),
-        "config/settings.py": (
-            "# AWS credentials\n"
-            "AWS_ACCESS_KEY = 'AKIA" + "IOSFODNN7TESTDATA'\n"
-            "AWS_SECRET = 'wJalrXUtnFEMI" + "K7MDENGbPxRfiCYRRANDOMVALUE'\n"
-        ),
-        "src/api_client.py": (
-            "import os\n"
-            "\n"
-            "GITHUB_TOKEN = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'\n"
-            "def fetch_data():\n"
-            "    pass\n"
-        ),
-        "src/email_service.py": (
-            "# Email config\n"
-            "SENDGRID_KEY = 'SG." + "abcdefghijklmnopqrstuv.ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg'\n"
-            "password = 'supersecretpassword123'\n"
-        ),
-        "src/database.py": (
-            "DB_URL = 'postgresql://admin:secretpass@db.internal.io:5432/myapp'\n"
-            "def connect():\n"
-            "    pass\n"
-        ),
-        "src/auth.py": (
-            "PRIVATE_KEY = '''-----BEGIN RSA PRIVATE KEY-----\n"
-            "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF\n"
-            "-----END RSA PRIVATE KEY-----'''\n"
-        ),
-        "src/clean.py": (
-            "# No secrets here\n"
-            "def process_data(x):\n"
-            "    return x * 2\n"
-        ),
-    })
+    return project_factory(
+        {
+            "app.py": ("def main():\n    pass\n"),
+            "config/settings.py": (
+                "# AWS credentials\n"
+                "AWS_ACCESS_KEY = 'AKIA" + "IOSFODNN7TESTDATA'\n"
+                "AWS_SECRET = 'wJalrXUtnFEMI" + "K7MDENGbPxRfiCYRRANDOMVALUE'\n"
+            ),
+            "src/api_client.py": (
+                "import os\n\nGITHUB_TOKEN = 'ghp_ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghij'\ndef fetch_data():\n    pass\n"
+            ),
+            "src/email_service.py": (
+                "# Email config\n"
+                "SENDGRID_KEY = 'SG." + "abcdefghijklmnopqrstuv.ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789abcdefg'\n"
+                "password = 'supersecretpassword123'\n"
+            ),
+            "src/database.py": (
+                "DB_URL = 'postgresql://admin:secretpass@db.internal.io:5432/myapp'\ndef connect():\n    pass\n"
+            ),
+            "src/auth.py": (
+                "PRIVATE_KEY = '''-----BEGIN RSA PRIVATE KEY-----\n"
+                "MIIEpAIBAAKCAQEA0Z3VS5JJcds3xfn/ygWyF\n"
+                "-----END RSA PRIVATE KEY-----'''\n"
+            ),
+            "src/clean.py": ("# No secrets here\ndef process_data(x):\n    return x * 2\n"),
+        }
+    )
 
 
 @pytest.fixture
 def placeholder_project(project_factory):
     """Create a project with placeholder/example values that should be skipped."""
-    return project_factory({
-        "app.py": "def main(): pass\n",
-        "docs/example_config.py": (
-            "# Example configuration - these are placeholder values\n"
-            "AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
-            "PASSWORD = 'changeme_password123'\n"
-        ),
-        "src/config_template.py": (
-            "# TODO: Replace with your real token\n"
-            "TOKEN = 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n"
-        ),
-    })
+    return project_factory(
+        {
+            "app.py": "def main(): pass\n",
+            "docs/example_config.py": (
+                "# Example configuration - these are placeholder values\n"
+                "AWS_KEY = 'AKIAIOSFODNN7EXAMPLE'\n"
+                "PASSWORD = 'changeme_password123'\n"
+            ),
+            "src/config_template.py": (
+                "# TODO: Replace with your real token\nTOKEN = 'ghp_xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'\n"
+            ),
+        }
+    )
 
 
 @pytest.fixture
 def clean_project(project_factory):
     """Create a project with no secrets at all."""
-    return project_factory({
-        "app.py": (
-            "def main():\n"
-            "    print('Hello, world!')\n"
-        ),
-        "utils.py": (
-            "def add(a, b):\n"
-            "    return a + b\n"
-        ),
-    })
+    return project_factory(
+        {
+            "app.py": ("def main():\n    print('Hello, world!')\n"),
+            "utils.py": ("def add(a, b):\n    return a + b\n"),
+        }
+    )
 
 
 @pytest.fixture
@@ -98,10 +84,7 @@ def binary_project(tmp_path):
     (proj / ".gitignore").write_text(".roam/\n")
 
     # Source with a secret
-    (proj / "app.py").write_text(
-        "SECRET = 'AKIAIOSFODNN7TESTDATAX'\n"
-        "def main(): pass\n"
-    )
+    (proj / "app.py").write_text("SECRET = 'AKIAIOSFODNN7TESTDATAX'\ndef main(): pass\n")
     # Binary file that should be skipped
     (proj / "data.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 100)
     (proj / "archive.zip").write_bytes(b"PK" + b"\x00" * 100)
@@ -115,9 +98,11 @@ def binary_project(tmp_path):
 # Helpers
 # ---------------------------------------------------------------------------
 
+
 def _invoke(args, cwd, json_mode=False, sarif_mode=False):
     """Invoke roam CLI in-process."""
     from roam.cli import cli
+
     runner = CliRunner()
     full_args = []
     if json_mode:
@@ -137,6 +122,7 @@ def _invoke(args, cwd, json_mode=False, sarif_mode=False):
 # ===========================================================================
 # 1. Pattern detection tests
 # ===========================================================================
+
 
 class TestPatternDetection:
     """Test that each secret pattern category is detected."""
@@ -188,6 +174,7 @@ class TestPatternDetection:
 # 2. Masking tests -- never shows full secret
 # ===========================================================================
 
+
 class TestSecretMasking:
     """Ensure matched text is always masked and never shows full secrets."""
 
@@ -202,6 +189,7 @@ class TestSecretMasking:
     def test_mask_short_value(self):
         """Short values should show first 4 chars + ellipsis."""
         from roam.commands.cmd_secrets import mask_secret
+
         result = mask_secret("short12")
         assert result == "shor..."
         assert "short12" not in result
@@ -209,6 +197,7 @@ class TestSecretMasking:
     def test_mask_long_value(self):
         """Long values should show first 4 + ... + last 4."""
         from roam.commands.cmd_secrets import mask_secret
+
         result = mask_secret("AKIAIOSFODNN7EXAMPLE")
         assert result.startswith("AKIA")
         assert result.endswith("MPLE")
@@ -219,6 +208,7 @@ class TestSecretMasking:
     def test_mask_medium_value(self):
         """Medium-length values should be partially masked."""
         from roam.commands.cmd_secrets import mask_secret
+
         result = mask_secret("abcdefghij")  # 10 chars
         assert result.startswith("abcd")
         assert "..." in result
@@ -227,6 +217,7 @@ class TestSecretMasking:
 # ===========================================================================
 # 3. Severity filter tests
 # ===========================================================================
+
 
 class TestSeverityFilter:
     """Test the --severity filter option."""
@@ -254,12 +245,14 @@ class TestSeverityFilter:
 # 4. --fail-on-found exit code tests
 # ===========================================================================
 
+
 class TestFailOnFound:
     """Test the --fail-on-found CI gate flag."""
 
     def test_fail_on_found_with_secrets(self, secrets_project):
         """Should exit with code 5 when secrets are found."""
         from roam.cli import cli
+
         runner = CliRunner()
         old_cwd = os.getcwd()
         try:
@@ -277,6 +270,7 @@ class TestFailOnFound:
     def test_fail_on_found_json_mode(self, secrets_project):
         """Should output JSON before failing."""
         from roam.cli import cli
+
         runner = CliRunner()
         old_cwd = os.getcwd()
         try:
@@ -293,6 +287,7 @@ class TestFailOnFound:
 # 5. Binary file skipping tests
 # ===========================================================================
 
+
 class TestBinarySkipping:
     """Test that binary files are correctly skipped."""
 
@@ -306,6 +301,7 @@ class TestBinarySkipping:
 
     def test_is_binary_function(self):
         from roam.commands.cmd_secrets import _is_binary
+
         assert _is_binary("image.png")
         assert _is_binary("archive.zip")
         assert _is_binary("lib.dll")
@@ -318,6 +314,7 @@ class TestBinarySkipping:
 # 6. Placeholder / example value skipping tests
 # ===========================================================================
 
+
 class TestPlaceholderSkipping:
     """Test that lines with placeholder indicators are skipped."""
 
@@ -329,6 +326,7 @@ class TestPlaceholderSkipping:
 
     def test_is_placeholder_line_function(self):
         from roam.commands.cmd_secrets import _is_placeholder_line
+
         assert _is_placeholder_line("# This is an example config")
         assert _is_placeholder_line("TOKEN = 'changeme'")
         assert _is_placeholder_line("key = 'xxxxxxxx'")
@@ -340,6 +338,7 @@ class TestPlaceholderSkipping:
 # ===========================================================================
 # 7. JSON output format tests
 # ===========================================================================
+
 
 class TestJsonOutput:
     """Test the JSON envelope structure."""
@@ -388,6 +387,7 @@ class TestJsonOutput:
 # 8. Text output tests
 # ===========================================================================
 
+
 class TestTextOutput:
     """Test the plain-text output format."""
 
@@ -414,6 +414,7 @@ class TestTextOutput:
 # ===========================================================================
 # 9. SARIF output tests
 # ===========================================================================
+
 
 class TestSarifOutput:
     """Test the SARIF 2.1.0 output format."""
@@ -464,6 +465,7 @@ class TestSarifOutput:
 # 10. Scan function unit tests
 # ===========================================================================
 
+
 class TestScanFunctions:
     """Test the lower-level scan functions directly."""
 
@@ -472,6 +474,7 @@ class TestScanFunctions:
         f = tmp_path / "test.py"
         f.write_text("KEY = 'AKIAIOSFODNN7TESTDATA'\n")
         from roam.commands.cmd_secrets import scan_file
+
         findings = scan_file(str(f))
         assert len(findings) >= 1
         assert any(f["pattern_name"] == "AWS Access Key" for f in findings)
@@ -483,6 +486,7 @@ class TestScanFunctions:
         jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U"
         f.write_text(f"TOKEN = '{jwt}'\n")
         from roam.commands.cmd_secrets import scan_file
+
         findings = scan_file(str(f))
         assert any(f["pattern_name"] == "JWT Token" for f in findings)
 
@@ -491,6 +495,7 @@ class TestScanFunctions:
         f = tmp_path / "key.pem"
         f.write_text("-----BEGIN RSA PRIVATE KEY-----\ndata\n-----END RSA PRIVATE KEY-----\n")
         from roam.commands.cmd_secrets import scan_file
+
         findings = scan_file(str(f))
         assert any(f["pattern_name"] == "Private Key" for f in findings)
 
@@ -499,6 +504,7 @@ class TestScanFunctions:
         f = tmp_path / "test.py"
         f.write_text("# example: AKIAIOSFODNN7EXAMPLE\n")
         from roam.commands.cmd_secrets import scan_file
+
         findings = scan_file(str(f))
         assert len(findings) == 0
 
@@ -507,6 +513,7 @@ class TestScanFunctions:
         f = tmp_path / "test.py"
         f.write_text("password = 'mysecretpassword'\n")
         from roam.commands.cmd_secrets import scan_file
+
         all_findings = scan_file(str(f), min_severity="all")
         high_findings = scan_file(str(f), min_severity="high")
         # Password is medium severity, should be excluded with high filter
@@ -516,6 +523,7 @@ class TestScanFunctions:
     def test_scan_file_nonexistent(self):
         """Scanning a nonexistent file should return empty list, not crash."""
         from roam.commands.cmd_secrets import scan_file
+
         findings = scan_file("/nonexistent/path/file.py")
         assert findings == []
 
@@ -524,11 +532,13 @@ class TestScanFunctions:
 # 11. Skip directory tests
 # ===========================================================================
 
+
 class TestDirectorySkipping:
     """Test that certain directories are skipped."""
 
     def test_in_skip_dir_function(self):
         from roam.commands.cmd_secrets import _in_skip_dir
+
         assert _in_skip_dir("node_modules/package/index.js")
         assert _in_skip_dir(".git/config")
         assert _in_skip_dir("vendor/lib/module.go")
@@ -541,11 +551,13 @@ class TestDirectorySkipping:
 # 12. Pattern compilation tests
 # ===========================================================================
 
+
 class TestPatternCompilation:
     """Test that patterns are compiled correctly at module level."""
 
     def test_patterns_compiled(self):
         from roam.commands.cmd_secrets import _COMPILED_PATTERNS
+
         assert len(_COMPILED_PATTERNS) >= 24
         for pat in _COMPILED_PATTERNS:
             assert "name" in pat
@@ -554,8 +566,10 @@ class TestPatternCompilation:
             assert pat["severity"] in ("high", "medium", "low")
 
     def test_all_patterns_are_valid_regex(self):
-        from roam.commands.cmd_secrets import _COMPILED_PATTERNS
         import re
+
+        from roam.commands.cmd_secrets import _COMPILED_PATTERNS
+
         for pat in _COMPILED_PATTERNS:
             # Compiled regex should be a Pattern object
             assert isinstance(pat["regex"], re.Pattern)
@@ -565,12 +579,14 @@ class TestPatternCompilation:
 # 13. Individual pattern verification tests
 # ===========================================================================
 
+
 class TestIndividualPatterns:
     """Test specific patterns match expected test values."""
 
     def _match(self, pattern_name, text):
         """Check if a pattern matches text."""
         from roam.commands.cmd_secrets import _COMPILED_PATTERNS
+
         for pat in _COMPILED_PATTERNS:
             if pat["name"] == pattern_name:
                 return pat["regex"].search(text) is not None
@@ -629,9 +645,11 @@ class TestIndividualPatterns:
 
     def test_no_false_positive_on_normal_code(self):
         """Normal code should not trigger false positives."""
-        from roam.commands.cmd_secrets import scan_file
         import tempfile
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.py', delete=False) as f:
+
+        from roam.commands.cmd_secrets import scan_file
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".py", delete=False) as f:
             f.write("def calculate(x, y):\n")
             f.write("    return x + y\n")
             f.write("result = calculate(1, 2)\n")

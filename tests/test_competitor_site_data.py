@@ -68,6 +68,7 @@ def test_roam_counts_match_surface_source_of_truth():
 # Rubric-based scoring tests
 # ---------------------------------------------------------------------------
 
+
 def test_every_competitor_has_scores_with_all_7_categories():
     payload = build_site_payload()
     cat_ids = {cat["id"] for cat in SCORING_RUBRIC}
@@ -97,9 +98,7 @@ def test_every_criterion_in_rubric_appears_in_every_competitors_data():
         for cat in scores["categories"]:
             for crit in cat["criteria"]:
                 found_ids.add(crit["id"])
-        assert found_ids == all_crit_ids, (
-            f"{entry['name']} missing criteria in scores: {all_crit_ids - found_ids}"
-        )
+        assert found_ids == all_crit_ids, f"{entry['name']} missing criteria in scores: {all_crit_ids - found_ids}"
 
 
 def test_total_equals_sum_of_category_totals():
@@ -107,9 +106,7 @@ def test_total_equals_sum_of_category_totals():
     for entry in payload["competitors"]:
         scores = entry["scores"]
         cat_sum = sum(c["score"] for c in scores["categories"])
-        assert scores["total"] == cat_sum, (
-            f"{entry['name']}: total {scores['total']} != cat sum {cat_sum}"
-        )
+        assert scores["total"] == cat_sum, f"{entry['name']}: total {scores['total']} != cat sum {cat_sum}"
 
 
 def test_map_coordinates_in_range():
@@ -167,6 +164,7 @@ def test_compute_scores_function_directly():
 def test_criteria_data_covers_all_competitors():
     """Every competitor in MAP_METADATA should have CRITERIA_DATA."""
     from roam.competitor_site_data import MAP_METADATA
+
     for name in MAP_METADATA:
         assert name in CRITERIA_DATA, f"Missing CRITERIA_DATA for {name}"
 
@@ -175,9 +173,5 @@ def test_every_landscape_tool_has_version_and_repo():
     """Every tool on the landscape map must track which version was evaluated."""
     payload = build_site_payload()
     for entry in payload["competitors"]:
-        assert entry.get("version_evaluated"), (
-            f"{entry['name']} missing version_evaluated"
-        )
-        assert entry.get("repo_url"), (
-            f"{entry['name']} missing repo_url"
-        )
+        assert entry.get("version_evaluated"), f"{entry['name']} missing version_evaluated"
+        assert entry.get("repo_url"), f"{entry['name']} missing repo_url"

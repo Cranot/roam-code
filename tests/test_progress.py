@@ -20,12 +20,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit
-
+from conftest import git_init
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def small_project(tmp_path):
@@ -34,19 +34,9 @@ def small_project(tmp_path):
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
     (repo / "app.py").write_text(
-        "def main():\n"
-        "    return greet('world')\n"
-        "\n"
-        "def greet(name):\n"
-        "    return f'Hello, {name}!'\n"
+        "def main():\n    return greet('world')\n\ndef greet(name):\n    return f'Hello, {name}!'\n"
     )
-    (repo / "utils.py").write_text(
-        "def add(a, b):\n"
-        "    return a + b\n"
-        "\n"
-        "def unused():\n"
-        "    pass\n"
-    )
+    (repo / "utils.py").write_text("def add(a, b):\n    return a + b\n\ndef unused():\n    pass\n")
     git_init(repo)
     return repo
 
@@ -54,6 +44,7 @@ def small_project(tmp_path):
 # ---------------------------------------------------------------------------
 # Tests: Indexer progress output
 # ---------------------------------------------------------------------------
+
 
 class TestIndexerProgress:
     """Test the Indexer class progress output directly."""
@@ -64,6 +55,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True)
         finally:
@@ -82,6 +74,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True, quiet=True)
         finally:
@@ -97,6 +90,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True)
         finally:
@@ -106,9 +100,7 @@ class TestIndexerProgress:
         # Match the summary line pattern:
         # "Index complete: N files, N symbols, N edges (X.Xs)"
         pattern = r"Index complete: [\d,]+ files, [\d,]+ symbols, [\d,]+ edges \(\d+\.\d+s\)"
-        assert re.search(pattern, captured.err), (
-            f"Summary line not found in stderr. Got:\n{captured.err}"
-        )
+        assert re.search(pattern, captured.err), f"Summary line not found in stderr. Got:\n{captured.err}"
 
     def test_summary_dict_populated(self, small_project):
         """After run(), indexer.summary should be populated with counts."""
@@ -116,6 +108,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True, quiet=True)
         finally:
@@ -154,6 +147,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True)
         finally:
@@ -169,6 +163,7 @@ class TestIndexerProgress:
         try:
             os.chdir(str(small_project))
             from roam.index.indexer import Indexer
+
             indexer = Indexer(project_root=small_project)
             indexer.run(force=True)
         finally:
@@ -185,6 +180,7 @@ class TestIndexerProgress:
 # Tests: CLI command progress output
 # ---------------------------------------------------------------------------
 
+
 class TestCLIProgress:
     """Test progress output via CLI commands (roam index)."""
 
@@ -196,8 +192,7 @@ class TestCLIProgress:
         old_cwd = os.getcwd()
         try:
             os.chdir(str(small_project))
-            result = runner.invoke(cli, ["index", "--force", "--quiet"],
-                                   catch_exceptions=False)
+            result = runner.invoke(cli, ["index", "--force", "--quiet"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
 
@@ -213,8 +208,7 @@ class TestCLIProgress:
         old_cwd = os.getcwd()
         try:
             os.chdir(str(small_project))
-            result = runner.invoke(cli, ["--json", "index", "--force"],
-                                   catch_exceptions=False)
+            result = runner.invoke(cli, ["--json", "index", "--force"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
 
@@ -234,8 +228,7 @@ class TestCLIProgress:
         old_cwd = os.getcwd()
         try:
             os.chdir(str(small_project))
-            result = runner.invoke(cli, ["index", "--force"],
-                                   catch_exceptions=False)
+            result = runner.invoke(cli, ["index", "--force"], catch_exceptions=False)
         finally:
             os.chdir(old_cwd)
 
@@ -248,21 +241,26 @@ class TestCLIProgress:
 # Tests: format_count helper
 # ---------------------------------------------------------------------------
 
+
 class TestFormatCount:
     """Test the _format_count helper."""
 
     def test_small_number(self):
         from roam.index.indexer import _format_count
+
         assert _format_count(42) == "42"
 
     def test_thousands(self):
         from roam.index.indexer import _format_count
+
         assert _format_count(1247) == "1,247"
 
     def test_millions(self):
         from roam.index.indexer import _format_count
+
         assert _format_count(1234567) == "1,234,567"
 
     def test_zero(self):
         from roam.index.indexer import _format_count
+
         assert _format_count(0) == "0"

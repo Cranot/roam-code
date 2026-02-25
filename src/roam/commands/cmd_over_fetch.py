@@ -32,16 +32,15 @@ Supported frameworks: Laravel/Eloquent (PHP).
 
 from __future__ import annotations
 
-from collections import defaultdict
-import re
 import os
+import re
+from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import loc, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Constants
@@ -55,36 +54,37 @@ _ARRAY_STRING_RE = re.compile(r"""['"]([^'"]+)['"]""")
 # without going through an API Resource.
 _DIRECT_RETURN_PATTERNS = [
     # return $model;  /  return $record;  /  return $this->model;
-    re.compile(r'\breturn\s+\$\w+\s*;'),
+    re.compile(r"\breturn\s+\$\w+\s*;"),
     # response()->json($model)  /  response()->json($record)
-    re.compile(r'response\s*\(\s*\)\s*->\s*json\s*\(\s*\$\w+'),
+    re.compile(r"response\s*\(\s*\)\s*->\s*json\s*\(\s*\$\w+"),
     # ->json($model)
-    re.compile(r'->\s*json\s*\(\s*\$\w+'),
+    re.compile(r"->\s*json\s*\(\s*\$\w+"),
 ]
 
 # Patterns that indicate an API Resource wrapping (these are safe)
 _RESOURCE_PATTERNS = [
     # new SomeResource($model)  /  SomeResource::collection(...)
-    re.compile(r'\bnew\s+\w+Resource\s*\('),
-    re.compile(r'\w+Resource\s*::\s*collection\s*\('),
+    re.compile(r"\bnew\s+\w+Resource\s*\("),
+    re.compile(r"\w+Resource\s*::\s*collection\s*\("),
     # JsonResource, AnonymousResourceCollection
-    re.compile(r'\bJsonResource\b'),
+    re.compile(r"\bJsonResource\b"),
 ]
 
 # select() call detection — indicates developer is intentionally limiting columns
-_SELECT_CALL_RE = re.compile(r'->\s*select\s*\(')
+_SELECT_CALL_RE = re.compile(r"->\s*select\s*\(")
 
 # Unoptimized query patterns (no select)
 _UNOPTIMIZED_QUERY_RE = re.compile(
-    r'(?:Model::all\(\)|Model::paginate\(|'
-    r'::\s*all\s*\(\s*\)|::\s*paginate\s*\(|'
-    r'::\s*get\s*\(\s*\))',
+    r"(?:Model::all\(\)|Model::paginate\(|"
+    r"::\s*all\s*\(\s*\)|::\s*paginate\s*\(|"
+    r"::\s*get\s*\(\s*\))",
 )
 
 
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------
+
 
 def _is_test_path(path: str) -> bool:
     p = path.replace("\\", "/").lower()
@@ -116,7 +116,7 @@ def _extract_array_fields(source: str, property_name: str) -> list[str]:
     # Match:  $fillable = [ ... ]  or  protected $fillable = [ ... ];
     # Uses a non-greedy match that stops at the closing bracket.
     pattern = re.compile(
-        rf'\$\s*{re.escape(property_name)}\s*=\s*\[([^\]]*)\]',
+        rf"\$\s*{re.escape(property_name)}\s*=\s*\[([^\]]*)\]",
         re.DOTALL,
     )
     m = pattern.search(source)
@@ -127,7 +127,7 @@ def _extract_array_fields(source: str, property_name: str) -> list[str]:
 
 def _has_visible_property(source: str) -> bool:
     """Return True if the model defines $visible (whitelist — fully controlled)."""
-    return bool(re.search(r'\$\s*visible\s*=\s*\[', source))
+    return bool(re.search(r"\$\s*visible\s*=\s*\[", source))
 
 
 def _find_api_resource_for_model(conn, model_name: str) -> str | None:
@@ -169,28 +169,28 @@ def _count_resource_fields(root, resource_path: str) -> int | None:
     except OSError:
         return None
 
-    m = re.search(r'function\s+toArray\s*\(', source)
+    m = re.search(r"function\s+toArray\s*\(", source)
     if not m:
         return None
 
-    rest = source[m.end():]
-    return_match = re.search(r'return\s*\[', rest)
+    rest = source[m.end() :]
+    return_match = re.search(r"return\s*\[", rest)
     if not return_match:
         return None
 
-    bracket_pos = rest.index('[', return_match.start())
+    bracket_pos = rest.index("[", return_match.start())
     depth = 0
     pos = bracket_pos
     while pos < len(rest):
-        if rest[pos] == '[':
+        if rest[pos] == "[":
             depth += 1
-        elif rest[pos] == ']':
+        elif rest[pos] == "]":
             depth -= 1
             if depth == 0:
                 break
         pos += 1
 
-    array_body = rest[bracket_pos:pos + 1]
+    array_body = rest[bracket_pos : pos + 1]
 
     # Each 'key' => represents one exposed field in the response
     return len(re.findall(r"""['\"][^'\"]+['\"]\s*=>""", array_body))
@@ -208,9 +208,7 @@ def _check_controller_direct_returns(
     direct_returns = []
 
     controller_files = conn.execute(
-        "SELECT path FROM files "
-        "WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') "
-        "AND path LIKE '%.php'",
+        "SELECT path FROM files WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') AND path LIKE '%.php'",
     ).fetchall()
 
     for row in controller_files:
@@ -221,8 +219,11 @@ def _check_controller_direct_returns(
         if "/console/" in p_lower or "/commands/" in p_lower:
             continue
         # Only match files in HTTP controller directories
-        if "controller" in os.path.basename(row["path"]).lower() and \
-           "/http/" not in p_lower and "/controllers/" not in p_lower:
+        if (
+            "controller" in os.path.basename(row["path"]).lower()
+            and "/http/" not in p_lower
+            and "/controllers/" not in p_lower
+        ):
             continue
         abs_path = root / row["path"]
         if not abs_path.is_file():
@@ -244,12 +245,14 @@ def _check_controller_direct_returns(
             # Flag direct returns
             for pattern in _DIRECT_RETURN_PATTERNS:
                 if pattern.search(line):
-                    direct_returns.append({
-                        "file": row["path"],
-                        "line": line_no,
-                        "location": loc(row["path"], line_no),
-                        "snippet": line.strip()[:100],
-                    })
+                    direct_returns.append(
+                        {
+                            "file": row["path"],
+                            "line": line_no,
+                            "location": loc(row["path"], line_no),
+                            "snippet": line.strip()[:100],
+                        }
+                    )
                     break  # one match per line is enough
 
     return direct_returns
@@ -279,7 +282,7 @@ def _check_missing_select(
     # Pattern to match Model::query(), Model::all(), Model::paginate() etc.
     # We build model-specific patterns
     model_query_re = re.compile(
-        rf'{re.escape(model_name)}\s*::\s*(?:all|paginate|get|query|where|with)\s*\(',
+        rf"{re.escape(model_name)}\s*::\s*(?:all|paginate|get|query|where|with)\s*\(",
     )
 
     for row in files:
@@ -306,12 +309,14 @@ def _check_missing_select(
             context_block = "\n".join(lines[context_start:context_end])
             if _SELECT_CALL_RE.search(context_block):
                 continue  # select() is nearby — OK
-            missing_select.append({
-                "file": row["path"],
-                "line": line_no,
-                "location": loc(row["path"], line_no),
-                "snippet": line.strip()[:100],
-            })
+            missing_select.append(
+                {
+                    "file": row["path"],
+                    "line": line_no,
+                    "location": loc(row["path"], line_no),
+                    "snippet": line.strip()[:100],
+                }
+            )
 
     return missing_select
 
@@ -319,6 +324,7 @@ def _check_missing_select(
 # ---------------------------------------------------------------------------
 # Core analysis
 # ---------------------------------------------------------------------------
+
 
 def _find_model_files(conn) -> list[dict]:
     """Find PHP model files by path and presence of $fillable."""
@@ -407,9 +413,7 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
 
         if fillable_count >= 30 and hidden_count == 0 and not has_resource:
             confidence = "high"
-            reasons.append(
-                f"Serializes {fillable_count} fields per item in list APIs"
-            )
+            reasons.append(f"Serializes {fillable_count} fields per item in list APIs")
             if not has_resource:
                 reasons.append("No API Resource found to control output")
             suggestions.append(
@@ -422,8 +426,7 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
         elif fillable_count >= 20 and hidden_count < 3:
             confidence = "medium"
             reasons.append(
-                f"{fillable_count} fillable fields, only {hidden_count} hidden — "
-                f"{exposed_count} fields exposed"
+                f"{fillable_count} fillable fields, only {hidden_count} hidden — {exposed_count} fields exposed"
             )
             if not has_resource:
                 suggestions.append(
@@ -433,17 +436,11 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
                     f"               For CRUD apps, prefer API Resources for response shaping."
                 )
             else:
-                suggestions.append(
-                    f"Verify {resource_path} limits fields for list vs detail views"
-                )
+                suggestions.append(f"Verify {resource_path} limits fields for list vs detail views")
         elif fillable_count >= threshold:
             confidence = "low"
-            reasons.append(
-                f"{fillable_count} fillable fields without select() optimization"
-            )
-            suggestions.append(
-                "Use ->select(['field1', 'field2']) in list queries to limit columns"
-            )
+            reasons.append(f"{fillable_count} fillable fields without select() optimization")
+            suggestions.append("Use ->select(['field1', 'field2']) in list queries to limit columns")
 
         if confidence is None:
             continue
@@ -456,47 +453,40 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
 
         # Only do file I/O for medium+ threshold findings to stay fast
         if confidence in ("high", "medium"):
-            direct_returns = _check_controller_direct_returns(
-                conn, model_info["class_name"], root
-            )
+            direct_returns = _check_controller_direct_returns(conn, model_info["class_name"], root)
             # Upgrade to high if direct returns found and we were medium
             if direct_returns and confidence == "medium":
                 confidence = "high"
-                reasons.append(
-                    f"Model returned directly from controller "
-                    f"({len(direct_returns)} location(s))"
-                )
+                reasons.append(f"Model returned directly from controller ({len(direct_returns)} location(s))")
 
         if confidence == "low":
-            missing_selects = _check_missing_select(
-                conn, model_info["class_name"], root
-            )
+            missing_selects = _check_missing_select(conn, model_info["class_name"], root)
             if not missing_selects:
                 # No bad query patterns — downgrade / skip low-confidence
                 continue
 
-        findings.append({
-            "model_name": model_info["class_name"],
-            "model_path": model_info["path"],
-            "model_location": loc(model_info["path"], model_info["line_start"]),
-            "fillable_count": fillable_count,
-            "hidden_count": hidden_count,
-            "exposed_count": exposed_count,
-            "has_visible": has_visible,
-            "has_resource": has_resource,
-            "resource_path": resource_path,
-            "confidence": confidence,
-            "reasons": reasons,
-            "suggestions": suggestions,
-            "direct_returns": direct_returns[:5],   # Cap to avoid noise
-            "missing_selects": missing_selects[:5],
-        })
+        findings.append(
+            {
+                "model_name": model_info["class_name"],
+                "model_path": model_info["path"],
+                "model_location": loc(model_info["path"], model_info["line_start"]),
+                "fillable_count": fillable_count,
+                "hidden_count": hidden_count,
+                "exposed_count": exposed_count,
+                "has_visible": has_visible,
+                "has_resource": has_resource,
+                "resource_path": resource_path,
+                "confidence": confidence,
+                "reasons": reasons,
+                "suggestions": suggestions,
+                "direct_returns": direct_returns[:5],  # Cap to avoid noise
+                "missing_selects": missing_selects[:5],
+            }
+        )
 
     # Sort: high → medium → low, then by exposed_count descending
     _conf_order = {"high": 0, "medium": 1, "low": 2}
-    findings.sort(
-        key=lambda f: (_conf_order.get(f["confidence"], 9), -f["exposed_count"])
-    )
+    findings.sort(key=lambda f: (_conf_order.get(f["confidence"], 9), -f["exposed_count"]))
 
     return findings[:limit]
 
@@ -505,15 +495,18 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("over-fetch")
 @click.option(
-    "--threshold", "-t",
+    "--threshold",
+    "-t",
     default=20,
     show_default=True,
     help="Minimum number of $fillable fields to flag a model",
 )
 @click.option(
-    "--limit", "-n",
+    "--limit",
+    "-n",
     default=30,
     show_default=True,
     help="Maximum number of findings to display",
@@ -568,10 +561,7 @@ def over_fetch_cmd(ctx, threshold, limit):
     conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
     if total:
-        verdict = (
-            f"{total} over-fetch pattern{'s' if total != 1 else ''} found "
-            f"({conf_str})"
-        )
+        verdict = f"{total} over-fetch pattern{'s' if total != 1 else ''} found ({conf_str})"
     else:
         verdict = "No over-fetch patterns detected"
 
@@ -579,16 +569,20 @@ def over_fetch_cmd(ctx, threshold, limit):
     # JSON output
     # -------------------------------------------------------------------
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "over-fetch",
-            summary={
-                "verdict": verdict,
-                "total": total,
-                "threshold": threshold,
-                "by_confidence": dict(by_confidence),
-            },
-            findings=findings,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "over-fetch",
+                    summary={
+                        "verdict": verdict,
+                        "total": total,
+                        "threshold": threshold,
+                        "by_confidence": dict(by_confidence),
+                    },
+                    findings=findings,
+                )
+            )
+        )
         return
 
     # -------------------------------------------------------------------
@@ -610,10 +604,7 @@ def over_fetch_cmd(ctx, threshold, limit):
         model_loc = f["model_location"]
 
         # Header line: [confidence]  ModelName (N fillable, M hidden)  path:line
-        click.echo(
-            f"  [{conf}]  {model} "
-            f"({fillable} fillable, {hidden} hidden)  {model_loc}"
-        )
+        click.echo(f"  [{conf}]  {model} ({fillable} fillable, {hidden} hidden)  {model_loc}")
 
         # Reason lines
         for reason in f["reasons"]:
@@ -625,19 +616,13 @@ def over_fetch_cmd(ctx, threshold, limit):
 
         # Direct return locations (for high-confidence)
         if f["direct_returns"]:
-            click.echo(
-                f"          Direct controller returns "
-                f"({len(f['direct_returns'])} location(s)):"
-            )
+            click.echo(f"          Direct controller returns ({len(f['direct_returns'])} location(s)):")
             for dr in f["direct_returns"][:3]:
                 click.echo(f"            {dr['location']}  {dr['snippet']}")
 
         # Missing select locations (for low-confidence)
         if f["missing_selects"]:
-            click.echo(
-                f"          Queries without ->select() "
-                f"({len(f['missing_selects'])} location(s)):"
-            )
+            click.echo(f"          Queries without ->select() ({len(f['missing_selects'])} location(s)):")
             for ms in f["missing_selects"][:3]:
                 click.echo(f"            {ms['location']}  {ms['snippet']}")
 

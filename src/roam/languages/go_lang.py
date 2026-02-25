@@ -1,5 +1,5 @@
-
 from __future__ import annotations
+
 from .base import LanguageExtractor
 
 
@@ -24,7 +24,7 @@ class GoExtractor(LanguageExtractor):
         refs = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
         # Collect inheritance refs accumulated during extract_symbols
-        refs.extend(getattr(self, '_pending_inherits', []))
+        refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
         return refs
 
@@ -80,16 +80,18 @@ class GoExtractor(LanguageExtractor):
             if result:
                 sig += f" {self.node_text(result, source)}"
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="function",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public" if self._is_exported(name) else "private",
-            is_exported=self._is_exported(name),
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="function",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public" if self._is_exported(name) else "private",
+                is_exported=self._is_exported(name),
+            )
+        )
 
     def _extract_method(self, node, source, symbols):
         name_node = node.child_by_field_name("name")
@@ -111,18 +113,20 @@ class GoExtractor(LanguageExtractor):
 
         qualified = f"{recv_type}.{name}" if recv_type else name
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind="method",
-            line_start=node.start_point[0] + 1,
-            line_end=node.end_point[0] + 1,
-            qualified_name=qualified,
-            signature=sig,
-            docstring=self.get_docstring(node, source),
-            visibility="public" if self._is_exported(name) else "private",
-            is_exported=self._is_exported(name),
-            parent_name=recv_type,
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind="method",
+                line_start=node.start_point[0] + 1,
+                line_end=node.end_point[0] + 1,
+                qualified_name=qualified,
+                signature=sig,
+                docstring=self.get_docstring(node, source),
+                visibility="public" if self._is_exported(name) else "private",
+                is_exported=self._is_exported(name),
+                parent_name=recv_type,
+            )
+        )
 
     def _extract_receiver_type(self, receiver, source) -> str:
         """Extract the type name from a method receiver like (s *Server)."""
@@ -166,16 +170,18 @@ class GoExtractor(LanguageExtractor):
         else:
             sig += f" {self.node_text(type_node, source)[:60]}"
 
-        symbols.append(self._make_symbol(
-            name=name,
-            kind=kind,
-            line_start=parent_node.start_point[0] + 1,
-            line_end=parent_node.end_point[0] + 1,
-            signature=sig,
-            docstring=self.get_docstring(parent_node, source),
-            visibility="public" if self._is_exported(name) else "private",
-            is_exported=self._is_exported(name),
-        ))
+        symbols.append(
+            self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=parent_node.start_point[0] + 1,
+                line_end=parent_node.end_point[0] + 1,
+                signature=sig,
+                docstring=self.get_docstring(parent_node, source),
+                visibility="public" if self._is_exported(name) else "private",
+                is_exported=self._is_exported(name),
+            )
+        )
 
     def _extract_struct_fields(self, struct_node, source, symbols, struct_name):
         for child in struct_node.children:
@@ -189,26 +195,30 @@ class GoExtractor(LanguageExtractor):
                             sig = field_name
                             if type_node:
                                 sig += f" {self.node_text(type_node, source)}"
-                            symbols.append(self._make_symbol(
-                                name=field_name,
-                                kind="field",
-                                line_start=field.start_point[0] + 1,
-                                line_end=field.end_point[0] + 1,
-                                qualified_name=f"{struct_name}.{field_name}",
-                                signature=sig,
-                                visibility="public" if self._is_exported(field_name) else "private",
-                                is_exported=self._is_exported(field_name),
-                                parent_name=struct_name,
-                            ))
+                            symbols.append(
+                                self._make_symbol(
+                                    name=field_name,
+                                    kind="field",
+                                    line_start=field.start_point[0] + 1,
+                                    line_end=field.end_point[0] + 1,
+                                    qualified_name=f"{struct_name}.{field_name}",
+                                    signature=sig,
+                                    visibility="public" if self._is_exported(field_name) else "private",
+                                    is_exported=self._is_exported(field_name),
+                                    parent_name=struct_name,
+                                )
+                            )
                         elif type_node:
                             # No name = embedded/anonymous field (struct embedding)
                             type_name = self.node_text(type_node, source).lstrip("*")
-                            self._pending_inherits.append(self._make_reference(
-                                target_name=type_name,
-                                kind="inherits",
-                                line=field.start_point[0] + 1,
-                                source_name=struct_name,
-                            ))
+                            self._pending_inherits.append(
+                                self._make_reference(
+                                    target_name=type_name,
+                                    kind="inherits",
+                                    line=field.start_point[0] + 1,
+                                    source_name=struct_name,
+                                )
+                            )
 
     def _extract_interface_methods(self, iface_node, source, symbols, iface_name):
         for child in iface_node.children:
@@ -221,30 +231,34 @@ class GoExtractor(LanguageExtractor):
                     sig = f"{method_name}({self._params_text(params, source)})"
                     if result:
                         sig += f" {self.node_text(result, source)}"
-                    symbols.append(self._make_symbol(
-                        name=method_name,
-                        kind="method",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        qualified_name=f"{iface_name}.{method_name}",
-                        signature=sig,
-                        visibility="public" if self._is_exported(method_name) else "private",
-                        is_exported=self._is_exported(method_name),
-                        parent_name=iface_name,
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=method_name,
+                            kind="method",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            qualified_name=f"{iface_name}.{method_name}",
+                            signature=sig,
+                            visibility="public" if self._is_exported(method_name) else "private",
+                            is_exported=self._is_exported(method_name),
+                            parent_name=iface_name,
+                        )
+                    )
 
     def _extract_package(self, node, source, symbols):
         for child in node.children:
             if child.type == "package_identifier":
                 name = self.node_text(child, source)
-                symbols.append(self._make_symbol(
-                    name=name,
-                    kind="module",
-                    line_start=node.start_point[0] + 1,
-                    line_end=node.end_point[0] + 1,
-                    signature=f"package {name}",
-                    is_exported=True,
-                ))
+                symbols.append(
+                    self._make_symbol(
+                        name=name,
+                        kind="module",
+                        line_start=node.start_point[0] + 1,
+                        line_end=node.end_point[0] + 1,
+                        signature=f"package {name}",
+                        is_exported=True,
+                    )
+                )
 
     def _extract_var_decl(self, node, source, symbols):
         for child in node.children:
@@ -256,15 +270,17 @@ class GoExtractor(LanguageExtractor):
                     sig = f"var {name}"
                     if type_n:
                         sig += f" {self.node_text(type_n, source)}"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="variable",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        signature=sig,
-                        visibility="public" if self._is_exported(name) else "private",
-                        is_exported=self._is_exported(name),
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="variable",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            signature=sig,
+                            visibility="public" if self._is_exported(name) else "private",
+                            is_exported=self._is_exported(name),
+                        )
+                    )
 
     def _extract_const_decl(self, node, source, symbols):
         for child in node.children:
@@ -276,15 +292,17 @@ class GoExtractor(LanguageExtractor):
                     sig = f"const {name}"
                     if type_n:
                         sig += f" {self.node_text(type_n, source)}"
-                    symbols.append(self._make_symbol(
-                        name=name,
-                        kind="constant",
-                        line_start=child.start_point[0] + 1,
-                        line_end=child.end_point[0] + 1,
-                        signature=sig,
-                        visibility="public" if self._is_exported(name) else "private",
-                        is_exported=self._is_exported(name),
-                    ))
+                    symbols.append(
+                        self._make_symbol(
+                            name=name,
+                            kind="constant",
+                            line_start=child.start_point[0] + 1,
+                            line_end=child.end_point[0] + 1,
+                            signature=sig,
+                            visibility="public" if self._is_exported(name) else "private",
+                            is_exported=self._is_exported(name),
+                        )
+                    )
 
     # ---- Reference extraction ----
 
@@ -320,26 +338,30 @@ class GoExtractor(LanguageExtractor):
                     name_node = child.child_by_field_name("name")
                     if name_node:
                         target = self.node_text(name_node, source)
-                    refs.append(self._make_reference(
-                        target_name=target,
-                        kind="import",
-                        line=child.start_point[0] + 1,
-                        source_name=scope_name,
-                        import_path=path,
-                    ))
+                    refs.append(
+                        self._make_reference(
+                            target_name=target,
+                            kind="import",
+                            line=child.start_point[0] + 1,
+                            source_name=scope_name,
+                            import_path=path,
+                        )
+                    )
             elif child.type == "import_spec_list":
                 self._extract_imports(child, source, refs, scope_name)
             elif child.type == "interpreted_string_literal":
                 # Single import without parens
                 path = self.node_text(child, source).strip('"')
                 target = path.rsplit("/", 1)[-1] if "/" in path else path
-                refs.append(self._make_reference(
-                    target_name=target,
-                    kind="import",
-                    line=child.start_point[0] + 1,
-                    source_name=scope_name,
-                    import_path=path,
-                ))
+                refs.append(
+                    self._make_reference(
+                        target_name=target,
+                        kind="import",
+                        line=child.start_point[0] + 1,
+                        source_name=scope_name,
+                        import_path=path,
+                    )
+                )
 
     def _extract_call(self, node, source, refs, scope_name):
         func_node = node.child_by_field_name("function")
@@ -356,12 +378,14 @@ class GoExtractor(LanguageExtractor):
         else:
             name = self.node_text(func_node, source)
 
-        refs.append(self._make_reference(
-            target_name=name,
-            kind="call",
-            line=func_node.start_point[0] + 1,
-            source_name=scope_name,
-        ))
+        refs.append(
+            self._make_reference(
+                target_name=name,
+                kind="call",
+                line=func_node.start_point[0] + 1,
+                source_name=scope_name,
+            )
+        )
         # Recurse into arguments
         args = node.child_by_field_name("arguments")
         if args:

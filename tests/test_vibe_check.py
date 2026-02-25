@@ -20,12 +20,12 @@ import pytest
 from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import git_init, git_commit, index_in_process
-
+from conftest import git_init, index_in_process
 
 # ===========================================================================
 # Fixtures
 # ===========================================================================
+
 
 @pytest.fixture
 def cli_runner():
@@ -39,20 +39,9 @@ def clean_project(tmp_path):
     repo.mkdir()
     (repo / ".gitignore").write_text(".roam/\n")
     (repo / "app.py").write_text(
-        "def main():\n"
-        "    return greet('world')\n"
-        "\n"
-        "\n"
-        "def greet(name):\n"
-        "    return f'Hello, {name}!'\n"
+        "def main():\n    return greet('world')\n\n\ndef greet(name):\n    return f'Hello, {name}!'\n"
     )
-    (repo / "utils.py").write_text(
-        "from app import greet\n"
-        "\n"
-        "\n"
-        "def run():\n"
-        "    return greet('test')\n"
-    )
+    (repo / "utils.py").write_text("from app import greet\n\n\ndef run():\n    return greet('test')\n")
     git_init(repo)
     old_cwd = os.getcwd()
     try:
@@ -216,6 +205,7 @@ def dirty_project(tmp_path):
 # Helper to invoke the command
 # ===========================================================================
 
+
 def _invoke(runner, project_path, *extra_args, json_mode=False):
     from roam.cli import cli
 
@@ -237,6 +227,7 @@ def _invoke(runner, project_path, *extra_args, json_mode=False):
 # ===========================================================================
 # Tests: Basic functionality
 # ===========================================================================
+
 
 class TestVibeCheckBasic:
     """Basic command execution and output format."""
@@ -276,6 +267,7 @@ class TestVibeCheckBasic:
 # ===========================================================================
 # Tests: JSON output
 # ===========================================================================
+
 
 class TestVibeCheckJSON:
     """JSON output format and envelope contract."""
@@ -345,6 +337,7 @@ class TestVibeCheckJSON:
 # Tests: Scoring
 # ===========================================================================
 
+
 class TestVibeCheckScoring:
     """Composite scoring and severity labels."""
 
@@ -365,6 +358,7 @@ class TestVibeCheckScoring:
     def test_severity_labels(self):
         """Test severity label function."""
         from roam.commands.cmd_vibe_check import _severity_label
+
         assert _severity_label(0) == "HEALTHY"
         assert _severity_label(15) == "HEALTHY"
         assert _severity_label(16) == "LOW"
@@ -379,6 +373,7 @@ class TestVibeCheckScoring:
     def test_compute_score_all_zero(self):
         """All zero rates should produce score 0."""
         from roam.commands.cmd_vibe_check import _compute_score
+
         patterns = {
             "dead_exports": {"rate": 0.0},
             "short_churn": {"rate": 0.0},
@@ -394,6 +389,7 @@ class TestVibeCheckScoring:
     def test_compute_score_all_hundred(self):
         """All 100% rates should produce score 100."""
         from roam.commands.cmd_vibe_check import _compute_score
+
         patterns = {
             "dead_exports": {"rate": 100.0},
             "short_churn": {"rate": 100.0},
@@ -409,6 +405,7 @@ class TestVibeCheckScoring:
     def test_compute_score_partial(self):
         """Partial rates should produce an intermediate score."""
         from roam.commands.cmd_vibe_check import _compute_score
+
         patterns = {
             "dead_exports": {"rate": 50.0},
             "short_churn": {"rate": 0.0},
@@ -427,6 +424,7 @@ class TestVibeCheckScoring:
     def test_score_capped_at_100(self):
         """Even with rates > 100, score should cap at 100."""
         from roam.commands.cmd_vibe_check import _compute_score
+
         patterns = {
             "dead_exports": {"rate": 200.0},
             "short_churn": {"rate": 200.0},
@@ -443,6 +441,7 @@ class TestVibeCheckScoring:
 # ===========================================================================
 # Tests: Threshold gate
 # ===========================================================================
+
 
 class TestVibeCheckGate:
     """Threshold / gate failure behavior."""
@@ -481,6 +480,7 @@ class TestVibeCheckGate:
 # ===========================================================================
 # Tests: Individual pattern detectors
 # ===========================================================================
+
 
 class TestPatternDetectors:
     """Test each pattern detector individually."""
@@ -523,22 +523,23 @@ class TestPatternDetectors:
     def test_normalize_body(self):
         """Copy-paste normalization strips names and whitespace."""
         from roam.commands.cmd_vibe_check import _normalize_body
-        body_a = '''
+
+        body_a = """
 def process_alpha(data):
     result = []
     for item in data:
         if item > 0:
             result.append(item * 2)
     return result
-'''
-        body_b = '''
+"""
+        body_b = """
 def process_beta(items):
     result = []
     for item in items:
         if item > 0:
             result.append(item * 2)
     return result
-'''
+"""
         norm_a = _normalize_body(body_a)
         norm_b = _normalize_body(body_b)
         # After normalization, these should be very similar
@@ -551,6 +552,7 @@ def process_beta(items):
 # ===========================================================================
 # Tests: Edge cases
 # ===========================================================================
+
 
 class TestVibeCheckEdgeCases:
     """Edge cases and robustness."""
@@ -584,6 +586,7 @@ class TestVibeCheckEdgeCases:
     def test_help_flag(self, cli_runner):
         """--help works for vibe-check."""
         from roam.cli import cli
+
         result = cli_runner.invoke(cli, ["vibe-check", "--help"])
         assert result.exit_code == 0
         assert "AI" in result.output or "rot" in result.output or "anti-pattern" in result.output
@@ -592,6 +595,7 @@ class TestVibeCheckEdgeCases:
 # ===========================================================================
 # Tests: Worst files aggregation
 # ===========================================================================
+
 
 class TestWorstFiles:
     """Test worst files aggregation."""

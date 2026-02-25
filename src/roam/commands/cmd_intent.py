@@ -8,10 +8,9 @@ import subprocess
 
 import click
 
-from roam.db.connection import open_db, find_project_root
-from roam.output.formatter import abbrev_kind, to_json, json_envelope
 from roam.commands.resolve import ensure_index
-
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 _DOC_EXTENSIONS = {".md", ".txt", ".rst", ".adoc"}
 _SKIP_DIRS = {"node_modules", ".roam", ".git", "__pycache__", "vendor", "dist", "build"}
@@ -24,8 +23,12 @@ def _find_doc_files(root):
     try:
         result = subprocess.run(
             ["git", "ls-files"],
-            cwd=str(root), capture_output=True, text=True, timeout=10,
-            encoding="utf-8", errors="replace",
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=10,
+            encoding="utf-8",
+            errors="replace",
         )
         if result.returncode == 0:
             for line in result.stdout.strip().splitlines():
@@ -46,9 +49,7 @@ def _find_doc_files(root):
             for f in filenames:
                 ext = os.path.splitext(f)[1].lower()
                 if ext in _DOC_EXTENSIONS:
-                    rel = os.path.relpath(
-                        os.path.join(dirpath, f), str(root)
-                    ).replace("\\", "/")
+                    rel = os.path.relpath(os.path.join(dirpath, f), str(root)).replace("\\", "/")
                     doc_files.append(rel)
     return sorted(doc_files)
 
@@ -70,13 +71,15 @@ def _scan_doc_for_symbols(root, doc_path, symbol_names):
         for name in symbol_names:
             if len(name) < _MIN_NAME_LEN:
                 continue
-            if re.search(r'\b' + re.escape(name) + r'\b', line_text):
+            if re.search(r"\b" + re.escape(name) + r"\b", line_text):
                 snippet = line_text.strip()[:100]
-                refs.append({
-                    "symbol": name,
-                    "line": line_num,
-                    "snippet": snippet,
-                })
+                refs.append(
+                    {
+                        "symbol": name,
+                        "line": line_num,
+                        "snippet": snippet,
+                    }
+                )
     return refs
 
 
@@ -94,7 +97,7 @@ def _scan_doc_for_potential_symbols(root, doc_path):
         return potential
 
     # Find identifiers in code blocks/backticks
-    for match in re.finditer(r'`([a-zA-Z_]\w+)`', content):
+    for match in re.finditer(r"`([a-zA-Z_]\w+)`", content):
         name = match.group(1)
         if len(name) >= _MIN_NAME_LEN:
             potential.add(name)
@@ -103,16 +106,11 @@ def _scan_doc_for_potential_symbols(root, doc_path):
 
 
 @click.command("intent")
-@click.option("--symbol", "symbol_name", default=None,
-              help="Find docs mentioning this symbol")
-@click.option("--doc", "doc_path", default=None,
-              help="Find code referenced by this doc")
-@click.option("--drift", is_flag=True,
-              help="Show references to non-existent symbols")
-@click.option("--undocumented", is_flag=True,
-              help="Show important symbols not in docs")
-@click.option("--top", "top_n", default=20, type=int,
-              help="Max items to show")
+@click.option("--symbol", "symbol_name", default=None, help="Find docs mentioning this symbol")
+@click.option("--doc", "doc_path", default=None, help="Find code referenced by this doc")
+@click.option("--drift", is_flag=True, help="Show references to non-existent symbols")
+@click.option("--undocumented", is_flag=True, help="Show important symbols not in docs")
+@click.option("--top", "top_n", default=20, type=int, help="Max items to show")
 @click.pass_context
 def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
     """Link documentation to code -- find what docs describe what code.
@@ -128,8 +126,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
     with open_db(readonly=True) as conn:
         # Get all symbol names from DB (length >= _MIN_NAME_LEN)
         all_syms = conn.execute(
-            "SELECT DISTINCT name FROM symbols WHERE length(name) >= ?",
-            (_MIN_NAME_LEN,)
+            "SELECT DISTINCT name FROM symbols WHERE length(name) >= ?", (_MIN_NAME_LEN,)
         ).fetchall()
         symbol_names = set(s["name"] for s in all_syms)
 
@@ -139,20 +136,24 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
         if not doc_files:
             verdict = "No documentation files found"
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "intent",
-                    summary={
-                        "verdict": verdict,
-                        "doc_files": 0,
-                        "links": 0,
-                        "drift_count": 0,
-                        "undocumented_count": 0,
-                    },
-                    links=[],
-                    by_doc={},
-                    drift=[],
-                    undocumented=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "intent",
+                            summary={
+                                "verdict": verdict,
+                                "doc_files": 0,
+                                "links": 0,
+                                "drift_count": 0,
+                                "undocumented_count": 0,
+                            },
+                            links=[],
+                            by_doc={},
+                            drift=[],
+                            undocumented=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -170,25 +171,27 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
 
             links = links[:top_n]
             n = len(links)
-            verdict = (
-                f"{n} doc mention{'s' if n != 1 else ''} of '{symbol_name}'"
-            )
+            verdict = f"{n} doc mention{'s' if n != 1 else ''} of '{symbol_name}'"
 
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "intent",
-                    summary={
-                        "verdict": verdict,
-                        "doc_files": len(doc_files),
-                        "links": n,
-                        "drift_count": 0,
-                        "undocumented_count": 0,
-                    },
-                    links=links,
-                    by_doc={},
-                    drift=[],
-                    undocumented=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "intent",
+                            summary={
+                                "verdict": verdict,
+                                "doc_files": len(doc_files),
+                                "links": n,
+                                "drift_count": 0,
+                                "undocumented_count": 0,
+                            },
+                            links=links,
+                            by_doc={},
+                            drift=[],
+                            undocumented=[],
+                        )
+                    )
+                )
                 return
 
             click.echo(f"VERDICT: {verdict}")
@@ -220,20 +223,24 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             verdict = f"{n} symbol{'s' if n != 1 else ''} referenced in '{doc_path_norm}'"
 
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "intent",
-                    summary={
-                        "verdict": verdict,
-                        "doc_files": 1,
-                        "links": n,
-                        "drift_count": 0,
-                        "undocumented_count": 0,
-                    },
-                    links=[dict(doc=doc_path_norm, **r) for r in unique_refs],
-                    by_doc={doc_path_norm: unique_refs},
-                    drift=[],
-                    undocumented=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "intent",
+                            summary={
+                                "verdict": verdict,
+                                "doc_files": 1,
+                                "links": n,
+                                "drift_count": 0,
+                                "undocumented_count": 0,
+                            },
+                            links=[dict(doc=doc_path_norm, **r) for r in unique_refs],
+                            by_doc={doc_path_norm: unique_refs},
+                            drift=[],
+                            undocumented=[],
+                        )
+                    )
+                )
                 return
 
             click.echo(f"VERDICT: {verdict}")
@@ -259,26 +266,27 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
 
             drift_refs = drift_refs[:top_n]
             n = len(drift_refs)
-            verdict = (
-                f"{n} drift reference{'s' if n != 1 else ''} found "
-                f"(symbols in docs that don't exist in codebase)"
-            )
+            verdict = f"{n} drift reference{'s' if n != 1 else ''} found (symbols in docs that don't exist in codebase)"
 
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "intent",
-                    summary={
-                        "verdict": verdict,
-                        "doc_files": len(doc_files),
-                        "links": 0,
-                        "drift_count": n,
-                        "undocumented_count": 0,
-                    },
-                    links=[],
-                    by_doc={},
-                    drift=drift_refs,
-                    undocumented=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "intent",
+                            summary={
+                                "verdict": verdict,
+                                "doc_files": len(doc_files),
+                                "links": 0,
+                                "drift_count": n,
+                                "undocumented_count": 0,
+                            },
+                            links=[],
+                            by_doc={},
+                            drift=drift_refs,
+                            undocumented=[],
+                        )
+                    )
+                )
                 return
 
             click.echo(f"VERDICT: {verdict}")
@@ -317,7 +325,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
                        AND s.kind IN ('function', 'method', 'class')
                        ORDER BY sm.pagerank DESC
                        LIMIT ?""",
-                    (top_n * 3,)
+                    (top_n * 3,),
                 ).fetchall()
             except Exception:
                 high_pr = []
@@ -334,26 +342,27 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             ][:top_n]
 
             n = len(undoc_list)
-            verdict = (
-                f"{n} high-centrality symbol{'s' if n != 1 else ''} "
-                f"with no documentation coverage"
-            )
+            verdict = f"{n} high-centrality symbol{'s' if n != 1 else ''} with no documentation coverage"
 
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "intent",
-                    summary={
-                        "verdict": verdict,
-                        "doc_files": len(doc_files),
-                        "links": 0,
-                        "drift_count": 0,
-                        "undocumented_count": n,
-                    },
-                    links=[],
-                    by_doc={},
-                    drift=[],
-                    undocumented=undoc_list,
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "intent",
+                            summary={
+                                "verdict": verdict,
+                                "doc_files": len(doc_files),
+                                "links": 0,
+                                "drift_count": 0,
+                                "undocumented_count": n,
+                            },
+                            links=[],
+                            by_doc={},
+                            drift=[],
+                            undocumented=undoc_list,
+                        )
+                    )
+                )
                 return
 
             click.echo(f"VERDICT: {verdict}")
@@ -364,10 +373,7 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             click.echo("UNDOCUMENTED HIGH-CENTRALITY SYMBOLS:")
             for sym in undoc_list:
                 kind_abbr = abbrev_kind(sym["kind"])
-                click.echo(
-                    f"  {kind_abbr}  {sym['name']}  {sym['file']}  "
-                    f"pagerank={sym['pagerank']}"
-                )
+                click.echo(f"  {kind_abbr}  {sym['name']}  {sym['file']}  pagerank={sym['pagerank']}")
             return
 
         # ------------------------------------------------------------------
@@ -406,20 +412,24 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             verdict += f", {drift_count} drift{'s' if drift_count != 1 else ''}"
 
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "intent",
-                summary={
-                    "verdict": verdict,
-                    "doc_files": len(doc_files),
-                    "links": total_links,
-                    "drift_count": drift_count,
-                    "undocumented_count": 0,
-                },
-                links=display_links,
-                by_doc=by_doc,
-                drift=[],
-                undocumented=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "intent",
+                        summary={
+                            "verdict": verdict,
+                            "doc_files": len(doc_files),
+                            "links": total_links,
+                            "drift_count": drift_count,
+                            "undocumented_count": 0,
+                        },
+                        links=display_links,
+                        by_doc=by_doc,
+                        drift=[],
+                        undocumented=[],
+                    )
+                )
+            )
             return
 
         click.echo(f"VERDICT: {verdict}")

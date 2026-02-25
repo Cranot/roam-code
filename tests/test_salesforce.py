@@ -9,28 +9,28 @@ Covers:
 - Integration: full project indexing with roam CLI
 """
 
-import subprocess
 import sys
 from pathlib import Path
 
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, git_commit, index_in_process
-
+from conftest import git_init, index_in_process, roam
 
 # ---------------------------------------------------------------------------
 # Helper: parse a source string using tree-sitter + extractor
 # ---------------------------------------------------------------------------
+
 
 def _parse_and_extract(source_text: str, file_path: str, language: str = None):
     """Parse source text and extract symbols + references.
 
     Returns (symbols, references) lists.
     """
-    from roam.index.parser import detect_language, GRAMMAR_ALIASES
-    from roam.languages.registry import get_extractor
     from tree_sitter_language_pack import get_parser
+
+    from roam.index.parser import GRAMMAR_ALIASES, detect_language
+    from roam.languages.registry import get_extractor
 
     if language is None:
         language = detect_language(file_path)
@@ -50,6 +50,7 @@ def _parse_and_extract(source_text: str, file_path: str, language: str = None):
 # ===========================================================================
 # Apex tests
 # ===========================================================================
+
 
 class TestApexExtractor:
     """Tests for ApexExtractor (cls/trigger files parsed via Java grammar)."""
@@ -170,6 +171,7 @@ class TestApexExtractor:
 # SFXML tests
 # ===========================================================================
 
+
 class TestSfxmlExtractor:
     """Tests for SfxmlExtractor (Salesforce metadata XML files)."""
 
@@ -184,11 +186,11 @@ class TestSfxmlExtractor:
         source = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<CustomObject xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <deploymentStatus>Deployed</deploymentStatus>\n'
-            '    <label>Invoice</label>\n'
-            '    <pluralLabel>Invoices</pluralLabel>\n'
-            '    <sharingModel>ReadWrite</sharingModel>\n'
-            '</CustomObject>\n'
+            "    <deploymentStatus>Deployed</deploymentStatus>\n"
+            "    <label>Invoice</label>\n"
+            "    <pluralLabel>Invoices</pluralLabel>\n"
+            "    <sharingModel>ReadWrite</sharingModel>\n"
+            "</CustomObject>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -209,9 +211,9 @@ class TestSfxmlExtractor:
         source = (
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <apiVersion>58.0</apiVersion>\n'
-            '    <status>Active</status>\n'
-            '</ApexClass>\n'
+            "    <apiVersion>58.0</apiVersion>\n"
+            "    <status>Active</status>\n"
+            "</ApexClass>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -220,14 +222,14 @@ class TestSfxmlExtractor:
         )
 
         assert len(symbols) == 0, (
-            f"Sidecar .cls-meta.xml should produce no symbols, got {len(symbols)}: "
-            f"{[s['name'] for s in symbols]}"
+            f"Sidecar .cls-meta.xml should produce no symbols, got {len(symbols)}: {[s['name'] for s in symbols]}"
         )
 
 
 # ===========================================================================
 # Aura tests
 # ===========================================================================
+
 
 class TestAuraExtractor:
     """Tests for AuraExtractor (Lightning Aura component files)."""
@@ -239,10 +241,10 @@ class TestAuraExtractor:
             '    <aura:attribute name="recordId" type="String" />\n'
             '    <aura:attribute name="account" type="Account" />\n'
             '    <aura:method name="refresh" action="{!c.doRefresh}" />\n'
-            '    <div>\n'
-            '        <p>{!v.account.Name}</p>\n'
-            '    </div>\n'
-            '</aura:component>\n'
+            "    <div>\n"
+            "        <p>{!v.account.Name}</p>\n"
+            "    </div>\n"
+            "</aura:component>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -272,7 +274,7 @@ class TestAuraExtractor:
         source = (
             '<aura:component controller="MyApexController">\n'
             '    <aura:attribute name="data" type="String" />\n'
-            '</aura:component>\n'
+            "</aura:component>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -288,13 +290,13 @@ class TestAuraExtractor:
     def test_aura_custom_component_refs(self):
         """Verify <c:CustomChild> creates component_ref references."""
         source = (
-            '<aura:component>\n'
+            "<aura:component>\n"
             '    <c:CustomChild recordId="{!v.recordId}" />\n'
-            '    <c:AnotherWidget />\n'
+            "    <c:AnotherWidget />\n"
             '    <lightning:card title="Test">\n'
-            '        <p>Content</p>\n'
-            '    </lightning:card>\n'
-            '</aura:component>\n'
+            "        <p>Content</p>\n"
+            "    </lightning:card>\n"
+            "</aura:component>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -315,6 +317,7 @@ class TestAuraExtractor:
 # Visualforce tests
 # ===========================================================================
 
+
 class TestVisualforceExtractor:
     """Tests for VisualforceExtractor (Visualforce .page and .component files)."""
 
@@ -322,10 +325,10 @@ class TestVisualforceExtractor:
         """Parse a .page file, verify page symbol."""
         source = (
             '<apex:page controller="InvoiceController">\n'
-            '    <apex:form>\n'
+            "    <apex:form>\n"
             '        <apex:inputField value="{!Invoice__c.Name}" />\n'
-            '    </apex:form>\n'
-            '</apex:page>\n'
+            "    </apex:form>\n"
+            "</apex:page>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -344,7 +347,7 @@ class TestVisualforceExtractor:
         source = (
             '<apex:page controller="MainController" extensions="ExtA, ExtB">\n'
             '    <apex:outputText value="Hello" />\n'
-            '</apex:page>\n'
+            "</apex:page>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -363,8 +366,8 @@ class TestVisualforceExtractor:
             '<apex:page controller="AcctCtrl">\n'
             '    <apex:outputText value="{!Account.Name}" />\n'
             '    <apex:outputText value="{!Contact__c.Email}" />\n'
-            '    <apex:outputText value="{!IF(isActive, \'yes\', \'no\')}" />\n'
-            '</apex:page>\n'
+            "    <apex:outputText value=\"{!IF(isActive, 'yes', 'no')}\" />\n"
+            "</apex:page>\n"
         )
         symbols, refs = _parse_and_extract(
             source,
@@ -382,6 +385,7 @@ class TestVisualforceExtractor:
 # ===========================================================================
 # Grammar aliasing tests
 # ===========================================================================
+
 
 class TestGrammarAliasing:
     """Tests for detect_language, grammar alias resolution, extractor routing."""
@@ -430,8 +434,8 @@ class TestGrammarAliasing:
 
     def test_extractor_routing_apex(self):
         """get_extractor('apex') should return an ApexExtractor instance."""
-        from roam.languages.registry import get_extractor
         from roam.languages.apex_lang import ApexExtractor
+        from roam.languages.registry import get_extractor
 
         ext = get_extractor("apex")
         assert isinstance(ext, ApexExtractor)
@@ -448,8 +452,8 @@ class TestGrammarAliasing:
 
     def test_extractor_routing_aura(self):
         """get_extractor('aura') should return an AuraExtractor instance."""
-        from roam.languages.registry import get_extractor
         from roam.languages.aura_lang import AuraExtractor
+        from roam.languages.registry import get_extractor
 
         ext = get_extractor("aura")
         assert isinstance(ext, AuraExtractor)
@@ -469,11 +473,7 @@ class TestGrammarAliasing:
         from roam.index.parser import parse_file
 
         cls_file = tmp_path / "Test.cls"
-        cls_file.write_text(
-            "public class Test {\n"
-            "    public void run() {}\n"
-            "}\n"
-        )
+        cls_file.write_text("public class Test {\n    public void run() {}\n}\n")
 
         tree, source, language = parse_file(cls_file)
         assert tree is not None, "parse_file should return a valid tree for .cls files"
@@ -484,6 +484,7 @@ class TestGrammarAliasing:
 # ===========================================================================
 # Integration test: full project indexing
 # ===========================================================================
+
 
 class TestApexProjectIndexing:
     """Integration test: create a temp Salesforce project, index it, verify results."""
@@ -517,9 +518,9 @@ class TestApexProjectIndexing:
         (classes_dir / "AccountService.cls-meta.xml").write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <apiVersion>58.0</apiVersion>\n'
-            '    <status>Active</status>\n'
-            '</ApexClass>\n'
+            "    <apiVersion>58.0</apiVersion>\n"
+            "    <status>Active</status>\n"
+            "</ApexClass>\n"
         )
 
         # Second Apex class that calls the first
@@ -534,9 +535,9 @@ class TestApexProjectIndexing:
         (classes_dir / "AccountController.cls-meta.xml").write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ApexClass xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <apiVersion>58.0</apiVersion>\n'
-            '    <status>Active</status>\n'
-            '</ApexClass>\n'
+            "    <apiVersion>58.0</apiVersion>\n"
+            "    <status>Active</status>\n"
+            "</ApexClass>\n"
         )
 
         # Trigger
@@ -548,29 +549,29 @@ class TestApexProjectIndexing:
         (triggers_dir / "AccountTrigger.trigger-meta.xml").write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ApexTrigger xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <apiVersion>58.0</apiVersion>\n'
-            '    <status>Active</status>\n'
-            '</ApexTrigger>\n'
+            "    <apiVersion>58.0</apiVersion>\n"
+            "    <status>Active</status>\n"
+            "</ApexTrigger>\n"
         )
 
         # Visualforce page
         (pages_dir / "AccountPage.page").write_text(
             '<apex:page controller="AccountController">\n'
             '    <apex:outputText value="{!Account.Name}" />\n'
-            '</apex:page>\n'
+            "</apex:page>\n"
         )
         (pages_dir / "AccountPage.page-meta.xml").write_text(
             '<?xml version="1.0" encoding="UTF-8"?>\n'
             '<ApexPage xmlns="http://soap.sforce.com/2006/04/metadata">\n'
-            '    <apiVersion>58.0</apiVersion>\n'
-            '</ApexPage>\n'
+            "    <apiVersion>58.0</apiVersion>\n"
+            "</ApexPage>\n"
         )
 
         # Aura component
         (aura_dir / "MyComp.cmp").write_text(
             '<aura:component controller="AccountService">\n'
             '    <aura:attribute name="recordId" type="String" />\n'
-            '</aura:component>\n'
+            "</aura:component>\n"
         )
 
         git_init(proj)
@@ -584,9 +585,7 @@ class TestApexProjectIndexing:
         # Verify symbols are indexed by searching for them
         output, rc = roam("search", "AccountService", cwd=sf_project)
         assert rc == 0, f"roam search failed: {output}"
-        assert "AccountService" in output, (
-            f"Expected 'AccountService' in search results, got: {output}"
-        )
+        assert "AccountService" in output, f"Expected 'AccountService' in search results, got: {output}"
 
     def test_apex_project_map(self, sf_project):
         """Verify roam map shows the indexed Salesforce files."""

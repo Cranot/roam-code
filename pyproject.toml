@@ -74,7 +74,14 @@ markers = [
 
 [tool.ruff]
 target-version = "py39"
-line-length = 100
+line-length = 120
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I"]
+ignore = [
+    "E402",   # module-import-not-at-top — needed for sys.path manipulation in tests
+    "E501",   # line-too-long — handled by ruff format; remaining are long strings/SQL
+    "E731",   # lambda-assignment — used for concise dispatch tables
+    "E741",   # ambiguous variable names (G, l, etc.) — common in graph code
+    "F841",   # unused-variable — often intentional destructuring
+]

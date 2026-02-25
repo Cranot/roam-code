@@ -4,9 +4,9 @@ from __future__ import annotations
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope
 from roam.commands.resolve import ensure_index
+from roam.db.connection import open_db
+from roam.output.formatter import json_envelope, to_json
 
 
 @click.command("cut")
@@ -26,9 +26,10 @@ def cut(ctx, between, leak_edges, top_n):
 
     with open_db(readonly=True) as conn:
         try:
+            import networkx as nx
+
             from roam.graph.builder import build_symbol_graph
             from roam.graph.clusters import detect_clusters, label_clusters
-            import networkx as nx
         except ImportError:
             click.echo("VERDICT: NetworkX required for cut analysis")
             return
@@ -38,16 +39,21 @@ def cut(ctx, between, leak_edges, top_n):
         if len(G) < 2:
             verdict = "No cross-cluster boundaries found"
             if json_mode:
-                click.echo(to_json(json_envelope("cut",
-                    summary={
-                        "verdict": verdict,
-                        "boundaries_analyzed": 0,
-                        "fragile_boundaries": 0,
-                        "leak_edges_found": 0,
-                    },
-                    boundaries=[],
-                    leak_edges=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "cut",
+                            summary={
+                                "verdict": verdict,
+                                "boundaries_analyzed": 0,
+                                "fragile_boundaries": 0,
+                                "leak_edges_found": 0,
+                            },
+                            boundaries=[],
+                            leak_edges=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {verdict}")
             return
@@ -69,7 +75,7 @@ def cut(ctx, between, leak_edges, top_n):
         boundaries: list[dict] = []
 
         for i, c1 in enumerate(cluster_ids):
-            for c2 in cluster_ids[i + 1:]:
+            for c2 in cluster_ids[i + 1 :]:
                 if between:
                     # Filter to requested pair
                     l1 = labels.get(c1, str(c1)).lower()
@@ -120,22 +126,26 @@ def cut(ctx, between, leak_edges, top_n):
                 for u, v in sorted(min_cut_edges):
                     u_node = G.nodes.get(u, {})
                     v_node = G.nodes.get(v, {})
-                    cut_details.append({
-                        "source": u_node.get("name", str(u)),
-                        "source_file": u_node.get("file_path", ""),
-                        "target": v_node.get("name", str(v)),
-                        "target_file": v_node.get("file_path", ""),
-                    })
+                    cut_details.append(
+                        {
+                            "source": u_node.get("name", str(u)),
+                            "source_file": u_node.get("file_path", ""),
+                            "target": v_node.get("name", str(v)),
+                            "target_file": v_node.get("file_path", ""),
+                        }
+                    )
 
-                boundaries.append({
-                    "cluster_a": labels.get(c1, f"cluster_{c1}"),
-                    "cluster_b": labels.get(c2, f"cluster_{c2}"),
-                    "cross_edges": len(cross_edges),
-                    "min_cut": min_cut_size,
-                    "thinness": round(thinness, 2),
-                    "fragile": fragile,
-                    "cut_edges": cut_details[:5],
-                })
+                boundaries.append(
+                    {
+                        "cluster_a": labels.get(c1, f"cluster_{c1}"),
+                        "cluster_b": labels.get(c2, f"cluster_{c2}"),
+                        "cross_edges": len(cross_edges),
+                        "min_cut": min_cut_size,
+                        "thinness": round(thinness, 2),
+                        "fragile": fragile,
+                        "cut_edges": cut_details[:5],
+                    }
+                )
 
         # Sort by thinness (most fragile first)
         boundaries.sort(key=lambda b: b["thinness"])
@@ -152,25 +162,23 @@ def cut(ctx, between, leak_edges, top_n):
             for (u, v), bc in sorted(ebc.items(), key=lambda x: -x[1]):
                 u_cluster = clusters.get(u)
                 v_cluster = clusters.get(v)
-                if (
-                    u_cluster is not None
-                    and v_cluster is not None
-                    and u_cluster != v_cluster
-                ):
+                if u_cluster is not None and v_cluster is not None and u_cluster != v_cluster:
                     u_node = G.nodes.get(u, {})
                     v_node = G.nodes.get(v, {})
-                    leak_edge_list.append({
-                        "source": u_node.get("name", str(u)),
-                        "source_file": u_node.get("file_path", ""),
-                        "target": v_node.get("name", str(v)),
-                        "target_file": v_node.get("file_path", ""),
-                        "betweenness": round(bc, 4),
-                        "suggestion": (
-                            f"Extract interface between "
-                            f"{u_node.get('name', str(u))} and "
-                            f"{v_node.get('name', str(v))}"
-                        ),
-                    })
+                    leak_edge_list.append(
+                        {
+                            "source": u_node.get("name", str(u)),
+                            "source_file": u_node.get("file_path", ""),
+                            "target": v_node.get("name", str(v)),
+                            "target_file": v_node.get("file_path", ""),
+                            "betweenness": round(bc, 4),
+                            "suggestion": (
+                                f"Extract interface between "
+                                f"{u_node.get('name', str(u))} and "
+                                f"{v_node.get('name', str(v))}"
+                            ),
+                        }
+                    )
                     if len(leak_edge_list) >= top_n:
                         break
 
@@ -186,16 +194,21 @@ def cut(ctx, between, leak_edges, top_n):
 
         # JSON output
         if json_mode:
-            click.echo(to_json(json_envelope("cut",
-                summary={
-                    "verdict": verdict,
-                    "boundaries_analyzed": total_boundaries,
-                    "fragile_boundaries": fragile_count,
-                    "leak_edges_found": len(leak_edge_list),
-                },
-                boundaries=boundaries,
-                leak_edges=leak_edge_list,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "cut",
+                        summary={
+                            "verdict": verdict,
+                            "boundaries_analyzed": total_boundaries,
+                            "fragile_boundaries": fragile_count,
+                            "leak_edges_found": len(leak_edge_list),
+                        },
+                        boundaries=boundaries,
+                        leak_edges=leak_edge_list,
+                    )
+                )
+            )
             return
 
         # Text output — verdict first
@@ -206,25 +219,17 @@ def cut(ctx, between, leak_edges, top_n):
             tag = "<< FRAGILE" if b["fragile"] else "(adequate)"
             click.echo(f"BOUNDARY: {b['cluster_a']} <-> {b['cluster_b']}")
             click.echo(
-                f"  Cross-edges: {b['cross_edges']} | "
-                f"Min cut: {b['min_cut']} edges | "
-                f"Thinness: {b['thinness']}  {tag}"
+                f"  Cross-edges: {b['cross_edges']} | Min cut: {b['min_cut']} edges | Thinness: {b['thinness']}  {tag}"
             )
             if b["cut_edges"]:
                 click.echo("  Cut edges:")
                 for ce in b["cut_edges"]:
-                    click.echo(
-                        f"    {ce['source_file']}::{ce['source']} -> "
-                        f"{ce['target_file']}::{ce['target']}"
-                    )
+                    click.echo(f"    {ce['source_file']}::{ce['source']} -> {ce['target_file']}::{ce['target']}")
             click.echo()
 
         if leak_edge_list:
             click.echo("LEAK EDGES (highest blast-radius amplification):")
             for i, le in enumerate(leak_edge_list[:5], 1):
-                click.echo(
-                    f"  {i}. {le['source_file']}::{le['source']} -> "
-                    f"{le['target_file']}::{le['target']}"
-                )
+                click.echo(f"  {i}. {le['source_file']}::{le['source']} -> {le['target_file']}::{le['target']}")
                 click.echo(f"     Edge betweenness: {le['betweenness']}")
                 click.echo(f"     Suggest: {le['suggestion']}")

@@ -6,15 +6,19 @@ import json as _json
 
 import click
 
-from roam.output.formatter import to_json, json_envelope
+from roam.output.formatter import json_envelope, to_json
 from roam.output.schema_registry import get_schema_info, validate_envelope
 
 
 @click.command("schema")
-@click.option("--validate", "validate_file", type=click.Path(exists=True),
-              default=None, help="Validate a JSON file against the envelope schema.")
-@click.option("--changelog", "show_changelog", is_flag=True,
-              help="Show the schema changelog.")
+@click.option(
+    "--validate",
+    "validate_file",
+    type=click.Path(exists=True),
+    default=None,
+    help="Validate a JSON file against the envelope schema.",
+)
+@click.option("--changelog", "show_changelog", is_flag=True, help="Show the schema changelog.")
 @click.pass_context
 def schema_cmd(ctx, validate_file, show_changelog):
     """Show the roam JSON envelope schema and validate output files."""
@@ -38,15 +42,19 @@ def schema_cmd(ctx, validate_file, show_changelog):
 def _handle_info(schema: dict, json_mode: bool) -> None:
     """Display schema information."""
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "schema",
-            summary={
-                "verdict": f"{schema['name']} (version {schema['version']})",
-                "schema_name": schema["name"],
-                "schema_version": schema["version"],
-            },
-            schema=schema,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "schema",
+                    summary={
+                        "verdict": f"{schema['name']} (version {schema['version']})",
+                        "schema_name": schema["name"],
+                        "schema_version": schema["version"],
+                    },
+                    schema=schema,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {schema['name']} (version {schema['version']})")
@@ -64,15 +72,19 @@ def _handle_info(schema: dict, json_mode: bool) -> None:
 def _handle_changelog(schema: dict, json_mode: bool) -> None:
     """Display schema changelog."""
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "schema",
-            summary={
-                "verdict": f"{schema['name']} changelog ({len(schema['changelog'])} entries)",
-                "schema_name": schema["name"],
-                "schema_version": schema["version"],
-            },
-            changelog=schema["changelog"],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "schema",
+                    summary={
+                        "verdict": f"{schema['name']} changelog ({len(schema['changelog'])} entries)",
+                        "schema_name": schema["name"],
+                        "schema_version": schema["version"],
+                    },
+                    changelog=schema["changelog"],
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {schema['name']} changelog ({len(schema['changelog'])} entries)")
@@ -90,16 +102,20 @@ def _handle_validate(filepath: str, schema: dict, json_mode: bool) -> None:
             data = _json.load(f)
     except _json.JSONDecodeError as e:
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "schema",
-                summary={
-                    "verdict": "invalid JSON file",
-                    "schema_name": schema["name"],
-                    "schema_version": schema["version"],
-                    "is_valid": False,
-                },
-                validation={"errors": [f"JSON parse error: {e}"]},
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "schema",
+                        summary={
+                            "verdict": "invalid JSON file",
+                            "schema_name": schema["name"],
+                            "schema_version": schema["version"],
+                            "is_valid": False,
+                        },
+                        validation={"errors": [f"JSON parse error: {e}"]},
+                    )
+                )
+            )
         else:
             click.echo("VERDICT: invalid JSON file")
             click.echo(f"  Error: {e}")
@@ -118,16 +134,20 @@ def _handle_validate(filepath: str, schema: dict, json_mode: bool) -> None:
             validation_info["detected_version"] = data["schema_version"]
         if "command" in data:
             validation_info["detected_command"] = data["command"]
-        click.echo(to_json(json_envelope(
-            "schema",
-            summary={
-                "verdict": "valid roam-envelope-v1 output" if is_valid else "invalid roam-envelope-v1 output",
-                "schema_name": schema["name"],
-                "schema_version": schema["version"],
-                "is_valid": is_valid,
-            },
-            validation=validation_info,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "schema",
+                    summary={
+                        "verdict": "valid roam-envelope-v1 output" if is_valid else "invalid roam-envelope-v1 output",
+                        "schema_name": schema["name"],
+                        "schema_version": schema["version"],
+                        "is_valid": is_valid,
+                    },
+                    validation=validation_info,
+                )
+            )
+        )
         return
 
     if is_valid:

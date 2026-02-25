@@ -8,6 +8,7 @@ generated code in various languages:
 - C++: *.pb.h / *.pb.cc with namespace::MessageName
 - TypeScript/JavaScript: *_pb.ts / *_pb.js
 """
+
 from __future__ import annotations
 
 import os
@@ -16,31 +17,41 @@ import re
 from roam.bridges.base import LanguageBridge
 from roam.bridges.registry import register_bridge
 
-
 # Proto source extension
 _PROTO_EXT = frozenset({".proto"})
 
 # Generated stub file patterns by language
 _GENERATED_PATTERNS: dict[str, re.Pattern] = {
-    "python": re.compile(r'_pb2\.pyi?$'),
-    "go": re.compile(r'\.pb\.go$'),
-    "java": re.compile(r'(?:OuterClass|Grpc|Proto)\.java$'),
-    "cpp_header": re.compile(r'\.pb\.h$'),
-    "cpp_source": re.compile(r'\.pb\.cc$'),
-    "typescript": re.compile(r'_pb\.(ts|d\.ts)$'),
-    "javascript": re.compile(r'_pb\.js$'),
-    "csharp": re.compile(r'\.g\.cs$'),
-    "ruby": re.compile(r'_pb\.rb$'),
+    "python": re.compile(r"_pb2\.pyi?$"),
+    "go": re.compile(r"\.pb\.go$"),
+    "java": re.compile(r"(?:OuterClass|Grpc|Proto)\.java$"),
+    "cpp_header": re.compile(r"\.pb\.h$"),
+    "cpp_source": re.compile(r"\.pb\.cc$"),
+    "typescript": re.compile(r"_pb\.(ts|d\.ts)$"),
+    "javascript": re.compile(r"_pb\.js$"),
+    "csharp": re.compile(r"\.g\.cs$"),
+    "ruby": re.compile(r"_pb\.rb$"),
 }
 
 # All target extensions that could be generated from .proto
-_TARGET_EXTS = frozenset({
-    ".py", ".pyi", ".go", ".java", ".h", ".cc", ".cpp",
-    ".ts", ".js", ".cs", ".rb",
-})
+_TARGET_EXTS = frozenset(
+    {
+        ".py",
+        ".pyi",
+        ".go",
+        ".java",
+        ".h",
+        ".cc",
+        ".cpp",
+        ".ts",
+        ".js",
+        ".cs",
+        ".rb",
+    }
+)
 
 # Pattern to extract package from proto file symbols
-_PROTO_PACKAGE_RE = re.compile(r'package\s+([\w.]+)')
+_PROTO_PACKAGE_RE = re.compile(r"package\s+([\w.]+)")
 
 
 class ProtobufBridge(LanguageBridge):
@@ -76,8 +87,7 @@ class ProtobufBridge(LanguageBridge):
                 return True
         return False
 
-    def resolve(self, source_path: str, source_symbols: list[dict],
-                target_files: dict[str, list[dict]]) -> list[dict]:
+    def resolve(self, source_path: str, source_symbols: list[dict], target_files: dict[str, list[dict]]) -> list[dict]:
         """Resolve .proto symbols to their generated stubs.
 
         Resolution strategies:
@@ -113,10 +123,7 @@ class ProtobufBridge(LanguageBridge):
 
         # For each generated file, try to match symbols
         for tpath, tsymbols, lang in generated_targets:
-            target_symbol_names = {
-                sym.get("name", ""): sym.get("qualified_name", "")
-                for sym in tsymbols
-            }
+            target_symbol_names = {sym.get("name", ""): sym.get("qualified_name", "") for sym in tsymbols}
 
             # Match message symbols
             for msg in messages:
@@ -124,14 +131,16 @@ class ProtobufBridge(LanguageBridge):
                 msg_qname = msg.get("qualified_name", msg_name)
                 matched = self._match_message(msg_name, target_symbol_names, lang)
                 for target_qname in matched:
-                    edges.append({
-                        "source": msg_qname,
-                        "target": target_qname,
-                        "kind": "x-lang",
-                        "bridge": self.name,
-                        "mechanism": "proto-message",
-                        "target_lang": lang,
-                    })
+                    edges.append(
+                        {
+                            "source": msg_qname,
+                            "target": target_qname,
+                            "kind": "x-lang",
+                            "bridge": self.name,
+                            "mechanism": "proto-message",
+                            "target_lang": lang,
+                        }
+                    )
 
             # Match service symbols
             for svc in services:
@@ -139,14 +148,16 @@ class ProtobufBridge(LanguageBridge):
                 svc_qname = svc.get("qualified_name", svc_name)
                 matched = self._match_service(svc_name, target_symbol_names, lang)
                 for target_qname in matched:
-                    edges.append({
-                        "source": svc_qname,
-                        "target": target_qname,
-                        "kind": "x-lang",
-                        "bridge": self.name,
-                        "mechanism": "proto-service",
-                        "target_lang": lang,
-                    })
+                    edges.append(
+                        {
+                            "source": svc_qname,
+                            "target": target_qname,
+                            "kind": "x-lang",
+                            "bridge": self.name,
+                            "mechanism": "proto-service",
+                            "target_lang": lang,
+                        }
+                    )
 
             # Match enum symbols
             for enum in enums:
@@ -154,20 +165,22 @@ class ProtobufBridge(LanguageBridge):
                 enum_qname = enum.get("qualified_name", enum_name)
                 matched = self._match_enum(enum_name, target_symbol_names, lang)
                 for target_qname in matched:
-                    edges.append({
-                        "source": enum_qname,
-                        "target": target_qname,
-                        "kind": "x-lang",
-                        "bridge": self.name,
-                        "mechanism": "proto-enum",
-                        "target_lang": lang,
-                    })
+                    edges.append(
+                        {
+                            "source": enum_qname,
+                            "target": target_qname,
+                            "kind": "x-lang",
+                            "bridge": self.name,
+                            "mechanism": "proto-enum",
+                            "target_lang": lang,
+                        }
+                    )
 
         return edges
 
-    def _find_generated_files(self, proto_stem: str,
-                              target_files: dict[str, list[dict]]
-                              ) -> list[tuple[str, list[dict], str]]:
+    def _find_generated_files(
+        self, proto_stem: str, target_files: dict[str, list[dict]]
+    ) -> list[tuple[str, list[dict], str]]:
         """Find target files that were likely generated from this proto.
 
         Returns list of (path, symbols, language) tuples.
@@ -198,40 +211,39 @@ class ProtobufBridge(LanguageBridge):
         lower = basename.lower()
         if lang == "python":
             # foo_pb2.py or foo_pb2.pyi
-            m = re.match(r'^(.+)_pb2\.pyi?$', lower)
+            m = re.match(r"^(.+)_pb2\.pyi?$", lower)
             return m.group(1) if m else None
         elif lang == "go":
             # foo.pb.go
-            m = re.match(r'^(.+)\.pb\.go$', lower)
+            m = re.match(r"^(.+)\.pb\.go$", lower)
             return m.group(1) if m else None
         elif lang == "java":
             # FooOuterClass.java or FooGrpc.java or FooProto.java
-            m = re.match(r'^(.+?)(?:outerclass|grpc|proto)\.java$', lower)
+            m = re.match(r"^(.+?)(?:outerclass|grpc|proto)\.java$", lower)
             return m.group(1) if m else None
         elif lang in ("cpp_header", "cpp_source"):
             # foo.pb.h or foo.pb.cc
-            m = re.match(r'^(.+)\.pb\.(?:h|cc)$', lower)
+            m = re.match(r"^(.+)\.pb\.(?:h|cc)$", lower)
             return m.group(1) if m else None
         elif lang == "typescript":
             # foo_pb.ts or foo_pb.d.ts
-            m = re.match(r'^(.+)_pb\.(?:d\.)?ts$', lower)
+            m = re.match(r"^(.+)_pb\.(?:d\.)?ts$", lower)
             return m.group(1) if m else None
         elif lang == "javascript":
             # foo_pb.js
-            m = re.match(r'^(.+)_pb\.js$', lower)
+            m = re.match(r"^(.+)_pb\.js$", lower)
             return m.group(1) if m else None
         elif lang == "csharp":
             # Foo.g.cs
-            m = re.match(r'^(.+)\.g\.cs$', lower)
+            m = re.match(r"^(.+)\.g\.cs$", lower)
             return m.group(1) if m else None
         elif lang == "ruby":
             # foo_pb.rb
-            m = re.match(r'^(.+)_pb\.rb$', lower)
+            m = re.match(r"^(.+)_pb\.rb$", lower)
             return m.group(1) if m else None
         return None
 
-    def _match_message(self, msg_name: str, target_names: dict[str, str],
-                       lang: str) -> list[str]:
+    def _match_message(self, msg_name: str, target_names: dict[str, str], lang: str) -> list[str]:
         """Match a proto message name to generated symbols.
 
         Naming conventions vary by language:
@@ -264,8 +276,7 @@ class ProtobufBridge(LanguageBridge):
 
         return matched
 
-    def _match_service(self, svc_name: str, target_names: dict[str, str],
-                       lang: str) -> list[str]:
+    def _match_service(self, svc_name: str, target_names: dict[str, str], lang: str) -> list[str]:
         """Match a proto service name to generated symbols.
 
         Generated service stubs commonly use suffixes:
@@ -279,8 +290,13 @@ class ProtobufBridge(LanguageBridge):
         # Common generated suffixes for service stubs
         suffixes = [
             "",  # exact match
-            "client", "server", "stub", "servicer",
-            "grpc", "blockingstub", "futurestub",
+            "client",
+            "server",
+            "stub",
+            "servicer",
+            "grpc",
+            "blockingstub",
+            "futurestub",
             "implbase",
         ]
 
@@ -297,8 +313,7 @@ class ProtobufBridge(LanguageBridge):
 
         return matched
 
-    def _match_enum(self, enum_name: str, target_names: dict[str, str],
-                    lang: str) -> list[str]:
+    def _match_enum(self, enum_name: str, target_names: dict[str, str], lang: str) -> list[str]:
         """Match a proto enum name to generated symbols.
 
         Enums generally keep their name across languages.

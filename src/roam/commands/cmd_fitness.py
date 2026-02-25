@@ -61,9 +61,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db, find_project_root
 from roam.commands.resolve import ensure_index
-from roam.output.formatter import loc, to_json, json_envelope
+from roam.db.connection import find_project_root, open_db
+from roam.output.formatter import json_envelope, loc, to_json
 
 
 def _load_rules(project_root: Path) -> list[dict]:
@@ -131,6 +131,7 @@ def _parse_simple_yaml(path: Path) -> list[dict]:
 
 # ── Rule checkers ────────────────────────────────────────────────────
 
+
 def _check_dependency_rule(rule, conn) -> list[dict]:
     """Check a dependency constraint rule.
 
@@ -159,14 +160,16 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
         tgt_match = fnmatch.fnmatch(r["target_path"], to_pattern)
 
         if src_match and tgt_match and not allow:
-            violations.append({
-                "rule": rule["name"],
-                "type": "dependency",
-                "message": f"{r['source_name']} -> {r['target_name']}",
-                "source": f"{r['source_path']}:{r['line'] or '?'}",
-                "target": r["target_path"],
-                "edge_kind": r["kind"],
-            })
+            violations.append(
+                {
+                    "rule": rule["name"],
+                    "type": "dependency",
+                    "message": f"{r['source_name']} -> {r['target_name']}",
+                    "source": f"{r['source_path']}:{r['line'] or '?'}",
+                    "target": r["target_path"],
+                    "edge_kind": r["kind"],
+                }
+            )
 
     return violations
 
@@ -183,27 +186,32 @@ def _check_metric_rule(rule, conn) -> list[dict]:
         try:
             from roam.graph.builder import build_symbol_graph
             from roam.graph.cycles import find_cycles
+
             G = build_symbol_graph(conn)
             cycles = find_cycles(G)
             count = len(cycles)
             if max_val is not None and count > max_val:
-                violations.append({
-                    "rule": rule["name"],
-                    "type": "metric",
-                    "message": f"cycles={count} (max={max_val})",
-                    "metric": "cycles",
-                    "value": count,
-                    "threshold": max_val,
-                })
+                violations.append(
+                    {
+                        "rule": rule["name"],
+                        "type": "metric",
+                        "message": f"cycles={count} (max={max_val})",
+                        "metric": "cycles",
+                        "value": count,
+                        "threshold": max_val,
+                    }
+                )
             if min_val is not None and count < min_val:
-                violations.append({
-                    "rule": rule["name"],
-                    "type": "metric",
-                    "message": f"cycles={count} (min={min_val})",
-                    "metric": "cycles",
-                    "value": count,
-                    "threshold": min_val,
-                })
+                violations.append(
+                    {
+                        "rule": rule["name"],
+                        "type": "metric",
+                        "message": f"cycles={count} (min={min_val})",
+                        "metric": "cycles",
+                        "value": count,
+                        "threshold": min_val,
+                    }
+                )
         except Exception:
             pass
 
@@ -212,6 +220,7 @@ def _check_metric_rule(rule, conn) -> list[dict]:
         try:
             from roam.graph.builder import build_symbol_graph
             from roam.graph.cycles import find_cycles
+
             G = build_symbol_graph(conn)
             total_syms = len(G)
             if total_syms == 0:
@@ -224,17 +233,27 @@ def _check_metric_rule(rule, conn) -> list[dict]:
             score = max(0, 100 - int(cycle_pct * 2))
 
             if max_val is not None and score > max_val:
-                violations.append({
-                    "rule": rule["name"], "type": "metric",
-                    "message": f"health_score={score} (max={max_val})",
-                    "metric": "health_score", "value": score, "threshold": max_val,
-                })
+                violations.append(
+                    {
+                        "rule": rule["name"],
+                        "type": "metric",
+                        "message": f"health_score={score} (max={max_val})",
+                        "metric": "health_score",
+                        "value": score,
+                        "threshold": max_val,
+                    }
+                )
             if min_val is not None and score < min_val:
-                violations.append({
-                    "rule": rule["name"], "type": "metric",
-                    "message": f"health_score={score} (min={min_val})",
-                    "metric": "health_score", "value": score, "threshold": min_val,
-                })
+                violations.append(
+                    {
+                        "rule": rule["name"],
+                        "type": "metric",
+                        "message": f"health_score={score} (min={min_val})",
+                        "metric": "health_score",
+                        "value": score,
+                        "threshold": min_val,
+                    }
+                )
         except Exception:
             pass
 
@@ -254,17 +273,17 @@ def _check_metric_rule(rule, conn) -> list[dict]:
                 (threshold,),
             ).fetchall()
             for r in rows:
-                violations.append({
-                    "rule": rule["name"], "type": "metric",
-                    "message": (
-                        f"{r['name']} complexity={r['cognitive_complexity']:.0f} "
-                        f"(max={threshold})"
-                    ),
-                    "source": loc(r["path"], r["line_start"]),
-                    "metric": "cognitive_complexity",
-                    "value": r["cognitive_complexity"],
-                    "threshold": threshold,
-                })
+                violations.append(
+                    {
+                        "rule": rule["name"],
+                        "type": "metric",
+                        "message": (f"{r['name']} complexity={r['cognitive_complexity']:.0f} (max={threshold})"),
+                        "source": loc(r["path"], r["line_start"]),
+                        "metric": "cognitive_complexity",
+                        "value": r["cognitive_complexity"],
+                        "threshold": threshold,
+                    }
+                )
         except Exception:
             pass
 
@@ -288,29 +307,35 @@ def _check_count_metric(metric, rule, conn, violations):
                AND (gm.in_degree IS NULL OR gm.in_degree = 0)"""
         ).fetchone()[0]
     elif metric == "god_components":
-        rows = conn.execute(
-            "SELECT COUNT(*) FROM graph_metrics WHERE in_degree + out_degree > 20"
-        ).fetchone()
+        rows = conn.execute("SELECT COUNT(*) FROM graph_metrics WHERE in_degree + out_degree > 20").fetchone()
         count = rows[0] if rows else 0
     elif metric == "bottlenecks":
-        count = conn.execute(
-            "SELECT COUNT(*) FROM graph_metrics WHERE betweenness > 0.1"
-        ).fetchone()[0]
+        count = conn.execute("SELECT COUNT(*) FROM graph_metrics WHERE betweenness > 0.1").fetchone()[0]
     else:
         return
 
     if max_val is not None and count > max_val:
-        violations.append({
-            "rule": rule["name"], "type": "metric",
-            "message": f"{metric}={count} (max={max_val})",
-            "metric": metric, "value": count, "threshold": max_val,
-        })
+        violations.append(
+            {
+                "rule": rule["name"],
+                "type": "metric",
+                "message": f"{metric}={count} (max={max_val})",
+                "metric": metric,
+                "value": count,
+                "threshold": max_val,
+            }
+        )
     if min_val is not None and count < min_val:
-        violations.append({
-            "rule": rule["name"], "type": "metric",
-            "message": f"{metric}={count} (min={min_val})",
-            "metric": metric, "value": count, "threshold": min_val,
-        })
+        violations.append(
+            {
+                "rule": rule["name"],
+                "type": "metric",
+                "message": f"{metric}={count} (min={min_val})",
+                "metric": metric,
+                "value": count,
+                "threshold": min_val,
+            }
+        )
 
 
 def _check_naming_rule(rule, conn) -> list[dict]:
@@ -339,12 +364,14 @@ def _check_naming_rule(rule, conn) -> list[dict]:
         if exclude_re and exclude_re.match(name):
             continue
         if not regex.match(name):
-            violations.append({
-                "rule": rule["name"],
-                "type": "naming",
-                "message": f"{name} does not match {pattern}",
-                "source": loc(r["path"], r["line_start"]),
-            })
+            violations.append(
+                {
+                    "rule": rule["name"],
+                    "type": "naming",
+                    "message": f"{name} does not match {pattern}",
+                    "source": loc(r["path"], r["line_start"]),
+                }
+            )
 
     return violations
 
@@ -369,17 +396,27 @@ def _check_trend_rule(rule, conn) -> list[dict]:
 
     # Validate the metric is a real snapshot column
     _SNAPSHOT_METRICS = {
-        "health_score", "tangle_ratio", "avg_complexity", "brain_methods",
-        "cycles", "god_components", "bottlenecks", "dead_exports",
-        "layer_violations", "files", "symbols", "edges",
+        "health_score",
+        "tangle_ratio",
+        "avg_complexity",
+        "brain_methods",
+        "cycles",
+        "god_components",
+        "bottlenecks",
+        "dead_exports",
+        "layer_violations",
+        "files",
+        "symbols",
+        "edges",
     }
     if metric not in _SNAPSHOT_METRICS:
-        return [{
-            "rule": rule.get("name", "unnamed"),
-            "type": "trend",
-            "message": f"Unknown snapshot metric '{metric}'. "
-                       f"Valid: {', '.join(sorted(_SNAPSHOT_METRICS))}",
-        }]
+        return [
+            {
+                "rule": rule.get("name", "unnamed"),
+                "type": "trend",
+                "message": f"Unknown snapshot metric '{metric}'. Valid: {', '.join(sorted(_SNAPSHOT_METRICS))}",
+            }
+        ]
 
     # Fetch recent snapshots (need at least 2 to compute a trend)
     rows = conn.execute(
@@ -404,36 +441,40 @@ def _check_trend_rule(rule, conn) -> list[dict]:
     violations = []
 
     if max_decrease is not None and delta < -max_decrease:
-        violations.append({
-            "rule": rule.get("name", "unnamed"),
-            "type": "trend",
-            "message": (
-                f"{metric} dropped by {abs(delta):.1f} "
-                f"(from avg {prev_avg:.1f} to {latest:.1f}, "
-                f"max allowed decrease: {max_decrease})"
-            ),
-            "metric": metric,
-            "latest": latest,
-            "previous_avg": round(prev_avg, 2),
-            "delta": round(delta, 2),
-            "threshold": max_decrease,
-        })
+        violations.append(
+            {
+                "rule": rule.get("name", "unnamed"),
+                "type": "trend",
+                "message": (
+                    f"{metric} dropped by {abs(delta):.1f} "
+                    f"(from avg {prev_avg:.1f} to {latest:.1f}, "
+                    f"max allowed decrease: {max_decrease})"
+                ),
+                "metric": metric,
+                "latest": latest,
+                "previous_avg": round(prev_avg, 2),
+                "delta": round(delta, 2),
+                "threshold": max_decrease,
+            }
+        )
 
     if max_increase is not None and delta > max_increase:
-        violations.append({
-            "rule": rule.get("name", "unnamed"),
-            "type": "trend",
-            "message": (
-                f"{metric} increased by {delta:.1f} "
-                f"(from avg {prev_avg:.1f} to {latest:.1f}, "
-                f"max allowed increase: {max_increase})"
-            ),
-            "metric": metric,
-            "latest": latest,
-            "previous_avg": round(prev_avg, 2),
-            "delta": round(delta, 2),
-            "threshold": max_increase,
-        })
+        violations.append(
+            {
+                "rule": rule.get("name", "unnamed"),
+                "type": "trend",
+                "message": (
+                    f"{metric} increased by {delta:.1f} "
+                    f"(from avg {prev_avg:.1f} to {latest:.1f}, "
+                    f"max allowed increase: {max_increase})"
+                ),
+                "metric": metric,
+                "latest": latest,
+                "previous_avg": round(prev_avg, 2),
+                "delta": round(delta, 2),
+                "threshold": max_increase,
+            }
+        )
 
     return violations
 
@@ -447,6 +488,7 @@ _CHECKERS = {
 
 
 # ── CLI command ──────────────────────────────────────────────────────
+
 
 @click.command("fitness")
 @click.option("--init", "do_init", is_flag=True, help="Create a starter fitness.yaml")
@@ -472,16 +514,24 @@ def fitness(ctx, do_init, rule_filter, explain):
 
     if not rules:
         if json_mode:
-            click.echo(to_json(json_envelope("fitness",
-                summary={"rules_checked": 0, "passed": 0, "failed": 0,
-                          "total_violations": 0, "verdict": "no rules configured"},
-                rules=[], violations=[],
-            )))
-        else:
             click.echo(
-                "No fitness rules found. Create .roam/fitness.yaml or run:\n"
-                "  roam fitness --init"
+                to_json(
+                    json_envelope(
+                        "fitness",
+                        summary={
+                            "rules_checked": 0,
+                            "passed": 0,
+                            "failed": 0,
+                            "total_violations": 0,
+                            "verdict": "no rules configured",
+                        },
+                        rules=[],
+                        violations=[],
+                    )
+                )
             )
+        else:
+            click.echo("No fitness rules found. Create .roam/fitness.yaml or run:\n  roam fitness --init")
         return
 
     if rule_filter:
@@ -521,19 +571,24 @@ def fitness(ctx, do_init, rule_filter, explain):
         failed = sum(1 for r in rule_results if r["status"] == "FAIL")
 
         if json_mode:
-            click.echo(to_json(json_envelope("fitness",
-                summary={
-                    "rules_checked": len(rule_results),
-                    "passed": passed,
-                    "failed": failed,
-                    "total_violations": len(all_violations),
-                },
-                rules=rule_results,
-                violations=[
-                    {k: v for k, v in viol.items()}
-                    for viol in all_violations[:100]  # Cap at 100
-                ],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "fitness",
+                        summary={
+                            "rules_checked": len(rule_results),
+                            "passed": passed,
+                            "failed": failed,
+                            "total_violations": len(all_violations),
+                        },
+                        rules=rule_results,
+                        violations=[
+                            {k: v for k, v in viol.items()}
+                            for viol in all_violations[:100]  # Cap at 100
+                        ],
+                    )
+                )
+            )
         else:
             click.echo(f"Fitness check: {len(rule_results)} rules\n")
 

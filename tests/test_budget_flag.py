@@ -11,13 +11,10 @@ import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
-    invoke_cli,
-    parse_json_output,
-    assert_json_envelope,
     git_init,
     index_in_process,
+    invoke_cli,
 )
-
 
 # ---------------------------------------------------------------------------
 # Unit tests for budget_truncate()
@@ -291,6 +288,7 @@ class TestBudgetCLIFlag:
     def test_budget_flag_default(self):
         """--budget defaults to 0 (unlimited)."""
         from click.testing import CliRunner
+
         from roam.cli import cli
 
         runner = CliRunner()
@@ -300,8 +298,8 @@ class TestBudgetCLIFlag:
 
     def test_budget_flag_parses(self):
         """--budget N is accepted and stored in ctx.obj."""
-        from click.testing import CliRunner
         import click
+        from click.testing import CliRunner
 
         captured = {}
 
@@ -312,6 +310,7 @@ class TestBudgetCLIFlag:
             click.echo("ok")
 
         from roam.cli import cli
+
         # Temporarily add our test command
         # Instead, just verify the flag is accepted by the CLI group
         result = runner = CliRunner()
@@ -321,6 +320,7 @@ class TestBudgetCLIFlag:
     def test_budget_flag_accepted(self):
         """--budget N is accepted by the CLI group without error."""
         from click.testing import CliRunner
+
         from roam.cli import cli
 
         runner = CliRunner()
@@ -345,17 +345,8 @@ def health_project(tmp_path, monkeypatch):
 
     src = proj / "src"
     src.mkdir()
-    (src / "app.py").write_text(
-        "def main():\n"
-        "    print('hello')\n"
-        "\n"
-        "def helper():\n"
-        "    return main()\n"
-    )
-    (src / "utils.py").write_text(
-        "def format_name(name):\n"
-        "    return name.title()\n"
-    )
+    (src / "app.py").write_text("def main():\n    print('hello')\n\ndef helper():\n    return main()\n")
+    (src / "utils.py").write_text("def format_name(name):\n    return name.title()\n")
 
     git_init(proj)
     monkeypatch.chdir(proj)
@@ -374,8 +365,7 @@ class TestHealthWithBudget:
 
         monkeypatch.chdir(health_project)
         runner = CliRunner()
-        result = invoke_cli(runner, ["--detail", "health"], cwd=health_project,
-                            json_mode=True)
+        result = invoke_cli(runner, ["--detail", "health"], cwd=health_project, json_mode=True)
         assert result.exit_code == 0
         data = json.loads(result.output)
         assert "truncated" not in data["summary"]
@@ -383,6 +373,7 @@ class TestHealthWithBudget:
     def test_health_with_budget(self, health_project, monkeypatch):
         """Health with tight budget truncates output."""
         from click.testing import CliRunner
+
         from roam.cli import cli
 
         monkeypatch.chdir(health_project)
@@ -408,6 +399,7 @@ class TestHealthWithBudget:
     def test_health_large_budget_no_truncation(self, health_project, monkeypatch):
         """Health with large budget does not truncate."""
         from click.testing import CliRunner
+
         from roam.cli import cli
 
         monkeypatch.chdir(health_project)
@@ -449,7 +441,7 @@ class TestBudgetTruncateTextIntegration:
         lines.append("")
         lines.append("=== God Components ===")
         for i in range(30):
-            lines.append(f"  {i}. BigClass (degree={50+i})")
+            lines.append(f"  {i}. BigClass (degree={50 + i})")
 
         text = "\n".join(lines)
         result = budget_truncate(text, 100)  # 100 tokens = 400 chars

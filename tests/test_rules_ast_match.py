@@ -20,25 +20,25 @@ def _write_rules(project_path: Path, rule_files: dict[str, str]) -> Path:
 
 
 def test_ast_match_rule_finds_eval_calls(project_factory, monkeypatch):
-    proj = project_factory({
-        "src/app.py": (
-            "def run_expr(code):\n"
-            "    eval(code)\n"
-            "    answer = eval('1 + 1')\n"
-            "    return answer\n"
-        ),
-    })
-    rules_dir = _write_rules(proj, {
-        "no_eval.yaml": (
-            'name: "No eval calls"\n'
-            "severity: error\n"
-            "type: ast_match\n"
-            "match:\n"
-            '  ast: "eval($EXPR)"\n'
-            "  language: python\n"
-            '  file_glob: "**/*.py"\n'
-        ),
-    })
+    proj = project_factory(
+        {
+            "src/app.py": ("def run_expr(code):\n    eval(code)\n    answer = eval('1 + 1')\n    return answer\n"),
+        }
+    )
+    rules_dir = _write_rules(
+        proj,
+        {
+            "no_eval.yaml": (
+                'name: "No eval calls"\n'
+                "severity: error\n"
+                "type: ast_match\n"
+                "match:\n"
+                '  ast: "eval($EXPR)"\n'
+                "  language: python\n"
+                '  file_glob: "**/*.py"\n'
+            ),
+        },
+    )
 
     monkeypatch.chdir(proj)
     with open_db(readonly=True) as conn:
@@ -53,24 +53,25 @@ def test_ast_match_rule_finds_eval_calls(project_factory, monkeypatch):
 
 
 def test_ast_match_repeated_metavar_requires_same_subtree(project_factory, monkeypatch):
-    proj = project_factory({
-        "src/app.py": (
-            "def compare(a, b):\n"
-            "    same(a, a)\n"
-            "    same(a, b)\n"
-        ),
-    })
-    rules_dir = _write_rules(proj, {
-        "same_args.yaml": (
-            'name: "same args only"\n'
-            "severity: warning\n"
-            "type: ast_match\n"
-            "match:\n"
-            '  ast: "same($X, $X)"\n'
-            "  language: python\n"
-            '  file_glob: "**/*.py"\n'
-        ),
-    })
+    proj = project_factory(
+        {
+            "src/app.py": ("def compare(a, b):\n    same(a, a)\n    same(a, b)\n"),
+        }
+    )
+    rules_dir = _write_rules(
+        proj,
+        {
+            "same_args.yaml": (
+                'name: "same args only"\n'
+                "severity: warning\n"
+                "type: ast_match\n"
+                "match:\n"
+                '  ast: "same($X, $X)"\n'
+                "  language: python\n"
+                '  file_glob: "**/*.py"\n'
+            ),
+        },
+    )
 
     monkeypatch.chdir(proj)
     with open_db(readonly=True) as conn:
@@ -83,23 +84,25 @@ def test_ast_match_repeated_metavar_requires_same_subtree(project_factory, monke
 
 
 def test_ast_match_rule_passes_when_no_match(project_factory, monkeypatch):
-    proj = project_factory({
-        "src/app.py": (
-            "def run_expr(code):\n"
-            "    return code + 'safe'\n"
-        ),
-    })
-    rules_dir = _write_rules(proj, {
-        "no_exec.yaml": (
-            'name: "No exec calls"\n'
-            "severity: error\n"
-            "type: ast_match\n"
-            "match:\n"
-            '  ast: "exec($EXPR)"\n'
-            "  language: python\n"
-            '  file_glob: "**/*.py"\n'
-        ),
-    })
+    proj = project_factory(
+        {
+            "src/app.py": ("def run_expr(code):\n    return code + 'safe'\n"),
+        }
+    )
+    rules_dir = _write_rules(
+        proj,
+        {
+            "no_exec.yaml": (
+                'name: "No exec calls"\n'
+                "severity: error\n"
+                "type: ast_match\n"
+                "match:\n"
+                '  ast: "exec($EXPR)"\n'
+                "  language: python\n"
+                '  file_glob: "**/*.py"\n'
+            ),
+        },
+    )
 
     monkeypatch.chdir(proj)
     with open_db(readonly=True) as conn:
@@ -111,23 +114,25 @@ def test_ast_match_rule_passes_when_no_match(project_factory, monkeypatch):
 
 
 def test_check_rules_includes_custom_ast_rules(project_factory, monkeypatch):
-    proj = project_factory({
-        "src/app.py": (
-            "def run_expr(code):\n"
-            "    eval(code)\n"
-        ),
-    })
-    _write_rules(proj, {
-        "no_eval.yaml": (
-            'name: "No eval calls"\n'
-            "severity: error\n"
-            "type: ast_match\n"
-            "match:\n"
-            '  ast: "eval($EXPR)"\n'
-            "  language: python\n"
-            '  file_glob: "**/*.py"\n'
-        ),
-    })
+    proj = project_factory(
+        {
+            "src/app.py": ("def run_expr(code):\n    eval(code)\n"),
+        }
+    )
+    _write_rules(
+        proj,
+        {
+            "no_eval.yaml": (
+                'name: "No eval calls"\n'
+                "severity: error\n"
+                "type: ast_match\n"
+                "match:\n"
+                '  ast: "eval($EXPR)"\n'
+                "  language: python\n"
+                '  file_glob: "**/*.py"\n'
+            ),
+        },
+    )
 
     monkeypatch.chdir(proj)
     runner = CliRunner()

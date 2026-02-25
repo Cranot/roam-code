@@ -13,7 +13,6 @@ from pathlib import Path
 
 import pytest
 
-
 pytestmark = pytest.mark.skipif(
     shutil.which("node") is None,
     reason="Node.js not available in test environment",
@@ -43,23 +42,27 @@ def test_build_comment_includes_marker_and_sections(tmp_path):
     results_dir = tmp_path / "results"
     results_dir.mkdir()
     (results_dir / "health.json").write_text(
-        json.dumps({
-            "summary": {
-                "verdict": "overall healthy",
-                "health_score": 82,
-                "issue_count": 3,
-            },
-        }),
+        json.dumps(
+            {
+                "summary": {
+                    "verdict": "overall healthy",
+                    "health_score": 82,
+                    "issue_count": 3,
+                },
+            }
+        ),
         encoding="utf-8",
     )
     (results_dir / "pr-risk.json").write_text(
-        json.dumps({
-            "summary": {
-                "verdict": "low risk",
-                "risk_score": 21,
-                "files_changed": 4,
-            },
-        }),
+        json.dumps(
+            {
+                "summary": {
+                    "verdict": "low risk",
+                    "risk_score": 21,
+                    "files_changed": 4,
+                },
+            }
+        ),
         encoding="utf-8",
     )
 

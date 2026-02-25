@@ -13,7 +13,6 @@ from __future__ import annotations
 import os.path
 import re
 
-
 # ---------------------------------------------------------------------------
 # Role constants
 # ---------------------------------------------------------------------------
@@ -30,11 +29,21 @@ ROLE_EXAMPLES = "examples"
 ROLE_SCRIPTS = "scripts"
 ROLE_CI = "ci"
 
-ALL_ROLES = frozenset({
-    ROLE_SOURCE, ROLE_TEST, ROLE_CONFIG, ROLE_BUILD, ROLE_DOCS,
-    ROLE_GENERATED, ROLE_VENDORED, ROLE_DATA, ROLE_EXAMPLES,
-    ROLE_SCRIPTS, ROLE_CI,
-})
+ALL_ROLES = frozenset(
+    {
+        ROLE_SOURCE,
+        ROLE_TEST,
+        ROLE_CONFIG,
+        ROLE_BUILD,
+        ROLE_DOCS,
+        ROLE_GENERATED,
+        ROLE_VENDORED,
+        ROLE_DATA,
+        ROLE_EXAMPLES,
+        ROLE_SCRIPTS,
+        ROLE_CI,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Tier 1 — Path-based patterns (compiled regex, no I/O)
@@ -49,7 +58,6 @@ _PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)\.circleci/"), ROLE_CI),
     (re.compile(r"(^|/)\.gitlab-ci/"), ROLE_CI),
     (re.compile(r"(^|/)\.gitlab/"), ROLE_CI),
-
     # Vendored / third-party
     (re.compile(r"(^|/)vendor/"), ROLE_VENDORED),
     (re.compile(r"(^|/)node_modules/"), ROLE_VENDORED),
@@ -57,30 +65,25 @@ _PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)third-party/"), ROLE_VENDORED),
     (re.compile(r"(^|/)extern/"), ROLE_VENDORED),
     (re.compile(r"(^|/)external/"), ROLE_VENDORED),
-
     # Test directories
     (re.compile(r"(^|/)tests/"), ROLE_TEST),
     (re.compile(r"(^|/)test/"), ROLE_TEST),
     (re.compile(r"(^|/)__tests__/"), ROLE_TEST),
     (re.compile(r"(^|/)spec/"), ROLE_TEST),
     (re.compile(r"(^|/)testing/"), ROLE_TEST),
-
     # Docs
     (re.compile(r"(^|/)docs/"), ROLE_DOCS),
     (re.compile(r"(^|/)doc/"), ROLE_DOCS),
     (re.compile(r"(^|/)documentation/"), ROLE_DOCS),
-
     # Examples / samples
     (re.compile(r"(^|/)examples/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)example/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)samples/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)sample/"), ROLE_EXAMPLES),
-
     # Scripts / bin / dev tools
     (re.compile(r"(^|/)scripts/"), ROLE_SCRIPTS),
     (re.compile(r"(^|/)bin/"), ROLE_SCRIPTS),
     (re.compile(r"(^|/)dev/"), ROLE_SCRIPTS),
-
     # Build / dist output
     (re.compile(r"(^|/)build/"), ROLE_BUILD),
     (re.compile(r"(^|/)dist/"), ROLE_BUILD),
@@ -137,45 +140,32 @@ _TEST_PATTERNS: list[re.Pattern[str]] = [
     re.compile(r"^test_.*\.py$"),
     re.compile(r"^.*_test\.py$"),
     re.compile(r"^conftest\.py$"),
-
     # Go: *_test.go
     re.compile(r"^.*_test\.go$"),
-
     # JavaScript / TypeScript: *.test.js, *.test.ts, *.test.jsx, *.test.tsx
     re.compile(r"^.*\.test\.[jt]sx?$"),
     # *.spec.js, *.spec.ts, *.spec.jsx, *.spec.tsx
     re.compile(r"^.*\.spec\.[jt]sx?$"),
-
     # Java: *Test.java, *Tests.java
     re.compile(r"^.*Tests?\.java$"),
-
     # Kotlin: *Test.kt, *Tests.kt
     re.compile(r"^.*Tests?\.kt$"),
-
     # C#: *Test.cs, *Tests.cs
     re.compile(r"^.*Tests?\.cs$"),
-
     # Ruby: *_spec.rb
     re.compile(r"^.*_spec\.rb$"),
-
     # PHP: *Test.php
     re.compile(r"^.*Test\.php$"),
-
     # Scala: *Test.scala, *Spec.scala
     re.compile(r"^.*(?:Test|Spec)\.scala$"),
-
     # Elixir: *_test.exs
     re.compile(r"^.*_test\.exs$"),
-
     # Dart: *_test.dart
     re.compile(r"^.*_test\.dart$"),
-
     # Salesforce Apex: *Test.cls
     re.compile(r"^.*Test\.cls$"),
-
     # Rust: tests are usually inline, but test files exist
     re.compile(r"^.*_test\.rs$"),
-
     # Swift: *Tests.swift, *Test.swift
     re.compile(r"^.*Tests?\.swift$"),
 ]
@@ -183,44 +173,131 @@ _TEST_PATTERNS: list[re.Pattern[str]] = [
 # Extension-based classification (matched against lowercase extension)
 _DOC_EXTENSIONS = frozenset({".md", ".rst", ".adoc", ".asciidoc", ".txt"})
 
-_CONFIG_EXTENSIONS = frozenset({
-    ".json", ".yaml", ".yml", ".toml", ".ini", ".cfg",
-    ".conf", ".properties", ".env", ".editorconfig",
-    ".xml",  # many config files are XML
-})
+_CONFIG_EXTENSIONS = frozenset(
+    {
+        ".json",
+        ".yaml",
+        ".yml",
+        ".toml",
+        ".ini",
+        ".cfg",
+        ".conf",
+        ".properties",
+        ".env",
+        ".editorconfig",
+        ".xml",  # many config files are XML
+    }
+)
 
 # Config filenames that are config even without a typical config extension
-_CONFIG_FILENAMES = frozenset({
-    ".gitignore", ".gitattributes", ".dockerignore",
-    ".eslintrc", ".prettierrc", ".babelrc",
-    ".flake8", ".pylintrc", ".rubocop.yml",
-    "setup.cfg", "pyproject.toml", "setup.py",
-    "package.json", "tsconfig.json", "jsconfig.json",
-    ".eslintrc.json", ".prettierrc.json",
-    "tox.ini", "mypy.ini", "pytest.ini",
-    "cargo.toml", "go.mod", "go.sum",
-    "gemfile", "composer.json", "mix.exs",
-    "pubspec.yaml", "pubspec.yml",
-    ".htaccess", "nginx.conf",
-    ".browserslistrc", ".nvmrc", ".node-version",
-    ".python-version", ".ruby-version", ".tool-versions",
-    "requirements.txt", "constraints.txt",
-    "pipfile",
-})
+_CONFIG_FILENAMES = frozenset(
+    {
+        ".gitignore",
+        ".gitattributes",
+        ".dockerignore",
+        ".eslintrc",
+        ".prettierrc",
+        ".babelrc",
+        ".flake8",
+        ".pylintrc",
+        ".rubocop.yml",
+        "setup.cfg",
+        "pyproject.toml",
+        "setup.py",
+        "package.json",
+        "tsconfig.json",
+        "jsconfig.json",
+        ".eslintrc.json",
+        ".prettierrc.json",
+        "tox.ini",
+        "mypy.ini",
+        "pytest.ini",
+        "cargo.toml",
+        "go.mod",
+        "go.sum",
+        "gemfile",
+        "composer.json",
+        "mix.exs",
+        "pubspec.yaml",
+        "pubspec.yml",
+        ".htaccess",
+        "nginx.conf",
+        ".browserslistrc",
+        ".nvmrc",
+        ".node-version",
+        ".python-version",
+        ".ruby-version",
+        ".tool-versions",
+        "requirements.txt",
+        "constraints.txt",
+        "pipfile",
+    }
+)
 
-_DATA_EXTENSIONS = frozenset({
-    ".png", ".jpg", ".jpeg", ".gif", ".svg", ".ico", ".bmp", ".webp",
-    ".tiff", ".tif", ".psd",
-    ".mp3", ".mp4", ".wav", ".ogg", ".flac", ".avi", ".mov", ".mkv",
-    ".woff", ".woff2", ".ttf", ".eot", ".otf",
-    ".zip", ".tar", ".gz", ".bz2", ".xz", ".7z", ".rar",
-    ".pdf", ".doc", ".docx", ".xls", ".xlsx", ".ppt", ".pptx",
-    ".csv", ".tsv", ".parquet", ".avro",
-    ".db", ".sqlite", ".sqlite3",
-    ".bin", ".dat", ".pak", ".wasm",
-    ".exe", ".dll", ".so", ".dylib", ".o", ".a", ".lib",
-    ".pyc", ".pyo", ".class", ".jar",
-})
+_DATA_EXTENSIONS = frozenset(
+    {
+        ".png",
+        ".jpg",
+        ".jpeg",
+        ".gif",
+        ".svg",
+        ".ico",
+        ".bmp",
+        ".webp",
+        ".tiff",
+        ".tif",
+        ".psd",
+        ".mp3",
+        ".mp4",
+        ".wav",
+        ".ogg",
+        ".flac",
+        ".avi",
+        ".mov",
+        ".mkv",
+        ".woff",
+        ".woff2",
+        ".ttf",
+        ".eot",
+        ".otf",
+        ".zip",
+        ".tar",
+        ".gz",
+        ".bz2",
+        ".xz",
+        ".7z",
+        ".rar",
+        ".pdf",
+        ".doc",
+        ".docx",
+        ".xls",
+        ".xlsx",
+        ".ppt",
+        ".pptx",
+        ".csv",
+        ".tsv",
+        ".parquet",
+        ".avro",
+        ".db",
+        ".sqlite",
+        ".sqlite3",
+        ".bin",
+        ".dat",
+        ".pak",
+        ".wasm",
+        ".exe",
+        ".dll",
+        ".so",
+        ".dylib",
+        ".o",
+        ".a",
+        ".lib",
+        ".pyc",
+        ".pyo",
+        ".class",
+        ".jar",
+    }
+)
 
 # Filename patterns matched against basename (compiled regex, returns role)
 _FILENAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
@@ -235,7 +312,6 @@ _FILENAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^Jenkinsfile"), ROLE_CI),
     (re.compile(r"^codecov\.yml$"), ROLE_CI),
     (re.compile(r"^\.coveragerc$"), ROLE_CI),
-
     # Generated file patterns
     (re.compile(r"^.*\.generated\.\w+$"), ROLE_GENERATED),
     (re.compile(r"^.*\.g\.\w+$"), ROLE_GENERATED),
@@ -244,7 +320,6 @@ _FILENAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"^.*\.pb\.h$"), ROLE_GENERATED),
     (re.compile(r"^.*\.pb\.cc$"), ROLE_GENERATED),
     (re.compile(r"^.*\.min\.\w+$"), ROLE_GENERATED),
-
     # Lock files → config (they are dependency-version pinning)
     (re.compile(r"^.*\.lock$"), ROLE_CONFIG),
     (re.compile(r"^.*-lock\.\w+$"), ROLE_CONFIG),
@@ -273,6 +348,7 @@ _MINIFICATION_AVG_LINE_THRESHOLD = 110
 # Normalisation helpers
 # ---------------------------------------------------------------------------
 
+
 def _normalise_path(path: str) -> str:
     """Normalise path separators to forward slashes."""
     return path.replace("\\", "/")
@@ -292,6 +368,7 @@ def _get_parts(normalised_path: str) -> tuple[str, str, str]:
 # ---------------------------------------------------------------------------
 # Tier helpers
 # ---------------------------------------------------------------------------
+
 
 def _tier1_path(normalised: str) -> str | None:
     """Tier 1: classify by directory path patterns."""
@@ -378,6 +455,7 @@ def _tier3_content(content: str | None, ext: str) -> str | None:
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
+
 
 def classify_file(path: str, content: str | None = None) -> str:
     """Classify a file into a role category.

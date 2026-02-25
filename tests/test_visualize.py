@@ -7,12 +7,12 @@ from pathlib import Path
 import pytest
 
 sys.path.insert(0, str(Path(__file__).parent))
-from conftest import roam, git_init, index_in_process
-
+from conftest import git_init, index_in_process, roam
 
 # ============================================================================
 # Shared fixture: small Python project with known dependency structure
 # ============================================================================
+
 
 @pytest.fixture(scope="module")
 def indexed_project(tmp_path_factory):
@@ -20,45 +20,45 @@ def indexed_project(tmp_path_factory):
     proj = tmp_path_factory.mktemp("visualize")
 
     (proj / "models.py").write_text(
-        'class User:\n'
+        "class User:\n"
         '    """A user model."""\n'
-        '    def __init__(self, name: str):\n'
-        '        self.name = name\n'
-        '\n'
-        'class Role:\n'
+        "    def __init__(self, name: str):\n"
+        "        self.name = name\n"
+        "\n"
+        "class Role:\n"
         '    """A role model."""\n'
-        '    def __init__(self, title: str):\n'
-        '        self.title = title\n'
+        "    def __init__(self, title: str):\n"
+        "        self.title = title\n"
     )
 
     (proj / "utils.py").write_text(
-        'def validate(value: str) -> bool:\n'
-        '    return len(value) > 0\n'
-        '\n'
-        'def format_name(name: str) -> str:\n'
-        '    return name.strip()\n'
+        "def validate(value: str) -> bool:\n"
+        "    return len(value) > 0\n"
+        "\n"
+        "def format_name(name: str) -> str:\n"
+        "    return name.strip()\n"
     )
 
     (proj / "service.py").write_text(
-        'from models import User, Role\n'
-        'from utils import validate, format_name\n'
-        '\n'
-        'def create_user(name: str) -> User:\n'
-        '    if not validate(name):\n'
+        "from models import User, Role\n"
+        "from utils import validate, format_name\n"
+        "\n"
+        "def create_user(name: str) -> User:\n"
+        "    if not validate(name):\n"
         '        raise ValueError("bad")\n'
-        '    return User(format_name(name))\n'
-        '\n'
-        'def assign_role(user: User) -> Role:\n'
+        "    return User(format_name(name))\n"
+        "\n"
+        "def assign_role(user: User) -> Role:\n"
         '    return Role("member")\n'
     )
 
     (proj / "main.py").write_text(
-        'from service import create_user, assign_role\n'
-        '\n'
-        'def run():\n'
+        "from service import create_user, assign_role\n"
+        "\n"
+        "def run():\n"
         '    u = create_user("Alice")\n'
-        '    r = assign_role(u)\n'
-        '    print(u.name, r.title)\n'
+        "    r = assign_role(u)\n"
+        "    print(u.name, r.title)\n"
     )
 
     git_init(proj)
@@ -70,6 +70,7 @@ def indexed_project(tmp_path_factory):
 # ============================================================================
 # Tests
 # ============================================================================
+
 
 class TestVisualizeMermaid:
     """Test Mermaid output mode."""
@@ -138,6 +139,7 @@ class TestVisualizeOptions:
         assert "VERDICT: OK" in out
         # Count node definitions (lines matching n<digits>)
         import re
+
         node_defs = re.findall(r'\bn\d+[\[(""]', out)
         assert len(node_defs) <= 10  # generous upper bound (5 nodes, some may appear in edges)
 

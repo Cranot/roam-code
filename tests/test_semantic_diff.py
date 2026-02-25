@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import json
 import os
-import subprocess
 import sys
 from pathlib import Path
 
@@ -13,20 +12,18 @@ from click.testing import CliRunner
 
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
+    assert_json_envelope,
+    git_commit,
+    git_init,
+    index_in_process,
     invoke_cli,
     parse_json_output,
-    assert_json_envelope,
-    git_init,
-    git_commit,
-    index_in_process,
 )
-
-from roam.cli import cli
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
+
 
 @pytest.fixture
 def cli_runner():
@@ -57,78 +54,74 @@ def semantic_diff_project(tmp_path):
 
     # --- Commit 1 (init): initial state ---
     (src / "app.py").write_text(
-        'from utils import format_name\n'
-        '\n'
-        '\n'
-        'def process_data(items):\n'
+        "from utils import format_name\n"
+        "\n"
+        "\n"
+        "def process_data(items):\n"
         '    """Process a list of items."""\n'
-        '    result = []\n'
-        '    for item in items:\n'
-        '        result.append(item.upper())\n'
-        '    return result\n'
-        '\n'
-        '\n'
-        'def old_helper():\n'
+        "    result = []\n"
+        "    for item in items:\n"
+        "        result.append(item.upper())\n"
+        "    return result\n"
+        "\n"
+        "\n"
+        "def old_helper():\n"
         '    """This will be removed."""\n'
-        '    return 42\n'
-        '\n'
-        '\n'
-        'def stable_function():\n'
+        "    return 42\n"
+        "\n"
+        "\n"
+        "def stable_function():\n"
         '    """This will not change."""\n'
-        '    return True\n'
+        "    return True\n"
     )
 
     (src / "utils.py").write_text(
-        'def format_name(first, last):\n'
-        '    """Format a full name."""\n'
-        '    return f"{first} {last}"\n'
+        'def format_name(first, last):\n    """Format a full name."""\n    return f"{first} {last}"\n'
     )
 
     git_init(proj)
 
     # --- Commit 2: minor addition to create HEAD~1 ---
-    (src / "config.py").write_text(
-        'DEBUG = False\n'
-    )
+    (src / "config.py").write_text("DEBUG = False\n")
     git_commit(proj, "add config")
 
     # --- Working tree changes: modify, add, remove ---
     (src / "app.py").write_text(
-        'from utils import format_name, parse_email\n'
-        '\n'
-        '\n'
-        'def process_data(items, strict=False):\n'
+        "from utils import format_name, parse_email\n"
+        "\n"
+        "\n"
+        "def process_data(items, strict=False):\n"
         '    """Process a list of items with optional strict mode."""\n'
-        '    result = []\n'
-        '    for item in items:\n'
-        '        if strict and not item:\n'
+        "    result = []\n"
+        "    for item in items:\n"
+        "        if strict and not item:\n"
         '            raise ValueError("Empty item")\n'
-        '        result.append(item.upper())\n'
-        '    return result\n'
-        '\n'
-        '\n'
-        'def validate_input(data):\n'
+        "        result.append(item.upper())\n"
+        "    return result\n"
+        "\n"
+        "\n"
+        "def validate_input(data):\n"
         '    """New validation function."""\n'
-        '    if not isinstance(data, dict):\n'
-        '        return False\n'
-        '    return True\n'
-        '\n'
-        '\n'
-        'def stable_function():\n'
+        "    if not isinstance(data, dict):\n"
+        "        return False\n"
+        "    return True\n"
+        "\n"
+        "\n"
+        "def stable_function():\n"
         '    """This will not change."""\n'
-        '    return True\n'
+        "    return True\n"
     )
 
     (src / "utils.py").write_text(
-        'def format_name(first, last):\n'
+        "def format_name(first, last):\n"
         '    """Format a full name."""\n'
         '    return f"{first} {last}"\n'
-        '\n'
-        '\n'
-        'def parse_email(raw):\n'
+        "\n"
+        "\n"
+        "def parse_email(raw):\n"
         '    """Parse an email address."""\n'
         '    if "@" not in raw:\n'
-        '        return None\n'
+        "        return None\n"
         '    return raw.split("@")\n'
     )
 
@@ -149,18 +142,12 @@ def no_change_project(tmp_path):
     src = proj / "src"
     src.mkdir()
 
-    (src / "app.py").write_text(
-        'def greet(name):\n'
-        '    return f"Hello, {name}"\n'
-    )
+    (src / "app.py").write_text('def greet(name):\n    return f"Hello, {name}"\n')
 
     git_init(proj)
 
     # Make a second commit with the same content
-    (src / "extra.py").write_text(
-        'def extra():\n'
-        '    pass\n'
-    )
+    (src / "extra.py").write_text("def extra():\n    pass\n")
     git_commit(proj, "add extra")
 
     out, rc = index_in_process(proj)
@@ -172,6 +159,7 @@ def no_change_project(tmp_path):
 # ===========================================================================
 # Basic execution tests
 # ===========================================================================
+
 
 class TestSemanticDiffBasic:
     """Basic execution and output format tests."""
@@ -206,6 +194,7 @@ class TestSemanticDiffBasic:
 # ===========================================================================
 # Text output tests
 # ===========================================================================
+
 
 class TestSemanticDiffText:
     """Tests for text output format."""
@@ -259,13 +248,13 @@ class TestSemanticDiffText:
         )
         out = result.output
         # Should show "No changed files" or "0 structural changes"
-        assert ("no changed" in out.lower() or "0 structural" in out.lower()
-                or "VERDICT:" in out)
+        assert "no changed" in out.lower() or "0 structural" in out.lower() or "VERDICT:" in out
 
 
 # ===========================================================================
 # JSON output tests
 # ===========================================================================
+
 
 class TestSemanticDiffJSON:
     """Tests for JSON output format."""
@@ -274,8 +263,10 @@ class TestSemanticDiffJSON:
         """JSON mode produces valid JSON."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -285,8 +276,10 @@ class TestSemanticDiffJSON:
         """JSON output follows the roam envelope contract."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "semantic-diff")
         assert_json_envelope(data, "semantic-diff")
@@ -295,8 +288,10 @@ class TestSemanticDiffJSON:
         """JSON summary contains a verdict field."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = json.loads(result.output)
         summary = data.get("summary", {})
@@ -306,8 +301,10 @@ class TestSemanticDiffJSON:
         """JSON summary contains all expected count fields."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = json.loads(result.output)
         summary = data.get("summary", {})
@@ -322,8 +319,10 @@ class TestSemanticDiffJSON:
         """JSON output contains the expected top-level arrays."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = json.loads(result.output)
         assert "symbols_added" in data
@@ -341,8 +340,10 @@ class TestSemanticDiffJSON:
         """JSON output contains the base_ref field."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = json.loads(result.output)
         assert "base_ref" in data
@@ -366,8 +367,10 @@ class TestSemanticDiffJSON:
         """Added symbols have the expected dict keys."""
         monkeypatch.chdir(semantic_diff_project)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=semantic_diff_project, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=semantic_diff_project,
+            json_mode=True,
         )
         data = json.loads(result.output)
         added = data.get("symbols_added", [])
@@ -382,12 +385,14 @@ class TestSemanticDiffJSON:
 # Unit tests for internal comparison logic
 # ===========================================================================
 
+
 class TestComparisonHelpers:
     """Unit tests for the comparison functions."""
 
     def test_extract_params_simple(self):
         """Extract params from a simple Python signature."""
         from roam.commands.cmd_semantic_diff import _extract_params
+
         params = _extract_params("def process_data(items, strict=False)")
         assert "items" in params
         assert "strict" in params
@@ -395,18 +400,21 @@ class TestComparisonHelpers:
     def test_extract_params_empty(self):
         """Extract params from empty parens."""
         from roam.commands.cmd_semantic_diff import _extract_params
+
         params = _extract_params("def no_args()")
         assert params == []
 
     def test_extract_params_none(self):
         """Extract params from None returns empty."""
         from roam.commands.cmd_semantic_diff import _extract_params
+
         params = _extract_params(None)
         assert params == []
 
     def test_extract_params_typed(self):
         """Extract params from typed signature."""
         from roam.commands.cmd_semantic_diff import _extract_params
+
         params = _extract_params("def func(name: str, age: int)")
         assert "name" in params
         assert "age" in params
@@ -414,6 +422,7 @@ class TestComparisonHelpers:
     def test_count_lines(self):
         """Count lines from line_start/line_end."""
         from roam.commands.cmd_semantic_diff import _count_lines
+
         assert _count_lines({"line_start": 5, "line_end": 10}) == 6
         assert _count_lines({"line_start": 5, "line_end": 5}) == 1
         assert _count_lines({"line_start": None, "line_end": None}) is None
@@ -421,12 +430,14 @@ class TestComparisonHelpers:
     def test_sym_key(self):
         """Symbol key prefers qualified_name."""
         from roam.commands.cmd_semantic_diff import _sym_key
+
         assert _sym_key({"qualified_name": "Foo.bar", "name": "bar"}) == "Foo.bar"
         assert _sym_key({"name": "bar"}) == "bar"
 
     def test_compare_symbols_added(self):
         """Detect added symbols."""
         from roam.commands.cmd_semantic_diff import _compare_symbols
+
         old = [{"name": "a", "kind": "function", "line_start": 1, "line_end": 3}]
         new = [
             {"name": "a", "kind": "function", "line_start": 1, "line_end": 3},
@@ -440,6 +451,7 @@ class TestComparisonHelpers:
     def test_compare_symbols_removed(self):
         """Detect removed symbols."""
         from roam.commands.cmd_semantic_diff import _compare_symbols
+
         old = [
             {"name": "a", "kind": "function", "line_start": 1, "line_end": 3},
             {"name": "b", "kind": "function", "line_start": 5, "line_end": 8},
@@ -453,6 +465,7 @@ class TestComparisonHelpers:
     def test_compare_symbols_modified_body(self):
         """Detect body line count changes."""
         from roam.commands.cmd_semantic_diff import _compare_symbols
+
         old = [{"name": "a", "kind": "function", "line_start": 1, "line_end": 5}]
         new = [{"name": "a", "kind": "function", "line_start": 1, "line_end": 10}]
         added, removed, modified = _compare_symbols("test.py", old, new)
@@ -464,20 +477,25 @@ class TestComparisonHelpers:
     def test_compare_symbols_modified_signature(self):
         """Detect signature changes."""
         from roam.commands.cmd_semantic_diff import _compare_symbols
-        old = [{
-            "name": "func",
-            "kind": "function",
-            "signature": "def func(a, b)",
-            "line_start": 1,
-            "line_end": 5,
-        }]
-        new = [{
-            "name": "func",
-            "kind": "function",
-            "signature": "def func(a, b, c)",
-            "line_start": 1,
-            "line_end": 5,
-        }]
+
+        old = [
+            {
+                "name": "func",
+                "kind": "function",
+                "signature": "def func(a, b)",
+                "line_start": 1,
+                "line_end": 5,
+            }
+        ]
+        new = [
+            {
+                "name": "func",
+                "kind": "function",
+                "signature": "def func(a, b, c)",
+                "line_start": 1,
+                "line_end": 5,
+            }
+        ]
         added, removed, modified = _compare_symbols("test.py", old, new)
         assert len(modified) == 1
         assert "params" in modified[0]["changes"]
@@ -488,6 +506,7 @@ class TestComparisonHelpers:
     def test_compare_symbols_no_change(self):
         """Unchanged symbols produce no output."""
         from roam.commands.cmd_semantic_diff import _compare_symbols
+
         old = [{"name": "a", "kind": "function", "line_start": 1, "line_end": 5}]
         new = [{"name": "a", "kind": "function", "line_start": 1, "line_end": 5}]
         added, removed, modified = _compare_symbols("test.py", old, new)
@@ -498,6 +517,7 @@ class TestComparisonHelpers:
     def test_compare_imports_added(self):
         """Detect added imports."""
         from roam.commands.cmd_semantic_diff import _compare_imports
+
         old_refs = [
             {"kind": "import", "target_name": "os", "import_path": ""},
         ]
@@ -513,6 +533,7 @@ class TestComparisonHelpers:
     def test_compare_imports_removed(self):
         """Detect removed imports."""
         from roam.commands.cmd_semantic_diff import _compare_imports
+
         old_refs = [
             {"kind": "import", "target_name": "os", "import_path": ""},
             {"kind": "import", "target_name": "sys", "import_path": ""},
@@ -528,6 +549,7 @@ class TestComparisonHelpers:
     def test_compare_imports_with_path(self):
         """Import keys include import_path when present."""
         from roam.commands.cmd_semantic_diff import _compare_imports
+
         old_refs = []
         new_refs = [
             {"kind": "import_from", "target_name": "bar", "import_path": "foo"},
@@ -539,6 +561,7 @@ class TestComparisonHelpers:
     def test_compare_imports_ignores_calls(self):
         """Non-import references are ignored."""
         from roam.commands.cmd_semantic_diff import _compare_imports
+
         old_refs = [{"kind": "call", "target_name": "foo", "import_path": ""}]
         new_refs = []
         added, removed = _compare_imports("test.py", old_refs, new_refs)
@@ -549,6 +572,7 @@ class TestComparisonHelpers:
 # ===========================================================================
 # Edge case tests
 # ===========================================================================
+
 
 class TestSemanticDiffEdgeCases:
     """Edge case and robustness tests."""
@@ -562,23 +586,21 @@ class TestSemanticDiffEdgeCases:
         # Initial commit with one file
         src = proj / "src"
         src.mkdir()
-        (src / "old.py").write_text('def old_func():\n    pass\n')
+        (src / "old.py").write_text("def old_func():\n    pass\n")
         git_init(proj)
 
         # Add a new file (not committed -- working tree only)
-        (src / "new_module.py").write_text(
-            'def brand_new():\n'
-            '    """A brand new function."""\n'
-            '    return 1\n'
-        )
+        (src / "new_module.py").write_text('def brand_new():\n    """A brand new function."""\n    return 1\n')
 
         out, rc = index_in_process(proj)
         assert rc == 0, f"roam index failed:\n{out}"
 
         monkeypatch.chdir(proj)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=proj, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=proj,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -594,11 +616,9 @@ class TestSemanticDiffEdgeCases:
         src = proj / "src"
         src.mkdir()
         (src / "app.py").write_text(
-            'def will_be_deleted():\n'
-            '    """This function lives in a file that will be removed."""\n'
-            '    return 42\n'
+            'def will_be_deleted():\n    """This function lives in a file that will be removed."""\n    return 42\n'
         )
-        (src / "keep.py").write_text('def stay():\n    pass\n')
+        (src / "keep.py").write_text("def stay():\n    pass\n")
         git_init(proj)
 
         # Delete the file
@@ -609,8 +629,10 @@ class TestSemanticDiffEdgeCases:
 
         monkeypatch.chdir(proj)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
-            cwd=proj, json_mode=True,
+            cli_runner,
+            ["semantic-diff"],
+            cwd=proj,
+            json_mode=True,
         )
         assert result.exit_code == 0
         data = json.loads(result.output)
@@ -631,7 +653,8 @@ class TestSemanticDiffEdgeCases:
 
         monkeypatch.chdir(proj)
         result = invoke_cli(
-            cli_runner, ["semantic-diff"],
+            cli_runner,
+            ["semantic-diff"],
             cwd=proj,
         )
         assert result.exit_code == 0

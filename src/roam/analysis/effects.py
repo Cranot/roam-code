@@ -25,10 +25,21 @@ CACHE = "cache"
 QUEUE = "queue"
 LOGGING = "logging"
 
-ALL_EFFECTS = frozenset({
-    PURE, READS_DB, WRITES_DB, NETWORK, FILESYSTEM,
-    TIME, RANDOM, MUTATES_GLOBAL, CACHE, QUEUE, LOGGING,
-})
+ALL_EFFECTS = frozenset(
+    {
+        PURE,
+        READS_DB,
+        WRITES_DB,
+        NETWORK,
+        FILESYSTEM,
+        TIME,
+        RANDOM,
+        MUTATES_GLOBAL,
+        CACHE,
+        QUEUE,
+        LOGGING,
+    }
+)
 
 # ---------------------------------------------------------------------------
 # Framework-aware pattern dictionaries
@@ -38,240 +49,249 @@ ALL_EFFECTS = frozenset({
 # line_end). We compile once at import time for performance.
 # ---------------------------------------------------------------------------
 
+
 def _compile(patterns: list[tuple[str, str]]) -> list[tuple[re.Pattern, str]]:
     """Compile (regex_str, effect) pairs."""
     return [(re.compile(p, re.IGNORECASE), e) for p, e in patterns]
 
 
-_PYTHON_PATTERNS = _compile([
-    # Database writes
-    (r"\.save\s*\(", WRITES_DB),
-    (r"\.create\s*\(", WRITES_DB),
-    (r"\.delete\s*\(", WRITES_DB),
-    (r"\.update\s*\(", WRITES_DB),
-    (r"\.bulk_create\s*\(", WRITES_DB),
-    (r"\.bulk_update\s*\(", WRITES_DB),
-    (r"\.execute\s*\(", WRITES_DB),
-    (r"\.executemany\s*\(", WRITES_DB),
-    (r"cursor\.", WRITES_DB),
-    (r"\.commit\s*\(", WRITES_DB),
-    (r"\.add\s*\(", WRITES_DB),
-    (r"session\.flush", WRITES_DB),
-    (r"\.insert\s*\(", WRITES_DB),
-    # Database reads
-    (r"\.objects\.", READS_DB),
-    (r"\.filter\s*\(", READS_DB),
-    (r"\.get\s*\(", READS_DB),
-    (r"\.all\s*\(", READS_DB),
-    (r"\.select\s*\(", READS_DB),
-    (r"\.fetchone\s*\(", READS_DB),
-    (r"\.fetchall\s*\(", READS_DB),
-    (r"\.fetchmany\s*\(", READS_DB),
-    (r"\.query\s*\(", READS_DB),
-    # Network
-    (r"requests\.\w+\s*\(", NETWORK),
-    (r"httpx\.\w+\s*\(", NETWORK),
-    (r"urllib\.", NETWORK),
-    (r"aiohttp\.", NETWORK),
-    (r"urlopen\s*\(", NETWORK),
-    (r"socket\.", NETWORK),
-    (r"grpc\.", NETWORK),
-    # Filesystem
-    (r"\bopen\s*\(", FILESYSTEM),
-    (r"Path\s*\(", FILESYSTEM),
-    (r"\bos\.(?:path|remove|rename|mkdir|rmdir|listdir|walk|unlink|stat)", FILESYSTEM),
-    (r"shutil\.", FILESYSTEM),
-    (r"pathlib\.", FILESYSTEM),
-    (r"\.read_text\s*\(", FILESYSTEM),
-    (r"\.write_text\s*\(", FILESYSTEM),
-    (r"\.read_bytes\s*\(", FILESYSTEM),
-    (r"\.write_bytes\s*\(", FILESYSTEM),
-    # Time
-    (r"time\.\w+\s*\(", TIME),
-    (r"datetime\.", TIME),
-    (r"sleep\s*\(", TIME),
-    # Random
-    (r"random\.\w+\s*\(", RANDOM),
-    (r"secrets\.", RANDOM),
-    (r"uuid\.", RANDOM),
-    # Global mutation
-    (r"\bglobal\s+\w+", MUTATES_GLOBAL),
-    (r"os\.environ\[", MUTATES_GLOBAL),
-    # Cache
-    (r"@cache\b", CACHE),
-    (r"@lru_cache", CACHE),
-    (r"@cached", CACHE),
-    (r"\.cache\.", CACHE),
-    (r"redis\.", CACHE),
-    (r"memcache", CACHE),
-    # Queue
-    (r"\.send_message\s*\(", QUEUE),
-    (r"\.publish\s*\(", QUEUE),
-    (r"\.put\s*\(", QUEUE),
-    (r"celery\.", QUEUE),
-    (r"\.delay\s*\(", QUEUE),
-    (r"\.apply_async\s*\(", QUEUE),
-    # Logging
-    (r"logger\.\w+\s*\(", LOGGING),
-    (r"logging\.\w+\s*\(", LOGGING),
-    (r"\blog\.\w+\s*\(", LOGGING),
-    (r"print\s*\(", LOGGING),
-])
+_PYTHON_PATTERNS = _compile(
+    [
+        # Database writes
+        (r"\.save\s*\(", WRITES_DB),
+        (r"\.create\s*\(", WRITES_DB),
+        (r"\.delete\s*\(", WRITES_DB),
+        (r"\.update\s*\(", WRITES_DB),
+        (r"\.bulk_create\s*\(", WRITES_DB),
+        (r"\.bulk_update\s*\(", WRITES_DB),
+        (r"\.execute\s*\(", WRITES_DB),
+        (r"\.executemany\s*\(", WRITES_DB),
+        (r"cursor\.", WRITES_DB),
+        (r"\.commit\s*\(", WRITES_DB),
+        (r"\.add\s*\(", WRITES_DB),
+        (r"session\.flush", WRITES_DB),
+        (r"\.insert\s*\(", WRITES_DB),
+        # Database reads
+        (r"\.objects\.", READS_DB),
+        (r"\.filter\s*\(", READS_DB),
+        (r"\.get\s*\(", READS_DB),
+        (r"\.all\s*\(", READS_DB),
+        (r"\.select\s*\(", READS_DB),
+        (r"\.fetchone\s*\(", READS_DB),
+        (r"\.fetchall\s*\(", READS_DB),
+        (r"\.fetchmany\s*\(", READS_DB),
+        (r"\.query\s*\(", READS_DB),
+        # Network
+        (r"requests\.\w+\s*\(", NETWORK),
+        (r"httpx\.\w+\s*\(", NETWORK),
+        (r"urllib\.", NETWORK),
+        (r"aiohttp\.", NETWORK),
+        (r"urlopen\s*\(", NETWORK),
+        (r"socket\.", NETWORK),
+        (r"grpc\.", NETWORK),
+        # Filesystem
+        (r"\bopen\s*\(", FILESYSTEM),
+        (r"Path\s*\(", FILESYSTEM),
+        (r"\bos\.(?:path|remove|rename|mkdir|rmdir|listdir|walk|unlink|stat)", FILESYSTEM),
+        (r"shutil\.", FILESYSTEM),
+        (r"pathlib\.", FILESYSTEM),
+        (r"\.read_text\s*\(", FILESYSTEM),
+        (r"\.write_text\s*\(", FILESYSTEM),
+        (r"\.read_bytes\s*\(", FILESYSTEM),
+        (r"\.write_bytes\s*\(", FILESYSTEM),
+        # Time
+        (r"time\.\w+\s*\(", TIME),
+        (r"datetime\.", TIME),
+        (r"sleep\s*\(", TIME),
+        # Random
+        (r"random\.\w+\s*\(", RANDOM),
+        (r"secrets\.", RANDOM),
+        (r"uuid\.", RANDOM),
+        # Global mutation
+        (r"\bglobal\s+\w+", MUTATES_GLOBAL),
+        (r"os\.environ\[", MUTATES_GLOBAL),
+        # Cache
+        (r"@cache\b", CACHE),
+        (r"@lru_cache", CACHE),
+        (r"@cached", CACHE),
+        (r"\.cache\.", CACHE),
+        (r"redis\.", CACHE),
+        (r"memcache", CACHE),
+        # Queue
+        (r"\.send_message\s*\(", QUEUE),
+        (r"\.publish\s*\(", QUEUE),
+        (r"\.put\s*\(", QUEUE),
+        (r"celery\.", QUEUE),
+        (r"\.delay\s*\(", QUEUE),
+        (r"\.apply_async\s*\(", QUEUE),
+        # Logging
+        (r"logger\.\w+\s*\(", LOGGING),
+        (r"logging\.\w+\s*\(", LOGGING),
+        (r"\blog\.\w+\s*\(", LOGGING),
+        (r"print\s*\(", LOGGING),
+    ]
+)
 
-_JAVASCRIPT_PATTERNS = _compile([
-    # Network
-    (r"\bfetch\s*\(", NETWORK),
-    (r"axios\.\w+\s*\(", NETWORK),
-    (r"XMLHttpRequest", NETWORK),
-    (r"\.ajax\s*\(", NETWORK),
-    (r"http\.\w+\s*\(", NETWORK),
-    (r"ws\.send\s*\(", NETWORK),
-    (r"WebSocket\s*\(", NETWORK),
-    # Database writes
-    (r"\.save\s*\(", WRITES_DB),
-    (r"\.create\s*\(", WRITES_DB),
-    (r"\.insertOne\s*\(", WRITES_DB),
-    (r"\.insertMany\s*\(", WRITES_DB),
-    (r"\.updateOne\s*\(", WRITES_DB),
-    (r"\.updateMany\s*\(", WRITES_DB),
-    (r"\.deleteOne\s*\(", WRITES_DB),
-    (r"\.deleteMany\s*\(", WRITES_DB),
-    (r"\.destroy\s*\(", WRITES_DB),
-    (r"\.execute\s*\(", WRITES_DB),
-    (r"\.query\s*\(", WRITES_DB),
-    (r"\.run\s*\(", WRITES_DB),
-    # Database reads
-    (r"\.find\s*\(", READS_DB),
-    (r"\.findOne\s*\(", READS_DB),
-    (r"\.findById\s*\(", READS_DB),
-    (r"\.findAll\s*\(", READS_DB),
-    (r"\.select\s*\(", READS_DB),
-    (r"\.where\s*\(", READS_DB),
-    # Filesystem
-    (r"fs\.\w+\s*\(", FILESYSTEM),
-    (r"readFile\w*\s*\(", FILESYSTEM),
-    (r"writeFile\w*\s*\(", FILESYSTEM),
-    (r"\.createReadStream\s*\(", FILESYSTEM),
-    (r"\.createWriteStream\s*\(", FILESYSTEM),
-    # Time
-    (r"setTimeout\s*\(", TIME),
-    (r"setInterval\s*\(", TIME),
-    (r"Date\.\w+\s*\(", TIME),
-    (r"new Date\s*\(", TIME),
-    # Random
-    (r"Math\.random\s*\(", RANDOM),
-    (r"crypto\.random", RANDOM),
-    # Global mutation
-    (r"globalThis\.", MUTATES_GLOBAL),
-    (r"window\.\w+\s*=", MUTATES_GLOBAL),
-    (r"process\.env\.", MUTATES_GLOBAL),
-    # Cache
-    (r"localStorage\.", CACHE),
-    (r"sessionStorage\.", CACHE),
-    (r"\.setItem\s*\(", CACHE),
-    (r"\.getItem\s*\(", CACHE),
-    # Queue
-    (r"\.emit\s*\(", QUEUE),
-    (r"\.publish\s*\(", QUEUE),
-    (r"\.postMessage\s*\(", QUEUE),
-    # Logging
-    (r"console\.\w+\s*\(", LOGGING),
-])
+_JAVASCRIPT_PATTERNS = _compile(
+    [
+        # Network
+        (r"\bfetch\s*\(", NETWORK),
+        (r"axios\.\w+\s*\(", NETWORK),
+        (r"XMLHttpRequest", NETWORK),
+        (r"\.ajax\s*\(", NETWORK),
+        (r"http\.\w+\s*\(", NETWORK),
+        (r"ws\.send\s*\(", NETWORK),
+        (r"WebSocket\s*\(", NETWORK),
+        # Database writes
+        (r"\.save\s*\(", WRITES_DB),
+        (r"\.create\s*\(", WRITES_DB),
+        (r"\.insertOne\s*\(", WRITES_DB),
+        (r"\.insertMany\s*\(", WRITES_DB),
+        (r"\.updateOne\s*\(", WRITES_DB),
+        (r"\.updateMany\s*\(", WRITES_DB),
+        (r"\.deleteOne\s*\(", WRITES_DB),
+        (r"\.deleteMany\s*\(", WRITES_DB),
+        (r"\.destroy\s*\(", WRITES_DB),
+        (r"\.execute\s*\(", WRITES_DB),
+        (r"\.query\s*\(", WRITES_DB),
+        (r"\.run\s*\(", WRITES_DB),
+        # Database reads
+        (r"\.find\s*\(", READS_DB),
+        (r"\.findOne\s*\(", READS_DB),
+        (r"\.findById\s*\(", READS_DB),
+        (r"\.findAll\s*\(", READS_DB),
+        (r"\.select\s*\(", READS_DB),
+        (r"\.where\s*\(", READS_DB),
+        # Filesystem
+        (r"fs\.\w+\s*\(", FILESYSTEM),
+        (r"readFile\w*\s*\(", FILESYSTEM),
+        (r"writeFile\w*\s*\(", FILESYSTEM),
+        (r"\.createReadStream\s*\(", FILESYSTEM),
+        (r"\.createWriteStream\s*\(", FILESYSTEM),
+        # Time
+        (r"setTimeout\s*\(", TIME),
+        (r"setInterval\s*\(", TIME),
+        (r"Date\.\w+\s*\(", TIME),
+        (r"new Date\s*\(", TIME),
+        # Random
+        (r"Math\.random\s*\(", RANDOM),
+        (r"crypto\.random", RANDOM),
+        # Global mutation
+        (r"globalThis\.", MUTATES_GLOBAL),
+        (r"window\.\w+\s*=", MUTATES_GLOBAL),
+        (r"process\.env\.", MUTATES_GLOBAL),
+        # Cache
+        (r"localStorage\.", CACHE),
+        (r"sessionStorage\.", CACHE),
+        (r"\.setItem\s*\(", CACHE),
+        (r"\.getItem\s*\(", CACHE),
+        # Queue
+        (r"\.emit\s*\(", QUEUE),
+        (r"\.publish\s*\(", QUEUE),
+        (r"\.postMessage\s*\(", QUEUE),
+        # Logging
+        (r"console\.\w+\s*\(", LOGGING),
+    ]
+)
 
-_PHP_PATTERNS = _compile([
-    # Database writes
-    (r"->save\s*\(", WRITES_DB),
-    (r"::create\s*\(", WRITES_DB),
-    (r"->insert\s*\(", WRITES_DB),
-    (r"->update\s*\(", WRITES_DB),
-    (r"->delete\s*\(", WRITES_DB),
-    (r"DB::insert\b", WRITES_DB),
-    (r"DB::update\b", WRITES_DB),
-    (r"DB::delete\b", WRITES_DB),
-    (r"DB::statement\b", WRITES_DB),
-    (r"->execute\s*\(", WRITES_DB),
-    (r"->exec\s*\(", WRITES_DB),
-    # Database reads
-    (r"DB::select\b", READS_DB),
-    (r"DB::table\b", READS_DB),
-    (r"->get\s*\(", READS_DB),
-    (r"->find\s*\(", READS_DB),
-    (r"->first\s*\(", READS_DB),
-    (r"->where\s*\(", READS_DB),
-    (r"->select\s*\(", READS_DB),
-    (r"->fetchAll\s*\(", READS_DB),
-    (r"->fetch\s*\(", READS_DB),
-    # Network
-    (r"curl_\w+\s*\(", NETWORK),
-    (r"file_get_contents\s*\(", NETWORK),
-    (r"Http::", NETWORK),
-    (r"Guzzle", NETWORK),
-    (r"->request\s*\(", NETWORK),
-    # Filesystem
-    (r"fopen\s*\(", FILESYSTEM),
-    (r"fwrite\s*\(", FILESYSTEM),
-    (r"fread\s*\(", FILESYSTEM),
-    (r"file_put_contents\s*\(", FILESYSTEM),
-    (r"unlink\s*\(", FILESYSTEM),
-    (r"mkdir\s*\(", FILESYSTEM),
-    (r"rmdir\s*\(", FILESYSTEM),
-    (r"is_file\s*\(", FILESYSTEM),
-    # Time
-    (r"time\s*\(", TIME),
-    (r"strtotime\s*\(", TIME),
-    (r"Carbon::", TIME),
-    (r"new DateTime\b", TIME),
-    (r"sleep\s*\(", TIME),
-    # Random
-    (r"rand\s*\(", RANDOM),
-    (r"mt_rand\s*\(", RANDOM),
-    (r"random_\w+\s*\(", RANDOM),
-    (r"Str::random\s*\(", RANDOM),
-    # Global mutation
-    (r"\$GLOBALS\[", MUTATES_GLOBAL),
-    (r"\$_SESSION\[", MUTATES_GLOBAL),
-    (r"putenv\s*\(", MUTATES_GLOBAL),
-    # Cache
-    (r"Cache::", CACHE),
-    (r"->remember\s*\(", CACHE),
-    (r"->forever\s*\(", CACHE),
-    (r"Redis::", CACHE),
-    # Queue
-    (r"dispatch\s*\(", QUEUE),
-    (r"Queue::", QUEUE),
-    (r"->onQueue\s*\(", QUEUE),
-    (r"Event::", QUEUE),
-    # Logging
-    (r"Log::", LOGGING),
-    (r"->info\s*\(", LOGGING),
-    (r"->error\s*\(", LOGGING),
-    (r"->warning\s*\(", LOGGING),
-    (r"error_log\s*\(", LOGGING),
-])
+_PHP_PATTERNS = _compile(
+    [
+        # Database writes
+        (r"->save\s*\(", WRITES_DB),
+        (r"::create\s*\(", WRITES_DB),
+        (r"->insert\s*\(", WRITES_DB),
+        (r"->update\s*\(", WRITES_DB),
+        (r"->delete\s*\(", WRITES_DB),
+        (r"DB::insert\b", WRITES_DB),
+        (r"DB::update\b", WRITES_DB),
+        (r"DB::delete\b", WRITES_DB),
+        (r"DB::statement\b", WRITES_DB),
+        (r"->execute\s*\(", WRITES_DB),
+        (r"->exec\s*\(", WRITES_DB),
+        # Database reads
+        (r"DB::select\b", READS_DB),
+        (r"DB::table\b", READS_DB),
+        (r"->get\s*\(", READS_DB),
+        (r"->find\s*\(", READS_DB),
+        (r"->first\s*\(", READS_DB),
+        (r"->where\s*\(", READS_DB),
+        (r"->select\s*\(", READS_DB),
+        (r"->fetchAll\s*\(", READS_DB),
+        (r"->fetch\s*\(", READS_DB),
+        # Network
+        (r"curl_\w+\s*\(", NETWORK),
+        (r"file_get_contents\s*\(", NETWORK),
+        (r"Http::", NETWORK),
+        (r"Guzzle", NETWORK),
+        (r"->request\s*\(", NETWORK),
+        # Filesystem
+        (r"fopen\s*\(", FILESYSTEM),
+        (r"fwrite\s*\(", FILESYSTEM),
+        (r"fread\s*\(", FILESYSTEM),
+        (r"file_put_contents\s*\(", FILESYSTEM),
+        (r"unlink\s*\(", FILESYSTEM),
+        (r"mkdir\s*\(", FILESYSTEM),
+        (r"rmdir\s*\(", FILESYSTEM),
+        (r"is_file\s*\(", FILESYSTEM),
+        # Time
+        (r"time\s*\(", TIME),
+        (r"strtotime\s*\(", TIME),
+        (r"Carbon::", TIME),
+        (r"new DateTime\b", TIME),
+        (r"sleep\s*\(", TIME),
+        # Random
+        (r"rand\s*\(", RANDOM),
+        (r"mt_rand\s*\(", RANDOM),
+        (r"random_\w+\s*\(", RANDOM),
+        (r"Str::random\s*\(", RANDOM),
+        # Global mutation
+        (r"\$GLOBALS\[", MUTATES_GLOBAL),
+        (r"\$_SESSION\[", MUTATES_GLOBAL),
+        (r"putenv\s*\(", MUTATES_GLOBAL),
+        # Cache
+        (r"Cache::", CACHE),
+        (r"->remember\s*\(", CACHE),
+        (r"->forever\s*\(", CACHE),
+        (r"Redis::", CACHE),
+        # Queue
+        (r"dispatch\s*\(", QUEUE),
+        (r"Queue::", QUEUE),
+        (r"->onQueue\s*\(", QUEUE),
+        (r"Event::", QUEUE),
+        # Logging
+        (r"Log::", LOGGING),
+        (r"->info\s*\(", LOGGING),
+        (r"->error\s*\(", LOGGING),
+        (r"->warning\s*\(", LOGGING),
+        (r"error_log\s*\(", LOGGING),
+    ]
+)
 
-_GO_PATTERNS = _compile([
-    # Database
-    (r"\.Query\w*\s*\(", READS_DB),
-    (r"\.Exec\w*\s*\(", WRITES_DB),
-    (r"\.Prepare\s*\(", READS_DB),
-    (r"tx\.Commit\s*\(", WRITES_DB),
-    # Network
-    (r"http\.\w+\s*\(", NETWORK),
-    (r"net\.Dial\w*\s*\(", NETWORK),
-    (r"grpc\.", NETWORK),
-    # Filesystem
-    (r"os\.(?:Open|Create|Remove|Mkdir|ReadFile|WriteFile|Stat)", FILESYSTEM),
-    (r"ioutil\.", FILESYSTEM),
-    (r"io\.Read", FILESYSTEM),
-    # Time
-    (r"time\.Now\s*\(", TIME),
-    (r"time\.Sleep\s*\(", TIME),
-    # Random
-    (r"rand\.\w+\s*\(", RANDOM),
-    # Logging
-    (r"log\.\w+\s*\(", LOGGING),
-    (r"fmt\.Print", LOGGING),
-])
+_GO_PATTERNS = _compile(
+    [
+        # Database
+        (r"\.Query\w*\s*\(", READS_DB),
+        (r"\.Exec\w*\s*\(", WRITES_DB),
+        (r"\.Prepare\s*\(", READS_DB),
+        (r"tx\.Commit\s*\(", WRITES_DB),
+        # Network
+        (r"http\.\w+\s*\(", NETWORK),
+        (r"net\.Dial\w*\s*\(", NETWORK),
+        (r"grpc\.", NETWORK),
+        # Filesystem
+        (r"os\.(?:Open|Create|Remove|Mkdir|ReadFile|WriteFile|Stat)", FILESYSTEM),
+        (r"ioutil\.", FILESYSTEM),
+        (r"io\.Read", FILESYSTEM),
+        # Time
+        (r"time\.Now\s*\(", TIME),
+        (r"time\.Sleep\s*\(", TIME),
+        # Random
+        (r"rand\.\w+\s*\(", RANDOM),
+        # Logging
+        (r"log\.\w+\s*\(", LOGGING),
+        (r"fmt\.Print", LOGGING),
+    ]
+)
 
 # Language -> pattern list mapping
 _LANGUAGE_PATTERNS: dict[str, list[tuple[re.Pattern, str]]] = {
@@ -289,16 +309,25 @@ _LANGUAGE_PATTERNS: dict[str, list[tuple[re.Pattern, str]]] = {
 # String/comment exclusion via tree-sitter
 # ---------------------------------------------------------------------------
 
-_STRING_COMMENT_TYPES = frozenset({
-    "string", "string_literal", "template_string", "raw_string",
-    "comment", "line_comment", "block_comment",
-    "string_content", "interpreted_string_literal",
-    "encapsed_string", "heredoc_body", "nowdoc_body",
-})
+_STRING_COMMENT_TYPES = frozenset(
+    {
+        "string",
+        "string_literal",
+        "template_string",
+        "raw_string",
+        "comment",
+        "line_comment",
+        "block_comment",
+        "string_content",
+        "interpreted_string_literal",
+        "encapsed_string",
+        "heredoc_body",
+        "nowdoc_body",
+    }
+)
 
 
-def _collect_excluded_ranges(tree, source: bytes,
-                             line_start: int, line_end: int) -> list[tuple[int, int]]:
+def _collect_excluded_ranges(tree, source: bytes, line_start: int, line_end: int) -> list[tuple[int, int]]:
     """Collect byte ranges of strings/comments within [line_start, line_end].
 
     Returns list of (start_byte, end_byte) that should be excluded from
@@ -318,8 +347,7 @@ def _collect_excluded_ranges(tree, source: bytes,
         if node.end_byte <= body_start_byte or node.start_byte >= body_end_byte:
             return
         if node.type in _STRING_COMMENT_TYPES:
-            ranges.append((node.start_byte - body_start_byte,
-                           node.end_byte - body_start_byte))
+            ranges.append((node.start_byte - body_start_byte, node.end_byte - body_start_byte))
             return
         for child in node.children:
             _walk(child)
@@ -425,13 +453,16 @@ def classify_file_effects(
         le = row["line_end"] or len(lines)
 
         # Extract body text (1-based lines)
-        body_lines = lines[max(0, ls - 1):le]
+        body_lines = lines[max(0, ls - 1) : le]
         body_text = "\n".join(body_lines)
 
         effects = classify_symbol_effects(
-            body_text, language,
-            tree=tree, source=source,
-            line_start=ls, line_end=le,
+            body_text,
+            language,
+            tree=tree,
+            source=source,
+            line_start=ls,
+            line_end=le,
         )
         if effects:
             results[sym_id] = effects
@@ -548,8 +579,7 @@ def store_effects(
 
     if rows:
         conn.executemany(
-            "INSERT INTO symbol_effects (symbol_id, effect_type, source) "
-            "VALUES (?, ?, ?)",
+            "INSERT INTO symbol_effects (symbol_id, effect_type, source) VALUES (?, ?, ?)",
             rows,
         )
 
@@ -588,7 +618,11 @@ def compute_and_store_effects(conn, root, G=None):
         tree, parsed_source, lang = parse_file(full_path, language)
 
         effects = classify_file_effects(
-            conn, file_id, source, language, tree=tree,
+            conn,
+            file_id,
+            source,
+            language,
+            tree=tree,
         )
         direct_effects.update(effects)
 

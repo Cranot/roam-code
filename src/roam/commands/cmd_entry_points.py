@@ -7,11 +7,10 @@ from collections import defaultdict
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import abbrev_kind, loc, format_table, to_json, json_envelope
+from roam.commands.graph_helpers import bfs_reachable, build_forward_adj
 from roam.commands.resolve import ensure_index
-from roam.commands.graph_helpers import build_forward_adj, bfs_reachable
-
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
 # Protocol classification
@@ -23,63 +22,78 @@ from roam.commands.graph_helpers import build_forward_adj, bfs_reachable
 
 _DECORATOR_PATTERNS = [
     # HTTP
-    ("HTTP", re.compile(
-        r"@(?:app|router|blueprint|bp)\."
-        r"(?:route|get|post|put|patch|delete|head|options)"
-        r"|@(?:Get|Post|Put|Patch|Delete|Request)Mapping"
-        r"|@api_view"
-        r"|@action"
-        r"|@require_http_methods"
-        r"|@csrf_exempt"
-        r"|http\.Handle"
-        r"|\.get\(|\.post\(|\.put\(|\.delete\(",
-        re.IGNORECASE,
-    )),
+    (
+        "HTTP",
+        re.compile(
+            r"@(?:app|router|blueprint|bp)\."
+            r"(?:route|get|post|put|patch|delete|head|options)"
+            r"|@(?:Get|Post|Put|Patch|Delete|Request)Mapping"
+            r"|@api_view"
+            r"|@action"
+            r"|@require_http_methods"
+            r"|@csrf_exempt"
+            r"|http\.Handle"
+            r"|\.get\(|\.post\(|\.put\(|\.delete\(",
+            re.IGNORECASE,
+        ),
+    ),
     # CLI
-    ("CLI", re.compile(
-        r"@click\.(?:command|group)"
-        r"|@(?:cli|app)\.command"
-        r"|argparse"
-        r"|sys\.argv"
-        r"|add_argument\("
-        r"|@Cli",
-        re.IGNORECASE,
-    )),
+    (
+        "CLI",
+        re.compile(
+            r"@click\.(?:command|group)"
+            r"|@(?:cli|app)\.command"
+            r"|argparse"
+            r"|sys\.argv"
+            r"|add_argument\("
+            r"|@Cli",
+            re.IGNORECASE,
+        ),
+    ),
     # Scheduled / periodic
-    ("Scheduled", re.compile(
-        r"@(?:schedule|periodic_task|crontab|celery_task)"
-        r"|@shared_task"
-        r"|@task\("
-        r"|cron"
-        r"|@Scheduled",
-        re.IGNORECASE,
-    )),
+    (
+        "Scheduled",
+        re.compile(
+            r"@(?:schedule|periodic_task|crontab|celery_task)"
+            r"|@shared_task"
+            r"|@task\("
+            r"|cron"
+            r"|@Scheduled",
+            re.IGNORECASE,
+        ),
+    ),
     # Message / queue
-    ("Message", re.compile(
-        r"@subscribe"
-        r"|@consume"
-        r"|@listener"
-        r"|@queue"
-        r"|@on_message"
-        r"|@SqsListener"
-        r"|@RabbitListener"
-        r"|@KafkaListener"
-        r"|message_handler"
-        r"|consumer",
-        re.IGNORECASE,
-    )),
+    (
+        "Message",
+        re.compile(
+            r"@subscribe"
+            r"|@consume"
+            r"|@listener"
+            r"|@queue"
+            r"|@on_message"
+            r"|@SqsListener"
+            r"|@RabbitListener"
+            r"|@KafkaListener"
+            r"|message_handler"
+            r"|consumer",
+            re.IGNORECASE,
+        ),
+    ),
     # Event
-    ("Event", re.compile(
-        r"@on_event"
-        r"|@event_handler"
-        r"|@receiver"
-        r"|\.on\("
-        r"|addEventListener"
-        r"|@HostListener"
-        r"|EventHandler"
-        r"|event_listener",
-        re.IGNORECASE,
-    )),
+    (
+        "Event",
+        re.compile(
+            r"@on_event"
+            r"|@event_handler"
+            r"|@receiver"
+            r"|\.on\("
+            r"|addEventListener"
+            r"|@HostListener"
+            r"|EventHandler"
+            r"|event_listener",
+            re.IGNORECASE,
+        ),
+    ),
 ]
 
 # Name-based patterns (tested against symbol name when signature gives no hit)
@@ -121,6 +135,7 @@ def _classify_protocol(name, signature):
 # ---------------------------------------------------------------------------
 # Core query: find entry-point symbols
 # ---------------------------------------------------------------------------
+
 
 def _find_entry_point_symbols(conn, protocol_filter, limit):
     """Return a list of dicts describing each entry point symbol.
@@ -171,16 +186,18 @@ def _find_entry_point_symbols(conn, protocol_filter, limit):
         if protocol_filter and proto.lower() != protocol_filter.lower():
             return
         seen_ids.add(row["id"])
-        entries.append({
-            "id": row["id"],
-            "name": row["qualified_name"] or row["name"],
-            "kind": row["kind"],
-            "protocol": proto,
-            "file": row["file_path"],
-            "line": row["line_start"],
-            "fan_out": row["out_degree"] or 0,
-            "is_exported": bool(row["is_exported"]),
-        })
+        entries.append(
+            {
+                "id": row["id"],
+                "name": row["qualified_name"] or row["name"],
+                "kind": row["kind"],
+                "protocol": proto,
+                "file": row["file_path"],
+                "line": row["line_start"],
+                "fan_out": row["out_degree"] or 0,
+                "is_exported": bool(row["is_exported"]),
+            }
+        )
 
     # Phase 1 results
     for r in rows_zero:
@@ -196,10 +213,12 @@ def _find_entry_point_symbols(conn, protocol_filter, limit):
 
     # Sort by protocol then fan_out descending
     protocol_order = ["HTTP", "CLI", "Event", "Scheduled", "Message", "Main", "Export"]
-    entries.sort(key=lambda e: (
-        protocol_order.index(e["protocol"]) if e["protocol"] in protocol_order else 99,
-        -e["fan_out"],
-    ))
+    entries.sort(
+        key=lambda e: (
+            protocol_order.index(e["protocol"]) if e["protocol"] in protocol_order else 99,
+            -e["fan_out"],
+        )
+    )
 
     if limit:
         entries = entries[:limit]
@@ -210,6 +229,7 @@ def _find_entry_point_symbols(conn, protocol_filter, limit):
 # ---------------------------------------------------------------------------
 # Coverage: % of total symbols reachable from each entry point
 # ---------------------------------------------------------------------------
+
 
 def _compute_coverage(conn, entries, adj):
     """Add a 'coverage_pct' field to each entry dict."""
@@ -228,15 +248,19 @@ def _compute_coverage(conn, entries, adj):
 # CLI command
 # ---------------------------------------------------------------------------
 
+
 @click.command("entry-points")
-@click.option("--protocol", "protocol_filter", default=None,
-              type=click.Choice(
-                  ["HTTP", "CLI", "Event", "Scheduled", "Message", "Main", "Export"],
-                  case_sensitive=False,
-              ),
-              help="Show only entry points of this protocol type.")
-@click.option("--limit", default=50, show_default=True,
-              help="Maximum number of entry points to display.")
+@click.option(
+    "--protocol",
+    "protocol_filter",
+    default=None,
+    type=click.Choice(
+        ["HTTP", "CLI", "Event", "Scheduled", "Message", "Main", "Export"],
+        case_sensitive=False,
+    ),
+    help="Show only entry points of this protocol type.",
+)
+@click.option("--limit", default=50, show_default=True, help="Maximum number of entry points to display.")
 @click.pass_context
 def entry_points(ctx, protocol_filter, limit):
     """Entry point catalog with protocol classification.
@@ -255,10 +279,15 @@ def entry_points(ctx, protocol_filter, limit):
 
         if not entries:
             if json_mode:
-                click.echo(to_json(json_envelope("entry-points",
-                    summary={"total": 0, "note": "no entry points found"},
-                    entry_points=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "entry-points",
+                            summary={"total": 0, "note": "no entry points found"},
+                            entry_points=[],
+                        )
+                    )
+                )
             else:
                 click.echo("No entry points found.")
             return
@@ -279,17 +308,20 @@ def entry_points(ctx, protocol_filter, limit):
             for e in entries:
                 clean.append({k: v for k, v in e.items() if k != "id"})
 
-            protocol_summary = {
-                proto: len(items) for proto, items in by_protocol.items()
-            }
+            protocol_summary = {proto: len(items) for proto, items in by_protocol.items()}
 
-            click.echo(to_json(json_envelope("entry-points",
-                summary={
-                    "total": len(entries),
-                    "by_protocol": protocol_summary,
-                },
-                entry_points=clean,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "entry-points",
+                        summary={
+                            "total": len(entries),
+                            "by_protocol": protocol_summary,
+                        },
+                        entry_points=clean,
+                    )
+                )
+            )
             return
 
         # --- Text output ----------------------------------------------
@@ -307,16 +339,20 @@ def entry_points(ctx, protocol_filter, limit):
             click.echo(f"-- {proto} ({len(items)}) --")
             rows = []
             for e in items:
-                rows.append([
-                    e["name"],
-                    abbrev_kind(e["kind"]),
-                    loc(e["file"], e["line"]),
-                    str(e["fan_out"]),
-                    f"{e['coverage_pct']}%",
-                ])
-            click.echo(format_table(
-                ["Name", "Kind", "Location", "Fan-out", "Coverage"],
-                rows,
-                budget=30,
-            ))
+                rows.append(
+                    [
+                        e["name"],
+                        abbrev_kind(e["kind"]),
+                        loc(e["file"], e["line"]),
+                        str(e["fan_out"]),
+                        f"{e['coverage_pct']}%",
+                    ]
+                )
+            click.echo(
+                format_table(
+                    ["Name", "Kind", "Location", "Fan-out", "Coverage"],
+                    rows,
+                    budget=30,
+                )
+            )
             click.echo()

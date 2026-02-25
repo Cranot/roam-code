@@ -19,10 +19,14 @@ ENVELOPE_SCHEMA = {
     },
     "changelog": [
         {"version": "1.0.0", "date": "2026-02-20", "changes": ["Initial schema version"]},
-        {"version": "1.1.0", "date": "2026-02-22", "changes": [
-            "Moved timestamp and index_age_s to _meta sub-dict for deterministic output",
-            "Added sort_keys=True to JSON serialization for LLM prompt-caching compatibility",
-        ]},
+        {
+            "version": "1.1.0",
+            "date": "2026-02-22",
+            "changes": [
+                "Moved timestamp and index_age_s to _meta sub-dict for deterministic output",
+                "Added sort_keys=True to JSON serialization for LLM prompt-caching compatibility",
+            ],
+        },
     ],
 }
 

@@ -2,16 +2,15 @@
 
 from __future__ import annotations
 
-from collections import defaultdict, deque
 import re
+from collections import defaultdict, deque
 
 import click
 
-from roam.db.connection import open_db, find_project_root, batched_in
-from roam.output.formatter import to_json, json_envelope, summary_envelope
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
-from roam.commands.next_steps import suggest_next_steps, format_next_steps_text
-
+from roam.db.connection import batched_in, find_project_root, open_db
+from roam.output.formatter import json_envelope, summary_envelope, to_json
 
 _SEVERITY_ORDER = {"critical": 0, "high": 1, "medium": 2}
 _ENTRYPOINT_HINT = re.compile(
@@ -193,9 +192,7 @@ def _find_symbol_for_line(spans: list[dict], line_no: int) -> dict | None:
 
 
 def _compute_entrypoint_distances(conn) -> tuple[dict[int, int], int]:
-    edges = conn.execute(
-        "SELECT source_id, target_id FROM edges"
-    ).fetchall()
+    edges = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
     adj: dict[int, set[int]] = defaultdict(set)
     for row in edges:
         src = int(row["source_id"])
@@ -294,11 +291,7 @@ def _compute_security_hotspots(conn) -> dict:
                         "severity": sink["severity"],
                         "recommendation": sink["recommendation"],
                         "symbol_id": symbol["id"] if symbol else None,
-                        "symbol": (
-                            symbol["qualified_name"] or symbol["name"]
-                            if symbol
-                            else None
-                        ),
+                        "symbol": (symbol["qualified_name"] or symbol["name"] if symbol else None),
                         "code": line.strip()[:160],
                     }
                 )
@@ -458,9 +451,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
                 if item["code"]:
                     click.echo(f"    code: {item['code']}")
                 if item["reachable_from_entrypoint"]:
-                    click.echo(
-                        f"    entrypoint distance: {item['hops_from_entrypoint']} hop(s)"
-                    )
+                    click.echo(f"    entrypoint distance: {item['hops_from_entrypoint']} hop(s)")
                 click.echo(f"    recommendation: {item['recommendation']}")
                 click.echo()
         return
@@ -473,14 +464,22 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
             conn.execute("SELECT COUNT(*) FROM runtime_stats")
         except Exception:
             if json_mode:
-                click.echo(to_json(json_envelope("hotspots",
-                    budget=token_budget,
-                    summary={
-                        "verdict": "No runtime data. Run `roam ingest-trace` first.",
-                        "total": 0, "upgrades": 0, "confirmed": 0, "downgrades": 0,
-                    },
-                    hotspots=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "hotspots",
+                            budget=token_budget,
+                            summary={
+                                "verdict": "No runtime data. Run `roam ingest-trace` first.",
+                                "total": 0,
+                                "upgrades": 0,
+                                "confirmed": 0,
+                                "downgrades": 0,
+                            },
+                            hotspots=[],
+                        )
+                    )
+                )
             else:
                 click.echo("VERDICT: No runtime data. Run `roam ingest-trace` first.")
             return
@@ -502,11 +501,15 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
     verdict = f"{total} runtime hotspots ({hidden} hidden -- static analysis missed them)"
 
     if json_mode:
-        next_steps = suggest_next_steps("hotspots", {
-            "upgrades": upgrades,
-            "total": total,
-        })
-        envelope = json_envelope("hotspots",
+        next_steps = suggest_next_steps(
+            "hotspots",
+            {
+                "upgrades": upgrades,
+                "total": total,
+            },
+        )
+        envelope = json_envelope(
+            "hotspots",
             budget=token_budget,
             summary={
                 "verdict": verdict,
@@ -542,10 +545,15 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
 
     if not items:
         click.echo("  (no runtime data ingested)")
-        ns_text = format_next_steps_text(suggest_next_steps("hotspots", {
-            "upgrades": upgrades,
-            "total": total,
-        }))
+        ns_text = format_next_steps_text(
+            suggest_next_steps(
+                "hotspots",
+                {
+                    "upgrades": upgrades,
+                    "total": total,
+                },
+            )
+        )
         if ns_text:
             click.echo(ns_text)
         return
@@ -573,22 +581,26 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
 
         calls_str = f"{rs['call_count']}"
         if rs["call_count"] >= 1000:
-            calls_str = f"{rs['call_count'] / 1000:.0f}K" if rs["call_count"] < 1_000_000 else f"{rs['call_count'] / 1_000_000:.1f}M"
+            calls_str = (
+                f"{rs['call_count'] / 1000:.0f}K"
+                if rs["call_count"] < 1_000_000
+                else f"{rs['call_count'] / 1_000_000:.1f}M"
+            )
 
         p99_str = f"p99={rs['p99_latency_ms']:.0f}ms" if rs["p99_latency_ms"] is not None else "p99=n/a"
         err_str = f"err={rs['error_rate'] * 100:.1f}%" if rs["error_rate"] else "err=0%"
 
-        click.echo(
-            f"    Runtime: {calls_str} calls, {p99_str}, {err_str} "
-            f"-- ranked #{h['runtime_rank']}"
-        )
+        click.echo(f"    Runtime: {calls_str} calls, {p99_str}, {err_str} -- ranked #{h['runtime_rank']}")
         click.echo(f"    >> {h['classification']}")
         click.echo()
 
-    next_steps = suggest_next_steps("hotspots", {
-        "upgrades": upgrades,
-        "total": total,
-    })
+    next_steps = suggest_next_steps(
+        "hotspots",
+        {
+            "upgrades": upgrades,
+            "total": total,
+        },
+    )
     ns_text = format_next_steps_text(next_steps)
     if ns_text:
         click.echo(ns_text)

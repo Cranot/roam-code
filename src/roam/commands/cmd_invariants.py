@@ -6,9 +6,9 @@ from pathlib import Path
 
 import click
 
-from roam.db.connection import open_db
-from roam.output.formatter import to_json, json_envelope, abbrev_kind, loc
 from roam.commands.resolve import ensure_index, find_symbol
+from roam.db.connection import open_db
+from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 
 def _discover_invariants(conn, sym_id, sym_info):
@@ -26,7 +26,7 @@ def _discover_invariants(conn, sym_id, sym_info):
            JOIN symbols s ON e.source_id = s.id
            JOIN files f ON s.file_id = f.id
            WHERE e.target_id = ?""",
-        (sym_id,)
+        (sym_id,),
     ).fetchall()
 
     caller_count = len(callers)
@@ -40,14 +40,14 @@ def _discover_invariants(conn, sym_id, sym_info):
            JOIN symbols s ON e.target_id = s.id
            JOIN files f ON s.file_id = f.id
            WHERE e.source_id = ?""",
-        (sym_id,)
+        (sym_id,),
     ).fetchall()
 
     # 3. Complexity metrics
     metrics_row = conn.execute(
         """SELECT cognitive_complexity, param_count, line_count, return_count
            FROM symbol_metrics WHERE symbol_id = ?""",
-        (sym_id,)
+        (sym_id,),
     ).fetchone()
 
     param_count = metrics_row["param_count"] if metrics_row else 0
@@ -58,47 +58,58 @@ def _discover_invariants(conn, sym_id, sym_info):
     # Signature contract
     if signature:
         stability = "HIGH" if caller_count >= 10 else "MEDIUM" if caller_count >= 3 else "LOW"
-        invariants.append({
-            "type": "SIGNATURE",
-            "description": f"Signature: {signature}",
-            "stability": stability,
-            "detail": f"{caller_count} callers depend on this signature",
-        })
+        invariants.append(
+            {
+                "type": "SIGNATURE",
+                "description": f"Signature: {signature}",
+                "stability": stability,
+                "detail": f"{caller_count} callers depend on this signature",
+            }
+        )
 
     # Parameter count contract
     if param_count > 0:
-        invariants.append({
-            "type": "PARAMS",
-            "description": f"Accepts {param_count} parameter(s)",
-            "stability": "HIGH" if caller_count >= 5 else "MEDIUM",
-            "detail": f"Changing parameter count would affect {caller_count} call sites",
-        })
+        invariants.append(
+            {
+                "type": "PARAMS",
+                "description": f"Accepts {param_count} parameter(s)",
+                "stability": "HIGH" if caller_count >= 5 else "MEDIUM",
+                "detail": f"Changing parameter count would affect {caller_count} call sites",
+            }
+        )
 
     # File spread contract
     if file_spread >= 3:
-        invariants.append({
-            "type": "USAGE_SPREAD",
-            "description": f"Used across {file_spread} files",
-            "stability": "HIGH",
-            "detail": "Wide usage makes this a de-facto public API",
-        })
+        invariants.append(
+            {
+                "type": "USAGE_SPREAD",
+                "description": f"Used across {file_spread} files",
+                "stability": "HIGH",
+                "detail": "Wide usage makes this a de-facto public API",
+            }
+        )
 
     # Dependency contract (what it calls)
     if len(callees) > 0:
         dep_names = [c["name"] for c in callees[:5]]
-        invariants.append({
-            "type": "DEPENDENCIES",
-            "description": f"Depends on {len(callees)} symbol(s): {', '.join(dep_names)}",
-            "stability": "MEDIUM",
-            "detail": "Removing a dependency may change behavior",
-        })
+        invariants.append(
+            {
+                "type": "DEPENDENCIES",
+                "description": f"Depends on {len(callees)} symbol(s): {', '.join(dep_names)}",
+                "stability": "MEDIUM",
+                "detail": "Removing a dependency may change behavior",
+            }
+        )
 
     # Breaking risk score
     breaking_risk = caller_count * max(file_spread, 1)
     risk_level = (
-        "CRITICAL" if breaking_risk >= 50
-        else "HIGH" if breaking_risk >= 20
-        else "MEDIUM" if breaking_risk >= 5
+        "CRITICAL"
+        if breaking_risk >= 50
+        else "HIGH"
+        if breaking_risk >= 20
+        else "MEDIUM"
+        if breaking_risk >= 5
         else "LOW"
     )
 
@@ -147,23 +158,38 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
             # Detect whether target looks like a file path (has a known extension)
             target_norm = target.replace("\\", "/")
             _known_exts = {
-                ".py", ".js", ".ts", ".jsx", ".tsx", ".go", ".java", ".rb",
-                ".rs", ".c", ".cpp", ".h", ".hpp", ".php", ".cs", ".swift",
-                ".kt", ".scala", ".m", ".r", ".lua", ".sh", ".sql",
+                ".py",
+                ".js",
+                ".ts",
+                ".jsx",
+                ".tsx",
+                ".go",
+                ".java",
+                ".rb",
+                ".rs",
+                ".c",
+                ".cpp",
+                ".h",
+                ".hpp",
+                ".php",
+                ".cs",
+                ".swift",
+                ".kt",
+                ".scala",
+                ".m",
+                ".r",
+                ".lua",
+                ".sh",
+                ".sql",
             }
             target_suffix = Path(target_norm).suffix.lower()
             looks_like_file = target_suffix in _known_exts
 
             if looks_like_file:
                 # File mode: try exact match, then suffix/LIKE match
-                row = conn.execute(
-                    "SELECT id FROM files WHERE path = ?", (target_norm,)
-                ).fetchone()
+                row = conn.execute("SELECT id FROM files WHERE path = ?", (target_norm,)).fetchone()
                 if not row:
-                    row = conn.execute(
-                        "SELECT id FROM files WHERE path LIKE ?",
-                        (f"%{target_norm}",)
-                    ).fetchone()
+                    row = conn.execute("SELECT id FROM files WHERE path LIKE ?", (f"%{target_norm}",)).fetchone()
 
                 if row:
                     syms = conn.execute(
@@ -173,7 +199,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                            WHERE s.file_id = ?
                            AND s.kind IN ('function', 'method', 'class')
                            ORDER BY s.line_start""",
-                        (row["id"],)
+                        (row["id"],),
                     ).fetchall()
                     for sym in syms:
                         results.append(_discover_invariants(conn, sym["id"], dict(sym)))
@@ -198,7 +224,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                    AND s.name NOT LIKE '\\_%' ESCAPE '\\'
                    ORDER BY s.name"""
             ).fetchall()
-            for sym in syms[:top_n * 2]:  # over-fetch, then sort/trim
+            for sym in syms[: top_n * 2]:  # over-fetch, then sort/trim
                 results.append(_discover_invariants(conn, sym["id"], dict(sym)))
 
         elif breaking_risk:
@@ -236,22 +262,23 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
                 f" ({r['caller_count']} callers, risk: {r['risk_level']})"
             )
         else:
-            verdict = (
-                f"{total_invariants} invariants across {len(results)} symbols,"
-                f" {high_risk} high-risk"
-            )
+            verdict = f"{total_invariants} invariants across {len(results)} symbols, {high_risk} high-risk"
 
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "invariants",
-                summary={
-                    "verdict": verdict,
-                    "symbols_analyzed": len(results),
-                    "total_invariants": total_invariants,
-                    "high_risk_count": high_risk,
-                },
-                symbols=results,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "invariants",
+                        summary={
+                            "verdict": verdict,
+                            "symbols_analyzed": len(results),
+                            "total_invariants": total_invariants,
+                            "high_risk_count": high_risk,
+                        },
+                        symbols=results,
+                    )
+                )
+            )
             return
 
         # Text output
@@ -259,10 +286,7 @@ def invariants(ctx, target, public_api, breaking_risk, top_n):
         click.echo()
 
         for r in results:
-            click.echo(
-                f"CONTRACT: {r['name']}"
-                f" ({abbrev_kind(r['kind'])}, {loc(r['file'], r['line'])})"
-            )
+            click.echo(f"CONTRACT: {r['name']} ({abbrev_kind(r['kind'])}, {loc(r['file'], r['line'])})")
             if r["signature"]:
                 click.echo(f"  Signature: {r['signature']}")
             click.echo(f"  Callers: {r['caller_count']} across {r['file_spread']} files")

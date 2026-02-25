@@ -5,6 +5,7 @@ Each preset defines:
 - What constitutes acceptable coverage (test file exists, test function count, etc.)
 - Framework-specific conventions for test discovery
 """
+
 from __future__ import annotations
 
 from dataclasses import dataclass, field
@@ -13,6 +14,7 @@ from dataclasses import dataclass, field
 @dataclass
 class GateRule:
     """A single gate rule: which files must have tests."""
+
     name: str
     description: str
     # Glob patterns for files that MUST have tests
@@ -28,6 +30,7 @@ class GateRule:
 @dataclass
 class GatePreset:
     """A collection of gate rules for a framework/language."""
+
     name: str
     description: str
     languages: list[str] = field(default_factory=list)
@@ -51,9 +54,16 @@ PRESET_PYTHON = GatePreset(
             description="All Python source modules should have test coverage",
             include_patterns=["src/**/*.py", "**/*.py"],
             exclude_patterns=[
-                "tests/**", "test/**", "conftest.py", "setup.py",
-                "**/migrations/**", "**/__init__.py", "**/conftest.py",
-                "docs/**", "scripts/**", "examples/**",
+                "tests/**",
+                "test/**",
+                "conftest.py",
+                "setup.py",
+                "**/migrations/**",
+                "**/__init__.py",
+                "**/conftest.py",
+                "docs/**",
+                "scripts/**",
+                "examples/**",
             ],
             min_test_count=1,
             severity="warning",
@@ -80,8 +90,12 @@ PRESET_JAVASCRIPT = GatePreset(
             description="All JS/TS source modules should have test coverage",
             include_patterns=["src/**/*.{js,ts,jsx,tsx}"],
             exclude_patterns=[
-                "**/*.test.*", "**/*.spec.*", "**/__tests__/**",
-                "**/node_modules/**", "**/*.config.*", "**/*.d.ts",
+                "**/*.test.*",
+                "**/*.spec.*",
+                "**/__tests__/**",
+                "**/node_modules/**",
+                "**/*.config.*",
+                "**/*.d.ts",
             ],
             min_test_count=1,
             severity="warning",
@@ -160,6 +174,7 @@ def get_preset(name: str) -> GatePreset | None:
 def detect_preset(file_paths: list[str]) -> GatePreset | None:
     """Auto-detect the best preset for a project based on its files."""
     import os
+
     basenames = {os.path.basename(f) for f in file_paths}
 
     for preset in ALL_PRESETS:
@@ -194,12 +209,14 @@ def load_gates_config(config_path: str) -> list[GateRule]:
 
     rules = []
     for r in data["rules"]:
-        rules.append(GateRule(
-            name=r.get("name", "unnamed"),
-            description=r.get("description", ""),
-            include_patterns=r.get("include", []),
-            exclude_patterns=r.get("exclude", []),
-            min_test_count=r.get("min_tests", 1),
-            severity=r.get("severity", "warning"),
-        ))
+        rules.append(
+            GateRule(
+                name=r.get("name", "unnamed"),
+                description=r.get("description", ""),
+                include_patterns=r.get("include", []),
+                exclude_patterns=r.get("exclude", []),
+                min_test_count=r.get("min_tests", 1),
+                severity=r.get("severity", "warning"),
+            )
+        )
     return rules
