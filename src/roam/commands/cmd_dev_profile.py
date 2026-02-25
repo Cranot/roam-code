@@ -403,7 +403,7 @@ def dev_profile(ctx, author, days, limit):
                 to_json(
                     json_envelope(
                         "dev-profile",
-                        summary={"verdict": verdict, "author_count": 0, "days": days},
+                        summary={"verdict": verdict, "author_count": 0, "total_commits": 0, "days": days},
                         profiles=[],
                     )
                 )
@@ -421,7 +421,7 @@ def dev_profile(ctx, author, days, limit):
                 to_json(
                     json_envelope(
                         "dev-profile",
-                        summary={"verdict": verdict, "author_count": 0, "days": days},
+                        summary={"verdict": verdict, "author_count": 0, "total_commits": 0, "days": days},
                         profiles=[],
                     )
                 )
@@ -449,6 +449,7 @@ def dev_profile(ctx, author, days, limit):
                             summary={
                                 "verdict": verdict,
                                 "author_count": 0,
+                                "total_commits": 0,
                                 "days": days,
                                 "filter": author,
                             },
