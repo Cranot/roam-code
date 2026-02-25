@@ -833,9 +833,14 @@ MAP_METADATA: dict[str, dict[str, object]] = {
 def _repo_root() -> Path:
     start = Path(__file__).resolve()
     for parent in [start, *start.parents]:
+        # Primary check: both reports dir and docs site exist
         tracker = parent / "reports" / "competitor_tracker.md"
         site_dir = parent / "docs" / "site"
         if tracker.exists() and site_dir.exists():
+            return parent
+    # Fallback: look for pyproject.toml (works in CI after checkout)
+    for parent in [start, *start.parents]:
+        if (parent / "pyproject.toml").exists():
             return parent
     raise RuntimeError("Could not locate repository root from competitor_site_data.py")
 
