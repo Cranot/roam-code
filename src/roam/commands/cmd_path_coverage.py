@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 from collections import deque
 
 import click
@@ -21,8 +20,10 @@ def _find_entry_points(conn, from_pattern):
     """Find symbols with outgoing edges but no incoming edges (call graph roots).
 
     If from_pattern is provided, only symbols whose file path matches the
-    fnmatch glob are included.
+    gitignore-style glob are included.
     """
+    from roam.index.gitignore import matches_gitignore
+
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start "
         "FROM symbols s "
@@ -35,7 +36,7 @@ def _find_entry_points(conn, from_pattern):
 
     entries = []
     for r in rows:
-        if from_pattern and not fnmatch.fnmatch(r["file_path"], from_pattern):
+        if from_pattern and not matches_gitignore(r["file_path"], from_pattern):
             continue
         entries.append(
             {
@@ -56,6 +57,8 @@ def _find_entry_points(conn, from_pattern):
 
 def _find_sinks_from_effects(conn, to_pattern):
     """Find sink symbols from symbol_effects table (writes_db, network, filesystem)."""
+    from roam.index.gitignore import matches_gitignore
+
     try:
         rows = conn.execute(
             "SELECT DISTINCT se.symbol_id, s.name, s.kind, f.path AS file_path, "
@@ -72,7 +75,7 @@ def _find_sinks_from_effects(conn, to_pattern):
     sink_ids = {}
     sink_effects = {}
     for r in rows:
-        if to_pattern and not fnmatch.fnmatch(r["file_path"], to_pattern):
+        if to_pattern and not matches_gitignore(r["file_path"], to_pattern):
             continue
         sid = r["symbol_id"]
         sink_ids[sid] = {
@@ -90,6 +93,8 @@ def _find_sinks_from_effects(conn, to_pattern):
 
 def _find_sinks_fallback(conn, to_pattern):
     """Fallback: leaf nodes with incoming but no outgoing edges."""
+    from roam.index.gitignore import matches_gitignore
+
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start "
         "FROM symbols s "
@@ -102,7 +107,7 @@ def _find_sinks_fallback(conn, to_pattern):
 
     sink_ids = {}
     for r in rows:
-        if to_pattern and not fnmatch.fnmatch(r["file_path"], to_pattern):
+        if to_pattern and not matches_gitignore(r["file_path"], to_pattern):
             continue
         sink_ids[r["id"]] = {
             "id": r["id"],

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import fnmatch
 import os
 import re
 
@@ -111,6 +110,8 @@ def _evaluate_gate_rules(conn, rules):
 
     Returns a list of violation dicts for files that fail a gate rule.
     """
+    from roam.index.gitignore import matches_gitignore
+
     # Fetch all indexed file paths
     all_files = [r["path"] for r in conn.execute("SELECT path FROM files").fetchall()]
 
@@ -119,7 +120,7 @@ def _evaluate_gate_rules(conn, rules):
     test_files = set()
     for fp in all_files:
         basename = os.path.basename(fp)
-        if any(fnmatch.fnmatch(basename, tp) for tp in test_patterns):
+        if any(matches_gitignore(basename, tp) for tp in test_patterns):
             test_files.add(fp)
 
     # Count test functions per file
@@ -138,14 +139,14 @@ def _evaluate_gate_rules(conn, rules):
         matched = set()
         for fp in all_files:
             for pat in rule.include_patterns:
-                if fnmatch.fnmatch(fp, pat):
+                if matches_gitignore(fp, pat):
                     matched.add(fp)
                     break
 
         # Remove files matching exclude patterns
         for fp in list(matched):
             for pat in rule.exclude_patterns:
-                if fnmatch.fnmatch(fp, pat):
+                if matches_gitignore(fp, pat):
                     matched.discard(fp)
                     break
 

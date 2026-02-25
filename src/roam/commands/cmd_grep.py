@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import os
 import re
 import subprocess
 
@@ -43,12 +42,11 @@ _SOURCE_ONLY_EXCLUDES = [
 
 
 def _matches_any_exclude(path, excludes):
-    """Check if a path matches any of the exclusion patterns."""
-    import fnmatch
+    """Check if a path matches any of the exclusion patterns (gitignore semantics)."""
+    from roam.index.gitignore import matches_gitignore
 
-    p = path.replace("\\", "/")
     for pat in excludes:
-        if fnmatch.fnmatch(p, pat) or fnmatch.fnmatch(os.path.basename(p), pat):
+        if matches_gitignore(path, pat):
             return True
     return False
 
@@ -127,10 +125,10 @@ def _grep_files(pattern, root, glob_filter=None):
 
 
 def _matches_glob(path, pattern):
-    """Simple glob matching."""
-    import fnmatch
+    """Glob matching with gitignore semantics."""
+    from roam.index.gitignore import matches_gitignore
 
-    return fnmatch.fnmatch(path, pattern)
+    return matches_gitignore(path, pattern)
 
 
 def _find_enclosing_symbol(conn, file_path, line_num):

@@ -1,7 +1,5 @@
 """Show blast radius of uncommitted changes."""
 
-import fnmatch
-
 import click
 
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
@@ -166,13 +164,15 @@ def _check_dep_rule_scoped(rule, conn, changed_paths):
            JOIN files tf ON ts.file_id = tf.id"""
     ).fetchall()
 
+    from roam.index.gitignore import matches_gitignore
+
     violations = []
     for r in rows:
         # Only flag edges originating from changed files
         if r["source_path"] not in changed_paths:
             continue
-        src_match = fnmatch.fnmatch(r["source_path"], from_pattern)
-        tgt_match = fnmatch.fnmatch(r["target_path"], to_pattern)
+        src_match = matches_gitignore(r["source_path"], from_pattern)
+        tgt_match = matches_gitignore(r["target_path"], to_pattern)
 
         if src_match and tgt_match and not allow:
             violations.append(
