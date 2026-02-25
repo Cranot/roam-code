@@ -29,7 +29,7 @@ def test_mcp_surface_counts():
 
 
 def test_docs_use_reconciled_command_count_copy():
-    expected = "136 canonical commands (+1 legacy alias = 137 invokable names)"
+    expected = "137 commands"
     assert expected in _read("README.md")
     assert expected in _read("CLAUDE.md")
     assert expected in _read("llms-install.md")

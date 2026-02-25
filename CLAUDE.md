@@ -4,7 +4,7 @@
 
 roam-code is a CLI tool that gives AI coding agents instant codebase comprehension.
 It pre-indexes symbols, call graphs, dependencies, architecture, and git history into
-a local SQLite DB. 136 canonical commands (+1 legacy alias = 137 invokable names),
+a local SQLite DB. 137 commands, 101 MCP tools,
 26 languages, 100% local, zero API keys.
 
 **Package:** `roam-code` on PyPI. Entry point: `roam.cli:cli`.
@@ -110,7 +110,7 @@ src/roam/
     gate_presets.py    # Framework-specific gate rules + .roam-gates.yml loader
     graph_helpers.py   # Shared graph utilities (adjacency builders, BFS helpers)
     context_helpers.py # Data-gathering helpers extracted from cmd_context.py
-    cmd_*.py           # One module per CLI command (134 modules, 136 canonical commands + 1 legacy alias)
+    cmd_*.py           # One module per CLI command (134 modules, 137 commands)
   output/
     formatter.py       # Token-efficient text formatting, abbrev_kind(), loc(), format_table(), to_json(), json_envelope()
     sarif.py           # SARIF 2.1.0 output (--sarif flag on health/debt/complexity)
@@ -259,5 +259,5 @@ Additional commands: `roam health` (0-100 score), `roam impact <name>` (what bre
 `roam simulate move <sym> <file>` (what-if architecture), `roam orchestrate` (multi-agent partitioning),
 `roam adversarial` (attack surface review), `roam mutate move <sym> <file>` (code transforms).
 
-Run `roam --help` for all 137 invokable command names (136 canonical + `math` legacy alias). Use `roam --json <cmd>` for structured output.
+Run `roam --help` for all 137 commands. Use `roam --json <cmd>` for structured output.
 Use `roam --sarif health` for CI integration (SARIF 2.1.0).

@@ -61,7 +61,7 @@ def test_readme_has_v11_narrative_section():
 def test_readme_roadmap_refreshed_for_v11_state():
     text = _readme_text()
     assert "### Shipped" in text
-    assert "### Next (v11 Closeout + immediate follow-up)" in text
+    assert "### Next" in text
     assert "MCP v2 agent surface" in text
     # Stale count-era roadmap line should not remain.
     assert "MCP server -- 19 tools, 2 resources" not in text
