@@ -1552,17 +1552,11 @@ async def roam_reindex(
 def understand(root: str = ".") -> dict:
     """Get a full codebase briefing in a single call.
 
-    WHEN TO USE: Call this FIRST when you start working with a new or
-    unfamiliar repository. Do NOT use Glob/Grep/Read to explore the
-    codebase manually -- this tool gives you everything in one shot.
-
-    Returns: tech stack, architecture overview (layers, clusters, entry
-    points, key abstractions), health score, hotspots, naming conventions,
-    design patterns, and a suggested file reading order.
-
-    Output is ~2,000-4,000 tokens of structured JSON. After calling this,
-    use `search_symbol` or `context` to drill into specific areas.
-    """
+    Call this FIRST when starting work on a new or unfamiliar codebase.
+    Covers tech stack, architecture (layers, clusters, entry points),
+    health score, hotspots, conventions, and patterns. ~2-4K token output.
+    Do NOT explore manually with Glob/Grep/Read -- use this instead.
+    Follow with search_symbol or context to drill into specifics."""
     return _run_roam(["understand"], root)
 
 
@@ -1588,17 +1582,12 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
        description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
        output_schema=_SCHEMA_HEALTH)
 def health(root: str = ".") -> dict:
-    """Get the codebase health score (0-100) with issue breakdown.
+    """Codebase health score (0-100) with issue breakdown.
 
-    WHEN TO USE: Call this to assess overall code quality before deciding
-    where to focus refactoring effort, or to check whether recent changes
-    degraded health. Do NOT call this if you already called `understand`
-    (which includes health data) or `preflight` (which includes it per-symbol).
-
-    Returns: composite health score, cycle count, god-component count,
-    bottleneck symbols, dead-export count, layer violations, per-file
-    health scores, and tangle ratio.
-    """
+    Call this to assess overall code quality before deciding where to
+    focus refactoring, or to check whether recent changes degraded health.
+    Skip if you already called understand (includes health) or preflight
+    (includes it per-symbol)."""
     return _run_roam(["health"], root)
 
 
@@ -1608,24 +1597,10 @@ def health(root: str = ".") -> dict:
 def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
     """Pre-change safety check. Call this BEFORE modifying any symbol or file.
 
-    WHEN TO USE: Always call this before making code changes. It replaces
-    5-6 separate tool calls by combining blast radius, affected tests,
-    complexity, coupling, convention checks, and fitness violations into
-    one response. Do NOT call `context`, `impact`, `affected_tests`, or
-    `complexity_report` separately if preflight covers your need.
-
-    Parameters
-    ----------
-    target:
-        Symbol name or file path to check. If empty, checks all
-        currently changed (unstaged) files.
-    staged:
-        If True, check staged (git add-ed) changes instead.
-
-    Returns: risk level, blast radius (affected symbols and files),
-    test files to run, complexity metrics, coupling data, and any
-    fitness rule violations.
-    """
+    Combines blast radius, affected tests, complexity, coupling, and
+    fitness violations in one call. Replaces 5-6 separate tool calls.
+    Do NOT call context, impact, affected_tests, or complexity_report
+    separately if preflight covers your need."""
     args = ["preflight"]
     if target:
         args.append(target)
@@ -1640,20 +1615,11 @@ def preflight(target: str = "", staged: bool = False, root: str = ".") -> dict:
 def search_symbol(query: str, root: str = ".") -> dict:
     """Find symbols by name (case-insensitive substring match).
 
-    WHEN TO USE: Call this when you know part of a symbol name and need
-    the exact qualified name, file location, or kind. Use this before
-    calling `context` or `impact` to get the correct symbol identifier.
-    Do NOT use Grep to search for function definitions -- this is faster
-    and returns structured data with PageRank importance.
-
-    Parameters
-    ----------
-    query:
-        Name substring to search for (e.g., "auth", "User", "handle_request").
-
-    Returns: matching symbols with kind (function/class/method), file path,
-    line number, signature, export status, and PageRank importance score.
-    """
+    Call this when you know part of a symbol name and need the exact
+    qualified name, file location, or kind. Use before context or impact
+    to get the correct identifier. Do NOT use Grep for function
+    definitions -- this is faster and returns structured data with
+    PageRank importance."""
     return _run_roam(["search", query], root)
 
 
@@ -1664,29 +1630,10 @@ def context(symbol: str, task: str = "", session_hint: str = "",
             recent_symbols: str = "", root: str = ".") -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
-    WHEN TO USE: Call this when you need to understand or modify a
-    specific function, class, or method. Returns the exact files and
-    line ranges to read -- much more targeted than `understand`.
-    For pre-change safety checks, prefer `preflight` instead (it
-    includes context data plus blast radius and tests).
-
-    Parameters
-    ----------
-    symbol:
-        Qualified or short name of the symbol to inspect.
-    task:
-        Optional hint: "refactor", "debug", "extend", "review", or
-        "understand". Tailors output (e.g., adds complexity details
-        for refactor, test coverage for debug).
-    session_hint:
-        Optional conversation hint used to personalize files-to-read rank.
-    recent_symbols:
-        Comma-separated recently discussed symbols for rank biasing.
-
-    Returns: symbol definition, direct callers and callees, file location
-    with line ranges, related tests, graph metrics (PageRank, fan-in/out,
-    betweenness), and complexity metrics.
-    """
+    Call this when you need to understand or modify a function, class,
+    or method. Returns exact files and line ranges to read. More targeted
+    than understand. For pre-change safety checks, prefer preflight
+    instead (includes context plus blast radius and tests)."""
     args = ["context", symbol]
     if task:
         args.extend(["--task", task])
@@ -1704,21 +1651,9 @@ def context(symbol: str, task: str = "", session_hint: str = "",
 def trace(source: str, target: str, root: str = ".") -> dict:
     """Find the shortest dependency path between two symbols.
 
-    WHEN TO USE: Call this when you need to understand HOW a change in
-    one symbol could affect another. Shows each hop along the path with
-    symbol names, edge types, and locations.
-
-    Parameters
-    ----------
-    source:
-        Starting symbol name.
-    target:
-        Destination symbol name.
-
-    Returns: path hops (symbol name, kind, location, edge type), total
-    hop count, coupling classification (strong/moderate/weak), and any
-    hub nodes encountered.
-    """
+    Call this to understand HOW a change in one symbol could affect
+    another. Shows path hops with symbol names, edge types, locations,
+    and coupling strength."""
     return _run_roam(["trace", source, target], root)
 
 
@@ -1728,19 +1663,10 @@ def trace(source: str, target: str, root: str = ".") -> dict:
 def impact(symbol: str, root: str = ".") -> dict:
     """Show the blast radius of changing a symbol.
 
-    WHEN TO USE: Call this when you need to know everything that would
-    break if a symbol's signature or behavior changed. For pre-change
-    checks, prefer `preflight` which includes impact data plus tests
-    and fitness checks.
-
-    Parameters
-    ----------
-    symbol:
-        Symbol to analyze.
-
-    Returns: affected symbols grouped by hop distance, affected files,
-    total affected count, and severity assessment.
-    """
+    Everything that would break if its signature or behavior changed.
+    Affected symbols by hop distance, affected files, severity. For
+    pre-change checks, prefer preflight (includes impact plus tests
+    and fitness)."""
     return _run_roam(["impact", symbol], root)
 
 
@@ -1749,19 +1675,8 @@ def impact(symbol: str, root: str = ".") -> dict:
 def file_info(path: str, root: str = ".") -> dict:
     """Show a file skeleton: every symbol definition with its signature.
 
-    WHEN TO USE: Call this when you need to understand what a file
-    contains without reading the full source. Returns a structured
-    outline that is more useful than Read for getting an overview.
-
-    Parameters
-    ----------
-    path:
-        File path relative to the project root.
-
-    Returns: all symbols in the file (functions, classes, methods) with
-    kind, line range, signature, export status, and parent relationships.
-    Also includes per-kind counts and the file's detected language.
-    """
+    Call this to understand what a file contains without reading the
+    full source. More useful than Read for getting a file overview."""
     return _run_roam(["file", path], root)
 
 
@@ -1776,19 +1691,9 @@ def file_info(path: str, root: str = ".") -> dict:
 def pr_risk(staged: bool = False, root: str = ".") -> dict:
     """Compute a risk score (0-100) for pending changes.
 
-    WHEN TO USE: Call this before committing or creating a PR to assess
-    risk. Analyzes the current diff and produces a risk rating (LOW /
-    MODERATE / HIGH / CRITICAL) with specific risk factors.
-
-    Parameters
-    ----------
-    staged:
-        If True, analyze staged changes instead of working-tree diff.
-
-    Returns: risk score, risk level, per-file breakdown (symbols changed,
-    blast radius, churn), suggested reviewers, coupling surprises, and
-    any new dead exports created.
-    """
+    Call this before committing or creating a PR. Produces LOW/MODERATE/
+    HIGH/CRITICAL rating with per-file breakdown, risk factors, and
+    suggested reviewers."""
     args = ["pr-risk"]
     if staged:
         args.append("--staged")
@@ -1893,23 +1798,12 @@ def api_changes(base: str = "HEAD~1", severity: str = "warning", root: str = "."
 @_tool(name="roam_affected_tests",
        description="Test files that exercise changed code, with hop distance.")
 def affected_tests(target: str = "", staged: bool = False, root: str = ".") -> dict:
-    """Find test files that exercise the changed code.
+    """Find test files that exercise changed code.
 
-    WHEN TO USE: Call this to know which tests to run after making
-    changes. Walks reverse dependency edges from changed code to find
-    test files. For a full pre-change check, prefer `preflight` which
-    includes affected tests plus blast radius and fitness checks.
-
-    Parameters
-    ----------
-    target:
-        Symbol name or file path. If empty, uses all currently changed files.
-    staged:
-        If True, start from staged changes.
-
-    Returns: test files with the symbols that link them to the change
-    and the hop distance.
-    """
+    Call this to know which tests to run after making changes. Walks
+    reverse dependency edges from changed code to find test files. For
+    a full pre-change check, prefer preflight (includes affected tests
+    plus blast radius and fitness)."""
     args = ["affected-tests"]
     if target:
         args.append(target)
@@ -2010,13 +1904,9 @@ def dark_matter(min_npmi: float = 0.3, min_cochanges: int = 3, root: str = ".") 
 def dead_code(root: str = ".") -> dict:
     """List unreferenced exported symbols (dead code candidates).
 
-    WHEN TO USE: Call this to find code that can be safely removed.
-    Finds exported symbols with zero incoming edges, filtering out
-    known entry points and framework lifecycle hooks.
-
-    Returns: each dead symbol with kind, location, file, and a safety
-    verdict indicating confidence level.
-    """
+    Call this to find code that can be safely removed. Finds symbols
+    with zero incoming edges, filtering out known entry points and
+    framework lifecycle hooks. Includes safety verdict per symbol."""
     return _run_roam(["dead"], root)
 
 
@@ -2173,19 +2063,9 @@ def check_rules(
 def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     """Rank functions by cognitive complexity.
 
-    WHEN TO USE: Call this to find the most complex functions that
-    should be refactored. Only symbols at or above the threshold are
-    included. For checking a single symbol, prefer `context` or
-    `preflight` which include complexity data.
-
-    Parameters
-    ----------
-    threshold:
-        Minimum cognitive-complexity score to include (default 15).
-
-    Returns: symbols ranked by complexity with score, nesting depth,
-    parameter count, line count, severity label, and file location.
-    """
+    Call this to find the most complex functions that should be
+    refactored. For checking a single symbol, prefer context or
+    preflight which include complexity data."""
     return _run_roam(["complexity", "--threshold", str(threshold)], root)
 
 
@@ -2310,25 +2190,12 @@ def visualize(
        description="Root cause analysis: upstream/downstream suspects ranked by composite risk.",
        output_schema=_SCHEMA_DIAGNOSE)
 def diagnose(symbol: str, depth: int = 2, root: str = ".") -> dict:
-    """Root cause analysis for a failing symbol.
+    """Root cause analysis for a failing symbol or test.
 
-    WHEN TO USE: Call this when debugging a bug or test failure and you
-    need to find the likely root cause. Ranks upstream callers and
-    downstream callees by a composite risk score combining git churn,
-    cognitive complexity, file health, and co-change entropy. Much
-    faster than manually tracing call chains.
-
-    Parameters
-    ----------
-    symbol:
-        The symbol suspected of being involved in the bug.
-    depth:
-        How many hops upstream/downstream to analyze (default 2).
-
-    Returns: target symbol metrics, upstream suspects ranked by risk,
-    downstream suspects ranked by risk, co-change partners, recent
-    git commits, and a verdict naming the top suspect.
-    """
+    Call this when debugging a bug or test failure to find the likely
+    root cause. Ranks upstream/downstream suspects by risk (git churn,
+    complexity, health, co-change entropy). Faster than manually tracing
+    call chains. Returns verdict naming top suspect."""
     args = ["diagnose", symbol, "--depth", str(depth)]
     return _run_roam(args, root)
 
@@ -3480,25 +3347,9 @@ def search_semantic(query: str, top: int = 10, threshold: float = 0.05,
 def roam_diff(commit_range: str = "", staged: bool = False, root: str = ".") -> dict:
     """Blast radius of uncommitted or committed changes.
 
-    WHEN TO USE: call after making code changes to see what's affected
-    BEFORE committing. Shows affected symbols, files, tests, coupling
-    warnings, and fitness violations.
-
-    WHEN NOT TO USE: for pre-PR analysis use roam_pr_risk instead.
-
-    Parameters
-    ----------
-    commit_range:
-        Git range like ``HEAD~3..HEAD`` or ``main..feature``.
-        Empty = uncommitted working tree changes.
-    staged:
-        If True, analyze git-staged changes only.
-    root:
-        Working directory (project root).
-
-    Returns: changed files, affected symbols, blast radius metrics,
-    per-file breakdown.
-    """
+    Call this after making code changes to see what's affected BEFORE
+    committing. Shows affected symbols, files, tests, coupling warnings,
+    and fitness violations. For pre-PR analysis, use pr_risk instead."""
     args = ["diff"]
     if commit_range:
         args.append(commit_range)
@@ -3539,22 +3390,9 @@ def roam_symbol(name: str, full: bool = False, root: str = ".") -> dict:
 def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
     """File-level import/imported-by relationships.
 
-    WHEN TO USE: to understand a file's dependencies -- what it imports
-    and what imports it. File-level granularity. Use for module boundary
-    analysis and refactoring impact.
-
-    Parameters
-    ----------
-    path:
-        File path relative to project root.
-    full:
-        Show all dependencies without truncation.
-    root:
-        Working directory (project root).
-
-    Returns: file path, imports list (paths, symbol counts), importers
-    list (files that import this one).
-    """
+    Call this to understand a file's dependencies -- what it imports
+    and what imports it. Use for module boundary analysis and
+    refactoring impact."""
     args = ["deps", path]
     if full:
         args.append("--full")
@@ -3566,22 +3404,8 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
 def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
     """All consumers of a symbol: callers, importers, inheritors.
 
-    WHEN TO USE: to find ALL places using a symbol, grouped by edge type
-    (calls, imports, inheritance, trait usage). Broader than roam_impact.
-    Use for planning API changes.
-
-    Parameters
-    ----------
-    name:
-        Symbol name. Supports partial matching.
-    full:
-        Show all consumers without truncation.
-    root:
-        Working directory (project root).
-
-    Returns: symbol name, total_consumers, total_files, consumers
-    grouped by edge kind with name, kind, and location.
-    """
+    Grouped by edge type (calls, imports, inheritance, trait usage).
+    Broader than impact. Use for planning API changes."""
     args = ["uses", name]
     if full:
         args.append("--full")
