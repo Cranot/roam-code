@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*136 canonical commands (+1 legacy alias = 137 invokable names) · 26 languages · architecture OS · 100% local*
+*137 commands · 101 MCP tools · 26 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -23,7 +23,7 @@ Roam is a structural intelligence engine for software. It pre-indexes your codeb
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 136 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 137 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            26 languages   + edges            govern
@@ -212,7 +212,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. 136 canonical commands (+1 legacy alias = 137 invokable names) are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 137 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -233,7 +233,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam tour [--write PATH]` | Auto-generated onboarding guide: top symbols, reading order, entry points, language breakdown. `--write` saves to Markdown |
 | `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
 | `roam agent-export [--format F] [--write]` | Generate agent-context bundle from project analysis (`AGENTS.md` + provider-specific overlays) |
-| `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for CLAUDE.md injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
+| `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for agent config injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
 | `roam config [--set-db-dir PATH] [--semantic-backend MODE]` | Manage `.roam/config.json` (DB path, excludes, optional ONNX semantic settings) |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
 | `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
@@ -387,9 +387,9 @@ roam --sarif algo > roam-algo.sarif  # SARIF with fingerprints + fixes
 </details>
 
 <details>
-<summary><strong>roam minimap — annotated codebase snapshot for CLAUDE.md</strong></summary>
+<summary><strong>roam minimap — annotated codebase snapshot for agent configs</strong></summary>
 
-`roam minimap` generates a compact block (stack, annotated directory tree, key symbols, hotspots, conventions) wrapped in sentinel comments for in-place CLAUDE.md updates:
+`roam minimap` generates a compact block (stack, annotated directory tree, key symbols, hotspots, conventions) wrapped in sentinel comments for in-place agent config updates:
 
 ```
 $ roam minimap
@@ -1228,7 +1228,7 @@ Tier 2 languages get symbol extraction and basic inheritance via a generic tree-
 
 </details>
 
-Agent-efficiency benchmark write-up: [`reports/09_agent_efficiency_benchmarks.md`](reports/09_agent_efficiency_benchmarks.md).
+Agent-efficiency benchmarks: see the [`benchmarks/`](benchmarks/) directory for harness, repos, and results.
 
 ## How It Works
 
@@ -1305,12 +1305,11 @@ Each factor uses sigmoid health: `h = e^(-signal/scale)` (1 = pristine, approach
 
 roam-code is the only tool that combines graph algorithms (PageRank, Tarjan SCC, Louvain clustering), git archaeology, architecture simulation, and multi-agent partitioning in a single local CLI with zero API keys.
 
-Interactive docs site (GitHub Pages artifact, published by `.github/workflows/pages.yml`):
-- `docs/site/index.html` (landing)
-- `docs/site/getting-started.html` (tutorial)
-- `docs/site/command-reference.html` (examples)
-- `docs/site/architecture.html` (diagram + internals)
-- `docs/site/landscape.html` (competitor matrix)
+Documentation (local HTML in `docs/site/`, CI-deployed via `.github/workflows/pages.yml`):
+- `docs/site/getting-started.html` — tutorial
+- `docs/site/command-reference.html` — examples
+- `docs/site/architecture.html` — diagram + internals
+- `docs/site/landscape.html` — competitor matrix
 
 | Capability | roam-code | AI IDEs (Cursor, Windsurf) | AI Agents (Claude Code, Codex) | SAST (SonarQube, CodeQL) |
 |---|---|---|---|---|
@@ -1398,7 +1397,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # 2656 tests, Python 3.9-3.13
+pytest tests/              # ~5000 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1415,7 +1414,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (136 canonical commands + 1 legacy alias)
+│   ├── cli.py                         # Click CLI (137 commands)
 │   ├── mcp_server.py                  # MCP server (101 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1487,7 +1486,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # Test suite across 70 test files
+└── tests/                             # ~5000 tests across 151 test files
 ```
 
 </details>
@@ -1510,7 +1509,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 136 canonical CLI commands (+1 alias) and 101 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 137 CLI commands and 101 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.
@@ -1531,7 +1530,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # All 2656 tests must pass
+pytest tests/   # all ~5000 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
