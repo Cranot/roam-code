@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import ast
 import json
+import sys
 from collections import Counter, defaultdict
 from pathlib import Path
 
@@ -151,7 +152,7 @@ def collect_surface_counts() -> dict:
 
 
 def main() -> None:
-    print(json.dumps(collect_surface_counts(), indent=2, sort_keys=True))
+    sys.stdout.write(json.dumps(collect_surface_counts(), indent=2, sort_keys=True) + "\n")
 
 
 if __name__ == "__main__":

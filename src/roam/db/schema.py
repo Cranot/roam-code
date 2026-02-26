@@ -120,7 +120,7 @@ CREATE INDEX IF NOT EXISTS idx_file_stats_churn ON file_stats(total_churn DESC);
 
 -- v11: composite indexes for hot query paths
 CREATE INDEX IF NOT EXISTS idx_edges_source_target ON edges(source_id, target_id);
-CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id);
+-- NOTE: idx_edges_source_file moved to connection.py ensure_schema() to run AFTER column migration
 CREATE INDEX IF NOT EXISTS idx_symbols_file_kind ON symbols(file_id, kind);
 CREATE INDEX IF NOT EXISTS idx_symbols_file_exported ON symbols(file_id, is_exported);
 CREATE INDEX IF NOT EXISTS idx_file_edges_source_target ON file_edges(source_file_id, target_file_id);

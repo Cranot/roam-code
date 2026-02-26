@@ -39,6 +39,7 @@ bench-repos/
 # Virtual environments
 venv/
 .venv/
+.venv_roam/
 env/
 
 # Node (benchmark workspaces)
@@ -54,3 +55,7 @@ benchmarks/oss-eval/results/
 # Build artifacts in benchmark workspaces
 **/build-mingw/
 **/cmake-build-*/
+
+# Generated command-audit reports
+reports/command_audit_*.md
+reports/command_audit_latest.md
