@@ -155,6 +155,13 @@ _FRAMEWORK_IO_PACKS = {
             "confidence": "high",
             "fix": ("Use one `IN` query and eager loading (`selectinload`/`joinedload`) before the loop."),
         },
+        {
+            "framework": "python-http-client",
+            "receiver_hints": {"requests", "httpx", "aiohttp", "client", "session"},
+            "leaves": {"get", "post", "put", "delete", "patch", "request"},
+            "confidence": "medium",
+            "fix": "Use a bulk endpoint or bounded async batches (e.g., gather + semaphore).",
+        },
     ],
     "ruby": [
         {
@@ -189,6 +196,13 @@ _FRAMEWORK_IO_PACKS = {
             "confidence": "medium",
             "fix": "Use a bulk endpoint or bounded parallel batch requests.",
         },
+        {
+            "framework": "graphql-client",
+            "receiver_hints": {"graphql", "apollo", "urql", "client"},
+            "leaves": {"query", "mutate", "request"},
+            "confidence": "medium",
+            "fix": "Batch GraphQL operations or use persisted/bulk queries.",
+        },
     ],
     "typescript": [
         {
@@ -204,6 +218,13 @@ _FRAMEWORK_IO_PACKS = {
             "leaves": {"get", "post", "request"},
             "confidence": "medium",
             "fix": "Use a bulk endpoint or bounded parallel batch requests.",
+        },
+        {
+            "framework": "graphql-client",
+            "receiver_hints": {"graphql", "apollo", "urql", "client"},
+            "leaves": {"query", "mutate", "request"},
+            "confidence": "medium",
+            "fix": "Batch GraphQL operations or use persisted/bulk queries.",
         },
     ],
     "java": [
@@ -1027,6 +1048,10 @@ def detect_regex_in_loop(conn):
         "MatchString",
     }
 
+    # Module-level regex prefixes — calls like `re.match()` recompile each time,
+    # but `compiled_pattern.match()` does not.  Only flag the former.
+    _REGEX_MODULE_PREFIXES = {"re.", "regexp.", "regex.", "Pattern."}
+
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -1034,10 +1059,16 @@ def detect_regex_in_loop(conn):
         calls = _iter_loop_calls(r)
         # Direct compile in loop is always bad
         compile_calls = _call_in(calls, _REGEX_COMPILE_CALLS)
-        # Convenience regex calls in loop (re.match, re.search, etc.) also
-        # compile each time in most runtimes — flag at medium confidence
-        # since these could be on a pre-compiled pattern object
-        convenience_calls = _call_in(calls, _REGEX_CONVENIENCE_CALLS)
+        # Convenience regex calls — only flag when called via the regex module
+        # (e.g. `re.findall`), NOT when called on a pre-compiled pattern object
+        # (e.g. `_MY_RE.findall`).  Check qualified names for module prefix.
+        qcalls = _json_list(_row_value(r, "calls_in_loops_qualified", ""))
+        module_convenience = [
+            c
+            for c in qcalls
+            if any(c.startswith(prefix) for prefix in _REGEX_MODULE_PREFIXES)
+            and _call_leaf(c) in _REGEX_CONVENIENCE_CALLS
+        ]
         if compile_calls:
             results.append(
                 _finding(
@@ -1048,14 +1079,14 @@ def detect_regex_in_loop(conn):
                     "high",
                 )
             )
-        elif convenience_calls:
+        elif module_convenience:
             results.append(
                 _finding(
                     "regex-in-loop",
                     "compile-per-iter",
                     r,
-                    f"Regex call ({', '.join(convenience_calls[:2])}) inside loop (may recompile per iteration)",
-                    "medium",
+                    f"Regex call ({', '.join(module_convenience[:2])}) inside loop (recompiles per iteration)",
+                    "high",
                 )
             )
     return results
@@ -1152,8 +1183,8 @@ def detect_io_in_loop(conn):
         recv = _receiver_hint(call)
         lower_c = call.lower()
         for pack in _framework_packs(language):
-            leaves = pack.get("leaves", set())
-            recv_hints = pack.get("receiver_hints", set())
+            leaves = {str(v).lower() for v in pack.get("leaves", set())}
+            recv_hints = {str(v).lower() for v in pack.get("receiver_hints", set())}
             if lower_c in {c.lower() for c in pack.get("exact", set())}:
                 return pack
             if leaf not in leaves:
@@ -1181,6 +1212,7 @@ def detect_io_in_loop(conn):
 
         high_calls: list[str] = []
         medium_calls: list[str] = []
+        ambiguous_calls: list[str] = []
         frameworks: set[str] = set()
         fixes: set[str] = set()
         for c in calls:
@@ -1226,13 +1258,13 @@ def detect_io_in_loop(conn):
                 ).fetchone()
                 if local_helper:
                     continue
-                medium_calls.append(c)
+                ambiguous_calls.append(c)
                 continue
             if leaf == "open":
                 medium_calls.append(c)
                 continue
 
-        if not high_calls and not medium_calls:
+        if not high_calls and not medium_calls and not ambiguous_calls:
             continue
 
         name_lower = (r["name"] or "").lower()
@@ -1240,6 +1272,7 @@ def detect_io_in_loop(conn):
             continue
 
         guard_applies = bool(frameworks and guard_hints)
+        evidence_io_calls = _dedupe(high_calls + medium_calls + ambiguous_calls)[:6]
         if high_calls:
             reason_calls = _dedupe(high_calls)[:2]
             reason_suffix = ""
@@ -1257,14 +1290,14 @@ def detect_io_in_loop(conn):
                     f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
                     confidence,
                     evidence={
-                        "io_calls": _dedupe(high_calls + medium_calls)[:6],
+                        "io_calls": evidence_io_calls,
                         "frameworks": sorted(frameworks),
                         "guard_hints": guard_hints,
                     },
                     fix="; ".join(sorted(fixes)) if fixes else None,
                 )
             )
-        else:
+        elif medium_calls:
             reason_calls = _dedupe(medium_calls)[:2]
             reason_suffix = ""
             if frameworks:
@@ -1281,13 +1314,36 @@ def detect_io_in_loop(conn):
                     f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
                     confidence,
                     evidence={
-                        "io_calls": _dedupe(high_calls + medium_calls)[:6],
+                        "io_calls": evidence_io_calls,
                         "frameworks": sorted(frameworks),
                         "guard_hints": guard_hints,
                     },
                     fix="; ".join(sorted(fixes)) if fixes else None,
                 )
             )
+        else:
+            # Ambiguous bare calls (get/find/query) are weak evidence. Emit as
+            # low confidence so strict/balanced profiles can downrank these
+            # without losing runtime escalation opportunities.
+            reason_calls = _dedupe(ambiguous_calls)[:2]
+            finding = _finding(
+                "io-in-loop",
+                "loop-query",
+                r,
+                f"Ambiguous bare call ({', '.join(reason_calls)}) inside loop (possible I/O, review manually)",
+                "low",
+                evidence={
+                    "io_calls": evidence_io_calls,
+                    "ambiguous_io_calls": _dedupe(ambiguous_calls)[:4],
+                    "ambiguous_io_only": True,
+                    "frameworks": sorted(frameworks),
+                    "guard_hints": guard_hints,
+                },
+                fix="; ".join(sorted(fixes)) if fixes else None,
+            )
+            # This path has weak static precision by design.
+            finding["precision"] = "low"
+            results.append(finding)
     return results
 
 
@@ -1316,10 +1372,18 @@ def detect_list_prepend(conn):
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
+    # deque operations are O(1) — suppress when popleft/appendleft are the ops
+    _DEQUE_OPS = {"popleft", "appendleft", "extendleft"}
+
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
+        calls = _iter_loop_calls(r)
+        # If the only front-ops are deque methods, this is already optimal
+        front_calls = _call_in(calls, {"insert", "unshift", "shift", "popleft", "appendleft", "extendleft"})
+        if front_calls and all(_call_leaf(c) in _DEQUE_OPS for c in front_calls):
+            continue  # Already using deque — no issue
         # New indexes precompute the exact front-op signal.
         if _row_value(r, "front_ops_in_loop", None) == 1:
             results.append(
@@ -1332,9 +1396,9 @@ def detect_list_prepend(conn):
                 )
             )
             continue
-        # Fallback heuristic (conservative): only explicit front APIs.
-        calls = _iter_loop_calls(r)
-        if _call_in(calls, {"insert", "unshift", "shift", "appendleft", "popleft"}):
+        # Fallback heuristic (conservative): only list front APIs.
+        # Note: appendleft/popleft are deque O(1) ops — do NOT flag those.
+        if _call_in(calls, {"insert", "unshift", "shift"}):
             results.append(
                 _finding(
                     "list-prepend",
@@ -1704,7 +1768,14 @@ def detect_loop_invariant_call(conn):
             continue
         inv_calls = json.loads(r["loop_invariant_calls"]) if r["loop_invariant_calls"] else []
         # Filter out intentional per-iteration calls
-        flagged = [c for c in inv_calls if c.lower() not in _INTENTIONAL_CALLS]
+        flagged = []
+        for c in inv_calls:
+            call_full = (c or "").lower()
+            call_leaf = _call_leaf(c).lower()
+            if call_full in _INTENTIONAL_CALLS or call_leaf in _INTENTIONAL_CALLS:
+                continue
+            flagged.append(c)
+        flagged = _dedupe(flagged)
         if not flagged:
             continue
         results.append(
@@ -1805,6 +1876,10 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
             "loop_depth": 0,
             "loop_bound_small": 0,
             "caller_count": 0,
+            "cognitive_complexity": 0.0,
+            "cyclomatic_density": 0.0,
+            "line_count": 0,
+            "complexity_zscore": 0.0,
             "runtime_call_count": 0,
             "runtime_p99_latency_ms": None,
             "runtime_error_rate": 0.0,
@@ -1816,6 +1891,24 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
     }
     if not symbol_ids:
         return context
+
+    # Repo-relative complexity baseline (differential scoring signal).
+    complexity_mean = 0.0
+    complexity_std = 0.0
+    try:
+        row = conn.execute(
+            "SELECT AVG(COALESCE(cognitive_complexity, 0)) AS avg_cc, "
+            "AVG(COALESCE(cognitive_complexity, 0) * COALESCE(cognitive_complexity, 0)) AS avg_sq_cc "
+            "FROM symbol_metrics"
+        ).fetchone()
+        if row and row["avg_cc"] is not None:
+            complexity_mean = float(row["avg_cc"] or 0.0)
+            avg_sq = float(row["avg_sq_cc"] or 0.0)
+            variance = max(0.0, avg_sq - (complexity_mean * complexity_mean))
+            complexity_std = variance**0.5
+    except Exception:
+        complexity_mean = 0.0
+        complexity_std = 0.0
 
     # Static AST signals
     for chunk in _chunked(symbol_ids):
@@ -1840,6 +1933,28 @@ def _symbol_context(conn, symbol_ids: list[int]) -> dict[int, dict]:
                 if r[col]:
                     signals.append(label)
             ctx["signals"] = signals
+
+    # Complexity metrics
+    for chunk in _chunked(symbol_ids):
+        ph = ",".join("?" for _ in chunk)
+        rows = conn.execute(
+            f"SELECT symbol_id, cognitive_complexity, cyclomatic_density, line_count "
+            f"FROM symbol_metrics WHERE symbol_id IN ({ph})",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            sid = r["symbol_id"]
+            if sid not in context:
+                continue
+            cc = float(r["cognitive_complexity"] or 0.0)
+            density = float(r["cyclomatic_density"] or 0.0)
+            line_count = int(r["line_count"] or 0)
+            ctx = context[sid]
+            ctx["cognitive_complexity"] = cc
+            ctx["cyclomatic_density"] = density
+            ctx["line_count"] = line_count
+            if complexity_std > 0:
+                ctx["complexity_zscore"] = (cc - complexity_mean) / complexity_std
 
     # Caller counts
     for chunk in _chunked(symbol_ids):
@@ -1914,6 +2029,17 @@ def _build_evidence(context: dict) -> dict:
         "loop_bound_small": bool(context.get("loop_bound_small", 0)),
         "caller_count": int(context.get("caller_count", 0) or 0),
     }
+    cognitive = float(context.get("cognitive_complexity", 0.0) or 0.0)
+    density = float(context.get("cyclomatic_density", 0.0) or 0.0)
+    line_count = int(context.get("line_count", 0) or 0)
+    zscore = float(context.get("complexity_zscore", 0.0) or 0.0)
+    if cognitive > 0 or density > 0 or line_count > 0:
+        evidence["complexity"] = {
+            "cognitive": cognitive,
+            "cyclomatic_density": density,
+            "line_count": line_count,
+            "zscore": round(zscore, 3),
+        }
     runtime_calls = int(context.get("runtime_call_count", 0) or 0)
     runtime_p99 = context.get("runtime_p99_latency_ms")
     runtime_error = float(context.get("runtime_error_rate", 0.0) or 0.0)
@@ -1937,6 +2063,15 @@ def _build_evidence_path(finding: dict, context: dict) -> list[str]:
     signals = context.get("signals", [])
     if signals:
         path.append(f"Static evidence: {', '.join(signals[:4])}")
+    cognitive = float(context.get("cognitive_complexity", 0.0) or 0.0)
+    zscore = float(context.get("complexity_zscore", 0.0) or 0.0)
+    if cognitive >= 12 or zscore >= 1.0:
+        path.append(
+            "Complexity pressure: cognitive={:.1f}, zscore={:.2f}".format(
+                cognitive,
+                zscore,
+            )
+        )
     runtime_calls = int(context.get("runtime_call_count", 0) or 0)
     runtime_p99 = context.get("runtime_p99_latency_ms")
     runtime_db_system = context.get("runtime_otel_db_system")
@@ -1970,6 +2105,17 @@ def _impact_score(finding: dict, context: dict) -> float:
 
     caller_count = int(context.get("caller_count", 0) or 0)
     score += min(10.0, caller_count * 1.5)
+
+    # Differential complexity pressure (relative to repository baseline).
+    cognitive = float(context.get("cognitive_complexity", 0.0) or 0.0)
+    density = float(context.get("cyclomatic_density", 0.0) or 0.0)
+    zscore = float(context.get("complexity_zscore", 0.0) or 0.0)
+    if cognitive > 0:
+        score += min(7.0, cognitive / 6.0)
+    if density > 0:
+        score += min(4.0, density * 8.0)
+    if zscore > 0:
+        score += min(8.0, zscore * 2.5)
 
     runtime_calls = int(context.get("runtime_call_count", 0) or 0)
     runtime_p99 = context.get("runtime_p99_latency_ms")
@@ -2019,14 +2165,26 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     ctx = context or {}
     caller_count = int(ctx.get("caller_count", 0) or 0)
     loop_bound_small = bool(ctx.get("loop_bound_small", 0))
+    signal_count = len(ctx.get("signals", []))
     runtime_calls = int(ctx.get("runtime_call_count", 0) or 0)
     runtime_p99 = ctx.get("runtime_p99_latency_ms")
     runtime_error = float(ctx.get("runtime_error_rate", 0.0) or 0.0)
     runtime_db_system = ctx.get("runtime_otel_db_system")
     runtime_db_operation = ctx.get("runtime_otel_db_operation") or ctx.get("runtime_otel_db_statement_type") or ""
     runtime_db_operation = str(runtime_db_operation).upper()
+    precision = (finding.get("precision") or "medium").lower()
+    evidence = finding.get("evidence", {}) if isinstance(finding.get("evidence"), dict) else {}
+    ambiguous_io_only = bool(
+        finding.get("task_id") == "io-in-loop"
+        and evidence.get("ambiguous_io_only")
+    )
+    caller_threshold = 5
+    if precision == "medium":
+        caller_threshold = 8
+    elif precision == "low":
+        caller_threshold = 12
 
-    if caller_count >= 5:
+    if (not ambiguous_io_only) and caller_count >= caller_threshold and (precision == "high" or signal_count >= 2):
         finding["confidence"] = _boost_confidence(finding["confidence"])
         finding["reason"] += f" (hot: {caller_count} callers)"
     elif caller_count == 0 and runtime_calls == 0:
@@ -2040,6 +2198,13 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     )
     if runtime_hot:
         finding["confidence"] = _boost_confidence(finding["confidence"])
+        runtime_very_hot = (
+            runtime_calls >= 5000
+            or (runtime_p99 is not None and runtime_p99 >= 800)
+            or runtime_error >= 0.05
+        )
+        if runtime_very_hot:
+            finding["confidence"] = _boost_confidence(finding["confidence"])
         rt_bits = []
         if runtime_calls:
             rt_bits.append(f"{runtime_calls} calls")

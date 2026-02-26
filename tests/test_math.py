@@ -385,6 +385,53 @@ class TestAlgoCLI:
         data = parse_json_output(result, "algo")
         assert len(data.get("findings", [])) <= 1
 
+    def test_algo_max_per_task_diversifies_first_page(self, project_factory, monkeypatch):
+        """--max-per-task should prevent one detector from dominating top results."""
+        io_funcs = []
+        for i in range(1, 8):
+            io_funcs.append(
+                f"def fetch_{i}(urls):\n"
+                f"    out = []\n"
+                f"    for url in urls:\n"
+                f"        out.append(requests.get(url))\n"
+                f"    return out\n"
+            )
+        proj = project_factory(
+            {
+                "algo.py": (
+                    "import requests\n"
+                    + "\n".join(io_funcs)
+                    + "\n"
+                    "def bubble_sort(arr):\n"
+                    "    for i in range(len(arr)):\n"
+                    "        for j in range(len(arr) - 1):\n"
+                    "            if arr[j] > arr[j+1]:\n"
+                    "                arr[j], arr[j+1] = arr[j+1], arr[j]\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        runner = CliRunner()
+        result = invoke_cli(
+            runner,
+            ["algo", "--limit", "6", "--max-per-task", "2"],
+            cwd=proj,
+            json_mode=True,
+        )
+        data = parse_json_output(result, "algo")
+        findings = data.get("findings", [])
+        assert len(findings) <= 6
+
+        by_task = {}
+        for f in findings:
+            by_task[f["task_id"]] = by_task.get(f["task_id"], 0) + 1
+        assert by_task, "Expected findings for diversity check"
+        assert len(by_task.keys()) >= 2
+        first_page_tasks = {f["task_id"] for f in findings[:3]}
+        assert len(first_page_tasks) >= 2
+        assert data["summary"].get("max_per_task") == 2
+        assert data["summary"].get("deferred_by_task_cap", 0) > 0
+
     def test_math_alias_still_works(self, cli_runner, indexed_project, monkeypatch):
         """roam math should still work as a backward compat alias for algo."""
         monkeypatch.chdir(indexed_project)
@@ -655,6 +702,89 @@ class TestDetectors:
         with open_db(readonly=True, project_root=proj) as conn:
             hits = detect_io_in_loop(conn)
             assert len(hits) == 0
+
+    def test_detect_io_in_loop_ambiguous_bare_get_low_confidence(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "fetcher.py": (
+                    "def fetch_users(ids):\n"
+                    "    users = []\n"
+                    "    for uid in ids:\n"
+                    "        users.append(get(uid))\n"
+                    "    return users\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_io_in_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) >= 1
+            hit = hits[0]
+            assert hit["confidence"] == "low"
+            evidence = hit.get("evidence", {})
+            assert evidence.get("ambiguous_io_only") is True
+            assert "get" in evidence.get("ambiguous_io_calls", [])
+
+    def test_ambiguous_io_in_loop_runtime_escalates_confidence(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "fetcher.py": (
+                    "def fetch_users(ids):\n"
+                    "    users = []\n"
+                    "    for uid in ids:\n"
+                    "        users.append(get(uid))\n"
+                    "    return users\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import run_detectors
+        from roam.db.connection import open_db
+
+        with open_db(readonly=False, project_root=proj) as conn:
+            sym = conn.execute("SELECT id FROM symbols WHERE name = 'fetch_users' LIMIT 1").fetchone()
+            assert sym is not None
+            conn.execute(
+                "INSERT INTO runtime_stats "
+                "(symbol_id, symbol_name, trace_source, call_count, p99_latency_ms, error_rate) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (sym["id"], "fetch_users", "generic", 5000, 450.0, 0.01),
+            )
+            conn.commit()
+
+            hits = run_detectors(conn, task_filter="io-in-loop")
+            assert len(hits) >= 1
+            hit = next((h for h in hits if "fetch_users" in h.get("symbol_name", "")), None)
+            assert hit is not None
+            assert hit["confidence"] in {"medium", "high"}
+            assert "runtime:" in hit.get("reason", "")
+
+    def test_detect_io_in_loop_httpx_framework_pack(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "fetcher.py": (
+                    "import httpx\n"
+                    "def fetch_users(urls):\n"
+                    "    users = []\n"
+                    "    for url in urls:\n"
+                    "        users.append(httpx.get(url))\n"
+                    "    return users\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_io_in_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) >= 1
+            hit = hits[0]
+            assert "python-http-client" in hit.get("evidence", {}).get("frameworks", [])
+            assert "bounded async batches" in (hit.get("fix") or "")
 
     def test_detect_loop_lookup(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1130,6 +1260,27 @@ class TestDetectorsTier2:
             hits = detect_loop_invariant_call(conn)
             assert len(hits) == 0
 
+    def test_loop_invariant_suppresses_qualified_append(self, project_factory, monkeypatch):
+        """Qualified intentional calls like out.append(...) should be suppressed."""
+        proj = project_factory(
+            {
+                "work.py": (
+                    "def collect(items):\n"
+                    "    out = []\n"
+                    "    for item in items:\n"
+                    "        out.append(item)\n"
+                    "    return out\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_loop_invariant_call
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_loop_invariant_call(conn)
+            assert len(hits) == 0
+
     def test_bounded_loop_lowers_confidence(self, project_factory, monkeypatch):
         """Nested loops over range(3) should get confidence lowered."""
         proj = project_factory(
@@ -1365,6 +1516,48 @@ class TestAlgoRicher:
             assert isinstance(f.get("impact_score"), float)
             assert f.get("impact_band") in {"high", "medium", "low"}
             assert "io-in-loop" in meta.get("detector_metadata", {})
+
+    def test_complexity_pressure_raises_impact_score(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "fetcher.py": (
+                    "import requests\n"
+                    "def fetch_simple(urls):\n"
+                    "    out = []\n"
+                    "    for u in urls:\n"
+                    "        out.append(requests.get(u))\n"
+                    "    return out\n"
+                    "\n"
+                    "def fetch_complex(urls, a, b, c, d):\n"
+                    "    out = []\n"
+                    "    if a:\n"
+                    "        mode = 'x'\n"
+                    "    else:\n"
+                    "        mode = 'y'\n"
+                    "    if b:\n"
+                    "        mode = mode + '1'\n"
+                    "    if c:\n"
+                    "        mode = mode + '2'\n"
+                    "    if d:\n"
+                    "        mode = mode + '3'\n"
+                    "    for u in urls:\n"
+                    "        out.append(requests.get(u))\n"
+                    "    return out\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import run_detectors
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = run_detectors(conn, task_filter="io-in-loop")
+            simple_hit = next((h for h in hits if "fetch_simple" in h.get("symbol_name", "")), None)
+            complex_hit = next((h for h in hits if "fetch_complex" in h.get("symbol_name", "")), None)
+            assert simple_hit is not None
+            assert complex_hit is not None
+            assert "complexity" in complex_hit.get("evidence", {})
+            assert complex_hit["impact_score"] > simple_hit["impact_score"]
 
     def test_io_in_loop_guard_hints_reduce_confidence(self, project_factory, monkeypatch):
         proj = project_factory(
