@@ -8,25 +8,8 @@ from datetime import datetime, timezone
 
 import click
 
+from roam.graph.stats import gini_coefficient
 from roam.output.formatter import format_table, json_envelope, to_json
-
-# ---------------------------------------------------------------------------
-# Statistical helpers
-# ---------------------------------------------------------------------------
-
-
-def gini_coefficient(values: list[int | float]) -> float:
-    """Calculate Gini coefficient (0=perfectly equal, 1=perfectly concentrated).
-
-    A Gini of 0 means changes are spread perfectly evenly across files.
-    A Gini of 1 means all changes are in a single file.
-    """
-    if not values or sum(values) == 0:
-        return 0.0
-    sorted_vals = sorted(values)
-    n = len(sorted_vals)
-    cumulative = sum((2 * i - n + 1) * v for i, v in enumerate(sorted_vals))
-    return cumulative / (n * sum(sorted_vals))
 
 
 def detect_bursts(timestamps: list[int], window_seconds: int = 3600) -> dict:
@@ -381,6 +364,11 @@ def dev_profile(ctx, author, days, limit):
 
     With no AUTHOR argument, profiles all active developers.
     With an AUTHOR (email or substring), profiles only that developer.
+
+    Unlike ``ai-ratio`` (which estimates codebase-wide AI authorship from commit
+    history) and ``pr-risk`` (which scores a specific PR), this command profiles
+    an individual developer's commit patterns -- session timing, burst behavior,
+    and file-change distribution -- for behavioral risk assessment.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

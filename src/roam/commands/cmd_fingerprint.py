@@ -11,6 +11,8 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
+_MAX_GRAPH_SYMBOLS = 5000
+
 
 def _format_pct_list(pcts: list[float]) -> str:
     """Format a list of percentages into a compact distribution string."""
@@ -37,6 +39,10 @@ def _format_pct_list(pcts: list[float]) -> str:
 def fingerprint(ctx, compact, export_path, compare_path):
     """Topology fingerprint for cross-repo comparison.
 
+    Unlike ``capsule`` (which exports the raw graph as portable JSON),
+    this command extracts a computed topology signature for cross-repo
+    comparison.
+
     Extracts a structural signature from the codebase graph: layers,
     modularity, connectivity, clusters, hub/bridge ratio, PageRank
     distribution, and anti-patterns.
@@ -49,6 +55,25 @@ def fingerprint(ctx, compact, export_path, compare_path):
     with open_db(readonly=True) as conn:
         from roam.graph.builder import build_symbol_graph
         from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
+
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > _MAX_GRAPH_SYMBOLS:
+            msg = (
+                f"Graph too large ({sym_count} symbols) for fingerprint analysis. "
+                "Index a subdirectory to reduce graph size."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "fingerprint",
+                            summary={"verdict": msg, "symbol_count": sym_count},
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
+            return
 
         G = build_symbol_graph(conn)
         fp = compute_fingerprint(conn, G)

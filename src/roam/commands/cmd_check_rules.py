@@ -343,6 +343,10 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     file length, test coverage, god classes, deep inheritance, layer violations,
     and orphan symbols.
 
+    Unlike ``rules`` (which manages custom rule definitions in .roam/rules),
+    this command evaluates both built-in and custom rules and reports
+    pass/fail results.
+
     Configure thresholds and enable/disable rules via .roam-rules.yml.
     Use --profile to select a named rule profile (default, strict-security,
     ai-code-review, legacy-maintenance, minimal).
@@ -538,7 +542,6 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
     if failed:
         click.echo("=== Failing Rules ===")
         for r in failed:
-            sev = r["severity"].upper()
             count = r["violation_count"]
             click.echo(
                 "  [{}] {} -- {} ({} violation{})".format(

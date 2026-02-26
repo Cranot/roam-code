@@ -211,6 +211,10 @@ def _budget_str(rule: dict) -> str:
 def budget(ctx, do_init, staged, commit_range, explain, config_path):
     """Check pending changes against architectural budgets.
 
+    Unlike ``debt`` (which ranks files by accumulated technical debt),
+    this command enforces delta thresholds on architectural metrics as a
+    CI gate.
+
     Evaluates metric deltas against budget rules defined in
     .roam/budget.yaml (or defaults). Exit code 1 if any budget
     is exceeded, making it suitable as a CI gate.
@@ -345,7 +349,7 @@ def budget(ctx, do_init, staged, commit_range, explain, config_path):
 
     if not has_before:
         click.echo()
-        click.echo("Note: No snapshot found. Run 'roam snapshot' to create a baseline.")
+        click.echo("Note: No snapshot found. Run 'roam trends --save' to create a baseline.")
 
     if failed > 0:
         from roam.exit_codes import EXIT_GATE_FAILURE

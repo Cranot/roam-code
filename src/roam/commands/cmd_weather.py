@@ -1,4 +1,6 @@
-"""Show code hotspots: churn x complexity ranking."""
+"""Rank files by churn x complexity score (highest-leverage refactoring targets)."""
+
+from __future__ import annotations
 
 import math
 
@@ -14,7 +16,12 @@ from roam.output.formatter import format_table, json_envelope, to_json
 @click.option("-n", "count", default=20, help="Number of hotspots")
 @click.pass_context
 def weather(ctx, count):
-    """Show code hotspots: churn x complexity ranking."""
+    """Rank files by churn x complexity score (highest-leverage refactoring targets).
+
+    Unlike ``debt`` (which computes comprehensive technical debt including cycles and
+    god-component penalties), this command provides a lightweight churn-times-complexity
+    ranking using geometric mean normalization — no graph traversal required.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     with open_db(readonly=True) as conn:
@@ -25,12 +32,13 @@ def weather(ctx, count):
                     to_json(
                         json_envelope(
                             "weather",
-                            summary={"hotspots": 0},
+                            summary={"verdict": "no churn data available", "hotspots": 0},
                             hotspots=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no churn data available\n")
                 click.echo("No churn data available. Is this a git repository?")
             return
 
@@ -81,11 +89,20 @@ def weather(ctx, count):
                 }
                 for score, churn, complexity, commits, authors, reason, path in scored[:count]
             ]
+            if hotspot_list:
+                _top = hotspot_list[0]
+                _verdict = (
+                    f"{len(hotspot_list)} hotspots; top: {_top['path'].split('/')[-1]}"
+                    f"(churn={_top['churn']}, score={_top['score']})"
+                )
+            else:
+                _verdict = "no hotspots found"
             click.echo(
                 to_json(
                     json_envelope(
                         "weather",
                         summary={
+                            "verdict": _verdict,
                             "hotspots": len(hotspot_list),
                             "max_score": hotspot_list[0]["score"] if hotspot_list else 0,
                         },
@@ -109,6 +126,15 @@ def weather(ctx, count):
                 ]
             )
 
+        if scored:
+            _top_path, _top_churn, _top_score = scored[0][6], scored[0][1], scored[0][0]
+            _verdict = (
+                f"{len(scored[:count])} hotspots; top: {_top_path.split('/')[-1]}"
+                f"(churn={_top_churn}, score={_top_score:.0f})"
+            )
+        else:
+            _verdict = "no hotspots found"
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo("=== Hotspots (churn x complexity) ===")
         click.echo(
             format_table(

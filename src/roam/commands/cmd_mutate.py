@@ -56,6 +56,10 @@ def _truncate(text: str, max_len: int) -> str:
 def mutate(ctx):
     """Syntax-less agentic editing.
 
+    Unlike ``simulate`` (which predicts metric impact on a cloned graph),
+    this command generates actual code transformations with import and
+    reference updates.
+
     Move, rename, add calls, and extract symbols with automatic import
     rewriting and reference updates. Default is dry-run (preview).
     Use --apply to write changes to disk.

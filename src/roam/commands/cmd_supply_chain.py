@@ -8,6 +8,10 @@ from typing import NamedTuple
 
 import click
 
+# Pre-compiled regex for requirements.txt parsing
+_RE_INLINE_COMMENT = re.compile(r"\s+#.*$")
+_RE_REQUIREMENT = re.compile(r"^([A-Za-z0-9_.\-]+)(\[.*?\])?(.*)?$")
+
 from roam import __version__
 from roam.db.connection import find_project_root
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -90,8 +94,12 @@ def _pin_status_ruby(spec: str) -> str:
     return "unpinned"
 
 
-def _risk_level(pin_status: str, is_dev: bool) -> str:  # noqa: ARG001
-    return {"exact": "low", "range": "medium", "unpinned": "high"}[pin_status]
+def _risk_level(pin_status: str, is_dev: bool) -> str:
+    level = {"exact": "low", "range": "medium", "unpinned": "high"}[pin_status]
+    # Dev dependencies don't ship to production — reduce risk by one level
+    if is_dev:
+        level = {"high": "medium", "medium": "low", "low": "low"}[level]
+    return level
 
 
 def _parse_requirements_txt(path: Path, source: str) -> list[Dependency]:
@@ -104,8 +112,8 @@ def _parse_requirements_txt(path: Path, source: str) -> list[Dependency]:
         line = raw_line.strip()
         if not line or line.startswith("#") or line.startswith("-"):
             continue
-        line = re.sub(r"\s+#.*$", "", line)
-        m = re.match(r"^([A-Za-z0-9_.\-]+)(\[.*?\])?(.*)?$", line)
+        line = _RE_INLINE_COMMENT.sub("", line)
+        m = _RE_REQUIREMENT.match(line)
         if not m:
             continue
         name = m.group(1).strip()
@@ -687,7 +695,12 @@ def supply_chain_to_sarif(deps: list[Dependency], score: int) -> dict:
 @click.option("--top", default=5, show_default=True, help="Number of riskiest dependencies to highlight")
 @click.pass_context
 def supply_chain(ctx, top):
-    """Dependency risk dashboard: pin coverage, risk scoring, supply-chain health."""
+    """Dependency risk dashboard: pin coverage, risk scoring, supply-chain health.
+
+    Unlike ``sbom`` (which generates a software bill of materials), this command
+    analyzes dependency manifest files across 7 ecosystems for pin coverage --
+    exact pins, range constraints, and unpinned dependencies.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

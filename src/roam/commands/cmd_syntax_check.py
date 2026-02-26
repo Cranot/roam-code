@@ -11,11 +11,12 @@ Exit codes:
 from __future__ import annotations
 
 import os
-import subprocess
 from pathlib import Path
 
 import click
 
+from roam.commands.changed_files import get_changed_files
+from roam.db.connection import find_project_root
 from roam.index.parser import (
     GRAMMAR_ALIASES,
     REGEX_ONLY_LANGUAGES,
@@ -141,45 +142,11 @@ def _parse_file_for_syntax(file_path: str) -> dict | None:
 
 
 def _get_changed_files() -> list[str]:
-    """Get files changed in the working tree (unstaged + staged) via git."""
-    try:
-        # Unstaged changes
-        r1 = subprocess.run(
-            ["git", "diff", "--name-only"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-        )
-        # Staged changes
-        r2 = subprocess.run(
-            ["git", "diff", "--name-only", "--cached"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-        )
-        # Untracked new files
-        r3 = subprocess.run(
-            ["git", "ls-files", "--others", "--exclude-standard"],
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-        )
-        files: set[str] = set()
-        for r in (r1, r2, r3):
-            if r.returncode == 0 and r.stdout.strip():
-                for line in r.stdout.strip().splitlines():
-                    line = line.strip()
-                    if line:
-                        files.add(line.replace("\\", "/"))
-        return sorted(files)
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
+    """Get files changed in the working tree (unstaged + staged + untracked)."""
+    root = find_project_root()
+    unstaged = get_changed_files(root, untracked=True)
+    staged = get_changed_files(root, staged=True)
+    return sorted(set(unstaged) | set(staged))
 
 
 # ---------------------------------------------------------------------------
@@ -196,6 +163,9 @@ def syntax_check(ctx, paths, changed):
 
     Parses each file with tree-sitter and walks the AST looking for ERROR
     and MISSING nodes.  Works without a roam index -- parses files directly.
+
+    Unlike ``health`` (which scores structural quality from the indexed
+    graph), this command validates raw syntax correctness of source files.
 
     \b
     Exit codes:

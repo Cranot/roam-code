@@ -21,11 +21,16 @@ from roam.output.formatter import json_envelope, to_json
 def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
     """Detect dark matter: file pairs that co-change but have no structural link.
 
+    Unlike ``coupling`` (which measures file-level co-change frequency),
+    this command finds file pairs that co-change frequently despite having
+    no structural dependency.
+
     Dark matter couplings indicate hidden dependencies -- shared databases,
     event buses, config keys, or copy-paste patterns. Use --explain to see
     hypothesized reasons for each coupling.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     from roam.graph.dark_matter import HypothesisEngine, dark_matter_edges
@@ -62,6 +67,7 @@ def dark_matter(ctx, limit, min_npmi, min_cochanges, explain, category):
                             "total_dark_matter_edges": total,
                             "by_category": dict(by_cat),
                         },
+                        budget=token_budget,
                         dark_matter_pairs=[
                             {
                                 "file_a": p["path_a"],

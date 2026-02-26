@@ -428,14 +428,11 @@ def _scan_proto(source: str, file_path: str, rel_path: str) -> list[dict]:
     """Scan protobuf files for gRPC service definitions."""
     endpoints = []
     current_service = ""
-    service_line = 1
     for m in _GRPC_SERVICE_RE.finditer(source):
         current_service = m.group(1)
-        service_line = _line_of(source, m.start())
 
     for m in _GRPC_RPC_RE.finditer(source):
         rpc_name = m.group(1)
-        request_type = m.group(2)
         line = _line_of(source, m.start())
         endpoints.append(
             {
@@ -648,6 +645,9 @@ def _collect_endpoints(project_root: Path, file_paths: list[str], include_tests:
 @click.pass_context
 def endpoints(ctx, framework, http_method, include_tests, group_by):
     """List all detected REST/GraphQL/gRPC endpoints with handlers.
+
+    Unlike ``auth-gaps`` (which checks for missing auth guards on routes),
+    this command catalogs all route definitions across 12 frameworks.
 
     Scans indexed source files for route definitions from Flask, FastAPI,
     Django, Express, Spring, Rails, Laravel, Go net/http, GraphQL schemas,

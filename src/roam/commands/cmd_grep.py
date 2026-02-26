@@ -179,8 +179,14 @@ def _find_enclosing_symbol(conn, file_path, line_num):
 )
 @click.pass_context
 def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_patterns):
-    """Context-enriched grep: search with enclosing symbol annotation."""
+    """Context-enriched grep: search with enclosing symbol annotation.
+
+    Unlike ``search`` (which queries the symbol index by name), this command
+    searches raw file contents and annotates matches with their enclosing
+    symbol.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     root = find_project_root()
 
@@ -214,7 +220,8 @@ def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_p
                 to_json(
                     json_envelope(
                         "grep",
-                        summary={"total": 0},
+                        budget=token_budget,
+                        summary={"verdict": f"no matches for '{pattern}'", "total": 0},
                         pattern=pattern,
                         matches=[],
                         source_only=source_only,
@@ -223,8 +230,14 @@ def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_p
                 )
             )
         else:
+            click.echo(f"VERDICT: no matches for '{pattern}'")
+            click.echo()
             click.echo(f"No matches for '{pattern}'")
         return
+
+    # Count unique files for verdict
+    _grep_unique_files = len({m["path"] for m in matches})
+    _grep_verdict = f"{len(matches)} matches in {_grep_unique_files} files for '{pattern}'"
 
     if json_mode:
         with open_db(readonly=True) as conn:
@@ -240,7 +253,8 @@ def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_p
                 to_json(
                     json_envelope(
                         "grep",
-                        summary={"total": len(matches), "shown": len(results)},
+                        budget=token_budget,
+                        summary={"verdict": _grep_verdict, "total": len(matches), "shown": len(results)},
                         pattern=pattern,
                         total=len(matches),
                         source_only=source_only,
@@ -252,6 +266,8 @@ def grep_cmd(ctx, pattern, glob_filter, count, source_only, test_only, exclude_p
             )
         return
 
+    click.echo(f"VERDICT: {_grep_verdict}")
+    click.echo()
     click.echo(f"=== {len(matches)} matches for '{pattern}' ===\n")
 
     with open_db(readonly=True) as conn:

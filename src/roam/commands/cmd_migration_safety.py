@@ -602,8 +602,10 @@ def migration_safety_cmd(ctx, limit, confidence_filter, include_archive):
 
     Scans all PHP migration files in the indexed project and reports
     operations that will fail or corrupt data if executed more than once.
-    This matters for projects with dual migration tables (e.g. Laravel +
-    Forge) where migrations can be unexpectedly re-run.
+    Unlike ``missing-index`` (which finds queries on unindexed columns) and
+    ``n1`` (which detects ORM lazy-load N+1 patterns), this command analyzes
+    Laravel migration files for non-idempotent DDL operations that would fail
+    if run twice.
 
     \b
     Detects:

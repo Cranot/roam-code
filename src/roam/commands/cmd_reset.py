@@ -16,10 +16,10 @@ from roam.output.formatter import json_envelope, to_json
 def reset(ctx, force, root):
     """Delete the index DB and rebuild from scratch.
 
-    Equivalent to: rm .roam/index.db && roam init
-
-    Requires --force to confirm the destructive operation.
-    Useful when the index is corrupted or out of sync.
+    Requires --force to confirm the destructive operation. Unlike ``clean``
+    (which surgically removes orphaned records while preserving valid data),
+    this command deletes the entire index and rebuilds from scratch. Use
+    ``doctor`` to verify environment health after a reset.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

@@ -437,8 +437,7 @@ def collect_dataflow_findings(
         if line_start > len(lines):
             continue
 
-        # Scope slice and body slice (excluding declaration line).
-        scope_lines = lines[line_start - 1 : min(line_end, len(lines))]
+        # Body slice (excluding declaration line).
         body_lines = lines[line_start : min(line_end, len(lines))]
         body_text = "\n".join(body_lines)
         token_counts = _token_counts(body_text)

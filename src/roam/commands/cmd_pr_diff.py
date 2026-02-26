@@ -28,6 +28,10 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
     Compares current metrics against the latest snapshot to show metric
     deltas, cross-cluster edges, layer violations, symbol changes, and
     overall graph footprint.
+
+    Unlike ``diff`` (which shows the developer-facing blast radius of
+    changed symbols), this command compares aggregate CI-level metrics
+    before and after a change.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -193,7 +197,7 @@ def pr_diff(ctx, staged, commit_range, fmt, fail_on_degradation):
             click.echo(f"  {label:20s} {d['before']} -> {d['after']}  {delta_str}{flag}")
         click.echo()
     else:
-        click.echo("METRIC DELTAS: No snapshot found. Run 'roam snapshot' to enable delta tracking.")
+        click.echo("METRIC DELTAS: No snapshot found. Run 'roam trends --save' to enable delta tracking.")
         click.echo()
 
     # Edge analysis
@@ -253,7 +257,7 @@ def _emit_markdown(verdict, deltas, deltas_available, edges, sym_changes, footpr
             )
         click.echo()
     else:
-        click.echo("_No snapshot found. Run `roam snapshot` to enable delta tracking._")
+        click.echo("_No snapshot found. Run `roam trends --save` to enable delta tracking._")
         click.echo()
 
     # Edge analysis

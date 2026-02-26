@@ -1,5 +1,7 @@
 """Detect health degradation trends and generate actionable alerts."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.metrics_history import collect_metrics, get_snapshots
@@ -245,16 +247,6 @@ def _check_rate_of_change(snapshots_chrono):
                         trend_direction="up",
                     )
                 )
-            elif curr_val < prev_val and metric in _WORSE_WHEN_LOWER:
-                alerts.append(
-                    _make_alert(
-                        INFO,
-                        metric,
-                        f"{metric}={curr_val} (new since last snapshot)",
-                        curr_val,
-                        trend_direction="down",
-                    )
-                )
             continue
 
         pct = abs(curr_val - prev_val) / abs(prev_val) * 100
@@ -312,6 +304,11 @@ def alerts(ctx):
     - Metrics that consistently worsen over 3+ snapshots
     - Current values that exceed severity thresholds
     - Metrics that changed more than 20% since the last snapshot
+
+    Unlike ``health`` (which gives a point-in-time codebase score), this
+    command performs time-series analysis over snapshot history using
+    Mann-Kendall trend tests and Sen's slope to detect degradation trends.
+    Run ``trends --save`` regularly to build history for trend detection.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -366,6 +363,19 @@ def alerts(ctx):
     for a in all_alerts:
         counts[a["level"]] += 1
 
+    # Build verdict
+    if all_alerts:
+        parts = []
+        if counts[CRITICAL]:
+            parts.append(f"{counts[CRITICAL]} critical")
+        if counts[WARNING]:
+            parts.append(f"{counts[WARNING]} warning{'s' if counts[WARNING] != 1 else ''}")
+        if counts[INFO]:
+            parts.append(f"{counts[INFO]} info")
+        verdict = f"{len(all_alerts)} alert{'s' if len(all_alerts) != 1 else ''}: {', '.join(parts)}"
+    else:
+        verdict = "no alerts — all metrics within normal ranges"
+
     # --- JSON output ---
     if json_mode:
         click.echo(
@@ -373,6 +383,7 @@ def alerts(ctx):
                 json_envelope(
                     "alerts",
                     summary={
+                        "verdict": verdict,
                         "total": len(all_alerts),
                         "critical": counts[CRITICAL],
                         "warning": counts[WARNING],
@@ -386,6 +397,7 @@ def alerts(ctx):
         return
 
     # --- Text output ---
+    click.echo(f"VERDICT: {verdict}\n")
     if not all_alerts:
         click.echo("No health alerts. All metrics are within normal ranges.")
         return

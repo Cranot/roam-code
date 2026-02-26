@@ -164,6 +164,10 @@ def _recent_changes(conn, file_id, limit=5):
 def diagnose(ctx, name, depth):
     """Root cause analysis for a failing symbol.
 
+    Unlike ``why`` (which explains a symbol's architectural role), this
+    command ranks upstream and downstream symbols by risk score to find
+    likely root causes of failures.
+
     Given a symbol suspected of causing a bug, ranks upstream callers
     and downstream callees by a composite risk score combining:
     git churn, cognitive complexity, file health, and co-change entropy.
@@ -310,7 +314,7 @@ def diagnose(ctx, name, depth):
             return
 
         # Text output
-        click.echo(f"\nVERDICT: {verdict}\n")
+        click.echo(f"VERDICT: {verdict}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")
         click.echo(f"  {loc(target_metrics['file_path'], sym['line_start'])}")

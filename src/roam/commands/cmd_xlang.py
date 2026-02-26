@@ -17,6 +17,10 @@ def xlang(ctx):
     Detects and reports cross-language boundaries such as:
     - Protobuf .proto -> generated Go/Java/Python stubs
     - Salesforce Apex -> Aura/LWC/Visualforce templates
+
+    Shows cross-language symbol links discovered by active bridges (Protobuf,
+    Salesforce Apex, REST API, template, config). Use ``bridges`` to see which
+    bridge types are available.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -32,12 +36,13 @@ def xlang(ctx):
                     to_json(
                         json_envelope(
                             "x-lang",
-                            summary={"bridges": 0, "links": 0},
+                            summary={"verdict": "no files indexed", "bridges": 0, "links": 0},
                             bridges=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no files indexed\n")
                 click.echo("No files indexed.")
             return
 
@@ -52,18 +57,45 @@ def xlang(ctx):
                     to_json(
                         json_envelope(
                             "x-lang",
-                            summary={"bridges": 0, "links": 0},
+                            summary={"verdict": "no cross-language bridges detected", "bridges": 0, "links": 0},
                             bridges=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no cross-language bridges detected\n")
                 click.echo("No cross-language bridges detected.")
             return
 
         # For each bridge, resolve cross-language edges
         all_links = []
         bridge_summaries = []
+
+        # Performance guard: cap total file count to avoid O(src*tgt) blowup
+        _MAX_BRIDGE_FILES = 1000
+        total_bridge_files = 0
+        for bridge in active:
+            src_count = sum(1 for p in file_paths if any(p.endswith(ext) for ext in bridge.source_extensions))
+            tgt_count = sum(1 for p in file_paths if any(p.endswith(ext) for ext in bridge.target_extensions))
+            total_bridge_files += src_count + tgt_count
+        if total_bridge_files > _MAX_BRIDGE_FILES:
+            warning = (
+                f"Too many bridge files ({total_bridge_files} source+target) for cross-language analysis. "
+                "Index a subdirectory to reduce scope."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "x-lang",
+                            summary={"verdict": f"skipped: {warning}", "bridges": 0, "links": 0, "warning": warning},
+                            bridges=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"WARNING: {warning}")
+            return
 
         for bridge in active:
             # Find source files for this bridge
@@ -107,11 +139,18 @@ def xlang(ctx):
             )
 
         if json_mode:
+            _bnames = ", ".join(bs["name"] for bs in bridge_summaries[:3])
+            _verdict = (
+                f"{len(bridge_summaries)} bridges ({_bnames}), {len(all_links)} links"
+                if bridge_summaries
+                else "no cross-language bridges detected"
+            )
             click.echo(
                 to_json(
                     json_envelope(
                         "x-lang",
                         summary={
+                            "verdict": _verdict,
                             "bridges": len(bridge_summaries),
                             "links": len(all_links),
                         },
@@ -123,6 +162,13 @@ def xlang(ctx):
             return
 
         # Text output
+        _bnames = ", ".join(bs["name"] for bs in bridge_summaries[:3])
+        _verdict = (
+            f"{len(bridge_summaries)} bridges ({_bnames}), {len(all_links)} links"
+            if bridge_summaries
+            else "no cross-language bridges detected"
+        )
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"=== Cross-Language Bridges ({len(bridge_summaries)}) ===\n")
 
         if bridge_summaries:

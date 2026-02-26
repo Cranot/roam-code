@@ -63,6 +63,10 @@ def _severity_icon(sev: str) -> str:
 def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
     """Show cognitive complexity metrics for functions and methods.
 
+    Unlike ``health`` (which scores the whole codebase) and ``debt`` (which
+    estimates remediation effort), this command ranks individual symbols by
+    cognitive complexity.
+
     Ranks symbols by a multi-factor complexity score that accounts for
     nesting depth, boolean operators, callback depth, and control-flow
     breaks. Use --bumpy-road to find files where many functions are
@@ -161,11 +165,19 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
         high_count = sum(1 for s in scores if 15 <= s < 25)
 
         if json_mode:
+            _worst_name = (rows[0]["qualified_name"] or rows[0]["name"]) if rows else "none"
+            _worst_cc = rows[0]["cognitive_complexity"] if rows else 0
+            _cx_verdict = (
+                f"avg complexity {avg:.1f}, "
+                f"{critical_count} critical, {high_count} high; "
+                f"worst: {_worst_name}({_worst_cc:.0f})"
+            )
             click.echo(
                 to_json(
                     json_envelope(
                         "complexity",
                         summary={
+                            "verdict": _cx_verdict,
                             "total_analyzed": total,
                             "average_complexity": round(avg, 1),
                             "p90_complexity": round(p90, 1),
@@ -202,6 +214,15 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
             return
 
         # Text output
+        _worst_name_txt = (rows[0]["qualified_name"] or rows[0]["name"]) if rows else "none"
+        _worst_cc_txt = rows[0]["cognitive_complexity"] if rows else 0
+        _cx_verdict_txt = (
+            f"avg complexity {avg:.1f}, "
+            f"{critical_count} critical, {high_count} high; "
+            f"worst: {_worst_name_txt}({_worst_cc_txt:.0f})"
+        )
+        click.echo(f"VERDICT: {_cx_verdict_txt}")
+        click.echo()
         click.echo(
             f"Cognitive complexity ({total} functions analyzed, "
             f"avg={avg:.1f}, p90={p90:.1f}, "
@@ -263,11 +284,16 @@ def _by_file_output(conn, rows, json_mode):
     file_summaries.sort(key=lambda f: f["total_complexity"], reverse=True)
 
     if json_mode:
+        _bf_max = file_summaries[0]["max_complexity"] if file_summaries else 0
+        _bf_file = file_summaries[0]["file"].split("/")[-1] if file_summaries else "none"
+        _bf_verdict = (
+            f"{len(file_summaries)} files analyzed, worst file: {_bf_file} (max={_bf_max:.0f})"
+        )
         click.echo(
             to_json(
                 json_envelope(
                     "complexity",
-                    summary={"files": len(file_summaries)},
+                    summary={"verdict": _bf_verdict, "files": len(file_summaries)},
                     files=[
                         {
                             "file": fs["file"],
@@ -327,11 +353,15 @@ def _bumpy_road(conn, json_mode, limit, threshold):
         return
 
     if json_mode:
+        _br_verdict = (
+            f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
+        )
         click.echo(
             to_json(
                 json_envelope(
                     "complexity",
                     summary={
+                        "verdict": _br_verdict,
                         "mode": "bumpy-road",
                         "threshold": min_score,
                         "files_found": len(rows),
@@ -353,6 +383,11 @@ def _bumpy_road(conn, json_mode, limit, threshold):
         )
         return
 
+    _br_verdict_txt = (
+        f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
+    )
+    click.echo(f"VERDICT: {_br_verdict_txt}")
+    click.echo()
     click.echo(f"Bumpy-road files (3+ functions with complexity >= {min_score}):\n")
     for r in rows:
         bumpy = r["func_count"] * r["avg_cc"]

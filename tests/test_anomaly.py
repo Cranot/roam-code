@@ -464,15 +464,15 @@ class TestTrendCommandAnomalies:
             git_commit(proj, f"add module_{i}")
             out, rc = index_in_process(proj)
             assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"
-            # Also try to create an explicit snapshot
-            roam("snapshot", "--tag", f"v{i}", cwd=proj)
+            # Create an explicit snapshot via trends --save
+            roam("trends", "--save", "--tag", f"v{i}", cwd=proj)
 
         return proj
 
     def test_trend_analyze_produces_output(self, trend_project):
-        """roam trend --analyze should produce analysis output."""
-        out, rc = roam("trend", "--analyze", cwd=trend_project)
-        assert rc == 0, f"trend --analyze failed (exit {rc}):\n{out}"
+        """roam trends --analyze should produce analysis output."""
+        out, rc = roam("trends", "--analyze", cwd=trend_project)
+        assert rc == 0, f"trends --analyze failed (exit {rc}):\n{out}"
         # Should contain analysis-related text (verdict, trends, etc.)
         out_lower = out.lower()
         assert any(word in out_lower for word in ["verdict", "trend", "anomal", "pattern", "score", "date"]), (
@@ -480,18 +480,18 @@ class TestTrendCommandAnomalies:
         )
 
     def test_trend_json_anomalies_has_array(self, trend_project):
-        """roam --json trend --anomalies should have anomalies array in JSON."""
-        out, rc = roam("--json", "trend", "--anomalies", cwd=trend_project)
-        assert rc == 0, f"trend --anomalies JSON failed (exit {rc}):\n{out}"
+        """roam --json trends --anomalies should have anomalies array in JSON."""
+        out, rc = roam("--json", "trends", "--anomalies", cwd=trend_project)
+        assert rc == 0, f"trends --anomalies JSON failed (exit {rc}):\n{out}"
         # Parse the JSON output
         data = json.loads(out)
         assert "anomalies" in data, f"Expected 'anomalies' key in JSON output, got keys: {list(data.keys())}"
         assert isinstance(data["anomalies"], list)
 
     def test_trend_json_forecast_has_arrays(self, trend_project):
-        """roam --json trend --forecast should have trends and forecasts arrays."""
-        out, rc = roam("--json", "trend", "--forecast", cwd=trend_project)
-        assert rc == 0, f"trend --forecast JSON failed (exit {rc}):\n{out}"
+        """roam --json trends --forecast should have trends and forecasts arrays."""
+        out, rc = roam("--json", "trends", "--forecast", cwd=trend_project)
+        assert rc == 0, f"trends --forecast JSON failed (exit {rc}):\n{out}"
         data = json.loads(out)
         assert "trends" in data, f"Expected 'trends' key in JSON output, got keys: {list(data.keys())}"
         assert isinstance(data["trends"], list)
@@ -499,9 +499,9 @@ class TestTrendCommandAnomalies:
         assert isinstance(data["forecasts"], list)
 
     def test_trend_json_analyze_has_all_fields(self, trend_project):
-        """roam --json trend --analyze should have all analysis fields."""
-        out, rc = roam("--json", "trend", "--analyze", cwd=trend_project)
-        assert rc == 0, f"trend --analyze JSON failed (exit {rc}):\n{out}"
+        """roam --json trends --analyze should have all analysis fields."""
+        out, rc = roam("--json", "trends", "--analyze", cwd=trend_project)
+        assert rc == 0, f"trends --analyze JSON failed (exit {rc}):\n{out}"
         data = json.loads(out)
         assert "anomalies" in data, f"Missing 'anomalies' in: {list(data.keys())}"
         assert "trends" in data, f"Missing 'trends' in: {list(data.keys())}"
@@ -516,20 +516,20 @@ class TestTrendCommandAnomalies:
         """Higher sensitivity should detect >= anomalies compared to lower."""
         out_high, rc_high = roam(
             "--json",
-            "trend",
+            "trends",
             "--analyze",
             "--sensitivity=high",
             cwd=trend_project,
         )
         out_low, rc_low = roam(
             "--json",
-            "trend",
+            "trends",
             "--analyze",
             "--sensitivity=low",
             cwd=trend_project,
         )
-        assert rc_high == 0, f"trend --sensitivity=high failed:\n{out_high}"
-        assert rc_low == 0, f"trend --sensitivity=low failed:\n{out_low}"
+        assert rc_high == 0, f"trends --sensitivity=high failed:\n{out_high}"
+        assert rc_low == 0, f"trends --sensitivity=low failed:\n{out_low}"
         data_high = json.loads(out_high)
         data_low = json.loads(out_low)
         anomalies_high = len(data_high.get("anomalies", []))

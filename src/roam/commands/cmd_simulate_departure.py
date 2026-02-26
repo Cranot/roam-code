@@ -11,10 +11,14 @@ from __future__ import annotations
 import math
 import time
 from collections import defaultdict
-from pathlib import Path
 
 import click
 
+from roam.commands.codeowners_helpers import (
+    find_codeowners,
+    parse_codeowners as _parse_codeowners_file,
+    resolve_owners,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import (
@@ -22,6 +26,21 @@ from roam.output.formatter import (
     json_envelope,
     to_json,
 )
+
+# ---------------------------------------------------------------------------
+# Backward-compatible CODEOWNERS wrapper
+# ---------------------------------------------------------------------------
+
+
+def parse_codeowners(project_root):
+    """Find and parse a CODEOWNERS file under *project_root*.
+
+    Thin wrapper around the shared helpers for backward compatibility --
+    earlier versions of this module combined finding and parsing in one call.
+    """
+    co_path = find_codeowners(project_root)
+    return _parse_codeowners_file(co_path) if co_path else []
+
 
 # ---------------------------------------------------------------------------
 # Time-decayed ownership computation
@@ -83,67 +102,12 @@ def compute_file_ownership(conn, file_ids: list[int], now: int | None = None):
     return result
 
 
-# ---------------------------------------------------------------------------
-# CODEOWNERS parsing
-# ---------------------------------------------------------------------------
-
-
-def parse_codeowners(project_root: Path) -> list[tuple[str, list[str]]]:
-    """Parse a CODEOWNERS file and return (pattern, [owners]) pairs.
-
-    Searches for CODEOWNERS in standard locations:
-    - CODEOWNERS
-    - .github/CODEOWNERS
-    - docs/CODEOWNERS
-
-    Returns patterns in order (last match wins, as per GitHub convention).
-    """
-    candidates = [
-        project_root / "CODEOWNERS",
-        project_root / ".github" / "CODEOWNERS",
-        project_root / "docs" / "CODEOWNERS",
-    ]
-    codeowners_path = None
-    for c in candidates:
-        if c.exists():
-            codeowners_path = c
-            break
-
-    if codeowners_path is None:
-        return []
-
-    rules: list[tuple[str, list[str]]] = []
-    try:
-        text = codeowners_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        pattern = parts[0]
-        owners = parts[1:]
-        rules.append((pattern, owners))
-
-    return rules
-
-
 def resolve_codeowner(file_path: str, rules: list[tuple[str, list[str]]]) -> list[str]:
     """Resolve CODEOWNERS for a file path.  Last matching rule wins.
 
-    Uses gitignore-style pattern matching (see ``roam.index.gitignore``).
+    Delegates to the shared ``resolve_owners`` helper.
     """
-    from roam.index.gitignore import matches_gitignore
-
-    matched_owners: list[str] = []
-    for pattern, owners in rules:
-        if matches_gitignore(file_path, pattern):
-            matched_owners = owners
-    return matched_owners
+    return resolve_owners(rules, file_path)
 
 
 def _normalise_identity(name: str) -> str:
@@ -450,6 +414,10 @@ def simulate_departure(ctx, developers, limit):
     or under-owned.  Accepts one or more developer names or email addresses
     (matched against git blame authors).
 
+    Unlike ``bus-factor`` (which shows team-level ownership concentration),
+    this command simulates the concrete impact of a specific individual
+    departing.
+
     \b
     Examples:
       roam simulate-departure "Alice Smith"
@@ -542,7 +510,6 @@ def _output_json(result, developers):
 
 def _output_text(result, developers, limit):
     """Emit verdict-first text output."""
-    dev_str = ", ".join(developers)
     click.echo(f"VERDICT: {result['verdict']}")
     click.echo()
 

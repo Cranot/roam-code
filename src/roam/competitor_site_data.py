@@ -1715,30 +1715,11 @@ def _decision_entries(
     return entries
 
 
-def _find_section_line_range(lines: list[str], heading: str) -> tuple[int, int]:
-    start = _find_heading(lines, heading) + 1
-    end = len(lines)
-    for i in range(start, len(lines)):
-        if lines[i].startswith("## "):
-            end = i
-            break
-    return start, end
-
-
-def _parse_roam_trails(lines: list[str]) -> list[str]:
-    start, end = _find_section_line_range(lines, "## Where roam-code Trails")
-    items: list[str] = []
-    for line in lines[start:end]:
-        m = re.match(r"\s*\d+\.\s+(.*)$", line)
-        if m:
-            items.append(_strip_md(m.group(1)))
-    return items
-
 
 def _parse_matrix_confidence(lines: list[str]) -> dict[str, dict[str, object]]:
     heading = next((line for line in lines if line.startswith("## Matrix Recheck Log")), "")
     if not heading:
-        raise ValueError("Heading not found: ## Matrix Recheck Log")
+        return {}
     _, rows = _parse_table_after_heading(lines, heading)
     mapping: dict[str, dict[str, object]] = {}
 
@@ -1915,9 +1896,9 @@ def _matrix_to_competitors(
     confidence_map: dict[str, dict[str, object]],
     tracker_updated_iso: str,
 ) -> list[dict[str, object]]:
-    headers, rows = _parse_table_after_heading(lines, "## Master Comparison Table (18 Competitors)")
+    headers, rows = _parse_table_after_heading(lines, "## Feature Comparison Matrix (18 Tools)")
     if not rows:
-        raise ValueError("Master comparison table is empty")
+        raise ValueError("Feature comparison matrix table is empty")
 
     feature_col = headers[0]
     names = headers[1:]
@@ -1989,14 +1970,14 @@ def _append_ckb_from_leaderboard(
     confidence_map: dict[str, dict[str, object]],
     tracker_updated_iso: str,
 ) -> None:
-    _, rows = _parse_table_after_heading(lines, "## MCP Tool Count Leaderboard")
+    _, rows = _parse_table_after_heading(lines, "## MCP Tool Count Comparison")
     ckb_row = None
     for row in rows:
         if _strip_md(row.get("Tool", "")) == "CKB/CodeMCP":
             ckb_row = row
             break
     if ckb_row is None:
-        raise ValueError("CKB/CodeMCP row not found in MCP Tool Count Leaderboard")
+        raise ValueError("CKB/CodeMCP row not found in MCP Tool Count Comparison")
 
     if any(entry["name"] == "CKB/CodeMCP" for entry in competitors):
         return

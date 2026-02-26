@@ -515,7 +515,11 @@ def _walk_for_files(root: Path) -> list[str]:
 )
 @click.pass_context
 def secrets(ctx, severity, fail_on_found, include_tests):
-    """Scan for hardcoded secrets, API keys, tokens, and passwords."""
+    """Scan for hardcoded secrets, API keys, tokens, and passwords.
+
+    Unlike ``supply-chain`` (which assesses third-party dependency risk),
+    this command scans source code for hardcoded credentials and API keys.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

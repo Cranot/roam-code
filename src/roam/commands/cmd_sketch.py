@@ -1,4 +1,16 @@
-"""Compact structural skeleton of a directory — API surface without implementation."""
+"""Compact structural skeleton of a directory — API surface without implementation.
+
+Prefer ``roam understand --skeleton <DIR>`` for the unified single-call
+alternative, which produces identical output within the broader understand
+context.
+
+This command is kept as a standalone entry point because it accepts a
+positional ``directory`` argument and supports a ``--full`` flag to include
+non-exported symbols, neither of which is exposed by ``understand
+--skeleton``.
+"""
+
+from __future__ import annotations
 
 from collections import defaultdict
 
@@ -14,7 +26,12 @@ from roam.output.formatter import abbrev_kind, format_signature, json_envelope, 
 @click.option("--full", is_flag=True, help="Show all symbols, not just exported")
 @click.pass_context
 def sketch(ctx, directory, full):
-    """Show compact structural skeleton of a directory."""
+    """Show compact structural skeleton of a directory.
+
+    Unlike ``understand --skeleton`` (which shows exported symbols as part
+    of a broader overview), this command provides a standalone structural
+    skeleton with optional ``--full`` mode to include private symbols.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -65,7 +82,11 @@ def sketch(ctx, directory, full):
                     to_json(
                         json_envelope(
                             "sketch",
-                            summary={"file_count": 0, "symbol_count": 0},
+                            summary={
+                                "verdict": f"no symbols found in {directory}/",
+                                "file_count": 0,
+                                "symbol_count": 0,
+                            },
                             directory=directory,
                             files={},
                             symbol_count=0,
@@ -73,6 +94,7 @@ def sketch(ctx, directory, full):
                     )
                 )
             else:
+                click.echo(f"VERDICT: no symbols found in {directory}/\n")
                 click.echo(f"No {'symbols' if full else 'exported symbols'} found in: {directory}/")
                 click.echo("Hint: use a path relative to the project root.")
             return
@@ -83,6 +105,7 @@ def sketch(ctx, directory, full):
             by_file[s["file_path"]].append(s)
 
         if json_mode:
+            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols"
             result = {}
             for fp in sorted(by_file.keys()):
                 result[fp] = [
@@ -100,7 +123,11 @@ def sketch(ctx, directory, full):
                 to_json(
                     json_envelope(
                         "sketch",
-                        summary={"file_count": len(by_file), "symbol_count": len(symbols)},
+                        summary={
+                            "verdict": _verdict,
+                            "file_count": len(by_file),
+                            "symbol_count": len(symbols),
+                        },
                         directory=directory,
                         file_count=len(by_file),
                         symbol_count=len(symbols),
@@ -114,6 +141,8 @@ def sketch(ctx, directory, full):
         file_count = len(by_file)
         sym_count = len(symbols)
         label = "symbols" if full else "exported symbols"
+        _verdict = f"{directory}/: {file_count} files, {sym_count} {label}"
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"{directory}/ ({file_count} files, {sym_count} {label})")
         click.echo()
 

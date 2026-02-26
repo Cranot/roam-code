@@ -27,7 +27,13 @@ from roam.output.formatter import budget_truncate, json_envelope, to_json
 )
 @click.pass_context
 def agent_context(ctx, agent_id, n_agents):
-    """Generate per-worker context: write scope, read-only deps, and contracts."""
+    """Generate per-worker context: write scope, read-only deps, and contracts.
+
+    Extracts a single agent's partition from the full agent plan (see
+    ``agent-plan`` for the complete multi-agent view) and assembles a
+    focused context blob with write scope, read-only dependencies,
+    interface contracts, and coordination instructions.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()

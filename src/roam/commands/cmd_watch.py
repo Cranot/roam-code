@@ -109,7 +109,7 @@ def _guardian_drift_summary(
     max_files: int = 250,
 ) -> dict:
     """Return compact ownership-drift summary for architecture guardian mode."""
-    from roam.commands.cmd_codeowners import find_codeowners, parse_codeowners, resolve_owners
+    from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
     from roam.commands.cmd_drift import compute_drift_score, compute_file_ownership
 
     co_path = find_codeowners(project_root)
@@ -175,7 +175,7 @@ def collect_guardian_snapshot(
     drift_threshold: float = 0.5,
 ) -> dict:
     """Collect a continuous architecture-guardian snapshot."""
-    from roam.commands.cmd_trend import _analyze_trends, _trend_verdict
+    from roam.commands.cmd_trends import _analyze_trends, _trend_verdict
     from roam.commands.metrics_history import append_snapshot, get_snapshots
 
     with open_db(readonly=False, project_root=project_root) as conn:
@@ -703,10 +703,14 @@ def watch(
 ):
     """Watch for file changes and auto-re-index incrementally.
 
-    Uses polling (no external dependencies). Debounces rapid bursts of
+    Uses polling (no external dependencies).  Debounces rapid bursts of
     changes and only re-indexes what actually changed.
     Optional webhook bridge mode allows CI/webhook systems to trigger
     refreshes without shelling into the process.
+
+    Use ``--guardian`` for continuous architecture health snapshots
+    (JSONL audit trail of health score, cycles, drift, and layer
+    violations after each re-index).
 
     Press Ctrl+C to stop.
     """

@@ -37,7 +37,6 @@ def _health_label(metrics: dict) -> str:
     score = 0
     cc = metrics.get("complexity", 0) or 0
     fan_out = metrics.get("fan_out", 0) or 0
-    fan_in = metrics.get("fan_in", 0) or 0
     churn = metrics.get("churn", 0) or 0
     dead_code_risk = metrics.get("dead_code_risk", False)
 
@@ -474,6 +473,9 @@ def _resolve_target(conn: sqlite3.Connection, target: str) -> tuple[str, int | N
 @click.pass_context
 def metrics(ctx, target):
     """Show unified metrics for a file or symbol.
+
+    Unlike ``health`` (which scores the entire codebase), this command
+    shows detailed metrics for a single file or symbol.
 
     TARGET can be a file path (e.g. src/app.py) or a symbol name
     (e.g. create_user). Consolidates complexity, fan-in/fan-out,

@@ -12,6 +12,20 @@ from roam.output.formatter import abbrev_kind, format_edge_kind, json_envelope, 
 
 def _test_map_symbol(conn, sym):
     """Show test files that exercise a given symbol."""
+    # Pre-compute test counts for verdict (lightweight queries)
+    callers_pre = conn.execute(
+        "SELECT s.name, f.path as file_path FROM edges e "
+        "JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id WHERE e.target_id = ?",
+        (sym["id"],),
+    ).fetchall()
+    direct_pre = [c for c in callers_pre if _is_test_file(c["file_path"])]
+    sym_verdict = (
+        f"{len(direct_pre)} direct test{'s' if len(direct_pre) != 1 else ''} for {sym['name']}"
+        if direct_pre
+        else f"no tests found for {sym['name']}"
+    )
+    click.echo(f"VERDICT: {sym_verdict}\n")
     click.echo(
         f"Test coverage for: {sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
     )
@@ -92,6 +106,18 @@ def _test_map_file(conn, path):
         click.echo(f"File not found in index: {path}")
         raise SystemExit(1)
 
+    # Pre-compute for verdict
+    importers_pre = conn.execute(
+        "SELECT f.path FROM file_edges fe JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
+        (frow["id"],),
+    ).fetchall()
+    test_importers_pre = [r for r in importers_pre if _is_test_file(r["path"])]
+    file_verdict = (
+        f"{len(test_importers_pre)} test file{'s' if len(test_importers_pre) != 1 else ''} import {frow['path']}"
+        if test_importers_pre
+        else f"no tests found for {frow['path']}"
+    )
+    click.echo(f"VERDICT: {file_verdict}\n")
     click.echo(f"Test coverage for: {frow['path']}")
     click.echo()
 
@@ -166,7 +192,13 @@ def _test_map_file(conn, path):
 @click.argument("name")
 @click.pass_context
 def test_map(ctx, name):
-    """Map a symbol or file to its test coverage."""
+    """Map a symbol or file to its test coverage.
+
+    Unlike ``test-gaps`` (which finds untested symbols in changed files) and
+    ``affected-tests`` (which traces forward from changes to affected test files),
+    this command looks up the specific test functions and files that currently
+    exercise a given symbol.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -225,11 +257,19 @@ def _test_map_symbol_json(conn, sym):
         (f"{base_name}Test", f"{base_name}_Test"),
     ).fetchall()
 
+    total_test_coverage = len(direct_tests) + len(test_importers) + len(convention_tests)
+    sym_verdict = (
+        f"{total_test_coverage} test reference{'s' if total_test_coverage != 1 else ''} for {sym['name']}: "
+        f"{len(direct_tests)} direct, {len(test_importers)} importer{'s' if len(test_importers) != 1 else ''}"
+        if total_test_coverage
+        else f"no tests found for {sym['name']}"
+    )
     click.echo(
         to_json(
             json_envelope(
                 "test-map",
                 summary={
+                    "verdict": sym_verdict,
                     "direct_tests": len(direct_tests),
                     "test_importers": len(test_importers),
                     "convention_tests": len(convention_tests),
@@ -292,11 +332,20 @@ def _test_map_file_json(conn, path):
         ).fetchall()
         test_caller_files = [r["path"] for r in test_callers if _is_test_file(r["path"])]
 
+    total_file_coverage = len(test_importers) + len(test_caller_files)
+    file_verdict = (
+        f"{total_file_coverage} test file{'s' if total_file_coverage != 1 else ''} cover {frow['path']}: "
+        f"{len(test_importers)} importer{'s' if len(test_importers) != 1 else ''}, "
+        f"{len(test_caller_files)} caller file{'s' if len(test_caller_files) != 1 else ''}"
+        if total_file_coverage
+        else f"no tests found for {frow['path']}"
+    )
     click.echo(
         to_json(
             json_envelope(
                 "test-map",
                 summary={
+                    "verdict": file_verdict,
                     "test_importers": len(test_importers),
                     "test_callers": len(test_caller_files),
                 },

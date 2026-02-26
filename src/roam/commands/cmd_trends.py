@@ -1,4 +1,9 @@
-"""Historical metric trends with sparkline output."""
+"""Historical metric trends with sparklines, anomaly detection, and CI gates.
+
+Unified command combining health-snapshot timeline, per-metric tracking,
+anomaly detection (Modified Z-Score, Theil-Sen, Western Electric), CI
+assertion gates, and AI-vs-human cohort analysis.
+"""
 
 from __future__ import annotations
 
@@ -6,23 +11,235 @@ import math
 import re
 import time
 from collections import defaultdict
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 
 import click
 
+from roam.commands.metrics_history import append_snapshot, collect_metrics, get_snapshots
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.index.git_stats import get_blame_for_file
 from roam.output.formatter import format_table, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
-# Metric definitions — name, SQL/computation, "higher_is_better" flag
+# Sparkline rendering
+# ---------------------------------------------------------------------------
+
+_SPARKS = "\u2581\u2582\u2583\u2584\u2585\u2586\u2587\u2588"
+_SPARK_CHARS = "._-=+*#%@"
+
+
+def _sparkline(values):
+    """Render a list of numbers as a terminal sparkline (Unicode)."""
+    if not values:
+        return ""
+    mn, mx = min(values), max(values)
+    rng = mx - mn or 1
+    return "".join(
+        _SPARKS[min(len(_SPARKS) - 1, int((v - mn) / rng * (len(_SPARKS) - 1)))]
+        for v in values
+    )
+
+
+def _ascii_sparkline(values: list[float]) -> str:
+    """Render ASCII sparkline for a numeric series."""
+    if not values:
+        return ""
+    vmin = min(values)
+    vmax = max(values)
+    if math.isclose(vmin, vmax):
+        return "=" * len(values)
+
+    out = []
+    span = vmax - vmin
+    levels = len(_SPARK_CHARS) - 1
+    for v in values:
+        norm = (v - vmin) / span
+        idx = int(round(norm * levels))
+        idx = max(0, min(levels, idx))
+        out.append(_SPARK_CHARS[idx])
+    return "".join(out)
+
+
+# ---------------------------------------------------------------------------
+# CI assertion engine
+# ---------------------------------------------------------------------------
+
+_ASSERT_RE = re.compile(r"(\w+)\s*(<=|>=|==|!=|<|>)\s*(\d+)")
+_OPS = {
+    "<=": lambda a, b: a <= b,
+    ">=": lambda a, b: a >= b,
+    "==": lambda a, b: a == b,
+    "!=": lambda a, b: a != b,
+    "<": lambda a, b: a < b,
+    ">": lambda a, b: a > b,
+}
+
+
+def _check_assertions(assertions_str, snap):
+    """Check CI assertions against a snapshot. Returns list of failure strings."""
+    failures = []
+    for expr in assertions_str.split(","):
+        expr = expr.strip()
+        if not expr:
+            continue
+        m = _ASSERT_RE.match(expr)
+        if not m:
+            failures.append(f"invalid expression: {expr}")
+            continue
+        metric, op, threshold = m.group(1), m.group(2), int(m.group(3))
+        actual = snap.get(metric)
+        if actual is None:
+            failures.append(f"unknown metric: {metric}")
+            continue
+        if not _OPS[op](actual, threshold):
+            failures.append(f"{metric}={actual} (expected {op}{threshold})")
+    return failures
+
+
+# ---------------------------------------------------------------------------
+# Anomaly detection integration
+# ---------------------------------------------------------------------------
+
+# Metrics classified by type for appropriate analysis
+_QUALITY_METRICS = ["cycles", "god_components", "bottlenecks", "dead_exports", "layer_violations"]
+_GROWTH_METRICS = ["files", "symbols", "edges"]
+_COMPOSITE_METRICS = ["health_score"]
+
+# Sensitivity presets: (z_threshold, we_sigma_mult)
+_SENSITIVITY = {
+    "low": (4.0, 1.2),
+    "medium": (3.5, 1.0),
+    "high": (3.0, 0.8),
+}
+
+
+def _analyze_trends(chrono, sensitivity="medium"):
+    """Run full anomaly + trend analysis on chronological snapshots.
+
+    Returns dict with anomalies, trends, forecasts, patterns.
+    """
+    from roam.graph.anomaly import (
+        forecast,
+        mann_kendall_test,
+        modified_z_score,
+        theil_sen_slope,
+        western_electric_rules,
+    )
+
+    z_thresh, _ = _SENSITIVITY.get(sensitivity, _SENSITIVITY["medium"])
+    all_metrics = _QUALITY_METRICS + _GROWTH_METRICS + _COMPOSITE_METRICS
+
+    anomalies = []
+    trends = []
+    forecasts = []
+    patterns = []
+
+    for metric in all_metrics:
+        values = [s.get(metric) or 0 for s in chrono]
+        if len(values) < 4:
+            continue
+
+        # Point anomaly detection
+        z_results = modified_z_score(values, threshold=z_thresh)
+        for r in z_results:
+            if r["is_anomaly"]:
+                anomalies.append(
+                    {
+                        "metric": metric,
+                        "index": r["index"],
+                        "value": r["value"],
+                        "z_score": round(r["z_score"], 2),
+                        "typical": f"{r.get('median', 0):.0f}",
+                    }
+                )
+
+        # Trend estimation
+        ts = theil_sen_slope(values)
+        if ts:
+            entry = {
+                "metric": metric,
+                "slope": round(ts["slope"], 3),
+                "direction": ts["direction"],
+            }
+            # Add significance if enough data
+            if len(values) >= 8:
+                mk = mann_kendall_test(values)
+                if mk:
+                    entry["p_value"] = round(mk["p_value"], 4)
+                    entry["significant"] = mk["significant"]
+            trends.append(entry)
+
+            # Forecasting for quality metrics (bad = increasing)
+            if metric in _QUALITY_METRICS and ts["direction"] == "increasing":
+                current = values[-1]
+                target = max(current * 2, current + 10)
+                fc = forecast(values, target=target)
+                if fc and fc.get("steps_until"):
+                    forecasts.append(
+                        {
+                            "metric": metric,
+                            "current": current,
+                            "target": target,
+                            "slope": round(fc["slope"], 2),
+                            "snapshots_until": fc["steps_until"],
+                        }
+                    )
+
+        # Pattern detection
+        we_results = western_electric_rules(values)
+        for r in we_results:
+            patterns.append(
+                {
+                    "metric": metric,
+                    "rule": r["rule"],
+                    "description": r["description"],
+                    "indices": r.get("indices", []),
+                }
+            )
+
+    return {
+        "anomalies": anomalies,
+        "trends": trends,
+        "forecasts": forecasts,
+        "patterns": patterns,
+    }
+
+
+def _trend_verdict(analysis):
+    """Derive a verdict from analysis results."""
+    n_anomalies = len(analysis["anomalies"])
+    n_patterns = len(analysis["patterns"])
+
+    # Check for degrading quality trends
+    degrading = [
+        t
+        for t in analysis["trends"]
+        if t["metric"] in _QUALITY_METRICS and t["direction"] == "increasing" and t.get("significant", True)
+    ]
+    improving = [
+        t
+        for t in analysis["trends"]
+        if t["metric"] in _COMPOSITE_METRICS and t["direction"] == "increasing" and t.get("significant", True)
+    ]
+
+    if n_anomalies > 2 or len(degrading) > 2:
+        return "degrading"
+    if n_anomalies > 0 or len(degrading) > 0 or n_patterns > 2:
+        return "warning"
+    if improving:
+        return "improving"
+    return "stable"
+
+
+# ---------------------------------------------------------------------------
+# Metric definitions for --metric mode (broader metrics via metric_snapshots)
 # ---------------------------------------------------------------------------
 
 # Each entry: (metric_name, higher_is_better)
 # higher_is_better controls direction interpretation:
-#   True  → increase = "improving", decrease = "worsening"
-#   False → increase = "worsening", decrease = "improving"
+#   True  -> increase = "improving", decrease = "worsening"
+#   False -> increase = "worsening", decrease = "improving"
 _METRIC_DEFS = {
     "health_score": True,
     "total_files": True,  # neutral/growing, but not "worsening"
@@ -34,19 +251,17 @@ _METRIC_DEFS = {
     "test_file_ratio": True,
 }
 
-_SPARK_CHARS = "._-=+*#%@"
-_AI_AUTHOR_RE = re.compile(
-    r"(copilot|claude|cursor|codeium|tabnine|gemini|chatgpt|openai|anthropic|"
-    r"aider|codex|devin|bot|dependabot|renovate|sweep)",
-    re.IGNORECASE,
-)
+
+# ---------------------------------------------------------------------------
+# Metric snapshot capture and history (metric_snapshots table)
+# ---------------------------------------------------------------------------
 
 
 def _collect_current_metrics(conn):
     """Query the DB and return a dict of {metric_name: value}."""
     metrics = {}
 
-    # health_score — reuse the snapshot infrastructure
+    # health_score -- reuse the snapshot infrastructure
     try:
         from roam.commands.metrics_history import collect_metrics
 
@@ -104,17 +319,9 @@ def _record_snapshot(conn):
     return metrics
 
 
-# ---------------------------------------------------------------------------
-# Trend computation
-# ---------------------------------------------------------------------------
-
-
 def _get_metric_history(conn, metric_name, days):
     """Fetch time-ordered values for a metric within the last N days."""
     cutoff = datetime.now(timezone.utc).replace(microsecond=0)
-    # Compute the cutoff timestamp string
-    from datetime import timedelta
-
     since = cutoff - timedelta(days=days)
     since_str = since.isoformat().replace("+00:00", "Z")
 
@@ -125,6 +332,11 @@ def _get_metric_history(conn, metric_name, days):
         (metric_name, since_str),
     ).fetchall()
     return [(r["timestamp"], r["metric_value"]) for r in rows]
+
+
+# ---------------------------------------------------------------------------
+# Direction labels, trend bars, alerts
+# ---------------------------------------------------------------------------
 
 
 def _direction_label(first_val, last_val, higher_is_better):
@@ -146,9 +358,7 @@ def _ascii_trend_bar(first_val, last_val, higher_is_better, max_width=8):
     if first_val == last_val:
         return "==="
 
-    # Compute a rough magnitude (1-max_width)
     diff = abs(last_val - first_val)
-    # Scale relative to max(abs(first), 1) to avoid div-by-zero
     scale = max(abs(first_val), 1.0)
     magnitude = min(max_width, max(1, int(diff / scale * max_width) + 1))
 
@@ -161,7 +371,7 @@ def _ascii_trend_bar(first_val, last_val, higher_is_better, max_width=8):
 
 
 def _format_value(val):
-    """Format a metric value for display — integers for whole numbers, else 2dp."""
+    """Format a metric value for display -- integers for whole numbers, else 2dp."""
     if val == int(val):
         return str(int(val))
     return f"{val:.2f}"
@@ -210,6 +420,12 @@ def _worsening_verb(metric_name):
 # ---------------------------------------------------------------------------
 # Cohort trend analysis (AI-authored vs human-authored)
 # ---------------------------------------------------------------------------
+
+_AI_AUTHOR_RE = re.compile(
+    r"(copilot|claude|cursor|codeium|tabnine|gemini|chatgpt|openai|anthropic|"
+    r"aider|codex|devin|bot|dependabot|renovate|sweep)",
+    re.IGNORECASE,
+)
 
 
 def _is_ai_author(author: str | None) -> bool:
@@ -273,26 +489,6 @@ def _linear_slope(values: list[float]) -> float:
     if den == 0:
         return 0.0
     return num / den
-
-
-def _ascii_sparkline(values: list[float]) -> str:
-    """Render ASCII sparkline for a numeric series."""
-    if not values:
-        return ""
-    vmin = min(values)
-    vmax = max(values)
-    if math.isclose(vmin, vmax):
-        return "=" * len(values)
-
-    out = []
-    span = vmax - vmin
-    levels = len(_SPARK_CHARS) - 1
-    for v in values:
-        norm = (v - vmin) / span
-        idx = int(round(norm * levels))
-        idx = max(0, min(levels, idx))
-        out.append(_SPARK_CHARS[idx])
-    return "".join(out)
 
 
 def _load_source_file_risk(conn) -> dict[str, dict]:
@@ -606,187 +802,514 @@ def _build_cohort_analysis(conn, days: int) -> dict:
 
 
 # ---------------------------------------------------------------------------
-# CLI command
+# Timeline mode helpers (health snapshots from `roam index` / `roam trends --save`)
+# ---------------------------------------------------------------------------
+
+
+def _render_timeline_json(ctx, cmd_name, snap_dicts, assertions, assertion_results, analysis, anomalies_flag,
+                          do_forecast, analyze_flag, fail_on_anomaly):
+    """Render JSON output for the timeline mode."""
+    summary = {
+        "snapshots": len(snap_dicts),
+        "latest_health": snap_dicts[0]["health_score"] if snap_dicts else None,
+    }
+    if analysis:
+        verdict = _trend_verdict(analysis)
+        summary["verdict"] = verdict
+        summary["anomaly_count"] = len(analysis["anomalies"])
+        summary["trend_direction"] = verdict
+
+    envelope = json_envelope(
+        cmd_name,
+        summary=summary,
+        snapshots=snap_dicts,
+    )
+    if assertions:
+        envelope["assertions"] = {
+            "expression": assertions,
+            "passed": len(assertion_results) == 0,
+            "failures": assertion_results,
+        }
+    if analysis:
+        if anomalies_flag or analyze_flag:
+            envelope["anomalies"] = analysis["anomalies"]
+        if do_forecast or analyze_flag:
+            envelope["trends"] = analysis["trends"]
+            envelope["forecasts"] = analysis["forecasts"]
+        if analyze_flag:
+            envelope["patterns"] = analysis["patterns"]
+    click.echo(to_json(envelope))
+    if assertion_results:
+        raise SystemExit(1)
+    if fail_on_anomaly and analysis and analysis["anomalies"]:
+        raise SystemExit(1)
+
+
+def _render_timeline_text(snap_dicts, chrono, assertions, assertion_results, analysis, fail_on_anomaly):
+    """Render text output for the timeline mode."""
+    click.echo(f"=== Health Trend (last {len(snap_dicts)} snapshots) ===\n")
+
+    # Table
+    rows = []
+    for s in snap_dicts:
+        dt = datetime.fromtimestamp(s["timestamp"], tz=timezone.utc)
+        date_str = dt.strftime("%Y-%m-%d %H:%M")
+        tag = s["tag"] or f"({s['source']})"
+        rows.append(
+            [
+                date_str,
+                tag,
+                str(s["health_score"]),
+                str(s["cycles"]),
+                str(s["god_components"]),
+                str(s["bottlenecks"]),
+                str(s["dead_exports"]),
+                str(s["layer_violations"]),
+            ]
+        )
+    click.echo(
+        format_table(
+            ["Date", "Tag", "Score", "Cycles", "Gods", "BN", "Dead", "Violations"],
+            rows,
+        )
+    )
+
+    # Sparklines (chronological order)
+    if len(chrono) >= 2:
+        click.echo("\nSparklines:")
+        metrics = [
+            ("Score", "health_score"),
+            ("Cycles", "cycles"),
+            ("Gods", "god_components"),
+            ("Dead", "dead_exports"),
+            ("Violations", "layer_violations"),
+        ]
+        for label, key in metrics:
+            vals = [s[key] or 0 for s in chrono]
+            spark = _sparkline(vals)
+            mn, mx = min(vals), max(vals)
+            click.echo(f"  {label:<12s} {spark}  (range: {mn}-{mx})")
+
+    # Anomaly analysis text output
+    if analysis:
+        if analysis["anomalies"]:
+            click.echo(f"\nAnomalies ({len(analysis['anomalies'])}):")
+            for a in analysis["anomalies"]:
+                click.echo(f"  ANOMALY: {a['metric']}={a['value']} (z={a['z_score']}, typical ~{a['typical']})")
+
+        sig_trends = [
+            t for t in analysis["trends"] if t["direction"] != "stable" and t.get("significant", t["slope"] != 0)
+        ]
+        if sig_trends:
+            click.echo(f"\nTrends ({len(sig_trends)} significant):")
+            for t in sig_trends:
+                p_str = f" (p={t['p_value']:.3f})" if "p_value" in t else ""
+                sign = "+" if t["slope"] > 0 else ""
+                click.echo(f"  TREND: {t['metric']} {t['direction']} {sign}{t['slope']:.2f}/snapshot{p_str}")
+
+        if analysis["forecasts"]:
+            click.echo("\nForecasts:")
+            for f in analysis["forecasts"]:
+                click.echo(
+                    f"  FORECAST: {f['metric']} will reach {f['target']} "
+                    f"in ~{f['snapshots_until']} snapshots "
+                    f"(current: {f['current']}, rate: +{f['slope']:.1f}/snap)"
+                )
+
+        if analysis["patterns"]:
+            click.echo(f"\nPatterns ({len(analysis['patterns'])}):")
+            for p in analysis["patterns"]:
+                click.echo(f"  WARNING: {p['metric']} -- {p['description']} (Rule {p['rule']})")
+
+        verdict = _trend_verdict(analysis)
+        click.echo(f"\nVERDICT: {verdict}")
+
+    # Assertions
+    if assertions:
+        click.echo()
+        if assertion_results:
+            click.echo(f"ASSERTIONS FAILED ({len(assertion_results)}):")
+            for f in assertion_results:
+                click.echo(f"  FAIL: {f}")
+            raise SystemExit(1)
+        else:
+            click.echo("All assertions passed.")
+
+    # CI gate for anomalies
+    if fail_on_anomaly and analysis and analysis["anomalies"]:
+        raise SystemExit(1)
+
+
+# ---------------------------------------------------------------------------
+# CLI command (unified)
 # ---------------------------------------------------------------------------
 
 
 @click.command()
+# Timeline / snapshot options
+@click.option("--range", "count", default=10, help="Number of snapshots for timeline view")
+@click.option(
+    "--since",
+    "since_date",
+    default=None,
+    help="Timeline: only show snapshots after this date (YYYY-MM-DD). With --compare: snapshot tag to compare against",
+)
+# CI gate options
+@click.option(
+    "--assert",
+    "assertions",
+    default=None,
+    help="CI gate: comma-separated expressions (e.g. 'cycles<=5,dead_exports<=20')",
+)
+@click.option("--fail-on-anomaly", is_flag=True, default=False, help="CI: exit 1 if any anomaly detected")
+# Anomaly detection options
+@click.option(
+    "--anomalies",
+    is_flag=True,
+    default=False,
+    help="Flag anomalous metric values using Modified Z-Score",
+)
+@click.option(
+    "--forecast",
+    "do_forecast",
+    is_flag=True,
+    default=False,
+    help="Show trend slopes and forecasts using Theil-Sen regression",
+)
+@click.option(
+    "--analyze",
+    is_flag=True,
+    default=False,
+    help="Full analysis: anomalies + trends + patterns + forecasts",
+)
+@click.option(
+    "--sensitivity",
+    default="medium",
+    type=click.Choice(["low", "medium", "high"]),
+    help="Anomaly sensitivity (low=4sigma, medium=3.5sigma, high=3sigma)",
+)
+# Metric snapshot options
 @click.option("--record", is_flag=True, help="Take a snapshot of current metrics and store it")
-@click.option("--days", default=30, type=int, help="Show trends for last N days (default: 30)")
-@click.option("--metric", default=None, help="Filter to a specific metric name")
+@click.option("--days", default=30, type=int, help="Time window in days (for --metric and --cohort-by-author)")
+@click.option("--metric", default=None, help="Show per-metric trends from metric_snapshots table")
+# Cohort analysis
 @click.option(
     "--cohort-by-author",
     is_flag=True,
-    help=(
-        "Compare AI-authored vs human-authored degradation trajectories using git authorship + ai-ratio file signals"
-    ),
+    help="Compare AI-authored vs human-authored degradation trajectories",
+)
+# Save / compare options
+@click.option("--save", "do_save", is_flag=True, default=False, help="Save a snapshot of current health metrics")
+@click.option("--tag", "save_tag", default=None, help="Label for the saved snapshot (use with --save)")
+@click.option(
+    "--compare",
+    "do_compare",
+    is_flag=True,
+    default=False,
+    help="Compare current metrics against last snapshot (or tagged snapshot via --since)",
 )
 @click.pass_context
-def trends(ctx, record, days, metric, cohort_by_author):
-    """Historical metric trends with sparkline output.
+def trends(
+    ctx,
+    count,
+    since_date,
+    assertions,
+    fail_on_anomaly,
+    anomalies,
+    do_forecast,
+    analyze,
+    sensitivity,
+    record,
+    days,
+    metric,
+    cohort_by_author,
+    do_save,
+    save_tag,
+    do_compare,
+):
+    """Health trend timeline, anomaly detection, per-metric tracking, and CI gates.
 
-    Tracks key codebase metrics over time so you can answer
-    "is the code getting better?"
-
-    Use --record after indexing to store a snapshot.
-    Use --days to control the time window.
-    Use --metric to focus on a single metric.
+    By default shows a health snapshot timeline (populated by `roam index`).
+    Use --analyze for anomaly detection (Modified Z-Score, Theil-Sen, Western Electric).
+    Use --assert or --fail-on-anomaly for CI pipelines.
+    Use --record to capture broader metric snapshots.
+    Use --metric to view per-metric trends from recorded snapshots.
     Use --cohort-by-author to compare AI vs human quality trajectories.
+    Use --save [--tag TAG] to persist a health snapshot.
+    Use --compare [--since TAG] to diff current metrics against a snapshot.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    cmd_name = ctx.info_name or "trends"
     ensure_index()
+
+    # --- Mode dispatch ---
 
     if cohort_by_author and record:
         click.echo("Cannot combine --record with --cohort-by-author")
         raise SystemExit(1)
 
+    # Mode: Save snapshot (highest priority — runs and exits)
+    if do_save:
+        _handle_save(ctx, cmd_name, json_mode, save_tag)
+        return
+
+    # Mode: Compare against snapshot
+    if do_compare:
+        # --since is reused from the timeline option to indicate a tag for comparison
+        _handle_compare(ctx, cmd_name, json_mode, since_tag=since_date)
+        return
+
+    # Mode 1: Record metric snapshot
+    if record:
+        _handle_record(ctx, cmd_name, json_mode)
+        return
+
+    # Mode 2: Cohort analysis
     if cohort_by_author:
-        with open_db(readonly=True) as conn:
-            cohort = _build_cohort_analysis(conn, days=max(days, 1))
+        _handle_cohort(ctx, cmd_name, json_mode, days)
+        return
 
-        if not cohort:
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "trends",
-                            summary={
-                                "verdict": "No cohort trend data available",
-                                "mode": "cohort-by-author",
-                                "days": days,
-                            },
-                            mode="cohort-by-author",
-                            days=days,
-                            cohorts={},
-                            signals={},
-                        )
-                    )
+    # Mode 3: Per-metric trends (from metric_snapshots table)
+    if metric:
+        _handle_metric_view(ctx, cmd_name, json_mode, days, metric)
+        return
+
+    # Mode 4: Default — health snapshot timeline
+    _handle_timeline(
+        ctx, cmd_name, json_mode, count, since_date, assertions,
+        fail_on_anomaly, anomalies, do_forecast, analyze, sensitivity,
+    )
+
+
+# ---------------------------------------------------------------------------
+# Save / compare helpers (reused from digest logic)
+# ---------------------------------------------------------------------------
+
+_DIGEST_METRICS = [
+    ("health_score", "Health score"),
+    ("files", "Files"),
+    ("symbols", "Symbols"),
+    ("cycles", "Cycles"),
+    ("god_components", "God components"),
+    ("bottlenecks", "Bottlenecks"),
+    ("dead_exports", "Dead exports"),
+    ("layer_violations", "Violations"),
+]
+
+_LOWER_IS_BETTER = frozenset(
+    {
+        "cycles",
+        "god_components",
+        "bottlenecks",
+        "dead_exports",
+        "layer_violations",
+    }
+)
+
+
+def _digest_arrow(key, delta):
+    """Return direction arrow: up for improvement, down for regression."""
+    if delta == 0:
+        return ""
+    if key in _LOWER_IS_BETTER:
+        return "\u25b2" if delta < 0 else "\u25bc"
+    return "\u25b2" if delta > 0 else "\u25bc"
+
+
+def _digest_delta_str(delta):
+    """Format a delta value with sign."""
+    if delta == 0:
+        return "="
+    sign = "+" if delta > 0 else ""
+    return f"{sign}{delta}"
+
+
+def _build_compare_recommendations(deltas):
+    """Generate actionable recommendations based on metric changes."""
+    recs = []
+
+    new_dead = deltas.get("dead_exports", 0)
+    if new_dead > 0:
+        recs.append(f"Run `roam dead --summary` to review {new_dead} new dead export{'s' if new_dead != 1 else ''}")
+
+    new_cycles = deltas.get("cycles", 0)
+    if new_cycles > 0:
+        recs.append(f"Run `roam health` to inspect {new_cycles} new cycle{'s' if new_cycles != 1 else ''}")
+
+    new_gods = deltas.get("god_components", 0)
+    if new_gods > 0:
+        recs.append(
+            f"Run `roam health --no-framework` to review {new_gods} new god component{'s' if new_gods != 1 else ''}"
+        )
+
+    new_violations = deltas.get("layer_violations", 0)
+    if new_violations > 0:
+        recs.append(
+            f"Run `roam layers` to review {new_violations} new layer violation{'s' if new_violations != 1 else ''}"
+        )
+
+    score_drop = deltas.get("health_score", 0)
+    if score_drop < -5:
+        recs.append(f"Health dropped by {abs(score_drop)} points -- run `roam health` for details")
+
+    if not recs:
+        if deltas.get("health_score", 0) > 0:
+            recs.append("Health is improving -- keep it up!")
+        else:
+            recs.append("No significant changes detected")
+
+    return recs
+
+
+# ---------------------------------------------------------------------------
+# Mode handlers
+# ---------------------------------------------------------------------------
+
+
+def _handle_record(ctx, cmd_name, json_mode):
+    """Record mode: store a metric snapshot."""
+    with open_db() as conn:
+        recorded = _record_snapshot(conn)
+
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": "Snapshot recorded",
+                        "metrics_recorded": len(recorded),
+                    },
+                    action="record",
+                    metrics=recorded,
                 )
-            else:
-                click.echo("VERDICT: No cohort trend data available")
-                click.echo()
-                click.echo("Need indexed git history in the selected window. Try a larger --days value.")
-            return
+            )
+        )
+    else:
+        click.echo("VERDICT: Snapshot recorded")
+        click.echo()
+        for name, val in sorted(recorded.items()):
+            click.echo(f"  {name}: {_format_value(val)}")
 
+
+def _handle_cohort(ctx, cmd_name, json_mode, days):
+    """Cohort analysis mode: AI vs human degradation trajectories."""
+    with open_db(readonly=True) as conn:
+        cohort = _build_cohort_analysis(conn, days=max(days, 1))
+
+    if not cohort:
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
-                        "trends",
+                        cmd_name,
                         summary={
-                            "verdict": cohort["verdict"],
+                            "verdict": "No cohort trend data available",
                             "mode": "cohort-by-author",
-                            "days": cohort["window_days"],
-                            "files_analyzed": cohort["files_analyzed"],
+                            "days": days,
                         },
                         mode="cohort-by-author",
-                        days=cohort["window_days"],
-                        files_analyzed=cohort["files_analyzed"],
-                        bucket_count=cohort["bucket_count"],
-                        bucket_days=cohort["bucket_days"],
-                        signals=cohort["signals"],
-                        cohorts=cohort["cohorts"],
+                        days=days,
+                        cohorts={},
+                        signals={},
                     )
                 )
             )
-            return
-
-        click.echo(f"VERDICT: {cohort['verdict']}")
-        click.echo()
-        click.echo(
-            "Window: {}d  Buckets: {} (~{}d each)  Files analyzed: {}".format(
-                cohort["window_days"],
-                cohort["bucket_count"],
-                cohort["bucket_days"],
-                cohort["files_analyzed"],
-            )
-        )
-        click.echo(
-            "Signals: {} ai-ratio file hints, {} blame-scanned files, {} commit events".format(
-                cohort["signals"]["ai_ratio_file_signals"],
-                cohort["signals"]["blame_files_analyzed"],
-                cohort["signals"]["commit_events"],
-            )
-        )
-        click.echo()
-
-        rows = []
-        for name in ("ai", "human"):
-            c = cohort["cohorts"][name]
-            rows.append(
-                [
-                    name.upper(),
-                    str(c["files"]),
-                    f"{c['avg_risk_index']:.2f}",
-                    f"{c['avg_risk_percentile']:.1f}",
-                    f"{c['degradation_velocity_per_week']:+.3f}/wk",
-                    c["trend_direction"],
-                    c["sparkline"],
-                ]
-            )
-        click.echo(
-            format_table(
-                ["COHORT", "FILES", "AVG_RISK", "RISK_PCTL", "VELOCITY", "TREND", "SPARK"],
-                rows,
-            )
-        )
-
-        for name in ("ai", "human"):
-            c = cohort["cohorts"][name]
-            if not c["top_risk_files"]:
-                continue
+        else:
+            click.echo("VERDICT: No cohort trend data available")
             click.echo()
-            click.echo(f"Top risk files ({name.upper()} cohort):")
-            for item in c["top_risk_files"]:
-                click.echo(
-                    "  {}  risk={}  cohort_score={}".format(
-                        item["path"],
-                        item["risk_index"],
-                        item["cohort_score"],
-                    )
-                )
+            click.echo("Need indexed git history in the selected window. Try a larger --days value.")
         return
 
-    if record:
-        # Record mode: store snapshot and optionally show it
-        with open_db() as conn:
-            recorded = _record_snapshot(conn)
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": cohort["verdict"],
+                        "mode": "cohort-by-author",
+                        "days": cohort["window_days"],
+                        "files_analyzed": cohort["files_analyzed"],
+                    },
+                    mode="cohort-by-author",
+                    days=cohort["window_days"],
+                    files_analyzed=cohort["files_analyzed"],
+                    bucket_count=cohort["bucket_count"],
+                    bucket_days=cohort["bucket_days"],
+                    signals=cohort["signals"],
+                    cohorts=cohort["cohorts"],
+                )
+            )
+        )
+        return
 
-        if json_mode:
+    click.echo(f"VERDICT: {cohort['verdict']}")
+    click.echo()
+    click.echo(
+        "Window: {}d  Buckets: {} (~{}d each)  Files analyzed: {}".format(
+            cohort["window_days"],
+            cohort["bucket_count"],
+            cohort["bucket_days"],
+            cohort["files_analyzed"],
+        )
+    )
+    click.echo(
+        "Signals: {} ai-ratio file hints, {} blame-scanned files, {} commit events".format(
+            cohort["signals"]["ai_ratio_file_signals"],
+            cohort["signals"]["blame_files_analyzed"],
+            cohort["signals"]["commit_events"],
+        )
+    )
+    click.echo()
+
+    rows = []
+    for name in ("ai", "human"):
+        c = cohort["cohorts"][name]
+        rows.append(
+            [
+                name.upper(),
+                str(c["files"]),
+                f"{c['avg_risk_index']:.2f}",
+                f"{c['avg_risk_percentile']:.1f}",
+                f"{c['degradation_velocity_per_week']:+.3f}/wk",
+                c["trend_direction"],
+                c["sparkline"],
+            ]
+        )
+    click.echo(
+        format_table(
+            ["COHORT", "FILES", "AVG_RISK", "RISK_PCTL", "VELOCITY", "TREND", "SPARK"],
+            rows,
+        )
+    )
+
+    for name in ("ai", "human"):
+        c = cohort["cohorts"][name]
+        if not c["top_risk_files"]:
+            continue
+        click.echo()
+        click.echo(f"Top risk files ({name.upper()} cohort):")
+        for item in c["top_risk_files"]:
             click.echo(
-                to_json(
-                    json_envelope(
-                        "trends",
-                        summary={
-                            "verdict": "Snapshot recorded",
-                            "metrics_recorded": len(recorded),
-                        },
-                        action="record",
-                        metrics=recorded,
-                    )
+                "  {}  risk={}  cohort_score={}".format(
+                    item["path"],
+                    item["risk_index"],
+                    item["cohort_score"],
                 )
             )
-        else:
-            click.echo("VERDICT: Snapshot recorded")
-            click.echo()
-            for name, val in sorted(recorded.items()):
-                click.echo(f"  {name}: {_format_value(val)}")
-        return
 
-    # Display mode: show trends
+
+def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
+    """Per-metric trends from the metric_snapshots table."""
     with open_db(readonly=True) as conn:
-        # Determine which metrics to show
-        if metric:
-            if metric not in _METRIC_DEFS:
-                available = ", ".join(sorted(_METRIC_DEFS.keys()))
-                click.echo(f"Unknown metric: {metric}")
-                click.echo(f"Available: {available}")
-                raise SystemExit(1)
-            metric_names = [metric]
-        else:
-            metric_names = list(_METRIC_DEFS.keys())
+        if metric not in _METRIC_DEFS:
+            available = ", ".join(sorted(_METRIC_DEFS.keys()))
+            click.echo(f"Unknown metric: {metric}")
+            click.echo(f"Available: {available}")
+            raise SystemExit(1)
+        metric_names = [metric]
 
-        # Gather data for each metric
         metric_results = []
         total_snapshots = 0
         for name in metric_names:
@@ -816,114 +1339,347 @@ def trends(ctx, record, days, metric, cohort_by_author):
                 }
             )
 
-        if not metric_results:
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "trends",
-                            summary={
-                                "verdict": "No trend data available",
-                                "days": days,
-                                "snapshots_count": 0,
-                                "metrics": [],
-                                "alerts": [],
-                            },
-                            days=days,
-                            snapshots_count=0,
-                            metrics=[],
-                            alerts=[],
-                        )
-                    )
-                )
-            else:
-                click.echo("VERDICT: No trend data available")
-                click.echo()
-                click.echo("Run `roam trends --record` after indexing to start tracking.")
-            return
-
-        # Generate alerts
-        alerts = _generate_alerts(metric_results)
-
-        # Build verdict
-        tracked_count = len(metric_results)
-        improving = sum(1 for m in metric_results if m["direction"] == "improving")
-        worsening = sum(1 for m in metric_results if m["direction"] == "worsening")
-
-        if worsening > 0:
-            verdict = (
-                f"{tracked_count} metrics tracked over {days} days "
-                f"({total_snapshots} snapshots) -- "
-                f"{worsening} worsening, {improving} improving"
-            )
-        elif improving > 0:
-            verdict = (
-                f"{tracked_count} metrics tracked over {days} days "
-                f"({total_snapshots} snapshots) -- "
-                f"all stable or improving"
-            )
-        else:
-            verdict = f"{tracked_count} metrics tracked over {days} days ({total_snapshots} snapshots) -- stable"
-
+    if not metric_results:
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
-                        "trends",
+                        cmd_name,
                         summary={
-                            "verdict": verdict,
+                            "verdict": "No trend data available",
                             "days": days,
-                            "snapshots_count": total_snapshots,
-                            "metrics_tracked": tracked_count,
-                            "improving": improving,
-                            "worsening": worsening,
+                            "snapshots_count": 0,
+                            "metrics": [],
+                            "alerts": [],
                         },
                         days=days,
-                        snapshots_count=total_snapshots,
-                        metrics=[
-                            {
-                                "name": m["name"],
-                                "latest": m["latest"],
-                                "change": m["change"],
-                                "change_pct": m["change_pct"],
-                                "direction": m["direction"],
-                                "history": m["history"],
-                            }
-                            for m in metric_results
-                        ],
-                        alerts=[{"metric": a["metric"], "message": a["message"]} for a in alerts],
+                        snapshots_count=0,
+                        metrics=[],
+                        alerts=[],
                     )
                 )
             )
-            return
+        else:
+            click.echo("VERDICT: No trend data available")
+            click.echo()
+            click.echo("Run `roam trends --record` after indexing to start tracking.")
+        return
 
-        # --- Text output ---
-        click.echo(f"VERDICT: {verdict}")
-        click.echo()
+    alerts = _generate_alerts(metric_results)
+    tracked_count = len(metric_results)
+    improving = sum(1 for m in metric_results if m["direction"] == "improving")
+    worsening = sum(1 for m in metric_results if m["direction"] == "worsening")
 
-        # Table
-        rows = []
-        for m in metric_results:
-            change_str = f"{m['change']:+.2f}" if m["change"] != int(m["change"]) else f"{int(m['change']):+d}"
-            rows.append(
-                [
-                    m["name"],
-                    _format_value(m["latest"]),
-                    f"{change_str} ({m['change_pct']})",
-                    m["trend_bar"],
-                    m["direction"],
-                ]
-            )
+    if worsening > 0:
+        verdict = (
+            f"{tracked_count} metrics tracked over {days} days "
+            f"({total_snapshots} snapshots) -- "
+            f"{worsening} worsening, {improving} improving"
+        )
+    elif improving > 0:
+        verdict = (
+            f"{tracked_count} metrics tracked over {days} days "
+            f"({total_snapshots} snapshots) -- "
+            f"all stable or improving"
+        )
+    else:
+        verdict = f"{tracked_count} metrics tracked over {days} days ({total_snapshots} snapshots) -- stable"
+
+    if json_mode:
         click.echo(
-            format_table(
-                ["METRIC", "LATEST", "CHANGE", "TREND", "DIRECTION"],
-                rows,
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": verdict,
+                        "days": days,
+                        "snapshots_count": total_snapshots,
+                        "metrics_tracked": tracked_count,
+                        "improving": improving,
+                        "worsening": worsening,
+                    },
+                    days=days,
+                    snapshots_count=total_snapshots,
+                    metrics=[
+                        {
+                            "name": m["name"],
+                            "latest": m["latest"],
+                            "change": m["change"],
+                            "change_pct": m["change_pct"],
+                            "direction": m["direction"],
+                            "history": m["history"],
+                        }
+                        for m in metric_results
+                    ],
+                    alerts=[{"metric": a["metric"], "message": a["message"]} for a in alerts],
+                )
             )
         )
+        return
 
-        # Alerts
-        if alerts:
-            click.echo()
-            click.echo("ALERTS:")
-            for a in alerts:
-                click.echo(f"  {a['metric']}: {a['message']}")
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
+
+    rows = []
+    for m in metric_results:
+        change_str = f"{m['change']:+.2f}" if m["change"] != int(m["change"]) else f"{int(m['change']):+d}"
+        rows.append(
+            [
+                m["name"],
+                _format_value(m["latest"]),
+                f"{change_str} ({m['change_pct']})",
+                m["trend_bar"],
+                m["direction"],
+            ]
+        )
+    click.echo(
+        format_table(
+            ["METRIC", "LATEST", "CHANGE", "TREND", "DIRECTION"],
+            rows,
+        )
+    )
+
+    if alerts:
+        click.echo()
+        click.echo("ALERTS:")
+        for a in alerts:
+            click.echo(f"  {a['metric']}: {a['message']}")
+
+
+def _handle_save(ctx, cmd_name, json_mode, tag):
+    """Save mode: persist a snapshot of current health metrics."""
+    with open_db() as conn:
+        result = append_snapshot(conn, tag=tag, source="snapshot")
+
+    _tag_str = f" [{tag}]" if tag else ""
+    verdict = (
+        f"snapshot saved{_tag_str}: health={result['health_score']}, "
+        f"{result['files']} files, {result['symbols']} symbols"
+    )
+
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": verdict,
+                        "health_score": result["health_score"],
+                        "tag": tag,
+                        "mode": "save",
+                    },
+                    mode="save",
+                    **result,
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {verdict}\n")
+        click.echo(f"Snapshot saved{_tag_str}")
+        click.echo(f"  Health: {result['health_score']}/100")
+        click.echo(f"  Files: {result['files']}  Symbols: {result['symbols']}  Edges: {result['edges']}")
+        click.echo(
+            f"  Cycles: {result['cycles']}  God: {result['god_components']}  "
+            f"Bottlenecks: {result['bottlenecks']}  Dead: {result['dead_exports']}  "
+            f"Violations: {result['layer_violations']}"
+        )
+        if result.get("git_branch"):
+            click.echo(f"  Branch: {result['git_branch']}  Commit: {result.get('git_commit', '?')}")
+
+
+def _handle_compare(ctx, cmd_name, json_mode, since_tag):
+    """Compare mode: show deltas between current metrics and last (or tagged) snapshot."""
+    with open_db(readonly=True) as conn:
+        current = collect_metrics(conn)
+
+        snaps = get_snapshots(conn, limit=50)
+        if not snaps:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            cmd_name,
+                            summary={"verdict": "no snapshots found", "error": "No snapshots found", "mode": "compare"},
+                            current=current,
+                            previous=None,
+                            deltas=None,
+                        )
+                    )
+                )
+            else:
+                click.echo("VERDICT: no snapshots found\n")
+                click.echo("No snapshots found. Run `roam trends --save` first.")
+            return
+
+        # Pick the right snapshot for comparison
+        previous = None
+        if since_tag:
+            for s in snaps:
+                if s["tag"] == since_tag:
+                    previous = dict(s)
+                    break
+            if previous is None:
+                tags = [s["tag"] for s in snaps if s["tag"]]
+                tag_list = ", ".join(tags[:10]) if tags else "(none)"
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                cmd_name,
+                                summary={"error": f"Tag '{since_tag}' not found", "mode": "compare"},
+                                available_tags=tags[:20],
+                            )
+                        )
+                    )
+                else:
+                    click.echo(f"Tag '{since_tag}' not found. Available tags: {tag_list}")
+                return
+        else:
+            previous = dict(snaps[0])
+
+        # Compute deltas
+        deltas = {}
+        for key, _label in _DIGEST_METRICS:
+            cur_val = current.get(key, 0) or 0
+            prev_val = previous.get(key, 0) or 0
+            deltas[key] = cur_val - prev_val
+
+        recommendations = _build_compare_recommendations(deltas)
+
+        # Format snapshot label
+        snap_ts = previous.get("timestamp", 0)
+        snap_date = datetime.fromtimestamp(snap_ts, tz=timezone.utc).strftime("%Y-%m-%d")
+        snap_tag = previous.get("tag")
+        snap_label = snap_date
+        if snap_tag:
+            snap_label += f" [{snap_tag}]"
+
+    if json_mode:
+        _score = current.get("health_score", 0) or 0
+        _prev = previous.get("health_score", 0) or 0
+        _delta = deltas.get("health_score", 0)
+        _sign = "+" if _delta > 0 else ""
+        verdict = f"health {_prev} -> {_score} ({_sign}{_delta}) vs {snap_label}"
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={
+                        "verdict": verdict,
+                        "health_score": current.get("health_score"),
+                        "previous_health_score": previous.get("health_score"),
+                        "health_delta": deltas.get("health_score", 0),
+                        "snapshot_date": snap_date,
+                        "snapshot_tag": snap_tag,
+                        "mode": "compare",
+                    },
+                    mode="compare",
+                    current=current,
+                    previous={k: previous.get(k) for k, _ in _DIGEST_METRICS},
+                    deltas=deltas,
+                    recommendations=recommendations,
+                )
+            )
+        )
+        return
+
+    _score = current.get("health_score", 0) or 0
+    _prev = previous.get("health_score", 0) or 0
+    _delta = deltas.get("health_score", 0)
+    _sign = "+" if _delta > 0 else ""
+    click.echo(f"VERDICT: health {_prev} -> {_score} ({_sign}{_delta}) vs {snap_label}\n")
+    click.echo(f"Compare (vs {snap_label} snapshot):\n")
+
+    max_label = max(len(label) for _, label in _DIGEST_METRICS)
+    for key, label in _DIGEST_METRICS:
+        cur_val = current.get(key, 0) or 0
+        prev_val = previous.get(key, 0) or 0
+        d = deltas[key]
+        arrow = _digest_arrow(key, d)
+        padded = label.ljust(max_label)
+        click.echo(f"  {padded}  {prev_val} \u2192 {cur_val} ({_digest_delta_str(d)}) {arrow}")
+
+    if recommendations:
+        click.echo("\nRecommendations:")
+        for rec in recommendations:
+            click.echo(f"  - {rec}")
+
+
+def _handle_timeline(ctx, cmd_name, json_mode, count, since_date, assertions,
+                     fail_on_anomaly, anomalies_flag, do_forecast, analyze_flag, sensitivity):
+    """Default mode: health snapshot timeline with optional anomaly detection."""
+    do_analysis = analyze_flag or anomalies_flag or do_forecast or fail_on_anomaly
+
+    since_ts = None
+    if since_date:
+        try:
+            dt = datetime.strptime(since_date, "%Y-%m-%d").replace(tzinfo=timezone.utc)
+            since_ts = int(dt.timestamp())
+        except ValueError:
+            click.echo(f"Invalid date format: {since_date} (use YYYY-MM-DD)")
+            raise SystemExit(1)
+
+    with open_db(readonly=True) as conn:
+        snaps = get_snapshots(conn, limit=count, since=since_ts)
+
+        if not snaps:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            cmd_name,
+                            summary={"snapshots": 0},
+                            snapshots=[],
+                        )
+                    )
+                )
+            else:
+                click.echo("No snapshots found. Run `roam index` or `roam trends --save` first.")
+            return
+
+        # Convert to dicts for easier access
+        snap_dicts = []
+        for s in snaps:
+            snap_dicts.append(
+                {
+                    "timestamp": s["timestamp"],
+                    "tag": s["tag"],
+                    "source": s["source"],
+                    "git_branch": s["git_branch"],
+                    "git_commit": s["git_commit"],
+                    "files": s["files"],
+                    "symbols": s["symbols"],
+                    "edges": s["edges"],
+                    "cycles": s["cycles"],
+                    "god_components": s["god_components"],
+                    "bottlenecks": s["bottlenecks"],
+                    "dead_exports": s["dead_exports"],
+                    "layer_violations": s["layer_violations"],
+                    "health_score": s["health_score"],
+                }
+            )
+
+        # Reverse for chronological order (oldest first for sparklines)
+        chrono = list(reversed(snap_dicts))
+
+        # Assertions
+        assertion_results = []
+        if assertions:
+            latest = snap_dicts[0]  # newest first
+            assertion_results = _check_assertions(assertions, latest)
+
+        # Anomaly analysis
+        analysis = None
+        if do_analysis and len(chrono) >= 4:
+            analysis = _analyze_trends(chrono, sensitivity=sensitivity)
+
+        if json_mode:
+            _render_timeline_json(
+                ctx, cmd_name, snap_dicts, assertions, assertion_results,
+                analysis, anomalies_flag, do_forecast, analyze_flag, fail_on_anomaly,
+            )
+            return
+
+        _render_timeline_text(
+            snap_dicts, chrono, assertions, assertion_results, analysis, fail_on_anomaly,
+        )

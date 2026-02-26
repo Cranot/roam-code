@@ -5,6 +5,8 @@ and fitness violations into a single call -- reducing round-trips for AI
 agents from 5-6 calls to 1.
 """
 
+from __future__ import annotations
+
 from collections import Counter, defaultdict
 
 import click
@@ -532,6 +534,11 @@ def preflight(ctx, target, staged):
     Combines blast radius, affected tests, complexity, coupling, conventions,
     and fitness checks into a single report. Ideal for AI agents that want
     one-call risk assessment before making changes.
+
+    Unlike ``guard`` (which provides a deep 0-100 risk score for a single
+    symbol with layer analysis and move-sensitive edges), this command
+    handles files, staged changes, and multiple symbols at once, combining
+    6 signal dimensions into a single CRITICAL/HIGH/MEDIUM/LOW verdict.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 

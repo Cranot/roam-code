@@ -336,6 +336,10 @@ def breaking(ctx, target):
 
     Compares the current exported API surface against TARGET (default: HEAD~1)
     and reports removed exports, signature changes, and renames.
+
+    For severity-classified output including additions and visibility changes,
+    use ``api-changes``. This command provides a simpler binary signal:
+    removed, signature-changed, or renamed exports.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -349,7 +353,12 @@ def breaking(ctx, target):
                 to_json(
                     json_envelope(
                         "breaking",
-                        summary={"removed": 0, "signature_changed": 0, "renamed": 0},
+                        summary={
+                            "verdict": f"no breaking changes vs {target}",
+                            "removed": 0,
+                            "signature_changed": 0,
+                            "renamed": 0,
+                        },
                         target=target,
                         removed=[],
                         signature_changed=[],
@@ -358,6 +367,8 @@ def breaking(ctx, target):
                 )
             )
         else:
+            click.echo(f"VERDICT: no breaking changes vs {target}")
+            click.echo()
             click.echo(f"No changed files vs {target}.")
         return
 
@@ -396,12 +407,25 @@ def breaking(ctx, target):
 
     total = len(all_removed) + len(all_sig_changed) + len(all_renamed)
 
+    if total == 0:
+        _breaking_verdict = f"no breaking changes vs {target}"
+    else:
+        _parts = []
+        if all_removed:
+            _parts.append(f"{len(all_removed)} removed")
+        if all_sig_changed:
+            _parts.append(f"{len(all_sig_changed)} sig changes")
+        if all_renamed:
+            _parts.append(f"{len(all_renamed)} renames")
+        _breaking_verdict = f"{total} breaking changes vs {target}: {', '.join(_parts)}"
+
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "breaking",
                     summary={
+                        "verdict": _breaking_verdict,
                         "removed": len(all_removed),
                         "signature_changed": len(all_sig_changed),
                         "renamed": len(all_renamed),
@@ -417,6 +441,8 @@ def breaking(ctx, target):
         return
 
     # --- Text output ---
+    click.echo(f"VERDICT: {_breaking_verdict}")
+    click.echo()
     if total == 0:
         click.echo(f"No breaking changes vs {target}.")
         return

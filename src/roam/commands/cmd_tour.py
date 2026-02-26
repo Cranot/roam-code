@@ -4,6 +4,15 @@ Produces a structured architecture tour: overview, top symbols by
 importance, reading order based on topological layers, entry points,
 and detected patterns.  Always current because it is computed from
 the index, not hand-written documentation.
+
+Prefer ``roam understand --tour`` for the unified single-call alternative.
+The ``--mermaid`` flag is also available there (``roam understand --tour
+--mermaid``).  This command is kept as a standalone entry point for its
+``--write FILE`` flag, which saves the tour to a Markdown file.
+
+Helper functions in this module (``_top_symbols``, ``_reading_order``,
+``_entry_points``, ``_tour_mermaid``) are imported by
+``roam.commands.cmd_understand`` and must not be removed.
 """
 
 from __future__ import annotations
@@ -11,7 +20,7 @@ from __future__ import annotations
 import click
 
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.graph.builder import build_symbol_graph
 from roam.graph.layers import detect_layers
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
@@ -77,11 +86,12 @@ def _reading_order(conn, G):
     seen_files = set()
     for layer_num, sym_ids in enumerate(layers_list):
         pr_rows = (
-            conn.execute(
+            batched_in(
+                conn,
                 "SELECT gm.symbol_id, gm.pagerank FROM graph_metrics gm "
-                "WHERE gm.symbol_id IN ({}) ORDER BY gm.pagerank DESC".format(",".join("?" for _ in sym_ids)),
+                "WHERE gm.symbol_id IN ({ph}) ORDER BY gm.pagerank DESC",
                 list(sym_ids),
-            ).fetchall()
+            )
             if sym_ids
             else []
         )
@@ -91,13 +101,11 @@ def _reading_order(conn, G):
         # Get file paths for this layer's symbols
         if not sym_ids:
             continue
-        sym_list = list(sym_ids)[:500]
-        file_rows = conn.execute(
-            "SELECT DISTINCT f.path, s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({})".format(
-                ",".join("?" for _ in sym_list)
-            ),
-            sym_list,
-        ).fetchall()
+        file_rows = batched_in(
+            conn,
+            "SELECT DISTINCT f.path, s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+            list(sym_ids),
+        )
 
         # Rank files by max PageRank of their symbols in this layer
         file_pr = {}
@@ -215,7 +223,6 @@ def _tour_mermaid(conn, G, top, order):
     # Create nodes
     role_lookup = {s["name"]: s["role"] for s in top}
     for sid, info in sorted(id_to_info.items()):
-        short_path = info["path"].rsplit("/", 1)[-1] if "/" in info["path"] else info["path"]
         role = role_lookup.get(info["qname"], role_lookup.get(info["name"], ""))
         label_parts = [info["name"]]
         if role:
@@ -254,6 +261,10 @@ def tour(ctx, write_file, mermaid_mode):
     suggested reading order, entry points, and codebase statistics.
     Always current because it is derived from the index.
 
+    Unlike ``understand --tour`` (which appends tour data to the full
+    overview), this command provides a standalone guided reading order with
+    ``--write FILE`` for persisting onboarding documentation.
+
     Use --write to save to a file:
 
         roam tour --write ONBOARDING.md
@@ -270,6 +281,15 @@ def tour(ctx, write_file, mermaid_mode):
         order = _reading_order(conn, G)
         entries = _entry_points(conn)
 
+        # Build verdict
+        n_layers = len({item["layer"] for item in order}) if order else 0
+        start_file = order[0]["file"].replace("\\", "/").rsplit("/", 1)[-1] if order else "?"
+        lang_label = langs[0]["language"] if langs else "unknown"
+        verdict = (
+            f"tour: {stats['files']} files, {stats['symbols']} symbols, "
+            f"{n_layers} layers, start at {start_file} ({lang_label})"
+        )
+
         if mermaid_mode:
             mermaid_text = _tour_mermaid(conn, G, top, order)
             if json_mode:
@@ -278,6 +298,7 @@ def tour(ctx, write_file, mermaid_mode):
                         json_envelope(
                             "tour",
                             summary={
+                                "verdict": verdict,
                                 "files": stats["files"],
                                 "symbols": stats["symbols"],
                                 "languages": len(langs),
@@ -302,6 +323,7 @@ def tour(ctx, write_file, mermaid_mode):
                     json_envelope(
                         "tour",
                         summary={
+                            "verdict": verdict,
                             "files": stats["files"],
                             "symbols": stats["symbols"],
                             "languages": len(langs),
@@ -318,6 +340,7 @@ def tour(ctx, write_file, mermaid_mode):
             return
 
         lines = []
+        lines.append(f"VERDICT: {verdict}\n")
         lines.append("# Codebase Tour\n")
 
         # Overview

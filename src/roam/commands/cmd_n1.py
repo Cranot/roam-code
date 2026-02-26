@@ -864,13 +864,13 @@ def n1_cmd(ctx, confidence_filter, limit, verbose):
 
     Finds computed properties on model classes that trigger database
     queries when the model is serialized in a collection (pagination,
-    API responses, etc.).
+    API responses, etc.). Supports Laravel/Eloquent, Django, Rails,
+    SQLAlchemy, and JPA.
 
-    Unlike 'roam algo' which finds explicit loops with I/O, this
-    command finds IMPLICIT N+1 patterns where the loop is hidden
-    inside the ORM's serialization layer.
-
-    Supports: Laravel/Eloquent, Django, Rails, SQLAlchemy, JPA.
+    Unlike ``algo`` (which detects explicit I/O-in-loop patterns from AST
+    shapes), this command finds implicit N+1 queries hidden inside ORM
+    serialization -- e.g. Laravel $appends accessors that trigger lazy-load
+    SQL on every item.
 
     \b
     Examples:

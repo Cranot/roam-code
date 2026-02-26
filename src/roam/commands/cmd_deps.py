@@ -15,7 +15,12 @@ from roam.output.formatter import format_table, json_envelope, summary_envelope,
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def deps(ctx, path, full):
-    """Show file import/imported-by relationships."""
+    """Show file import/imported-by relationships.
+
+    Unlike ``uses`` (which shows symbol-level callers and consumers), this command shows
+    file-level import and imported-by relationships, including which specific symbols are
+    used from each imported file.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -55,9 +60,12 @@ def deps(ctx, path, full):
         imported_by = conn.execute(FILE_IMPORTED_BY, (frow["id"],)).fetchall()
 
         if json_mode:
+            _fname = frow["path"].split("/")[-1]
+            _verdict = f"{_fname}: {len(imports)} imports, {len(imported_by)} importers"
             envelope = json_envelope(
                 "deps",
                 summary={
+                    "verdict": _verdict,
                     "imports": len(imports),
                     "imported_by": len(imported_by),
                 },
@@ -79,6 +87,9 @@ def deps(ctx, path, full):
             return
 
         # --- Text output ---
+        _fname = frow["path"].split("/")[-1]
+        _verdict = f"{_fname}: {len(imports)} imports, {len(imported_by)} importers"
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"{frow['path']}")
         click.echo(f"Imports: {len(imports)}  |  Imported by: {len(imported_by)}")
         click.echo()

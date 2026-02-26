@@ -18,7 +18,12 @@ from roam.output.formatter import format_table, json_envelope, to_json
 @click.group("ws")
 @click.pass_context
 def ws(ctx):
-    """Multi-repo workspace commands."""
+    """Manage multi-repo workspaces with cross-repo dependency tracking.
+
+    Unlike single-repo commands (``understand``, ``health``, ``context``), the ws
+    subcommands aggregate across multiple indexed repositories and detect cross-repo
+    API connections.
+    """
     ctx.ensure_object(dict)
 
 

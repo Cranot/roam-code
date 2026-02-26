@@ -1,5 +1,7 @@
 """Show symbol definition, callers, and callees."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
@@ -39,7 +41,12 @@ def _dedup_edges(edges):
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def symbol(ctx, name, full):
-    """Show symbol definition, callers, and callees."""
+    """Show symbol definition, callers, and callees.
+
+    Unlike ``search`` (which finds symbols matching a pattern), this command
+    shows detailed information about one symbol including callers, callees,
+    and graph metrics.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -56,11 +63,16 @@ def symbol(ctx, name, full):
         deduped_callees = _dedup_edges(callees) if callees else []
 
         if json_mode:
+            _sym_loc = loc(s["file_path"], s["line_start"])
+            _verdict = (
+                f"{s['name']}: {abbrev_kind(s['kind'])} at {_sym_loc}, "
+                f"{len(deduped_callers)} callers, {len(deduped_callees)} callees"
+            )
             data = {
                 "name": s["qualified_name"] or s["name"],
                 "kind": s["kind"],
                 "signature": s["signature"] or "",
-                "location": loc(s["file_path"], s["line_start"]),
+                "location": _sym_loc,
                 "docstring": s["docstring"] or "",
             }
             if metrics:
@@ -90,6 +102,7 @@ def symbol(ctx, name, full):
                     json_envelope(
                         "symbol",
                         summary={
+                            "verdict": _verdict,
                             "callers": len(deduped_callers),
                             "callees": len(deduped_callees),
                         },
@@ -100,6 +113,12 @@ def symbol(ctx, name, full):
             return
 
         # --- Text output ---
+        _sym_loc = loc(s["file_path"], s["line_start"])
+        _verdict = (
+            f"{s['name']}: {abbrev_kind(s['kind'])} at {_sym_loc}, "
+            f"{len(deduped_callers)} callers, {len(deduped_callees)} callees"
+        )
+        click.echo(f"VERDICT: {_verdict}\n")
         sig = format_signature(s["signature"])
         click.echo(f"{abbrev_kind(s['kind'])}  {s['qualified_name'] or s['name']}")
         if sig:

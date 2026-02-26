@@ -616,38 +616,32 @@ class TestDiagnose:
 
 
 class TestDigest:
-    """Tests for `roam digest`."""
+    """Tests for `roam trends --compare` (formerly `roam digest`)."""
 
     def test_digest_runs(self, indexed_project, cli_runner, monkeypatch):
-        """digest exits 0 (may show 'no snapshots')."""
+        """trends --compare exits 0 (may show 'no snapshots')."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["digest"])
+        result = invoke_cli(cli_runner, ["trends", "--compare"])
         assert result.exit_code == 0
         output = result.output
         # Either shows digest or tells us no snapshots exist
-        assert "Digest" in output or "No snapshots" in output or "snapshot" in output.lower()
+        assert "Digest" in output or "No snapshots" in output or "snapshot" in output.lower() or "compare" in output.lower()
 
     def test_digest_json(self, indexed_project, cli_runner, monkeypatch):
         """--json returns envelope."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["digest"], json_mode=True)
-        data = parse_json_output(result, "digest")
-        assert_json_envelope(data, "digest")
+        result = invoke_cli(cli_runner, ["trends", "--compare"], json_mode=True)
+        data = parse_json_output(result, "trends")
+        assert_json_envelope(data, "trends")
         # Should have current metrics at minimum
         assert "current" in data or "summary" in data
-
-    def test_digest_brief(self, indexed_project, cli_runner, monkeypatch):
-        """--brief flag exits 0."""
-        monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["digest", "--brief"])
-        assert result.exit_code == 0
 
     def test_digest_json_summary_keys(self, indexed_project, cli_runner, monkeypatch):
         """JSON summary has expected keys when snapshots exist."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["digest"], json_mode=True)
-        data = parse_json_output(result, "digest")
-        assert_json_envelope(data, "digest")
+        result = invoke_cli(cli_runner, ["trends", "--compare"], json_mode=True)
+        data = parse_json_output(result, "trends")
+        assert_json_envelope(data, "trends")
         summary = data["summary"]
         # If no snapshots, summary has error key
         # If snapshots exist, summary has health_score
