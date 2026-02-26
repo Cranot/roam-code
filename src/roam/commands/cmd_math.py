@@ -13,6 +13,35 @@ from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 
+def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tuple[list[dict], int]:
+    """Apply a first-page per-task cap, then backfill to preserve limit."""
+    if limit <= 0:
+        return [], 0
+    if max_per_task <= 0:
+        return findings[:limit], 0
+
+    selected: list[dict] = []
+    deferred: list[dict] = []
+    counts: dict[str, int] = {}
+    deferred_count = 0
+
+    for finding in findings:
+        task_id = str(finding.get("task_id") or "")
+        seen = counts.get(task_id, 0)
+        if seen < max_per_task:
+            selected.append(finding)
+            counts[task_id] = seen + 1
+        else:
+            deferred.append(finding)
+            deferred_count += 1
+
+    if len(selected) >= limit:
+        return selected[:limit], deferred_count
+
+    selected.extend(deferred[: max(0, limit - len(selected))])
+    return selected, deferred_count
+
+
 @click.command()
 @click.option("--task", "task_filter", default=None, help="Filter by task ID (e.g. sorting, membership)")
 @click.option(
@@ -30,13 +59,23 @@ from roam.output.formatter import abbrev_kind, json_envelope, to_json
     help="Precision profile (strict reduces false positives; aggressive surfaces more candidates)",
 )
 @click.option("--limit", "-n", default=30, help="Max findings to show")
+@click.option(
+    "--max-per-task",
+    default=5,
+    type=click.IntRange(min=0),
+    help="Diversity cap for first page (0 disables, default 5 before backfill).",
+)
 @click.pass_context
-def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
+def math_cmd(ctx, task_filter, confidence_filter, profile, limit, max_per_task):
     """Detect suboptimal algorithms and suggest better approaches.
 
     Scans indexed symbols for common algorithmic anti-patterns
     (manual sort, linear search, nested-loop lookup, busy wait, etc.)
     and recommends better alternatives from a universal catalog.
+
+    Unlike ``smells`` (which flags style and structural patterns like god
+    classes or long methods), this command focuses on algorithm choices and
+    computational complexity.
 
     Primary name: algo. Alias: math (backward compat).
     """
@@ -87,9 +126,10 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
             )
         )
 
-        # Apply limit
+        # Apply limit + optional first-page diversity cap.
+        effective_cap = max_per_task if not task_filter else 0
         truncated = len(findings) > limit
-        findings = findings[:limit]
+        findings, deferred_by_cap = _apply_task_cap(findings, limit, effective_cap)
 
         # Group by task category
         by_category = defaultdict(list)
@@ -143,6 +183,8 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
                             "detector_metadata": detector_meta.get("detector_metadata", {}),
                             "profile": detector_meta.get("profile", profile),
                             "profile_filtered": detector_meta.get("profile_filtered", 0),
+                            "max_per_task": effective_cap,
+                            "deferred_by_task_cap": deferred_by_cap,
                             "max_impact_score": max(
                                 [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
                                 default=0.0,
@@ -156,7 +198,10 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit):
 
         # --- Text output ---
         click.echo(f"VERDICT: {verdict}")
-        click.echo("Ordering: highest impact first")
+        if effective_cap > 0 and not task_filter:
+            click.echo(f"Ordering: highest impact first (diversity cap {effective_cap}/task on first page)")
+        else:
+            click.echo("Ordering: highest impact first")
         click.echo(
             f"Profile: {detector_meta.get('profile', profile)} "
             f"(filtered {detector_meta.get('profile_filtered', 0)} low-signal findings)"
