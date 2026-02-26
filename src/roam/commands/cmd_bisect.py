@@ -99,6 +99,10 @@ def _compute_deltas(snapshots, metric):
 def bisect(ctx, metric, threshold, top_n, direction):
     """Find which snapshots caused architectural degradation.
 
+    Unlike ``trends`` (which shows metric history as sparklines), this
+    command ranks snapshots by degradation magnitude to find which commits
+    broke the architecture.
+
     Walks the snapshot history and ranks snapshots by the magnitude of
     metric changes. Identifies the commits that caused the biggest
     structural regressions.
@@ -120,7 +124,7 @@ def bisect(ctx, metric, threshold, top_n, direction):
         snapshots = [dict(s) for s in snapshots_raw]
 
         if len(snapshots) < 2:
-            verdict = "Not enough snapshots for bisect (need >= 2). Run 'roam snapshot' to create them."
+            verdict = "Not enough snapshots for bisect (need >= 2). Run 'roam trends --save' to create them."
             if json_mode:
                 click.echo(
                     to_json(

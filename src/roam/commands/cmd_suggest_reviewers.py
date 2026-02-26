@@ -6,11 +6,11 @@ import math
 import os
 import time
 from collections import defaultdict
-from pathlib import Path
 
 import click
 
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
+from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -25,64 +25,6 @@ _W_RECENCY = 0.20
 _W_BREADTH = 0.15
 
 
-# ---------------------------------------------------------------------------
-# CODEOWNERS parsing
-# ---------------------------------------------------------------------------
-
-
-def _find_codeowners(project_root: Path) -> Path | None:
-    """Locate the CODEOWNERS file (GitHub/GitLab conventions)."""
-    candidates = [
-        project_root / "CODEOWNERS",
-        project_root / ".github" / "CODEOWNERS",
-        project_root / ".gitlab" / "CODEOWNERS",
-        project_root / "docs" / "CODEOWNERS",
-    ]
-    for p in candidates:
-        if p.is_file():
-            return p
-    return None
-
-
-def _parse_codeowners(codeowners_path: Path) -> list[tuple[str, list[str]]]:
-    """Parse a CODEOWNERS file into a list of (pattern, [owners]).
-
-    Returns entries in file order (last match wins in GitHub semantics).
-    """
-    entries: list[tuple[str, list[str]]] = []
-    try:
-        text = codeowners_path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return entries
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        parts = line.split()
-        if len(parts) < 2:
-            continue
-        pattern = parts[0]
-        owners = [o.lstrip("@") for o in parts[1:] if not o.startswith("#")]
-        if owners:
-            entries.append((pattern, owners))
-    return entries
-
-
-def _resolve_codeowners(file_path: str, entries: list[tuple[str, list[str]]]) -> list[str]:
-    """Resolve which CODEOWNERS entries match a file path.
-
-    GitHub uses last-match-wins semantics: only the last matching pattern
-    applies.  Returns the owner list for that pattern, or [] if no match.
-    Uses gitignore-style pattern matching (see ``roam.index.gitignore``).
-    """
-    from roam.index.gitignore import matches_gitignore
-
-    matched_owners: list[str] = []
-    for pattern, owners in entries:
-        if matches_gitignore(file_path, pattern):
-            matched_owners = owners
-    return matched_owners
 
 
 # ---------------------------------------------------------------------------
@@ -265,8 +207,8 @@ def _aggregate_reviewer_scores(
         # Recency signal
         recency = _compute_recency(conn, fid, now=now)
         # CODEOWNERS signal
-        co_owners = _resolve_codeowners(path, codeowners_entries)
-        co_owners_set = set(co_owners)
+        co_owners = resolve_owners(codeowners_entries, path)
+        co_owners_set = {o.lstrip("@") for o in co_owners}
 
         has_candidate = False
         all_authors = set(ownership.keys()) | set(recency.keys()) | co_owners_set
@@ -407,8 +349,8 @@ def suggest_reviewers(ctx, files, top_n, excludes, use_changed):
             return
 
         # Parse CODEOWNERS
-        codeowners_path = _find_codeowners(root)
-        codeowners_entries = _parse_codeowners(codeowners_path) if codeowners_path else []
+        codeowners_path = find_codeowners(root)
+        codeowners_entries = parse_codeowners(codeowners_path) if codeowners_path else []
 
         exclude_set = set(excludes)
 

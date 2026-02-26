@@ -128,6 +128,11 @@ _RE_TABLE_PROP = re.compile(
     r"\$table\s*=\s*['\"]([^'\"]+)['\"]",
 )
 
+# Method declaration pattern (PHP visibility + function)
+_RE_METHOD_DECL = re.compile(
+    r"(?:public|protected|private)\s+function\s+(\w+)\s*\(",
+)
+
 
 # ---------------------------------------------------------------------------
 # Helper utilities
@@ -474,10 +479,7 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
 
         # --- Method-level analysis: chunk file into method bodies ---
         # Find all method declarations and process them as logical blocks
-        method_re = re.compile(
-            r"(?:public|protected|private)\s+function\s+(\w+)\s*\(",
-        )
-        method_matches = list(method_re.finditer(content))
+        method_matches = list(_RE_METHOD_DECL.finditer(content))
 
         for mi, mm in enumerate(method_matches):
             # Skip scope methods (already handled above)
@@ -734,7 +736,10 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
 
     Reads migration files to learn which columns are indexed, then scans
     models, services, and controllers for ->where() / ->orderBy() calls on
-    columns that have no index.
+    columns that have no index. Unlike ``migration-safety`` (which finds
+    non-idempotent DDL in migrations) and ``n1`` (which detects ORM N+1
+    lazy-load patterns), this command cross-references migration index
+    definitions against query patterns to find columns queried without indexes.
 
     Confidence levels:
 

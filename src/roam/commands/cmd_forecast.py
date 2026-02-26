@@ -245,6 +245,10 @@ def _at_risk_symbols(conn, symbol_filter, min_slope, limit=20):
 def forecast(ctx, symbol, horizon, alert_only, min_slope):
     """Predict when metrics will exceed thresholds using trend analysis.
 
+    Unlike ``trends`` (which shows current metric snapshots and sparklines),
+    this command uses Theil-Sen regression to predict when metrics will
+    cross threshold boundaries.
+
     Combines Theil-Sen regression on snapshot history (aggregate trends)
     with a churn-weighted complexity ranking (per-symbol risk) to surface
     the most likely future pain points.
@@ -253,16 +257,11 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
     are shown, suppressing stable metrics from the output.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        aggregate_result = _aggregate_forecasts(conn, horizon)
-        # _aggregate_forecasts returns (trends_list, snapshot_count)
-        # when there are >= 3 snapshots, otherwise ([], n) for n < 3
-        if isinstance(aggregate_result, tuple):
-            agg_trends, n_snapshots = aggregate_result
-        else:
-            agg_trends, n_snapshots = aggregate_result, 0
+        agg_trends, n_snapshots = _aggregate_forecasts(conn, horizon)
 
         # Apply alert-only filter on aggregate trends
         if alert_only:
@@ -309,6 +308,7 @@ def forecast(ctx, symbol, horizon, alert_only, min_slope):
                         "metrics_trending": metrics_trending,
                         "symbols_at_risk": symbols_at_risk,
                     },
+                    budget=token_budget,
                     aggregate_trends=agg_trends,
                     at_risk_symbols=at_risk,
                 )

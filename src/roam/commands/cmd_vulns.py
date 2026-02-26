@@ -220,6 +220,12 @@ def vulns(ctx, import_file, fmt, reachable_only):
     Import vulnerability reports from npm-audit, pip-audit, trivy, osv, or
     generic JSON formats. Show current vulnerability inventory with severity
     breakdown and optional reachability filtering.
+
+    Unlike ``vuln-map`` (which ingests vulnerability reports from specific scanner
+    formats) and ``vuln-reach`` (which traces call-graph paths from vulnerabilities
+    to entry points), this command provides unified vulnerability inventory with
+    auto-format detection, ``--import-file`` ingestion, and ``--reachable-only``
+    filtering.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
@@ -278,22 +284,32 @@ def _query_vulns(conn: sqlite3.Connection, reachable_only: bool) -> list[dict]:
     vulns = [dict(r) for r in rows]
 
     if reachable_only:
-        # If we don't have reachability data yet, compute it
+        # If we don't have reachability data yet, compute it in-memory
+        # (the connection may be readonly, so we cannot write back to DB)
         needs_analysis = any(v["reachable"] == 0 and v["matched_symbol_id"] is not None for v in vulns)
         if needs_analysis:
             try:
                 from roam.graph.builder import build_symbol_graph
-                from roam.security.vuln_reach import analyze_reachability
 
                 G = build_symbol_graph(conn)
-                analyzed = analyze_reachability(conn, G)
-                # Refresh from DB
-                rows = conn.execute(
-                    "SELECT id, cve_id, package_name, severity, title, source, "
-                    "matched_symbol_id, matched_file, reachable, shortest_path, hop_count "
-                    "FROM vulnerabilities ORDER BY id"
-                ).fetchall()
-                vulns = [dict(r) for r in rows]
+                # Find entry points (in-degree 0)
+                entries = [n for n in G.nodes() if G.in_degree(n) == 0]
+                import networkx as nx
+
+                for v in vulns:
+                    sid = v["matched_symbol_id"]
+                    if v["reachable"] != 0 or sid is None:
+                        continue
+                    if sid not in G:
+                        v["reachable"] = -1
+                        continue
+                    # Check reachability from any entry point
+                    reached = False
+                    for ep in entries:
+                        if nx.has_path(G, ep, sid):
+                            reached = True
+                            break
+                    v["reachable"] = 1 if reached else -1
             except Exception:
                 pass
 

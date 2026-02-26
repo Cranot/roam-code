@@ -365,7 +365,6 @@ def _get_propagation_scores_for_paths(conn, sym_ids, use_propagation, max_depth=
             chunk,
         ).fetchall()
         for row in rows:
-            fp = row[0] if not hasattr(row, "__getitem__") else row["id"]
             # Handle both sqlite3.Row and tuple
             try:
                 sym_id_val = row["id"]

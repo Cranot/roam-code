@@ -324,7 +324,6 @@ def _check_error_handling(conn, file_ids: list[int], root: Path) -> dict:
             continue
 
         files_checked += 1
-        lines = content.splitlines()
 
         # Bare except
         for m in _BARE_EXCEPT_RE.finditer(content):
@@ -661,6 +660,11 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
     and syntax integrity against established codebase patterns.
 
     If no files are specified, defaults to git-changed files.
+
+    Unlike ``conventions`` (which reports codebase-wide style patterns) and
+    ``smells`` (which detects structural anti-patterns from DB queries), this
+    command runs pre-commit checks on changed files: naming, imports, error
+    handling, duplicates, and syntax.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -670,7 +674,7 @@ def verify(ctx, changed, threshold, fix_suggestions, files):
     # Resolve target files
     if files:
         target_paths = [f.replace("\\", "/") for f in files]
-    elif changed or True:
+    else:
         # Default behavior: use git diff changed files
         target_paths = get_changed_files(root)
 

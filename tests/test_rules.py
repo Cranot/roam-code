@@ -449,7 +449,8 @@ class TestRulesCLI:
 
         runner = CliRunner()
         result = runner.invoke(cli, ["rules", "--ci"], catch_exceptions=False)
-        assert result.exit_code == 1
+        # EXIT_GATE_FAILURE = 5 (consistent with other gate commands)
+        assert result.exit_code == 5
 
 
 # ===========================================================================

@@ -424,12 +424,16 @@ def analyze_flags(
 )
 @click.pass_context
 def flag_dead(ctx, config_path, include_tests):
-    """Detect potentially stale feature flag code.
+    """Detect potentially stale feature flag code (conditionally-dead code).
 
-    Scans for feature flag API calls from LaunchDarkly, Unleash, Split,
-    and generic patterns. Identifies flags that may be stale based on
-    usage patterns: single-location references, constant defaults, and
-    flags listed in a known-stale config file.
+    Scans source files for feature flag API calls from LaunchDarkly,
+    Unleash, Split, and generic patterns.  Identifies flags that may be
+    stale based on usage patterns: single-location references, constant
+    defaults, and flags listed in a known-stale config file.
+
+    Unlike ``dead`` (which detects structurally unreferenced symbols via
+    the call graph), this command detects code that is alive in the graph
+    but gated behind feature flags that may never fire.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

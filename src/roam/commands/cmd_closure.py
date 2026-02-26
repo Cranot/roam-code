@@ -6,19 +6,10 @@ import os
 
 import click
 
+from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
-
-_TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
-_TEST_DIR_PATS = ["tests/", "test/", "__tests__/", "spec/"]
-
-
-def _is_test_file(path):
-    """Check if a file path looks like a test file."""
-    p = path.replace("\\", "/")
-    bn = os.path.basename(p)
-    return any(pat in bn for pat in _TEST_NAME_PATS) or any(d in p for d in _TEST_DIR_PATS)
 
 
 def _collect_closure(conn, sym, rename=None, delete=False):
@@ -189,8 +180,9 @@ def _closure_verdict(changes, sym_name):
 def closure(ctx, name, rename, delete_mode):
     """Compute the minimal set of changes needed when modifying a symbol.
 
-    Unlike `impact` (blast radius -- what MIGHT break), closure tells you
-    what MUST change. Returns the exact files and locations that need updating.
+    Unlike ``impact`` (which shows what might break), this command computes
+    the minimal set of files and lines that must change when modifying a
+    symbol.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

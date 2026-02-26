@@ -22,6 +22,10 @@ def effects(ctx, target, file_path, effect_type, transitive):
     I/O, filesystem access, global mutation, etc.) and shows both direct
     and transitive effects through the call graph.
 
+    Unlike ``impact`` (which shows graph-level dependents that break when a
+    symbol changes), this command classifies the runtime behaviour of each
+    function.
+
     \b
     Examples:
       roam effects create_user       # effects of a specific function

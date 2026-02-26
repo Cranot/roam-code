@@ -209,9 +209,9 @@ class TestContextBatch:
 
 class TestSnapshot:
     def test_snapshot_creates(self, indexed_project):
-        """roam snapshot --tag test should save a snapshot successfully."""
-        out, rc = roam("snapshot", "--tag", "test", cwd=indexed_project)
-        assert rc == 0, f"snapshot failed: {out}"
+        """roam trends --save --tag test should save a snapshot successfully."""
+        out, rc = roam("trends", "--save", "--tag", "test", cwd=indexed_project)
+        assert rc == 0, f"trends --save failed: {out}"
         assert "Snapshot saved" in out or "snapshot" in out.lower(), f"Missing success message in: {out}"
         assert "test" in out, f"Tag 'test' not in output: {out}"
 
@@ -223,32 +223,32 @@ class TestSnapshot:
 
 class TestTrend:
     def test_trend_display(self, indexed_project):
-        """roam trend should display a table of snapshots.
+        """roam trends should display a table of snapshots.
 
         Requires at least one snapshot to exist (created by indexing or
         the snapshot test).
         """
         # Ensure at least one snapshot exists
-        roam("snapshot", "--tag", "trend-seed", cwd=indexed_project)
-        out, rc = roam("trend", cwd=indexed_project)
-        assert rc == 0, f"trend failed: {out}"
+        roam("trends", "--save", "--tag", "trend-seed", cwd=indexed_project)
+        out, rc = roam("trends", cwd=indexed_project)
+        assert rc == 0, f"trends failed: {out}"
         assert "Health Trend" in out or "Score" in out or "Date" in out, f"Missing table output in: {out}"
 
     def test_trend_assert_pass(self, indexed_project):
-        """roam trend --assert 'cycles<=100' should pass (exit 0) for a healthy project."""
-        roam("snapshot", "--tag", "assert-seed", cwd=indexed_project)
-        out, rc = roam("trend", "--assert", "cycles<=100", cwd=indexed_project)
-        assert rc == 0, f"trend --assert should pass but failed: {out}"
+        """roam trends --assert 'cycles<=100' should pass (exit 0) for a healthy project."""
+        roam("trends", "--save", "--tag", "assert-seed", cwd=indexed_project)
+        out, rc = roam("trends", "--assert", "cycles<=100", cwd=indexed_project)
+        assert rc == 0, f"trends --assert should pass but failed: {out}"
         assert "passed" in out.lower() or rc == 0
 
     def test_trend_assert_fail(self, indexed_project):
-        """roam trend --assert 'cycles<=0' should handle strictness.
+        """roam trends --assert 'cycles<=0' should handle strictness.
 
         Note: if cycles is 0 this assertion actually passes.  We use
         health_score>=999 which will definitely fail.
         """
-        roam("snapshot", "--tag", "assert-fail-seed", cwd=indexed_project)
-        out, rc = roam("trend", "--assert", "health_score>=999", cwd=indexed_project)
+        roam("trends", "--save", "--tag", "assert-fail-seed", cwd=indexed_project)
+        out, rc = roam("trends", "--assert", "health_score>=999", cwd=indexed_project)
         # Should fail because health_score is never 999+
         assert rc != 0, f"Expected assertion failure, got rc=0: {out}"
 
@@ -331,18 +331,18 @@ class TestJsonEnvelope:
         assert "architecture" in data
 
     def test_json_snapshot(self, indexed_project):
-        """roam --json snapshot should have standard envelope."""
-        out, rc = roam("--json", "snapshot", "--tag", "json-test", cwd=indexed_project)
-        assert rc == 0, f"snapshot --json failed: {out}"
-        self._assert_envelope(out, "snapshot")
+        """roam --json trends --save should have standard envelope."""
+        out, rc = roam("--json", "trends", "--save", "--tag", "json-test", cwd=indexed_project)
+        assert rc == 0, f"trends --save --json failed: {out}"
+        self._assert_envelope(out, "trends")
 
     def test_json_trend(self, indexed_project):
-        """roam --json trend should have standard envelope."""
+        """roam --json trends should have standard envelope."""
         # Ensure at least one snapshot exists
-        roam("snapshot", "--tag", "json-trend-seed", cwd=indexed_project)
-        out, rc = roam("--json", "trend", cwd=indexed_project)
-        assert rc == 0, f"trend --json failed: {out}"
-        data = self._assert_envelope(out, "trend")
+        roam("trends", "--save", "--tag", "json-trend-seed", cwd=indexed_project)
+        out, rc = roam("--json", "trends", cwd=indexed_project)
+        assert rc == 0, f"trends --json failed: {out}"
+        data = self._assert_envelope(out, "trends")
         assert "snapshots" in data
 
     def test_json_context(self, indexed_project):

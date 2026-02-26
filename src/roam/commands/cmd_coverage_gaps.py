@@ -248,6 +248,12 @@ def coverage_gaps(
 
     Use --preset or --auto-detect to apply framework-specific gate rules
     that check file-level test coverage requirements.
+
+    Unlike ``auth-gaps`` (which performs PHP/Laravel-specific source analysis
+    for unprotected endpoints) and ``test-gaps`` (which finds untested symbols
+    in changed files), this command walks the call graph to verify that all
+    entry points reach a required gate symbol -- configurable via
+    ``--gate-pattern`` or framework presets.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -392,6 +398,9 @@ def coverage_gaps(
                 )
             )
         else:
+            verdict_str = "fail" if errors else "pass"
+            click.echo(f"VERDICT: {verdict_str}")
+            click.echo()
             click.echo(f"=== Coverage Gaps (preset: {preset_info}) ===\n")
             if import_summary:
                 pct = import_summary.get("coverage_pct")
@@ -553,6 +562,12 @@ def coverage_gaps(
             return
 
         # --- Text output ---
+        if len(uncovered) == 0:
+            verdict = f"all {total} entry points reach a gate ({coverage_pct}% coverage)"
+        else:
+            verdict = f"{len(uncovered)} unprotected entry point{'s' if len(uncovered) != 1 else ''} ({coverage_pct}% coverage)"
+        click.echo(f"VERDICT: {verdict}")
+        click.echo()
         header = "=== Coverage Gaps ==="
         if preset_used:
             header = f"=== Coverage Gaps (preset: {preset_used.name}) ==="

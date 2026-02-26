@@ -1,10 +1,14 @@
 """Show shortest dependency path between two symbols."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+
+_MAX_GRAPH_SYMBOLS = 5000
 
 
 def _classify_coupling(hops):
@@ -115,7 +119,12 @@ def _build_hops(path_ids, annotated, G):
 @click.option("-k", "k_paths", default=3, help="Number of alternative paths to find")
 @click.pass_context
 def trace(ctx, source, target, k_paths):
-    """Show shortest path between two symbols."""
+    """Show shortest path between two symbols.
+
+    Unlike ``impact`` (which shows the blast radius of one symbol), this
+    command finds the shortest dependency path connecting two specific
+    symbols.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -123,6 +132,27 @@ def trace(ctx, source, target, k_paths):
     from roam.graph.pathfinding import find_k_paths, find_symbol_id, format_path
 
     with open_db(readonly=True) as conn:
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > _MAX_GRAPH_SYMBOLS:
+            msg = (
+                f"Graph too large ({sym_count} symbols) for trace analysis. "
+                "Use a scoped index or reduce the codebase size."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "trace",
+                            summary={"verdict": msg, "symbol_count": sym_count},
+                            source=source,
+                            target=target,
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
+            return
+
         src_ids = find_symbol_id(conn, source)
         if not src_ids:
             click.echo(symbol_not_found_hint(source))
@@ -175,12 +205,13 @@ def trace(ctx, source, target, k_paths):
         unique_paths = unique_paths[:k_paths]
 
         if not unique_paths:
+            no_path_verdict = f"no path found between {source} and {target}"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "trace",
-                            summary={"hops": 0, "paths": 0},
+                            summary={"verdict": no_path_verdict, "hops": 0, "paths": 0},
                             source=source,
                             target=target,
                             path=None,
@@ -190,6 +221,7 @@ def trace(ctx, source, target, k_paths):
                     )
                 )
             else:
+                click.echo(f"VERDICT: {no_path_verdict}\n")
                 click.echo(f"No dependency path between '{source}' and '{target}'.")
                 click.echo("These symbols are independent — changes to one cannot affect the other.")
             return
@@ -243,11 +275,17 @@ def trace(ctx, source, target, k_paths):
         if json_mode:
             # Backward-compatible: "path" = first path's hops, "hops" = first path hop count
             first = annotated_paths[0]
+            trace_verdict = (
+                f"trace: {len(first['hops'])} hops {source}->{target}, "
+                f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
+                f"{coupling_summary}"
+            )
             click.echo(
                 to_json(
                     json_envelope(
                         "trace",
                         summary={
+                            "verdict": trace_verdict,
                             "hops": len(first["hops"]),
                             "paths": len(annotated_paths),
                             "coupling": coupling_summary,
@@ -273,6 +311,14 @@ def trace(ctx, source, target, k_paths):
             return
 
         # --- Text output ---
+        first_txt = annotated_paths[0]
+        text_verdict = (
+            f"trace: {len(first_txt['hops'])} hops {source}->{target}, "
+            f"{len(annotated_paths)} path{'s' if len(annotated_paths) != 1 else ''} found, "
+            f"{coupling_summary}"
+        )
+        click.echo(f"VERDICT: {text_verdict}\n")
+
         if len(annotated_paths) == 1:
             ap = annotated_paths[0]
             hub_note = f", {ap['hub_count']} hub{'s' if ap['hub_count'] != 1 else ''}" if ap["hub_count"] else ""

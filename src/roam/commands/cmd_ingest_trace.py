@@ -20,7 +20,10 @@ def ingest_trace(ctx, trace_file, otel_file, jaeger_file, zipkin_file, generic_f
     """Ingest runtime trace data and match spans to symbols.
 
     Supports OpenTelemetry (OTLP JSON), Jaeger, Zipkin, and a simple generic
-    format. Auto-detects format when given a positional argument.
+    format. Auto-detects format when given a positional argument. This command
+    is a prerequisite for ``hotspots`` — run it first to populate runtime
+    statistics from trace data, then use ``hotspots`` to classify functions as
+    UPGRADE/CONFIRMED/DOWNGRADE based on combined static and runtime signals.
 
     \b
     Examples:

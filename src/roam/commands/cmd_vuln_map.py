@@ -53,6 +53,10 @@ def vuln_map(ctx, npm_audit_path, pip_audit_path, trivy_path, osv_path, generic_
     a generic JSON format. For each vulnerability, attempts to match the
     affected package to symbols in the codebase index.
 
+    Prefer ``vulns --import-file <file>`` which auto-detects the report
+    format and adds reachability filtering and SARIF output.  This command
+    is retained for multi-source ingestion in a single call.
+
     \b
     Examples:
         roam vuln-map --npm-audit audit.json

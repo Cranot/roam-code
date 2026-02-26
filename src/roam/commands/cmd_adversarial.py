@@ -526,6 +526,10 @@ def _format_markdown(challenges, verdict, changed_files_count):
 def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
     """Adversarial architecture review -- challenge your changes.
 
+    Unlike ``diff`` (which reports blast radius facts), this command frames
+    architectural issues in changed files as challenges that developers
+    must address.
+
     Generates targeted architectural challenges based on graph topology.
     Acts as a 'Dungeon Master' forcing you to defend structural choices.
 
@@ -537,6 +541,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
       INFO      Orphaned symbols (no callers)
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     root = find_project_root()
 
@@ -562,6 +567,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                                 "info": 0,
                                 "changed_files": 0,
                             },
+                            budget=token_budget,
                             challenges=[],
                         )
                     )
@@ -591,6 +597,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                                 "info": 0,
                                 "changed_files": len(changed),
                             },
+                            budget=token_budget,
                             challenges=[],
                         )
                     )
@@ -676,6 +683,7 @@ def adversarial(ctx, staged, commit_range, severity, fail_on_critical, fmt):
                             "info": info,
                             "changed_files": len(file_map),
                         },
+                        budget=token_budget,
                         challenges=challenges,
                     )
                 )

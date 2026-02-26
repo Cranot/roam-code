@@ -34,6 +34,7 @@ def _run_git_blame(file_path, project_root):
             ["git", "blame", "-t", "--", file_path],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=30,
             cwd=str(project_root),
         )
@@ -251,7 +252,15 @@ ORDER BY f.path, s.line_start
 )
 @click.pass_context
 def doc_staleness(ctx, limit, days):
-    """Detect stale docstrings where the code body changed long after the docs."""
+    """Detect stale docstrings where the code body changed long after the docs.
+
+    Scans ALL symbols with docstrings (including private/internal) and uses
+    ``git blame`` to compare docstring timestamps against code body timestamps.
+
+    Unlike ``docs-coverage`` (which reports missing docs for exported public
+    symbols, ranked by PageRank), this command focuses on existing docs that
+    have gone stale.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -266,12 +275,17 @@ def doc_staleness(ctx, limit, days):
                 to_json(
                     json_envelope(
                         "doc-staleness",
-                        summary={"stale_count": 0, "threshold_days": days},
+                        summary={
+                            "verdict": "no documented symbols found in index",
+                            "stale_count": 0,
+                            "threshold_days": days,
+                        },
                         stale=[],
                     )
                 )
             )
         else:
+            click.echo("VERDICT: no documented symbols found in index\n")
             click.echo("No documented symbols found in index.")
         return
 
@@ -294,12 +308,18 @@ def doc_staleness(ctx, limit, days):
     # Apply limit
     displayed = stale[:limit]
 
+    if stale:
+        _verdict = f"{len(stale)} stale docs (>{days} days since code change)"
+    else:
+        _verdict = "all docs up to date"
+
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "doc-staleness",
                     summary={
+                        "verdict": _verdict,
                         "stale_count": len(stale),
                         "displayed": len(displayed),
                         "threshold_days": days,
@@ -314,10 +334,12 @@ def doc_staleness(ctx, limit, days):
 
     # --- Text output ---
     if not stale:
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"No stale docstrings found (threshold: {days} days).")
         click.echo(f"  Scanned {len(rows)} documented symbols across {len(symbols_by_file)} files.")
         return
 
+    click.echo(f"VERDICT: {_verdict}\n")
     click.echo(f"Stale documentation (body changed >{days} days after docstring):\n")
 
     for item in displayed:

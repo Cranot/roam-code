@@ -654,7 +654,14 @@ def _generate_recommendations(dimensions: dict[str, int], details: dict[str, dic
 )
 @click.pass_context
 def ai_readiness(ctx, threshold):
-    """Estimate how effectively AI agents can work on this codebase (0-100)."""
+    """Estimate how effectively AI agents can work on this codebase (0-100).
+
+    Unlike ``health`` (which scores structural quality) and ``vibe-check``
+    (which detects AI-generated anti-patterns), this command scores how well
+    AI coding agents can navigate and modify the codebase, covering naming
+    consistency, module coupling, dead code noise, test signal, documentation,
+    navigability, and architecture clarity.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()

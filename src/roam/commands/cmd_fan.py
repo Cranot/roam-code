@@ -1,5 +1,7 @@
 """Show fan-in/fan-out metrics for symbols or files."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.resolve import ensure_index
@@ -111,8 +113,14 @@ _FRAMEWORK_NAMES = frozenset(
 @click.option("--no-framework", is_flag=True, help="Filter out framework/boilerplate symbols")
 @click.pass_context
 def fan(ctx, mode, count, no_framework):
-    """Show fan-in/fan-out: most connected symbols or files."""
+    """Show fan-in/fan-out: most connected symbols or files.
+
+    Unlike ``coupling`` (which measures temporal co-change frequency), this
+    command measures structural connectivity (import/call edges) and flags
+    hub/spreader hotspots.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -142,7 +150,12 @@ def fan(ctx, mode, count, no_framework):
                         to_json(
                             json_envelope(
                                 "fan",
-                                summary={"mode": mode, "items": 0},
+                                budget=token_budget,
+                                summary={
+                                    "verdict": "no graph metrics available",
+                                    "mode": mode,
+                                    "items": 0,
+                                },
                                 mode=mode,
                                 items=[],
                             )
@@ -153,11 +166,18 @@ def fan(ctx, mode, count, no_framework):
                 return
 
             if json_mode:
+                _top_in = max(rows, key=lambda r: r["in_degree"] or 0)
+                _top_out = max(rows, key=lambda r: r["out_degree"] or 0)
+                _verdict = (
+                    f"top fan-in: {_top_in['name']}({_top_in['in_degree'] or 0}), "
+                    f"top fan-out: {_top_out['name']}({_top_out['out_degree'] or 0})"
+                )
                 click.echo(
                     to_json(
                         json_envelope(
                             "fan",
-                            summary={"mode": mode, "items": len(rows)},
+                            budget=token_budget,
+                            summary={"verdict": _verdict, "mode": mode, "items": len(rows)},
                             mode=mode,
                             items=[
                                 {
@@ -209,6 +229,13 @@ def fan(ctx, mode, count, no_framework):
                     ]
                 )
 
+            _top_in_r = max(rows, key=lambda r: r["in_degree"] or 0)
+            _top_out_r = max(rows, key=lambda r: r["out_degree"] or 0)
+            _verdict = (
+                f"top fan-in: {_top_in_r['name']}({_top_in_r['in_degree'] or 0}), "
+                f"top fan-out: {_top_out_r['name']}({_top_out_r['out_degree'] or 0})"
+            )
+            click.echo(f"VERDICT: {_verdict}\n")
             click.echo("=== Fan-in/Fan-out (symbol level) ===")
             click.echo(
                 format_table(
@@ -250,7 +277,12 @@ def fan(ctx, mode, count, no_framework):
                         to_json(
                             json_envelope(
                                 "fan",
-                                summary={"mode": mode, "items": 0},
+                                budget=token_budget,
+                                summary={
+                                    "verdict": "no file edges available",
+                                    "mode": mode,
+                                    "items": 0,
+                                },
                                 mode=mode,
                                 items=[],
                             )
@@ -261,11 +293,20 @@ def fan(ctx, mode, count, no_framework):
                 return
 
             if json_mode:
+                _top_in_r = max(rows, key=lambda r: r["fan_in"])
+                _top_out_r = max(rows, key=lambda r: r["fan_out"])
+                _top_in_name = _top_in_r["path"].split("/")[-1]
+                _top_out_name = _top_out_r["path"].split("/")[-1]
+                _verdict = (
+                    f"top fan-in: {_top_in_name}({_top_in_r['fan_in']}), "
+                    f"top fan-out: {_top_out_name}({_top_out_r['fan_out']})"
+                )
                 click.echo(
                     to_json(
                         json_envelope(
                             "fan",
-                            summary={"mode": mode, "items": len(rows)},
+                            budget=token_budget,
+                            summary={"verdict": _verdict, "mode": mode, "items": len(rows)},
                             mode=mode,
                             items=[
                                 {
@@ -302,6 +343,15 @@ def fan(ctx, mode, count, no_framework):
                     ]
                 )
 
+            _top_in_r = max(rows, key=lambda r: r["fan_in"])
+            _top_out_r = max(rows, key=lambda r: r["fan_out"])
+            _top_in_name = _top_in_r["path"].split("/")[-1]
+            _top_out_name = _top_out_r["path"].split("/")[-1]
+            _verdict = (
+                f"top fan-in: {_top_in_name}({_top_in_r['fan_in']}), "
+                f"top fan-out: {_top_out_name}({_top_out_r['fan_out']})"
+            )
+            click.echo(f"VERDICT: {_verdict}\n")
             click.echo("=== Fan-in/Fan-out (file level) ===")
             click.echo(
                 format_table(

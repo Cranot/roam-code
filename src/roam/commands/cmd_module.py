@@ -1,5 +1,7 @@
 """Show directory contents: exports, signatures, and dependencies."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.resolve import ensure_index
@@ -71,7 +73,12 @@ def _module_cohesion(conn, all_sym_ids):
 @click.argument("path")
 @click.pass_context
 def module(ctx, path):
-    """Show directory contents: exports, signatures, deps."""
+    """Show directory contents: exports, signatures, deps.
+
+    Unlike ``map`` (which gives a project-wide overview with PageRank rankings), this
+    command analyzes a single directory's cohesion, API surface percentage, and external
+    coupling.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -119,11 +126,13 @@ def module(ctx, path):
         ext_importers = len(imported_by_external)
 
         if json_mode:
+            _verdict = f"{path}/: {len(files)} files, {exported_count} symbols, {ext_importers} importers"
             click.echo(
                 to_json(
                     json_envelope(
                         "module",
                         summary={
+                            "verdict": _verdict,
                             "file_count": len(files),
                             "cohesion_pct": round(cohesion),
                             "external_importers": ext_importers,
@@ -151,6 +160,8 @@ def module(ctx, path):
             return
 
         # --- Text output ---
+        _verdict = f"{path}/: {len(files)} files, {exported_count} symbols, {ext_importers} importers"
+        click.echo(f"VERDICT: {_verdict}\n")
         click.echo(f"Module: {path}/  ({len(files)} files)")
         click.echo()
 

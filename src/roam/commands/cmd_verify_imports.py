@@ -5,12 +5,75 @@ from __future__ import annotations
 import os
 import re
 import sqlite3
+import sys
 
 import click
 
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+
+# ---------------------------------------------------------------------------
+# Python stdlib module names (for filtering false positives)
+# ---------------------------------------------------------------------------
+
+# sys.stdlib_module_names is available since Python 3.10
+_PYTHON_STDLIB: frozenset[str] = frozenset(
+    getattr(sys, "stdlib_module_names", None)
+    or {
+        # Fallback for Python 3.9 — top-level stdlib modules
+        "__future__", "_thread", "abc", "aifc", "argparse", "array", "ast",
+        "asynchat", "asyncio", "asyncore", "atexit", "base64", "bdb",
+        "binascii", "binhex", "bisect", "builtins", "bz2", "calendar",
+        "cgi", "cgitb", "chunk", "cmath", "cmd", "code", "codecs",
+        "codeop", "collections", "colorsys", "compileall", "concurrent",
+        "configparser", "contextlib", "contextvars", "copy", "copyreg",
+        "cProfile", "crypt", "csv", "ctypes", "curses", "dataclasses",
+        "datetime", "dbm", "decimal", "difflib", "dis", "distutils",
+        "doctest", "email", "encodings", "enum", "errno", "faulthandler",
+        "fcntl", "filecmp", "fileinput", "fnmatch", "fractions",
+        "ftplib", "functools", "gc", "getopt", "getpass", "gettext",
+        "glob", "graphlib", "grp", "gzip", "hashlib", "heapq", "hmac",
+        "html", "http", "idlelib", "imaplib", "imghdr", "imp",
+        "importlib", "inspect", "io", "ipaddress", "itertools", "json",
+        "keyword", "lib2to3", "linecache", "locale", "logging",
+        "lzma", "mailbox", "mailcap", "marshal", "math", "mimetypes",
+        "mmap", "modulefinder", "multiprocessing", "netrc", "nis",
+        "nntplib", "numbers", "operator", "optparse", "os", "ossaudiodev",
+        "pathlib", "pdb", "pickle", "pickletools", "pipes", "pkgutil",
+        "platform", "plistlib", "poplib", "posix", "posixpath", "pprint",
+        "profile", "pstats", "pty", "pwd", "py_compile", "pyclbr",
+        "pydoc", "queue", "quopri", "random", "re", "readline",
+        "reprlib", "resource", "rlcompleter", "runpy", "sched",
+        "secrets", "select", "selectors", "shelve", "shlex", "shutil",
+        "signal", "site", "smtpd", "smtplib", "sndhdr", "socket",
+        "socketserver", "spwd", "sqlite3", "ssl", "stat", "statistics",
+        "string", "stringprep", "struct", "subprocess", "sunau",
+        "symtable", "sys", "sysconfig", "syslog", "tabnanny",
+        "tarfile", "telnetlib", "tempfile", "termios", "test",
+        "textwrap", "threading", "time", "timeit", "tkinter", "token",
+        "tokenize", "trace", "traceback", "tracemalloc", "tty",
+        "turtle", "turtledemo", "types", "typing", "unicodedata",
+        "unittest", "urllib", "uu", "uuid", "venv", "warnings",
+        "wave", "weakref", "webbrowser", "winreg", "winsound",
+        "wsgiref", "xdrlib", "xml", "xmlrpc", "zipapp", "zipfile",
+        "zipimport", "zlib", "zoneinfo",
+    }
+)
+
+
+def _is_stdlib_module(name: str) -> bool:
+    """Return True if *name* is a Python stdlib module (top-level check)."""
+    top = name.split(".")[0]
+    return top in _PYTHON_STDLIB
+
+
+def _is_python_file(language: str | None, file_path: str) -> bool:
+    """Return True if the file is a Python source file."""
+    if language and language.lower() in ("python", "py"):
+        return True
+    return file_path.endswith(".py") or file_path.endswith(".pyi")
+
 
 # ---------------------------------------------------------------------------
 # Import pattern regexes
@@ -235,6 +298,17 @@ def _scan_file_imports(
                         continue
                     seen.add(key)
 
+                    # Skip Python stdlib modules — they are never in the index
+                    if _is_python_file(language, file_path) and _is_stdlib_module(name):
+                        results.append({
+                            "file": file_path,
+                            "line": line_num,
+                            "name": name,
+                            "status": "resolved",
+                            "suggestions": [],
+                        })
+                        continue
+
                     resolved = _check_name_exists(conn, name)
                     entry: dict = {
                         "file": file_path,
@@ -311,6 +385,19 @@ def verify_imports(
         if already_found:
             continue
 
+        # Skip Python stdlib modules in edge-based imports too
+        edge_lang = _get_file_language(conn, fp)
+        if _is_python_file(edge_lang, fp) and _is_stdlib_module(target_name):
+            all_imports.append({
+                "file": fp,
+                "line": line,
+                "name": target_name,
+                "status": "resolved",
+                "suggestions": [],
+            })
+            files_checked.add(fp)
+            continue
+
         resolved = edge["target_id"] is not None and _check_name_exists(conn, target_name)
         entry: dict = {
             "file": fp,
@@ -350,6 +437,11 @@ def verify_imports_cmd(ctx, file_path):
 
     Flags unresolvable imports and suggests corrections via fuzzy matching.
     Acts as a hallucination firewall for AI-generated code.
+
+    Unlike ``search`` (which finds symbols by name) and ``relate`` (which shows
+    symbol relationships), this command validates that import statements in source
+    files resolve to indexed symbols -- a hallucination firewall for AI-generated
+    imports.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

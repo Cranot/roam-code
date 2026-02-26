@@ -467,10 +467,15 @@ def _resolve_plan_targets(conn, target, symbol_name, file_path, staged, root):
 def plan(ctx, target, task, symbol_name, file_path, staged, depth):
     """Generate a structured execution plan for modifying code.
 
+    Unlike ``plan-refactor`` (which focuses on refactoring simulation),
+    this command generates a general-purpose work plan for any task type:
+    refactor, debug, extend, review, or understand.
+
     TARGET is a symbol name or file path.  Use --symbol / --file for
     explicit disambiguation, or --staged to plan for staged changes.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
     if not target and not symbol_name and not file_path and not staged:
         click.echo("Provide a TARGET symbol/file, --symbol, --file, or --staged.")
@@ -494,6 +499,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                                 "task": task,
                                 "error": msg,
                             },
+                            budget=token_budget,
                         )
                     )
                 )
@@ -535,6 +541,7 @@ def plan(ctx, target, task, symbol_name, file_path, staged, depth):
                             "touch_carefully": len(touch_carefully),
                             "tests": tests["count"],
                         },
+                        budget=token_budget,
                         read_order=read_order,
                         invariants=invariants,
                         safe_points=safe_points,

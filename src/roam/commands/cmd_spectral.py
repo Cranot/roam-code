@@ -17,6 +17,8 @@ from roam.graph.spectral import (
 )
 from roam.output.formatter import format_table, json_envelope, to_json
 
+_MAX_GRAPH_SYMBOLS = 5000
+
 
 def _partition_tree(partition_map, G):
     """Build a tree description of the spectral partition.
@@ -73,11 +75,36 @@ def _compare_with_louvain(G, spectral_map):
 @click.option("--k", default=0, help="Number of communities (0=auto-detect)")
 @click.pass_context
 def spectral(ctx, depth, compare, gap_only, k):
-    """Spectral bisection: Fiedler vector partition tree."""
+    """Spectral bisection: Fiedler vector partition tree.
+
+    Unlike ``clusters`` (which uses Louvain community detection to find logical
+    groupings), this command uses Fiedler-vector bisection to measure how
+    cleanly the dependency graph partitions, reporting spectral gap and
+    partition quality.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     with open_db(readonly=True) as conn:
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > _MAX_GRAPH_SYMBOLS:
+            msg = (
+                f"Graph too large ({sym_count} symbols) for spectral analysis. "
+                "Index a subdirectory to reduce graph size."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "spectral",
+                            summary={"verdict": msg, "symbol_count": sym_count},
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
+            return
+
         G = build_symbol_graph(conn)
 
         # Spectral gap

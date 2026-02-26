@@ -88,6 +88,7 @@ def _check_git() -> dict:
             ["git", "--version"],
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=5,
         )
         version_line = result.stdout.strip() if result.returncode == 0 else ""
@@ -233,8 +234,10 @@ def _check_sqlite(db_path_str: str | None) -> dict:
 @click.command("doctor")
 @click.pass_context
 def doctor(ctx):
-    """Diagnose environment setup: Python, dependencies, index state, disk space.
+    """Diagnose environment setup: Python, dependencies, and index state.
 
+    Unlike ``health`` (which analyzes codebase structural quality), this command
+    validates the local environment: Python, dependencies, git, and index state.
     Checks each requirement and reports PASS or FAIL. Useful for onboarding
     new developers or troubleshooting agent setup issues.
 

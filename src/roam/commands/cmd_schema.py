@@ -21,7 +21,12 @@ from roam.output.schema_registry import get_schema_info, validate_envelope
 @click.option("--changelog", "show_changelog", is_flag=True, help="Show the schema changelog.")
 @click.pass_context
 def schema_cmd(ctx, validate_file, show_changelog):
-    """Show the roam JSON envelope schema and validate output files."""
+    """Show the roam JSON envelope schema and validate output files.
+
+    Unlike other commands that produce JSON envelope output, this command
+    inspects and validates the envelope schema itself. Use ``--validate FILE``
+    to check a JSON file against the envelope specification.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     schema = get_schema_info()
 

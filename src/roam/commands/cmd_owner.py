@@ -1,5 +1,7 @@
 """Show code ownership: who owns a file or directory."""
 
+from __future__ import annotations
+
 from datetime import datetime, timezone
 
 import click
@@ -55,8 +57,13 @@ def _ownership_for_file(project_root, file_path):
 @click.argument("path")
 @click.pass_context
 def owner(ctx, path):
-    """Show code ownership: who owns a file or directory."""
+    """Show code ownership: who owns a file or directory.
+
+    Unlike ``codeowners`` (which reads the CODEOWNERS file), this command
+    computes actual ownership from git blame history.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     project_root = find_project_root()
     path = path.replace("\\", "/")
@@ -95,13 +102,19 @@ def owner(ctx, path):
                         }
                         for a, n in info["authors"]
                     ]
+                main_dev = data.get("main_dev", "?")
+                frag = data.get("fragmentation", 0)
+                n_authors = len(info["authors"]) if info else 0
+                owner_verdict = f"top owner: {main_dev}, {n_authors} contributor{'s' if n_authors != 1 else ''}, fragmentation={frag}"
                 click.echo(
                     to_json(
                         json_envelope(
                             "owner",
+                            budget=token_budget,
                             summary={
-                                "main_dev": data.get("main_dev", "?"),
-                                "fragmentation": data.get("fragmentation", 0),
+                                "verdict": owner_verdict,
+                                "main_dev": main_dev,
+                                "fragmentation": frag,
                             },
                             **data,
                         )
@@ -121,11 +134,15 @@ def owner(ctx, path):
                         GROUP BY gc.author ORDER BY churn DESC""",
                     file_ids,
                 ).fetchall()
+                top_owner_dir = rows[0]["author"] if rows else "?"
+                dir_verdict = f"top owner: {top_owner_dir}, {len(rows)} contributor{'s' if len(rows) != 1 else ''}, {len(dir_files)} files"
                 click.echo(
                     to_json(
                         json_envelope(
                             "owner",
+                            budget=token_budget,
                             summary={
+                                "verdict": dir_verdict,
                                 "file_count": len(dir_files),
                                 "authors": len(rows),
                             },
@@ -157,11 +174,12 @@ def _show_file_owner(conn, project_root, file_row):
     """Show ownership for a single file."""
     file_path = file_row["path"]
     file_id = file_row["id"]
-    click.echo(f"{file_path}")
-    click.echo()
 
     info = _ownership_for_file(project_root, file_path)
     if info is None:
+        click.echo("VERDICT: no blame data available\n")
+        click.echo(f"{file_path}")
+        click.echo()
         click.echo("  (no blame data available)")
         return
 
@@ -173,6 +191,12 @@ def _show_file_owner(conn, project_root, file_row):
         bus_factor += 1
         if cumulative >= info["total"] * 0.8:
             break
+
+    top_pct = round(info["authors"][0][1] * 100 / info["total"]) if info["authors"] else 0
+    file_verdict = f"top owner: {info['main_dev']} ({top_pct}%), bus factor {bus_factor}, {len(info['authors'])} contributors"
+    click.echo(f"VERDICT: {file_verdict}\n")
+    click.echo(f"{file_path}")
+    click.echo()
 
     click.echo(f"Main developer: {info['main_dev']}")
     click.echo(f"Bus factor:     {bus_factor} (authors covering 80% of lines)")
@@ -207,8 +231,6 @@ def _show_file_owner(conn, project_root, file_row):
 def _show_dir_owner(conn, project_root, path, dir_files):
     """Show ownership for a directory using stored git data (fast)."""
     file_ids = [f["id"] for f in dir_files]
-    click.echo(f"{path}/ ({len(dir_files)} files)")
-    click.echo()
 
     # Use stored git data for fast aggregation
     placeholders = ",".join("?" for _ in file_ids)
@@ -227,6 +249,9 @@ def _show_dir_owner(conn, project_root, path, dir_files):
     ).fetchall()
 
     if not rows:
+        click.echo("VERDICT: no git data available\n")
+        click.echo(f"{path}/ ({len(dir_files)} files)")
+        click.echo()
         click.echo("  (no git data available)")
         return
 
@@ -241,6 +266,11 @@ def _show_dir_owner(conn, project_root, path, dir_files):
         bus_factor += 1
         if cumulative >= total_churn * 0.8:
             break
+
+    dir_verdict = f"top owner: {main_dev}, bus factor {bus_factor}, {len(rows)} contributor{'s' if len(rows) != 1 else ''}"
+    click.echo(f"VERDICT: {dir_verdict}\n")
+    click.echo(f"{path}/ ({len(dir_files)} files)")
+    click.echo()
 
     click.echo(f"Main developer: {main_dev}")
     click.echo(f"Bus factor:     {bus_factor} (authors covering 80% of churn)")

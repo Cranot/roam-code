@@ -205,6 +205,10 @@ def _build_capsule(conn, redact_paths: bool, no_signatures: bool) -> dict:
 def capsule(ctx, redact_paths, no_signatures, output):
     """Export the structural graph as a portable JSON capsule.
 
+    Unlike ``context`` (which provides targeted context for one symbol),
+    this command exports the entire structural graph as a portable JSON
+    document.
+
     The capsule contains symbol signatures, call edges, cluster assignments,
     and health metrics — but never function bodies. Useful for external
     architectural review without sharing source code.
@@ -213,6 +217,7 @@ def capsule(ctx, redact_paths, no_signatures, output):
     file regardless of --json mode, and a summary is printed to stdout.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -250,6 +255,7 @@ def capsule(ctx, redact_paths, no_signatures, output):
                         "edges": edges_n,
                         "health_score": score,
                     },
+                    budget=token_budget,
                     **capsule_data,
                 )
             )

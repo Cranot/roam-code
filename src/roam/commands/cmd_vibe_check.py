@@ -730,7 +730,14 @@ def _aggregate_worst_files(all_details: dict[str, list[dict]], limit: int = 5) -
 @click.option("--threshold", type=int, default=0, help="Fail if AI rot score exceeds threshold (0=no gate)")
 @click.pass_context
 def vibe_check(ctx, threshold):
-    """Detect AI code anti-patterns and compute AI rot score."""
+    """Detect AI code anti-patterns and compute AI rot score.
+
+    Unlike ``smells`` (which detects structural complexity anti-patterns from
+    DB metrics) and ``health`` (which scores overall codebase fitness), this
+    command specifically targets AI-generated code anti-patterns: dead exports,
+    short-term churn, empty error handlers, abandoned stubs, hallucinated
+    imports, and copy-paste functions.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()

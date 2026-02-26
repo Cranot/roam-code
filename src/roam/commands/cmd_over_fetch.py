@@ -519,6 +519,10 @@ def over_fetch_cmd(ctx, threshold, limit):
     controllers that return models directly without API Resources, and
     queries missing ->select() to limit fetched columns.
 
+    Unlike ``api-drift`` (which compares backend field names against
+    frontend TypeScript types) and ``orphan-routes`` (which finds dead
+    endpoints), this command focuses on data volume and field exposure.
+
     Confidence levels:
 
     \b

@@ -1353,7 +1353,8 @@ def detect_list_prepend(conn):
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.front_ops_in_loop "
+            "s.line_start, ms.front_ops_in_loop, "
+            "ms.calls_in_loops, ms.calls_in_loops_qualified "
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "JOIN math_signals ms ON ms.symbol_id = s.id "

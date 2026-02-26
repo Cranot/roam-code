@@ -64,7 +64,13 @@ def canonical_cli_commands() -> list[str]:
             continue
         by_target[(mod_name, attr_name)].append(name)
 
-    canonical = [sorted(names)[0] for names in by_target.values() if names]
+    canonical = []
+    for (mod_name, attr_name), names in by_target.items():
+        if not names:
+            continue
+        # Prefer the name matching the Click function attr (primary), else first alphabetically
+        primary = attr_name.replace("_", "-")
+        canonical.append(primary if primary in names else sorted(names)[0])
     return sorted(canonical)
 
 

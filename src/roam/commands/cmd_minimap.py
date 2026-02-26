@@ -437,6 +437,11 @@ def minimap(ctx, update_claude, output_file, init_notes):
 
     Add project-specific gotchas to .roam/minimap-notes.md -- they appear
     in every subsequent minimap output.
+
+    The generated snapshot includes tech stack, annotated directory tree,
+    key symbols by PageRank, high-fan-in symbols, and hotspots.  Use
+    ``--update`` to refresh the sentinel block in-place without clobbering
+    surrounding content.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()

@@ -1,21 +1,15 @@
 """Check if a symbol can be safely deleted."""
 
+from __future__ import annotations
+
 import os
 
 import click
 
+from roam.commands.changed_files import is_test_file as _is_test_file
 from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
 from roam.db.connection import open_db
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
-
-_TEST_NAME_PATS = ["test_", "_test.", ".test.", ".spec."]
-_TEST_DIR_PATS = ["tests/", "test/", "__tests__/", "spec/"]
-
-
-def _is_test_file(path):
-    p = path.replace("\\", "/")
-    bn = os.path.basename(p)
-    return any(pat in bn for pat in _TEST_NAME_PATS) or any(d in p for d in _TEST_DIR_PATS)
 
 
 @click.command("safe-delete")
@@ -26,6 +20,10 @@ def safe_delete(ctx, name):
 
     Combines dead-code check, impact analysis, and test coverage
     into a single verdict: SAFE / REVIEW / UNSAFE.
+
+    Unlike ``dead`` (which finds all unreferenced symbols) and ``impact``
+    (which shows transitive blast radius), this command fuses both signals
+    with public-API heuristics into a single go/no-go deletion verdict.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -199,7 +197,7 @@ def safe_delete(ctx, name):
             f"{loc(sym['file_path'], sym['line_start'])}"
         )
         click.echo()
-        click.echo(f"Verdict: {verdict}")
+        click.echo(f"VERDICT: {verdict}")
         click.echo(f"  {reason}")
         click.echo()
         click.echo(f"References: {len(non_test_callers)} direct, {dependent_count} transitive")

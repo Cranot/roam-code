@@ -221,7 +221,11 @@ def _uninstall_hook(hook_path: Path) -> tuple[str, str | None]:
 @click.group("hooks")
 @click.pass_context
 def hooks(ctx):
-    """Manage git hook integration for automatic re-indexing."""
+    """Manage git hook integration for automatic re-indexing.
+
+    Unlike ``init`` (which creates the roam index and database), this
+    command installs git hooks that keep the index up to date automatically.
+    """
     pass
 
 

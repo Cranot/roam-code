@@ -242,7 +242,13 @@ def build_agent_plan(
 )
 @click.pass_context
 def agent_plan(ctx, n_agents, output_format):
-    """Decompose partitions into dependency-ordered multi-agent tasks."""
+    """Decompose partitions into dependency-ordered multi-agent tasks.
+
+    Unlike ``partition`` (which produces a raw analytical manifest) and
+    ``orchestrate`` (which focuses on operational dispatch), this command
+    builds a dependency-ordered phase schedule with merge sequencing and
+    Claude Teams schema output.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 

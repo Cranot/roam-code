@@ -311,7 +311,12 @@ def _reasons(
 )
 @click.pass_context
 def suggest_refactoring(ctx, limit, min_score):
-    """Rank symbols that are likely to yield high-value refactoring wins."""
+    """Rank symbols that are likely to yield high-value refactoring wins.
+
+    Unlike ``plan-refactor`` (which builds a step-by-step plan for one
+    symbol), this command screens the entire codebase to identify the
+    highest-value refactoring targets.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = bool(ctx.obj.get("detail", False)) if ctx.obj else False
@@ -474,9 +479,9 @@ def suggest_refactoring(ctx, limit, min_score):
         )
 
     lines = [
-        "Refactoring recommendations",
-        "",
         f"VERDICT: {verdict}",
+        "",
+        "Refactoring recommendations",
         "",
         format_table(headers, rows),
     ]

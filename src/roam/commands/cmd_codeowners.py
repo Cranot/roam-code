@@ -3,108 +3,19 @@
 from __future__ import annotations
 
 from collections import defaultdict
-from pathlib import Path
 
 import click
 
+from roam.commands.codeowners_helpers import (  # noqa: F401 — re-exported for backward compat
+    _CODEOWNERS_LOCATIONS,
+    _codeowners_match,
+    find_codeowners,
+    parse_codeowners,
+    resolve_owners,
+)
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
-
-# ---------------------------------------------------------------------------
-# CODEOWNERS locations (checked in order)
-# ---------------------------------------------------------------------------
-
-_CODEOWNERS_LOCATIONS = [
-    "CODEOWNERS",
-    ".github/CODEOWNERS",
-    "docs/CODEOWNERS",
-    ".gitlab/CODEOWNERS",
-]
-
-
-# ---------------------------------------------------------------------------
-# Parser
-# ---------------------------------------------------------------------------
-
-
-def find_codeowners(project_root: Path) -> Path | None:
-    """Find the CODEOWNERS file in standard locations.
-
-    Returns the first matching path, or None if no file exists.
-    """
-    for loc in _CODEOWNERS_LOCATIONS:
-        candidate = project_root / loc
-        if candidate.is_file():
-            return candidate
-    return None
-
-
-def parse_codeowners(codeowners_path: str | Path) -> list[tuple[str, list[str]]]:
-    """Parse a CODEOWNERS file into (pattern, owners) tuples.
-
-    Format:
-    - Lines starting with # are comments
-    - Empty lines are ignored
-    - Pattern followed by one or more owners: ``*.py @backend-team @alice``
-    - Later rules override earlier ones (last match wins)
-    """
-    path = Path(codeowners_path)
-    if not path.is_file():
-        return []
-
-    rules: list[tuple[str, list[str]]] = []
-    try:
-        text = path.read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    for line in text.splitlines():
-        line = line.strip()
-        # Skip comments and empty lines
-        if not line or line.startswith("#"):
-            continue
-        # Inline comments (# after whitespace)
-        if " #" in line:
-            line = line[: line.index(" #")].strip()
-        parts = line.split()
-        if len(parts) < 2:
-            # Pattern with no owner = explicitly unowned (clears ownership)
-            rules.append((parts[0], []))
-            continue
-        pattern = parts[0]
-        owners = parts[1:]
-        rules.append((pattern, owners))
-
-    return rules
-
-
-# ---------------------------------------------------------------------------
-# Pattern matching (gitignore-style)
-# ---------------------------------------------------------------------------
-
-
-def _codeowners_match(pattern: str, filepath: str) -> bool:
-    """Match a CODEOWNERS pattern against a file path.
-
-    Delegates to the shared gitignore matcher in ``roam.index.gitignore``.
-    """
-    from roam.index.gitignore import matches_gitignore
-
-    return matches_gitignore(filepath, pattern)
-
-
-def resolve_owners(rules: list[tuple[str, list[str]]], filepath: str) -> list[str]:
-    """Determine the owner(s) of a file by applying CODEOWNERS rules.
-
-    Last matching rule wins (standard CODEOWNERS semantics).
-    Returns an empty list if no rule matches.
-    """
-    owners: list[str] = []
-    for pattern, rule_owners in rules:
-        if _codeowners_match(pattern, filepath):
-            owners = rule_owners
-    return owners
 
 
 # ---------------------------------------------------------------------------
@@ -163,7 +74,13 @@ def _get_blame_top_contributor(conn, file_id: int) -> str | None:
 @click.option("--limit", default=30, help="Max items to display")
 @click.pass_context
 def codeowners(ctx, unowned, owner, limit):
-    """Analyze CODEOWNERS coverage and ownership distribution."""
+    """Analyze CODEOWNERS coverage and ownership distribution.
+
+    Unlike ``drift`` (which measures time-decayed ownership divergence) and
+    ``suggest-reviewers`` (which recommends PR reviewers from commit history),
+    this command analyzes static CODEOWNERS coverage, ownership distribution,
+    and unowned files.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
