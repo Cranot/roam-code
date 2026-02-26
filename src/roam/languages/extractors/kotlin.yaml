@@ -1,0 +1,113 @@
+# Kotlin Language Extractor
+# Extracts symbols, references, and inheritance from Kotlin source code.
+#
+# Tree-sitter query notes:
+# - 'class' is a reserved keyword in query syntax, can't be used as node type
+# - Use (class_declaration (type_identifier) @name) to match all classes/interfaces
+# - Kind resolution happens in query_engine by checking first child type
+
+language: kotlin
+extensions: [.kt, .kts]
+grammar_alias: kotlin
+description: Kotlin programming language extractor
+
+# -------------------------------------------------------------------------
+# Symbol Extraction
+# -------------------------------------------------------------------------
+
+symbols:
+  # All class declarations (classes, interfaces, data classes, enums, sealed)
+  # Kind is resolved in query_engine by checking first child type
+  - query: |
+      (class_declaration
+        (type_identifier) @name
+      ) @def
+    kind:
+      default: class
+      context:
+        class_body: class
+    def_capture: def
+    name_capture: name
+
+  # Object declarations (singleton)
+  - query: |
+      (object_declaration
+        (type_identifier) @name
+      ) @def
+    kind:
+      default: object
+      context:
+        class_body: object
+    def_capture: def
+    name_capture: name
+
+  # Functions (top-level and methods)
+  - query: |
+      (function_declaration
+        (simple_identifier) @name
+      ) @def
+    kind:
+      default: function
+      context:
+        class_body: method
+    def_capture: def
+    name_capture: name
+
+  # Properties with variable_declaration (val name: Type)
+  - query: |
+      (property_declaration
+        (variable_declaration
+          (simple_identifier) @name)
+      ) @def
+    kind:
+      default: property
+      context:
+        class_body: field
+    def_capture: def
+    name_capture: name
+
+  # Type aliases
+  - query: |
+      (type_alias
+        (type_identifier) @name
+      ) @def
+    kind: typealias
+    def_capture: def
+    name_capture: name
+
+# -------------------------------------------------------------------------
+# Inheritance Extraction
+# -------------------------------------------------------------------------
+
+inheritance:
+  extends:
+    # class Child : Parent(args) - constructor invocation style
+    - query: |
+        (class_declaration
+          (type_identifier) @child
+          (delegation_specifier
+            (constructor_invocation
+              (user_type
+                (type_identifier) @parent)))
+        ) @inherit
+      relationship: extends
+      child_capture: child
+      parent_capture: parent
+
+    # object Child : Parent - object inheritance
+    - query: |
+        (object_declaration
+          (type_identifier) @child
+          (delegation_specifier
+            (user_type
+              (type_identifier) @parent))
+        ) @inherit
+      relationship: extends
+      child_capture: child
+      parent_capture: parent
+
+# -------------------------------------------------------------------------
+# References (disabled for now)
+# -------------------------------------------------------------------------
+
+references: {}

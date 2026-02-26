@@ -195,7 +195,7 @@ roam minimap --update           # update sentinel block in CLAUDE.md
 
 ## Discovering More Commands
 
-This skill covers the most common commands, but roam has 137 commands.
+This skill covers the most common commands, but roam has 144 commands.
 To explore what's available:
 
 ```bash

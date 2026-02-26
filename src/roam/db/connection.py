@@ -182,6 +182,8 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "edges", "confidence", "REAL")
     # v11: source file tracking for O(changed) incremental edge rebuild
     _safe_alter(conn, "edges", "source_file_id", "INTEGER REFERENCES files(id) ON DELETE CASCADE")
+    # v11: index for source_file_id (must be AFTER column migration above)
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_edges_source_file ON edges(source_file_id)")
     # v9.0+: runtime_stats, vulnerabilities, symbol_tfidf, metric_snapshots tables
     # are all defined in SCHEMA_SQL (CREATE TABLE IF NOT EXISTS) and created above
     # by conn.executescript(SCHEMA_SQL). No inline duplicates needed here.

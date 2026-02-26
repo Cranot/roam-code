@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*137 commands · 101 MCP tools · 26 languages · 100% local*
+*144 commands · 101 MCP tools · 26 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -212,7 +212,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 137 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 144 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -239,6 +239,8 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
 | `roam mcp [--list-tools] [--transport T]` | Start MCP server (stdio/SSE/streamable-http), inspect available tools, and expose roam to coding agents |
 | `roam mcp-setup <platform>` | Generate MCP config snippets for AI platforms: claude-code, cursor, windsurf, vscode, gemini-cli, codex-cli |
+| `roam ci-setup [--platform P] [--write]` | Generate CI/CD pipeline config (GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Bitbucket) with SARIF + quality gates |
+| `roam adrs [--status S] [--limit N]` | Discover Architecture Decision Records, link to affected code modules, show status and coverage |
 
 ### Daily Workflow
 
@@ -270,6 +272,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam syntax-check [--changed] [PATHS...]` | Tree-sitter syntax integrity check for changed files and multi-agent judge workflows |
 | `roam verify [--threshold N]` | Pre-commit AI-code consistency check across naming, imports, error handling, and duplication signals |
 | `roam verify-imports [--file F]` | Import hallucination firewall: validate all imports against indexed symbol table, suggest corrections via FTS5 fuzzy matching |
+| `roam triage list\|add\|stats\|check` | Security finding suppression workflow: manage `.roam-suppressions.yml` (SAFE/ACKNOWLEDGED/WONT-FIX status lifecycle) |
 | `roam safe-delete <symbol>` | Safe deletion check: SAFE/REVIEW/UNSAFE verdict |
 | `roam test-map <name>` | Map a symbol or file to its test coverage |
 | `roam adversarial [--staged] [--range R]` | Adversarial architecture review: generates targeted challenges based on changes |
@@ -452,6 +455,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam spectral [--depth N] [--compare] [--gap-only] [--k K]` | Spectral bisection: Fiedler vector partition tree with algebraic connectivity gap verdict |
 | `roam layers` | Topological dependency layers + upward violations + Gini balance |
 | `roam dead [--all] [--summary] [--clusters]` | Unreferenced exported symbols with safety verdicts + confidence scoring (60-95%) |
+| `roam flag-dead [--config FILE] [--include-tests]` | Feature flag dead code detection: stale LaunchDarkly/Unleash/Split/custom flags with staleness analysis |
 | `roam fan [symbol\|file] [-n N] [--no-framework]` | Fan-in/fan-out: most connected symbols or files |
 | `roam risk [-n N] [--domain KW] [--explain]` | Domain-weighted risk ranking |
 | `roam why <name> [name2 ...]` | Role classification (Hub/Bridge/Core/Leaf), reach, criticality |
@@ -485,6 +489,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam docs-coverage` | Public-symbol doc coverage + stale docs + PageRank-ranked missing-doc hotlist |
 | `roam suggest-refactoring [--limit N] [--min-score N]` | Proactive refactoring recommendations ranked by complexity, coupling, churn, smells, coverage gaps, and debt |
 | `roam plan-refactor <symbol> [--operation auto\|extract\|move]` | Ordered refactor plan with blast radius, test gaps, layer risk, and simulation-based strategy preview |
+| `roam test-scaffold <name\|file> [--write] [--framework F]` | Generate test file/function/import skeletons from symbol data (pytest, jest, Go, JUnit, RSpec) |
 | `roam conventions` | Auto-detect naming styles, import preferences. Flags outliers |
 | `roam breaking [REV_RANGE]` | Breaking change detection: removed exports, signature changes |
 | `roam affected-tests <symbol\|file>` | Trace reverse call graph to test files |
@@ -519,6 +524,8 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam vuln-map --generic\|--npm-audit\|--trivy F` | Ingest vulnerability reports and match to codebase symbols |
 | `roam vuln-reach [--cve C] [--from E]` | Vulnerability reachability: exact paths from entry points to vulnerable calls |
 | `roam supply-chain [--top N]` | Dependency risk dashboard: pin coverage, risk scoring, supply-chain health |
+| `roam sbom [--format cyclonedx\|spdx] [--no-reachability] [-o FILE]` | SBOM generation (CycloneDX 1.5 / SPDX 2.3) enriched with call-graph reachability per dependency |
+| `roam congestion [--window N] [--min-authors N]` | Developer congestion detection: concurrent authors per file, coordination risk scoring |
 | `roam invariants [--staged] [--range R]` | Discover architectural contracts (invariants) from the codebase structure |
 
 ### Multi-Repo Workspace
@@ -1445,7 +1452,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (137 commands)
+│   ├── cli.py                         # Click CLI (144 commands)
 │   ├── mcp_server.py                  # MCP server (101 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)

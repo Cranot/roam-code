@@ -1,7 +1,7 @@
 # Installing roam-code
 
 roam-code provides instant codebase comprehension for AI coding agents.
-137 commands, 101 MCP tools, 26 languages, 100% local, zero API keys.
+144 commands, 101 MCP tools, 26 languages, 100% local, zero API keys.
 
 ## Documentation Hub
 
@@ -78,4 +78,4 @@ Add to your MCP config:
 | `roam context <symbol>` | Files and line ranges to read |
 | `roam diff` | Blast radius of uncommitted changes |
 
-Run `roam --help` for all 137 invokable command names (136 canonical + `math` legacy alias).
+Run `roam --help` for all 137 invokable command names (143 canonical + `math` legacy alias).
