@@ -1,0 +1,8 @@
+name: SEC-431-py-cmdi
+description: "Command injection via concatenation in os.popen()."
+severity: error
+type: ast_match
+match:
+  ast: "os.popen($CMD + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

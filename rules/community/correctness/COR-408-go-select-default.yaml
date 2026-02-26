@@ -1,0 +1,8 @@
+name: COR-408-go-select-default
+description: "select with only default is a no-op; verify intent."
+severity: info
+type: ast_match
+match:
+  ast: "select { default: $BODY }"
+  language: go
+  file_glob: "**/*.go"

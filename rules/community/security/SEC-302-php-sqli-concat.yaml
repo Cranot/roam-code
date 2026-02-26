@@ -1,0 +1,8 @@
+name: SEC-302-php-sqli-concat
+description: "SQL injection via string concatenation in PDO query()."
+severity: error
+type: ast_match
+match:
+  ast: "$pdo->query($SQL . $INPUT)"
+  language: php
+  file_glob: "**/*.php"

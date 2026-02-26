@@ -1,0 +1,8 @@
+name: PERF-125-java-string-valueof
+description: "String.valueOf is fine; verify not in tight loop."
+severity: info
+type: ast_match
+match:
+  ast: "String.valueOf($OBJ)"
+  language: java
+  file_glob: "**/*.java"

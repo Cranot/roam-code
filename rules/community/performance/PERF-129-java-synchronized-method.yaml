@@ -1,0 +1,8 @@
+name: PERF-129-java-synchronized-method
+description: "Synchronized method locks 'this'; use fine-grained lock."
+severity: info
+type: ast_match
+match:
+  ast: "synchronized void $METHOD($ARGS)"
+  language: java
+  file_glob: "**/*.java"

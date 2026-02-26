@@ -1,0 +1,8 @@
+name: STY-js-console-warn
+description: "console.warn in production; use proper logging."
+severity: info
+type: ast_match
+match:
+  ast: "console.warn($MSG)"
+  language: javascript
+  file_glob: "**/*.js"

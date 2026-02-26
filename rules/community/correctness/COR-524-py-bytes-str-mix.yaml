@@ -1,0 +1,8 @@
+name: COR-524-py-bytes-str-mix
+description: "Verify encoding matches expected format."
+severity: info
+type: ast_match
+match:
+  ast: "$BYTES.decode($ENC)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-695-rust-integer-overflow
+description: "Wrapping addition; verify overflow is expected."
+severity: info
+type: ast_match
+match:
+  ast: "$A.wrapping_add($B)"
+  language: rust
+  file_glob: "**/*.rs"

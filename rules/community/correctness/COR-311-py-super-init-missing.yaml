@@ -1,0 +1,8 @@
+name: COR-311-py-super-init-missing
+description: "Verify super().__init__() is called in subclass __init__."
+severity: info
+type: ast_match
+match:
+  ast: "def __init__(self, $ARGS)"
+  language: python
+  file_glob: "**/*.py"

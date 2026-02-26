@@ -1,0 +1,8 @@
+name: STY-py-nested-import
+description: "Import inside function; move to module level."
+severity: info
+type: ast_match
+match:
+  ast: "def $FUNC($ARGS): from $MOD import $NAME"
+  language: python
+  file_glob: "**/*.py"

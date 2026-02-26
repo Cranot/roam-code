@@ -1,0 +1,8 @@
+name: SEC-366-go-deser
+description: "Verify gob decoder input is trusted."
+severity: error
+type: ast_match
+match:
+  ast: "gob.NewDecoder($READER).Decode($OBJ)"
+  language: go
+  file_glob: "**/*.go"

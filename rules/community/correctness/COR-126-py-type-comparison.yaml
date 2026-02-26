@@ -1,0 +1,8 @@
+name: COR-126-py-type-comparison
+description: "Use isinstance() instead of type comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "type($X) == $TYPE"
+  language: python
+  file_glob: "**/*.py"

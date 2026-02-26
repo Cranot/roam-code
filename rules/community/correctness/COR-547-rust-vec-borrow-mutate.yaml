@@ -1,0 +1,8 @@
+name: COR-547-rust-vec-borrow-mutate
+description: "Verify no active borrows when pushing to Vec."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.push($ELEM)"
+  language: rust
+  file_glob: "**/*.rs"

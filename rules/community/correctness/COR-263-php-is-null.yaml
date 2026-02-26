@@ -1,0 +1,8 @@
+name: COR-263-php-is-null
+description: "Use === null instead of is_null() for consistency."
+severity: info
+type: ast_match
+match:
+  ast: "is_null($X)"
+  language: php
+  file_glob: "**/*.php"

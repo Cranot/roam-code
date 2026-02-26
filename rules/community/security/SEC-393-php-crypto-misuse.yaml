@@ -1,0 +1,8 @@
+name: SEC-393-php-crypto-misuse
+description: "rand() is not cryptographically secure; use random_int()."
+severity: warning
+type: ast_match
+match:
+  ast: "rand($MIN, $MAX)"
+  language: php
+  file_glob: "**/*.php"

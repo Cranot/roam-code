@@ -1,0 +1,8 @@
+name: PERF-131-java-streams-boxed
+description: "boxed() creates wrapper objects; use primitive streams."
+severity: info
+type: ast_match
+match:
+  ast: "$STREAM.boxed()"
+  language: java
+  file_glob: "**/*.java"

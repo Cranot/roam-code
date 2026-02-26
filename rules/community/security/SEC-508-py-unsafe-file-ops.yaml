@@ -1,0 +1,8 @@
+name: SEC-508-py-unsafe-file-ops
+description: "mktemp() is insecure; use mkstemp() or NamedTemporaryFile."
+severity: warning
+type: ast_match
+match:
+  ast: "tempfile.mktemp()"
+  language: python
+  file_glob: "**/*.py"

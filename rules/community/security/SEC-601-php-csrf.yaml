@@ -1,0 +1,8 @@
+name: SEC-601-php-csrf
+description: "Verify CSRF token is present in all forms."
+severity: warning
+type: ast_match
+match:
+  ast: "csrf_field()"
+  language: php
+  file_glob: "**/*.php"

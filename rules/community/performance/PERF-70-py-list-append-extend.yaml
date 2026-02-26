@@ -1,0 +1,8 @@
+name: PERF-70-py-list-append-extend
+description: "Use list.extend() instead of append in loop."
+severity: warning
+type: ast_match
+match:
+  ast: "for $X in $ITER: $LIST.append($X)"
+  language: python
+  file_glob: "**/*.py"

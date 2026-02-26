@@ -1,0 +1,8 @@
+name: PERF-304-py-generator-vs-list
+description: "Materializing generator into list; use generator if streaming."
+severity: info
+type: ast_match
+match:
+  ast: "list($GEN)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-293-rust-iter-chain
+description: "Iterator chaining; verify not allocating unnecessarily."
+severity: info
+type: ast_match
+match:
+  ast: "$ITER.chain($OTHER)"
+  language: rust
+  file_glob: "**/*.rs"

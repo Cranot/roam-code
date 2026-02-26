@@ -1,0 +1,8 @@
+name: COR-378-ts-enum-numeric
+description: "Numeric enums have pitfalls; consider string enums."
+severity: info
+type: ast_match
+match:
+  ast: "enum $NAME { $MEMBERS }"
+  language: typescript
+  file_glob: "**/*.ts"

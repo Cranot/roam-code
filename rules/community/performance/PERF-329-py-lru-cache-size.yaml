@@ -1,0 +1,8 @@
+name: PERF-329-py-lru-cache-size
+description: "Verify LRU cache maxsize is appropriate."
+severity: info
+type: ast_match
+match:
+  ast: "@lru_cache(maxsize=$SIZE)"
+  language: python
+  file_glob: "**/*.py"

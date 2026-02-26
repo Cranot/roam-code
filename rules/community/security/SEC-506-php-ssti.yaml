@@ -1,0 +1,8 @@
+name: SEC-506-php-ssti
+description: "eval() with user input enables code injection."
+severity: error
+type: ast_match
+match:
+  ast: "eval($INPUT)"
+  language: php
+  file_glob: "**/*.php"

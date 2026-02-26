@@ -1,0 +1,8 @@
+name: COR-167-js-constant-condition
+description: "Constant condition in if statement."
+severity: warning
+type: ast_match
+match:
+  ast: "if (true)"
+  language: javascript
+  file_glob: "**/*.js"

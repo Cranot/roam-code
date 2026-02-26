@@ -1,0 +1,8 @@
+name: PERF-203-rb-n-plus-1-query
+description: "ActiveRecord find in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "$MODEL.find($ID)"
+  language: ruby
+  file_glob: "**/*.rb"

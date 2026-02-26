@@ -1,0 +1,12 @@
+name: "ARCH-220-no-usecases-to-controllers"
+description: "Use cases should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/usecases/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

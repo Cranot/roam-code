@@ -1,0 +1,8 @@
+name: COR-148-py-staticmethod-no-self
+description: "Method that does not use self should be @staticmethod."
+severity: info
+type: ast_match
+match:
+  ast: "def $METHOD($ARGS)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,12 @@
+name: "ARCH-234-no-persistence-to-api"
+description: "Persistence layer should not depend on API."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/persistence/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  max_distance: 1

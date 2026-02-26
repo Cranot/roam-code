@@ -1,0 +1,8 @@
+name: PERF-200-ts-n-plus-1-query
+description: "Database query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "db.query($SQL)"
+  language: typescript
+  file_glob: "**/*.ts"

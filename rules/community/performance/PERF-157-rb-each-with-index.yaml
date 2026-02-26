@@ -1,0 +1,8 @@
+name: PERF-157-rb-each-with-index
+description: "each_with_index is fine; prefer each.with_index."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.each_with_index { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

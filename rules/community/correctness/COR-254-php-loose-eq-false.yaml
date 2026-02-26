@@ -1,0 +1,8 @@
+name: COR-254-php-loose-eq-false
+description: "Loose comparison with false; use === for strict check."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == false"
+  language: php
+  file_glob: "**/*.php"

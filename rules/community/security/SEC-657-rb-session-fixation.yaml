@@ -1,0 +1,8 @@
+name: SEC-657-rb-session-fixation
+description: "Verify session is reset after authentication."
+severity: info
+type: ast_match
+match:
+  ast: "session[$KEY] = $VALUE"
+  language: ruby
+  file_glob: "**/*.rb"

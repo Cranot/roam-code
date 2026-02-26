@@ -1,0 +1,8 @@
+name: COR-420-rust-string-as-bytes
+description: "as_bytes gives UTF-8 bytes; verify byte manipulation is correct."
+severity: info
+type: ast_match
+match:
+  ast: "$S.as_bytes()"
+  language: rust
+  file_glob: "**/*.rs"

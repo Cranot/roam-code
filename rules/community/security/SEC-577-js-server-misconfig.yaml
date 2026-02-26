@@ -1,0 +1,8 @@
+name: SEC-577-js-server-misconfig
+description: "Verify server binds to localhost in production."
+severity: warning
+type: ast_match
+match:
+  ast: "app.listen($PORT)"
+  language: javascript
+  file_glob: "**/*.js"

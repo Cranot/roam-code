@@ -1,0 +1,8 @@
+name: PERF-76-py-print-in-loop
+description: "print() in loop is slow; batch output."
+severity: info
+type: ast_match
+match:
+  ast: "print($MSG)"
+  language: python
+  file_glob: "**/*.py"

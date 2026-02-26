@@ -1,0 +1,8 @@
+name: COR-414-rust-as-ref-clone
+description: "Chained as_ref().unwrap().clone(); simplify."
+severity: info
+type: ast_match
+match:
+  ast: "$X.as_ref().unwrap().clone()"
+  language: rust
+  file_glob: "**/*.rs"

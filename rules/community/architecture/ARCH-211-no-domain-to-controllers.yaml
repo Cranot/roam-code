@@ -1,0 +1,12 @@
+name: "ARCH-211-no-domain-to-controllers"
+description: "Domain should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: COR-140-py-raise-bare
+description: "Bare raise outside except block will cause RuntimeError."
+severity: info
+type: ast_match
+match:
+  ast: "raise"
+  language: python
+  file_glob: "**/*.py"

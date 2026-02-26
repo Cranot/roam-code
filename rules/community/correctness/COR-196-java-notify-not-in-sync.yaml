@@ -1,0 +1,8 @@
+name: COR-196-java-notify-not-in-sync
+description: "notify() must be called within synchronized block."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.notify()"
+  language: java
+  file_glob: "**/*.java"

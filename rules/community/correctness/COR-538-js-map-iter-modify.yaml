@@ -1,0 +1,8 @@
+name: COR-538-js-map-iter-modify
+description: "Verify map is not modified during forEach iteration."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.forEach($FUNC)"
+  language: javascript
+  file_glob: "**/*.js"

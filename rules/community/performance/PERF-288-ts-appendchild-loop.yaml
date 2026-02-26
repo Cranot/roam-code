@@ -1,0 +1,8 @@
+name: PERF-288-ts-appendchild-loop
+description: "appendChild in loop causes reflow; batch with Fragment."
+severity: warning
+type: ast_match
+match:
+  ast: "$PARENT.appendChild($CHILD)"
+  language: typescript
+  file_glob: "**/*.ts"

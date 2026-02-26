@@ -1,0 +1,8 @@
+name: PERF-135-java-linkedlist-random-access
+description: "LinkedList has O(n) random access; use ArrayList."
+severity: info
+type: ast_match
+match:
+  ast: "new LinkedList()"
+  language: java
+  file_glob: "**/*.java"

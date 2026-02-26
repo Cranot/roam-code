@@ -1,0 +1,8 @@
+name: SEC-522-cs-dynamic-code
+description: "Dynamic type instantiation may create untrusted objects."
+severity: warning
+type: ast_match
+match:
+  ast: "Activator.CreateInstance($TYPE)"
+  language: csharp
+  file_glob: "**/*.cs"

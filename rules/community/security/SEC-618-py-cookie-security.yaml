@@ -1,0 +1,8 @@
+name: SEC-618-py-cookie-security
+description: "Verify cookie has Secure and HttpOnly flags."
+severity: warning
+type: ast_match
+match:
+  ast: "set_cookie($NAME, $VALUE)"
+  language: python
+  file_glob: "**/*.py"

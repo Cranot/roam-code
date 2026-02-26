@@ -1,0 +1,8 @@
+name: PERF-184-cs-string-format-loop
+description: "string.Format in loop; use StringBuilder."
+severity: info
+type: ast_match
+match:
+  ast: "string.Format($FMT, $ARGS)"
+  language: csharp
+  file_glob: "**/*.cs"

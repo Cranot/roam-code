@@ -1,0 +1,8 @@
+name: PERF-319-ts-fs-promises
+description: "fs.promises is async; good for non-blocking I/O."
+severity: info
+type: ast_match
+match:
+  ast: "fs.promises.readFile($PATH)"
+  language: typescript
+  file_glob: "**/*.ts"

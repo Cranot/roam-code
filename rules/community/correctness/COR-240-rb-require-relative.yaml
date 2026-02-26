@@ -1,0 +1,8 @@
+name: COR-240-rb-require-relative
+description: "Use require_relative for local files."
+severity: info
+type: ast_match
+match:
+  ast: "require($PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

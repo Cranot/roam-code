@@ -1,0 +1,8 @@
+name: COR-507-go-type-switch
+description: "Type switch; verify all expected types are handled."
+severity: info
+type: ast_match
+match:
+  ast: "switch $V := $X.(type) { $CASES }"
+  language: go
+  file_glob: "**/*.go"

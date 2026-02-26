@@ -1,0 +1,8 @@
+name: PERF-246-go-http-client-default
+description: "http.DefaultClient has no timeout; set custom client."
+severity: warning
+type: ast_match
+match:
+  ast: "http.DefaultClient"
+  language: go
+  file_glob: "**/*.go"

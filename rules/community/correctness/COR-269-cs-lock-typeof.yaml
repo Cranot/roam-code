@@ -1,0 +1,8 @@
+name: COR-269-cs-lock-typeof
+description: "lock(typeof) is dangerous; use private lock object."
+severity: warning
+type: ast_match
+match:
+  ast: "lock (typeof($TYPE))"
+  language: csharp
+  file_glob: "**/*.cs"

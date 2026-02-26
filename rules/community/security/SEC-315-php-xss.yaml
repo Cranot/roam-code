@@ -1,0 +1,8 @@
+name: SEC-315-php-xss
+description: "Potential XSS via unescaped echo output."
+severity: error
+type: ast_match
+match:
+  ast: "echo $INPUT"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: PERF-123-ts-getelementbyid-loop
+description: "getElementById in loop; cache the element."
+severity: warning
+type: ast_match
+match:
+  ast: "document.getElementById($ID)"
+  language: typescript
+  file_glob: "**/*.ts"

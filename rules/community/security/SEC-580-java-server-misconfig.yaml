@@ -1,0 +1,8 @@
+name: SEC-580-java-server-misconfig
+description: "Verify server socket binds to restricted interface."
+severity: warning
+type: ast_match
+match:
+  ast: "ServerSocket($PORT)"
+  language: java
+  file_glob: "**/*.java"

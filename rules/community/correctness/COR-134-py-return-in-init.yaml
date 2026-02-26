@@ -1,0 +1,8 @@
+name: COR-134-py-return-in-init
+description: "__init__ should not return a value."
+severity: error
+type: ast_match
+match:
+  ast: "def __init__($SELF): return $VALUE"
+  language: python
+  file_glob: "**/*.py"

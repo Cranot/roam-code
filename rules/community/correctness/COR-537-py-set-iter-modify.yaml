@@ -1,0 +1,8 @@
+name: COR-537-py-set-iter-modify
+description: "Verify set is not modified during iteration."
+severity: info
+type: ast_match
+match:
+  ast: "for $ITEM in $SET:"
+  language: python
+  file_glob: "**/*.py"

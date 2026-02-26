@@ -1,0 +1,12 @@
+name: "ARCH-207-no-config-to-service"
+description: "Config should not depend on services."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/config/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  max_distance: 1

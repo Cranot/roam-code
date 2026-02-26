@@ -1,0 +1,8 @@
+name: SEC-390-rb-crypto-misuse
+description: "SHA-1 is deprecated; use SHA-256+."
+severity: warning
+type: ast_match
+match:
+  ast: "Digest::SHA1.hexdigest($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

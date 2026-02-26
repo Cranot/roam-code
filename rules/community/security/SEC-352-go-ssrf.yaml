@@ -1,0 +1,8 @@
+name: SEC-352-go-ssrf
+description: "SSRF risk via user-controlled URL in http.Post()."
+severity: error
+type: ast_match
+match:
+  ast: "http.Post($URL + $INPUT, $CT, $BODY)"
+  language: go
+  file_glob: "**/*.go"

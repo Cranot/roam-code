@@ -1,0 +1,8 @@
+name: COR-386-java-calendar-month
+description: "Calendar months are 0-based; verify month arithmetic."
+severity: info
+type: ast_match
+match:
+  ast: "Calendar.JANUARY"
+  language: java
+  file_glob: "**/*.java"

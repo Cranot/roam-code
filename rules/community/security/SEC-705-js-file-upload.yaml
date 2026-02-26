@@ -1,0 +1,8 @@
+name: SEC-705-js-file-upload
+description: "Verify multer file size and type limits are set."
+severity: warning
+type: ast_match
+match:
+  ast: "multer($OPTS)"
+  language: javascript
+  file_glob: "**/*.js"

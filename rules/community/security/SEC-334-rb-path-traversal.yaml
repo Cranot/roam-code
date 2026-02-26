@@ -1,0 +1,8 @@
+name: SEC-334-rb-path-traversal
+description: "Path traversal via concatenated File.read()."
+severity: error
+type: ast_match
+match:
+  ast: "File.read($PATH + $INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

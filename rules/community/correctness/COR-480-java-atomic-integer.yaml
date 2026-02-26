@@ -1,0 +1,8 @@
+name: COR-480-java-atomic-integer
+description: "AtomicInteger; verify compareAndSet patterns."
+severity: info
+type: ast_match
+match:
+  ast: "AtomicInteger($INIT)"
+  language: java
+  file_glob: "**/*.java"

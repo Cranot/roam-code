@@ -1,0 +1,8 @@
+name: SEC-693-cs-integer-overflow
+description: "Checked arithmetic; verify overflow handling."
+severity: info
+type: ast_match
+match:
+  ast: "checked($EXPR)"
+  language: csharp
+  file_glob: "**/*.cs"

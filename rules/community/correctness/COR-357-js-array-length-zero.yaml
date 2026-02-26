@@ -1,0 +1,8 @@
+name: COR-357-js-array-length-zero
+description: "Setting length to 0 clears array; verify intent."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.length = 0"
+  language: javascript
+  file_glob: "**/*.js"

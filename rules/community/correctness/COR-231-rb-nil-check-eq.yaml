@@ -1,0 +1,8 @@
+name: COR-231-rb-nil-check-eq
+description: "Use .nil? instead of == nil."
+severity: info
+type: ast_match
+match:
+  ast: "$X == nil"
+  language: ruby
+  file_glob: "**/*.rb"

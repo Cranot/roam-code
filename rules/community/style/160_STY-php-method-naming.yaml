@@ -1,0 +1,9 @@
+name: STY-php-method-naming
+description: "PHP method names should use camelCase."
+severity: info
+type: symbol_match
+match:
+  kind: method
+  file_glob: "**/*.php"
+  require:
+    name_regex: "^[A-Z]"

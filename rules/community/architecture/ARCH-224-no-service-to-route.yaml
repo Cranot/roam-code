@@ -1,0 +1,12 @@
+name: "ARCH-224-no-service-to-route"
+description: "Services should not depend on route definitions."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/routes/**"
+    kind: [function, method, class]
+  max_distance: 1

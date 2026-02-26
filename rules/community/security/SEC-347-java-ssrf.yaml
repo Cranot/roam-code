@@ -1,0 +1,8 @@
+name: SEC-347-java-ssrf
+description: "SSRF risk via user-controlled URL."
+severity: error
+type: ast_match
+match:
+  ast: "new URL($INPUT).openConnection()"
+  language: java
+  file_glob: "**/*.java"

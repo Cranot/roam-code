@@ -1,0 +1,8 @@
+name: COR-504-ts-typeof-array
+description: "typeof [] is 'object'; use Array.isArray()."
+severity: info
+type: ast_match
+match:
+  ast: "typeof $X"
+  language: typescript
+  file_glob: "**/*.ts"

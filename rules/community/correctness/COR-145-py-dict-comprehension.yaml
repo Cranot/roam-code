@@ -1,0 +1,8 @@
+name: COR-145-py-dict-comprehension
+description: "Use dict comprehension instead of dict() with list comprehension."
+severity: info
+type: ast_match
+match:
+  ast: "dict([($K, $V) for $K, $V in $ITER])"
+  language: python
+  file_glob: "**/*.py"

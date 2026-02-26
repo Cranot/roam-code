@@ -1,0 +1,8 @@
+name: PERF-273-cs-json-serialize-loop
+description: "JSON serialization in loop; batch if possible."
+severity: info
+type: ast_match
+match:
+  ast: "JsonSerializer.Serialize($OBJ)"
+  language: csharp
+  file_glob: "**/*.cs"

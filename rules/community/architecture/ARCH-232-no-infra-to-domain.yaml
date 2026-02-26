@@ -1,0 +1,12 @@
+name: "ARCH-232-no-infra-to-domain"
+description: "Infrastructure should not depend on domain logic."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/infrastructure/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  max_distance: 1

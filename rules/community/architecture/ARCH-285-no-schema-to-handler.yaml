@@ -1,0 +1,12 @@
+name: "ARCH-285-no-schema-to-handler"
+description: "Schema definitions should not depend on handlers."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/schema/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  max_distance: 1

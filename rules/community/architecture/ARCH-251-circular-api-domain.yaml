@@ -1,0 +1,12 @@
+name: "ARCH-251-circular-api-domain"
+description: "Circular dependency between API and domain."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  max_distance: 1

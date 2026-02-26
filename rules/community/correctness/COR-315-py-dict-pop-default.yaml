@@ -1,0 +1,8 @@
+name: COR-315-py-dict-pop-default
+description: "Use dict.pop(key, default) to avoid redundant key check."
+severity: info
+type: ast_match
+match:
+  ast: "if $KEY in $DICT: $DICT.pop($KEY)"
+  language: python
+  file_glob: "**/*.py"

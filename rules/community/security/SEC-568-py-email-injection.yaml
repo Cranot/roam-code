@@ -1,0 +1,8 @@
+name: SEC-568-py-email-injection
+description: "Verify email body is not user-controlled for injection."
+severity: warning
+type: ast_match
+match:
+  ast: "MIMEText($BODY)"
+  language: python
+  file_glob: "**/*.py"

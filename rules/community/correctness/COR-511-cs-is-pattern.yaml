@@ -1,0 +1,8 @@
+name: COR-511-cs-is-pattern
+description: "Pattern matching is safe; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "if ($X is $TYPE $VAR) { $BODY }"
+  language: csharp
+  file_glob: "**/*.cs"

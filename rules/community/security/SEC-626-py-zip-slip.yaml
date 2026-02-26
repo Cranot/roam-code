@@ -1,0 +1,8 @@
+name: SEC-626-py-zip-slip
+description: "Zip slip risk; validate paths before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "zipfile.ZipFile($PATH).extractall($DEST)"
+  language: python
+  file_glob: "**/*.py"

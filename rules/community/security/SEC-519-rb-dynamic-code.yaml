@@ -1,0 +1,8 @@
+name: SEC-519-rb-dynamic-code
+description: "Dynamic method dispatch may invoke unintended methods."
+severity: warning
+type: ast_match
+match:
+  ast: "send($METHOD, $ARGS)"
+  language: ruby
+  file_glob: "**/*.rb"

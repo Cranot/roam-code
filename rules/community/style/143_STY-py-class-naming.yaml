@@ -1,0 +1,9 @@
+name: STY-py-class-naming
+description: "Python class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.py"
+  require:
+    name_regex: "[a-z].*"

@@ -1,0 +1,8 @@
+name: COR-280-py-range-len
+description: "Use enumerate() instead of range(len())."
+severity: info
+type: ast_match
+match:
+  ast: "for $I in range(len($X))"
+  language: python
+  file_glob: "**/*.py"

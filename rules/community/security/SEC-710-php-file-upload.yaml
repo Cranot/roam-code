@@ -1,0 +1,8 @@
+name: SEC-710-php-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "$_FILES[$NAME]"
+  language: php
+  file_glob: "**/*.php"

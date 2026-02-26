@@ -1,0 +1,8 @@
+name: SEC-692-go-integer-overflow
+description: "Integer multiplication may overflow; add bounds check."
+severity: info
+type: ast_match
+match:
+  ast: "$A * $B"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-390-java-enum-ordinal
+description: "Enum ordinal is fragile; add/reorder breaks code."
+severity: warning
+type: ast_match
+match:
+  ast: "$ENUM.ordinal()"
+  language: java
+  file_glob: "**/*.java"

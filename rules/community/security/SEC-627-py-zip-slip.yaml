@@ -1,0 +1,8 @@
+name: SEC-627-py-zip-slip
+description: "Tar slip risk; validate paths before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "tarfile.open($PATH).extractall($DEST)"
+  language: python
+  file_glob: "**/*.py"

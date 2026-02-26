@@ -1,0 +1,8 @@
+name: COR-137-py-open-no-close
+description: "File opened without context manager; use 'with' statement."
+severity: warning
+type: ast_match
+match:
+  ast: "$F = open($PATH)"
+  language: python
+  file_glob: "**/*.py"

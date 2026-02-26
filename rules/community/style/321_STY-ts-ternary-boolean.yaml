@@ -1,0 +1,8 @@
+name: STY-ts-ternary-boolean
+description: "Ternary returning boolean; use condition directly."
+severity: info
+type: ast_match
+match:
+  ast: "$COND ? true : false"
+  language: typescript
+  file_glob: "**/*.ts"

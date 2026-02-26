@@ -1,0 +1,8 @@
+name: COR-540-ts-map-iter-modify
+description: "Verify map is not modified during forEach."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.forEach($FUNC)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: SEC-447-java-xxe
+description: "XXE risk; disable external entities."
+severity: error
+type: ast_match
+match:
+  ast: "DocumentBuilderFactory.newInstance()"
+  language: java
+  file_glob: "**/*.java"

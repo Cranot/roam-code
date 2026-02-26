@@ -1,0 +1,8 @@
+name: SEC-497-py-info-exposure
+description: "Debugger breakpoint left in production code."
+severity: warning
+type: ast_match
+match:
+  ast: "breakpoint()"
+  language: python
+  file_glob: "**/*.py"

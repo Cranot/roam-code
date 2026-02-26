@@ -1,0 +1,8 @@
+name: PERF-83-py-collections-counter
+description: "Counter is efficient for frequency analysis."
+severity: info
+type: ast_match
+match:
+  ast: "Counter($LIST).most_common($N)"
+  language: python
+  file_glob: "**/*.py"

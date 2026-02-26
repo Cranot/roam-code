@@ -1,0 +1,8 @@
+name: SEC-729-java-owasp-extra
+description: "URLClassLoader can load untrusted classes."
+severity: warning
+type: ast_match
+match:
+  ast: "URLClassLoader($URLS)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: PERF-153-go-reflect-valueof
+description: "reflect.ValueOf in hot path is slow; use type assertion."
+severity: warning
+type: ast_match
+match:
+  ast: "reflect.ValueOf($OBJ)"
+  language: go
+  file_glob: "**/*.go"

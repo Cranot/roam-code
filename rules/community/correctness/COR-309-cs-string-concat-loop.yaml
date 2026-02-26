@@ -1,0 +1,8 @@
+name: COR-309-cs-string-concat-loop
+description: "String concatenation in loop; use StringBuilder."
+severity: warning
+type: ast_match
+match:
+  ast: "$S += $PART"
+  language: csharp
+  file_glob: "**/*.cs"

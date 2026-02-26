@@ -1,0 +1,8 @@
+name: COR-121-py-eq-true
+description: "Use 'if x' or 'is True' instead of '== True'."
+severity: info
+type: ast_match
+match:
+  ast: "$X == True"
+  language: python
+  file_glob: "**/*.py"

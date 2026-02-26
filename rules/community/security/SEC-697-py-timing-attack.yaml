@@ -1,0 +1,8 @@
+name: SEC-697-py-timing-attack
+description: "String comparison timing may leak information; use hmac.compare_digest."
+severity: info
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: python
+  file_glob: "**/*.py"

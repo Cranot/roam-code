@@ -1,0 +1,8 @@
+name: COR-150-py-slots-mutable
+description: "Use tuple for __slots__ instead of list."
+severity: info
+type: ast_match
+match:
+  ast: "__slots__ = [$ITEMS]"
+  language: python
+  file_glob: "**/*.py"

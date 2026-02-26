@@ -1,0 +1,8 @@
+name: SEC-340-py-ssrf
+description: "SSRF risk via user-controlled URL in urlopen()."
+severity: error
+type: ast_match
+match:
+  ast: "urllib.request.urlopen($INPUT)"
+  language: python
+  file_glob: "**/*.py"

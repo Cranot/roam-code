@@ -1,0 +1,8 @@
+name: COR-177-js-async-no-await
+description: "Async function without await is unnecessary."
+severity: warning
+type: ast_match
+match:
+  ast: "async function $NAME($ARGS) { return $X }"
+  language: javascript
+  file_glob: "**/*.js"

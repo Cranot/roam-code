@@ -1,0 +1,12 @@
+name: "ARCH-243-no-sdk-to-app"
+description: "SDK should not depend on application code."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/sdk/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/app/**"
+    kind: [function, method, class]
+  max_distance: 1

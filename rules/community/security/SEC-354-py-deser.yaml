@@ -1,0 +1,8 @@
+name: SEC-354-py-deser
+description: "Unsafe deserialization via marshal.loads()."
+severity: error
+type: ast_match
+match:
+  ast: "marshal.loads($DATA)"
+  language: python
+  file_glob: "**/*.py"

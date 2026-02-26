@@ -1,0 +1,12 @@
+name: "ARCH-274-no-seed-to-controller"
+description: "Seed data should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/seeds/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

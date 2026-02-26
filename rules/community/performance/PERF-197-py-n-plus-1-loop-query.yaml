@@ -1,0 +1,8 @@
+name: PERF-197-py-n-plus-1-loop-query
+description: "SQL query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "cursor.execute($SQL)"
+  language: python
+  file_glob: "**/*.py"

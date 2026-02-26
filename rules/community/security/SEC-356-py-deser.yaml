@@ -1,0 +1,8 @@
+name: SEC-356-py-deser
+description: "Unsafe deserialization via jsonpickle.decode()."
+severity: error
+type: ast_match
+match:
+  ast: "jsonpickle.decode($DATA)"
+  language: python
+  file_glob: "**/*.py"

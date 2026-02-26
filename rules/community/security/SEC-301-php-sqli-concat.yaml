@@ -1,0 +1,8 @@
+name: SEC-301-php-sqli-concat
+description: "SQL injection via string concatenation in mysqli_query()."
+severity: error
+type: ast_match
+match:
+  ast: "mysqli_query($CONN, $SQL . $INPUT)"
+  language: php
+  file_glob: "**/*.php"

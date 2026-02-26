@@ -1,0 +1,8 @@
+name: COR-299-go-new-vs-make
+description: "Prefer var or composite literal over new() for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "new($TYPE)"
+  language: go
+  file_glob: "**/*.go"

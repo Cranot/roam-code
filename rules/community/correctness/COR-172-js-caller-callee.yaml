@@ -1,0 +1,8 @@
+name: COR-172-js-caller-callee
+description: "arguments.callee is deprecated and not in strict mode."
+severity: warning
+type: ast_match
+match:
+  ast: "arguments.callee"
+  language: javascript
+  file_glob: "**/*.js"

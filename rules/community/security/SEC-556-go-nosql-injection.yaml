@@ -1,0 +1,8 @@
+name: SEC-556-go-nosql-injection
+description: "Verify MongoDB filter is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "collection.Find($CTX, $FILTER)"
+  language: go
+  file_glob: "**/*.go"

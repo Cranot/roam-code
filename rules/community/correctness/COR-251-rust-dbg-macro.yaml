@@ -1,0 +1,8 @@
+name: COR-251-rust-dbg-macro
+description: "dbg!() left in production code; remove before release."
+severity: warning
+type: ast_match
+match:
+  ast: "dbg!($X)"
+  language: rust
+  file_glob: "**/*.rs"

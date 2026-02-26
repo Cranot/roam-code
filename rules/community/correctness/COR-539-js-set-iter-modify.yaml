@@ -1,0 +1,8 @@
+name: COR-539-js-set-iter-modify
+description: "Verify set is not modified during forEach."
+severity: info
+type: ast_match
+match:
+  ast: "$SET.forEach($FUNC)"
+  language: javascript
+  file_glob: "**/*.js"

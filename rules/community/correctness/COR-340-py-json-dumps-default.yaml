@@ -1,0 +1,8 @@
+name: COR-340-py-json-dumps-default
+description: "json.dumps may fail on non-serializable; add default handler."
+severity: info
+type: ast_match
+match:
+  ast: "json.dumps($OBJ)"
+  language: python
+  file_glob: "**/*.py"

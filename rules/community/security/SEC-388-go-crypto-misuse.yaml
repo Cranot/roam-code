@@ -1,0 +1,8 @@
+name: SEC-388-go-crypto-misuse
+description: "DES is insecure; use AES."
+severity: warning
+type: ast_match
+match:
+  ast: "des.NewCipher($KEY)"
+  language: go
+  file_glob: "**/*.go"

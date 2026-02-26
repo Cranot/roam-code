@@ -1,0 +1,8 @@
+name: SEC-721-js-owasp-extra
+description: "vm.runInThisContext can access parent scope."
+severity: warning
+type: ast_match
+match:
+  ast: "vm.runInThisContext($CODE)"
+  language: javascript
+  file_glob: "**/*.js"

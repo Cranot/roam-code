@@ -1,0 +1,8 @@
+name: COR-495-go-rows-close
+description: "Rows must be closed; defer rows.Close()."
+severity: warning
+type: ast_match
+match:
+  ast: "db.Query($SQL)"
+  language: go
+  file_glob: "**/*.go"

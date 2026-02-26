@@ -1,0 +1,8 @@
+name: COR-518-java-localdate-now
+description: "LocalDate.now() uses system timezone; specify zone."
+severity: info
+type: ast_match
+match:
+  ast: "LocalDate.now()"
+  language: java
+  file_glob: "**/*.java"

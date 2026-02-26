@@ -1,0 +1,12 @@
+name: "ARCH-283-no-generated-to-src"
+description: "Generated code should not depend on source."
+severity: info
+type: path_match
+match:
+  from:
+    file_glob: "**/generated/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  max_distance: 1

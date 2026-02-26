@@ -1,0 +1,8 @@
+name: PERF-228-js-weakmap-get-loop
+description: "WeakMap.get in loop; cache if key is stable."
+severity: info
+type: ast_match
+match:
+  ast: "$WMAP.get($KEY)"
+  language: javascript
+  file_glob: "**/*.js"

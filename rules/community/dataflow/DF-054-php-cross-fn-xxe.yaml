@@ -1,0 +1,11 @@
+name: DF-054-php-cross-fn-xxe
+description: "Cross-function XXE: POST data flows to XML parser."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['$_POST', 'php://input']
+  sinks: ['simplexml_load_string(', 'DOMDocument->loadXML(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: SEC-642-js-rate-limiting
+description: "POST endpoint; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "router.post($PATH, $HANDLER)"
+  language: javascript
+  file_glob: "**/*.js"

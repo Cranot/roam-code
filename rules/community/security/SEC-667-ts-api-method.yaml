@@ -1,0 +1,8 @@
+name: SEC-667-ts-api-method
+description: "router.all accepts all methods; restrict to needed methods."
+severity: info
+type: ast_match
+match:
+  ast: "router.all($PATH, $HANDLER)"
+  language: typescript
+  file_glob: "**/*.ts"

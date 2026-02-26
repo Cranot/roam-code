@@ -1,0 +1,8 @@
+name: PERF-296-rust-cow-to-string
+description: "Cow to_string allocates; use into_owned if consuming."
+severity: info
+type: ast_match
+match:
+  ast: "$COW.to_string()"
+  language: rust
+  file_glob: "**/*.rs"

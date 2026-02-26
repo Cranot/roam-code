@@ -1,0 +1,8 @@
+name: SEC-669-java-api-method
+description: "RequestMapping without method; restrict HTTP methods."
+severity: info
+type: ast_match
+match:
+  ast: "@RequestMapping($PATH)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: SEC-373-py-crypto-misuse
+description: "random.randint() is not cryptographically secure."
+severity: warning
+type: ast_match
+match:
+  ast: "random.randint($A, $B)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: STY-rb-puts-prod
+description: "puts in production; use logger."
+severity: info
+type: ast_match
+match:
+  ast: "puts($MSG)"
+  language: ruby
+  file_glob: "**/*.rb"

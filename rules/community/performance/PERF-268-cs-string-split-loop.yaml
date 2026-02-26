@@ -1,0 +1,8 @@
+name: PERF-268-cs-string-split-loop
+description: "String.Split in loop allocates; cache results."
+severity: info
+type: ast_match
+match:
+  ast: "$S.Split($DELIM)"
+  language: csharp
+  file_glob: "**/*.cs"

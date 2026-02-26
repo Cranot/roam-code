@@ -1,0 +1,8 @@
+name: COR-455-cs-string-compare-ordinal
+description: "String == is culture-specific; use StringComparison.Ordinal."
+severity: info
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: csharp
+  file_glob: "**/*.cs"

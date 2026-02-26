@@ -1,0 +1,8 @@
+name: PERF-334-rb-memoize-ivar
+description: "Memoization pattern; verify thread safety."
+severity: info
+type: ast_match
+match:
+  ast: "@$IVAR ||= $EXPR"
+  language: ruby
+  file_glob: "**/*.rb"

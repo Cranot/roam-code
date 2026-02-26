@@ -1,0 +1,8 @@
+name: COR-275-cs-gc-collect
+description: "Manual GC.Collect() is usually unnecessary."
+severity: info
+type: ast_match
+match:
+  ast: "GC.Collect()"
+  language: csharp
+  file_glob: "**/*.cs"

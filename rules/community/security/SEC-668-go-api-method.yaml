@@ -1,0 +1,8 @@
+name: SEC-668-go-api-method
+description: "Verify handler restricts HTTP methods."
+severity: info
+type: ast_match
+match:
+  ast: "mux.Handle($PATH, $HANDLER)"
+  language: go
+  file_glob: "**/*.go"

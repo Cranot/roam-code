@@ -1,0 +1,8 @@
+name: STY-rb-test-refute
+description: "Use specific refutation for better messages."
+severity: info
+type: ast_match
+match:
+  ast: "refute($EXPR)"
+  language: ruby
+  file_glob: "**/*.rb"

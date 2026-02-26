@@ -1,0 +1,9 @@
+name: "STY-components-max-60-lines"
+description: "Functions in components/ should be <= 60 lines."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "components/**"
+  require:
+    max_symbol_lines: 60

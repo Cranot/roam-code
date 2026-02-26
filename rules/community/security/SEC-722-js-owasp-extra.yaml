@@ -1,0 +1,8 @@
+name: SEC-722-js-owasp-extra
+description: "vm sandbox can be escaped; not suitable for untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "vm.runInNewContext($CODE, $CTX)"
+  language: javascript
+  file_glob: "**/*.js"

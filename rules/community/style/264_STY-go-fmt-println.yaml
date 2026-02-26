@@ -1,0 +1,8 @@
+name: STY-go-fmt-println
+description: "fmt.Println in production; use structured logger."
+severity: info
+type: ast_match
+match:
+  ast: "fmt.Println($MSG)"
+  language: go
+  file_glob: "**/*.go"

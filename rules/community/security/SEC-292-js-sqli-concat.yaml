@@ -1,0 +1,8 @@
+name: SEC-292-js-sqli-concat
+description: "SQL injection via string concatenation in db.query()."
+severity: error
+type: ast_match
+match:
+  ast: "db.query($SQL + $INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: STY-java-boolean-return
+description: "Simplify to return cond."
+severity: info
+type: ast_match
+match:
+  ast: "if ($COND) { return true; } else { return false; }"
+  language: java
+  file_glob: "**/*.java"

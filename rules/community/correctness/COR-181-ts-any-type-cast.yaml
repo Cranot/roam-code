@@ -1,0 +1,8 @@
+name: COR-181-ts-any-type-cast
+description: "Casting to any defeats TypeScript type safety."
+severity: warning
+type: ast_match
+match:
+  ast: "$X as any"
+  language: typescript
+  file_glob: "**/*.ts"

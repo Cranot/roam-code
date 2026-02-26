@@ -1,0 +1,8 @@
+name: PERF-212-py-os-walk
+description: "os.walk is slow for large trees; consider scandir."
+severity: info
+type: ast_match
+match:
+  ast: "os.walk($PATH)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-320-java-buffered-reader
+description: "BufferedReader is good; verify buffer size for large files."
+severity: info
+type: ast_match
+match:
+  ast: "new BufferedReader($READER)"
+  language: java
+  file_glob: "**/*.java"

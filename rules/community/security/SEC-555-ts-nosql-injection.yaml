@@ -1,0 +1,8 @@
+name: SEC-555-ts-nosql-injection
+description: "NoSQL injection risk in findOne()."
+severity: warning
+type: ast_match
+match:
+  ast: "$COLLECTION.findOne($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

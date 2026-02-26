@@ -1,0 +1,8 @@
+name: COR-312-py-class-getattr
+description: "__getattr__ may hide AttributeError bugs; implement carefully."
+severity: info
+type: ast_match
+match:
+  ast: "def __getattr__(self, $NAME)"
+  language: python
+  file_glob: "**/*.py"

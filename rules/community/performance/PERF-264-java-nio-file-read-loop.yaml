@@ -1,0 +1,8 @@
+name: PERF-264-java-nio-file-read-loop
+description: "readAllBytes in loop; batch file reads."
+severity: warning
+type: ast_match
+match:
+  ast: "Files.readAllBytes($PATH)"
+  language: java
+  file_glob: "**/*.java"

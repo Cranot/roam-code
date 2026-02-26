@@ -1,0 +1,12 @@
+name: "ARCH-219-no-entities-to-views"
+description: "Entities should not depend on view models."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/entities/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/viewmodels/**"
+    kind: [function, method, class]
+  max_distance: 1

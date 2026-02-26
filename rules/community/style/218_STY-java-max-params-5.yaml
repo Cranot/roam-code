@@ -1,0 +1,9 @@
+name: "STY-java-max-params-5"
+description: "Functions with more than 5 parameters should use an options object."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "**/*.java"
+  require:
+    max_params: 5

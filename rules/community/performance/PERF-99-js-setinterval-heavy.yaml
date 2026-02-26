@@ -1,0 +1,8 @@
+name: PERF-99-js-setinterval-heavy
+description: "Frequent setInterval may cause jank; use requestAnimationFrame."
+severity: info
+type: ast_match
+match:
+  ast: "setInterval($FUNC, $MS)"
+  language: javascript
+  file_glob: "**/*.js"

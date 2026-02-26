@@ -1,0 +1,8 @@
+name: COR-417-rust-arc-mutex
+description: "Arc<Mutex<T>> shared state; verify no deadlocks."
+severity: info
+type: ast_match
+match:
+  ast: "Arc<Mutex<$T>>"
+  language: rust
+  file_glob: "**/*.rs"

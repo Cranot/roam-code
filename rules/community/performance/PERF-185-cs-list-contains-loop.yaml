@@ -1,0 +1,8 @@
+name: PERF-185-cs-list-contains-loop
+description: "List.Contains is O(n); use HashSet for frequent lookups."
+severity: warning
+type: ast_match
+match:
+  ast: "$LIST.Contains($ELEM)"
+  language: csharp
+  file_glob: "**/*.cs"

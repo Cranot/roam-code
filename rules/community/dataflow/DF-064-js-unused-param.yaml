@@ -1,0 +1,8 @@
+name: DF-064-js-unused-param
+description: "Function parameter is never used in the function body."
+severity: info
+type: dataflow_match
+match:
+  patterns: [unused_param]
+  file_glob: "**/*.js"
+  max_matches: 200

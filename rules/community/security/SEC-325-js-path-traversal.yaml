@@ -1,0 +1,8 @@
+name: SEC-325-js-path-traversal
+description: "Path traversal via concatenated fs.readFile()."
+severity: error
+type: ast_match
+match:
+  ast: "fs.readFile($PATH + $INPUT, $CB)"
+  language: javascript
+  file_glob: "**/*.js"

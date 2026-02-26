@@ -1,0 +1,8 @@
+name: SEC-395-cs-crypto-misuse
+description: "SHA-1 is deprecated; use SHA256."
+severity: warning
+type: ast_match
+match:
+  ast: "SHA1.Create()"
+  language: csharp
+  file_glob: "**/*.cs"

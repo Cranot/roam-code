@@ -1,0 +1,8 @@
+name: COR-337-py-datetime-strftime
+description: "Verify strftime format string is correct."
+severity: info
+type: ast_match
+match:
+  ast: "$DT.strftime($FMT)"
+  language: python
+  file_glob: "**/*.py"

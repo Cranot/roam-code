@@ -1,0 +1,8 @@
+name: COR-213-go-defer-in-loop
+description: "defer in loop defers until function returns, not loop iteration."
+severity: warning
+type: ast_match
+match:
+  ast: "defer $FUNC()"
+  language: go
+  file_glob: "**/*.go"

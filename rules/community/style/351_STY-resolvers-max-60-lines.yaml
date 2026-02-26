@@ -1,0 +1,9 @@
+name: "STY-resolvers-max-60-lines"
+description: "Functions in resolvers/ should be <= 60 lines."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "resolvers/**"
+  require:
+    max_symbol_lines: 60

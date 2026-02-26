@@ -1,0 +1,8 @@
+name: STY-cs-magic-number
+description: "Magic number; extract to named constant."
+severity: info
+type: ast_match
+match:
+  ast: "if ($X == $NUM)"
+  language: csharp
+  file_glob: "**/*.cs"

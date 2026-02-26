@@ -1,0 +1,8 @@
+name: SEC-542-php-log-sensitive
+description: "Potential logging of sensitive data."
+severity: info
+type: ast_match
+match:
+  ast: "error_log($PASSWORD)"
+  language: php
+  file_glob: "**/*.php"

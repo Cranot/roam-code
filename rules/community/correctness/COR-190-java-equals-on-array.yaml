@@ -1,0 +1,8 @@
+name: COR-190-java-equals-on-array
+description: "equals() on arrays compares reference; use Arrays.equals()."
+severity: error
+type: ast_match
+match:
+  ast: "$ARR.equals($OTHER)"
+  language: java
+  file_glob: "**/*.java"

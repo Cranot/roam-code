@@ -1,0 +1,8 @@
+name: COR-362-js-weakmap-non-object
+description: "WeakMap keys must be objects; verify usage."
+severity: info
+type: ast_match
+match:
+  ast: "new WeakMap()"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-255-php-loose-eq-null
+description: "Loose comparison with null; use === for strict check."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == null"
+  language: php
+  file_glob: "**/*.php"

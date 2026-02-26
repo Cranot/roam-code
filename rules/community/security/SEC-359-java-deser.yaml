@@ -1,0 +1,8 @@
+name: SEC-359-java-deser
+description: "Unsafe deserialization via XMLDecoder."
+severity: error
+type: ast_match
+match:
+  ast: "XMLDecoder($STREAM)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-235-rb-retry-no-limit
+description: "retry without counter creates infinite loop."
+severity: warning
+type: ast_match
+match:
+  ast: "retry"
+  language: ruby
+  file_glob: "**/*.rb"

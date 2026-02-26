@@ -1,0 +1,8 @@
+name: PERF-230-js-url-create-loop
+description: "URL parsing in loop; cache parsed URLs."
+severity: info
+type: ast_match
+match:
+  ast: "new URL($STR)"
+  language: javascript
+  file_glob: "**/*.js"

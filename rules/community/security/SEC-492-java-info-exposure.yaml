@@ -1,0 +1,8 @@
+name: SEC-492-java-info-exposure
+description: "Stack trace via printStackTrace()."
+severity: warning
+type: ast_match
+match:
+  ast: "$EX.printStackTrace()"
+  language: java
+  file_glob: "**/*.java"

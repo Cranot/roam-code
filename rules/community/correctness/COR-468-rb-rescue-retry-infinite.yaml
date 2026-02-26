@@ -1,0 +1,8 @@
+name: COR-468-rb-rescue-retry-infinite
+description: "retry without limit creates infinite loop."
+severity: warning
+type: ast_match
+match:
+  ast: "rescue $EX; retry"
+  language: ruby
+  file_glob: "**/*.rb"

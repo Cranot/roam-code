@@ -1,0 +1,8 @@
+name: SEC-418-py-auth-cors
+description: "Flask-CORS applied globally; restrict to specific origins."
+severity: warning
+type: ast_match
+match:
+  ast: "CORS($APP)"
+  language: python
+  file_glob: "**/*.py"

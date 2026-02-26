@@ -1,0 +1,8 @@
+name: SEC-671-rb-api-method
+description: "Route accepts all methods; restrict to needed methods."
+severity: info
+type: ast_match
+match:
+  ast: "match $PATH, to: $CTRL, via: :all"
+  language: ruby
+  file_glob: "**/*.rb"

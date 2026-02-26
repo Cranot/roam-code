@@ -1,0 +1,8 @@
+name: COR-324-go-copy-lock
+description: "Copying a sync type copies the lock state."
+severity: error
+type: ast_match
+match:
+  ast: "$LOCK = $OTHER"
+  language: go
+  file_glob: "**/*.go"

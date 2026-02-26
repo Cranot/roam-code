@@ -1,0 +1,8 @@
+name: PERF-121-ts-promise-all-sequential
+description: "Sequential awaits; use Promise.all for parallel execution."
+severity: info
+type: ast_match
+match:
+  ast: "await $PROMISE1"
+  language: typescript
+  file_glob: "**/*.ts"

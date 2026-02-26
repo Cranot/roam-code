@@ -1,0 +1,8 @@
+name: SEC-424-java-auth-cors
+description: "Open redirect risk if user controls redirect target."
+severity: warning
+type: ast_match
+match:
+  ast: "response.sendRedirect($INPUT)"
+  language: java
+  file_glob: "**/*.java"

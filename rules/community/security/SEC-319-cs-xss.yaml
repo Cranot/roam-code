@@ -1,0 +1,8 @@
+name: SEC-319-cs-xss
+description: "XSS risk via Html.Raw() bypassing encoding."
+severity: error
+type: ast_match
+match:
+  ast: "Html.Raw($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

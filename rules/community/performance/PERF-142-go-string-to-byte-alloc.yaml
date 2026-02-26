@@ -1,0 +1,8 @@
+name: PERF-142-go-string-to-byte-alloc
+description: "String-to-byte conversion allocates; cache the result."
+severity: info
+type: ast_match
+match:
+  ast: "[]byte($STR)"
+  language: go
+  file_glob: "**/*.go"

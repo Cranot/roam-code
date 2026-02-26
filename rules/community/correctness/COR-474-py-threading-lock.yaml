@@ -1,0 +1,8 @@
+name: COR-474-py-threading-lock
+description: "Verify Lock is used correctly with acquire/release or with."
+severity: info
+type: ast_match
+match:
+  ast: "threading.Lock()"
+  language: python
+  file_glob: "**/*.py"

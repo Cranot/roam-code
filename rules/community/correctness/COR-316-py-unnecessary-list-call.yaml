@@ -1,0 +1,8 @@
+name: COR-316-py-unnecessary-list-call
+description: "list() wrapping a list comprehension is redundant."
+severity: info
+type: ast_match
+match:
+  ast: "list($LISTCOMP)"
+  language: python
+  file_glob: "**/*.py"

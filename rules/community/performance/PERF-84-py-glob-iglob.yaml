@@ -1,0 +1,8 @@
+name: PERF-84-py-glob-iglob
+description: "glob.glob loads all into memory; use iglob for large dirs."
+severity: info
+type: ast_match
+match:
+  ast: "glob.glob($PATTERN)"
+  language: python
+  file_glob: "**/*.py"

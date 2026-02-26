@@ -1,0 +1,8 @@
+name: SEC-380-ts-crypto-misuse
+description: "Math.random() is not cryptographically secure for security use."
+severity: warning
+type: ast_match
+match:
+  ast: "Math.random()"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: PERF-143-go-byte-to-string-alloc
+description: "Byte-to-string conversion allocates; minimize conversions."
+severity: info
+type: ast_match
+match:
+  ast: "string($BYTES)"
+  language: go
+  file_glob: "**/*.go"

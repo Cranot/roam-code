@@ -1,0 +1,8 @@
+name: SEC-337-cs-path-traversal
+description: "Path traversal via concatenated File.ReadAllText()."
+severity: error
+type: ast_match
+match:
+  ast: "File.ReadAllText($PATH + $INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

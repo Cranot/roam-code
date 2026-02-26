@@ -1,0 +1,8 @@
+name: COR-494-java-resultset-close
+description: "ResultSet must be closed; use try-with-resources."
+severity: warning
+type: ast_match
+match:
+  ast: "$STMT.executeQuery()"
+  language: java
+  file_glob: "**/*.java"

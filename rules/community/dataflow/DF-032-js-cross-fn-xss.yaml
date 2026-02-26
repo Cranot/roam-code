@@ -1,0 +1,11 @@
+name: DF-032-js-cross-fn-xss
+description: "Cross-function XSS: request data flows to response."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['req.query', 'req.body', 'req.params', 'req.headers']
+  sinks: ['res.send(', 'res.write(', 'document.write(', 'innerHTML']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.js"

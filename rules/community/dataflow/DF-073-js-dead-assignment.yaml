@@ -1,0 +1,8 @@
+name: DF-073-js-dead-assignment
+description: "Variable assigned but never read before reassignment or end of scope."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [dead_assignment]
+  file_glob: "**/*.js"
+  max_matches: 200

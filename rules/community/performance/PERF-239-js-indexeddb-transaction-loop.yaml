@@ -1,0 +1,8 @@
+name: PERF-239-js-indexeddb-transaction-loop
+description: "IDB transaction per item; batch operations."
+severity: warning
+type: ast_match
+match:
+  ast: "$DB.transaction($STORES)"
+  language: javascript
+  file_glob: "**/*.js"

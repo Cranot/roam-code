@@ -1,0 +1,8 @@
+name: SEC-500-py-ssti
+description: "SSTI risk in Flask render_template_string()."
+severity: error
+type: ast_match
+match:
+  ast: "render_template_string($INPUT)"
+  language: python
+  file_glob: "**/*.py"

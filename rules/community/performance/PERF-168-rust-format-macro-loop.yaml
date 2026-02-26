@@ -1,0 +1,8 @@
+name: PERF-168-rust-format-macro-loop
+description: "format! in loop allocates; use write! with buffer."
+severity: info
+type: ast_match
+match:
+  ast: "format!($FMT, $ARGS)"
+  language: rust
+  file_glob: "**/*.rs"

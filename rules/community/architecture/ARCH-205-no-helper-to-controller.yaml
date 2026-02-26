@@ -1,0 +1,12 @@
+name: "ARCH-205-no-helper-to-controller"
+description: "Helpers should not depend on controllers."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/helpers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: STY-py-nested-function
+description: "Deeply nested function; consider extracting."
+severity: info
+type: ast_match
+match:
+  ast: "def $OUTER($ARGS): def $INNER($IARGS): $BODY"
+  language: python
+  file_glob: "**/*.py"

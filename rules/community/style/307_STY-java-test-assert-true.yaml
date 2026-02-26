@@ -1,0 +1,8 @@
+name: STY-java-test-assert-true
+description: "Prefer specific assertions for better messages."
+severity: info
+type: ast_match
+match:
+  ast: "assertTrue($EXPR)"
+  language: java
+  file_glob: "**/*.java"

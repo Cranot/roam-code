@@ -1,0 +1,8 @@
+name: COR-382-ts-never-type
+description: "Function returning never; verify it always throws."
+severity: info
+type: ast_match
+match:
+  ast: "function $NAME($ARGS): never { $BODY }"
+  language: typescript
+  file_glob: "**/*.ts"

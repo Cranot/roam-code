@@ -1,0 +1,8 @@
+name: PERF-297-php-foreach-reference
+description: "foreach by reference; unset after loop to avoid bugs."
+severity: warning
+type: ast_match
+match:
+  ast: "foreach ($ARR as &$ITEM)"
+  language: php
+  file_glob: "**/*.php"

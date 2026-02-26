@@ -1,0 +1,8 @@
+name: STY-py-test-assert-false
+description: "Use assertFalse or assert not x instead of assert x == False."
+severity: info
+type: ast_match
+match:
+  ast: "assert $X == False"
+  language: python
+  file_glob: "**/*.py"

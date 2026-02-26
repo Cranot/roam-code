@@ -1,0 +1,8 @@
+name: PERF-237-js-requestanimationframe-heavy
+description: "Heavy work in rAF callback causes jank."
+severity: info
+type: ast_match
+match:
+  ast: "requestAnimationFrame($FUNC)"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: SEC-321-ts-xss
+description: "Potential XSS via dynamic src attribute."
+severity: error
+type: ast_match
+match:
+  ast: "$EL.src = $INPUT"
+  language: typescript
+  file_glob: "**/*.ts"

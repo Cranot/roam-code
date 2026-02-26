@@ -1,0 +1,10 @@
+name: "STY-exported-need-tests-handlers"
+description: "Exported functions in handlers/ should have test coverage."
+severity: warning
+type: symbol_match
+match:
+  kind: [function, class]
+  file_glob: "handlers/**"
+  exported: true
+  require:
+    has_test: true

@@ -1,0 +1,8 @@
+name: SEC-660-js-api-key-exposure
+description: "Verify authorization header value is not hardcoded."
+severity: info
+type: ast_match
+match:
+  ast: "Authorization: $VALUE"
+  language: javascript
+  file_glob: "**/*.js"

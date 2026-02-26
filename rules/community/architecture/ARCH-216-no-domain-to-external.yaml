@@ -1,0 +1,12 @@
+name: "ARCH-216-no-domain-to-external"
+description: "Domain should not depend on external service clients."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/external/**"
+    kind: [function, method, class]
+  max_distance: 1

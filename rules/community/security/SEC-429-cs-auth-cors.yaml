@@ -1,0 +1,8 @@
+name: SEC-429-cs-auth-cors
+description: "CORS allows any origin; restrict to known domains."
+severity: warning
+type: ast_match
+match:
+  ast: "AllowAnyOrigin()"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,12 @@
+name: "ARCH-203-no-util-to-controller"
+description: "Utilities should not depend on controllers."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/utils/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

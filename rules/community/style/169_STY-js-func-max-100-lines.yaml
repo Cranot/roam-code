@@ -1,0 +1,9 @@
+name: "STY-js-func-max-100-lines"
+description: "Functions over 100 lines should be refactored."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "**/*.js"
+  require:
+    max_symbol_lines: 100

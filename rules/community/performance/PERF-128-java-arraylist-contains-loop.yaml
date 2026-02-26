@@ -1,0 +1,8 @@
+name: PERF-128-java-arraylist-contains-loop
+description: "ArrayList.contains is O(n); use HashSet for frequent lookups."
+severity: warning
+type: ast_match
+match:
+  ast: "$LIST.contains($ELEM)"
+  language: java
+  file_glob: "**/*.java"

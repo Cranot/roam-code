@@ -1,0 +1,8 @@
+name: COR-276-cs-environment-exit
+description: "Environment.Exit() in library; throw exception instead."
+severity: warning
+type: ast_match
+match:
+  ast: "Environment.Exit($CODE)"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: SEC-696-rust-integer-overflow
+description: "Wrapping multiplication; verify overflow is expected."
+severity: info
+type: ast_match
+match:
+  ast: "$A.wrapping_mul($B)"
+  language: rust
+  file_glob: "**/*.rs"

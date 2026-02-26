@@ -1,0 +1,8 @@
+name: SEC-311-js-xss
+description: "XSS risk via outerHTML assignment."
+severity: error
+type: ast_match
+match:
+  ast: "$EL.outerHTML = $INPUT"
+  language: javascript
+  file_glob: "**/*.js"

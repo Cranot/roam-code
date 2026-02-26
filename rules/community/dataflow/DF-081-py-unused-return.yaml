@@ -1,0 +1,8 @@
+name: DF-081-py-unused-return
+description: "Function return value is never used by any caller."
+severity: info
+type: dataflow_match
+match:
+  patterns: [inter_unused_return]
+  file_glob: "**/*.py"
+  max_matches: 100

@@ -1,0 +1,8 @@
+name: COR-469-rb-rescue-nil
+description: "Swallowing exception and returning nil hides bugs."
+severity: warning
+type: ast_match
+match:
+  ast: "rescue; nil"
+  language: ruby
+  file_glob: "**/*.rb"

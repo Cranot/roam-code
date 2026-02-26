@@ -1,0 +1,8 @@
+name: PERF-205-cs-n-plus-1-query
+description: "SQL query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "$CMD.ExecuteReader()"
+  language: csharp
+  file_glob: "**/*.cs"

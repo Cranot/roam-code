@@ -1,0 +1,8 @@
+name: SEC-330-go-path-traversal
+description: "Path traversal via concatenated os.Open()."
+severity: error
+type: ast_match
+match:
+  ast: "os.Open($PATH + $INPUT)"
+  language: go
+  file_glob: "**/*.go"

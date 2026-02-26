@@ -1,0 +1,8 @@
+name: PERF-323-go-bufio-reader
+description: "Buffered reader improves I/O performance."
+severity: info
+type: ast_match
+match:
+  ast: "bufio.NewReader($R)"
+  language: go
+  file_glob: "**/*.go"

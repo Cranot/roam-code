@@ -1,0 +1,8 @@
+name: SEC-457-ts-jwt-session
+description: "jwt.decode() does not verify signature; use jwt.verify()."
+severity: warning
+type: ast_match
+match:
+  ast: "jwt.decode($TOKEN)"
+  language: typescript
+  file_glob: "**/*.ts"

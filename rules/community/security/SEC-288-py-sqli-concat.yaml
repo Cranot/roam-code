@@ -1,0 +1,8 @@
+name: SEC-288-py-sqli-concat
+description: "SQL injection via string concatenation in cursor.execute()."
+severity: error
+type: ast_match
+match:
+  ast: "cursor.execute($SQL + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-207-java-float-eq
+description: "Floating point == is imprecise; use Math.abs(a-b) < epsilon."
+severity: info
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-411-go-errors-new
+description: "errors.New creates sentinel error; use fmt.Errorf for context."
+severity: info
+type: ast_match
+match:
+  ast: "errors.New($MSG)"
+  language: go
+  file_glob: "**/*.go"

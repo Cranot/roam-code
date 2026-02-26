@@ -1,0 +1,11 @@
+name: DF-042-js-cross-fn-redirect
+description: "Cross-function open redirect: request data flows to redirect."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['req.query', 'req.body', 'req.params']
+  sinks: ['res.redirect(', 'window.location']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.js"

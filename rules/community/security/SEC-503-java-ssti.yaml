@@ -1,0 +1,8 @@
+name: SEC-503-java-ssti
+description: "Code injection via ScriptEngine.eval()."
+severity: error
+type: ast_match
+match:
+  ast: "ScriptEngine.eval($INPUT)"
+  language: java
+  file_glob: "**/*.java"

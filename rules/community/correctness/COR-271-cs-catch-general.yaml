@@ -1,0 +1,8 @@
+name: COR-271-cs-catch-general
+description: "Catching base Exception may hide programming errors."
+severity: info
+type: ast_match
+match:
+  ast: "catch (Exception $E)"
+  language: csharp
+  file_glob: "**/*.cs"

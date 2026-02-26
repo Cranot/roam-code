@@ -1,0 +1,8 @@
+name: SEC-493-go-info-exposure
+description: "debug.PrintStack() in production."
+severity: warning
+type: ast_match
+match:
+  ast: "debug.PrintStack()"
+  language: go
+  file_glob: "**/*.go"

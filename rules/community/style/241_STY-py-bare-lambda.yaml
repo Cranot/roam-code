@@ -1,0 +1,8 @@
+name: STY-py-bare-lambda
+description: "Consider named function instead of lambda for readability."
+severity: info
+type: ast_match
+match:
+  ast: "lambda: $EXPR"
+  language: python
+  file_glob: "**/*.py"

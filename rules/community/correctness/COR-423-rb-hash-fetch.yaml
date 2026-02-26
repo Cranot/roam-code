@@ -1,0 +1,8 @@
+name: COR-423-rb-hash-fetch
+description: "Hash[] returns nil for missing key; use fetch for safety."
+severity: info
+type: ast_match
+match:
+  ast: "$HASH[$KEY]"
+  language: ruby
+  file_glob: "**/*.rb"

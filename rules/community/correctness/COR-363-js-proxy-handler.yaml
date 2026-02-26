@@ -1,0 +1,8 @@
+name: COR-363-js-proxy-handler
+description: "Proxy handler; verify trap implementations are complete."
+severity: info
+type: ast_match
+match:
+  ast: "new Proxy($TARGET, $HANDLER)"
+  language: javascript
+  file_glob: "**/*.js"

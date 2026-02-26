@@ -1,0 +1,8 @@
+name: PERF-260-java-file-io-loop
+description: "FileReader in loop; use buffered I/O."
+severity: warning
+type: ast_match
+match:
+  ast: "new FileReader($PATH)"
+  language: java
+  file_glob: "**/*.java"

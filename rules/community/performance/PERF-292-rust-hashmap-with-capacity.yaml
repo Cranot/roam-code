@@ -1,0 +1,8 @@
+name: PERF-292-rust-hashmap-with-capacity
+description: "HashMap::new without capacity; use with_capacity for known sizes."
+severity: info
+type: ast_match
+match:
+  ast: "HashMap::new()"
+  language: rust
+  file_glob: "**/*.rs"

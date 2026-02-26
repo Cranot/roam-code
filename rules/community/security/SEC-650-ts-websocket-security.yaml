@@ -1,0 +1,8 @@
+name: SEC-650-ts-websocket-security
+description: "Verify WebSocket uses wss:// for encryption."
+severity: warning
+type: ast_match
+match:
+  ast: "new WebSocket($URL)"
+  language: typescript
+  file_glob: "**/*.ts"

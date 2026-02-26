@@ -1,0 +1,8 @@
+name: PERF-139-go-append-no-prealloc
+description: "append without pre-allocation causes repeated growth."
+severity: info
+type: ast_match
+match:
+  ast: "append($SLICE, $ELEM)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-291-js-object-keys-length
+description: "Use dedicated isEmpty helper for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "Object.keys($OBJ).length === 0"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-377-ts-type-assertion-object
+description: "Type assertion may hide type errors; prefer type guard."
+severity: info
+type: ast_match
+match:
+  ast: "$X as $TYPE"
+  language: typescript
+  file_glob: "**/*.ts"

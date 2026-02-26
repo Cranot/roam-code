@@ -1,0 +1,8 @@
+name: STY-cs-test-assert-areequal
+description: "Verify expected is first parameter."
+severity: info
+type: ast_match
+match:
+  ast: "Assert.AreEqual($EXPECTED, $ACTUAL)"
+  language: csharp
+  file_glob: "**/*.cs"

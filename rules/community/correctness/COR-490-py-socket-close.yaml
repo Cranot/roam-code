@@ -1,0 +1,8 @@
+name: COR-490-py-socket-close
+description: "Socket must be closed; use with statement."
+severity: info
+type: ast_match
+match:
+  ast: "socket.socket($AF, $TYPE)"
+  language: python
+  file_glob: "**/*.py"

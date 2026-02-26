@@ -1,0 +1,8 @@
+name: PERF-114-ts-queryselector-loop
+description: "DOM query in loop; cache the result."
+severity: warning
+type: ast_match
+match:
+  ast: "document.querySelector($SEL)"
+  language: typescript
+  file_glob: "**/*.ts"

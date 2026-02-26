@@ -1,0 +1,8 @@
+name: COR-499-cs-stream-dispose
+description: "FileStream must be disposed; use using statement."
+severity: warning
+type: ast_match
+match:
+  ast: "new FileStream($PATH, $MODE)"
+  language: csharp
+  file_glob: "**/*.cs"

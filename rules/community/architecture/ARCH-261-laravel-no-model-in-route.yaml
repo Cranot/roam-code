@@ -1,0 +1,12 @@
+name: "ARCH-261-laravel-no-model-in-route"
+description: "Laravel routes should not import models."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/routes/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/Models/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: SEC-653-java-websocket-security
+description: "Verify WebSocket uses wss:// for encryption."
+severity: warning
+type: ast_match
+match:
+  ast: "new WebSocketClient($URI)"
+  language: java
+  file_glob: "**/*.java"

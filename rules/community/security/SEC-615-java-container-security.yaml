@@ -1,0 +1,8 @@
+name: SEC-615-java-container-security
+description: "Container privileged mode is insecure."
+severity: error
+type: ast_match
+match:
+  ast: "setPrivileged(true)"
+  language: java
+  file_glob: "**/*.java"

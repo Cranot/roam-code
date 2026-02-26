@@ -1,0 +1,12 @@
+name: "ARCH-268-no-grpc-to-db"
+description: "gRPC handlers should use services, not database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/grpc/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

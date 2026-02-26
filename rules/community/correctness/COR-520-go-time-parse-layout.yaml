@@ -1,0 +1,8 @@
+name: COR-520-go-time-parse-layout
+description: "Verify time.Parse layout uses Go reference time."
+severity: info
+type: ast_match
+match:
+  ast: "time.Parse($LAYOUT, $VALUE)"
+  language: go
+  file_glob: "**/*.go"

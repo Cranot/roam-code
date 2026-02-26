@@ -1,0 +1,8 @@
+name: COR-135-py-not-is
+description: "Use 'is not' instead of 'not ... is'."
+severity: warning
+type: ast_match
+match:
+  ast: "not $X is $Y"
+  language: python
+  file_glob: "**/*.py"

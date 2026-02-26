@@ -1,0 +1,8 @@
+name: COR-365-js-async-generator
+description: "Async generator; verify consumer handles async iteration."
+severity: info
+type: ast_match
+match:
+  ast: "async function* $NAME($ARGS) { $BODY }"
+  language: javascript
+  file_glob: "**/*.js"

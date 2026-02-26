@@ -1,0 +1,8 @@
+name: PERF-100-js-innerhtml-append
+description: "innerHTML += causes full reparse; use insertAdjacentHTML."
+severity: warning
+type: ast_match
+match:
+  ast: "$EL.innerHTML += $HTML"
+  language: javascript
+  file_glob: "**/*.js"

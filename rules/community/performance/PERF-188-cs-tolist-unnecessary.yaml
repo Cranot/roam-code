@@ -1,0 +1,8 @@
+name: PERF-188-cs-tolist-unnecessary
+description: "ToList() materializes entire sequence; defer if possible."
+severity: info
+type: ast_match
+match:
+  ast: "$SEQ.ToList()"
+  language: csharp
+  file_glob: "**/*.cs"

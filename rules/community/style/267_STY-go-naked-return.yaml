@@ -1,0 +1,8 @@
+name: STY-go-naked-return
+description: "Naked return; consider named return values or explicit."
+severity: info
+type: ast_match
+match:
+  ast: "return"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: PERF-311-go-pool-put
+description: "sync.Pool reduces allocations; verify object is reset."
+severity: info
+type: ast_match
+match:
+  ast: "$POOL.Put($OBJ)"
+  language: go
+  file_glob: "**/*.go"

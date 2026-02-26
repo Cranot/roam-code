@@ -1,0 +1,8 @@
+name: SEC-713-py-owasp-extra
+description: "Command injection via concatenation in subprocess.run."
+severity: warning
+type: ast_match
+match:
+  ast: "subprocess.run($CMD + $INPUT, $ARGS)"
+  language: python
+  file_glob: "**/*.py"

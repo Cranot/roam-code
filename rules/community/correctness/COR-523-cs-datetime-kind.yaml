@@ -1,0 +1,8 @@
+name: COR-523-cs-datetime-kind
+description: "DateTime.Now is local; use DateTimeOffset.UtcNow."
+severity: info
+type: ast_match
+match:
+  ast: "DateTime.Now"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: SEC-658-php-session-fixation
+description: "Verify session_regenerate_id() is called after login."
+severity: info
+type: ast_match
+match:
+  ast: "$_SESSION[$KEY] = $VALUE"
+  language: php
+  file_glob: "**/*.php"

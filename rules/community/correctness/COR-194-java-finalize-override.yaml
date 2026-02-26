@@ -1,0 +1,8 @@
+name: COR-194-java-finalize-override
+description: "finalize() is deprecated; use Cleaner or try-with-resources."
+severity: warning
+type: ast_match
+match:
+  ast: "protected void finalize()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-483-go-wg-add-after-go
+description: "WaitGroup.Add after goroutine start is a race condition."
+severity: error
+type: ast_match
+match:
+  ast: "go $FUNC(); $WG.Add($N)"
+  language: go
+  file_glob: "**/*.go"

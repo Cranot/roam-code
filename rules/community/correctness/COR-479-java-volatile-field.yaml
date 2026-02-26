@@ -1,0 +1,8 @@
+name: COR-479-java-volatile-field
+description: "Volatile ensures visibility but not atomicity."
+severity: info
+type: ast_match
+match:
+  ast: "volatile $TYPE $FIELD"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: STY-cs-test-assert-istrue
+description: "Use specific assertion for better messages."
+severity: info
+type: ast_match
+match:
+  ast: "Assert.IsTrue($EXPR)"
+  language: csharp
+  file_glob: "**/*.cs"

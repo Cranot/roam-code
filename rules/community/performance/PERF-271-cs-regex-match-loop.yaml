@@ -1,0 +1,8 @@
+name: PERF-271-cs-regex-match-loop
+description: "Static Regex.Match recompiles; use cached Regex."
+severity: warning
+type: ast_match
+match:
+  ast: "Regex.Match($INPUT, $PATTERN)"
+  language: csharp
+  file_glob: "**/*.cs"

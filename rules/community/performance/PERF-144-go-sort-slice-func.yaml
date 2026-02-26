@@ -1,0 +1,8 @@
+name: PERF-144-go-sort-slice-func
+description: "sort.Slice uses interface; sort.Slice is fine for most cases."
+severity: info
+type: ast_match
+match:
+  ast: "sort.Slice($S, $LESS)"
+  language: go
+  file_glob: "**/*.go"

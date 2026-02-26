@@ -1,0 +1,12 @@
+name: "ARCH-222-no-service-to-controller"
+description: "Services should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

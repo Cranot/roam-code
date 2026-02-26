@@ -1,0 +1,8 @@
+name: COR-265-php-isset-or
+description: "Use null coalescing operator $x ?? $default."
+severity: info
+type: ast_match
+match:
+  ast: "isset($X) ? $X : $DEFAULT"
+  language: php
+  file_glob: "**/*.php"

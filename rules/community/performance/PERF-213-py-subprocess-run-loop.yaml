@@ -1,0 +1,8 @@
+name: PERF-213-py-subprocess-run-loop
+description: "subprocess.run in loop; batch commands."
+severity: warning
+type: ast_match
+match:
+  ast: "subprocess.run($CMD)"
+  language: python
+  file_glob: "**/*.py"

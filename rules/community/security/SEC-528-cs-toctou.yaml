@@ -1,0 +1,8 @@
+name: SEC-528-cs-toctou
+description: "TOCTOU race between Exists() and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "File.Exists($PATH)"
+  language: csharp
+  file_glob: "**/*.cs"

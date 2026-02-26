@@ -1,0 +1,8 @@
+name: SEC-353-py-deser
+description: "Unsafe YAML deserialization without SafeLoader."
+severity: error
+type: ast_match
+match:
+  ast: "yaml.load($DATA)"
+  language: python
+  file_glob: "**/*.py"

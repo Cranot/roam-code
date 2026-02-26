@@ -1,0 +1,8 @@
+name: PERF-316-py-aiohttp-session
+description: "Reuse aiohttp session; creating per request is wasteful."
+severity: warning
+type: ast_match
+match:
+  ast: "aiohttp.ClientSession()"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-262-php-empty-check
+description: "empty() has surprising behavior with 0 and '0'; be explicit."
+severity: info
+type: ast_match
+match:
+  ast: "empty($X)"
+  language: php
+  file_glob: "**/*.php"

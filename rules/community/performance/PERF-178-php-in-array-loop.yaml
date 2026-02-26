@@ -1,0 +1,8 @@
+name: PERF-178-php-in-array-loop
+description: "in_array is O(n); use array_flip + isset for frequent checks."
+severity: warning
+type: ast_match
+match:
+  ast: "in_array($ELEM, $ARR)"
+  language: php
+  file_glob: "**/*.php"

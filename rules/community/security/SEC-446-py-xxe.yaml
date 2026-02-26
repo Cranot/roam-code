@@ -1,0 +1,8 @@
+name: SEC-446-py-xxe
+description: "XXE risk in etree.fromstring()."
+severity: error
+type: ast_match
+match:
+  ast: "etree.fromstring($INPUT)"
+  language: python
+  file_glob: "**/*.py"

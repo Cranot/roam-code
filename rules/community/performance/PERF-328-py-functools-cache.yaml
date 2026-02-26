@@ -1,0 +1,8 @@
+name: PERF-328-py-functools-cache
+description: "functools.cache has no size limit; use lru_cache with maxsize."
+severity: info
+type: ast_match
+match:
+  ast: "@functools.cache"
+  language: python
+  file_glob: "**/*.py"

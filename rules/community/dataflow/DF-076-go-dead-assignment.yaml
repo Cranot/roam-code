@@ -1,0 +1,8 @@
+name: DF-076-go-dead-assignment
+description: "Variable assigned but never read before reassignment or end of scope."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [dead_assignment]
+  file_glob: "**/*.go"
+  max_matches: 200

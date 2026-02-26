@@ -1,0 +1,8 @@
+name: SEC-450-cs-xxe
+description: "XXE risk; set XmlResolver = null."
+severity: error
+type: ast_match
+match:
+  ast: "XmlDocument()"
+  language: csharp
+  file_glob: "**/*.cs"

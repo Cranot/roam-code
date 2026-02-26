@@ -1,0 +1,8 @@
+name: SEC-485-rb-mass-assign
+description: "Mass assignment with permit! allows all params."
+severity: warning
+type: ast_match
+match:
+  ast: "params.permit!"
+  language: ruby
+  file_glob: "**/*.rb"

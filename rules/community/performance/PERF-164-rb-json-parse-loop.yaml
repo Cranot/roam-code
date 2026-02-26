@@ -1,0 +1,8 @@
+name: PERF-164-rb-json-parse-loop
+description: "JSON.parse in loop; batch if possible."
+severity: info
+type: ast_match
+match:
+  ast: "JSON.parse($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: STY-ts-nested-callbacks
+description: "Nested callback; use async/await."
+severity: info
+type: ast_match
+match:
+  ast: "$FUNC($ARGS, function($CB_ARGS) { $BODY })"
+  language: typescript
+  file_glob: "**/*.ts"
