@@ -22,8 +22,11 @@ def vuln_reach(ctx, from_entry, cve_id):
     """Query reachability of ingested vulnerabilities through the call graph.
 
     Analyzes whether vulnerabilities are reachable from entry points (symbols
-    with no incoming calls). Unreachable vulnerabilities can be safely
-    deprioritized.
+    with no incoming calls). Unlike ``vulns`` (which lists known vulnerabilities
+    with optional ``--reachable-only`` filtering) and ``vuln-map`` (which
+    ingests vulnerability data), this command traces call-graph paths from
+    vulnerable packages to entry points, showing hop distance and blast radius
+    per CVE.
 
     \b
     Examples:

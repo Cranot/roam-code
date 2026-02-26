@@ -79,6 +79,7 @@ def get_changed_files(
     commit_range: str | None = None,
     pr: bool = False,
     base_ref: str = "main",
+    untracked: bool = False,
 ) -> list[str]:
     """Get list of changed files from git diff.
 
@@ -87,6 +88,9 @@ def get_changed_files(
     - *staged*: files in the staging area
     - *pr*: files changed in ``base_ref..HEAD``
     - (default): unstaged working-tree changes
+
+    When *untracked* is True, also includes new files that are not yet
+    tracked by git (``git ls-files --others --exclude-standard``).
 
     Returns normalised forward-slash paths relative to the repo root.
     """
@@ -111,26 +115,55 @@ def get_changed_files(
         )
         if result.returncode != 0:
             return []
-        return [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
+        paths = [p.replace("\\", "/") for p in result.stdout.strip().splitlines() if p.strip()]
     except (FileNotFoundError, subprocess.TimeoutExpired):
         return []
+
+    if untracked:
+        try:
+            ut = subprocess.run(
+                ["git", "ls-files", "--others", "--exclude-standard"],
+                cwd=str(root),
+                capture_output=True,
+                text=True,
+                timeout=10,
+                encoding="utf-8",
+                errors="replace",
+            )
+            if ut.returncode == 0 and ut.stdout.strip():
+                for line in ut.stdout.strip().splitlines():
+                    line = line.strip()
+                    if line:
+                        paths.append(line.replace("\\", "/"))
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            pass
+
+    return paths
 
 
 def resolve_changed_to_db(conn, changed_paths: list[str]) -> dict[str, int]:
     """Map a list of changed paths to ``{path: file_id}`` using the index DB.
 
-    Falls back to LIKE matching when exact path fails (handles sub-directory
-    prefixes and normalisation differences).
+    Falls back to suffix matching when exact path fails (handles sub-directory
+    prefixes and normalisation differences).  Uses a basename index for O(1)
+    suffix lookups instead of scanning all files.
     """
     file_map: dict[str, int] = {}
     all_files = conn.execute("SELECT id, path FROM files").fetchall()
     exact: dict[str, tuple[int, str]] = {}
+    # Suffix index: basename -> list of (id, full_path) for fast fallback
+    suffix_idx: dict[str, list[tuple[int, str]]] = {}
     for f in all_files:
-        exact[f["path"]] = (f["id"], f["path"])
+        f_id, f_path = f["id"], f["path"]
+        exact[f_path] = (f_id, f_path)
+        basename = f_path.rsplit("/", 1)[-1]
+        suffix_idx.setdefault(basename, []).append((f_id, f_path))
     for path in changed_paths:
         hit = exact.get(path)
         if not hit:
-            for f_id, f_path in exact.values():
+            # Use suffix index: look up by basename, then verify endswith
+            basename = path.rsplit("/", 1)[-1]
+            for f_id, f_path in suffix_idx.get(basename, ()):
                 if f_path.endswith(path):
                     hit = (f_id, f_path)
                     break

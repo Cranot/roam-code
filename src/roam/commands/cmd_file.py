@@ -1,10 +1,12 @@
 """Show file skeleton: all definitions with signatures."""
 
-import subprocess
+from __future__ import annotations
+
 from collections import Counter
 
 import click
 
+from roam.commands.changed_files import get_changed_files
 from roam.commands.resolve import ensure_index, file_not_found_hint
 from roam.db.connection import find_project_root, open_db
 from roam.db.queries import FILE_BY_PATH, SYMBOLS_IN_FILE
@@ -28,31 +30,11 @@ def _resolve_file(conn, path):
 
 
 def _get_changed_files():
-    """Get list of uncommitted changed file paths from git."""
+    """Get list of uncommitted changed file paths from git (staged + unstaged)."""
     root = find_project_root()
-    paths = set()
-    for cmd in (
-        ["git", "diff", "--name-only"],
-        ["git", "diff", "--name-only", "--staged"],
-    ):
-        try:
-            result = subprocess.run(
-                cmd,
-                cwd=str(root),
-                capture_output=True,
-                text=True,
-                timeout=10,
-                encoding="utf-8",
-                errors="replace",
-            )
-            if result.returncode == 0:
-                for p in result.stdout.strip().splitlines():
-                    p = p.strip()
-                    if p:
-                        paths.add(p.replace("\\", "/"))
-        except (FileNotFoundError, subprocess.TimeoutExpired):
-            pass
-    return sorted(paths)
+    unstaged = get_changed_files(root)
+    staged = get_changed_files(root, staged=True)
+    return sorted(set(unstaged) | set(staged))
 
 
 def _get_deps_of_file(conn, frow):
@@ -205,6 +187,10 @@ def _render_skeleton_text(frow, symbols, kind_counts, parent_ids, header=None):
 def file_cmd(ctx, paths, full, changed, deps_of):
     """Show file skeleton: all definitions with signatures.
 
+    Unlike ``context`` (which provides change-oriented analysis for a symbol),
+    this command shows the structural skeleton of a file: all definitions with
+    signatures and line ranges.
+
     Accepts one or more file paths.  With --changed, shows skeletons of all
     uncommitted changed files.  With --deps-of PATH, shows the skeleton of
     PATH plus every file it imports.
@@ -256,11 +242,18 @@ def file_cmd(ctx, paths, full, changed, deps_of):
 
             if json_mode:
                 obj = _skeleton_to_json(frow, symbols, kind_counts, parent_ids)
+                _fname = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
+                _kind_str = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
+                _file_verdict = (
+                    f"{_fname}: {len(symbols)} symbols ({_kind_str}), "
+                    f"{frow['line_count']} LOC"
+                )
                 click.echo(
                     to_json(
                         json_envelope(
                             "file",
                             summary={
+                                "verdict": _file_verdict,
                                 "symbols": len(symbols),
                                 "line_count": frow["line_count"],
                             },
@@ -276,6 +269,14 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 )
                 return
 
+            _fname_txt = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
+            _kind_str_txt = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
+            _file_verdict_txt = (
+                f"{_fname_txt}: {len(symbols)} symbols ({_kind_str_txt}), "
+                f"{frow['line_count']} LOC"
+            )
+            click.echo(f"VERDICT: {_file_verdict_txt}")
+            click.echo()
             text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids)
             click.echo("\n".join(text_lines))
             return
@@ -296,11 +297,16 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             for frow, symbols, kind_counts, parent_ids in file_results:
                 files_json.append(_skeleton_to_json(frow, symbols, kind_counts, parent_ids))
             total_symbols = sum(f["symbol_count"] for f in files_json)
+            _multi_verdict = (
+                f"{len(files_json)} files, {total_symbols} total symbols"
+                + (f", {len(missing)} not indexed" if missing else "")
+            )
             click.echo(
                 to_json(
                     json_envelope(
                         "file",
                         summary={
+                            "verdict": _multi_verdict,
                             "files": len(files_json),
                             "total_symbols": total_symbols,
                             "missing": missing,
@@ -312,6 +318,13 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             return
 
         # Text output
+        _total_syms_txt = sum(len(s) for _, s, _, _ in file_results)
+        _multi_verdict_txt = (
+            f"{len(file_results)} files, {_total_syms_txt} total symbols"
+            + (f", {len(missing)} not indexed" if missing else "")
+        )
+        click.echo(f"VERDICT: {_multi_verdict_txt}")
+        click.echo()
         if missing:
             for m in missing:
                 click.echo(f"(not indexed: {m})")
@@ -322,7 +335,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             if not first:
                 click.echo()
 
-            header = f"\u2500\u2500\u2500 {frow['path']} ({len(symbols)} symbols) \u2500\u2500\u2500"
+            header = f"--- {frow['path']} ({len(symbols)} symbols) ---"
             text_lines = _render_skeleton_text(
                 frow,
                 symbols,

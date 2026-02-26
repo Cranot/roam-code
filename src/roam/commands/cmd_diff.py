@@ -1,5 +1,7 @@
 """Show blast radius of uncommitted changes."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
@@ -300,6 +302,10 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
 def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
     """Show blast radius: what code is affected by your changes.
 
+    Unlike ``pr-diff`` (which compares CI-level metrics before and after),
+    this command shows the developer-facing blast radius of uncommitted or
+    committed changes.
+
     Optionally pass a COMMIT_RANGE (e.g. HEAD~3..HEAD, abc123, main..feature)
     to analyze committed changes instead of uncommitted ones.
 
@@ -307,6 +313,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
     or --full to enable all three plus untruncated output.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     root = find_project_root()
 
@@ -413,6 +420,11 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
         # ── JSON output ──────────────────────────────────────────────
 
         if json_mode:
+            _diff_verdict = (
+                f"{len(file_map)} files changed, "
+                f"{len(all_affected_syms)} symbols affected, "
+                f"{len(all_affected_files)} files in blast radius"
+            )
             envelope_data = dict(
                 label=commit_range or ("staged" if staged else "unstaged"),
                 changed_files=len(file_map),
@@ -424,6 +436,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
             )
 
             summary = {
+                "verdict": _diff_verdict,
                 "changed_files": len(file_map),
                 "affected_symbols": len(all_affected_syms),
                 "affected_files": len(all_affected_files),
@@ -477,6 +490,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
                 to_json(
                     json_envelope(
                         "diff",
+                        budget=token_budget,
                         summary=summary,
                         **envelope_data,
                     )
@@ -490,6 +504,13 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
             label = commit_range
         else:
             label = "staged" if staged else "unstaged"
+        _diff_verdict_text = (
+            f"{len(file_map)} files changed, "
+            f"{len(all_affected_syms)} symbols affected, "
+            f"{len(all_affected_files)} files in blast radius"
+        )
+        click.echo(f"VERDICT: {_diff_verdict_text}")
+        click.echo()
         click.echo(f"=== Blast Radius ({label} changes) ===\n")
         click.echo(f"Changed files: {len(file_map)}  Symbols defined: {total_syms}")
         click.echo(f"Affected symbols: {len(all_affected_syms)}  Affected files: {len(all_affected_files)}")

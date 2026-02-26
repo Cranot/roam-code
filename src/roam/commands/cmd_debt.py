@@ -4,6 +4,8 @@ Core insight (CodeScene): unhealthy code in hotspots (frequently changed files)
 costs 15x more than unhealthy cold code.  debt_score = health_penalty * hotspot_factor.
 """
 
+from __future__ import annotations
+
 import os
 from collections import defaultdict
 
@@ -485,6 +487,10 @@ def _group_by_directory(items):
 def debt(ctx, limit, by_kind, threshold, roi):
     """Hotspot-weighted technical debt prioritization.
 
+    Unlike ``complexity`` (which ranks individual symbols by cognitive
+    complexity), this command combines multiple health signals at the file
+    level, weighted by churn frequency.
+
     Combines code health signals (complexity, cycles, god components, dead
     exports) with churn hotspot data. Files that are both unhealthy AND
     frequently changed get amplified debt scores -- these are the highest
@@ -509,12 +515,14 @@ def debt(ctx, limit, by_kind, threshold, roi):
                     to_json(
                         json_envelope(
                             "debt",
-                            summary={"total_files": 0, "total_debt": 0},
+                            summary={"verdict": "no debt data — run roam index first", "total_files": 0, "total_debt": 0},
                             items=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no debt data — run roam index first")
+                click.echo()
                 click.echo("No file stats available. Run `roam index` first.")
             return
 
@@ -524,6 +532,22 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         stats = _summary_stats(all_items)
         suggestions = _improvement_suggestions(all_items)
+
+        # Build verdict
+        _n_cycles = stats["files_with_cycles"]
+        _n_gods = stats["files_with_god_components"]
+        _n_hotspots = stats["hotspot_files"]
+        _debt_label = (
+            "low debt" if stats["mean_debt"] < 0.1
+            else "moderate debt" if stats["mean_debt"] < 0.3
+            else "high debt"
+        )
+        _debt_verdict = (
+            f"{_debt_label}: {_n_cycles} cycle files, "
+            f"{_n_gods} god components, {_n_hotspots} hotspots "
+            f"across {stats['total_files']} files"
+        )
+
         roi_summary, roi_by_path = ({}, {})
         if roi:
             roi_summary, roi_by_path = _estimate_refactoring_roi(
@@ -549,7 +573,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
             if json_mode:
                 payload = {
-                    "summary": stats,
+                    "summary": {**stats, "verdict": _debt_verdict},
                     "budget": token_budget,
                     "suggestions": suggestions,
                     "grouping": "directory",
@@ -580,6 +604,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
                 return
 
             # Text output: grouped
+            click.echo(f"VERDICT: {_debt_verdict}")
+            click.echo()
             click.echo("=== Technical Debt by Directory ===\n")
             _print_summary(stats, suggestions)
             if roi and roi_summary:
@@ -614,7 +640,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
 
         if json_mode:
             payload = {
-                "summary": stats,
+                "summary": {**stats, "verdict": _debt_verdict},
                 "budget": token_budget,
                 "suggestions": suggestions,
                 "items": [
@@ -649,6 +675,8 @@ def debt(ctx, limit, by_kind, threshold, roi):
             return
 
         # Text output: flat
+        click.echo(f"VERDICT: {_debt_verdict}")
+        click.echo()
         click.echo("=== Technical Debt (hotspot-weighted) ===\n")
         _print_summary(stats, suggestions)
         if roi and roi_summary:

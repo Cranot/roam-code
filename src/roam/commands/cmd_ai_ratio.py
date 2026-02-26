@@ -23,6 +23,7 @@ import click
 
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
+from roam.graph.stats import gini_coefficient as compute_gini
 from roam.output.formatter import json_envelope, to_json
 
 log = logging.getLogger(__name__)
@@ -37,32 +38,6 @@ _W_BURST = 0.25
 _W_PATTERNS = 0.20
 _W_COMMENT = 0.15
 _W_TEMPORAL = 0.15
-
-# ---------------------------------------------------------------------------
-# Gini coefficient
-# ---------------------------------------------------------------------------
-
-
-def compute_gini(values: list[float]) -> float:
-    """Compute the Gini coefficient for a list of non-negative values.
-
-    Returns 0.0 for perfectly equal distributions and approaches 1.0
-    for maximally unequal distributions. Returns 0.0 for empty or
-    single-element lists.
-    """
-    n = len(values)
-    if n <= 1:
-        return 0.0
-    total = sum(values)
-    if total == 0:
-        return 0.0
-    sorted_vals = sorted(values)
-    cum = 0.0
-    numerator = 0.0
-    for i, v in enumerate(sorted_vals):
-        cum += v
-        numerator += (2 * (i + 1) - n - 1) * v
-    return numerator / (n * total)
 
 
 def _gini_signal(commits: list[dict]) -> float:
@@ -674,7 +649,14 @@ def analyse_ai_ratio(conn, since_days: int = 90) -> dict:
 @click.option("--detail", is_flag=True, help="Show per-file breakdown")
 @click.pass_context
 def ai_ratio(ctx, since, detail):
-    """Estimate the percentage of AI-generated code from git patterns."""
+    """Estimate the percentage of AI-generated code from git patterns.
+
+    Unlike ``vibe-check`` (which detects AI-generated source-code patterns)
+    and ``dev-profile`` (which profiles individual developer commit behavior),
+    this command estimates the codebase-wide AI-generated code ratio from
+    commit history signals: co-author tags, burst additions, and temporal
+    patterns.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 

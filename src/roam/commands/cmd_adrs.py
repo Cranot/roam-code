@@ -59,6 +59,7 @@ def _git_ls_files(project_root: Path) -> list[str] | None:
             cwd=str(project_root),
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
@@ -376,6 +377,10 @@ def adrs(ctx, filter_status, limit):
     architecture/decisions/, etc.), parses their metadata (title, status,
     date), and cross-references mentioned files/modules with the symbol
     index.
+
+    Unlike ``doc-staleness`` (which measures inline docstring drift),
+    this command focuses on prose decision documents and their linkage
+    to live code.
 
     Use --status to filter by ADR status:
 

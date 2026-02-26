@@ -142,6 +142,10 @@ def fn_coupling(ctx, min_count, limit, include_connected):
     together in commits but have NO direct edge (import/call) between them.
     These represent hidden dependencies that should either be made explicit
     or decoupled.
+
+    Unlike ``coupling`` (which detects file-level temporal coupling with
+    statistical metrics like Lift and NPMI), this command drills down to
+    individual functions and classes to pinpoint the exact symbols involved.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -232,6 +236,17 @@ def fn_coupling(ctx, min_count, limit, include_connected):
             all_ids.add(sb)
         sym_info = _load_symbol_info(conn, all_ids)
 
+        # --- Build verdict ---
+        if results:
+            sa0, sb0, cnt0, _e0 = results[0]
+            ia0 = sym_info.get(sa0, {})
+            ib0 = sym_info.get(sb0, {})
+            name_a0 = ia0.get("name", f"sym_{sa0}")
+            name_b0 = ib0.get("name", f"sym_{sb0}")
+            verdict = f"{len(hidden)} coupled function pairs, strongest: {name_a0}+{name_b0} ({cnt0} co-changes)"
+        else:
+            verdict = "no significant function coupling"
+
         # --- JSON output ---
         if json_mode:
             pairs = []
@@ -259,6 +274,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
                     json_envelope(
                         "fn-coupling",
                         summary={
+                            "verdict": verdict,
                             "pairs": len(pairs),
                             "hidden": hidden_count,
                             "connected": len(pairs) - hidden_count,
@@ -271,6 +287,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo("Function-level temporal coupling (hidden dependencies):\n")
 
         for sa, sb, count, has_edge in results:

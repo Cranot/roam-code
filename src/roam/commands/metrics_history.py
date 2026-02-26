@@ -211,6 +211,7 @@ def _git_info(root):
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=5,
         )
         if r.returncode == 0:
@@ -223,6 +224,7 @@ def _git_info(root):
             cwd=str(root),
             capture_output=True,
             text=True,
+            encoding="utf-8", errors="replace",
             timeout=5,
         )
         if r.returncode == 0:

@@ -15,7 +15,12 @@ from roam.output.formatter import json_envelope, to_json
 @click.option("--quiet", "-q", is_flag=True, help="Suppress progress output")
 @click.pass_context
 def index(ctx, force, verbose, quiet):
-    """Build or rebuild the codebase index."""
+    """Build or rebuild the codebase index.
+
+    Unlike ``init`` (which bootstraps the project with config files and
+    workflows), this command only rebuilds the codebase index and metrics
+    database.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     include_excluded = ctx.obj.get("include_excluded") if ctx.obj else False
     from roam.db.connection import db_exists, open_db
@@ -33,9 +38,6 @@ def index(ctx, force, verbose, quiet):
         quiet=suppress_progress,
     )
     elapsed = time.monotonic() - t0
-
-    if not json_mode and not quiet:
-        click.echo(f"Index complete. ({elapsed:.1f}s)")
 
     # Show summary stats
     if db_exists():
@@ -64,12 +66,17 @@ def index(ctx, force, verbose, quiet):
             ).fetchone()[0]
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
+            _index_verdict = (
+                f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
+            )
+
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "index",
                             summary={
+                                "verdict": _index_verdict,
                                 "files": file_count,
                                 "symbols": sym_count,
                                 "edges": edge_count,
@@ -86,6 +93,9 @@ def index(ctx, force, verbose, quiet):
                 )
             elif not quiet:
                 lang_str = ", ".join(f"{r['language']}={r['cnt']}" for r in lang_rows[:8])
+                click.echo(f"VERDICT: {_index_verdict}")
+                click.echo()
+                click.echo(f"  Completed in {elapsed:.1f}s")
                 click.echo(f"  Files: {file_count}  Symbols: {sym_count}  Edges: {edge_count}")
                 click.echo(f"  Languages: {lang_str}")
                 click.echo(f"  Avg symbols/file: {avg_sym:.1f}  Parse coverage: {coverage:.0f}%")

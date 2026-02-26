@@ -1,5 +1,7 @@
 """Find all consumers of a symbol: callers, importers, inheritors."""
 
+from __future__ import annotations
+
 import click
 
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
@@ -12,7 +14,12 @@ from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc,
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.pass_context
 def uses(ctx, name, full):
-    """Show all consumers of a symbol: callers, importers, inheritors."""
+    """Show all consumers of a symbol: callers, importers, inheritors.
+
+    Unlike ``impact`` (which computes transitive blast radius via graph
+    traversal), this command lists direct consumers grouped by relationship
+    type.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
@@ -58,13 +65,18 @@ def uses(ctx, name, full):
                     to_json(
                         json_envelope(
                             "uses",
-                            summary={"total_consumers": 0, "total_files": 0},
+                            summary={
+                                "verdict": f"no consumers of '{name}' found",
+                                "total_consumers": 0,
+                                "total_files": 0,
+                            },
                             symbol=name,
                             consumers={},
                         )
                     )
                 )
             else:
+                click.echo(f"VERDICT: no consumers of '{name}' found.\n")
                 click.echo(f"No consumers of '{name}' found.")
             return
 
@@ -103,11 +115,13 @@ def uses(ctx, name, full):
                 ]
             files = set(r["path"] for r in rows)
             total_consumers = sum(len(v) for v in json_groups.values())
+            _verdict = f"'{name}': {total_consumers} consumers in {len(files)} files"
             click.echo(
                 to_json(
                     json_envelope(
                         "uses",
                         summary={
+                            "verdict": _verdict,
                             "total_consumers": total_consumers,
                             "total_files": len(files),
                         },
@@ -121,6 +135,9 @@ def uses(ctx, name, full):
             return
 
         total = 0
+        # Compute totals for verdict
+        _files_set = set(r["path"] for r in rows)
+        click.echo(f"VERDICT: '{name}': {len(rows)} consumers in {len(_files_set)} files\n")
         click.echo(f"=== Consumers of '{name}' ===\n")
 
         # Show in a consistent order, then any remaining kinds

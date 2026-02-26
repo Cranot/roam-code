@@ -72,6 +72,10 @@ def config(
 ):
     """Manage per-project roam configuration (.roam/config.json).
 
+    Unlike ``doctor`` (which reads environment state for diagnostics), this command
+    writes and manages the per-project .roam/config.json: DB location, ONNX semantic
+    backend, and exclude patterns.
+
     Use ``--set-db-dir`` to redirect the SQLite database to a local directory
     when your project lives on a network drive or cloud-synced folder (OneDrive,
     Dropbox, etc.) where SQLite cannot open a read-only URI connection:

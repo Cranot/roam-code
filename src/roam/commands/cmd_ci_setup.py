@@ -193,8 +193,16 @@ def _get_default_branch(project_root: Path) -> str:
 def ci_setup(ctx, platform, write_file, python_version, gate):
     """Generate CI/CD pipeline config for roam-code integration.
 
+    Produces ready-to-commit pipeline YAML for GitHub Actions, GitLab CI,
+    Azure Pipelines, Jenkins, and Bitbucket.  Auto-detects the CI platform
+    from marker files or use --platform to specify one.
+
+    Unlike ``mcp-setup`` (which generates MCP server JSON configs), this
+    command generates full CI pipeline files that run ``roam health``,
+    ``roam check-rules``, and ``roam pr-risk`` on every pull request.
+
     \b
-    Auto-detects your CI platform or use --platform to specify one:
+    Platforms:
       github      GitHub Actions (composite action)
       gitlab      GitLab CI/CD
       azure       Azure DevOps Pipelines

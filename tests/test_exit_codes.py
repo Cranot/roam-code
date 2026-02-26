@@ -316,7 +316,7 @@ class TestGateFailureExitCode:
         try:
             os.chdir(str(proj))
             # Take a snapshot first
-            result = runner.invoke(cli, ["snapshot"], catch_exceptions=False)
+            result = runner.invoke(cli, ["trends", "--save"], catch_exceptions=False)
 
             # Run budget command
             result = runner.invoke(cli, ["budget"], catch_exceptions=False)

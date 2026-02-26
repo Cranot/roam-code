@@ -269,6 +269,9 @@ def _suggest_refactor(names: list[str], pattern: str) -> str:
 def duplicates(ctx, threshold, min_lines, scope):
     """Detect semantically duplicate functions via structural similarity.
 
+    Unlike ``smells`` (which detects structural anti-patterns like god classes),
+    this command clusters semantically similar functions for consolidation.
+
     Finds functions that are structurally similar (same control flow,
     parameter shape, naming pattern) but not textual clones.  Uses
     AST-derived metrics from the index for comparison.
@@ -329,6 +332,32 @@ def duplicates(ctx, threshold, min_lines, scope):
                 )
             else:
                 click.echo(f"VERDICT: {verdict}")
+            return
+
+        # ── Performance guard: cap candidates to avoid O(n^2) blowup ──
+        _MAX_CANDIDATES = 2000
+        if len(candidates) > _MAX_CANDIDATES and not scope:
+            warning = (
+                f"Too many candidates ({len(candidates)} functions) for duplicate detection. "
+                "Use --scope to limit scope."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "duplicates",
+                            summary={
+                                "verdict": warning,
+                                "total_clusters": 0,
+                                "total_functions": 0,
+                                "estimated_reducible_lines": 0,
+                            },
+                            clusters=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {warning}")
             return
 
         # Build lookup

@@ -1,5 +1,7 @@
 """Show temporal coupling: files that change together."""
 
+from __future__ import annotations
+
 import math
 
 import click
@@ -205,10 +207,15 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
 def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
     """Show temporal coupling: file pairs that change together.
 
+    Unlike ``fn-coupling`` (which tracks symbol-level co-change) and
+    ``dark-matter`` (which finds hidden coupling), this command measures
+    file-level temporal coupling from git history.
+
     Default: show top co-change pairs.
     With --staged or --against: show missing co-change partners for your changes.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -223,6 +230,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                         to_json(
                             json_envelope(
                                 "coupling",
+                                budget=token_budget,
                                 summary={"error": f"No changes for {label}"},
                             )
                         )
@@ -238,6 +246,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                         to_json(
                             json_envelope(
                                 "coupling",
+                                budget=token_budget,
                                 summary={"error": "Changed files not in index"},
                             )
                         )
@@ -257,9 +266,12 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
             surprise, best_pattern, similarity = _compute_surprise(conn, change_fids)
 
             if json_mode:
+                _against_verdict = "incomplete changeset" if missing else "complete changeset"
                 envelope = json_envelope(
                     "coupling",
+                    budget=token_budget,
                     summary={
+                        "verdict": _against_verdict,
                         "change_set": len(file_map),
                         "missing": len(missing),
                         "surprise_score": surprise,
@@ -276,6 +288,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                 return
 
             label = commit_range or "staged"
+            click.echo(f"VERDICT: {len(missing)} missing co-change partner(s)\n")
             click.echo(f"=== Coupling Check ({label}, {len(file_map)} files) ===\n")
             click.echo(f"Surprise score: {surprise:.0%}{'  (unfamiliar combination!)' if surprise > 0.7 else ''}")
             click.echo()
@@ -343,12 +356,14 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     to_json(
                         json_envelope(
                             "coupling",
-                            summary={"pairs": 0},
+                            budget=token_budget,
+                            summary={"verdict": "no significant coupling", "pairs": 0},
                             pairs=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no significant coupling\n")
                 click.echo("No co-change data available. Run `roam index` on a git repository.")
             return
 
@@ -434,16 +449,36 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     }
                 )
             hidden_pairs = sum(1 for p in pairs if not p["has_structural_edge"])
+            if pairs:
+                top = pairs[0]
+                a_base = top["file_a"].replace("\\", "/").rsplit("/", 1)[-1]
+                b_base = top["file_b"].replace("\\", "/").rsplit("/", 1)[-1]
+                strength_str = f" ({int(top['strength'] * 100)}%)" if top["strength"] else ""
+                verdict = f"{len(pairs)} coupled pairs, strongest: {a_base}+{b_base}{strength_str}"
+            else:
+                verdict = "no significant coupling"
             click.echo(
                 to_json(
                     json_envelope(
                         "coupling",
-                        summary={"pairs": len(pairs), "hidden_coupling": hidden_pairs},
+                        budget=token_budget,
+                        summary={"verdict": verdict, "pairs": len(pairs), "hidden_coupling": hidden_pairs},
                         pairs=pairs,
                     )
                 )
             )
             return
+
+        # Build verdict for text output
+        if table_rows:
+            top_row = table_rows[0]
+            a_base = rows[0]["path_a"].replace("\\", "/").rsplit("/", 1)[-1]
+            b_base = rows[0]["path_b"].replace("\\", "/").rsplit("/", 1)[-1]
+            strength_label = f" ({top_row[1]})" if top_row[1] else ""
+            verdict_txt = f"{len(table_rows)} coupled pairs, strongest: {a_base}+{b_base}{strength_label}"
+        else:
+            verdict_txt = "no significant coupling"
+        click.echo(f"VERDICT: {verdict_txt}\n")
 
         click.echo("=== Temporal coupling (co-change frequency) ===")
         click.echo(

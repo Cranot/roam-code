@@ -447,6 +447,10 @@ def api_drift_cmd(ctx, limit, confidence, model):
     Compares PHP model $fillable/$appends fields against TypeScript interface
     definitions to find:
 
+    Unlike ``orphan-routes`` (which finds dead endpoints) and ``over-fetch``
+    (which detects models exposing too many fields), this command focuses
+    on field-level type contract divergence between backend and frontend.
+
     \b
     [high]   Frontend expects a field the backend doesn't send → undefined at runtime
     [medium] Backend sends a field the frontend doesn't type  → wasted bandwidth

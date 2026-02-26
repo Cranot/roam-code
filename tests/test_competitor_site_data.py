@@ -61,7 +61,8 @@ def test_roam_counts_match_surface_source_of_truth():
 
     assert roam["mcp"] == str(surface["mcp"]["registered_tools"])
     assert str(surface["cli"]["canonical_commands"]) in roam["cli_commands"]
-    assert re.search(r"\+1 alias", roam["cli_commands"])
+    alias_count = surface["cli"]["alias_names"]
+    assert re.search(rf"\+{alias_count} alias", roam["cli_commands"])
 
 
 # ---------------------------------------------------------------------------

@@ -631,6 +631,11 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
     2. Controller CRUD methods without $this->authorize() / Gate::allows() checks
     3. Controller read methods without any authorization call (low confidence)
 
+    Unlike ``coverage-gaps`` (which checks call-graph reachability from entry
+    points to gate symbols), this command performs PHP/Laravel-specific source
+    analysis — parsing route group nesting, constructor middleware, and
+    ServiceProvider registrations to find unprotected endpoints.
+
     Confidence levels:
       high   - Route outside any auth group AND no controller-level auth
       medium - CRUD method missing explicit object-level authorization

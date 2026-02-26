@@ -462,8 +462,14 @@ def _analyze_error_handling(conn) -> dict:
 @click.option("-n", "max_outliers", default=10, help="Maximum outliers to display per category")
 @click.pass_context
 def conventions(ctx, max_outliers):
-    """Auto-detect codebase naming, file, import, and export conventions."""
+    """Auto-detect codebase naming, file, import, and export conventions.
+
+    Unlike ``verify`` (which enforces conventions on changed files) and
+    ``check-rules`` (which evaluates governance rules), this command
+    discovers what conventions the codebase actually follows.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -551,6 +557,17 @@ def conventions(ctx, max_outliers):
         # ---- 5. Export patterns ----
         export_info = _analyze_exports(conn)
 
+        # ---- Build verdict ----
+        # Dominant naming style across all groups
+        dominant_desc = ""
+        if naming_summary:
+            # Pick the group with the most symbols to represent overall style
+            biggest_group = max(naming_summary.values(), key=lambda g: g["total"])
+            dominant_desc = f"{biggest_group['dominant_style']} ({biggest_group['percent']}%)"
+        test_desc = f"{file_info['test_file_count']} test files" if file_info["test_file_count"] else "no test files"
+        outlier_desc = f"{len(outliers)} naming outliers" if outliers else "consistent naming"
+        verdict = f"{outlier_desc}, {dominant_desc}, {test_desc}"
+
         # ---- JSON output ----
         if json_mode:
             violation_list = [
@@ -565,6 +582,7 @@ def conventions(ctx, max_outliers):
                 for o in outliers
             ]
             summary = {
+                "verdict": verdict,
                 "total_symbols_analyzed": len(symbol_details),
                 "naming_groups": len(naming_summary),
                 "outlier_count": len(outliers),
@@ -579,6 +597,7 @@ def conventions(ctx, max_outliers):
                     json_envelope(
                         "conventions",
                         summary=summary,
+                        budget=token_budget,
                         naming=naming_summary,
                         affixes=affixes,
                         files=file_info,
@@ -592,6 +611,7 @@ def conventions(ctx, max_outliers):
             return
 
         # ---- Text output ----
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Conventions detected in {project}:\n")
 
         # -- Naming --

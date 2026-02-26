@@ -194,7 +194,6 @@ def _clusters_mermaid(conn, rows, min_size):
     visible_ids = {r["cluster_id"] for r in visible[:15]}
     visible_pairs = {k: v for k, v in inter_pairs.items() if k[0] in visible_ids and k[1] in visible_ids}
     top_inter = sorted(visible_pairs.items(), key=lambda x: -x[1])[:10]
-    cl_labels = {r["cluster_id"]: r["cluster_label"] for r in rows}
     for (ca, cb), cnt in top_inter:
         # Use cluster-level node IDs for inter-cluster edges
         # Pick the first symbol from each cluster as the edge anchor
@@ -228,10 +227,19 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
     if mermaid is not None:
         extra["mermaid"] = mermaid
 
+    # Build verdict
+    n_visible = len(visible)
+    largest = max(visible, key=lambda r: r["size"]) if visible else None
+    if largest:
+        verdict = f"{n_visible} clusters, largest: {largest['cluster_label']}({largest['size']} syms)"
+    else:
+        verdict = "no clusters detected"
+
     envelope = json_envelope(
         "clusters",
         summary={
-            "clusters": len(visible),
+            "verdict": verdict,
+            "clusters": n_visible,
             "mismatches": sum(1 for m in mismatches if m["cluster_id"] in visible_ids),
             "modularity_q": quality["modularity"],
             "mean_conductance": quality["mean_conductance"],
@@ -304,6 +312,14 @@ def clusters(ctx, min_size, mermaid_mode):
         if json_mode:
             _clusters_json(conn, rows, min_size, quality, detail=detail, token_budget=token_budget)
             return
+
+        visible_pre = [r for r in rows if r["size"] >= min_size]
+        if visible_pre:
+            largest_pre = max(visible_pre, key=lambda r: r["size"])
+            verdict_text = f"{len(visible_pre)} clusters, largest: {largest_pre['cluster_label']}({largest_pre['size']} syms)"
+        else:
+            verdict_text = "no clusters detected"
+        click.echo(f"VERDICT: {verdict_text}\n")
 
         click.echo("=== Clusters ===")
         if not rows:

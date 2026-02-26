@@ -1,5 +1,7 @@
 """Detect knowledge loss risk per module (bus factor analysis)."""
 
+from __future__ import annotations
+
 import math
 import time
 
@@ -260,7 +262,13 @@ def _query_brain_methods(conn):
 @click.option("--brain-methods", is_flag=True, help="Show disproportionately complex functions")
 @click.pass_context
 def bus_factor(ctx, limit, stale_months, brain_methods):
-    """Detect knowledge loss risk per module (bus factor analysis)."""
+    """Detect knowledge loss risk per module (bus factor analysis).
+
+    Unlike ``simulate-departure`` (which models the impact of a specific developer
+    leaving) and ``drift`` (which measures ownership divergence from CODEOWNERS),
+    this command scans all directories for knowledge concentration using Shannon
+    entropy and staleness factors.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -269,15 +277,17 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
         brain_list = _query_brain_methods(conn) if brain_methods else []
 
         if not results:
+            no_data_verdict = "no git history data available"
             if json_mode:
                 envelope_kwargs = dict(
-                    summary={"directory_count": 0, "high_risk": 0},
+                    summary={"verdict": no_data_verdict, "directory_count": 0, "high_risk": 0},
                     directories=[],
                 )
                 if brain_methods:
                     envelope_kwargs["brain_methods"] = brain_list
                 click.echo(to_json(json_envelope("bus-factor", **envelope_kwargs)))
             else:
+                click.echo(f"VERDICT: {no_data_verdict}\n")
                 click.echo("No git history data available. Run 'roam index' first.")
                 if brain_methods and brain_list:
                     _print_brain_methods(brain_list)
@@ -291,8 +301,20 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
         stale_count = sum(1 for r in results if r["stale_primary"])
         critical_entropy_count = sum(1 for r in results if r["knowledge_risk"] == "CRITICAL")
 
+        # Build verdict
+        if results:
+            top_dir = results[0]
+            min_bf = min(r["bus_factor"] for r in results)
+            bus_verdict = (
+                f"bus factor {min_bf} (min), {high_risk} high-risk, "
+                f"{concentrated_count} single-owner modules, top risk: {top_dir['directory']}"
+            )
+        else:
+            bus_verdict = "no data"
+
         if json_mode:
             summary = {
+                "verdict": bus_verdict,
                 "directory_count": len(results),
                 "high_risk": high_risk,
                 "medium_risk": medium_risk,
@@ -334,6 +356,7 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {bus_verdict}\n")
         click.echo("Knowledge risk by module:")
         click.echo(
             f"  ({len(results)} directories analysed, "

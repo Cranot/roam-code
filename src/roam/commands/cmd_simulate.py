@@ -8,6 +8,8 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
+_MAX_GRAPH_SYMBOLS = 10000
+
 
 def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     """Shared flow for all simulate subcommands.
@@ -33,6 +35,15 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     )
 
     with open_db(readonly=True) as conn:
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > _MAX_GRAPH_SYMBOLS:
+            msg = (
+                f"Warning: large graph ({sym_count} symbols) -- "
+                "simulation may be slow."
+            )
+            if not json_mode:
+                click.echo(msg, err=True)
+
         G = build_symbol_graph(conn)
         before = compute_graph_metrics(G)
 
@@ -211,6 +222,9 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
 @click.pass_context
 def simulate(ctx):
     """Counterfactual architecture simulator.
+
+    Unlike ``mutate`` (which generates actual code changes), this command
+    predicts metric deltas on a cloned graph without modifying any files.
 
     Test structural changes (move, extract, merge, delete) on the dependency
     graph and see predicted metric deltas before making actual code changes.

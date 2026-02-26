@@ -169,10 +169,9 @@ def _group_by_module(changed_files, affected_files):
 def affected(ctx, base_ref, max_depth, use_changed):
     """Identify affected files/modules from a git diff via dependency graph.
 
-    Walks forward through the dependency graph from changed files to find
-    all transitively affected code.  Groups results by impact depth
-    (DIRECT, TRANSITIVE-1, TRANSITIVE-2+) and identifies affected tests
-    and entry points.
+    Unlike ``affected-tests`` (which traces backward from code to test files that
+    exercise it), this command traces forward from changed files to find all
+    downstream dependents, entry points, and module-level impact groups.
 
     Use --base to specify the git ref to diff against (default: HEAD~1).
     Use --depth to limit the maximum dependency traversal depth.
@@ -270,7 +269,6 @@ def affected(ctx, base_ref, max_depth, use_changed):
                 sym_to_file[r["id"]] = r["file_path"]
 
         # Classify affected files by depth
-        affected_direct = set()  # files that were changed (depth 0)
         affected_t1 = {}  # file -> via (1 hop)
         affected_t2plus = {}  # file -> via (2+ hops)
         all_affected_sym_ids = set()

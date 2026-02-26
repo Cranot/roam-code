@@ -1,4 +1,17 @@
-"""Auto-generate a project description for AI coding agents."""
+"""Auto-generate a project description for AI coding agents.
+
+Prefer ``roam understand --agent`` for the compact token-efficient variant
+(equivalent to ``roam describe --agent-prompt``), or plain ``roam understand``
+for the full architecture overview.
+
+This command is kept as a standalone entry point for its ``--write`` /
+``-o PATH`` flags, which persist the project description to an agent config
+file (CLAUDE.md, AGENTS.md, .cursor/rules, etc.).
+
+Helper functions in this module (``_agent_prompt_data``,
+``_format_agent_prompt``) are imported by ``roam.commands.cmd_understand``
+and must not be removed.
+"""
 
 from __future__ import annotations
 
@@ -8,7 +21,7 @@ from pathlib import Path
 
 import click
 
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
@@ -66,35 +79,9 @@ def _section_directories(conn):
 
 
 def _section_entry_points(conn):
-    """Entry points: conventional names + main() functions."""
+    """Entry points: conventional names, main() functions, and route/command decorators."""
     lines = ["", "## Entry Points", ""]
-    entry_names = {
-        "main.py",
-        "__main__.py",
-        "__init__.py",
-        "index.js",
-        "index.ts",
-        "main.go",
-        "main.rs",
-        "app.py",
-        "app.js",
-        "app.ts",
-        "mod.rs",
-        "lib.rs",
-        "setup.py",
-        "manage.py",
-    }
-    files = conn.execute("SELECT path FROM files").fetchall()
-    entries = [f["path"] for f in files if os.path.basename(f["path"]) in entry_names]
-
-    main_files = conn.execute(
-        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
-        "WHERE s.name = 'main' AND s.kind = 'function'",
-    ).fetchall()
-    for r in main_files:
-        if r["path"] not in entries:
-            entries.append(r["path"])
-
+    entries = [ep["path"] for ep in detect_entry_points(conn)]
     if entries:
         for e in entries[:25]:
             lines.append(f"- `{e}`")
@@ -888,6 +875,10 @@ def describe(ctx, write, force, agent_prompt, out_file):
     By default prints to stdout.  Use ``--write`` to save to your agent's
     config file (auto-detected: CLAUDE.md, AGENTS.md, .cursor/rules, etc.)
     or ``-o PATH`` to specify an explicit output path.
+
+    Unlike ``understand`` (which provides a compact codebase overview), this
+    command generates a comprehensive multi-section Markdown report with
+    ``--write`` to persist directly to CLAUDE.md, AGENTS.md, or .cursor/rules.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -896,17 +887,23 @@ def describe(ctx, write, force, agent_prompt, out_file):
         with open_db(readonly=True) as conn:
             data = _agent_prompt_data(conn)
 
+        _ap_verdict = (
+            f"{data.get('project', 'project')}: {data.get('files', 0)} files, "
+            f"{data.get('languages', 'unknown')} | health={data.get('health_score', 'N/A')}"
+        )
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "describe",
-                        summary={"mode": "agent-prompt"},
+                        summary={"verdict": _ap_verdict, "mode": "agent-prompt"},
                         **data,
                     )
                 )
             )
         else:
+            click.echo(f"VERDICT: {_ap_verdict}")
+            click.echo()
             click.echo(_format_agent_prompt(data))
         return
 
@@ -926,17 +923,28 @@ def describe(ctx, write, force, agent_prompt, out_file):
 
         output = "\n".join(line for sec in sections for line in sec)
 
+        # Gather compact verdict data
+        _total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        _lang_counts = Counter(f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"])
+        _top_lang = _lang_counts.most_common(1)[0][0] if _lang_counts else "unknown"
+        _n_langs = len(_lang_counts)
+
+    _desc_verdict = f"{_top_lang} project, {_total_files} files, {_n_langs} languages"
+
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "describe",
-                    summary={"length": len(output)},
+                    summary={"verdict": _desc_verdict, "length": len(output)},
                     markdown=output,
                 )
             )
         )
         return
+
+    click.echo(f"VERDICT: {_desc_verdict}")
+    click.echo()
 
     if write or out_file:
         from pathlib import Path

@@ -8,6 +8,8 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
+_MAX_GRAPH_SYMBOLS = 5000
+
 
 @click.command("cut")
 @click.option("--between", nargs=2, default=None, help="Analyze boundary between two clusters")
@@ -16,6 +18,10 @@ from roam.output.formatter import json_envelope, to_json
 @click.pass_context
 def cut(ctx, between, leak_edges, top_n):
     """Minimum cut analysis — find fragile domain boundaries.
+
+    Unlike ``split`` (which decomposes a single file), this command finds
+    the thinnest boundaries between architectural clusters using graph
+    min-cut analysis.
 
     Computes minimum edge cuts between architectural clusters to identify
     the thinnest (most fragile) boundaries and the highest-impact "leak
@@ -32,6 +38,25 @@ def cut(ctx, between, leak_edges, top_n):
             from roam.graph.clusters import detect_clusters, label_clusters
         except ImportError:
             click.echo("VERDICT: NetworkX required for cut analysis")
+            return
+
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        if sym_count > _MAX_GRAPH_SYMBOLS and not between:
+            msg = (
+                f"Graph too large ({sym_count} symbols) for cut analysis. "
+                "Index a subdirectory to reduce graph size."
+            )
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "cut",
+                            summary={"verdict": msg, "symbol_count": sym_count},
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: {msg}")
             return
 
         G = build_symbol_graph(conn)

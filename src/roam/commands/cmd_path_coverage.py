@@ -8,7 +8,7 @@ import click
 
 from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -124,7 +124,16 @@ def _find_sinks_fallback(conn, to_pattern):
 # ---------------------------------------------------------------------------
 
 
-def _find_paths(conn, entry_id, sink_ids, max_depth):
+def _build_adjacency(conn):
+    """Pre-build a forward adjacency dict from the edges table."""
+    adj: dict[int, list[int]] = {}
+    rows = conn.execute("SELECT source_id, target_id FROM edges").fetchall()
+    for r in rows:
+        adj.setdefault(r["source_id"], []).append(r["target_id"])
+    return adj
+
+
+def _find_paths(adj, entry_id, sink_ids, max_depth):
     """BFS from entry_id, return list of paths (as node ID lists) that reach any sink."""
     paths = []
     queue = deque()
@@ -139,12 +148,7 @@ def _find_paths(conn, entry_id, sink_ids, max_depth):
             paths.append(path)
             continue  # don't continue traversal past a sink
 
-        callees = conn.execute(
-            "SELECT target_id FROM edges WHERE source_id = ?",
-            (current,),
-        ).fetchall()
-        for row in callees:
-            tid = row["target_id"]
+        for tid in adj.get(current, []):
             if tid not in visited:
                 visited.add(tid)
                 queue.append((tid, path + [tid]))
@@ -168,23 +172,23 @@ def _build_tested_set(conn):
     if not test_file_ids:
         return tested
 
-    # All symbols that are targets of edges originating from test symbols
-    for file_id in test_file_ids:
-        rows = conn.execute(
-            "SELECT e.target_id FROM edges e JOIN symbols s ON e.source_id = s.id WHERE s.file_id = ?",
-            (file_id,),
-        ).fetchall()
-        for r in rows:
-            tested.add(r["target_id"])
+    test_file_id_list = list(test_file_ids)
 
-    # Also include symbols that live inside test files themselves
-    for file_id in test_file_ids:
-        rows = conn.execute(
-            "SELECT id FROM symbols WHERE file_id = ?",
-            (file_id,),
-        ).fetchall()
-        for r in rows:
-            tested.add(r["id"])
+    # All symbols that are targets of edges originating from test symbols (batched)
+    for r in batched_in(
+        conn,
+        "SELECT e.target_id FROM edges e JOIN symbols s ON e.source_id = s.id WHERE s.file_id IN ({ph})",
+        test_file_id_list,
+    ):
+        tested.add(r["target_id"])
+
+    # Also include symbols that live inside test files themselves (batched)
+    for r in batched_in(
+        conn,
+        "SELECT id FROM symbols WHERE file_id IN ({ph})",
+        test_file_id_list,
+    ):
+        tested.add(r["id"])
 
     return tested
 
@@ -297,6 +301,10 @@ def _suggest_test_points(untested_paths, tested_set):
 def path_coverage(ctx, from_pattern, to_pattern, max_depth):
     """Find critical untested paths from entry points to sensitive sinks.
 
+    Unlike ``coverage-gaps`` (which finds unprotected entry points), this
+    command traces full call paths from entry points to sensitive sinks and
+    identifies untested paths.
+
     Traces call graph paths from entry points (functions with no callers) to
     sensitive sinks (functions with side effects like DB writes or network I/O)
     and identifies which paths have zero test coverage.  Suggests the minimal
@@ -310,6 +318,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
       roam path-coverage --max-depth 5
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -330,15 +339,17 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                 len(sink_info),
                 from_pattern,
                 to_pattern,
+                token_budget=token_budget,
             )
             return
 
         sink_id_set = set(sink_info.keys())
 
         # --- 3. BFS path search ---
+        adj = _build_adjacency(conn)
         all_paths = []
         for entry in entries:
-            paths = _find_paths(conn, entry["id"], sink_id_set, max_depth)
+            paths = _find_paths(adj, entry["id"], sink_id_set, max_depth)
             all_paths.extend(paths)
 
         # Deduplicate paths (same node sequence)
@@ -357,6 +368,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                 len(sink_info),
                 from_pattern,
                 to_pattern,
+                token_budget=token_budget,
             )
             return
 
@@ -370,20 +382,19 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             all_node_ids.update(path)
 
         sym_info = {}
-        for nid in all_node_ids:
-            row = conn.execute(
-                "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start "
-                "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                (nid,),
-            ).fetchone()
-            if row:
-                sym_info[nid] = {
-                    "id": row["id"],
-                    "name": row["name"],
-                    "kind": row["kind"],
-                    "file": row["file_path"],
-                    "line": row["line_start"] or 0,
-                }
+        for row in batched_in(
+            conn,
+            "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start "
+            "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+            list(all_node_ids),
+        ):
+            sym_info[row["id"]] = {
+                "id": row["id"],
+                "name": row["name"],
+                "kind": row["kind"],
+                "file": row["file_path"],
+                "line": row["line_start"] or 0,
+            }
 
         classified_paths = []
         untested_paths_for_cover = []
@@ -480,6 +491,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
                             "critical": counts["CRITICAL"],
                             "high": counts["HIGH"],
                         },
+                        budget=token_budget,
                         paths=paths_clean,
                         suggestions=suggestions,
                         entry_points_found=len(entries),
@@ -530,7 +542,7 @@ def path_coverage(ctx, from_pattern, to_pattern, max_depth):
             click.echo("No test insertion suggestions (all paths have some coverage).")
 
 
-def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_pattern):
+def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_pattern, token_budget=0):
     """Emit a graceful message when no entry→sink paths can be found."""
     if from_pattern or to_pattern:
         note = "No paths found matching the specified filters."
@@ -555,6 +567,7 @@ def _no_paths_output(json_mode, entry_count, sink_count, from_pattern, to_patter
                         "critical": 0,
                         "high": 0,
                     },
+                    budget=token_budget,
                     paths=[],
                     suggestions=[],
                     entry_points_found=entry_count,

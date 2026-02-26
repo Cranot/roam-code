@@ -288,7 +288,12 @@ def _build_steps(
 )
 @click.pass_context
 def plan_refactor(ctx, symbol, operation, target_file, max_steps):
-    """Build an ordered refactoring plan with risk, test, and impact context."""
+    """Build an ordered refactoring plan with risk, test, and impact context.
+
+    Unlike ``suggest-refactoring`` (which screens for refactoring
+    candidates), this command builds a detailed execution plan with
+    simulation previews for a specific symbol.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = bool(ctx.obj.get("detail", False)) if ctx.obj else False
@@ -322,7 +327,18 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
             move_sensitive_count=layers["move_sensitive_count"],
         )
 
-        previews = _simulation_previews(conn, sym, operation, target_file)
+        # Performance guard: skip simulation previews on large codebases
+        _MAX_SIM_SYMBOLS = 5000
+        _symbol_count = conn.execute("SELECT COUNT(*) AS cnt FROM symbols").fetchone()["cnt"]
+        if _symbol_count > _MAX_SIM_SYMBOLS:
+            previews = []
+            click.echo(
+                f"NOTE: Simulation previews skipped ({_symbol_count} symbols, "
+                "use smaller codebase for simulation)",
+                err=True,
+            )
+        else:
+            previews = _simulation_previews(conn, sym, operation, target_file)
 
     selected_preview = previews[0] if previews else None
     plan_steps = _build_steps(
@@ -396,8 +412,8 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
         return
 
     lines = [
-        f"Refactor plan: {definition['qualified_name']} {definition['location']}",
         f"VERDICT: {verdict}",
+        f"Refactor plan: {definition['qualified_name']} {definition['location']}",
         (
             "Context: "
             f"{len(context['non_test_callers'])} callers, "

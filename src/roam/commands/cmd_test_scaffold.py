@@ -84,7 +84,6 @@ def _scaffold_python(symbols, source_path, framework="pytest"):
 
     # Collect importable names
     importable = [s["name"] for s in symbols if s["kind"] in ("function", "class")]
-    methods = [s for s in symbols if s["kind"] == "method"]
 
     if framework == "unittest":
         lines.append("import unittest")
@@ -295,8 +294,6 @@ def _scaffold_java(symbols, source_path, framework="junit5"):
     lines.append("")
     lines.append(f"class {base_name}Test {{")
     lines.append("")
-
-    class_methods = _group_methods_by_parent(symbols)
 
     for sym in symbols:
         if sym["kind"] in ("function", "method"):
@@ -594,6 +591,9 @@ def test_scaffold(ctx, name, write, framework):
     (functions, classes, methods) and generates a test file skeleton
     with proper imports and stubs.  If the test file already exists,
     only adds stubs for untested symbols.
+
+    Use ``affected-tests`` to find which existing tests cover a symbol.
+    Use this command to generate stubs for symbols that have no tests yet.
 
     By default shows the scaffold (dry-run).  Use --write to create
     the file on disk.

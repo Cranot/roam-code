@@ -22,7 +22,13 @@ from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 )
 @click.pass_context
 def search_semantic(ctx, query, top_k, threshold, backend):
-    """Find symbols by natural language query (hybrid BM25 + vector + packs)."""
+    """Find symbols by natural language query (hybrid BM25 + vector + packs).
+
+    Unlike ``search`` (which matches exact symbol name substrings), this
+    command uses semantic similarity to find conceptually related symbols.
+    Query "auth middleware" may return ``validate_token`` or ``check_session``
+    even though they share no keywords with the query.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
     backend = (backend or "auto").lower()

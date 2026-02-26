@@ -354,13 +354,7 @@ def compute_partition_manifest(
         # with files in OTHER partitions
         cochange_score = 0
         partition_file_ids = {file_path_to_id[f] for f in files_set if f in file_path_to_id}
-        for fid_a in partition_file_ids:
-            for fid_b, count in cochange_map.items():
-                if fid_b[0] == fid_a:
-                    other_fid = fid_b[1] if len(fid_b) > 1 else fid_b
-                    # This is handled differently — iterate cochange pairs
-                    pass
-        # Simpler approach: iterate known cochange pairs
+        # Iterate known cochange pairs
         for (fid_a, fid_b), count in cochange_map.items():
             if fid_a in partition_file_ids and fid_b not in partition_file_ids:
                 cochange_score += count
@@ -606,6 +600,11 @@ def partition(ctx, n_agents, output_format):
     Partitions the codebase into non-overlapping work zones using community
     detection, then enriches each partition with conflict probability,
     test coverage, estimated complexity, and a suggested agent role.
+
+    Unlike ``orchestrate`` (which assigns scoped write zones and interface
+    contracts for immediate multi-agent dispatch), this command provides
+    deeper analytical metrics: difficulty scores, churn, co-change coupling,
+    and the ``--format claude-teams`` output for SDK integration.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

@@ -163,7 +163,12 @@ def _format_explanation_text(expl: dict) -> list[str]:
 @click.option("--explain", is_flag=True, help="Show score breakdown for each result")
 @click.pass_context
 def search(ctx, pattern, full, kind_filter, explain):
-    """Find symbols matching a name substring (case-insensitive)."""
+    """Find symbols matching a name substring (case-insensitive).
+
+    Unlike ``grep`` (which searches file contents) and ``search-semantic``
+    (which uses natural-language queries), this command finds symbols by
+    exact name substring.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
@@ -178,18 +183,21 @@ def search(ctx, pattern, full, kind_filter, explain):
 
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""
+            _no_match_verdict = f"no matches for '{pattern}'{suffix}"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "search",
-                            summary={"total": 0},
+                            summary={"verdict": _no_match_verdict, "total": 0},
                             pattern=pattern,
                             results=[],
                         )
                     )
                 )
             else:
+                click.echo(f"VERDICT: {_no_match_verdict}")
+                click.echo()
                 click.echo(f"No symbols matching '{pattern}'{suffix}")
             return
 
@@ -211,6 +219,10 @@ def search(ctx, pattern, full, kind_filter, explain):
             for r in rows:
                 explanations[r["id"]] = _get_explain_data(conn, r["id"], pattern)
 
+        _search_verdict = f"{len(rows)} matches for '{pattern}'"
+        if kind_filter:
+            _search_verdict += f" (kind={kind_filter})"
+
         if json_mode:
             results_list = []
             for r in rows:
@@ -231,7 +243,7 @@ def search(ctx, pattern, full, kind_filter, explain):
                 to_json(
                     json_envelope(
                         "search",
-                        summary={"total": len(rows), "pattern": pattern},
+                        summary={"verdict": _search_verdict, "total": len(rows), "pattern": pattern},
                         budget=token_budget,
                         pattern=pattern,
                         total=len(rows),
@@ -243,6 +255,8 @@ def search(ctx, pattern, full, kind_filter, explain):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {_search_verdict}")
+        click.echo()
         total = len(rows)
         if not full and total == 50:
             cnt = conn.execute(

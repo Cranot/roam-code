@@ -122,7 +122,16 @@ def _stale_docs(symbols: list[dict], threshold_days: int) -> list[dict]:
 )
 @click.pass_context
 def docs_coverage(ctx, limit, days, threshold):
-    """Analyze exported-symbol doc coverage and stale docs in one report."""
+    """Analyze exported-symbol doc coverage and stale docs in one report.
+
+    Reports coverage percentage, PageRank-ranked missing-doc hotlist, and
+    stale docs for the public API surface.  Use ``--threshold`` as a CI
+    gate (exits with code 5 if coverage is below the threshold).
+
+    Unlike ``doc-staleness`` (which scans ALL symbols including private
+    ones for stale docstrings), this command focuses on the exported public
+    API surface and prioritizes missing docs by symbol importance.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 

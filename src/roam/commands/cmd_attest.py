@@ -623,6 +623,10 @@ def attest(ctx, commit_range, staged, output_format, sign, output_file):
     budget consumed, affected tests, and effects into a single verifiable
     evidence artifact. Use --format markdown for PR comments.
 
+    Unlike ``pr-risk`` (which produces a single composite risk score),
+    this command assembles multiple independent evidence dimensions into
+    one auditable artifact.
+
     \\b
     Examples:
       roam attest                          # attest uncommitted changes

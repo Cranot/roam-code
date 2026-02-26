@@ -5,7 +5,6 @@ from __future__ import annotations
 import re
 
 import click
-import networkx as nx
 
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db
@@ -57,6 +56,8 @@ def _dot_node(node_id: int, label: str, kind: str, is_file: bool) -> str:
 
 def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiGraph:
     """BFS neighborhood around a focal symbol."""
+    import networkx as nx
+
     sym = find_symbol(conn, focus_name)
     if sym is None:
         raise click.ClickException(
@@ -295,7 +296,12 @@ def _emit_flat_nodes_dot(G: nx.DiGraph, lines: list[str], is_file_level: bool) -
 @click.option("--file-level", is_flag=True, help="Use file-level graph")
 @click.pass_context
 def visualize(ctx, fmt, focus, depth, limit, no_clusters, direction, file_level):
-    """Generate a Mermaid or DOT architecture diagram."""
+    """Generate a Mermaid or DOT architecture diagram.
+
+    Unlike ``map`` (which produces a text-based project skeleton), this
+    command generates Mermaid or DOT architecture diagrams with cluster
+    grouping and cycle highlighting.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 

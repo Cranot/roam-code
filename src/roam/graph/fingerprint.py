@@ -8,26 +8,7 @@ from collections import Counter, defaultdict
 
 import networkx as nx
 
-
-def _gini_coefficient(values: list[float]) -> float:
-    """Compute the Gini coefficient for a list of non-negative values.
-
-    Returns a value in [0, 1] where 0 = perfectly uniform and 1 = maximally
-    concentrated.  Uses the mean-difference formulation.
-    """
-    if not values or len(values) < 2:
-        return 0.0
-    n = len(values)
-    sorted_vals = sorted(values)
-    total = sum(sorted_vals)
-    if total == 0:
-        return 0.0
-    cumsum = 0.0
-    weighted_sum = 0.0
-    for i, v in enumerate(sorted_vals):
-        cumsum += v
-        weighted_sum += (2 * (i + 1) - n - 1) * v
-    return round(weighted_sum / (n * total), 6)
+from roam.graph.stats import gini_coefficient as _gini_coefficient
 
 
 def _hub_bridge_ratio(G: nx.DiGraph) -> float:

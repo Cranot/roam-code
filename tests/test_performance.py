@@ -268,22 +268,22 @@ class TestNewCommandPerformance:
         assert elapsed < QUERY_TIME_MS, f"coverage-gaps took {elapsed:.0f}ms"
 
     def test_snapshot_speed(self):
-        out, rc, elapsed = timed_roam("snapshot", "--tag", "bench", cwd=self.proj)
+        out, rc, elapsed = timed_roam("trends", "--save", "--tag", "bench", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"snapshot took {elapsed:.0f}ms"
+        assert elapsed < QUERY_TIME_MS, f"trends --save took {elapsed:.0f}ms"
 
     def test_trend_speed(self):
         # Ensure at least one snapshot exists
-        roam("snapshot", cwd=self.proj)
-        out, rc, elapsed = timed_roam("trend", cwd=self.proj)
+        roam("trends", "--save", cwd=self.proj)
+        out, rc, elapsed = timed_roam("trends", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"trend took {elapsed:.0f}ms"
+        assert elapsed < QUERY_TIME_MS, f"trends took {elapsed:.0f}ms"
 
     def test_trend_assert_speed(self):
-        roam("snapshot", cwd=self.proj)
-        out, rc, elapsed = timed_roam("trend", "--assert", "cycles<=100", cwd=self.proj)
+        roam("trends", "--save", cwd=self.proj)
+        out, rc, elapsed = timed_roam("trends", "--assert", "cycles<=100", cwd=self.proj)
         assert rc == 0
-        assert elapsed < QUERY_TIME_MS, f"trend --assert took {elapsed:.0f}ms"
+        assert elapsed < QUERY_TIME_MS, f"trends --assert took {elapsed:.0f}ms"
 
     def test_report_list_speed(self):
         out, rc, elapsed = timed_roam("report", "--list", cwd=self.proj)

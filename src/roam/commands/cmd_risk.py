@@ -283,6 +283,11 @@ def risk(ctx, count, domain_keywords, explain):
     criticality weights. Financial, auth, and data-integrity symbols
     rank higher than UI symbols.
 
+    Unlike ``fan`` (which ranks by raw fan-in/out degree), this command weights
+    structural connectivity by semantic domain relevance — using name keywords,
+    callee-chain BFS, and file-path zones to surface high-risk business logic
+    over infrastructure code.
+
     Domain matching uses three sources (highest wins):
     - Symbol name keyword matching
     - Callee-chain analysis (what the symbol calls, up to 3 hops)
@@ -325,12 +330,14 @@ def risk(ctx, count, domain_keywords, explain):
                     to_json(
                         json_envelope(
                             "risk",
-                            summary={"items": 0, "max_risk": 0},
+                            summary={"verdict": "no risk data — run roam index first", "items": 0, "max_risk": 0},
                             items=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no risk data — run roam index first")
+                click.echo()
                 click.echo("No graph metrics available. Run `roam index` first.")
             return
 
@@ -416,6 +423,17 @@ def risk(ctx, count, domain_keywords, explain):
         scored.sort(key=lambda x: -x["adjusted_risk"])
         scored = scored[:count]
 
+        # Build verdict
+        _critical_count = sum(1 for s in scored if s["adjusted_risk"] >= 30)
+        _high_count = sum(1 for s in scored if 15 <= s["adjusted_risk"] < 30)
+        _top_name = scored[0]["name"] if scored else "none"
+        _top_risk = scored[0]["adjusted_risk"] if scored else 0
+        _risk_level = "critical" if _critical_count > 0 else "high" if _high_count > 0 else "moderate"
+        _risk_verdict = (
+            f"{_risk_level} risk: {_critical_count} critical, {_high_count} high symbols; "
+            f"top: {_top_name}({_top_risk:.1f})"
+        )
+
         if json_mode:
             items = []
             for s in scored:
@@ -457,7 +475,7 @@ def risk(ctx, count, domain_keywords, explain):
                 to_json(
                     json_envelope(
                         "risk",
-                        summary={"count": len(items), "explain": explain},
+                        summary={"verdict": _risk_verdict, "count": len(items), "explain": explain},
                         items=items,
                     )
                 )
@@ -465,6 +483,8 @@ def risk(ctx, count, domain_keywords, explain):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {_risk_verdict}")
+        click.echo()
         click.echo("=== Domain-Weighted Risk ===")
         if domain_keywords:
             click.echo(f"  Custom domain keywords: {domain_keywords}")

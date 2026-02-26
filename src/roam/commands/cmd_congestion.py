@@ -186,10 +186,14 @@ def _compute_congestion(
 def congestion(ctx, window, min_authors, limit):
     """Detect developer congestion: files with too many concurrent authors.
 
-    Identifies files where multiple developers work simultaneously,
-    predicting coordination failures and merge conflicts.  Combines
-    author count, churn intensity, and code complexity into a single
-    congestion score.
+    Identifies files where multiple developers work simultaneously within
+    a sliding time window, predicting coordination failures and merge
+    conflicts.  Combines author count, churn intensity, and code
+    complexity into a single congestion score.
+
+    Unlike ``bus-factor`` (which measures knowledge-loss risk from author
+    concentration at the directory level), this command measures
+    merge-conflict risk from concurrent authorship at the file level.
 
     High-congestion files are merge-conflict hotspots.  Consider
     splitting them, assigning clear ownership, or introducing feature

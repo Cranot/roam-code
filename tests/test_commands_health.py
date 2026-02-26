@@ -366,66 +366,66 @@ class TestAlerts:
 
 
 class TestTrend:
-    """Tests for `roam trend` -- health history sparklines."""
+    """Tests for `roam trends` -- health history sparklines."""
 
     def test_trend_no_snapshots(self, cli_runner, indexed_project, monkeypatch):
-        """roam trend should handle gracefully when no snapshots exist.
+        """roam trends should handle gracefully when no snapshots exist.
 
         Note: indexing may create an automatic snapshot. Either way the
         command should not crash.
         """
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["trend"], cwd=indexed_project)
+        result = invoke_cli(cli_runner, ["trends"], cwd=indexed_project)
         # Should exit 0 whether or not snapshots exist
-        assert result.exit_code == 0, f"trend failed: {result.output}"
+        assert result.exit_code == 0, f"trends failed: {result.output}"
         out = result.output
         # Either shows snapshot table or 'No snapshots' message
         assert (
             "Trend" in out or "Score" in out or "Date" in out or "No snapshots" in out or "snapshot" in out.lower()
-        ), f"Unexpected trend output:\n{out}"
+        ), f"Unexpected trends output:\n{out}"
 
     def test_trend_with_snapshots(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam trend with multiple snapshots should show sparklines."""
+        """roam trends with multiple snapshots should show sparklines."""
         monkeypatch.chdir(project_with_snapshots)
-        result = invoke_cli(cli_runner, ["trend"], cwd=project_with_snapshots)
-        assert result.exit_code == 0, f"trend failed: {result.output}"
+        result = invoke_cli(cli_runner, ["trends"], cwd=project_with_snapshots)
+        assert result.exit_code == 0, f"trends failed: {result.output}"
         out = result.output
         assert "Trend" in out or "Score" in out or "Date" in out, f"Missing trend table in output:\n{out}"
 
     def test_trend_json(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam --json trend should return an envelope with snapshots array."""
+        """roam --json trends should return an envelope with snapshots array."""
         monkeypatch.chdir(project_with_snapshots)
-        result = invoke_cli(cli_runner, ["trend"], cwd=project_with_snapshots, json_mode=True)
-        data = parse_json_output(result, "trend")
-        assert_json_envelope(data, "trend")
-        assert "snapshots" in data, f"Missing 'snapshots' in trend JSON: {list(data.keys())}"
+        result = invoke_cli(cli_runner, ["trends"], cwd=project_with_snapshots, json_mode=True)
+        data = parse_json_output(result, "trends")
+        assert_json_envelope(data, "trends")
+        assert "snapshots" in data, f"Missing 'snapshots' in trends JSON: {list(data.keys())}"
         assert isinstance(data["snapshots"], list)
 
     def test_trend_json_has_snapshot_count(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam --json trend summary should report number of snapshots."""
+        """roam --json trends summary should report number of snapshots."""
         monkeypatch.chdir(project_with_snapshots)
-        result = invoke_cli(cli_runner, ["trend"], cwd=project_with_snapshots, json_mode=True)
-        data = parse_json_output(result, "trend")
+        result = invoke_cli(cli_runner, ["trends"], cwd=project_with_snapshots, json_mode=True)
+        data = parse_json_output(result, "trends")
         summary = data.get("summary", {})
         assert "snapshots" in summary, f"Missing 'snapshots' count in summary: {summary}"
         assert summary["snapshots"] > 0, "Expected at least 1 snapshot"
 
     def test_trend_assert_pass(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam trend --assert 'health_score>=0' should pass (exit 0)."""
+        """roam trends --assert 'health_score>=0' should pass (exit 0)."""
         monkeypatch.chdir(project_with_snapshots)
         result = invoke_cli(
             cli_runner,
-            ["trend", "--assert", "health_score>=0"],
+            ["trends", "--assert", "health_score>=0"],
             cwd=project_with_snapshots,
         )
-        assert result.exit_code == 0, f"trend --assert health_score>=0 should pass but failed: {result.output}"
+        assert result.exit_code == 0, f"trends --assert health_score>=0 should pass but failed: {result.output}"
 
     def test_trend_assert_fail(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam trend --assert 'health_score>=999' should fail with exit 1."""
+        """roam trends --assert 'health_score>=999' should fail with exit 1."""
         monkeypatch.chdir(project_with_snapshots)
         result = cli_runner.invoke(
             cli,
-            ["trend", "--assert", "health_score>=999"],
+            ["trends", "--assert", "health_score>=999"],
             catch_exceptions=True,
         )
         # SystemExit(1) is caught by CliRunner as exit_code=1
@@ -434,23 +434,23 @@ class TestTrend:
         )
 
     def test_trend_range(self, cli_runner, project_with_snapshots, monkeypatch):
-        """roam trend --range 3 should limit the number of snapshots shown."""
+        """roam trends --range 3 should limit the number of snapshots shown."""
         monkeypatch.chdir(project_with_snapshots)
         result = invoke_cli(
             cli_runner,
-            ["trend", "--range", "3"],
+            ["trends", "--range", "3"],
             cwd=project_with_snapshots,
             json_mode=True,
         )
-        data = parse_json_output(result, "trend")
+        data = parse_json_output(result, "trends")
         snapshots = data.get("snapshots", [])
         assert len(snapshots) <= 3, f"Expected at most 3 snapshots with --range 3, got {len(snapshots)}"
 
     def test_trend_json_snapshots_have_health_score(self, cli_runner, project_with_snapshots, monkeypatch):
-        """Each snapshot in trend JSON should have a health_score field."""
+        """Each snapshot in trends JSON should have a health_score field."""
         monkeypatch.chdir(project_with_snapshots)
-        result = invoke_cli(cli_runner, ["trend"], cwd=project_with_snapshots, json_mode=True)
-        data = parse_json_output(result, "trend")
+        result = invoke_cli(cli_runner, ["trends"], cwd=project_with_snapshots, json_mode=True)
+        data = parse_json_output(result, "trends")
         snapshots = data.get("snapshots", [])
         assert len(snapshots) > 0, "Expected at least one snapshot"
         for i, snap in enumerate(snapshots):
@@ -551,51 +551,51 @@ class TestFitness:
 
 
 class TestSnapshot:
-    """Tests for `roam snapshot` -- create a health snapshot."""
+    """Tests for `roam trends --save` -- create a health snapshot."""
 
     def test_snapshot_creates(self, cli_runner, indexed_project, monkeypatch):
-        """roam snapshot should exit 0 and report success."""
+        """roam trends --save should exit 0 and report success."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["snapshot"], cwd=indexed_project)
-        assert result.exit_code == 0, f"snapshot failed: {result.output}"
+        result = invoke_cli(cli_runner, ["trends", "--save"], cwd=indexed_project)
+        assert result.exit_code == 0, f"trends --save failed: {result.output}"
         assert "Snapshot saved" in result.output or "snapshot" in result.output.lower(), (
             f"Missing success message:\n{result.output}"
         )
 
     def test_snapshot_with_tag(self, cli_runner, indexed_project, monkeypatch):
-        """roam snapshot --tag 'v1' should include the tag in output."""
+        """roam trends --save --tag 'v1' should include the tag in output."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["snapshot", "--tag", "v1"], cwd=indexed_project)
-        assert result.exit_code == 0, f"snapshot --tag v1 failed: {result.output}"
+        result = invoke_cli(cli_runner, ["trends", "--save", "--tag", "v1"], cwd=indexed_project)
+        assert result.exit_code == 0, f"trends --save --tag v1 failed: {result.output}"
         assert "v1" in result.output, f"Tag 'v1' not in output: {result.output}"
 
     def test_snapshot_json(self, cli_runner, indexed_project, monkeypatch):
-        """roam --json snapshot should return a valid envelope."""
+        """roam --json trends --save should return a valid envelope."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
             cli_runner,
-            ["snapshot", "--tag", "json-test"],
+            ["trends", "--save", "--tag", "json-test"],
             cwd=indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "snapshot")
-        assert_json_envelope(data, "snapshot")
+        data = parse_json_output(result, "trends")
+        assert_json_envelope(data, "trends")
 
     def test_snapshot_json_summary(self, cli_runner, indexed_project, monkeypatch):
-        """roam --json snapshot summary should include health_score."""
+        """roam --json trends --save summary should include health_score."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
             cli_runner,
-            ["snapshot", "--tag", "summary-test"],
+            ["trends", "--save", "--tag", "summary-test"],
             cwd=indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "snapshot")
+        data = parse_json_output(result, "trends")
         summary = data.get("summary", {})
         assert "health_score" in summary, f"Missing health_score in summary: {summary}"
 
     def test_snapshot_health_score_matches_health_command(self, cli_runner, indexed_project, monkeypatch):
-        """snapshot and health should use the same composite health score math."""
+        """trends --save and health should use the same composite health score math."""
         monkeypatch.chdir(indexed_project)
 
         health_result = invoke_cli(
@@ -609,11 +609,11 @@ class TestSnapshot:
 
         snapshot_result = invoke_cli(
             cli_runner,
-            ["snapshot", "--tag", "score-parity"],
+            ["trends", "--save", "--tag", "score-parity"],
             cwd=indexed_project,
             json_mode=True,
         )
-        snapshot_data = parse_json_output(snapshot_result, "snapshot")
+        snapshot_data = parse_json_output(snapshot_result, "trends")
         snapshot_score = snapshot_data.get("summary", {}).get("health_score")
 
         assert isinstance(health_score, int)
@@ -621,24 +621,24 @@ class TestSnapshot:
         assert snapshot_score == health_score
 
     def test_snapshot_text_shows_metrics(self, cli_runner, indexed_project, monkeypatch):
-        """roam snapshot text output should report file/symbol counts."""
+        """roam trends --save text output should report file/symbol counts."""
         monkeypatch.chdir(indexed_project)
-        result = invoke_cli(cli_runner, ["snapshot"], cwd=indexed_project)
+        result = invoke_cli(cli_runner, ["trends", "--save"], cwd=indexed_project)
         assert result.exit_code == 0
         out = result.output
         # Should mention Health score, Files, Symbols
         assert "Health:" in out or "health" in out.lower(), f"Missing health info in snapshot output:\n{out}"
 
     def test_snapshot_json_has_detail_fields(self, cli_runner, indexed_project, monkeypatch):
-        """roam --json snapshot should include structural detail fields."""
+        """roam --json trends --save should include structural detail fields."""
         monkeypatch.chdir(indexed_project)
         result = invoke_cli(
             cli_runner,
-            ["snapshot", "--tag", "detail-test"],
+            ["trends", "--save", "--tag", "detail-test"],
             cwd=indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "snapshot")
+        data = parse_json_output(result, "trends")
         # The snapshot result is spread into the envelope via **result
         expected_fields = ["health_score", "files", "symbols", "edges"]
         for field in expected_fields:
@@ -652,7 +652,7 @@ class TestSnapshot:
         for i in range(3):
             result = invoke_cli(
                 cli_runner,
-                ["snapshot", "--tag", f"multi-{i}"],
+                ["trends", "--save", "--tag", f"multi-{i}"],
                 cwd=indexed_project,
             )
             assert result.exit_code == 0, f"snapshot {i} failed: {result.output}"

@@ -1,5 +1,7 @@
 """Trace from a changed symbol or file to test files that exercise it."""
 
+from __future__ import annotations
+
 import os
 from collections import deque
 
@@ -238,10 +240,14 @@ def _looks_like_file(target):
 def affected_tests(ctx, target, staged, show_command):
     """Trace from a changed symbol or file to test files that exercise it.
 
+    Unlike ``test-map`` (which maps test topology for a specific symbol),
+    this command finds all tests affected by staged or specified changes.
+
     TARGET is a symbol name or file path.  Use --staged to automatically
     find tests for all staged changes.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     if not target and not staged:
@@ -316,11 +322,17 @@ def affected_tests(ctx, target, staged, show_command):
             transitive_count = sum(1 for r in results if r["kind"] == "TRANSITIVE")
             colocated_count = sum(1 for r in results if r["kind"] == "COLOCATED")
 
+            if results:
+                verdict = f"{len(results)} tests affected ({len(seen_order)} files) for {target_label}"
+            else:
+                verdict = f"no tests affected for {target_label}"
+
             click.echo(
                 to_json(
                     json_envelope(
                         "affected-tests",
                         summary={
+                            "verdict": verdict,
                             "target": target_label,
                             "total_tests": len(results),
                             "direct": direct_count,
@@ -328,6 +340,7 @@ def affected_tests(ctx, target, staged, show_command):
                             "colocated": colocated_count,
                             "test_files": len(seen_order),
                         },
+                        budget=token_budget,
                         tests=[
                             {
                                 "file": r["file"],
@@ -347,9 +360,11 @@ def affected_tests(ctx, target, staged, show_command):
 
         # Text output
         if not results:
-            click.echo(f"No affected tests found for {target_label}.")
+            click.echo(f"VERDICT: no tests affected for {target_label}.")
             return
 
+        verdict = f"{len(results)} tests affected ({len(seen_order)} files) for {target_label}"
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Affected tests for {target_label}:\n")
 
         for r in results:

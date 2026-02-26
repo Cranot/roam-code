@@ -337,7 +337,7 @@ def project_with_snapshots(indexed_project, monkeypatch):
         git_commit(indexed_project, f"add extra_{i}")
         out, rc = index_in_process(indexed_project)
         assert rc == 0, f"roam index (snapshot {i}) failed:\n{out}"
-        out, rc = roam("snapshot", "--tag", f"v{i}", cwd=indexed_project)
-        # snapshot may or may not exist as command; don't assert
+        out, rc = roam("trends", "--save", "--tag", f"v{i}", cwd=indexed_project)
+        # trends --save creates a snapshot; don't assert exit code
 
     return indexed_project

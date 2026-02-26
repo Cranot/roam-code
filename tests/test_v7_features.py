@@ -388,36 +388,28 @@ class TestInit:
 
 class TestDigest:
     def test_digest_no_snapshots(self, v7_project):
-        """roam digest should explain when no snapshots exist."""
-        out, rc = roam("digest", cwd=v7_project)
+        """roam trends --compare should explain when no snapshots exist."""
+        out, rc = roam("trends", "--compare", cwd=v7_project)
         # May succeed but show "no snapshots" message
         assert "snapshot" in out.lower() or rc == 0
 
     def test_digest_with_snapshot(self, v7_project):
-        """roam digest should work after creating a snapshot."""
+        """roam trends --compare should work after creating a snapshot."""
         # Create a snapshot first
-        roam("snapshot", "--tag", "v7-test", cwd=v7_project)
-        out, rc = roam("digest", cwd=v7_project)
+        roam("trends", "--save", "--tag", "v7-test", cwd=v7_project)
+        out, rc = roam("trends", "--compare", cwd=v7_project)
         assert rc == 0
         # Should show metric comparison
-        assert "Health" in out or "score" in out.lower() or "Digest" in out
-
-    def test_digest_brief(self, v7_project):
-        """roam digest --brief should show a one-line summary."""
-        roam("snapshot", "--tag", "v7-brief", cwd=v7_project)
-        out, rc = roam("digest", "--brief", cwd=v7_project)
-        assert rc == 0
-        assert "Health" in out
+        assert "Health" in out or "score" in out.lower() or "Digest" in out or "compare" in out.lower()
 
     def test_digest_json(self, v7_project):
-        """roam --json digest should return structured output."""
-        roam("snapshot", "--tag", "v7-json", cwd=v7_project)
-        out, rc = roam("--json", "digest", cwd=v7_project)
+        """roam --json trends --compare should return structured output."""
+        roam("trends", "--save", "--tag", "v7-json", cwd=v7_project)
+        out, rc = roam("--json", "trends", "--compare", cwd=v7_project)
         assert rc == 0
         data = json.loads(out)
-        assert data["command"] == "digest"
-        assert "current" in data
-        assert "deltas" in data or "previous" in data
+        assert data["command"] == "trends"
+        assert "current" in data or "summary" in data
 
 
 # ============================================================================
@@ -776,11 +768,11 @@ class TestCompositeHealth:
 class TestSnapshotNewFields:
     def test_snapshot_stores_new_fields(self, v7_project):
         """Snapshot should include tangle_ratio, avg_complexity, brain_methods."""
-        out, rc = roam("snapshot", "--tag", "v7-fields", cwd=v7_project)
+        out, rc = roam("trends", "--save", "--tag", "v7-fields", cwd=v7_project)
         assert rc == 0
 
-        # Check via trend JSON
-        out, rc = roam("--json", "trend", cwd=v7_project)
+        # Check via trends JSON
+        out, rc = roam("--json", "trends", cwd=v7_project)
         if rc == 0:
             data = json.loads(out)
             snapshots = data.get("snapshots", [])

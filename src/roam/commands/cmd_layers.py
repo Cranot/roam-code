@@ -297,7 +297,12 @@ def _print_violations(conn, violations):
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
 @click.pass_context
 def layers(ctx, mermaid_mode):
-    """Show dependency layers and violations."""
+    """Show dependency layers and violations.
+
+    Unlike ``guard`` (which uses layer info as one component of a per-symbol
+    risk score), this command shows the full global layering structure with
+    all violations and optional ``--mermaid`` diagram output.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

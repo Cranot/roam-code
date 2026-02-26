@@ -8,7 +8,7 @@ from collections import defaultdict
 
 import click
 
-from roam.commands.cmd_codeowners import find_codeowners, parse_codeowners, resolve_owners
+from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
@@ -140,7 +140,13 @@ def _top_contributor(ownership_shares: dict[str, float]) -> tuple[str, float]:
 @click.option("--limit", default=30, help="Max items to display")
 @click.pass_context
 def drift(ctx, threshold, limit):
-    """Detect ownership drift: where declared owners differ from actual contributors."""
+    """Detect ownership drift: where declared owners differ from actual contributors.
+
+    Unlike ``codeowners`` (which shows static ownership coverage and unowned
+    files), this command computes time-decayed ownership drift scores --
+    highlighting files where declared CODEOWNERS no longer match recent commit
+    activity. See also ``simulate-departure`` for bus-factor modeling.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()

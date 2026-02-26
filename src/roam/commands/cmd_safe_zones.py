@@ -56,6 +56,11 @@ def safe_zones(ctx, target, depth):
     How far can changes propagate?
 
     TARGET is a symbol name (or file:symbol) or a file path.
+
+    Unlike ``impact`` (which traces unlimited reverse dependents for blast radius) and
+    ``closure`` (which identifies exact locations needing modification), this command maps
+    a bounded containment zone around a symbol, classifying nodes as strictly internal or
+    boundary.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
@@ -172,6 +177,12 @@ def safe_zones(ctx, target, depth):
             ext_callees = external_callee_count.get(bid, 0)
             boundary_external_refs[bid] = ext_callers + ext_callees
 
+        # --- Build verdict ---
+        verdict = (
+            f"{zone_label}: {len(strictly_internal_ids)} internal, {len(boundary_ids)} boundary symbols "
+            f"in {len(affected_files)} file{'s' if len(affected_files) != 1 else ''}"
+        )
+
         # --- JSON output ---
         if json_mode:
             internal_list = []
@@ -210,6 +221,7 @@ def safe_zones(ctx, target, depth):
                     json_envelope(
                         "safe-zones",
                         summary={
+                            "verdict": verdict,
                             "zone": zone_label,
                             "internal_symbols": len(strictly_internal_ids),
                             "boundary_symbols": len(boundary_ids),
@@ -232,6 +244,7 @@ def safe_zones(ctx, target, depth):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Safe zone analysis for `{target_label}`:\n")
         click.echo(f"Zone: {zone_label} ({zone_desc})\n")
 

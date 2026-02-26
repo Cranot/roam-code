@@ -198,6 +198,9 @@ def _classify_severity(symbol_row, pagerank):
 def test_gaps(ctx, files, changed, min_severity):
     """Map changed symbols to missing test coverage.
 
+    Unlike ``test-map`` (which shows existing test topology for a symbol),
+    this command finds changed symbols that lack any test coverage.
+
     Identifies which changed symbols lack test coverage by checking
     reverse dependency edges to test files.  Use --changed to analyze
     the current git diff, or pass specific file paths.

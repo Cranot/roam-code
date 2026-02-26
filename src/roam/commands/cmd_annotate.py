@@ -117,6 +117,9 @@ def annotations(ctx, target, tag, since):
         roam annotations src/auth.py             # Annotations for a file
         roam annotations --tag security          # All security annotations
         roam annotations --since 2025-01-01      # Recent annotations
+
+    Annotations persist across reindexing and are auto-injected into
+    ``roam context`` output.  Use ``annotate`` to create new annotations.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

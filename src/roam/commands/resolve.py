@@ -249,6 +249,91 @@ def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:
     ]
 
 
+def detect_entry_points(conn) -> list:
+    """Detect project entry points from conventional filenames, main() functions, and route decorators.
+
+    Returns a list of dicts: [{"path": str, "reason": str}]
+
+    Detection strategy (applied in order, duplicates suppressed):
+    1. Conventional filenames — well-known project entry file names.
+    2. Barrel-file filtering — index.* files with <=2 own definitions are
+       skipped (they are re-export barrels, not real entry points).
+    3. main() functions — files that define a top-level ``main`` function.
+    4. Route/command decorators — files that contain ``@route`` or ``@command``
+       style decorators, indicating a web or CLI entry point.
+    """
+    import os
+
+    _ENTRY_NAMES = {
+        "main.py",
+        "__main__.py",
+        "__init__.py",
+        "index.js",
+        "index.ts",
+        "main.go",
+        "main.rs",
+        "app.py",
+        "app.js",
+        "app.ts",
+        "mod.rs",
+        "lib.rs",
+        "setup.py",
+        "manage.py",
+        "server.py",
+        "handler.go",
+    }
+
+    results: list = []
+    seen_paths: set = set()
+
+    # Fetch all files with id so we can do the barrel check
+    files = conn.execute("SELECT id, path FROM files").fetchall()
+
+    # Build a path -> id map for barrel checking
+    path_to_id: dict = {f["path"]: f["id"] for f in files}
+
+    # 1. Conventional filenames
+    conventional_paths = [f["path"] for f in files if os.path.basename(f["path"]) in _ENTRY_NAMES]
+
+    # 2. Barrel-file filtering: skip index.* files with <=2 own definitions
+    for path in conventional_paths:
+        bn = os.path.basename(path)
+        if bn.startswith("index."):
+            file_id = path_to_id.get(path)
+            if file_id is not None:
+                own_defs = conn.execute(
+                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind IN ('function', 'class', 'method')",
+                    (file_id,),
+                ).fetchone()[0]
+                if own_defs <= 2:
+                    continue  # barrel file — skip
+        if path not in seen_paths:
+            seen_paths.add(path)
+            results.append({"path": path, "reason": "conventional filename"})
+
+    # 3. main() function lookup
+    main_files = conn.execute(
+        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.name = 'main' AND s.kind = 'function'",
+    ).fetchall()
+    for r in main_files:
+        if r["path"] not in seen_paths:
+            seen_paths.add(r["path"])
+            results.append({"path": r["path"], "reason": "main() function"})
+
+    # 4. Route/command decorator detection
+    decorated_files = conn.execute(
+        "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
+        "WHERE s.kind = 'decorator' AND (s.name LIKE '%route%' OR s.name LIKE '%command%')",
+    ).fetchall()
+    for r in decorated_files:
+        if r["path"] not in seen_paths:
+            seen_paths.add(r["path"])
+            results.append({"path": r["path"], "reason": "route/command decorator"})
+
+    return results
+
+
 def symbol_not_found(conn, name: str, *, json_mode: bool = False) -> str:
     """Build a 'symbol not found' error message with FTS5-powered suggestions.
 

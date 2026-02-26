@@ -1006,7 +1006,12 @@ def dead(
     sort_by_decay,
     show_dataflow,
 ):
-    """Show unreferenced exported symbols (dead code)."""
+    """Show unreferenced exported symbols (dead code).
+
+    Unlike ``flag-dead`` (which detects code gated behind feature flags
+    using regex scanning), this command detects structurally unreferenced
+    symbols via the call graph with aging, decay, and effort estimation.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False

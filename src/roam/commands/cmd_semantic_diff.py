@@ -355,11 +355,10 @@ def _read_current_file(root: Path, file_path: str) -> bytes | None:
 def semantic_diff(ctx, base_ref):
     """Show structural change summary vs a git ref.
 
-    Unlike textual git diff, this shows the semantic/structural meaning of
-    changes: symbols added/removed/modified, signature changes, body size
-    changes, and import edge changes.
-
-    Compares the current working tree against BASE (default: HEAD~1).
+    Unlike ``api-changes`` (which focuses on exported API surface with severity
+    classification) and ``breaking`` (which flags removed/renamed exports), this
+    command compares all symbols -- public and private -- plus import edges and
+    body size changes. Compares the current working tree against BASE (default: HEAD~1).
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

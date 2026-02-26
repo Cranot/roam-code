@@ -1,5 +1,7 @@
 """Run compound report presets — multiple commands in one shot."""
 
+from __future__ import annotations
+
 import json
 import subprocess
 import sys
@@ -60,9 +62,9 @@ PRESETS = {
     "guardian": {
         "description": ("Continuous architecture guardian baseline — snapshot, gates, trends, ownership drift"),
         "sections": [
-            {"title": "Snapshot", "command": ["snapshot", "--tag", "guardian"]},
+            {"title": "Snapshot", "command": ["trends", "--save", "--tag", "guardian"]},
             {"title": "Health Gate", "command": ["health", "--gate"]},
-            {"title": "Trend Analysis", "command": ["trend", "--analyze", "--range", "20"]},
+            {"title": "Trend Analysis", "command": ["trends", "--analyze", "--range", "20"]},
             {"title": "Metric Trends", "command": ["trends", "--days", "30"]},
             {
                 "title": "Ownership Drift",
@@ -190,6 +192,11 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
     """Run a compound report preset — multiple commands in one shot.
 
     Built-in presets: first-contact, security, pre-pr, refactor, guardian.
+
+    Unlike running individual commands, this command orchestrates multiple
+    analysis commands into compound report presets (first-contact, security,
+    pre-pr, refactor, guardian) with ``--md`` for CI-friendly Markdown and
+    ``--strict`` for exit-code gating.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -204,12 +211,17 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                 to_json(
                     json_envelope(
                         "report",
-                        summary={"presets": len(all_presets)},
+                        summary={
+                            "verdict": f"{len(all_presets)} presets available",
+                            "presets": len(all_presets),
+                        },
                         presets={name: p["description"] for name, p in all_presets.items()},
                     )
                 )
             )
         else:
+            click.echo(f"VERDICT: {len(all_presets)} presets available")
+            click.echo()
             click.echo("=== Available Report Presets ===\n")
             for name, p in all_presets.items():
                 sections = ", ".join(s["title"] for s in p["sections"])
@@ -248,12 +260,19 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
             raise SystemExit(1)
         return
 
+    _report_verdict = (
+        f"report '{preset}': {ok_count}/{len(results)} sections OK"
+        + (f", {fail_count} failed" if fail_count > 0 else "")
+        + f" in {elapsed:.1f}s"
+    )
+
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "report",
                     summary={
+                        "verdict": _report_verdict,
                         "preset": preset,
                         "sections_ok": ok_count,
                         "sections_failed": fail_count,
@@ -277,6 +296,8 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
         return
 
     # --- Text output ---
+    click.echo(f"VERDICT: {_report_verdict}")
+    click.echo()
     click.echo(f"=== Report: {preset} ({ok_count}/{len(results)} OK, {elapsed:.1f}s) ===\n")
 
     for title, success, data, stderr in results:

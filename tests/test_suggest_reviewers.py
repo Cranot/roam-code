@@ -453,19 +453,19 @@ class TestCODEOWNERSParser:
 
     def test_parse_codeowners_basic(self, tmp_path):
         """Parse a basic CODEOWNERS file."""
-        from roam.commands.cmd_suggest_reviewers import _parse_codeowners
+        from roam.commands.codeowners_helpers import parse_codeowners as _parse_codeowners
 
         co = tmp_path / "CODEOWNERS"
         co.write_text("# This is a comment\n*.py @alice @bob\nsrc/ @carol\n\n# Another comment\nlib/*.js @dave\n")
         entries = _parse_codeowners(co)
         assert len(entries) == 3
-        assert entries[0] == ("*.py", ["alice", "bob"])
-        assert entries[1] == ("src/", ["carol"])
-        assert entries[2] == ("lib/*.js", ["dave"])
+        assert entries[0] == ("*.py", ["@alice", "@bob"])
+        assert entries[1] == ("src/", ["@carol"])
+        assert entries[2] == ("lib/*.js", ["@dave"])
 
     def test_parse_codeowners_empty(self, tmp_path):
         """Empty CODEOWNERS returns empty list."""
-        from roam.commands.cmd_suggest_reviewers import _parse_codeowners
+        from roam.commands.codeowners_helpers import parse_codeowners as _parse_codeowners
 
         co = tmp_path / "CODEOWNERS"
         co.write_text("")
@@ -473,7 +473,7 @@ class TestCODEOWNERSParser:
 
     def test_parse_codeowners_comments_only(self, tmp_path):
         """CODEOWNERS with only comments returns empty list."""
-        from roam.commands.cmd_suggest_reviewers import _parse_codeowners
+        from roam.commands.codeowners_helpers import parse_codeowners as _parse_codeowners
 
         co = tmp_path / "CODEOWNERS"
         co.write_text("# comment\n# another comment\n")
@@ -481,17 +481,17 @@ class TestCODEOWNERSParser:
 
     def test_resolve_codeowners_wildcard(self):
         """Wildcard pattern matches files."""
-        from roam.commands.cmd_suggest_reviewers import _resolve_codeowners
+        from roam.commands.codeowners_helpers import resolve_owners as _resolve_owners
 
-        entries = [("*.py", ["alice"]), ("src/", ["bob"])]
-        assert _resolve_codeowners("src/models.py", entries) == ["bob"]
+        entries = [("*.py", ["@alice"]), ("src/", ["@bob"])]
+        assert _resolve_owners(entries, "src/models.py") == ["@bob"]
 
     def test_resolve_codeowners_no_match(self):
         """No matching pattern returns empty list."""
-        from roam.commands.cmd_suggest_reviewers import _resolve_codeowners
+        from roam.commands.codeowners_helpers import resolve_owners as _resolve_owners
 
-        entries = [("*.js", ["alice"])]
-        assert _resolve_codeowners("src/models.py", entries) == []
+        entries = [("*.js", ["@alice"])]
+        assert _resolve_owners(entries, "src/models.py") == []
 
 
 class TestOwnershipComputation:

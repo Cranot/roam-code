@@ -6,6 +6,14 @@ import math
 import re
 
 # ---------------------------------------------------------------------------
+# Pre-compiled regex patterns for tokenization
+# ---------------------------------------------------------------------------
+
+_RE_NON_ALNUM = re.compile(r"[^a-zA-Z0-9]+")
+_RE_CAMEL_SPLIT = re.compile(r"([a-z])([A-Z])")
+_RE_UPPER_SPLIT = re.compile(r"([A-Z]+)([A-Z][a-z])")
+
+# ---------------------------------------------------------------------------
 # Stopwords: common English + common code tokens
 # ---------------------------------------------------------------------------
 
@@ -120,15 +128,15 @@ def tokenize(text: str) -> list[str]:
     if not text:
         return []
     # Split on non-alphanumeric first (preserve case for camelCase detection)
-    raw = re.split(r"[^a-zA-Z0-9]+", text)
+    raw = _RE_NON_ALNUM.split(text)
     tokens = []
     for tok in raw:
         if not tok:
             continue
         # camelCase / PascalCase split (before lowercasing)
-        parts = re.sub(r"([a-z])([A-Z])", r"\1 \2", tok)
+        parts = _RE_CAMEL_SPLIT.sub(r"\1 \2", tok)
         # Also split on transitions like "XMLParser" -> "XML Parser"
-        parts = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", parts)
+        parts = _RE_UPPER_SPLIT.sub(r"\1 \2", parts)
         for part in parts.split():
             part = part.lower()
             if part in _STOPWORDS or len(part) < 2:

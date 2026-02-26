@@ -79,6 +79,12 @@ def orchestrate(ctx, n_agents, file_args, staged):
 
     Assigns exclusive write zones, read-only dependencies, interface
     contracts, merge order, and conflict probability for N agents.
+    Supports ``--files`` and ``--staged`` to restrict to a subgraph.
+
+    Unlike ``partition`` (which provides deeper analytical metrics like
+    difficulty scores, churn, and co-change coupling), this command
+    focuses on operational dispatch: give it N agents and get back
+    ready-to-use work assignments with interface contracts.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

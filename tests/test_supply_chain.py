@@ -119,8 +119,11 @@ def test_risk_unpinned():
     assert _risk_level("unpinned", False) == "high"
 
 
-def test_risk_dev_same():
-    assert _risk_level("unpinned", True) == "high"
+def test_risk_dev_reduced():
+    # Dev dependencies don't ship to production, so risk is reduced by one level
+    assert _risk_level("unpinned", True) == "medium"
+    assert _risk_level("range", True) == "low"
+    assert _risk_level("exact", True) == "low"
 
 
 def test_pin_ruby_exact():

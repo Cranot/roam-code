@@ -105,7 +105,11 @@ exempt:
 def rules(ctx, do_init, ci_mode, rules_dir_opt):
     """Evaluate custom governance rules defined in .roam/rules/.
 
-    Rules are YAML files that define architectural constraints. Two rule
+    Unlike ``check-rules`` (which evaluates pre-packaged structural rules),
+    this command evaluates user-authored YAML governance rules with custom
+    constraints.
+
+    Rules are YAML files that define architectural constraints. Four rule
     types are supported: path_match (edges between from/to patterns),
     symbol_match (symbols matching criteria with optional require),
     ast_match (AST structural patterns with `$METAVAR` captures),
@@ -250,7 +254,9 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
                 click.echo(f"    (+{count - 10} more)")
 
     if ci_mode and failed_errors > 0:
-        ctx.exit(1)
+        from roam.exit_codes import EXIT_GATE_FAILURE
+
+        ctx.exit(EXIT_GATE_FAILURE)
 
 
 # ---------------------------------------------------------------------------

@@ -179,7 +179,12 @@ def _compute_cohesion(distance_matrix, input_count):
 @click.option("--depth", default=3, help="Max hops for connecting paths (default 3)")
 @click.pass_context
 def relate(ctx, symbols, files, depth):
-    """Show how a set of symbols relate to each other."""
+    """Show how a set of symbols relate to each other.
+
+    Unlike ``coupling`` (which measures file-level temporal co-change),
+    this command shows structural relationships between specific symbols
+    including shared dependencies and distance.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 

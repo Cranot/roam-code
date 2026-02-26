@@ -502,6 +502,11 @@ def fitness(ctx, do_init, rule_filter, explain):
     Checks dependency constraints, metric thresholds, and naming rules.
     Returns exit code 1 if any rule is violated (for CI integration).
     Use --init to create a starter configuration.
+
+    Unlike ``preflight`` (which includes fitness rules as one of 6 signal
+    dimensions in a compound check), this command provides the full fitness
+    interface: per-rule output, ``--init`` scaffold, ``--rule`` filter,
+    ``--explain`` annotations, and trend regression guards.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
@@ -689,7 +694,7 @@ rules:
 
   # Trend-based regression guards (requires snapshots)
   # These catch gradual degradation that absolute thresholds miss.
-  # Run `roam snapshot` periodically to build history.
+  # Run `roam trends --save` periodically to build history.
   - name: "Health must not regress"
     type: trend
     metric: health_score

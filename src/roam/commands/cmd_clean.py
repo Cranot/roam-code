@@ -18,9 +18,10 @@ def clean(ctx):
 
     Deletes file records whose paths no longer exist on disk, along with
     their associated symbols, edges, and metrics — without a full rebuild.
-
-    Faster than `roam reset --force` for incremental cleanup after
-    files are deleted or moved outside of git tracking.
+    Unlike ``reset --force`` (which deletes the entire index and rebuilds from
+    scratch), this command surgically removes orphaned file records and dangling
+    edges while preserving all valid indexed data. Use ``doctor`` to verify
+    index integrity afterward.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

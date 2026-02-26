@@ -1,11 +1,12 @@
 """Show project skeleton with entry points and key symbols."""
 
-import os
+from __future__ import annotations
+
 from collections import Counter
 
 import click
 
-from roam.commands.resolve import ensure_index
+from roam.commands.resolve import detect_entry_points, ensure_index
 from roam.db.connection import open_db
 from roam.db.queries import (
     ALL_FILES,
@@ -43,7 +44,12 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
 @click.option("--budget", type=int, default=None, help="Approximate token limit for output")
 @click.pass_context
 def map_cmd(ctx, count, full, budget):
-    """Show project skeleton with entry points and key symbols."""
+    """Show project skeleton with entry points and key symbols.
+
+    Unlike ``describe`` (which generates a prose project overview), this
+    command produces a structured skeleton with directories, entry points,
+    and top symbols by PageRank.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
@@ -71,52 +77,7 @@ def map_cmd(ctx, count, full, budget):
         dir_items = sorted(dir_counts.items(), key=lambda x: x[1], reverse=True)
 
         # --- Entry points ---
-        entry_names = {
-            "main.py",
-            "__main__.py",
-            "__init__.py",
-            "index.js",
-            "index.ts",
-            "main.go",
-            "main.rs",
-            "app.py",
-            "app.js",
-            "app.ts",
-            "mod.rs",
-            "lib.rs",
-            "setup.py",
-            "manage.py",
-        }
-        entries = [f["path"] for f in files if os.path.basename(f["path"]) in entry_names]
-
-        # Filter barrel files: index files with few own definitions (re-export only)
-        barrel_paths = set()
-        for f in files:
-            bn = os.path.basename(f["path"])
-            if bn.startswith("index.") and f["path"] in entries:
-                own_defs = conn.execute(
-                    "SELECT COUNT(*) FROM symbols WHERE file_id = ? AND kind IN ('function', 'class', 'method')",
-                    (f["id"],),
-                ).fetchone()[0]
-                if own_defs <= 2:
-                    barrel_paths.add(f["path"])
-        entries = [e for e in entries if e not in barrel_paths]
-
-        main_files = conn.execute(
-            "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.name = 'main' AND s.kind = 'function'",
-        ).fetchall()
-        for r in main_files:
-            if r["path"] not in entries:
-                entries.append(r["path"])
-
-        decorated_files = conn.execute(
-            "SELECT DISTINCT f.path FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.kind = 'decorator' AND (s.name LIKE '%route%' OR s.name LIKE '%command%')",
-        ).fetchall()
-        for r in decorated_files:
-            if r["path"] not in entries:
-                entries.append(r["path"])
+        entries = [ep["path"] for ep in detect_entry_points(conn)]
 
         # --- Top symbols by PageRank ---
         # When budget is active, fetch all ranked symbols to allow greedy
@@ -174,6 +135,11 @@ def map_cmd(ctx, count, full, budget):
             top = all_ranked
             tokens_used = 0  # not tracked when budget is off
 
+        # Build verdict
+        n_dirs = len(dir_items)
+        deepest = max(dir_items, key=lambda x: x[0].count("/"))[0] if dir_items else "."
+        map_verdict = f"map: {n_dirs} directories, {total_files} files, {sym_count} symbols, deepest: {deepest}"
+
         if json_mode:
             data = {
                 "files": total_files,
@@ -195,6 +161,7 @@ def map_cmd(ctx, count, full, budget):
                 ],
             }
             summary = {
+                "verdict": map_verdict,
                 "files": total_files,
                 "symbols": sym_count,
                 "edges": edge_count,
@@ -216,6 +183,7 @@ def map_cmd(ctx, count, full, budget):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {map_verdict}\n")
         if budget is not None:
             # Preamble already built above; emit it directly
             click.echo(preamble_text, nl=False)

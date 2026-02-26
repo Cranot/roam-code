@@ -5,6 +5,7 @@ from __future__ import annotations
 import os
 import re
 import subprocess
+import time
 
 import click
 
@@ -115,6 +116,10 @@ def _scan_doc_for_potential_symbols(root, doc_path):
 def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
     """Link documentation to code -- find what docs describe what code.
 
+    Unlike ``docs-coverage`` (which ranks symbols missing docstrings),
+    this command links documentation files to referenced symbols and
+    detects doc-code drift.
+
     Scans markdown/text documentation for references to known symbols
     and reports doc-to-code links, drift (dead references), and
     undocumented high-importance symbols.
@@ -125,10 +130,29 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
 
     with open_db(readonly=True) as conn:
         # Get all symbol names from DB (length >= _MIN_NAME_LEN)
+        _MAX_SYMBOLS = 3000
         all_syms = conn.execute(
             "SELECT DISTINCT name FROM symbols WHERE length(name) >= ?", (_MIN_NAME_LEN,)
         ).fetchall()
         symbol_names = set(s["name"] for s in all_syms)
+
+        # Performance guard: if too many symbols, sample top N by PageRank
+        if len(symbol_names) > _MAX_SYMBOLS:
+            try:
+                top_syms = conn.execute(
+                    "SELECT DISTINCT s.name FROM symbols s "
+                    "LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id "
+                    "WHERE length(s.name) >= ? "
+                    "ORDER BY COALESCE(gm.pagerank, 0) DESC "
+                    "LIMIT ?",
+                    (_MIN_NAME_LEN, _MAX_SYMBOLS),
+                ).fetchall()
+                symbol_names = set(s["name"] for s in top_syms)
+            except Exception:
+                pass  # fall through with full set if query fails
+
+        _TIMEOUT_SECONDS = 30
+        _start_time = time.monotonic()
 
         # Find doc files
         doc_files = _find_doc_files(root)
@@ -310,20 +334,22 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             # Collect all documented symbol names across all docs
             documented = set()
             for df in doc_files:
+                if time.monotonic() - _start_time > _TIMEOUT_SECONDS:
+                    break
                 refs = _scan_doc_for_symbols(root, df, symbol_names)
                 documented.update(r["symbol"] for r in refs)
 
             # Find high-pagerank symbols NOT documented
-            # symbol_metrics may not always exist; guard with LEFT JOIN
+            # graph_metrics may not always exist; guard with try/except
             try:
                 high_pr = conn.execute(
-                    """SELECT s.name, s.kind, f.path as file_path, sm.pagerank
+                    """SELECT s.name, s.kind, f.path as file_path, gm.pagerank
                        FROM symbols s
                        JOIN files f ON s.file_id = f.id
-                       JOIN symbol_metrics sm ON sm.symbol_id = s.id
+                       JOIN graph_metrics gm ON gm.symbol_id = s.id
                        WHERE s.name NOT LIKE '\\_%' ESCAPE '\\'
                        AND s.kind IN ('function', 'method', 'class')
-                       ORDER BY sm.pagerank DESC
+                       ORDER BY gm.pagerank DESC
                        LIMIT ?""",
                     (top_n * 3,),
                 ).fetchall()
@@ -380,7 +406,11 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
         # Default: all doc-to-code links
         # ------------------------------------------------------------------
         all_links = []
+        _timed_out = False
         for df in doc_files:
+            if time.monotonic() - _start_time > _TIMEOUT_SECONDS:
+                _timed_out = True
+                break
             refs = _scan_doc_for_symbols(root, df, symbol_names)
             for ref in refs:
                 ref["doc"] = df
@@ -389,6 +419,9 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
         # Count drift references (backtick identifiers not in symbol set)
         drift_count = 0
         for df in doc_files:
+            if time.monotonic() - _start_time > _TIMEOUT_SECONDS:
+                _timed_out = True
+                break
             potential = _scan_doc_for_potential_symbols(root, df)
             drift_count += sum(1 for name in potential if name not in symbol_names)
 
@@ -408,6 +441,8 @@ def intent(ctx, symbol_name, doc_path, drift, undocumented, top_n):
             f"{total_links} doc-code link{'s' if total_links != 1 else ''} "
             f"across {n_docs} doc{'s' if n_docs != 1 else ''}"
         )
+        if _timed_out:
+            verdict += " (partial -- timed out after 30s)"
         if drift_count:
             verdict += f", {drift_count} drift{'s' if drift_count != 1 else ''}"
 

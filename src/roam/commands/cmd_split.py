@@ -90,10 +90,14 @@ def _label_suffix(symbols, exclude_word):
 def split(ctx, path, min_group):
     """Analyze a file's internal structure and suggest how to split it.
 
+    Unlike ``clusters`` (which partitions the whole codebase into modules),
+    this command analyzes one file's internal structure for decomposition.
+
     Shows natural symbol groups within a file based on call/reference
     patterns, with coupling metrics and extraction suggestions.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     path = path.replace("\\", "/")
@@ -121,12 +125,18 @@ def split(ctx, path, min_group):
         ).fetchall()
 
         if len(symbols) < 3:
+            _split_path = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "split",
-                            summary={"groups": 0, "total_symbols": len(symbols)},
+                            summary={
+                                "verdict": f"{_split_path}: too few symbols to analyze ({len(symbols)})",
+                                "groups": 0,
+                                "total_symbols": len(symbols),
+                            },
+                            budget=token_budget,
                             path=frow["path"],
                             groups=[],
                             message="Too few symbols to analyze",
@@ -134,6 +144,8 @@ def split(ctx, path, min_group):
                     )
                 )
             else:
+                click.echo(f"VERDICT: {_split_path}: too few symbols to analyze ({len(symbols)})")
+                click.echo()
                 click.echo(f"File has only {len(symbols)} symbols — too few to analyze.")
             return
 
@@ -281,16 +293,30 @@ def split(ctx, path, min_group):
                 tgt_name = sym_by_id[e["target_id"]]["name"]
                 cross_detail.setdefault(pair, []).append({"source": src_name, "target": tgt_name, "kind": e["kind"]})
 
+        _split_fname = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
+        if len(extractable) > 0:
+            _split_verdict = (
+                f"{_split_fname}: {len(extractable)} split candidates "
+                f"({len(group_data)} groups, {len(symbols)} symbols)"
+            )
+        else:
+            _split_verdict = (
+                f"{_split_fname}: no split candidates "
+                f"({len(group_data)} groups, {len(symbols)} symbols)"
+            )
+
         if json_mode:
             click.echo(
                 to_json(
                     json_envelope(
                         "split",
                         summary={
+                            "verdict": _split_verdict,
                             "groups": len(group_data),
                             "total_symbols": len(symbols),
                             "extractable": len(extractable),
                         },
+                        budget=token_budget,
                         path=frow["path"],
                         total_symbols=len(symbols),
                         total_intra_edges=len(intra_edges),
@@ -351,6 +377,8 @@ def split(ctx, path, min_group):
             return
 
         # --- Text output ---
+        click.echo(f"VERDICT: {_split_verdict}")
+        click.echo()
         click.echo(f"=== Split analysis: {frow['path']} ===")
         click.echo(
             f"  {len(symbols)} symbols, {len(intra_edges)} internal edges, "

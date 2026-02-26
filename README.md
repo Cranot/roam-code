@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*144 commands · 101 MCP tools · 26 languages · 100% local*
+*139 commands · 101 MCP tools · 26 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -23,7 +23,7 @@ Roam is a structural intelligence engine for software. It pre-indexes your codeb
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 137 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 139 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            26 languages   + edges            govern
@@ -64,7 +64,15 @@ $ roam diff                    # blast radius of uncommitted changes
 
 ## What's New in v11
 
-### MCP v2 for Agent-First Workflows
+### v11.1.1 -- Command Quality Audit
+- **Full command audit**: all 139 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
+- **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
+- **7 new commands**: `roam congestion`, `roam adrs`, `roam flag-dead`, `roam test-scaffold`, `roam sbom`, `roam triage`, `roam ci-setup`.
+- **CI templates**: `roam ci-setup` generates pipelines for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and Bitbucket.
+- **Bug fixes**: `--undocumented` mode in `intent` (wrong DB table), `--changed` flag in `verify` (was permanently dead), lazy-load violation in `visualize` (~500ms penalty), exit code inconsistency in `rules`, VERDICT-first convention enforced across all commands.
+- **Code quality**: 15 unused variables removed, dead code swept (4 orphaned cmd files, 2 dead helper functions), algo detector false-positive rate reduced (regex-in-loop: 7 to 1, list-prepend deque suppression), 6 regex patterns pre-compiled for loop performance.
+
+### v11.0 -- MCP v2 for Agent-First Workflows
 - In-process MCP execution removes per-call subprocess overhead.
 - 4 compound operations (`roam_explore`, `roam_prepare_change`, `roam_review_change`, `roam_diagnose_issue`) reduce multi-step agent workflows to single calls.
 - Preset-based tool surfacing (`core`, `review`, `refactor`, `debug`, `architecture`, `full`) keeps default tool choice tight for agents while retaining full depth on demand.
@@ -212,7 +220,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 144 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 139 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -300,9 +308,6 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam debt [--roi]` | Hotspot-weighted tech debt prioritization with SQALE remediation costs and optional refactoring ROI estimates |
 | `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
 | `roam alerts` | Health degradation trend detection (Mann-Kendall + Sen's slope) |
-| `roam snapshot [--tag TAG]` | Persist health metrics snapshot for trend tracking |
-| `roam trend` | Health score history with sparkline visualization |
-| `roam digest [--brief] [--since TAG]` | Compare current metrics against last snapshot |
 | `roam forecast [--symbol S] [--horizon N] [--alert-only]` | Predict when metrics will exceed thresholds: Theil-Sen regression on snapshot history + churn-weighted per-symbol risk |
 | `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 1 on violation) |
 | `roam bisect [--metric M] [--range R]` | Architectural git bisect: find the commit that degraded a specific metric |
@@ -407,19 +412,19 @@ src/
     bridges/
       base.py                 # LanguageBridge
       registry.py             # register_bridge, detect_bridges
-    commands/  (134 files) # is_test_file, get_changed_files
+    commands/  (137 cmd files) # is_test_file, get_changed_files
     db/
       connection.py           # find_project_root, batched_in
       schema.py
     graph/
       builder.py              # build_symbol_graph, build_file_graph
       pagerank.py             # compute_pagerank, compute_centrality
-    languages/  (20 files) # ApexExtractor
+    languages/  (21 files) # ApexExtractor
     output/
       formatter.py            # to_json, json_envelope
     cli.py                    # cli, LazyGroup
     mcp_server.py
-tests/  (151 files)
+tests/  (186 files)
 ` ` `
 
 **Key symbols** (PageRank): `open_db` · `ensure_index` · `json_envelope` · `to_json` · `LanguageExtractor`
@@ -1130,7 +1135,7 @@ Zero infrastructure, zero vendor lock-in, zero data leaving your network.
 
 **Week 3-4 (expand):** Add `roam health --gate score>=60` to CI as a non-blocking check.
 
-**Month 2+ (standardize):** Tighten to `--gate score>=70`. Expand to additional repos. Track trajectory with `roam trend`.
+**Month 2+ (standardize):** Tighten to `--gate score>=70`. Expand to additional repos. Track trajectory with `roam trends`.
 
 </details>
 
@@ -1183,12 +1188,13 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 </details>
 
 | Ruby | `.rb` | classes, modules, methods, singleton methods, constants | require, require_relative, include/extend, calls, ClassName.new | class inheritance |
+| Kotlin | `.kt` `.kts` | classes, interfaces, enums, objects, functions, methods, properties | imports, calls, type refs | extends, implements |
 | JSONC | `.jsonc` | via JSON grammar | -- | -- |
 | MDX | `.mdx` | via Markdown grammar | -- | -- |
 
 ### Tier 2 -- Generic extraction
 
-Kotlin (`.kt` `.kts`), Swift (`.swift`), Scala (`.scala` `.sc`)
+Swift (`.swift`), Scala (`.scala` `.sc`)
 
 Tier 2 languages get symbol extraction and basic inheritance via a generic tree-sitter walker.
 
@@ -1435,7 +1441,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # ~5000 tests, Python 3.9-3.13
+pytest tests/              # ~5700 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1452,7 +1458,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (144 commands)
+│   ├── cli.py                         # Click CLI (139 commands)
 │   ├── mcp_server.py                  # MCP server (101 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1472,7 +1478,7 @@ roam-code/
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
 │   │   ├── registry.py                # Language detection + aliasing
-│   │   ├── *_lang.py                  # One file per language (19 dedicated + generic)
+│   │   ├── *_lang.py                  # One file per language (20 dedicated + generic)
 │   │   └── generic_lang.py            # Tier 2 fallback
 │   ├── bridges/
 │   │   ├── base.py, registry.py       # Cross-language bridge framework
@@ -1524,7 +1530,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # ~5000 tests across 151 test files
+└── tests/                             # ~5700 tests across 186 test files
 ```
 
 </details>
@@ -1547,7 +1553,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 137 CLI commands and 101 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 139 CLI commands and 101 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.
@@ -1568,7 +1574,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # all ~5000 tests must pass
+pytest tests/   # all ~5700 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.

@@ -628,13 +628,12 @@ def _format_change_text(change: dict) -> str:
 def api_changes(ctx, base, severity, changed_only):
     """Detect breaking and non-breaking API changes vs a git ref.
 
-    Compares the current exported API surface against BASE (default: HEAD~1)
-    and reports removed symbols, changed signatures, visibility reductions,
-    type changes, renames, added symbols, and optional param additions.
-
-    Severity levels: breaking > warning > info.
-    Use --severity=info to see all changes including additions.
-    Use --severity=breaking to see only breaking changes.
+    Unlike ``breaking`` (which flags removed and renamed exports) and
+    ``semantic-diff`` (which compares all symbols including private), this
+    command classifies exported API changes into severity levels
+    (BREAKING/WARNING/INFO) with rename detection and visibility tracking.
+    Use --severity=breaking to see only breaking changes, or --severity=info
+    to see all changes including additions.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

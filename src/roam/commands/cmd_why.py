@@ -203,6 +203,11 @@ def why(ctx, names):
     Shows role classification, transitive reach, critical path membership,
     cluster affiliation, and a one-line verdict for decision-making.
 
+    Unlike ``fan`` (which ranks symbols by raw connectivity) and ``preflight``
+    (which checks blast radius before a change), this command explains a specific
+    symbol's role (Hub/Bridge/Leaf), cluster cohesion, transitive reach, and
+    generates a human-readable verdict.
+
     Accepts multiple symbols for batch triage:
 
         roam why parseAmount formatNumber clearGrid

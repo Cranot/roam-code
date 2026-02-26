@@ -608,6 +608,10 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
     Parses routes/api.php and routes/web.php, extracts route definitions,
     then searches the codebase for references to each route's path segments.
 
+    Unlike ``api-drift`` (which compares PHP model fields against TypeScript
+    type definitions) and ``over-fetch`` (which detects models exposing too
+    many fields), this command finds routes with zero frontend callers.
+
     Confidence levels:
 
     \b

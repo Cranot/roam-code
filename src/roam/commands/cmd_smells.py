@@ -35,7 +35,14 @@ _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
 )
 @click.pass_context
 def smells(ctx, file_path, min_severity):
-    """Detect code smells: brain methods, god classes, deep nesting, and more."""
+    """Detect code smells: brain methods, god classes, deep nesting, and more.
+
+    Unlike ``vibe-check`` (which detects AI-generated code anti-patterns via
+    source-file regex) and ``health`` (which gives an aggregate codebase
+    score), this command runs 15 deterministic DB-query-based structural smell
+    detectors: brain methods, god classes, deep nesting, shotgun surgery,
+    excessive parameters, and more.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     detail = ctx.obj.get("detail", False) if ctx.obj else False

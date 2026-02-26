@@ -584,10 +584,14 @@ _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
 def patterns(ctx, pattern_filter):
     """Detect common architectural patterns in the codebase.
 
+    Unlike ``smells`` (which flags negative anti-patterns), this command
+    discovers positive design patterns like Singleton, Factory, and Observer.
+
     Analyzes the symbol graph to find Singleton, Factory, Observer,
     Repository, Middleware, Strategy, and Decorator patterns.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -604,6 +608,13 @@ def patterns(ctx, pattern_filter):
                 all_results[key] = {"label": label, "instances": hits}
                 total += len(hits)
 
+        # --- Build verdict ---
+        if all_results:
+            top_parts = [f"{key}({len(data['instances'])})" for key, data in list(all_results.items())[:3]]
+            verdict = f"{total} design patterns detected: {', '.join(top_parts)}"
+        else:
+            verdict = "no patterns detected"
+
         # --- JSON output ---
         if json_mode:
             patterns_json = {}
@@ -619,10 +630,12 @@ def patterns(ctx, pattern_filter):
                     json_envelope(
                         "patterns",
                         summary={
+                            "verdict": verdict,
                             "total_patterns": total,
                             "pattern_types": len(all_results),
                             "types_found": list(all_results.keys()),
                         },
+                        budget=token_budget,
                         patterns=patterns_json,
                     )
                 )
@@ -631,11 +644,13 @@ def patterns(ctx, pattern_filter):
 
         # --- Text output ---
         if not all_results:
+            click.echo(f"VERDICT: {verdict}\n")
             click.echo("No architectural patterns detected.")
             if pattern_filter:
                 click.echo(f"  (filtered to: {pattern_filter})")
             return
 
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Architectural patterns detected ({total} total):\n")
 
         for key, data in all_results.items():

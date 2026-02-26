@@ -47,7 +47,6 @@ COMMANDS_WITH_JSON = [
     "split",
     "risk",
     "why",
-    "trend",
     "coverage-gaps",
     "report",
     "complexity",
@@ -67,7 +66,6 @@ COMMANDS_WITH_JSON = [
     "guard",
     "agent-plan",
     "agent-context",
-    "snapshot",
     "describe",
     "trace",
     "owner",
@@ -113,10 +111,8 @@ COMMAND_ARGS = {
 FRAGILE_COMMANDS = {
     "affected-tests",  # needs staged changes or a target with test coverage
     "trace",  # needs two connected symbols found by exact name
-    "trend",  # needs multiple snapshots
     "diff",  # needs uncommitted changes
     "pr-risk",  # needs uncommitted changes or PR context
-    "snapshot",  # snapshot creation may vary
     "coverage-gaps",  # needs test file mapping
     "doc-staleness",  # needs docstrings with stale references
     "breaking",  # needs public API changes

@@ -34,7 +34,12 @@ def triage(ctx):
 
     Suppressions are stored in .roam-suppressions.yml at the project root.
     Each suppression marks a specific finding (rule + file + optional line)
-    as reviewed with a status: safe, acknowledged, or wont-fix.
+    as reviewed with a reason and status.
+
+    This is the only write path for suppression data.  Security commands
+    like ``secrets``, ``auth-gaps``, ``watch``, and ``flag-dead`` read
+    suppressions to filter their output.  Use ``check-rules`` to detect
+    violations, then ``triage add`` to mark reviewed findings.
     """
     ctx.ensure_object(dict)
 

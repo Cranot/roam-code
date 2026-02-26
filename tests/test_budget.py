@@ -61,8 +61,8 @@ def budget_project(tmp_path, monkeypatch):
     from roam.cli import cli
 
     runner = CliRunner()
-    result = runner.invoke(cli, ["snapshot", "--tag", "baseline"], catch_exceptions=False)
-    assert result.exit_code == 0, f"snapshot failed: {result.output}"
+    result = runner.invoke(cli, ["trends", "--save", "--tag", "baseline"], catch_exceptions=False)
+    assert result.exit_code == 0, f"trends --save failed: {result.output}"
 
     return proj
 

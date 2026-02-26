@@ -1,5 +1,7 @@
 """Single-call codebase comprehension — everything an AI agent needs in one shot."""
 
+from __future__ import annotations
+
 import fnmatch
 import re
 
@@ -483,15 +485,48 @@ def _top_debt(conn, limit=5):
 
 @click.command()
 @click.option("--full", is_flag=True, help="Show all clusters and hotspots, not just top-N")
+@click.option("--tour", "tour_mode", is_flag=True, help="Append tour: reading order, entry points, next steps")
+@click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram (only active with --tour)")
+@click.option("--agent", "agent_mode", is_flag=True, help="Compact agent-oriented prompt (skips normal output)")
+@click.option(
+    "--skeleton",
+    "skeleton_dir",
+    default=None,
+    metavar="DIR",
+    help="Show structural skeleton of a directory (skips normal output)",
+)
 @click.pass_context
-def understand(ctx, full):
+def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
     """Single-call codebase comprehension — everything in one shot.
 
     Returns project structure, tech stack, architecture, health, hotspots,
     and a suggested reading order. Designed for AI agents.
+
+    Use --agent for a compact token-efficient prompt block suitable for an AI
+    system prompt, --skeleton DIR to see the exported API of a directory, or
+    --tour to append a guided reading order and entry points section.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    cmd_name = ctx.info_name or "understand"
     ensure_index()
+
+    # ------------------------------------------------------------------
+    # Flag: --agent  (compact agent prompt, skips normal output)
+    # ------------------------------------------------------------------
+    if agent_mode:
+        _run_agent_mode(json_mode, cmd_name)
+        return
+
+    # ------------------------------------------------------------------
+    # Flag: --skeleton DIR  (directory skeleton, skips normal output)
+    # ------------------------------------------------------------------
+    if skeleton_dir is not None:
+        _run_skeleton_mode(json_mode, cmd_name, skeleton_dir)
+        return
+
+    # ------------------------------------------------------------------
+    # Normal understand output
+    # ------------------------------------------------------------------
     root = find_project_root()
 
     with open_db(readonly=True) as conn:
@@ -520,6 +555,7 @@ def understand(ctx, full):
         build_tool = _detect_build(conn)
 
         # --- Architecture ---
+        G = None
         try:
             from roam.graph.builder import build_symbol_graph
             from roam.graph.layers import detect_layers
@@ -587,52 +623,78 @@ def understand(ctx, full):
         # --- Reading order ---
         reading_order = _suggest_reading_order(conn, entry_points, key_abs, hotspots)
 
+        # ------------------------------------------------------------------
+        # Flag: --tour  (gather tour data to append after normal output)
+        # ------------------------------------------------------------------
+        tour_data = None
+        if tour_mode:
+            tour_data = _gather_tour_data(conn, G)
+
         # --- JSON output ---
         if json_mode:
+            _lang_names = "+".join(l["name"] for l in languages[:3])
+            if len(languages) > 3:
+                _lang_names += f"+{len(languages) - 3}more"
+            _health_label = (
+                "healthy" if health["health_score"] >= 70
+                else "moderate" if health["health_score"] >= 40
+                else "unhealthy"
+            )
+            _understand_verdict = (
+                f"{_health_label} {len(languages)}-lang project "
+                f"({health['health_score']}/100), "
+                f"{len(clusters_data)} clusters, {len(hotspots)} hotspots"
+            )
+            envelope_kwargs = dict(
+                project={
+                    "name": root.name,
+                    "root": str(root),
+                    "files": file_count,
+                    "symbols": sym_count,
+                    "edges": edge_count,
+                },
+                tech_stack={
+                    "languages": languages,
+                    "frameworks": frameworks,
+                    "build": build_tool,
+                },
+                architecture={
+                    "layers": layers,
+                    "layer_count": len(layers),
+                    "entry_points": entry_points,
+                    "key_abstractions": key_abs,
+                    "clusters": clusters_data,
+                },
+                health_summary={
+                    "score": health["health_score"],
+                    "cycles": health["cycles"],
+                    "god_components": health["god_components"],
+                    "bottlenecks": health["bottlenecks"],
+                    "dead_exports": health["dead_exports"],
+                    "layer_violations": health["layer_violations"],
+                    "worst_issues": worst,
+                },
+                conventions=conventions_summary,
+                complexity=complexity_summary,
+                patterns=patterns_detected,
+                debt_hotspots=debt_hotspots,
+                hotspots=hotspots,
+                suggested_reading_order=reading_order,
+            )
+            if tour_data is not None:
+                envelope_kwargs["tour"] = tour_data
             click.echo(
                 to_json(
                     json_envelope(
-                        "understand",
+                        cmd_name,
                         summary={
+                            "verdict": _understand_verdict,
                             "files": file_count,
                             "symbols": sym_count,
                             "health_score": health["health_score"],
                             "languages": len(languages),
                         },
-                        project={
-                            "name": root.name,
-                            "root": str(root),
-                            "files": file_count,
-                            "symbols": sym_count,
-                            "edges": edge_count,
-                        },
-                        tech_stack={
-                            "languages": languages,
-                            "frameworks": frameworks,
-                            "build": build_tool,
-                        },
-                        architecture={
-                            "layers": layers,
-                            "layer_count": len(layers),
-                            "entry_points": entry_points,
-                            "key_abstractions": key_abs,
-                            "clusters": clusters_data,
-                        },
-                        health_summary={
-                            "score": health["health_score"],
-                            "cycles": health["cycles"],
-                            "god_components": health["god_components"],
-                            "bottlenecks": health["bottlenecks"],
-                            "dead_exports": health["dead_exports"],
-                            "layer_violations": health["layer_violations"],
-                            "worst_issues": worst,
-                        },
-                        conventions=conventions_summary,
-                        complexity=complexity_summary,
-                        patterns=patterns_detected,
-                        debt_hotspots=debt_hotspots,
-                        hotspots=hotspots,
-                        suggested_reading_order=reading_order,
+                        **envelope_kwargs,
                     )
                 )
             )
@@ -659,6 +721,10 @@ def understand(ctx, full):
             debt_hotspots,
             reading_order,
         )
+
+        # Append tour output if --tour was given
+        if tour_data is not None:
+            _emit_tour_text(tour_data, conn, G, mermaid_mode)
 
 
 def _understand_text(
@@ -690,6 +756,18 @@ def _understand_text(
     fw_str = ", ".join(frameworks) if frameworks else "none detected"
     build_str = build_tool or "unknown"
 
+    _health_label = (
+        "healthy" if health["health_score"] >= 70
+        else "moderate" if health["health_score"] >= 40
+        else "unhealthy"
+    )
+    _understand_verdict = (
+        f"{_health_label} {len(languages)}-lang project "
+        f"({health['health_score']}/100), "
+        f"{len(clusters_data)} clusters, {len(hotspots)} hotspots"
+    )
+    click.echo(f"VERDICT: {_understand_verdict}")
+    click.echo()
     click.echo(f"=== {root.name} ===\n")
     click.echo(f"Project: {file_count} files, {sym_count} symbols, {edge_count} edges")
     click.echo(f"Languages: {lang_str}")
@@ -761,3 +839,263 @@ def _understand_text(
     click.echo("Suggested reading order:")
     for ro in reading_order:
         click.echo(f"  {ro['priority']:>2d}. {ro['path']:<50s}  ({ro['reason']})")
+
+
+# ---------------------------------------------------------------------------
+# --tour helpers
+# ---------------------------------------------------------------------------
+
+
+def _gather_tour_data(conn, G):
+    """Gather tour data (reading order, entry points, top symbols) for --tour flag.
+
+    ``G`` may be None if the graph could not be built; in that case reading
+    order and top symbols will fall back to empty lists.
+    """
+    from roam.commands.cmd_tour import _entry_points as _tour_entry_points
+    from roam.commands.cmd_tour import _reading_order as _tour_reading_order
+    from roam.commands.cmd_tour import _top_symbols as _tour_top_symbols
+
+    if G is None:
+        try:
+            from roam.graph.builder import build_symbol_graph
+
+            G = build_symbol_graph(conn)
+        except Exception:
+            G = None
+
+    reading_order = _tour_reading_order(conn, G) if G is not None else []
+    entry_points = _tour_entry_points(conn)
+    top_symbols = _tour_top_symbols(conn, G, limit=10) if G is not None else []
+
+    return {
+        "reading_order": reading_order,
+        "entry_points": entry_points,
+        "top_symbols": top_symbols,
+    }
+
+
+def _emit_tour_text(tour_data, conn, G, mermaid_mode):
+    """Emit the tour section appended after normal understand text output."""
+    click.echo()
+    click.echo("=== Tour ===")
+    click.echo()
+
+    reading_order = tour_data.get("reading_order", [])
+    entry_points = tour_data.get("entry_points", [])
+    top_symbols = tour_data.get("top_symbols", [])
+
+    if reading_order:
+        click.echo("Reading order (layer-based, foundation first):")
+        current_layer = -1
+        for item in reading_order:
+            if item["layer"] != current_layer:
+                current_layer = item["layer"]
+                lbl = "foundation" if current_layer == 0 else f"builds on layer {current_layer - 1}"
+                click.echo(f"  Layer {current_layer} ({lbl}):")
+            click.echo(f"    {item['file']}")
+        click.echo()
+
+    if entry_points:
+        click.echo(f"Entry points ({len(entry_points)}):")
+        for e in entry_points:
+            click.echo(f"  {e['kind']:<6s} {e['name']:<40s} {e['location']}")
+        click.echo()
+
+    if top_symbols:
+        click.echo("Top symbols (PageRank):")
+        for s in top_symbols:
+            click.echo(f"  {s['kind']:<6s} {s['name']:<40s} fan_in={s['fan_in']:<3d} {s['location']}")
+        click.echo()
+
+    click.echo("Next steps:")
+    click.echo("  roam search <pattern>    -- find any symbol by name")
+    click.echo("  roam context <symbol>    -- get files and line ranges to read")
+    click.echo("  roam why <symbol>        -- understand why a symbol matters")
+    click.echo("  roam preflight <symbol>  -- safety check before modifying")
+    click.echo()
+
+    if mermaid_mode:
+        try:
+            from roam.commands.cmd_tour import _tour_mermaid
+
+            mermaid_text = _tour_mermaid(conn, G, top_symbols, reading_order)
+            click.echo("Mermaid diagram:")
+            click.echo(mermaid_text)
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# --agent helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_agent_mode(json_mode, cmd_name):
+    """Handle the --agent flag: emit a compact agent-oriented prompt."""
+    from roam.commands.cmd_describe import _agent_prompt_data, _format_agent_prompt
+
+    with open_db(readonly=True) as conn:
+        data = _agent_prompt_data(conn)
+
+    _ap_verdict = (
+        f"{data.get('project', 'project')}: {data.get('files', 0)} files, "
+        f"{data.get('languages', 'unknown')} | health={data.get('health_score', 'N/A')}"
+    )
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    cmd_name,
+                    summary={"verdict": _ap_verdict, "mode": "agent"},
+                    agent_prompt=_format_agent_prompt(data),
+                    **data,
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {_ap_verdict}")
+        click.echo()
+        click.echo(_format_agent_prompt(data))
+
+
+# ---------------------------------------------------------------------------
+# --skeleton helpers
+# ---------------------------------------------------------------------------
+
+
+def _run_skeleton_mode(json_mode, cmd_name, directory):
+    """Handle the --skeleton DIR flag: emit directory skeleton."""
+    from collections import defaultdict
+
+    from roam.output.formatter import format_signature
+
+    directory = directory.replace("\\", "/").rstrip("/")
+
+    with open_db(readonly=True) as conn:
+        symbols = conn.execute(
+            "SELECT s.*, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
+            "ORDER BY f.path, s.line_start",
+            (f"{directory}/%",),
+        ).fetchall()
+
+        if not symbols:
+            # Try partial match
+            symbols = conn.execute(
+                "SELECT s.*, f.path as file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE REPLACE(f.path, '\\', '/') LIKE ? AND s.is_exported = 1 "
+                "ORDER BY f.path, s.line_start",
+                (f"%{directory}/%",),
+            ).fetchall()
+
+        if not symbols:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            cmd_name,
+                            summary={
+                                "verdict": f"no symbols found in {directory}/",
+                                "file_count": 0,
+                                "symbol_count": 0,
+                            },
+                            directory=directory,
+                            files={},
+                            symbol_count=0,
+                        )
+                    )
+                )
+            else:
+                click.echo(f"VERDICT: no symbols found in {directory}/\n")
+                click.echo(f"No exported symbols found in: {directory}/")
+                click.echo("Hint: use a path relative to the project root.")
+            return
+
+        # Group by file
+        by_file = defaultdict(list)
+        for s in symbols:
+            by_file[s["file_path"]].append(s)
+
+        if json_mode:
+            _verdict = f"{directory}/: {len(by_file)} files, {len(symbols)} symbols"
+            result = {}
+            for fp in sorted(by_file.keys()):
+                result[fp] = [
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "signature": s["signature"] or "",
+                        "line_start": s["line_start"],
+                        "line_end": s["line_end"],
+                        "docstring": (s["docstring"] or "").strip().split("\n")[0][:80] if s["docstring"] else "",
+                    }
+                    for s in by_file[fp]
+                ]
+            click.echo(
+                to_json(
+                    json_envelope(
+                        cmd_name,
+                        summary={
+                            "verdict": _verdict,
+                            "file_count": len(by_file),
+                            "symbol_count": len(symbols),
+                        },
+                        directory=directory,
+                        file_count=len(by_file),
+                        symbol_count=len(symbols),
+                        files=result,
+                    )
+                )
+            )
+            return
+
+        file_count = len(by_file)
+        sym_count = len(symbols)
+        _verdict = f"{directory}/: {file_count} files, {sym_count} exported symbols"
+        click.echo(f"VERDICT: {_verdict}\n")
+        click.echo(f"{directory}/ ({file_count} files, {sym_count} exported symbols)")
+        click.echo()
+
+        # Build parent lookup for indentation
+        parent_ids = {s["id"]: s["parent_id"] for s in symbols}
+        parent_set = {s["id"] for s in symbols}
+
+        for file_path in sorted(by_file.keys()):
+            file_syms = by_file[file_path]
+            click.echo(f"  {file_path}")
+
+            for s in file_syms:
+                # Compute indentation level
+                level = 0
+                if s["parent_id"] is not None and s["parent_id"] in parent_set:
+                    level = 1
+                    pid = s["parent_id"]
+                    while pid in parent_ids and parent_ids[pid] is not None and parent_ids[pid] in parent_set:
+                        level += 1
+                        pid = parent_ids[pid]
+
+                prefix = "    " + "  " * level
+                kind = abbrev_kind(s["kind"])
+                sig = format_signature(s["signature"], max_len=40)
+                line_info = f"L{s['line_start']}"
+                if s["line_end"] and s["line_end"] != s["line_start"]:
+                    line_info += f"-{s['line_end']}"
+
+                doc_snippet = ""
+                if s["docstring"]:
+                    first_line = s["docstring"].strip().split("\n")[0].strip()
+                    if len(first_line) > 50:
+                        first_line = first_line[:47] + "..."
+                    doc_snippet = f"  {first_line}"
+
+                parts = [f"{kind:<6s}", s["name"]]
+                if sig:
+                    parts.append(sig)
+                parts.append(line_info)
+
+                click.echo(f"{prefix}{'  '.join(parts)}{doc_snippet}")
+
+            click.echo()

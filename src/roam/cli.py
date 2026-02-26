@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 144 invokable command names (143 canonical commands + 1 legacy alias).
+# Total: 142 invokable command names (139 canonical commands + 3 alias pairs).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
@@ -28,6 +28,7 @@ _COMMANDS = {
     "clusters": ("roam.commands.cmd_clusters", "clusters"),
     "layers": ("roam.commands.cmd_layers", "layers"),
     "weather": ("roam.commands.cmd_weather", "weather"),
+    "churn": ("roam.commands.cmd_weather", "weather"),
     "dead": ("roam.commands.cmd_dead", "dead"),
     "search": ("roam.commands.cmd_search", "search"),
     "grep": ("roam.commands.cmd_grep", "grep_cmd"),
@@ -46,13 +47,11 @@ _COMMANDS = {
     "split": ("roam.commands.cmd_split", "split"),
     "risk": ("roam.commands.cmd_risk", "risk"),
     "why": ("roam.commands.cmd_why", "why"),
-    "snapshot": ("roam.commands.cmd_snapshot", "snapshot"),
-    "trend": ("roam.commands.cmd_trend", "trend"),
     "auth-gaps": ("roam.commands.cmd_auth_gaps", "auth_gaps_cmd"),
     "coverage-gaps": ("roam.commands.cmd_coverage_gaps", "coverage_gaps"),
     "report": ("roam.commands.cmd_report", "report"),
     "understand": ("roam.commands.cmd_understand", "understand"),
-    "onboard": ("roam.commands.cmd_onboard", "onboard"),
+    "onboard": ("roam.commands.cmd_understand", "understand"),
     "affected-tests": ("roam.commands.cmd_affected_tests", "affected_tests"),
     "complexity": ("roam.commands.cmd_complexity", "complexity"),
     "debt": ("roam.commands.cmd_debt", "debt"),
@@ -73,7 +72,6 @@ _COMMANDS = {
     "guard": ("roam.commands.cmd_guard", "guard"),
     "init": ("roam.commands.cmd_init", "init"),
     "config": ("roam.commands.cmd_config", "config"),
-    "digest": ("roam.commands.cmd_digest", "digest"),
     "tour": ("roam.commands.cmd_tour", "tour"),
     "diagnose": ("roam.commands.cmd_diagnose", "diagnose"),
     "ws": ("roam.commands.cmd_ws", "ws"),
@@ -207,7 +205,6 @@ _CATEGORIES = {
         "context",
         "affected-tests",
         "diagnose",
-        "digest",
         "annotate",
         "annotations",
         "plan",
@@ -223,6 +220,7 @@ _CATEGORIES = {
         "ai-ratio",
         "trends",
         "weather",
+        "churn",
         "debt",
         "complexity",
         "algo",
@@ -230,9 +228,7 @@ _CATEGORIES = {
         "over-fetch",
         "missing-index",
         "alerts",
-        "trend",
         "fitness",
-        "snapshot",
         "forecast",
         "bisect",
         "ingest-trace",

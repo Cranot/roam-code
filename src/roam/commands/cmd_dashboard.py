@@ -231,7 +231,12 @@ def _health_label(score):
 @click.command("dashboard")
 @click.pass_context
 def dashboard(ctx):
-    """Unified codebase status: health, hotspots, debt, bus factor, AI rot."""
+    """Unified codebase status: health, hotspots, debt, bus factor, AI rot.
+
+    Unlike running individual commands, this command aggregates health, hotspots,
+    debt, bus factor, and vibe-check signals into a single overview with
+    approximate scoring.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
@@ -362,4 +367,4 @@ def dashboard(ctx):
             click.echo(f"  Top: {cats_str}")
             click.echo()
 
-        click.echo("  Run `roam health`, `roam hotspot`, `roam vibe-check` for details.")
+        click.echo("  Run `roam health`, `roam hotspots`, `roam vibe-check` for details.")

@@ -265,6 +265,10 @@ def _compute_coverage(conn, entries, adj):
 def entry_points(ctx, protocol_filter, limit):
     """Entry point catalog with protocol classification.
 
+    Unlike ``coverage-gaps`` (which finds unprotected entry points lacking
+    gate guards), this command catalogs all entry points by protocol type
+    with reachability metrics.
+
     Lists every symbol that serves as an entry point into the codebase,
     classified by protocol (HTTP, CLI, Event, Scheduled, Message, Main,
     Export).  For each entry point the command shows reachability coverage —
@@ -272,6 +276,7 @@ def entry_points(ctx, protocol_filter, limit):
     from that entry point through the call graph.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
     with open_db(readonly=True) as conn:
@@ -283,12 +288,14 @@ def entry_points(ctx, protocol_filter, limit):
                     to_json(
                         json_envelope(
                             "entry-points",
-                            summary={"total": 0, "note": "no entry points found"},
+                            summary={"verdict": "no entry points found", "total": 0, "note": "no entry points found"},
+                            budget=token_budget,
                             entry_points=[],
                         )
                     )
                 )
             else:
+                click.echo("VERDICT: no entry points found\n")
                 click.echo("No entry points found.")
             return
 
@@ -300,6 +307,10 @@ def entry_points(ctx, protocol_filter, limit):
         by_protocol = defaultdict(list)
         for e in entries:
             by_protocol[e["protocol"]].append(e)
+
+        # Build verdict
+        proto_parts = [f"{p}({len(items)})" for p, items in by_protocol.items()]
+        verdict = f"{len(entries)} entry points: {', '.join(proto_parts)}"
 
         # --- JSON output ----------------------------------------------
         if json_mode:
@@ -315,9 +326,11 @@ def entry_points(ctx, protocol_filter, limit):
                     json_envelope(
                         "entry-points",
                         summary={
+                            "verdict": verdict,
                             "total": len(entries),
                             "by_protocol": protocol_summary,
                         },
+                        budget=token_budget,
                         entry_points=clean,
                     )
                 )
@@ -325,6 +338,7 @@ def entry_points(ctx, protocol_filter, limit):
             return
 
         # --- Text output ----------------------------------------------
+        click.echo(f"VERDICT: {verdict}\n")
         click.echo("=== Entry Points ===\n")
         click.echo(f"Total: {len(entries)}")
         proto_parts = [f"{p} {len(items)}" for p, items in by_protocol.items()]

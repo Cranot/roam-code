@@ -138,6 +138,10 @@ def _discover_invariants(conn, sym_id, sym_info):
 def invariants(ctx, target, public_api, breaking_risk, top_n):
     """Discover implicit contracts for symbols.
 
+    Unlike ``check-rules`` (which evaluates explicit governance rules),
+    this command auto-discovers implicit contracts from usage patterns and
+    call frequency.
+
     Analyzes caller patterns, signatures, and usage spread to surface
     the invisible rules that must be preserved when modifying code.
 

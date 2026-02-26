@@ -82,7 +82,12 @@ def _impact_verdict(dependents, affected_files, total_syms):
 @click.argument("name")
 @click.pass_context
 def impact(ctx, name):
-    """Show blast radius: what breaks if a symbol changes."""
+    """Show blast radius: what breaks if a symbol changes.
+
+    Unlike ``uses`` (which lists direct callers), this command computes the
+    full transitive blast radius including affected files and PageRank-weighted
+    importance.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
@@ -135,7 +140,7 @@ def impact(ctx, name):
                         json_envelope(
                             "impact",
                             budget=token_budget,
-                            summary={"affected_symbols": 0, "affected_files": 0},
+                            summary={"verdict": "no dependents", "affected_symbols": 0, "affected_files": 0},
                             symbol=sym["qualified_name"] or sym["name"],
                             affected_symbols=0,
                             affected_files=0,
@@ -145,7 +150,7 @@ def impact(ctx, name):
                     )
                 )
             else:
-                click.echo("No dependents found.")
+                click.echo("VERDICT: no dependents — safe to change")
             return
 
         weighted_impact = sum(ppr.get(d, 0) for d in dependents)

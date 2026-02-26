@@ -204,18 +204,35 @@ class TestTrendsRecord:
 # ---------------------------------------------------------------------------
 
 
-class TestTrendsDisplay:
-    """Tests for the default display mode."""
+class TestTrendsTimeline:
+    """Tests for the default timeline display mode (health snapshots)."""
+
+    def test_timeline_exits_zero(self, trends_project):
+        """Default mode shows timeline from health snapshots (auto-populated)."""
+        result = _invoke(["trends"], cwd=trends_project)
+        assert result.exit_code == 0
+        assert "Health Trend" in result.output or "No snapshots" in result.output
+
+    def test_timeline_json(self, trends_project):
+        """JSON output has snapshot list and valid envelope."""
+        result = _invoke(["trends"], cwd=trends_project, json_mode=True)
+        data = _parse_json(result)
+        _assert_envelope(data)
+        assert "snapshots" in data or data["summary"]["snapshots"] >= 0
+
+
+class TestTrendsMetricDisplay:
+    """Tests for the per-metric display mode (metric_snapshots table)."""
 
     def test_no_data_exits_zero(self, trends_project):
-        """Without snapshots, the command exits 0 with a helpful message."""
-        result = _invoke(["trends"], cwd=trends_project)
+        """Without --record, --metric shows no data with a helpful message."""
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project)
         assert result.exit_code == 0
         assert "No trend data" in result.output or "VERDICT" in result.output
 
     def test_no_data_json(self, trends_project):
-        """Without snapshots, JSON output has valid envelope and empty metrics."""
-        result = _invoke(["trends"], cwd=trends_project, json_mode=True)
+        """Without --record, --metric JSON output has empty metrics."""
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project, json_mode=True)
         data = _parse_json(result)
         _assert_envelope(data)
         assert data["snapshots_count"] == 0
@@ -223,36 +240,35 @@ class TestTrendsDisplay:
 
     def test_display_verdict(self, trends_project_with_data):
         """Text output starts with VERDICT line."""
-        result = _invoke(["trends"], cwd=trends_project_with_data)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data)
         assert result.exit_code == 0
         first_line = result.output.strip().splitlines()[0]
         assert first_line.startswith("VERDICT:"), f"Expected VERDICT line, got: {first_line!r}"
 
     def test_display_table_headers(self, trends_project_with_data):
         """Text output includes the table headers."""
-        result = _invoke(["trends"], cwd=trends_project_with_data)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data)
         assert result.exit_code == 0
         assert "METRIC" in result.output
         assert "LATEST" in result.output
         assert "DIRECTION" in result.output
 
-    def test_display_shows_metrics(self, trends_project_with_data):
-        """Text output includes known metric names."""
-        result = _invoke(["trends"], cwd=trends_project_with_data)
+    def test_display_shows_metric(self, trends_project_with_data):
+        """Text output includes the requested metric name."""
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data)
         assert result.exit_code == 0
         assert "health_score" in result.output
-        assert "total_files" in result.output
 
     def test_display_json_has_metrics(self, trends_project_with_data):
         """JSON output has a non-empty metrics list."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         _assert_envelope(data)
         assert len(data["metrics"]) > 0
 
     def test_display_json_metric_fields(self, trends_project_with_data):
         """Each metric in JSON output has the required fields."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         required = {"name", "latest", "change", "change_pct", "direction", "history"}
         for m in data["metrics"]:
@@ -261,7 +277,7 @@ class TestTrendsDisplay:
 
     def test_display_json_summary_fields(self, trends_project_with_data):
         """Summary contains verdict, days, snapshots_count."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         summary = data["summary"]
         assert "verdict" in summary
@@ -270,14 +286,14 @@ class TestTrendsDisplay:
 
     def test_display_json_has_alerts(self, trends_project_with_data):
         """JSON output has an alerts list (possibly empty)."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         assert "alerts" in data
         assert isinstance(data["alerts"], list)
 
     def test_display_json_history_is_list(self, trends_project_with_data):
-        """Each metric's history field is a list of numbers."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        """Metric history field is a list of numbers."""
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         for m in data["metrics"]:
             assert isinstance(m["history"], list), f"Expected history to be a list for {m['name']}"
@@ -343,18 +359,18 @@ class TestTrendsMetricFilter:
 
 
 class TestTrendsDays:
-    """Tests for the --days flag."""
+    """Tests for the --days flag (in per-metric view)."""
 
     def test_days_default(self, trends_project_with_data):
         """Default --days=30 is accepted."""
-        result = _invoke(["trends"], cwd=trends_project_with_data, json_mode=True)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data, json_mode=True)
         data = _parse_json(result)
         assert data["days"] == 30
 
     def test_days_custom(self, trends_project_with_data):
         """Custom --days value is reflected in output."""
         result = _invoke(
-            ["trends", "--days", "7"],
+            ["trends", "--metric", "health_score", "--days", "7"],
             cwd=trends_project_with_data,
             json_mode=True,
         )
@@ -364,7 +380,7 @@ class TestTrendsDays:
     def test_days_zero(self, trends_project_with_data):
         """--days 0 shows no data (all snapshots are in the past)."""
         result = _invoke(
-            ["trends", "--days", "0"],
+            ["trends", "--metric", "health_score", "--days", "0"],
             cwd=trends_project_with_data,
             json_mode=True,
         )
@@ -471,7 +487,7 @@ class TestTrendsAlerts:
         """If there are alerts, they appear in text output."""
         # We can't guarantee worsening metrics in a fresh project,
         # but we can at least verify the command runs
-        result = _invoke(["trends"], cwd=trends_project_with_data)
+        result = _invoke(["trends", "--metric", "health_score"], cwd=trends_project_with_data)
         assert result.exit_code == 0
         # Alerts section is optional; just verify no crash
 

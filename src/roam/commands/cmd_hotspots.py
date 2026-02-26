@@ -368,6 +368,12 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
 
     Requires prior trace ingestion via ``roam ingest-trace``.
 
+    Unlike ``smells`` (which detects structural complexity anti-patterns from
+    DB queries), this command has two modes: ``--security`` scans source files
+    for dangerous API patterns (eval, pickle, subprocess) with reachability
+    scoring, and the default mode correlates static analysis with runtime
+    trace data from ``ingest-trace``.
+
     \b
     Classifications:
       UPGRADE   — runtime-critical but statically safe (hidden hotspot)

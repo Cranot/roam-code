@@ -1,12 +1,7 @@
-"""Tests for the `roam onboard` command.
+"""Tests for the `roam onboard` command (backward-compat alias for `understand`).
 
-Covers:
-- All sections present in text output
-- JSON output structure and envelope contract
-- --detail flag levels (brief/normal/full)
-- Empty / minimal project handling
-- Entry points section
-- Reading order generation
+Since v11.1 ``onboard`` is a thin alias for ``understand``.  These tests
+verify the alias works correctly and produces the same output as ``understand``.
 """
 
 from __future__ import annotations
@@ -140,77 +135,58 @@ def small_indexed_project(tmp_path):
 
 
 # ============================================================================
-# Text output: all sections present
+# Alias works — basic text output
 # ============================================================================
 
 
-class TestOnboardTextSections:
-    """Verify all expected sections appear in text output."""
+class TestOnboardAlias:
+    """Verify 'onboard' alias invokes 'understand' correctly."""
 
-    def test_project_overview_present(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_onboard_exits_zero(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
         assert result.exit_code == 0
-        assert "PROJECT OVERVIEW" in result.output
 
-    def test_architecture_present(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_onboard_shows_project_name(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
         assert result.exit_code == 0
-        assert "ARCHITECTURE" in result.output
+        assert "small_proj" in result.output
 
-    def test_entry_points_present(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_onboard_shows_languages(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
         assert result.exit_code == 0
-        assert "ENTRY POINTS" in result.output
-
-    def test_reading_order_present(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "SUGGESTED READING ORDER" in result.output
-
-    def test_conventions_present(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "CONVENTIONS" in result.output
-
-    def test_onboarding_guide_header(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "ONBOARDING GUIDE" in result.output
-
-    def test_files_count_shown(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "Files:" in result.output
-
-    def test_symbols_count_shown(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "Symbols:" in result.output
-
-    def test_languages_shown(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "Languages:" in result.output
-        # Language name in DB is "python" or "py" depending on version
         assert "py" in result.output.lower()
 
+    def test_onboard_shows_health(self, cli_runner, small_indexed_project, monkeypatch):
+        monkeypatch.chdir(small_indexed_project)
+        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
+        assert result.exit_code == 0
+        assert "Health:" in result.output
+
+    def test_onboard_shows_reading_order(self, cli_runner, small_indexed_project, monkeypatch):
+        monkeypatch.chdir(small_indexed_project)
+        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
+        assert result.exit_code == 0
+        assert "reading order" in result.output.lower()
+
+    def test_onboard_matches_understand(self, cli_runner, small_indexed_project, monkeypatch):
+        monkeypatch.chdir(small_indexed_project)
+        onboard_result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
+        understand_result = invoke_cli(cli_runner, ["understand"], cwd=small_indexed_project)
+        assert onboard_result.exit_code == 0
+        assert understand_result.exit_code == 0
+        assert onboard_result.output == understand_result.output
+
 
 # ============================================================================
-# JSON output structure
+# JSON output structure (matches understand envelope)
 # ============================================================================
 
 
 class TestOnboardJSON:
-    """Verify JSON output follows the envelope contract."""
+    """Verify JSON output follows the understand envelope contract."""
 
     def test_json_envelope(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
@@ -223,142 +199,71 @@ class TestOnboardJSON:
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
         data = parse_json_output(result, "onboard")
         summary = data["summary"]
-        assert "verdict" in summary
         assert "files" in summary
         assert "symbols" in summary
+        assert "health_score" in summary
         assert "languages" in summary
-        assert "layers" in summary
-        assert "modules" in summary
-        assert "entry_points" in summary
-        assert "risk_areas" in summary
-        assert "detail" in summary
 
-    def test_json_has_all_sections(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_json_has_project(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
-        data = parse_json_output(result, "onboard")
-        assert "overview" in data
+        data = parse_json_output(result, "understand")
+        assert "project" in data
+        assert data["project"]["files"] > 0
+        assert data["project"]["symbols"] > 0
+
+    def test_json_has_tech_stack(self, cli_runner, small_indexed_project, monkeypatch):
+        monkeypatch.chdir(small_indexed_project)
+        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
+        data = parse_json_output(result, "understand")
+        assert "tech_stack" in data
+        assert "languages" in data["tech_stack"]
+
+    def test_json_has_architecture(self, cli_runner, small_indexed_project, monkeypatch):
+        monkeypatch.chdir(small_indexed_project)
+        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
+        data = parse_json_output(result, "understand")
         assert "architecture" in data
-        assert "entry_points" in data
-        assert "critical_paths" in data
-        assert "risk_areas" in data
-        assert "reading_order" in data
-        assert "conventions" in data
+        assert "entry_points" in data["architecture"]
+        assert "key_abstractions" in data["architecture"]
 
-    def test_json_overview_structure(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_json_has_reading_order(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
-        data = parse_json_output(result, "onboard")
-        overview = data["overview"]
-        assert "total_files" in overview
-        assert "total_symbols" in overview
-        assert "languages" in overview
-        assert "primary_language" in overview
-        assert "has_tests" in overview
-        assert overview["total_files"] > 0
-        assert overview["total_symbols"] > 0
+        data = parse_json_output(result, "understand")
+        assert "suggested_reading_order" in data
+        reading = data["suggested_reading_order"]
+        assert isinstance(reading, list)
 
-    def test_json_architecture_structure(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_json_matches_understand(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
-        data = parse_json_output(result, "onboard")
-        arch = data["architecture"]
-        assert "layer_count" in arch
-        assert "layers" in arch
-        assert "cluster_count" in arch
-        assert "clusters" in arch
-
-    def test_json_entry_points_structure(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
-        data = parse_json_output(result, "onboard")
-        eps = data["entry_points"]
-        assert isinstance(eps, list)
-        if eps:
-            ep = eps[0]
-            assert "name" in ep
-            assert "kind" in ep
-            assert "file" in ep
-            assert "pagerank" in ep
-
-    def test_json_conventions_structure(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
-        data = parse_json_output(result, "onboard")
-        conv = data["conventions"]
-        assert "naming" in conv
-        assert "test_pattern" in conv
-        assert "test_file_count" in conv
-
-    def test_json_detail_field_reflects_flag(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        for detail_val in ("brief", "normal", "full"):
-            result = invoke_cli(
-                cli_runner,
-                ["onboard", "--detail", detail_val],
-                cwd=small_indexed_project,
-                json_mode=True,
-            )
-            data = parse_json_output(result, "onboard")
-            assert data["summary"]["detail"] == detail_val
+        onboard_result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project, json_mode=True)
+        understand_result = invoke_cli(cli_runner, ["understand"], cwd=small_indexed_project, json_mode=True)
+        onboard_data = parse_json_output(onboard_result, "understand")
+        understand_data = parse_json_output(understand_result, "understand")
+        # Same structure (timestamp may differ, but summary, project, etc. should match)
+        assert onboard_data["summary"] == understand_data["summary"]
+        assert onboard_data["project"] == understand_data["project"]
 
 
 # ============================================================================
-# --detail flag levels
+# --full flag (inherited from understand)
 # ============================================================================
 
 
-class TestOnboardDetailLevels:
-    """Verify that --detail flag changes output volume."""
+class TestOnboardFullFlag:
+    """Verify --full flag works through onboard alias."""
 
-    def test_brief_runs_ok(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_full_flag_exits_zero(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard", "--detail", "brief"], cwd=small_indexed_project)
+        result = invoke_cli(cli_runner, ["onboard", "--full"], cwd=small_indexed_project)
         assert result.exit_code == 0
-        assert "ONBOARDING GUIDE" in result.output
 
-    def test_normal_runs_ok(self, cli_runner, small_indexed_project, monkeypatch):
+    def test_full_has_more_output_than_default(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard", "--detail", "normal"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "ONBOARDING GUIDE" in result.output
-
-    def test_full_runs_ok(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard", "--detail", "full"], cwd=small_indexed_project)
-        assert result.exit_code == 0
-        assert "ONBOARDING GUIDE" in result.output
-
-    def test_full_has_more_output_than_brief(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        brief_result = invoke_cli(cli_runner, ["onboard", "--detail", "brief"], cwd=small_indexed_project)
-        full_result = invoke_cli(cli_runner, ["onboard", "--detail", "full"], cwd=small_indexed_project)
-        # Full should have at least as much output as brief
-        assert len(full_result.output) >= len(brief_result.output)
-
-    def test_invalid_detail_rejected(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(cli_runner, ["onboard", "--detail", "invalid"], cwd=small_indexed_project)
-        assert result.exit_code != 0
-
-    def test_json_brief_has_fewer_entry_points(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        brief_result = invoke_cli(
-            cli_runner,
-            ["onboard", "--detail", "brief"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        full_result = invoke_cli(
-            cli_runner,
-            ["onboard", "--detail", "full"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        brief_data = parse_json_output(brief_result, "onboard")
-        full_data = parse_json_output(full_result, "onboard")
-        # Full should have >= entry points compared to brief
-        assert len(full_data["entry_points"]) >= len(brief_data["entry_points"])
+        default_result = invoke_cli(cli_runner, ["onboard"], cwd=small_indexed_project)
+        full_result = invoke_cli(cli_runner, ["onboard", "--full"], cwd=small_indexed_project)
+        assert len(full_result.output) >= len(default_result.output)
 
 
 # ============================================================================
@@ -373,76 +278,12 @@ class TestOnboardMinimalProject:
         monkeypatch.chdir(empty_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=empty_indexed_project)
         assert result.exit_code == 0
-        assert "ONBOARDING GUIDE" in result.output
-        assert "PROJECT OVERVIEW" in result.output
 
     def test_empty_project_json(self, cli_runner, empty_indexed_project, monkeypatch):
         monkeypatch.chdir(empty_indexed_project)
         result = invoke_cli(cli_runner, ["onboard"], cwd=empty_indexed_project, json_mode=True)
         data = parse_json_output(result, "onboard")
         assert_json_envelope(data, "onboard")
-        assert "verdict" in data["summary"]
-
-    def test_empty_project_no_crash_on_all_details(self, cli_runner, empty_indexed_project, monkeypatch):
-        monkeypatch.chdir(empty_indexed_project)
-        for detail in ("brief", "normal", "full"):
-            result = invoke_cli(
-                cli_runner,
-                ["onboard", "--detail", detail],
-                cwd=empty_indexed_project,
-            )
-            assert result.exit_code == 0
-
-
-# ============================================================================
-# Entry points section
-# ============================================================================
-
-
-class TestOnboardEntryPoints:
-    """Verify entry points are extracted and shown correctly."""
-
-    def test_entry_points_contain_symbols(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(
-            cli_runner,
-            ["onboard"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        data = parse_json_output(result, "onboard")
-        eps = data["entry_points"]
-        # Our project has functions and classes, some should show as entry points
-        if eps:
-            names = [ep["name"] for ep in eps]
-            # At least one of the project's symbols should appear
-            assert len(names) > 0
-
-    def test_entry_points_have_pagerank(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(
-            cli_runner,
-            ["onboard"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        data = parse_json_output(result, "onboard")
-        for ep in data["entry_points"]:
-            assert "pagerank" in ep
-            assert isinstance(ep["pagerank"], (int, float))
-
-    def test_entry_points_have_why(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(
-            cli_runner,
-            ["onboard"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        data = parse_json_output(result, "onboard")
-        for ep in data["entry_points"]:
-            assert "why" in ep
-            assert len(ep["why"]) > 0
 
 
 # ============================================================================
@@ -451,7 +292,7 @@ class TestOnboardEntryPoints:
 
 
 class TestOnboardReadingOrder:
-    """Verify the suggested reading order is generated correctly."""
+    """Verify the suggested reading order via onboard alias."""
 
     def test_reading_order_has_entries(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
@@ -461,12 +302,10 @@ class TestOnboardReadingOrder:
             cwd=small_indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "onboard")
-        reading = data["reading_order"]
+        data = parse_json_output(result, "understand")
+        reading = data["suggested_reading_order"]
         assert isinstance(reading, list)
-        # With a project that has symbols, we should have at least one reading entry
-        if data["entry_points"]:
-            assert len(reading) > 0
+        assert len(reading) > 0
 
     def test_reading_order_has_priorities(self, cli_runner, small_indexed_project, monkeypatch):
         monkeypatch.chdir(small_indexed_project)
@@ -476,8 +315,8 @@ class TestOnboardReadingOrder:
             cwd=small_indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "onboard")
-        for item in data["reading_order"]:
+        data = parse_json_output(result, "understand")
+        for item in data["suggested_reading_order"]:
             assert "priority" in item
             assert "path" in item
             assert "reason" in item
@@ -490,10 +329,9 @@ class TestOnboardReadingOrder:
             cwd=small_indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "onboard")
-        priorities = [item["priority"] for item in data["reading_order"]]
+        data = parse_json_output(result, "understand")
+        priorities = [item["priority"] for item in data["suggested_reading_order"]]
         if priorities:
-            # Priorities should start at 1 and be sequential
             assert priorities[0] == 1
             for i in range(1, len(priorities)):
                 assert priorities[i] > priorities[i - 1]
@@ -506,28 +344,6 @@ class TestOnboardReadingOrder:
             cwd=small_indexed_project,
             json_mode=True,
         )
-        data = parse_json_output(result, "onboard")
-        paths = [item["path"] for item in data["reading_order"]]
+        data = parse_json_output(result, "understand")
+        paths = [item["path"] for item in data["suggested_reading_order"]]
         assert len(paths) == len(set(paths)), "Reading order contains duplicate paths"
-
-
-# ============================================================================
-# Verdict
-# ============================================================================
-
-
-class TestOnboardVerdict:
-    """Verify the verdict is generated."""
-
-    def test_verdict_in_json(self, cli_runner, small_indexed_project, monkeypatch):
-        monkeypatch.chdir(small_indexed_project)
-        result = invoke_cli(
-            cli_runner,
-            ["onboard"],
-            cwd=small_indexed_project,
-            json_mode=True,
-        )
-        data = parse_json_output(result, "onboard")
-        assert "verdict" in data["summary"]
-        assert isinstance(data["summary"]["verdict"], str)
-        assert len(data["summary"]["verdict"]) > 0

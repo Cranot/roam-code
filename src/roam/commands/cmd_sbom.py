@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import hashlib
 import re
 import uuid
 from datetime import datetime, timezone
@@ -367,10 +366,6 @@ def _generate_spdx(
             }
         )
 
-    # Compute document verification code
-    pkg_checksums = sorted(hashlib.sha256(p["name"].encode()).hexdigest() for p in packages)
-    verification = hashlib.sha256("".join(pkg_checksums).encode()).hexdigest()
-
     spdx: dict = {
         "spdxVersion": "SPDX-2.3",
         "dataLicense": "CC0-1.0",
@@ -428,6 +423,10 @@ def sbom(ctx, fmt, output_path, no_reachability):
 
     This reachability enrichment is unique to roam-code -- it lets you
     distinguish phantom dependencies from those actually exercised at runtime.
+
+    Unlike ``supply-chain`` (which shows a developer-facing risk dashboard),
+    this command produces machine-readable artifacts for external tools like
+    Dependency-Track, FOSSA, and GitHub Dependency Review.
 
     \b
     Examples:

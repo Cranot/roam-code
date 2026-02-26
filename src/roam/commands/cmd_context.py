@@ -2,25 +2,26 @@
 
 from __future__ import annotations
 
+import os
 from collections import defaultdict
 
 import click
 
 from roam.commands.changed_files import is_test_file
 from roam.commands.context_helpers import (
-    batch_context as _batch_context,
-)
-from roam.commands.context_helpers import (
-    gather_annotations as _gather_annotations,
-)
-from roam.commands.context_helpers import (
-    gather_symbol_context as _gather_symbol_context,
-)
-from roam.commands.context_helpers import (
-    gather_task_extras as _gather_task_extras,
-)
-from roam.commands.context_helpers import (
-    get_coupling as _get_coupling,
+    batch_context,
+    gather_annotations,
+    gather_symbol_context,
+    get_coupling,
+    get_symbol_metrics,
+    get_graph_metrics,
+    get_file_churn,
+    get_affected_tests_bfs,
+    get_blast_radius,
+    get_cluster_info,
+    get_similar_symbols,
+    get_entry_points_reaching,
+    get_file_context,
 )
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, file_not_found_hint, find_symbol, symbol_not_found
@@ -32,7 +33,7 @@ _TASK_CHOICES = ["refactor", "debug", "extend", "review", "understand"]
 
 
 # ---------------------------------------------------------------------------
-# Task-mode text output helpers
+# Small rendering helpers (text) — kept as-is, already well-factored
 # ---------------------------------------------------------------------------
 
 
@@ -162,312 +163,140 @@ def _render_annotations_text(annotations):
 
 
 # ---------------------------------------------------------------------------
-# Task-mode output: text
+# Gather functions — one per mode, each returns a standardised data dict
 # ---------------------------------------------------------------------------
 
 
-def _output_task_single_text(c, task, extras):
-    """Render task-mode text output for a single symbol."""
-    sym = c["sym"]
-    line_start = c["line_start"]
-    non_test_callers = c["non_test_callers"]
-    callees = c["callees"]
-    test_callers = c["test_callers"]
-    test_importers = c["test_importers"]
-    siblings = c["siblings"]
-    files_to_read = c["files_to_read"]
-    skipped_callers = c["skipped_callers"]
-    skipped_callees = c["skipped_callees"]
+def _gather_single(conn, sym, task, session_hint, recent_symbols, use_propagation):
+    """Gather all context for a single symbol.
 
-    hide_callees = extras.get("_hide_callees", False)
-    limit_callers = extras.get("_limit_callers")
-    limit_callees = extras.get("_limit_callees")
-
-    sig = sym["signature"] or ""
-    click.echo(f"=== Context for: {sym['name']} (task={task}) ===")
-    click.echo(
-        f"{abbrev_kind(sym['kind'])}  "
-        f"{sym['qualified_name'] or sym['name']}"
-        f"{'  ' + sig if sig else ''}  "
-        f"{loc(sym['file_path'], line_start)}"
+    Returns a data dict with mode='single', plus all context fields
+    including task extras (always gathered, regardless of task value).
+    """
+    c = gather_symbol_context(
+        conn,
+        sym,
+        task=task,
+        session_hint=session_hint,
+        recent_symbols=recent_symbols,
+        use_propagation=use_propagation,
     )
-    click.echo()
 
-    # Annotations (shown for all task modes)
-    _render_annotations_text(extras.get("annotations"))
+    sym_id = sym["id"]
+    file_path = sym["file_path"]
 
-    # understand: show docstring first
-    if task == "understand" and extras.get("docstring"):
-        click.echo("Docstring:")
-        for line in extras["docstring"].strip().splitlines()[:10]:
-            click.echo(f"  {line}")
-        click.echo()
+    # Always gather all extras — task just passes through for ranking/JSON
+    annotations = gather_annotations(conn, sym=sym)
 
-    # Callers
-    caller_cap = limit_callers or 20
-    if non_test_callers:
-        click.echo(f"Callers ({len(non_test_callers)}):")
-        rows = []
-        for cr in non_test_callers[:caller_cap]:
-            rows.append(
-                [
-                    abbrev_kind(cr["kind"]),
-                    cr["name"],
-                    loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
-                    cr["edge_kind"] or "",
-                ]
-            )
-        click.echo(format_table(["kind", "name", "location", "edge"], rows))
-        if len(non_test_callers) > caller_cap:
-            click.echo(f"  (+{len(non_test_callers) - caller_cap} more)")
-        click.echo()
-    else:
-        click.echo("Callers: (none)")
-        click.echo()
+    try:
+        docstring = sym["docstring"] or None
+    except (KeyError, IndexError):
+        docstring = None
 
-    # Callees (hidden for refactor, limited for understand)
-    if not hide_callees:
-        callee_cap = limit_callees or 15
-        if callees:
-            click.echo(f"Callees ({len(callees)}):")
-            rows = []
-            for ce in callees[:callee_cap]:
-                rows.append(
-                    [
-                        abbrev_kind(ce["kind"]),
-                        ce["name"],
-                        loc(ce["file_path"], ce["line_start"]),
-                        ce["edge_kind"] or "",
-                    ]
-                )
-            click.echo(format_table(["kind", "name", "location", "edge"], rows))
-            if len(callees) > callee_cap:
-                click.echo(f"  (+{len(callees) - callee_cap} more)")
-            click.echo()
-        else:
-            click.echo("Callees: (none)")
-            click.echo()
+    try:
+        complexity = get_symbol_metrics(conn, sym_id)
+    except Exception:
+        complexity = None
 
-    # Tests (default for non-review/debug; those use BFS affected_tests)
-    if task not in ("review", "debug"):
-        if test_callers or test_importers:
-            click.echo(f"Tests ({len(test_callers)} direct, {len(test_importers)} file-level):")
-            for t in test_callers:
-                click.echo(f"  {abbrev_kind(t['kind'])}  {t['name']}  {loc(t['file_path'], t['line_start'])}")
-            for ti in test_importers:
-                click.echo(f"  file  {ti['path']}")
-        else:
-            click.echo("Tests: (none)")
-        click.echo()
+    try:
+        graph_centrality = get_graph_metrics(conn, sym_id)
+    except Exception:
+        graph_centrality = None
 
-    # Siblings (shown for refactor, understand)
-    if task in ("refactor", "understand") and siblings:
-        click.echo(f"Siblings ({len(siblings)} exports in same file):")
-        for s in siblings[:10]:
-            click.echo(f"  {abbrev_kind(s['kind'])}  {s['name']}")
-        if len(siblings) > 10:
-            click.echo(f"  (+{len(siblings) - 10} more)")
-        click.echo()
+    try:
+        git_churn = get_file_churn(conn, file_path)
+    except Exception:
+        git_churn = None
 
-    # Task-specific extra sections
-    if task == "refactor":
-        _render_complexity_text(extras.get("complexity"))
-        _render_graph_centrality_text(extras.get("graph_centrality"))
-        _render_coupling_text(extras.get("coupling"))
+    try:
+        coupling = get_coupling(conn, file_path, limit=10)
+    except Exception:
+        coupling = []
 
-    elif task == "debug":
-        _render_complexity_text(extras.get("complexity"))
-        _render_affected_tests_text(extras.get("affected_tests", []))
+    try:
+        affected_tests = get_affected_tests_bfs(conn, sym_id)
+    except Exception:
+        affected_tests = []
 
-    elif task == "extend":
-        _render_graph_centrality_text(extras.get("graph_centrality"))
-        _render_similar_symbols_text(extras.get("similar_symbols", []))
-        _render_entry_points_text(extras.get("entry_points_reaching", []))
+    try:
+        blast_radius = get_blast_radius(conn, sym_id)
+    except Exception:
+        blast_radius = None
 
-    elif task == "review":
-        _render_complexity_text(extras.get("complexity"))
-        _render_churn_text(extras.get("git_churn"))
-        _render_affected_tests_text(extras.get("affected_tests", []))
-        _render_coupling_text(extras.get("coupling"))
-        _render_blast_radius_text(extras.get("blast_radius"))
-        _render_graph_centrality_text(extras.get("graph_centrality"))
+    try:
+        cluster = get_cluster_info(conn, sym_id)
+    except Exception:
+        cluster = None
 
-    elif task == "understand":
-        _render_cluster_text(extras.get("cluster"))
-        _render_graph_centrality_text(extras.get("graph_centrality"))
-        _render_file_context_text(extras.get("file_context", []))
+    try:
+        similar_symbols = get_similar_symbols(conn, sym, limit=10)
+    except Exception:
+        similar_symbols = []
 
-    # Files to read
-    skipped_total = skipped_callers + skipped_callees
-    extra_label = f", +{skipped_total} more" if skipped_total else ""
-    click.echo(f"Files to read ({len(files_to_read)}{extra_label}):")
-    for f in files_to_read:
-        end_str = f"-{f['end']}" if f["end"] and f["end"] != f["start"] else ""
-        lr = f":{f['start']}{end_str}" if f["start"] else ""
-        click.echo(f"  {f['path']:<50s} {lr:<12s} ({f['reason']})")
+    try:
+        entry_points_reaching = get_entry_points_reaching(conn, sym_id, limit=5)
+    except Exception:
+        entry_points_reaching = []
 
+    try:
+        fid = sym["file_id"]
+    except (KeyError, IndexError):
+        fid = conn.execute("SELECT file_id FROM symbols WHERE id = ?", (sym_id,)).fetchone()[0]
 
-# ---------------------------------------------------------------------------
-# Task-mode output: JSON
-# ---------------------------------------------------------------------------
+    try:
+        file_context_syms = get_file_context(conn, fid, sym_id)
+    except Exception:
+        file_context_syms = []
 
-
-def _output_task_single_json(c, task, extras, budget=0):
-    """Build and emit JSON output for task-mode single symbol."""
-    sym = c["sym"]
-    line_start = c["line_start"]
-    line_end = c["line_end"]
-    non_test_callers = c["non_test_callers"]
-    callees = c["callees"]
-    test_callers = c["test_callers"]
-    test_importers = c["test_importers"]
-    siblings = c["siblings"]
-    files_to_read = c["files_to_read"]
-
-    hide_callees = extras.get("_hide_callees", False)
-    limit_callers = extras.get("_limit_callers")
-    limit_callees = extras.get("_limit_callees")
-
-    caller_cap = limit_callers or len(non_test_callers)
-    callee_cap = limit_callees or len(callees)
-
-    payload = {
-        "task": task,
-        "symbol": sym["qualified_name"] or sym["name"],
-        "kind": sym["kind"],
-        "signature": sym["signature"] or "",
-        "location": loc(sym["file_path"], line_start),
-        "definition": {
-            "file": sym["file_path"],
-            "start": line_start,
-            "end": line_end,
+    next_steps = suggest_next_steps(
+        "context",
+        {
+            "symbol": sym["qualified_name"] or sym["name"],
+            "callers": len(c["non_test_callers"]),
         },
-        "callers": [
-            {
-                "name": cr["name"],
-                "kind": cr["kind"],
-                "location": loc(
-                    cr["file_path"],
-                    cr["edge_line"] or cr["line_start"],
-                ),
-                "edge_kind": cr["edge_kind"] or "",
-            }
-            for cr in non_test_callers[:caller_cap]
-        ],
+    )
+
+    return {
+        "mode": "single",
+        "task": task,
+        # raw gather_symbol_context fields
+        "sym": c["sym"],
+        "line_start": c["line_start"],
+        "line_end": c["line_end"],
+        "callers": c["callers"],
+        "callees": c["callees"],
+        "non_test_callers": c["non_test_callers"],
+        "test_callers": c["test_callers"],
+        "test_importers": c["test_importers"],
+        "siblings": c["siblings"],
+        "files_to_read": c["files_to_read"],
+        "skipped_callers": c["skipped_callers"],
+        "skipped_callees": c["skipped_callees"],
+        # extras — always present
+        "annotations": annotations,
+        "docstring": docstring,
+        "complexity": complexity,
+        "graph_centrality": graph_centrality,
+        "git_churn": git_churn,
+        "coupling": coupling,
+        "affected_tests": affected_tests,
+        "blast_radius": blast_radius,
+        "cluster": cluster,
+        "similar_symbols": similar_symbols,
+        "entry_points_reaching": entry_points_reaching,
+        "file_context_syms": file_context_syms,
+        "next_steps": next_steps,
     }
 
-    if not hide_callees:
-        payload["callees"] = [
-            {
-                "name": ce["name"],
-                "kind": ce["kind"],
-                "location": loc(ce["file_path"], ce["line_start"]),
-                "edge_kind": ce["edge_kind"] or "",
-            }
-            for ce in callees[:callee_cap]
-        ]
 
-    if task not in ("review", "debug"):
-        payload["tests"] = [
-            {
-                "name": t["name"],
-                "kind": t["kind"],
-                "location": loc(t["file_path"], t["line_start"]),
-                "edge_kind": t["edge_kind"] or "",
-            }
-            for t in test_callers
-        ]
-        payload["test_files"] = [r["path"] for r in test_importers]
+def _gather_file(conn, frow):
+    """Gather context for an entire file.
 
-    if task in ("refactor", "understand"):
-        payload["siblings"] = [{"name": s["name"], "kind": s["kind"]} for s in siblings[:10]]
-
-    # Annotations
-    anns = extras.get("annotations")
-    if anns:
-        payload["annotations"] = anns
-
-    # Task-specific extras
-    for key in (
-        "docstring",
-        "complexity",
-        "graph_centrality",
-        "git_churn",
-        "blast_radius",
-        "cluster",
-    ):
-        val = extras.get(key)
-        if val is not None:
-            payload[key] = val
-
-    for key in (
-        "coupling",
-        "affected_tests",
-        "similar_symbols",
-        "entry_points_reaching",
-        "file_context",
-    ):
-        val = extras.get(key)
-        if val:
-            payload[key] = val
-
-    payload["files_to_read"] = [
-        {
-            "path": f["path"],
-            "start": f["start"],
-            "end": f["end"],
-            "reason": f["reason"],
-            "score": f.get("score"),
-            "rank": f.get("rank"),
-        }
-        for f in files_to_read
-    ]
-
-    # Summary
-    summary = {"task": task, "callers": len(non_test_callers)}
-    if not hide_callees:
-        summary["callees"] = len(callees)
-    summary["tests"] = len(test_callers)
-    summary["files_to_read"] = len(files_to_read)
-
-    if extras.get("blast_radius"):
-        summary["blast_radius_symbols"] = extras["blast_radius"]["dependent_symbols"]
-        summary["blast_radius_files"] = extras["blast_radius"]["dependent_files"]
-    if extras.get("affected_tests") is not None:
-        summary["affected_tests_total"] = len(extras["affected_tests"])
-    if extras.get("coupling"):
-        summary["coupling_partners"] = len(extras["coupling"])
-
-    click.echo(to_json(json_envelope("context", summary=summary, budget=budget, **payload)))
-
-
-# ---------------------------------------------------------------------------
-# File-level context: --for-file
-# ---------------------------------------------------------------------------
-
-
-def _resolve_file(conn, path):
-    """Resolve a file path to its DB row, or None."""
-    path = path.replace("\\", "/")
-    frow = conn.execute(FILE_BY_PATH, (path,)).fetchone()
-    if frow is None:
-        frow = conn.execute(
-            "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
-            (f"%{path}",),
-        ).fetchone()
-    return frow
-
-
-def _gather_file_level_context(conn, frow):
-    """Gather comprehensive file-level context.
-
-    Returns a dict with callers, callees, tests, coupling, and complexity
-    aggregated across all symbols in the file.
+    Returns a data dict with mode='file'.
     """
     file_id = frow["id"]
     file_path = frow["path"]
 
-    # Get all symbols in the file
     symbols = conn.execute(
         "SELECT s.*, f.path as file_path "
         "FROM symbols s JOIN files f ON s.file_id = f.id "
@@ -478,7 +307,10 @@ def _gather_file_level_context(conn, frow):
     sym_ids = [s["id"] for s in symbols]
     if not sym_ids:
         return {
+            "mode": "file",
             "file_path": file_path,
+            "language": frow["language"],
+            "line_count": frow["line_count"],
             "symbol_count": 0,
             "callers": [],
             "callees": [],
@@ -487,7 +319,7 @@ def _gather_file_level_context(conn, frow):
             "complexity": None,
         }
 
-    # --- Callers: symbols in OTHER files that reference symbols in this file ---
+    # Callers: symbols in OTHER files that reference symbols in this file
     caller_rows = batched_in(
         conn,
         "SELECT e.target_id, s.name as caller_name, s.kind as caller_kind, "
@@ -502,7 +334,6 @@ def _gather_file_level_context(conn, frow):
         post=[file_id],
     )
 
-    # Group callers by source file
     callers_by_file = defaultdict(list)
     for r in caller_rows:
         if not is_test_file(r["caller_file"]):
@@ -511,15 +342,9 @@ def _gather_file_level_context(conn, frow):
     callers = []
     for cfile, targets in sorted(callers_by_file.items()):
         unique_targets = sorted(set(targets))
-        callers.append(
-            {
-                "file": cfile,
-                "symbols": unique_targets,
-                "count": len(unique_targets),
-            }
-        )
+        callers.append({"file": cfile, "symbols": unique_targets, "count": len(unique_targets)})
 
-    # --- Callees: symbols in OTHER files that this file's symbols reference ---
+    # Callees: symbols in OTHER files that this file's symbols reference
     callee_rows = batched_in(
         conn,
         "SELECT e.source_id, s.name as callee_name, s.kind as callee_kind, "
@@ -532,7 +357,6 @@ def _gather_file_level_context(conn, frow):
         post=[file_id],
     )
 
-    # Group callees by target file
     callees_by_file = defaultdict(list)
     for r in callee_rows:
         callees_by_file[r["callee_file"]].append(r["callee_name"])
@@ -540,15 +364,9 @@ def _gather_file_level_context(conn, frow):
     callees = []
     for cfile, names in sorted(callees_by_file.items()):
         unique_names = sorted(set(names))
-        callees.append(
-            {
-                "file": cfile,
-                "symbols": unique_names,
-                "count": len(unique_names),
-            }
-        )
+        callees.append({"file": cfile, "symbols": unique_names, "count": len(unique_names)})
 
-    # --- Tests: test files that reference any symbol in this file ---
+    # Tests: test files that reference any symbol in this file
     test_caller_rows = batched_in(
         conn,
         "SELECT DISTINCT f.path "
@@ -559,17 +377,14 @@ def _gather_file_level_context(conn, frow):
         sym_ids,
         post=[file_id],
     )
-
     direct_tests = sorted(set(r["path"] for r in test_caller_rows if is_test_file(r["path"])))
 
-    # Also check file_edges for file-level test importers
     test_importers = conn.execute(
         "SELECT f.path FROM file_edges fe JOIN files f ON fe.source_file_id = f.id WHERE fe.target_file_id = ?",
         (file_id,),
     ).fetchall()
     file_level_tests = sorted(set(r["path"] for r in test_importers if is_test_file(r["path"])))
 
-    # Merge direct + file-level, mark kind
     test_set = set()
     tests = []
     for t in direct_tests:
@@ -580,10 +395,8 @@ def _gather_file_level_context(conn, frow):
             test_set.add(t)
             tests.append({"file": t, "kind": "file-level"})
 
-    # --- Coupling ---
-    coupling = _get_coupling(conn, file_path, limit=10)
+    coupling = get_coupling(conn, file_path, limit=10)
 
-    # --- Complexity summary ---
     metrics_rows = batched_in(
         conn,
         "SELECT sm.* FROM symbol_metrics sm WHERE sm.symbol_id IN ({ph})",
@@ -603,6 +416,7 @@ def _gather_file_level_context(conn, frow):
         }
 
     return {
+        "mode": "file",
         "file_path": file_path,
         "language": frow["language"],
         "line_count": frow["line_count"],
@@ -615,12 +429,330 @@ def _gather_file_level_context(conn, frow):
     }
 
 
-def _output_file_context_text(data):
-    """Render --for-file context as text."""
+def _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propagation):
+    """Gather context for multiple symbols (batch mode).
+
+    Returns a data dict with mode='batch'.
+    """
+    contexts = [
+        gather_symbol_context(
+            conn,
+            sym,
+            task=task,
+            session_hint=session_hint,
+            recent_symbols=recent_symbols,
+            use_propagation=use_propagation,
+        )
+        for sym in resolved
+    ]
+
+    try:
+        shared_callers, shared_callees, scored_files = batch_context(
+            conn,
+            contexts,
+            task=task,
+            session_hint=session_hint,
+            recent_symbols=recent_symbols,
+            use_propagation=use_propagation,
+        )
+    except Exception:
+        shared_callers, shared_callees, scored_files = [], [], []
+        for c in contexts:
+            for f in c["files_to_read"]:
+                scored_files.append(f)
+
+    return {
+        "mode": "batch",
+        "task": task,
+        "contexts": contexts,
+        "shared_callers": shared_callers,
+        "shared_callees": shared_callees,
+        "files_to_read": scored_files,
+    }
+
+
+# ---------------------------------------------------------------------------
+# Render functions — text and JSON, one per mode
+# ---------------------------------------------------------------------------
+
+
+def _render_text(data):
+    """Print text output for any mode."""
+    mode = data["mode"]
+
+    if mode == "file":
+        _render_file_text(data)
+    elif mode == "batch":
+        _render_batch_text(data)
+    else:
+        _render_single_text(data)
+
+
+def _render_json(data, budget=0):
+    """Print JSON output for any mode."""
+    mode = data["mode"]
+
+    if mode == "file":
+        _render_file_json(data, budget)
+    elif mode == "batch":
+        _render_batch_json(data, budget)
+    else:
+        _render_single_json(data, budget)
+
+
+# ---------------------------------------------------------------------------
+# Single-symbol text + JSON
+# ---------------------------------------------------------------------------
+
+
+def _render_single_text(data):
+    sym = data["sym"]
+    task = data["task"]
+    non_test_callers = data["non_test_callers"]
+    callees = data["callees"]
+    test_callers = data["test_callers"]
+    test_importers = data["test_importers"]
+    siblings = data["siblings"]
+    files_to_read = data["files_to_read"]
+    skipped_callers = data["skipped_callers"]
+    skipped_callees = data["skipped_callees"]
+
+    sig = sym["signature"] or ""
+    task_suffix = f" (task={task})" if task else ""
+    verdict = f"{len(files_to_read)} files, {len(non_test_callers)} callers for {sym['name']}{task_suffix}"
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
+    click.echo(f"=== Context for: {sym['name']}{task_suffix} ===")
+    click.echo(
+        f"{abbrev_kind(sym['kind'])}  "
+        f"{sym['qualified_name'] or sym['name']}"
+        f"{'  ' + sig if sig else ''}  "
+        f"{loc(sym['file_path'], data['line_start'])}"
+    )
+    click.echo()
+
+    _render_annotations_text(data.get("annotations"))
+
+    if task == "understand" and data.get("docstring"):
+        click.echo("Docstring:")
+        for line in data["docstring"].strip().splitlines()[:10]:
+            click.echo(f"  {line}")
+        click.echo()
+
+    # Callers
+    if non_test_callers:
+        click.echo(f"Callers ({len(non_test_callers)}):")
+        rows = [
+            [
+                abbrev_kind(cr["kind"]),
+                cr["name"],
+                loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
+                cr["edge_kind"] or "",
+            ]
+            for cr in non_test_callers[:20]
+        ]
+        click.echo(format_table(["kind", "name", "location", "edge"], rows))
+        if len(non_test_callers) > 20:
+            click.echo(f"  (+{len(non_test_callers) - 20} more)")
+        click.echo()
+    else:
+        click.echo("Callers: (none)")
+        click.echo()
+
+    # Callees
+    if callees:
+        click.echo(f"Callees ({len(callees)}):")
+        rows = [
+            [
+                abbrev_kind(ce["kind"]),
+                ce["name"],
+                loc(ce["file_path"], ce["line_start"]),
+                ce["edge_kind"] or "",
+            ]
+            for ce in callees[:15]
+        ]
+        click.echo(format_table(["kind", "name", "location", "edge"], rows))
+        if len(callees) > 15:
+            click.echo(f"  (+{len(callees) - 15} more)")
+        click.echo()
+    else:
+        click.echo("Callees: (none)")
+        click.echo()
+
+    # Tests
+    if test_callers or test_importers:
+        click.echo(f"Tests ({len(test_callers)} direct, {len(test_importers)} file-level):")
+        for t in test_callers:
+            click.echo(f"  {abbrev_kind(t['kind'])}  {t['name']}  {loc(t['file_path'], t['line_start'])}")
+        for ti in test_importers:
+            click.echo(f"  file  {ti['path']}")
+    else:
+        click.echo("Tests: (none)")
+    click.echo()
+
+    # Siblings
+    if siblings:
+        click.echo(f"Siblings ({len(siblings)} exports in same file):")
+        for s in siblings[:10]:
+            click.echo(f"  {abbrev_kind(s['kind'])}  {s['name']}")
+        if len(siblings) > 10:
+            click.echo(f"  (+{len(siblings) - 10} more)")
+        click.echo()
+
+    # Always render all extras
+    _render_complexity_text(data.get("complexity"))
+    _render_graph_centrality_text(data.get("graph_centrality"))
+    _render_churn_text(data.get("git_churn"))
+    _render_coupling_text(data.get("coupling"))
+    _render_affected_tests_text(data.get("affected_tests") or [])
+    _render_blast_radius_text(data.get("blast_radius"))
+    _render_cluster_text(data.get("cluster"))
+    _render_similar_symbols_text(data.get("similar_symbols") or [])
+    _render_entry_points_text(data.get("entry_points_reaching") or [])
+    _render_file_context_text(data.get("file_context_syms") or [])
+
+    # Files to read
+    skipped_total = skipped_callers + skipped_callees
+    extra_label = f", +{skipped_total} more" if skipped_total else ""
+    click.echo(f"Files to read ({len(files_to_read)}{extra_label}):")
+    for f in files_to_read:
+        end_str = f"-{f['end']}" if f["end"] and f["end"] != f["start"] else ""
+        lr = f":{f['start']}{end_str}" if f["start"] else ""
+        click.echo(f"  {f['path']:<50s} {lr:<12s} ({f['reason']})")
+
+    ns_text = format_next_steps_text(data.get("next_steps") or [])
+    if ns_text:
+        click.echo(ns_text)
+
+
+def _render_single_json(data, budget=0):
+    sym = data["sym"]
+    task = data["task"]
+    non_test_callers = data["non_test_callers"]
+    callees = data["callees"]
+    test_callers = data["test_callers"]
+    test_importers = data["test_importers"]
+    siblings = data["siblings"]
+    files_to_read = data["files_to_read"]
+
+    task_suffix = f" (task={task})" if task else ""
+    verdict = f"{len(files_to_read)} files, {len(non_test_callers)} callers for {sym['name']}{task_suffix}"
+
+    summary = {
+        "verdict": verdict,
+        "callers": len(non_test_callers),
+        "callees": len(callees),
+        "tests": len(test_callers),
+        "files_to_read": len(files_to_read),
+    }
+    if task:
+        summary["task"] = task
+    if data.get("blast_radius"):
+        summary["blast_radius_symbols"] = data["blast_radius"]["dependent_symbols"]
+        summary["blast_radius_files"] = data["blast_radius"]["dependent_files"]
+    if data.get("affected_tests") is not None:
+        summary["affected_tests_total"] = len(data["affected_tests"])
+    if data.get("coupling"):
+        summary["coupling_partners"] = len(data["coupling"])
+
+    payload = {
+        "symbol": sym["qualified_name"] or sym["name"],
+        "kind": sym["kind"],
+        "signature": sym["signature"] or "",
+        "location": loc(sym["file_path"], data["line_start"]),
+        "definition": {
+            "file": sym["file_path"],
+            "start": data["line_start"],
+            "end": data["line_end"],
+        },
+        "callers": [
+            {
+                "name": cr["name"],
+                "kind": cr["kind"],
+                "location": loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
+                "edge_kind": cr["edge_kind"] or "",
+            }
+            for cr in non_test_callers
+        ],
+        "callees": [
+            {
+                "name": ce["name"],
+                "kind": ce["kind"],
+                "location": loc(ce["file_path"], ce["line_start"]),
+                "edge_kind": ce["edge_kind"] or "",
+            }
+            for ce in callees
+        ],
+        "tests": [
+            {
+                "name": t["name"],
+                "kind": t["kind"],
+                "location": loc(t["file_path"], t["line_start"]),
+                "edge_kind": t["edge_kind"] or "",
+            }
+            for t in test_callers
+        ],
+        "test_files": [r["path"] for r in test_importers],
+        "siblings": [{"name": s["name"], "kind": s["kind"]} for s in siblings[:10]],
+        "annotations": data.get("annotations") or [],
+        "files_to_read": [
+            {
+                "path": f["path"],
+                "start": f["start"],
+                "end": f["end"],
+                "reason": f["reason"],
+                "score": f.get("score"),
+                "rank": f.get("rank"),
+            }
+            for f in files_to_read
+        ],
+        "next_steps": data.get("next_steps") or [],
+    }
+
+    # Include all extras present in data (omit None / empty)
+    for key in (
+        "task",
+        "docstring",
+        "complexity",
+        "graph_centrality",
+        "git_churn",
+        "blast_radius",
+        "cluster",
+    ):
+        val = data.get(key)
+        if val is not None:
+            payload[key] = val
+
+    for key in (
+        "coupling",
+        "affected_tests",
+        "similar_symbols",
+        "entry_points_reaching",
+        "file_context_syms",
+    ):
+        val = data.get(key)
+        if val:
+            payload[key] = val
+
+    click.echo(to_json(json_envelope("context", summary=summary, budget=budget, **payload)))
+
+
+# ---------------------------------------------------------------------------
+# File-level text + JSON
+# ---------------------------------------------------------------------------
+
+
+def _render_file_text(data):
+    fname = os.path.basename(data["file_path"])
+    verdict = (
+        f"{fname}: {data['symbol_count']} symbols, "
+        f"{len(data['callers'])} caller files, {len(data['tests'])} test files"
+    )
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
     click.echo(f"Context for {data['file_path']} ({data['symbol_count']} symbols):")
     click.echo()
 
-    # Callers
     callers = data["callers"]
     if callers:
         click.echo(f"Callers ({len(callers)} unique files):")
@@ -628,7 +760,7 @@ def _output_file_context_text(data):
             syms = ", ".join(c["symbols"][:3])
             if len(c["symbols"]) > 3:
                 syms += f" +{len(c['symbols']) - 3} more"
-            click.echo(f"  {c['file']:<50s} \u2192 {syms}")
+            click.echo(f"  {c['file']:<50s} -> {syms}")
         if len(callers) > 20:
             click.echo(f"  (+{len(callers) - 20} more)")
         click.echo()
@@ -636,7 +768,6 @@ def _output_file_context_text(data):
         click.echo("Callers: (none)")
         click.echo()
 
-    # Callees
     callees = data["callees"]
     if callees:
         click.echo(f"Callees ({len(callees)} unique files):")
@@ -644,7 +775,7 @@ def _output_file_context_text(data):
             syms = ", ".join(c["symbols"][:3])
             if len(c["symbols"]) > 3:
                 syms += f" +{len(c['symbols']) - 3} more"
-            click.echo(f"  {c['file']:<50s} \u2190 {syms}")
+            click.echo(f"  {c['file']:<50s} <- {syms}")
         if len(callees) > 20:
             click.echo(f"  (+{len(callees) - 20} more)")
         click.echo()
@@ -652,7 +783,6 @@ def _output_file_context_text(data):
         click.echo("Callees: (none)")
         click.echo()
 
-    # Tests
     tests = data["tests"]
     if tests:
         direct = sum(1 for t in tests if t["kind"] == "direct")
@@ -665,7 +795,6 @@ def _output_file_context_text(data):
         click.echo("Tests: (none)")
         click.echo()
 
-    # Coupling
     coupling = data["coupling"]
     if coupling:
         click.echo(f"Coupling ({len(coupling)} partners):")
@@ -673,7 +802,6 @@ def _output_file_context_text(data):
         click.echo(format_table(["file", "co-changes", "strength"], rows))
         click.echo()
 
-    # Complexity
     cx = data["complexity"]
     if cx:
         click.echo(
@@ -684,9 +812,14 @@ def _output_file_context_text(data):
         click.echo()
 
 
-def _output_file_context_json(data, budget=0):
-    """Render --for-file context as JSON."""
+def _render_file_json(data, budget=0):
+    fname = os.path.basename(data["file_path"])
+    verdict = (
+        f"{fname}: {data['symbol_count']} symbols, "
+        f"{len(data['callers'])} caller files, {len(data['tests'])} test files"
+    )
     summary = {
+        "verdict": verdict,
         "symbol_count": data["symbol_count"],
         "caller_files": len(data["callers"]),
         "callee_files": len(data["callees"]),
@@ -716,6 +849,148 @@ def _output_file_context_json(data, budget=0):
             )
         )
     )
+
+
+# ---------------------------------------------------------------------------
+# Batch text + JSON
+# ---------------------------------------------------------------------------
+
+
+def _render_batch_text(data):
+    contexts = data["contexts"]
+    shared_callers = data["shared_callers"]
+    shared_callees = data["shared_callees"]
+    scored_files = data["files_to_read"]
+
+    click.echo(f"VERDICT: {len(contexts)} symbols, {len(scored_files)} files to read")
+    click.echo()
+    click.echo(f"=== Batch Context ({len(contexts)} symbols) ===\n")
+
+    for c in contexts:
+        s = c["sym"]
+        sig = s["signature"] or ""
+        click.echo(f"--- {s['name']} ---")
+        click.echo(
+            f"  {abbrev_kind(s['kind'])}  "
+            f"{s['qualified_name'] or s['name']}"
+            f"{'  ' + sig if sig else ''}  "
+            f"{loc(s['file_path'], c['line_start'])}"
+        )
+        click.echo(
+            f"  Callers: {len(c['non_test_callers'])}  "
+            f"Callees: {len(c['callees'])}  "
+            f"Tests: {len(c['test_callers'])}"
+        )
+        click.echo()
+
+    if shared_callers:
+        click.echo(f"Shared callers ({len(shared_callers)}):")
+        rows = [
+            [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
+            for c in shared_callers[:15]
+        ]
+        click.echo(format_table(["kind", "name", "location"], rows))
+        click.echo()
+
+    if shared_callees:
+        click.echo(f"Shared callees ({len(shared_callees)}):")
+        rows = [
+            [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
+            for c in shared_callees[:15]
+        ]
+        click.echo(format_table(["kind", "name", "location"], rows))
+        click.echo()
+
+    click.echo(f"Files to read ({len(scored_files)}):")
+    for f in scored_files[:25]:
+        reasons = ", ".join(f["reasons"])
+        rel_str = f"{f['relevance']:.0%}" if f.get("relevance", 0) > 0 else ""
+        click.echo(f"  {f['path']:<50s} {rel_str:>5s}  ({reasons})")
+    if len(scored_files) > 25:
+        click.echo(f"  (+{len(scored_files) - 25} more)")
+
+
+def _render_batch_json(data, budget=0):
+    contexts = data["contexts"]
+    shared_callers = data["shared_callers"]
+    shared_callees = data["shared_callees"]
+    scored_files = data["files_to_read"]
+
+    click.echo(
+        to_json(
+            json_envelope(
+                "context",
+                budget=budget,
+                summary={
+                    "verdict": f"{len(contexts)} symbols, {len(scored_files)} files to read",
+                    "symbols": len(contexts),
+                    "shared_callers": len(shared_callers),
+                    "shared_callees": len(shared_callees),
+                    "files_to_read": len(scored_files),
+                },
+                mode="batch",
+                symbols=[
+                    {
+                        "name": c["sym"]["qualified_name"] or c["sym"]["name"],
+                        "kind": c["sym"]["kind"],
+                        "location": loc(c["sym"]["file_path"], c["line_start"]),
+                        "callers": [
+                            {
+                                "name": cr["name"],
+                                "kind": cr["kind"],
+                                "location": loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
+                            }
+                            for cr in c["non_test_callers"][:20]
+                        ],
+                        "callees": [
+                            {
+                                "name": ce["name"],
+                                "kind": ce["kind"],
+                                "location": loc(ce["file_path"], ce["line_start"]),
+                            }
+                            for ce in c["callees"][:15]
+                        ],
+                        "tests": len(c["test_callers"]),
+                    }
+                    for c in contexts
+                ],
+                shared_callers=[
+                    {
+                        "name": c["name"],
+                        "kind": c["kind"],
+                        "location": loc(c["file_path"], c["line_start"]),
+                    }
+                    for c in shared_callers
+                ],
+                shared_callees=[
+                    {
+                        "name": c["name"],
+                        "kind": c["kind"],
+                        "location": loc(c["file_path"], c["line_start"]),
+                    }
+                    for c in shared_callees
+                ],
+                files_to_read=scored_files,
+            )
+        )
+    )
+
+
+# ---------------------------------------------------------------------------
+# File path resolver helper
+# ---------------------------------------------------------------------------
+
+
+def _resolve_file(conn, path):
+    """Resolve a file path to its DB row, or None."""
+    path = path.replace("\\", "/")
+    frow = conn.execute(FILE_BY_PATH, (path,)).fetchone()
+    if frow is None:
+        frow = conn.execute(
+            "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
+            (f"%{path}",),
+        ).fetchone()
+    return frow
 
 
 # ---------------------------------------------------------------------------
@@ -763,6 +1038,9 @@ def _output_file_context_json(data, budget=0):
 def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propagation):
     """Get the minimal context needed to safely modify a symbol.
 
+    Unlike single-purpose commands like ``impact`` or ``uses``, this command
+    aggregates data from 15+ subsystems into one AI-agent-ready response.
+
     Returns definition, callers, callees, tests, and the exact files
     to read -- everything an AI agent needs in one shot.
 
@@ -788,6 +1066,8 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
+    use_propagation = not no_propagation
+
     # --- File-level context mode ---
     if for_file:
         with open_db(readonly=True) as conn:
@@ -795,11 +1075,8 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
             if frow is None:
                 click.echo(file_not_found_hint(for_file))
                 raise SystemExit(1)
-            data = _gather_file_level_context(conn, frow)
-            if json_mode:
-                _output_file_context_json(data, budget=token_budget)
-            else:
-                _output_file_context_text(data)
+            data = _gather_file(conn, frow)
+        _render_json(data, budget=token_budget) if json_mode else _render_text(data)
         return
 
     # Require at least one symbol name if --for-file is not used
@@ -817,335 +1094,17 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
                 raise SystemExit(1)
             resolved.append(sym)
 
-        # Gather context for each
-        use_propagation = not no_propagation
-        contexts = [
-            _gather_symbol_context(
-                conn,
-                sym,
-                task=task,
-                session_hint=session_hint,
-                recent_symbols=recent_symbols,
-                use_propagation=use_propagation,
-            )
-            for sym in resolved
-        ]
-
-        # --- Batch mode (task extras are ignored) ---
-        if len(contexts) > 1:
+        # Batch mode
+        if len(resolved) > 1:
             if task and not json_mode:
                 click.echo(
                     "Warning: task-specific extra sections are ignored in batch mode "
                     "(multiple symbols). Ranking still uses task/session hints.",
                     err=True,
                 )
-            shared_callers, shared_callees, scored_files = _batch_context(
-                conn,
-                contexts,
-                task=task,
-                session_hint=session_hint,
-                recent_symbols=recent_symbols,
-                use_propagation=use_propagation,
-            )
-
-            if json_mode:
-                click.echo(
-                    to_json(
-                        json_envelope(
-                            "context",
-                            budget=token_budget,
-                            summary={
-                                "symbols": len(contexts),
-                                "shared_callers": len(shared_callers),
-                                "shared_callees": len(shared_callees),
-                                "files_to_read": len(scored_files),
-                            },
-                            mode="batch",
-                            symbols=[
-                                {
-                                    "name": c["sym"]["qualified_name"] or c["sym"]["name"],
-                                    "kind": c["sym"]["kind"],
-                                    "location": loc(c["sym"]["file_path"], c["line_start"]),
-                                    "callers": [
-                                        {
-                                            "name": cr["name"],
-                                            "kind": cr["kind"],
-                                            "location": loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
-                                        }
-                                        for cr in c["non_test_callers"][:20]
-                                    ],
-                                    "callees": [
-                                        {
-                                            "name": ce["name"],
-                                            "kind": ce["kind"],
-                                            "location": loc(ce["file_path"], ce["line_start"]),
-                                        }
-                                        for ce in c["callees"][:15]
-                                    ],
-                                    "tests": len(c["test_callers"]),
-                                }
-                                for c in contexts
-                            ],
-                            shared_callers=[
-                                {
-                                    "name": c["name"],
-                                    "kind": c["kind"],
-                                    "location": loc(c["file_path"], c["line_start"]),
-                                }
-                                for c in shared_callers
-                            ],
-                            shared_callees=[
-                                {
-                                    "name": c["name"],
-                                    "kind": c["kind"],
-                                    "location": loc(c["file_path"], c["line_start"]),
-                                }
-                                for c in shared_callees
-                            ],
-                            files_to_read=scored_files,
-                        )
-                    )
-                )
-                return
-
-            # Text batch output
-            click.echo(f"=== Batch Context ({len(contexts)} symbols) ===\n")
-
-            for c in contexts:
-                s = c["sym"]
-                sig = s["signature"] or ""
-                click.echo(f"--- {s['name']} ---")
-                click.echo(
-                    f"  {abbrev_kind(s['kind'])}  "
-                    f"{s['qualified_name'] or s['name']}"
-                    f"{'  ' + sig if sig else ''}  "
-                    f"{loc(s['file_path'], c['line_start'])}"
-                )
-                click.echo(
-                    f"  Callers: {len(c['non_test_callers'])}  "
-                    f"Callees: {len(c['callees'])}  "
-                    f"Tests: {len(c['test_callers'])}"
-                )
-                click.echo()
-
-            if shared_callers:
-                click.echo(f"Shared callers ({len(shared_callers)}):")
-                rows = [
-                    [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
-                    for c in shared_callers[:15]
-                ]
-                click.echo(format_table(["kind", "name", "location"], rows))
-                click.echo()
-
-            if shared_callees:
-                click.echo(f"Shared callees ({len(shared_callees)}):")
-                rows = [
-                    [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
-                    for c in shared_callees[:15]
-                ]
-                click.echo(format_table(["kind", "name", "location"], rows))
-                click.echo()
-
-            click.echo(f"Files to read ({len(scored_files)}):")
-            for f in scored_files[:25]:
-                reasons = ", ".join(f["reasons"])
-                rel_str = f"{f['relevance']:.0%}" if f["relevance"] > 0 else ""
-                click.echo(f"  {f['path']:<50s} {rel_str:>5s}  ({reasons})")
-            if len(scored_files) > 25:
-                click.echo(f"  (+{len(scored_files) - 25} more)")
-            return
-
-        # --- Single symbol mode ---
-        c = contexts[0]
-        sym = c["sym"]
-
-        # Task mode: gather extras and render
-        if task:
-            extras = _gather_task_extras(conn, sym, c, task)
-            if json_mode:
-                _output_task_single_json(c, task, extras, budget=token_budget)
-            else:
-                _output_task_single_text(c, task, extras)
-            return
-
-        # --- Default single symbol mode (original behavior) ---
-        # Inject annotations if any
-        default_annotations = _gather_annotations(conn, sym=sym)
-
-        line_start = c["line_start"]
-        line_end = c["line_end"]
-        non_test_callers = c["non_test_callers"]
-        callees = c["callees"]
-        test_callers = c["test_callers"]
-        test_importers = c["test_importers"]
-        siblings = c["siblings"]
-        files_to_read = c["files_to_read"]
-        skipped_callers = c["skipped_callers"]
-        skipped_callees = c["skipped_callees"]
-
-        if json_mode:
-            _sym_name = sym["qualified_name"] or sym["name"]
-            _next_steps = suggest_next_steps(
-                "context",
-                {
-                    "symbol": _sym_name,
-                    "callers": len(non_test_callers),
-                },
-            )
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "context",
-                        budget=token_budget,
-                        summary={
-                            "callers": len(non_test_callers),
-                            "callees": len(callees),
-                            "tests": len(test_callers),
-                            "files_to_read": len(files_to_read),
-                        },
-                        symbol=_sym_name,
-                        kind=sym["kind"],
-                        signature=sym["signature"] or "",
-                        location=loc(sym["file_path"], line_start),
-                        definition={
-                            "file": sym["file_path"],
-                            "start": line_start,
-                            "end": line_end,
-                        },
-                        callers=[
-                            {
-                                "name": cr["name"],
-                                "kind": cr["kind"],
-                                "location": loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
-                                "edge_kind": cr["edge_kind"] or "",
-                            }
-                            for cr in non_test_callers
-                        ],
-                        callees=[
-                            {
-                                "name": ce["name"],
-                                "kind": ce["kind"],
-                                "location": loc(ce["file_path"], ce["line_start"]),
-                                "edge_kind": ce["edge_kind"] or "",
-                            }
-                            for ce in callees
-                        ],
-                        tests=[
-                            {
-                                "name": t["name"],
-                                "kind": t["kind"],
-                                "location": loc(t["file_path"], t["line_start"]),
-                                "edge_kind": t["edge_kind"] or "",
-                            }
-                            for t in test_callers
-                        ],
-                        test_files=[r["path"] for r in test_importers],
-                        siblings=[{"name": s["name"], "kind": s["kind"]} for s in siblings[:10]],
-                        annotations=default_annotations if default_annotations else [],
-                        files_to_read=[
-                            {
-                                "path": f["path"],
-                                "start": f["start"],
-                                "end": f["end"],
-                                "reason": f["reason"],
-                                "score": f.get("score"),
-                                "rank": f.get("rank"),
-                            }
-                            for f in files_to_read
-                        ],
-                        next_steps=_next_steps,
-                    )
-                )
-            )
-            return
-
-        # --- Text output ---
-        sig = sym["signature"] or ""
-        click.echo(f"=== Context for: {sym['name']} ===")
-        click.echo(
-            f"{abbrev_kind(sym['kind'])}  "
-            f"{sym['qualified_name'] or sym['name']}"
-            f"{'  ' + sig if sig else ''}  "
-            f"{loc(sym['file_path'], line_start)}"
-        )
-        click.echo()
-
-        _render_annotations_text(default_annotations)
-
-        if non_test_callers:
-            click.echo(f"Callers ({len(non_test_callers)}):")
-            rows = []
-            for cr in non_test_callers[:20]:
-                rows.append(
-                    [
-                        abbrev_kind(cr["kind"]),
-                        cr["name"],
-                        loc(cr["file_path"], cr["edge_line"] or cr["line_start"]),
-                        cr["edge_kind"] or "",
-                    ]
-                )
-            click.echo(format_table(["kind", "name", "location", "edge"], rows))
-            if len(non_test_callers) > 20:
-                click.echo(f"  (+{len(non_test_callers) - 20} more)")
-            click.echo()
+            data = _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propagation)
         else:
-            click.echo("Callers: (none)")
-            click.echo()
+            # Single symbol mode — always gather everything
+            data = _gather_single(conn, resolved[0], task, session_hint, recent_symbols, use_propagation)
 
-        if callees:
-            click.echo(f"Callees ({len(callees)}):")
-            rows = []
-            for ce in callees[:15]:
-                rows.append(
-                    [
-                        abbrev_kind(ce["kind"]),
-                        ce["name"],
-                        loc(ce["file_path"], ce["line_start"]),
-                        ce["edge_kind"] or "",
-                    ]
-                )
-            click.echo(format_table(["kind", "name", "location", "edge"], rows))
-            if len(callees) > 15:
-                click.echo(f"  (+{len(callees) - 15} more)")
-            click.echo()
-        else:
-            click.echo("Callees: (none)")
-            click.echo()
-
-        if test_callers or test_importers:
-            click.echo(f"Tests ({len(test_callers)} direct, {len(test_importers)} file-level):")
-            for t in test_callers:
-                click.echo(f"  {abbrev_kind(t['kind'])}  {t['name']}  {loc(t['file_path'], t['line_start'])}")
-            for ti in test_importers:
-                click.echo(f"  file  {ti['path']}")
-        else:
-            click.echo("Tests: (none)")
-        click.echo()
-
-        if siblings:
-            click.echo(f"Siblings ({len(siblings)} exports in same file):")
-            for s in siblings[:10]:
-                click.echo(f"  {abbrev_kind(s['kind'])}  {s['name']}")
-            if len(siblings) > 10:
-                click.echo(f"  (+{len(siblings) - 10} more)")
-            click.echo()
-
-        skipped_total = skipped_callers + skipped_callees
-        extra = f", +{skipped_total} more" if skipped_total else ""
-        click.echo(f"Files to read ({len(files_to_read)}{extra}):")
-        for f in files_to_read:
-            end_str = f"-{f['end']}" if f["end"] and f["end"] != f["start"] else ""
-            lr = f":{f['start']}{end_str}" if f["start"] else ""
-            click.echo(f"  {f['path']:<50s} {lr:<12s} ({f['reason']})")
-
-        _sym_name = sym["qualified_name"] or sym["name"]
-        _next_steps = suggest_next_steps(
-            "context",
-            {
-                "symbol": _sym_name,
-                "callers": len(non_test_callers),
-            },
-        )
-        _ns_text = format_next_steps_text(_next_steps)
-        if _ns_text:
-            click.echo(_ns_text)
+    _render_json(data, budget=token_budget) if json_mode else _render_text(data)

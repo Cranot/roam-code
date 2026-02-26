@@ -69,7 +69,12 @@ Run `roam --help` for all commands."""
 @click.option("--yes", is_flag=True, help="Non-interactive, accept defaults")
 @click.pass_context
 def init(ctx, root, yes):
-    """Initialize Roam for this project: index, config, CI workflow."""
+    """Initialize Roam for this project: index, config, CI workflow.
+
+    Indexes the project, creates .roam/ config directory and fitness.yaml.
+    For advanced CI pipeline generation across multiple platforms, see
+    ``ci-setup``.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     project_root = find_project_root(root)
 
@@ -117,12 +122,17 @@ def init(ctx, root, yes):
         pass
 
     # 6. Output
+    _files = health_summary.get("files", 0)
+    _symbols = health_summary.get("symbols", 0)
+    _edges = health_summary.get("edges", 0)
+    _verdict = f"initialized: {_files} files, {_symbols} symbols, {_edges} edges"
     if json_mode:
         click.echo(
             to_json(
                 json_envelope(
                     "init",
                     summary={
+                        "verdict": _verdict,
                         "created": created,
                         "skipped": skipped,
                         "had_index": had_index,
@@ -155,6 +165,7 @@ def init(ctx, root, yes):
     welcome = _WELCOME.format(
         created_lines="\n".join(created_lines) if created_lines else "  (nothing new — all files already exist)",
     )
+    click.echo(f"VERDICT: {_verdict}\n")
     click.echo(welcome)
 
     if health_summary:

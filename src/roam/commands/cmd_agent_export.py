@@ -707,6 +707,10 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
     to be placed in the project root as CLAUDE.md, AGENTS.md, or
     .cursorrules for instant AI agent comprehension.
 
+    Unlike ``context`` (which returns ad-hoc file + line ranges for a
+    specific symbol), this command writes a persistent project-wide
+    context document for AI agents.
+
     \b
     Examples:
         roam agent-export                               # print default CLAUDE.md-style output

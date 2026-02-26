@@ -277,7 +277,17 @@ def _layer_analysis(conn, symbol_id: int, cap: int) -> dict:
 @click.argument("name")
 @click.pass_context
 def guard(ctx, name):
-    """Sub-agent preflight bundle for a symbol (~2K-token target)."""
+    """Check breaking-change risk for a symbol before editing.
+
+    Returns a 0-100 risk score with component breakdown (blast radius,
+    complexity, centrality, test gap, layer analysis) plus caller/callee
+    lists and covering tests -- all within a ~2K token budget.
+
+    Unlike ``preflight`` (which handles files/staged changes and adds
+    coupling, convention, and fitness checks), this command provides
+    deeper per-symbol analysis with a quantified risk score and
+    move-sensitive edge detection.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0

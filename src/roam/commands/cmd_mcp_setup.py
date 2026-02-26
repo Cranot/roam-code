@@ -64,6 +64,10 @@ _CONFIGS = {
 def mcp_setup(ctx, platform):
     """Generate MCP server config for AI coding platforms.
 
+    Prints the exact JSON config block to paste into your AI coding tool.
+    Unlike ``ci-setup`` (which generates CI/CD pipeline YAML files), this
+    command generates MCP server JSON configurations.
+
     \b
     Supported platforms:
       claude-code   Claude Code CLI
