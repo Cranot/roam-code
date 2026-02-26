@@ -1,0 +1,8 @@
+name: STY-php-short-tag
+description: "Short echo tag; use full PHP tag for portability."
+severity: info
+type: ast_match
+match:
+  ast: "<?= $EXPR ?>"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: COR-321-go-map-range-delete
+description: "Deleting from map during iteration is safe in Go."
+severity: info
+type: ast_match
+match:
+  ast: "delete($MAP, $KEY)"
+  language: go
+  file_glob: "**/*.go"

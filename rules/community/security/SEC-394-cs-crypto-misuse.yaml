@@ -1,0 +1,8 @@
+name: SEC-394-cs-crypto-misuse
+description: "MD5 is cryptographically broken; use SHA256."
+severity: warning
+type: ast_match
+match:
+  ast: "MD5.Create()"
+  language: csharp
+  file_glob: "**/*.cs"

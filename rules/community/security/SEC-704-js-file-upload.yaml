@@ -1,0 +1,8 @@
+name: SEC-704-js-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "req.file"
+  language: javascript
+  file_glob: "**/*.js"

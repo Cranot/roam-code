@@ -1,0 +1,8 @@
+name: COR-319-py-nested-with
+description: "Use combined with statement: with A as x, B as y."
+severity: info
+type: ast_match
+match:
+  ast: "with $A as $X: with $B as $Y: $BODY"
+  language: python
+  file_glob: "**/*.py"

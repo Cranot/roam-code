@@ -1,0 +1,8 @@
+name: SEC-738-cs-owasp-extra
+description: "Dynamic C# compilation may execute untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "CSharpCodeProvider()"
+  language: csharp
+  file_glob: "**/*.cs"

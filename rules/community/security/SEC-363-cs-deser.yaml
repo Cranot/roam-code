@@ -1,0 +1,8 @@
+name: SEC-363-cs-deser
+description: "Unsafe deserialization via BinaryFormatter."
+severity: error
+type: ast_match
+match:
+  ast: "BinaryFormatter.Deserialize($STREAM)"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: COR-437-php-date-create
+description: "DateTime constructor may throw on invalid input; use try/catch."
+severity: info
+type: ast_match
+match:
+  ast: "new DateTime($INPUT)"
+  language: php
+  file_glob: "**/*.php"

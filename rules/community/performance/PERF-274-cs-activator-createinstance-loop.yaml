@@ -1,0 +1,8 @@
+name: PERF-274-cs-activator-createinstance-loop
+description: "Activator.CreateInstance is slow; use factory."
+severity: warning
+type: ast_match
+match:
+  ast: "Activator.CreateInstance($TYPE)"
+  language: csharp
+  file_glob: "**/*.cs"

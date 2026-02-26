@@ -1,0 +1,8 @@
+name: COR-369-js-map-set-return
+description: "Map.set returns the map; verify chaining is intended."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.set($KEY, $VALUE)"
+  language: javascript
+  file_glob: "**/*.js"

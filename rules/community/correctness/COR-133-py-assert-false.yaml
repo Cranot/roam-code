@@ -1,0 +1,8 @@
+name: COR-133-py-assert-false
+description: "assert False will always fail; use raise instead."
+severity: warning
+type: ast_match
+match:
+  ast: "assert False"
+  language: python
+  file_glob: "**/*.py"

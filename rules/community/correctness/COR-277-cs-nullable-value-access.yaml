@@ -1,0 +1,8 @@
+name: COR-277-cs-nullable-value-access
+description: "Accessing .Value on nullable without HasValue check may throw."
+severity: warning
+type: ast_match
+match:
+  ast: "$X.Value"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: COR-159-js-new-array-constructor
+description: "new Array(n) creates sparse array; use Array.from or fill."
+severity: info
+type: ast_match
+match:
+  ast: "new Array($SIZE)"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-513-py-time-time
+description: "time.time() returns float; consider time.monotonic for durations."
+severity: info
+type: ast_match
+match:
+  ast: "time.time()"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-451-cs-list-find
+description: "Find returns default(T) if not found; check for null."
+severity: info
+type: ast_match
+match:
+  ast: "$LIST.Find($PRED)"
+  language: csharp
+  file_glob: "**/*.cs"

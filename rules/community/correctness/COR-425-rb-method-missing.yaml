@@ -1,0 +1,8 @@
+name: COR-425-rb-method-missing
+description: "method_missing is slow and error-prone; use respond_to_missing?."
+severity: warning
+type: ast_match
+match:
+  ast: "def method_missing($NAME, $ARGS)"
+  language: ruby
+  file_glob: "**/*.rb"

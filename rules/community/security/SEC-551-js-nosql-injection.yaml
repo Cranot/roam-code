@@ -1,0 +1,8 @@
+name: SEC-551-js-nosql-injection
+description: "Verify MongoDB find query is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "$DB.find($QUERY)"
+  language: javascript
+  file_glob: "**/*.js"

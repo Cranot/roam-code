@@ -1,0 +1,8 @@
+name: PERF-209-go-n-plus-1-http
+description: "HTTP request in loop; batch requests."
+severity: warning
+type: ast_match
+match:
+  ast: "http.Get($URL)"
+  language: go
+  file_glob: "**/*.go"

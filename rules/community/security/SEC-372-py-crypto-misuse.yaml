@@ -1,0 +1,8 @@
+name: SEC-372-py-crypto-misuse
+description: "random.random() is not cryptographically secure."
+severity: warning
+type: ast_match
+match:
+  ast: "random.random()"
+  language: python
+  file_glob: "**/*.py"

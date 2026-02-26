@@ -1,0 +1,8 @@
+name: COR-385-java-concurrent-modification
+description: "ConcurrentModificationException; use iterator.remove()."
+severity: error
+type: ast_match
+match:
+  ast: "for ($TYPE $ELEM : $COLLECTION) { $COLLECTION.remove($ELEM) }"
+  language: java
+  file_glob: "**/*.java"

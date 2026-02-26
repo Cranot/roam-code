@@ -1,0 +1,8 @@
+name: PERF-127-java-iterator-loop
+description: "Use enhanced for loop instead of explicit Iterator."
+severity: info
+type: ast_match
+match:
+  ast: "for (Iterator $IT = $COL.iterator(); $IT.hasNext();)"
+  language: java
+  file_glob: "**/*.java"

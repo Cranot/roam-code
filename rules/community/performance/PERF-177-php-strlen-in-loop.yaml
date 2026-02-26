@@ -1,0 +1,8 @@
+name: PERF-177-php-strlen-in-loop
+description: "strlen in loop condition; cache the length."
+severity: info
+type: ast_match
+match:
+  ast: "strlen($STR)"
+  language: php
+  file_glob: "**/*.php"

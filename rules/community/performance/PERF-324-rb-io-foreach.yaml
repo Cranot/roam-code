@@ -1,0 +1,8 @@
+name: PERF-324-rb-io-foreach
+description: "IO.foreach reads line by line; efficient for large files."
+severity: info
+type: ast_match
+match:
+  ast: "IO.foreach($PATH) { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

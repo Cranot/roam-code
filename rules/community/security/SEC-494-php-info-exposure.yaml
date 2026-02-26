@@ -1,0 +1,8 @@
+name: SEC-494-php-info-exposure
+description: "phpinfo() exposes server configuration."
+severity: warning
+type: ast_match
+match:
+  ast: "phpinfo()"
+  language: php
+  file_glob: "**/*.php"

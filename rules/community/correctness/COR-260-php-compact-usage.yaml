@@ -1,0 +1,8 @@
+name: COR-260-php-compact-usage
+description: "compact() is error-prone; use explicit array."
+severity: info
+type: ast_match
+match:
+  ast: "compact($VARS)"
+  language: php
+  file_glob: "**/*.php"

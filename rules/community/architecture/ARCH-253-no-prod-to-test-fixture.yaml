@@ -1,0 +1,12 @@
+name: "ARCH-253-no-prod-to-test-fixture"
+description: "Production code should not import test fixtures."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/fixtures/**"
+    kind: [function, method, class]
+  max_distance: 1

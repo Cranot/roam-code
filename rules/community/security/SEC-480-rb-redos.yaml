@@ -1,0 +1,8 @@
+name: SEC-480-rb-redos
+description: "Regex from user input may cause ReDoS."
+severity: info
+type: ast_match
+match:
+  ast: "Regexp.new($INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: PERF-106-js-regex-literal-loop
+description: "Regex construction in loop; compile once outside loop."
+severity: warning
+type: ast_match
+match:
+  ast: "new RegExp($PATTERN)"
+  language: javascript
+  file_glob: "**/*.js"

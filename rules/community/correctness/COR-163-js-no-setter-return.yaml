@@ -1,0 +1,8 @@
+name: COR-163-js-no-setter-return
+description: "Setter should not return a value."
+severity: warning
+type: ast_match
+match:
+  ast: "set $PROP($VAL) { return $X }"
+  language: javascript
+  file_glob: "**/*.js"

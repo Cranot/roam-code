@@ -1,0 +1,8 @@
+name: PERF-309-java-stream-parallel
+description: "Parallel stream has overhead; use only for large datasets."
+severity: info
+type: ast_match
+match:
+  ast: "$STREAM.parallel()"
+  language: java
+  file_glob: "**/*.java"

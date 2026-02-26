@@ -1,0 +1,8 @@
+name: PERF-191-cs-boxing-value-type
+description: "Boxing value type allocates; avoid in hot paths."
+severity: info
+type: ast_match
+match:
+  ast: "(object)$VALUE"
+  language: csharp
+  file_glob: "**/*.cs"

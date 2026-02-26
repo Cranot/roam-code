@@ -1,0 +1,8 @@
+name: SEC-439-rb-cmdi
+description: "Command injection via concatenation in system()."
+severity: error
+type: ast_match
+match:
+  ast: "system($CMD + $INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

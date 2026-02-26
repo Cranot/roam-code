@@ -1,0 +1,8 @@
+name: COR-351-py-sys-path-insert
+description: "Modifying sys.path is fragile; use proper packaging."
+severity: warning
+type: ast_match
+match:
+  ast: "sys.path.insert($POS, $PATH)"
+  language: python
+  file_glob: "**/*.py"

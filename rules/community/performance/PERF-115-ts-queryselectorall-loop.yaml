@@ -1,0 +1,8 @@
+name: PERF-115-ts-queryselectorall-loop
+description: "querySelectorAll in loop; cache the NodeList."
+severity: warning
+type: ast_match
+match:
+  ast: "document.querySelectorAll($SEL)"
+  language: typescript
+  file_glob: "**/*.ts"

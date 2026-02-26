@@ -1,0 +1,9 @@
+name: STY-java-constant-naming
+description: "Java constants should use UPPER_SNAKE_CASE."
+severity: info
+type: symbol_match
+match:
+  kind: function
+  file_glob: "**/*.java"
+  require:
+    name_regex: "^[a-z].*_[a-z]"

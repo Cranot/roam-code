@@ -1,0 +1,8 @@
+name: SEC-702-rb-timing-attack
+description: "Good: using secure comparison."
+severity: info
+type: ast_match
+match:
+  ast: "ActiveSupport::SecurityUtils.secure_compare($A, $B)"
+  language: ruby
+  file_glob: "**/*.rb"

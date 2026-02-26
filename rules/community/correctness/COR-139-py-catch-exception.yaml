@@ -1,0 +1,8 @@
+name: COR-139-py-catch-exception
+description: "Catching base Exception may mask unexpected errors."
+severity: info
+type: ast_match
+match:
+  ast: "except Exception:"
+  language: python
+  file_glob: "**/*.py"

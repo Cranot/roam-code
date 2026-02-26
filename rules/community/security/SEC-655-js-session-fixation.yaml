@@ -1,0 +1,8 @@
+name: SEC-655-js-session-fixation
+description: "Verify session is regenerated after authentication."
+severity: info
+type: ast_match
+match:
+  ast: "req.session[$KEY] = $VALUE"
+  language: javascript
+  file_glob: "**/*.js"

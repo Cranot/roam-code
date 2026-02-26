@@ -1,0 +1,8 @@
+name: COR-367-js-regex-group-zero
+description: "Regex match[0] is full match; use named groups for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "$MATCH[0]"
+  language: javascript
+  file_glob: "**/*.js"

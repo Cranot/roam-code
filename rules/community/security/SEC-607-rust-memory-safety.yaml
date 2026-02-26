@@ -1,0 +1,8 @@
+name: SEC-607-rust-memory-safety
+description: "mem::forget leaks resources; use ManuallyDrop."
+severity: warning
+type: ast_match
+match:
+  ast: "std::mem::forget($X)"
+  language: rust
+  file_glob: "**/*.rs"

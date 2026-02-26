@@ -1,0 +1,8 @@
+name: SEC-396-cs-crypto-misuse
+description: "DES is insecure; use AesCryptoServiceProvider."
+severity: warning
+type: ast_match
+match:
+  ast: "DESCryptoServiceProvider()"
+  language: csharp
+  file_glob: "**/*.cs"

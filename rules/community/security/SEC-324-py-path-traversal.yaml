@@ -1,0 +1,8 @@
+name: SEC-324-py-path-traversal
+description: "Path traversal risk in send_from_directory()."
+severity: error
+type: ast_match
+match:
+  ast: "send_from_directory($DIR, $INPUT)"
+  language: python
+  file_glob: "**/*.py"

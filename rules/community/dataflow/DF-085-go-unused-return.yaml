@@ -1,0 +1,8 @@
+name: DF-085-go-unused-return
+description: "Function return value is never used by any caller."
+severity: info
+type: dataflow_match
+match:
+  patterns: [inter_unused_return]
+  file_glob: "**/*.go"
+  max_matches: 100

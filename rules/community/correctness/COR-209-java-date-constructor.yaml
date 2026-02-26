@@ -1,0 +1,8 @@
+name: COR-209-java-date-constructor
+description: "Date() is mostly deprecated; use java.time API."
+severity: info
+type: ast_match
+match:
+  ast: "new Date()"
+  language: java
+  file_glob: "**/*.java"

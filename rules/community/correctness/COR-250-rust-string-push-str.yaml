@@ -1,0 +1,8 @@
+name: COR-250-rust-string-push-str
+description: "Use write! macro instead of push_str with format!."
+severity: info
+type: ast_match
+match:
+  ast: "$S.push_str(&format!($FMT, $ARGS))"
+  language: rust
+  file_glob: "**/*.rs"

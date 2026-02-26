@@ -1,0 +1,8 @@
+name: COR-392-java-string-getBytes
+description: "getBytes() uses platform default charset; specify UTF-8."
+severity: warning
+type: ast_match
+match:
+  ast: "$STR.getBytes()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-541-java-list-remove-in-for
+description: "Removing in enhanced for loop throws ConcurrentModification."
+severity: warning
+type: ast_match
+match:
+  ast: "$LIST.remove($ELEM)"
+  language: java
+  file_glob: "**/*.java"

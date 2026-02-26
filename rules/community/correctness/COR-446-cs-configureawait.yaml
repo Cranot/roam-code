@@ -1,0 +1,8 @@
+name: COR-446-cs-configureawait
+description: "ConfigureAwait(false); verify no UI context needed."
+severity: info
+type: ast_match
+match:
+  ast: "await $TASK.ConfigureAwait(false)"
+  language: csharp
+  file_glob: "**/*.cs"

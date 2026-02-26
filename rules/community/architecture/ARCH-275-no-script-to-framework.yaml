@@ -1,0 +1,12 @@
+name: "ARCH-275-no-script-to-framework"
+description: "Scripts should not depend on web framework."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/scripts/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/framework/**"
+    kind: [function, method, class]
+  max_distance: 1

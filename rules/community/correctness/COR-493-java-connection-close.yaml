@@ -1,0 +1,8 @@
+name: COR-493-java-connection-close
+description: "Statement must be closed; use try-with-resources."
+severity: warning
+type: ast_match
+match:
+  ast: "connection.createStatement()"
+  language: java
+  file_glob: "**/*.java"

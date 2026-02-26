@@ -1,0 +1,8 @@
+name: COR-516-ts-date-parse
+description: "Date.parse is inconsistent; use library."
+severity: warning
+type: ast_match
+match:
+  ast: "Date.parse($STR)"
+  language: typescript
+  file_glob: "**/*.ts"

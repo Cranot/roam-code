@@ -1,0 +1,8 @@
+name: COR-402-go-channel-direction
+description: "Use directional channels (chan<- or <-chan) for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "chan $TYPE"
+  language: go
+  file_glob: "**/*.go"

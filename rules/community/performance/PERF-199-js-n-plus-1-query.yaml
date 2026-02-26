@@ -1,0 +1,8 @@
+name: PERF-199-js-n-plus-1-query
+description: "Database query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "db.query($SQL)"
+  language: javascript
+  file_glob: "**/*.js"

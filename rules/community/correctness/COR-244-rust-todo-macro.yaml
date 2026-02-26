@@ -1,0 +1,8 @@
+name: COR-244-rust-todo-macro
+description: "todo!() panics at runtime; implement before release."
+severity: warning
+type: ast_match
+match:
+  ast: "todo!()"
+  language: rust
+  file_glob: "**/*.rs"

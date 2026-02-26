@@ -1,0 +1,12 @@
+name: "ARCH-230-no-repo-to-service"
+description: "Repositories should not depend on services."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  max_distance: 1

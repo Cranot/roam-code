@@ -1,0 +1,8 @@
+name: PERF-265-cs-linq-where-first
+description: "Use FirstOrDefault with predicate instead of Where.First."
+severity: info
+type: ast_match
+match:
+  ast: "$SEQ.Where($PRED).First()"
+  language: csharp
+  file_glob: "**/*.cs"

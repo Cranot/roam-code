@@ -1,0 +1,8 @@
+name: PERF-269-cs-enum-tostring
+description: "Enum.ToString() is slow due to reflection; cache."
+severity: info
+type: ast_match
+match:
+  ast: "$ENUM.ToString()"
+  language: csharp
+  file_glob: "**/*.cs"

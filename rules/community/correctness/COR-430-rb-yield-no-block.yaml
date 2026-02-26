@@ -1,0 +1,8 @@
+name: COR-430-rb-yield-no-block
+description: "yield without block_given? may raise LocalJumpError."
+severity: warning
+type: ast_match
+match:
+  ast: "yield"
+  language: ruby
+  file_glob: "**/*.rb"

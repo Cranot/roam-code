@@ -1,0 +1,12 @@
+name: "ARCH-239-no-ui-to-backend-models"
+description: "UI components should not import backend models."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/components/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  max_distance: 1

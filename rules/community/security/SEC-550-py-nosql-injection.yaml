@@ -1,0 +1,8 @@
+name: SEC-550-py-nosql-injection
+description: "Verify NoSQL insert input is sanitized."
+severity: warning
+type: ast_match
+match:
+  ast: "$COLLECTION.insert($INPUT)"
+  language: python
+  file_glob: "**/*.py"

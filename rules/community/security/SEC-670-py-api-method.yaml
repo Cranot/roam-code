@@ -1,0 +1,8 @@
+name: SEC-670-py-api-method
+description: "Flask route without methods restriction; add methods param."
+severity: info
+type: ast_match
+match:
+  ast: "@app.route($PATH)"
+  language: python
+  file_glob: "**/*.py"

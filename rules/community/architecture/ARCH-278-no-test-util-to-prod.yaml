@@ -1,0 +1,12 @@
+name: "ARCH-278-no-test-util-to-prod"
+description: "Test utilities should not be used in production."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/testutils/**"
+    kind: [function, method, class]
+  max_distance: 1

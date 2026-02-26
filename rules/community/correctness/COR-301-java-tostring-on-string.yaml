@@ -1,0 +1,8 @@
+name: COR-301-java-tostring-on-string
+description: "Calling toString() on a String is redundant."
+severity: info
+type: ast_match
+match:
+  ast: "$STR.toString()"
+  language: java
+  file_glob: "**/*.java"

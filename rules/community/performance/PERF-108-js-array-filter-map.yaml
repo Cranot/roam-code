@@ -1,0 +1,8 @@
+name: PERF-108-js-array-filter-map
+description: "filter().map() iterates twice; use reduce for single pass."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.filter($F1).map($F2)"
+  language: javascript
+  file_glob: "**/*.js"

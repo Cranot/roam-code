@@ -1,0 +1,8 @@
+name: STY-ts-test-expect-eq
+description: "toBe uses Object.is; use toEqual for deep comparison."
+severity: info
+type: ast_match
+match:
+  ast: "expect($X).toBe($Y)"
+  language: typescript
+  file_glob: "**/*.ts"

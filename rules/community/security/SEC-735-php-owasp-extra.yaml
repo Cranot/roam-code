@@ -1,0 +1,8 @@
+name: SEC-735-php-owasp-extra
+description: "create_function is deprecated and eval-like."
+severity: warning
+type: ast_match
+match:
+  ast: "create_function($ARGS, $CODE)"
+  language: php
+  file_glob: "**/*.php"

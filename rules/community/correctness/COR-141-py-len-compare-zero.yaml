@@ -1,0 +1,8 @@
+name: COR-141-py-len-compare-zero
+description: "Use 'not x' instead of 'len(x) == 0' for emptiness check."
+severity: info
+type: ast_match
+match:
+  ast: "len($X) == 0"
+  language: python
+  file_glob: "**/*.py"

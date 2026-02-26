@@ -1,0 +1,8 @@
+name: COR-131-py-dict-keys-list
+description: "dict.keys() already iterable in Python 3; list() may be unnecessary."
+severity: info
+type: ast_match
+match:
+  ast: "list($DICT.keys())"
+  language: python
+  file_glob: "**/*.py"

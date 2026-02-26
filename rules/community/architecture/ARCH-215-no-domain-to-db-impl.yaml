@@ -1,0 +1,12 @@
+name: "ARCH-215-no-domain-to-db-impl"
+description: "Domain should not depend on database implementations."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/repositories/impl/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: PERF-161-rb-gsub-simple
+description: "gsub with simple pattern; consider tr for single chars."
+severity: info
+type: ast_match
+match:
+  ast: "$S.gsub($PATTERN, $REPLACE)"
+  language: ruby
+  file_glob: "**/*.rb"

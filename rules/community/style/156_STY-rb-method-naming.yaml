@@ -1,0 +1,9 @@
+name: STY-rb-method-naming
+description: "Ruby methods should use snake_case."
+severity: info
+type: symbol_match
+match:
+  kind: method
+  file_glob: "**/*.rb"
+  require:
+    name_regex: "[A-Z]"

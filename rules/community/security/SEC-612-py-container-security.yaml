@@ -1,0 +1,8 @@
+name: SEC-612-py-container-security
+description: "Container running as root is insecure."
+severity: error
+type: ast_match
+match:
+  ast: "run_as_root=True"
+  language: python
+  file_glob: "**/*.py"

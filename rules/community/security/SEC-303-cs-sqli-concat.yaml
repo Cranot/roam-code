@@ -1,0 +1,8 @@
+name: SEC-303-cs-sqli-concat
+description: "SQL injection via string concatenation in SqlCommand."
+severity: error
+type: ast_match
+match:
+  ast: "command.CommandText = $SQL + $INPUT"
+  language: csharp
+  file_glob: "**/*.cs"

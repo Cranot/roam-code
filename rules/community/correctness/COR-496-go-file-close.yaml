@@ -1,0 +1,8 @@
+name: COR-496-go-file-close
+description: "File must be closed; defer f.Close()."
+severity: warning
+type: ast_match
+match:
+  ast: "os.Create($PATH)"
+  language: go
+  file_glob: "**/*.go"

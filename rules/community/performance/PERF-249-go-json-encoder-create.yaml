@@ -1,0 +1,8 @@
+name: PERF-249-go-json-encoder-create
+description: "json.NewEncoder is efficient for streaming."
+severity: info
+type: ast_match
+match:
+  ast: "json.NewEncoder($W)"
+  language: go
+  file_glob: "**/*.go"

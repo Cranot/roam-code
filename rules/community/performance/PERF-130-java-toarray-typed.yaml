@@ -1,0 +1,8 @@
+name: PERF-130-java-toarray-typed
+description: "Use toArray(new T[0]) for modern JVM optimization."
+severity: info
+type: ast_match
+match:
+  ast: "$LIST.toArray(new $TYPE[$SIZE])"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,10 @@
+name: "STY-exported-need-tests-mappers"
+description: "Exported functions in mappers/ should have test coverage."
+severity: warning
+type: symbol_match
+match:
+  kind: [function, class]
+  file_glob: "mappers/**"
+  exported: true
+  require:
+    has_test: true

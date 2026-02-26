@@ -1,0 +1,9 @@
+name: "STY-rb-func-max-80-lines"
+description: "Functions over 80 lines should be refactored."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "**/*.rb"
+  require:
+    max_symbol_lines: 80

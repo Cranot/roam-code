@@ -1,0 +1,8 @@
+name: COR-308-php-array-merge-loop
+description: "array_merge in loop is O(n^2); collect and merge once."
+severity: warning
+type: ast_match
+match:
+  ast: "array_merge($ARR, $OTHER)"
+  language: php
+  file_glob: "**/*.php"

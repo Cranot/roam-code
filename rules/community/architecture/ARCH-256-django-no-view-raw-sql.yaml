@@ -1,0 +1,12 @@
+name: "ARCH-256-django-no-view-raw-sql"
+description: "Django views should not use raw SQL."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

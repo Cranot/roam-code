@@ -1,0 +1,8 @@
+name: SEC-716-py-owasp-extra
+description: "Symlink creation may enable path traversal."
+severity: warning
+type: ast_match
+match:
+  ast: "os.symlink($SRC, $DST)"
+  language: python
+  file_glob: "**/*.py"

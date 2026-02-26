@@ -1,0 +1,9 @@
+name: STY-ts-func-naming
+description: "TypeScript function names should use camelCase."
+severity: info
+type: symbol_match
+match:
+  kind: function
+  file_glob: "**/*.ts"
+  require:
+    name_regex: "^[A-Z]"

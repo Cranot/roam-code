@@ -1,0 +1,8 @@
+name: COR-486-rb-thread-safe-array
+description: "Array append in thread; use Mutex or concurrent-ruby."
+severity: warning
+type: ast_match
+match:
+  ast: "Thread.new { $ARR << $ITEM }"
+  language: ruby
+  file_glob: "**/*.rb"

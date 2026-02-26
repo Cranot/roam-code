@@ -1,0 +1,8 @@
+name: PERF-101-js-style-loop
+description: "Individual style changes in loop cause reflow; use cssText or class."
+severity: info
+type: ast_match
+match:
+  ast: "$EL.style.$PROP = $VAL"
+  language: javascript
+  file_glob: "**/*.js"

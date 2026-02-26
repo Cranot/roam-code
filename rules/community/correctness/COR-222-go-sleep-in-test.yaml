@@ -1,0 +1,8 @@
+name: COR-222-go-sleep-in-test
+description: "time.Sleep in test is flaky; use synchronization."
+severity: warning
+type: ast_match
+match:
+  ast: "time.Sleep($DUR)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-341-py-asyncio-run-in-loop
+description: "asyncio.run() in existing event loop raises RuntimeError."
+severity: warning
+type: ast_match
+match:
+  ast: "asyncio.run($CORO)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-488-py-info-exposure
+description: "Debug mode enabled; disable in production."
+severity: warning
+type: ast_match
+match:
+  ast: "DEBUG = True"
+  language: python
+  file_glob: "**/*.py"

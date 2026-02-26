@@ -1,0 +1,8 @@
+name: COR-381-ts-abstract-constructor
+description: "Abstract class constructor; verify subclass calls super."
+severity: info
+type: ast_match
+match:
+  ast: "abstract class $NAME { constructor($ARGS) { $BODY } }"
+  language: typescript
+  file_glob: "**/*.ts"

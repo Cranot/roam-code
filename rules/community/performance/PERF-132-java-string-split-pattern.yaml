@@ -1,0 +1,8 @@
+name: PERF-132-java-string-split-pattern
+description: "String.split compiles regex; cache Pattern for reuse."
+severity: info
+type: ast_match
+match:
+  ast: "$STR.split($REGEX)"
+  language: java
+  file_glob: "**/*.java"

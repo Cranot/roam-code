@@ -1,0 +1,8 @@
+name: PERF-86-py-os-listdir
+description: "os.listdir loads all entries; use os.scandir() for large dirs."
+severity: info
+type: ast_match
+match:
+  ast: "os.listdir($PATH)"
+  language: python
+  file_glob: "**/*.py"

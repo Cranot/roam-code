@@ -1,0 +1,8 @@
+name: COR-330-java-string-intern
+description: "String.intern() can cause memory issues in PermGen."
+severity: info
+type: ast_match
+match:
+  ast: "$S.intern()"
+  language: java
+  file_glob: "**/*.java"

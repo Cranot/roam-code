@@ -1,0 +1,8 @@
+name: SEC-420-js-auth-cors
+description: "Express CORS middleware default allows all origins."
+severity: warning
+type: ast_match
+match:
+  ast: "cors()"
+  language: javascript
+  file_glob: "**/*.js"

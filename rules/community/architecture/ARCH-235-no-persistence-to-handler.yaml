@@ -1,0 +1,12 @@
+name: "ARCH-235-no-persistence-to-handler"
+description: "Persistence should not depend on handlers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/persistence/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  max_distance: 1

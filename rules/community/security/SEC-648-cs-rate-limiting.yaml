@@ -1,0 +1,8 @@
+name: SEC-648-cs-rate-limiting
+description: "POST endpoint; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "[HttpPost]"
+  language: csharp
+  file_glob: "**/*.cs"

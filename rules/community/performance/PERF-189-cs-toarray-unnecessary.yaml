@@ -1,0 +1,8 @@
+name: PERF-189-cs-toarray-unnecessary
+description: "ToArray() materializes entire sequence; defer if possible."
+severity: info
+type: ast_match
+match:
+  ast: "$SEQ.ToArray()"
+  language: csharp
+  file_glob: "**/*.cs"

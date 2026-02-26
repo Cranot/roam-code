@@ -1,0 +1,8 @@
+name: COR-253-php-loose-eq-zero
+description: "Loose comparison with 0; '' == 0 is true. Use ===."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == 0"
+  language: php
+  file_glob: "**/*.php"

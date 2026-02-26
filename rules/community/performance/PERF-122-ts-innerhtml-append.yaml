@@ -1,0 +1,8 @@
+name: PERF-122-ts-innerhtml-append
+description: "innerHTML += causes full reparse; use insertAdjacentHTML."
+severity: warning
+type: ast_match
+match:
+  ast: "$EL.innerHTML += $HTML"
+  language: typescript
+  file_glob: "**/*.ts"

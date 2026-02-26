@@ -1,0 +1,8 @@
+name: SEC-537-ts-log-sensitive
+description: "Potential logging of sensitive data to console."
+severity: info
+type: ast_match
+match:
+  ast: "console.log($PASSWORD)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-471-php-trigger-error
+description: "trigger_error is legacy; throw exception instead."
+severity: info
+type: ast_match
+match:
+  ast: "trigger_error($MSG)"
+  language: php
+  file_glob: "**/*.php"

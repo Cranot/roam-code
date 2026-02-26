@@ -1,0 +1,12 @@
+name: "ARCH-210-no-domain-to-api"
+description: "Domain should not depend on API layer."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  max_distance: 1

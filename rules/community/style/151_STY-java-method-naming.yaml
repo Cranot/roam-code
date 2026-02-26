@@ -1,0 +1,9 @@
+name: STY-java-method-naming
+description: "Java method names should use camelCase."
+severity: info
+type: symbol_match
+match:
+  kind: method
+  file_glob: "**/*.java"
+  require:
+    name_regex: "^[A-Z]"

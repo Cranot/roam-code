@@ -1,0 +1,8 @@
+name: SEC-333-java-path-traversal
+description: "Path traversal via concatenated FileInputStream."
+severity: error
+type: ast_match
+match:
+  ast: "new FileInputStream($PATH + $INPUT)"
+  language: java
+  file_glob: "**/*.java"

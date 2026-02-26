@@ -1,0 +1,8 @@
+name: PERF-263-java-math-pow-int
+description: "Math.pow for integer powers is slow; use multiplication."
+severity: info
+type: ast_match
+match:
+  ast: "Math.pow($BASE, $EXP)"
+  language: java
+  file_glob: "**/*.java"

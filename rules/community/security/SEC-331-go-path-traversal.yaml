@@ -1,0 +1,8 @@
+name: SEC-331-go-path-traversal
+description: "Path traversal via concatenated os.ReadFile()."
+severity: error
+type: ast_match
+match:
+  ast: "os.ReadFile($PATH + $INPUT)"
+  language: go
+  file_glob: "**/*.go"

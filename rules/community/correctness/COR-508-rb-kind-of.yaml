@@ -1,0 +1,8 @@
+name: COR-508-rb-kind-of
+description: "kind_of? matches subclasses; use instance_of? for exact match."
+severity: info
+type: ast_match
+match:
+  ast: "$X.kind_of?($TYPE)"
+  language: ruby
+  file_glob: "**/*.rb"

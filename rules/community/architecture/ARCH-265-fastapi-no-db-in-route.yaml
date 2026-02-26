@@ -1,0 +1,12 @@
+name: "ARCH-265-fastapi-no-db-in-route"
+description: "FastAPI routes should not access database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/routers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

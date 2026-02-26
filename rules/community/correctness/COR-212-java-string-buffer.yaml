@@ -1,0 +1,8 @@
+name: COR-212-java-string-buffer
+description: "StringBuffer is synchronized; use StringBuilder."
+severity: info
+type: ast_match
+match:
+  ast: "new StringBuffer()"
+  language: java
+  file_glob: "**/*.java"

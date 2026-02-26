@@ -1,0 +1,8 @@
+name: SEC-291-py-sqli-concat
+description: "SQL injection via str.format() in cursor.execute()."
+severity: error
+type: ast_match
+match:
+  ast: "cursor.execute($Q.format($ARGS))"
+  language: python
+  file_glob: "**/*.py"

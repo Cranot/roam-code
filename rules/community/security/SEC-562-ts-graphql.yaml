@@ -1,0 +1,8 @@
+name: SEC-562-ts-graphql
+description: "Verify GraphQL query is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "graphql($SCHEMA, $QUERY)"
+  language: typescript
+  file_glob: "**/*.ts"

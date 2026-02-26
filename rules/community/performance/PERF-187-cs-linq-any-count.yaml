@@ -1,0 +1,8 @@
+name: PERF-187-cs-linq-any-count
+description: "Use .Any() instead of Count() > 0."
+severity: warning
+type: ast_match
+match:
+  ast: "$SEQ.Count() > 0"
+  language: csharp
+  file_glob: "**/*.cs"

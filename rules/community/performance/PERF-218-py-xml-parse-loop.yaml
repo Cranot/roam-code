@@ -1,0 +1,8 @@
+name: PERF-218-py-xml-parse-loop
+description: "XML parsing in loop; batch if possible."
+severity: info
+type: ast_match
+match:
+  ast: "etree.parse($PATH)"
+  language: python
+  file_glob: "**/*.py"

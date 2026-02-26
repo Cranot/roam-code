@@ -1,0 +1,8 @@
+name: COR-459-py-suppress-all
+description: "Suppressing all exceptions hides bugs."
+severity: warning
+type: ast_match
+match:
+  ast: "contextlib.suppress(Exception)"
+  language: python
+  file_glob: "**/*.py"

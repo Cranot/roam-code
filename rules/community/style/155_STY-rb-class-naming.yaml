@@ -1,0 +1,9 @@
+name: STY-rb-class-naming
+description: "Ruby class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.rb"
+  require:
+    name_regex: "^[a-z]"

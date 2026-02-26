@@ -1,0 +1,8 @@
+name: SEC-734-rb-owasp-extra
+description: "String#constantize may instantiate arbitrary classes."
+severity: warning
+type: ast_match
+match:
+  ast: "constantize"
+  language: ruby
+  file_glob: "**/*.rb"

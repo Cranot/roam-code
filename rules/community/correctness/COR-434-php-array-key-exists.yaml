@@ -1,0 +1,8 @@
+name: COR-434-php-array-key-exists
+description: "array_key_exists is slower than isset; use isset unless null-check needed."
+severity: info
+type: ast_match
+match:
+  ast: "array_key_exists($KEY, $ARR)"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,9 @@
+name: "STY-actions-max-60-lines"
+description: "Functions in actions/ should be <= 60 lines."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "actions/**"
+  require:
+    max_symbol_lines: 60

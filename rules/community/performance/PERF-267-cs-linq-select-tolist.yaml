@@ -1,0 +1,8 @@
+name: PERF-267-cs-linq-select-tolist
+description: "Materializing LINQ immediately; defer if possible."
+severity: info
+type: ast_match
+match:
+  ast: "$SEQ.Select($F).ToList()"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: SEC-323-py-path-traversal
+description: "Path traversal risk in Flask send_file()."
+severity: error
+type: ast_match
+match:
+  ast: "send_file($INPUT)"
+  language: python
+  file_glob: "**/*.py"

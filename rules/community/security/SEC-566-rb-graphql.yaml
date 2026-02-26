@@ -1,0 +1,8 @@
+name: SEC-566-rb-graphql
+description: "Verify GraphQL query is sanitized."
+severity: warning
+type: ast_match
+match:
+  ast: "Schema.execute($QUERY)"
+  language: ruby
+  file_glob: "**/*.rb"

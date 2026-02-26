@@ -1,0 +1,8 @@
+name: SEC-438-java-cmdi
+description: "Command injection in Runtime.exec()."
+severity: error
+type: ast_match
+match:
+  ast: "Runtime.getRuntime().exec($CMD + $INPUT)"
+  language: java
+  file_glob: "**/*.java"

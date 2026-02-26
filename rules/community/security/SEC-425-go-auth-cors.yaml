@@ -1,0 +1,8 @@
+name: SEC-425-go-auth-cors
+description: "Open redirect risk if user controls redirect URL."
+severity: warning
+type: ast_match
+match:
+  ast: "http.Redirect($W, $R, $URL, $CODE)"
+  language: go
+  file_glob: "**/*.go"

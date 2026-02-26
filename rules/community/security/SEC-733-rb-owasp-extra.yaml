@@ -1,0 +1,8 @@
+name: SEC-733-rb-owasp-extra
+description: "IO.popen; verify command is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "IO.popen($CMD)"
+  language: ruby
+  file_glob: "**/*.rb"

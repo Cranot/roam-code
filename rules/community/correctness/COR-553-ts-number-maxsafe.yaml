@@ -1,0 +1,8 @@
+name: COR-553-ts-number-maxsafe
+description: "Numbers above MAX_SAFE_INTEGER lose precision; use BigInt."
+severity: info
+type: ast_match
+match:
+  ast: "Number.MAX_SAFE_INTEGER"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-282-py-map-lambda
+description: "Use list comprehension instead of map with lambda."
+severity: info
+type: ast_match
+match:
+  ast: "map(lambda $X: $EXPR, $ITER)"
+  language: python
+  file_glob: "**/*.py"

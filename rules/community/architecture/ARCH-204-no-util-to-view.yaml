@@ -1,0 +1,12 @@
+name: "ARCH-204-no-util-to-view"
+description: "Utilities should not depend on views."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/utils/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  max_distance: 1

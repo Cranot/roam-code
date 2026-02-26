@@ -1,0 +1,8 @@
+name: SEC-622-go-cookie-security
+description: "Verify cookie has Secure and HttpOnly flags."
+severity: warning
+type: ast_match
+match:
+  ast: "http.SetCookie($W, $COOKIE)"
+  language: go
+  file_glob: "**/*.go"

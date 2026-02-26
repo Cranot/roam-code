@@ -1,0 +1,8 @@
+name: COR-224-go-log-fatal
+description: "log.Fatal calls os.Exit; use in main() only."
+severity: warning
+type: ast_match
+match:
+  ast: "log.Fatal($MSG)"
+  language: go
+  file_glob: "**/*.go"

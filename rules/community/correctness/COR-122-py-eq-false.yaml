@@ -1,0 +1,8 @@
+name: COR-122-py-eq-false
+description: "Use 'if not x' or 'is False' instead of '== False'."
+severity: info
+type: ast_match
+match:
+  ast: "$X == False"
+  language: python
+  file_glob: "**/*.py"

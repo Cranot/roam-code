@@ -1,0 +1,8 @@
+name: COR-359-js-sparse-array
+description: "new Array(n) creates sparse array; use Array.from."
+severity: info
+type: ast_match
+match:
+  ast: "new Array($N)"
+  language: javascript
+  file_glob: "**/*.js"

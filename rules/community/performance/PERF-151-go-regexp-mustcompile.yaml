@@ -1,0 +1,8 @@
+name: PERF-151-go-regexp-mustcompile
+description: "MustCompile is fine at init; avoid in hot paths."
+severity: info
+type: ast_match
+match:
+  ast: "regexp.MustCompile($PATTERN)"
+  language: go
+  file_glob: "**/*.go"

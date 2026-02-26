@@ -1,0 +1,8 @@
+name: COR-492-ts-stream-destroy
+description: "Read stream; verify it is destroyed on error."
+severity: info
+type: ast_match
+match:
+  ast: "fs.createReadStream($PATH)"
+  language: typescript
+  file_glob: "**/*.ts"

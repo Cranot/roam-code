@@ -1,0 +1,8 @@
+name: STY-java-test-assert-equals
+description: "Verify expected is first parameter."
+severity: info
+type: ast_match
+match:
+  ast: "assertEquals($EXPECTED, $ACTUAL)"
+  language: java
+  file_glob: "**/*.java"

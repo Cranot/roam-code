@@ -1,0 +1,8 @@
+name: COR-418-rust-drop-manual
+description: "Explicit drop; verify it is needed for ordering."
+severity: info
+type: ast_match
+match:
+  ast: "drop($X)"
+  language: rust
+  file_glob: "**/*.rs"

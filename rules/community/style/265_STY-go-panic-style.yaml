@@ -1,0 +1,8 @@
+name: STY-go-panic-style
+description: "panic in library code; return error instead."
+severity: warning
+type: ast_match
+match:
+  ast: "panic($MSG)"
+  language: go
+  file_glob: "**/*.go"

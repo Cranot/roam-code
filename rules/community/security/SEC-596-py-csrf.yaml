@@ -1,0 +1,8 @@
+name: SEC-596-py-csrf
+description: "CSRF protection exempted; verify this is intentional."
+severity: warning
+type: ast_match
+match:
+  ast: "@csrf_exempt"
+  language: python
+  file_glob: "**/*.py"

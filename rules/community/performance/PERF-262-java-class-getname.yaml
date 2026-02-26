@@ -1,0 +1,8 @@
+name: PERF-262-java-class-getname
+description: "getClass().getName() is slow; cache class name."
+severity: info
+type: ast_match
+match:
+  ast: "$OBJ.getClass().getName()"
+  language: java
+  file_glob: "**/*.java"

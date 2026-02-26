@@ -1,0 +1,8 @@
+name: PERF-172-rust-hashmap-entry
+description: "Use entry API instead of contains_key + insert."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.contains_key($KEY)"
+  language: rust
+  file_glob: "**/*.rs"

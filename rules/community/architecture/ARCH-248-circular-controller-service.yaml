@@ -1,0 +1,12 @@
+name: "ARCH-248-circular-controller-service"
+description: "Circular dependency between controllers and services."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  max_distance: 1

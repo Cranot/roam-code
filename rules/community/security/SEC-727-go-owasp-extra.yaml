@@ -1,0 +1,8 @@
+name: SEC-727-go-owasp-extra
+description: "template.URL marks input as safe; verify it is trusted."
+severity: warning
+type: ast_match
+match:
+  ast: "template.URL($INPUT)"
+  language: go
+  file_glob: "**/*.go"

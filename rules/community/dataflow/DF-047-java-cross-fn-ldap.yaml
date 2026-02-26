@@ -1,0 +1,11 @@
+name: DF-047-java-cross-fn-ldap
+description: "Cross-function LDAP injection: parameter flows to LDAP search."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(']
+  sinks: ['ctx.search(', 'DirContext.search(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.java"

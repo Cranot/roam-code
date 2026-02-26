@@ -1,0 +1,8 @@
+name: COR-166-js-self-comparison
+description: "Comparing variable to itself is always true."
+severity: warning
+type: ast_match
+match:
+  ast: "$X === $X"
+  language: javascript
+  file_glob: "**/*.js"

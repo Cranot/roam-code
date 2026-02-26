@@ -1,0 +1,8 @@
+name: PERF-195-cs-gc-collect-manual
+description: "Manual GC.Collect() usually hurts performance."
+severity: warning
+type: ast_match
+match:
+  ast: "GC.Collect()"
+  language: csharp
+  file_glob: "**/*.cs"

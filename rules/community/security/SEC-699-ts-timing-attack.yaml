@@ -1,0 +1,8 @@
+name: SEC-699-ts-timing-attack
+description: "Token comparison timing leak; use crypto.timingSafeEqual."
+severity: info
+type: ast_match
+match:
+  ast: "$A === $B"
+  language: typescript
+  file_glob: "**/*.ts"

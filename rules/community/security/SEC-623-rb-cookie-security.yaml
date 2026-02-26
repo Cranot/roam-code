@@ -1,0 +1,8 @@
+name: SEC-623-rb-cookie-security
+description: "Verify cookie has secure and httponly flags."
+severity: warning
+type: ast_match
+match:
+  ast: "cookies[$NAME] = $VALUE"
+  language: ruby
+  file_glob: "**/*.rb"

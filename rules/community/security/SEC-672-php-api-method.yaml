@@ -1,0 +1,8 @@
+name: SEC-672-php-api-method
+description: "Route accepts all methods; restrict to needed methods."
+severity: info
+type: ast_match
+match:
+  ast: "Route::any($PATH, $HANDLER)"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: SEC-656-java-session-fixation
+description: "Verify session is invalidated after authentication."
+severity: info
+type: ast_match
+match:
+  ast: "session.setAttribute($KEY, $VALUE)"
+  language: java
+  file_glob: "**/*.java"

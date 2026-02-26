@@ -1,0 +1,8 @@
+name: STY-java-nested-class
+description: "Nested class; consider extracting to separate file."
+severity: info
+type: ast_match
+match:
+  ast: "class $OUTER { class $INNER { $BODY } }"
+  language: java
+  file_glob: "**/*.java"

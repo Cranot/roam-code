@@ -1,0 +1,8 @@
+name: COR-198-java-system-gc
+description: "System.gc() is unreliable; let JVM manage garbage collection."
+severity: info
+type: ast_match
+match:
+  ast: "System.gc()"
+  language: java
+  file_glob: "**/*.java"

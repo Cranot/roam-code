@@ -1,0 +1,8 @@
+name: COR-463-ts-then-no-catch
+description: "Promise .then without .catch may silently fail."
+severity: warning
+type: ast_match
+match:
+  ast: ".then($SUCCESS)"
+  language: typescript
+  file_glob: "**/*.ts"

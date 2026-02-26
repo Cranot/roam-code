@@ -1,0 +1,8 @@
+name: PERF-314-cs-arraypool-rent
+description: "ArrayPool avoids allocations; verify return after use."
+severity: info
+type: ast_match
+match:
+  ast: "ArrayPool<$T>.Shared.Rent($SIZE)"
+  language: csharp
+  file_glob: "**/*.cs"

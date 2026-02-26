@@ -1,0 +1,8 @@
+name: PERF-332-java-caffeine-cache
+description: "Caffeine cache; verify eviction policy."
+severity: info
+type: ast_match
+match:
+  ast: "Caffeine.newBuilder()"
+  language: java
+  file_glob: "**/*.java"

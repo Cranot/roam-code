@@ -1,0 +1,8 @@
+name: PERF-335-cs-memorycache
+description: "MemoryCache; verify expiration policy."
+severity: info
+type: ast_match
+match:
+  ast: "MemoryCache($OPTIONS)"
+  language: csharp
+  file_glob: "**/*.cs"

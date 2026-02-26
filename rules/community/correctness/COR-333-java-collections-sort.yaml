@@ -1,0 +1,8 @@
+name: COR-333-java-collections-sort
+description: "Use List.sort() instead of Collections.sort()."
+severity: info
+type: ast_match
+match:
+  ast: "Collections.sort($LIST)"
+  language: java
+  file_glob: "**/*.java"

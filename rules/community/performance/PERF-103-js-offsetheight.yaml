@@ -1,0 +1,8 @@
+name: PERF-103-js-offsetheight
+description: "offsetHeight forces layout; batch reads before writes."
+severity: info
+type: ast_match
+match:
+  ast: "$EL.offsetHeight"
+  language: javascript
+  file_glob: "**/*.js"

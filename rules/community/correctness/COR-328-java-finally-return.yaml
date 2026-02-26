@@ -1,0 +1,8 @@
+name: COR-328-java-finally-return
+description: "Return in finally swallows exceptions."
+severity: error
+type: ast_match
+match:
+  ast: "finally { return $X }"
+  language: java
+  file_glob: "**/*.java"

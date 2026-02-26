@@ -1,0 +1,11 @@
+name: DF-046-py-cross-fn-ldap
+description: "Cross-function LDAP injection: user input flows to LDAP filter."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.args', 'request.form']
+  sinks: ['ldap.search_s(', 'ldap.search(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.py"

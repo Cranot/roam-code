@@ -1,0 +1,8 @@
+name: SEC-525-go-toctou
+description: "TOCTOU race between Stat() and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "os.Stat($PATH)"
+  language: go
+  file_glob: "**/*.go"

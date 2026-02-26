@@ -1,0 +1,8 @@
+name: SEC-534-py-log-sensitive
+description: "Potential logging of sensitive data."
+severity: info
+type: ast_match
+match:
+  ast: "logging.info($PASSWORD)"
+  language: python
+  file_glob: "**/*.py"

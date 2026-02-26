@@ -1,0 +1,8 @@
+name: SEC-453-php-xxe
+description: "XXE risk in simplexml_load_string()."
+severity: error
+type: ast_match
+match:
+  ast: "simplexml_load_string($INPUT)"
+  language: php
+  file_glob: "**/*.php"

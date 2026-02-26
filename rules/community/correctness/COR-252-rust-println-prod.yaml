@@ -1,0 +1,8 @@
+name: COR-252-rust-println-prod
+description: "println!() in library code; use log crate instead."
+severity: info
+type: ast_match
+match:
+  ast: "println!($FMT)"
+  language: rust
+  file_glob: "**/*.rs"

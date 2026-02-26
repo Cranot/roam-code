@@ -1,0 +1,8 @@
+name: SEC-524-py-toctou
+description: "TOCTOU race between access check and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "os.access($PATH, $MODE)"
+  language: python
+  file_glob: "**/*.py"

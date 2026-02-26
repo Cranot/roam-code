@@ -1,0 +1,8 @@
+name: PERF-321-java-nio-channel
+description: "NIO channel for large files; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "FileChannel.open($PATH)"
+  language: java
+  file_glob: "**/*.java"

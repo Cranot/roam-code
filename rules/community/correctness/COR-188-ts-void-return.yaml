@@ -1,0 +1,8 @@
+name: COR-188-ts-void-return
+description: "Void function should not return a value."
+severity: error
+type: ast_match
+match:
+  ast: "function $NAME($ARGS): void { return $X }"
+  language: typescript
+  file_glob: "**/*.ts"

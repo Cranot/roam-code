@@ -1,0 +1,8 @@
+name: COR-457-cs-span-toarray
+description: "Span.ToArray allocates; avoid in hot paths."
+severity: info
+type: ast_match
+match:
+  ast: "$SPAN.ToArray()"
+  language: csharp
+  file_glob: "**/*.cs"

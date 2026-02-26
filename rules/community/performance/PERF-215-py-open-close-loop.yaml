@@ -1,0 +1,8 @@
+name: PERF-215-py-open-close-loop
+description: "File open in loop; batch I/O."
+severity: info
+type: ast_match
+match:
+  ast: "open($PATH)"
+  language: python
+  file_glob: "**/*.py"

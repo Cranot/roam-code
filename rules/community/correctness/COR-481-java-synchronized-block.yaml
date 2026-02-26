@@ -1,0 +1,8 @@
+name: COR-481-java-synchronized-block
+description: "Synchronized block; verify lock object is correct."
+severity: info
+type: ast_match
+match:
+  ast: "synchronized ($LOCK) { $BODY }"
+  language: java
+  file_glob: "**/*.java"

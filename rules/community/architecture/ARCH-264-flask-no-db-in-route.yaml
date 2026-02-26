@@ -1,0 +1,12 @@
+name: "ARCH-264-flask-no-db-in-route"
+description: "Flask routes should not access database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/routes/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

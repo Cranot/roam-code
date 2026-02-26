@@ -1,0 +1,12 @@
+name: "ARCH-214-no-domain-to-middleware"
+description: "Domain should not depend on middleware."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/middleware/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: COR-395-java-thread-sleep-loop
+description: "Thread.sleep in loop; use proper scheduling."
+severity: info
+type: ast_match
+match:
+  ast: "Thread.sleep($MS)"
+  language: java
+  file_glob: "**/*.java"

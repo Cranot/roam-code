@@ -1,0 +1,8 @@
+name: COR-506-go-type-assertion
+description: "Type assertion panics on failure; use comma-ok pattern."
+severity: warning
+type: ast_match
+match:
+  ast: "$X.($TYPE)"
+  language: go
+  file_glob: "**/*.go"

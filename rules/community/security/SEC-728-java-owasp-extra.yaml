@@ -1,0 +1,8 @@
+name: SEC-728-java-owasp-extra
+description: "ProcessBuilder; verify command is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "ProcessBuilder($CMD).start()"
+  language: java
+  file_glob: "**/*.java"

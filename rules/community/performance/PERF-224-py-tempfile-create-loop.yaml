@@ -1,0 +1,8 @@
+name: PERF-224-py-tempfile-create-loop
+description: "Temp file creation in loop; batch writes."
+severity: info
+type: ast_match
+match:
+  ast: "tempfile.NamedTemporaryFile()"
+  language: python
+  file_glob: "**/*.py"

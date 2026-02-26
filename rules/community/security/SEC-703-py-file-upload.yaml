@@ -1,0 +1,8 @@
+name: SEC-703-py-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "request.files[$NAME]"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-635-js-host-injection
+description: "Host header may be spoofed; validate against allowlist."
+severity: info
+type: ast_match
+match:
+  ast: "req.hostname"
+  language: javascript
+  file_glob: "**/*.js"

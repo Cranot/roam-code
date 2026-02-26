@@ -1,0 +1,8 @@
+name: COR-208-java-return-null-collection
+description: "Returning null for collections; return empty collection instead."
+severity: info
+type: ast_match
+match:
+  ast: "return null"
+  language: java
+  file_glob: "**/*.java"

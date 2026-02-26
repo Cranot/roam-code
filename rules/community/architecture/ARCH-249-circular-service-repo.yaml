@@ -1,0 +1,12 @@
+name: "ARCH-249-circular-service-repo"
+description: "Circular dependency between services and repositories."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: SEC-651-py-websocket-security
+description: "Verify WebSocket uses wss:// for encryption."
+severity: warning
+type: ast_match
+match:
+  ast: "websocket.connect($URL)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,11 @@
+name: DF-090-py-cross-fn-redos
+description: "Cross-function ReDoS: user input flows to regex pattern."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.args', 'request.form']
+  sinks: ['re.compile(', 're.search(', 're.match(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.py"

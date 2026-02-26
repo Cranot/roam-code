@@ -1,0 +1,8 @@
+name: SEC-718-py-owasp-extra
+description: "Opening browser with user-controlled URL is risky."
+severity: warning
+type: ast_match
+match:
+  ast: "webbrowser.open($URL)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: STY-go-test-fatal
+description: "t.Fatal stops test; use t.Error for non-critical."
+severity: info
+type: ast_match
+match:
+  ast: "t.Fatal($MSG)"
+  language: go
+  file_glob: "**/*.go"

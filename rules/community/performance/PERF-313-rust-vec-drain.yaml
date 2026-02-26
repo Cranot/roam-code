@@ -1,0 +1,8 @@
+name: PERF-313-rust-vec-drain
+description: "drain(..) clears and returns elements; efficient for reuse."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.drain(..)"
+  language: rust
+  file_glob: "**/*.rs"

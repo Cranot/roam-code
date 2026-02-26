@@ -1,0 +1,8 @@
+name: PERF-251-go-os-open-loop
+description: "File open in loop; batch I/O operations."
+severity: info
+type: ast_match
+match:
+  ast: "os.Open($PATH)"
+  language: go
+  file_glob: "**/*.go"

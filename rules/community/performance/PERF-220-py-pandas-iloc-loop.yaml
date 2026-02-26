@@ -1,0 +1,8 @@
+name: PERF-220-py-pandas-iloc-loop
+description: "DataFrame iloc in loop; use vectorized operations."
+severity: warning
+type: ast_match
+match:
+  ast: "$DF.iloc[$IDX]"
+  language: python
+  file_glob: "**/*.py"

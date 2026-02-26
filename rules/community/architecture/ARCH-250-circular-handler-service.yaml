@@ -1,0 +1,12 @@
+name: "ARCH-250-circular-handler-service"
+description: "Circular dependency between handlers and services."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  max_distance: 1

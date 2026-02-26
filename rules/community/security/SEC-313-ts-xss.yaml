@@ -1,0 +1,8 @@
+name: SEC-313-ts-xss
+description: "XSS risk via document.write()."
+severity: error
+type: ast_match
+match:
+  ast: "document.write($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

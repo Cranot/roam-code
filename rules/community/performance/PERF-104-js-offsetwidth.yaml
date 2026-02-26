@@ -1,0 +1,8 @@
+name: PERF-104-js-offsetwidth
+description: "offsetWidth forces layout; batch reads before writes."
+severity: info
+type: ast_match
+match:
+  ast: "$EL.offsetWidth"
+  language: javascript
+  file_glob: "**/*.js"

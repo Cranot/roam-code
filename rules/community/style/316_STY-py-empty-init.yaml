@@ -1,0 +1,8 @@
+name: STY-py-empty-init
+description: "Empty __init__; either add body or remove."
+severity: info
+type: ast_match
+match:
+  ast: "def __init__(self): pass"
+  language: python
+  file_glob: "**/*.py"

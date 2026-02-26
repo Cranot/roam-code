@@ -1,0 +1,8 @@
+name: STY-cs-empty-method
+description: "Empty method body; add implementation or remove."
+severity: info
+type: ast_match
+match:
+  ast: "void $METHOD($ARGS) { }"
+  language: csharp
+  file_glob: "**/*.cs"

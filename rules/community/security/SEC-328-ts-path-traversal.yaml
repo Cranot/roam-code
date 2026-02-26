@@ -1,0 +1,8 @@
+name: SEC-328-ts-path-traversal
+description: "Path traversal via concatenated fs.readFileSync()."
+severity: error
+type: ast_match
+match:
+  ast: "fs.readFileSync($PATH + $INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

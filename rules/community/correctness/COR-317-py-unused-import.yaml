@@ -1,0 +1,8 @@
+name: COR-317-py-unused-import
+description: "Verify imported module is used."
+severity: info
+type: ast_match
+match:
+  ast: "import $MODULE"
+  language: python
+  file_glob: "**/*.py"

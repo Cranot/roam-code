@@ -1,0 +1,8 @@
+name: PERF-308-ts-array-splice-large
+description: "splice on large array is O(n); use linked list for frequent inserts."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.splice($IDX, $COUNT)"
+  language: typescript
+  file_glob: "**/*.ts"

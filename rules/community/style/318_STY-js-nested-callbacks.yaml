@@ -1,0 +1,8 @@
+name: STY-js-nested-callbacks
+description: "Nested callback; use async/await or promises."
+severity: info
+type: ast_match
+match:
+  ast: "$FUNC($ARGS, function($CB_ARGS) { $BODY })"
+  language: javascript
+  file_glob: "**/*.js"

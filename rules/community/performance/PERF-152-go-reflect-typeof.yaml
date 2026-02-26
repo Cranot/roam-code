@@ -1,0 +1,8 @@
+name: PERF-152-go-reflect-typeof
+description: "reflect.TypeOf in hot path is slow; cache the type."
+severity: warning
+type: ast_match
+match:
+  ast: "reflect.TypeOf($OBJ)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: SEC-374-py-crypto-misuse
+description: "random.choice() is not cryptographically secure."
+severity: warning
+type: ast_match
+match:
+  ast: "random.choice($SEQ)"
+  language: python
+  file_glob: "**/*.py"

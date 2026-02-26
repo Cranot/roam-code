@@ -1,0 +1,8 @@
+name: PERF-134-java-exception-control-flow
+description: "Exception for control flow is expensive; use conditional."
+severity: info
+type: ast_match
+match:
+  ast: "try { $BODY } catch ($EX $E) { $HANDLER }"
+  language: java
+  file_glob: "**/*.java"

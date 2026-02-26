@@ -1,0 +1,8 @@
+name: PERF-253-java-boxed-comparison
+description: "Boxed Integer == compares reference; use equals."
+severity: error
+type: ast_match
+match:
+  ast: "Integer.valueOf($X) == Integer.valueOf($Y)"
+  language: java
+  file_glob: "**/*.java"

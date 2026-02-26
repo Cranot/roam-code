@@ -1,0 +1,8 @@
+name: SEC-678-java-env-exposure
+description: "Verify env var is not logged with secrets."
+severity: info
+type: ast_match
+match:
+  ast: "System.getenv($KEY)"
+  language: java
+  file_glob: "**/*.java"

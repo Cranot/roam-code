@@ -1,0 +1,12 @@
+name: "ARCH-262-aspnet-no-repo-in-controller"
+description: "ASP.NET controllers should use services, not repos."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/Controllers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/Repositories/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: DF-071-rust-unused-param
+description: "Function parameter is never used in the function body."
+severity: info
+type: dataflow_match
+match:
+  patterns: [unused_param]
+  file_glob: "**/*.rs"
+  max_matches: 200

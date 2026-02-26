@@ -1,0 +1,8 @@
+name: PERF-91-py-any-generator
+description: "any() accepts generator; remove list wrapper for early exit."
+severity: info
+type: ast_match
+match:
+  ast: "any([$ITEMS])"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-150-go-io-readall
+description: "io.ReadAll loads entire stream; use buffered reading for large data."
+severity: info
+type: ast_match
+match:
+  ast: "io.ReadAll($READER)"
+  language: go
+  file_glob: "**/*.go"

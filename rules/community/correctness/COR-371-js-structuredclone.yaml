@@ -1,0 +1,8 @@
+name: COR-371-js-structuredclone
+description: "structuredClone cannot clone functions or DOM nodes."
+severity: info
+type: ast_match
+match:
+  ast: "structuredClone($OBJ)"
+  language: javascript
+  file_glob: "**/*.js"

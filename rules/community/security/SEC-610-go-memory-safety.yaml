@@ -1,0 +1,8 @@
+name: SEC-610-go-memory-safety
+description: "uintptr arithmetic may be unsafe."
+severity: warning
+type: ast_match
+match:
+  ast: "uintptr($X)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: STY-java-public-field
+description: "Public field breaks encapsulation; use getter/setter."
+severity: info
+type: ast_match
+match:
+  ast: "public $TYPE $FIELD"
+  language: java
+  file_glob: "**/*.java"

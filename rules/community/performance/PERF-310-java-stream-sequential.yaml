@@ -1,0 +1,8 @@
+name: PERF-310-java-stream-sequential
+description: "Sequential after parallel cancels parallelism."
+severity: info
+type: ast_match
+match:
+  ast: "$STREAM.sequential()"
+  language: java
+  file_glob: "**/*.java"

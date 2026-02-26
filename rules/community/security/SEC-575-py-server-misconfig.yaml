@@ -1,0 +1,8 @@
+name: SEC-575-py-server-misconfig
+description: "Flask debug mode enabled; disable in production."
+severity: warning
+type: ast_match
+match:
+  ast: "app.run(debug=True)"
+  language: python
+  file_glob: "**/*.py"

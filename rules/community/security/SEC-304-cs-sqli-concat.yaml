@@ -1,0 +1,8 @@
+name: SEC-304-cs-sqli-concat
+description: "SQL injection via concatenation in SqlCommand constructor."
+severity: error
+type: ast_match
+match:
+  ast: "SqlCommand($SQL + $INPUT, $CONN)"
+  language: csharp
+  file_glob: "**/*.cs"

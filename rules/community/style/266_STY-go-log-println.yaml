@@ -1,0 +1,8 @@
+name: STY-go-log-println
+description: "log.Println; use structured logger."
+severity: info
+type: ast_match
+match:
+  ast: "log.Println($MSG)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,9 @@
+name: "STY-py-func-max-50-lines"
+description: "Functions over 50 lines should be refactored."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "**/*.py"
+  require:
+    max_symbol_lines: 50

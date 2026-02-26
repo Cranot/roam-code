@@ -1,0 +1,8 @@
+name: PERF-126-java-autoboxing-loop
+description: "Autoboxing in loop creates objects; use primitive."
+severity: warning
+type: ast_match
+match:
+  ast: "Integer.valueOf($X)"
+  language: java
+  file_glob: "**/*.java"

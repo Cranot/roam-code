@@ -1,0 +1,8 @@
+name: COR-201-java-thread-suspend
+description: "Thread.suspend() is deprecated and deadlock-prone."
+severity: error
+type: ast_match
+match:
+  ast: "$THREAD.suspend()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: PERF-255-java-stream-tolist
+description: "Use Stream.toList() in Java 16+ for simplicity."
+severity: info
+type: ast_match
+match:
+  ast: "$STREAM.collect(Collectors.toList())"
+  language: java
+  file_glob: "**/*.java"

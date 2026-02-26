@@ -1,0 +1,8 @@
+name: SEC-495-rb-info-exposure
+description: "Debugger breakpoint left in production code."
+severity: warning
+type: ast_match
+match:
+  ast: "binding.pry"
+  language: ruby
+  file_glob: "**/*.rb"

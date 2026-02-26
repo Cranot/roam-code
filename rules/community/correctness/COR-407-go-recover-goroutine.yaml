@@ -1,0 +1,8 @@
+name: COR-407-go-recover-goroutine
+description: "recover only works in deferred functions."
+severity: info
+type: ast_match
+match:
+  ast: "recover()"
+  language: go
+  file_glob: "**/*.go"

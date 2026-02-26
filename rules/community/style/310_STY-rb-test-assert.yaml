@@ -1,0 +1,8 @@
+name: STY-rb-test-assert
+description: "Use specific assertion for better failure messages."
+severity: info
+type: ast_match
+match:
+  ast: "assert($EXPR)"
+  language: ruby
+  file_glob: "**/*.rb"

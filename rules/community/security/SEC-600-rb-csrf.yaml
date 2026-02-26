@@ -1,0 +1,8 @@
+name: SEC-600-rb-csrf
+description: "Rails CSRF protection skipped."
+severity: warning
+type: ast_match
+match:
+  ast: "skip_before_action :verify_authenticity_token"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: PERF-300-php-realpath-loop
+description: "realpath() does filesystem I/O; cache results."
+severity: info
+type: ast_match
+match:
+  ast: "realpath($PATH)"
+  language: php
+  file_glob: "**/*.php"

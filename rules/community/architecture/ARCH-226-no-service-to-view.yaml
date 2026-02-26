@@ -1,0 +1,12 @@
+name: "ARCH-226-no-service-to-view"
+description: "Services should not depend on views."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  max_distance: 1

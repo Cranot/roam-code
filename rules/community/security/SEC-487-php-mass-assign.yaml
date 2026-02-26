@@ -1,0 +1,8 @@
+name: SEC-487-php-mass-assign
+description: "extract() creates variables from user input."
+severity: warning
+type: ast_match
+match:
+  ast: "extract($INPUT)"
+  language: php
+  file_glob: "**/*.php"

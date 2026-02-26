@@ -1,0 +1,8 @@
+name: COR-302-java-optional-get
+description: "Optional.get() throws on empty; use orElse or ifPresent."
+severity: warning
+type: ast_match
+match:
+  ast: "$OPT.get()"
+  language: java
+  file_glob: "**/*.java"

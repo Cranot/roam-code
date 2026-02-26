@@ -1,0 +1,8 @@
+name: COR-389-java-collections-unmodifiable
+description: "Unmodifiable view; original list can still be modified."
+severity: info
+type: ast_match
+match:
+  ast: "Collections.unmodifiableList($LIST)"
+  language: java
+  file_glob: "**/*.java"

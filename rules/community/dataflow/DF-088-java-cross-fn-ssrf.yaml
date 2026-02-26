@@ -1,0 +1,11 @@
+name: DF-088-java-cross-fn-ssrf
+description: "Cross-function SSRF: parameter flows to HTTP client."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(']
+  sinks: ['new URL(', 'HttpClient.send(', 'HttpURLConnection.connect(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.java"

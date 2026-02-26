@@ -1,0 +1,8 @@
+name: COR-452-cs-parse-int
+description: "Parse throws on invalid input; use TryParse."
+severity: warning
+type: ast_match
+match:
+  ast: "int.Parse($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

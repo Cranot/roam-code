@@ -1,0 +1,8 @@
+name: COR-438-php-array-map-keys
+description: "array_map does not preserve keys by default; verify."
+severity: info
+type: ast_match
+match:
+  ast: "array_map($FUNC, $ARR)"
+  language: php
+  file_glob: "**/*.php"

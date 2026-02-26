@@ -1,0 +1,8 @@
+name: PERF-302-php-array-filter-loop
+description: "array_filter in loop; batch filtering."
+severity: info
+type: ast_match
+match:
+  ast: "array_filter($ARR, $FUNC)"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: SEC-545-py-http-headers
+description: "SSL redirect disabled; enable in production."
+severity: warning
+type: ast_match
+match:
+  ast: "SECURE_SSL_REDIRECT = False"
+  language: python
+  file_glob: "**/*.py"

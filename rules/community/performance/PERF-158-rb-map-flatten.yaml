@@ -1,0 +1,8 @@
+name: PERF-158-rb-map-flatten
+description: "Use flat_map instead of map.flatten."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.map { $BLOCK }.flatten"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,9 @@
+name: STY-js-class-naming
+description: "JavaScript class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.js"
+  require:
+    name_regex: "^[a-z]"

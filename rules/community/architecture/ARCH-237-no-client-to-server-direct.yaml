@@ -1,0 +1,12 @@
+name: "ARCH-237-no-client-to-server-direct"
+description: "Client code should not import server modules."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/client/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/server/**"
+    kind: [function, method, class]
+  max_distance: 1

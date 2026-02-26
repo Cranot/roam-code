@@ -1,0 +1,8 @@
+name: SEC-526-java-toctou
+description: "TOCTOU race between exists() and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "$FILE.exists()"
+  language: java
+  file_glob: "**/*.java"

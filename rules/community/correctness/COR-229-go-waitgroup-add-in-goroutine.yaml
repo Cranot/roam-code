@@ -1,0 +1,8 @@
+name: COR-229-go-waitgroup-add-in-goroutine
+description: "WaitGroup.Add must be called before goroutine starts."
+severity: error
+type: ast_match
+match:
+  ast: "go func() { $WG.Add($N) }"
+  language: go
+  file_glob: "**/*.go"

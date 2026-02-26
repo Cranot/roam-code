@@ -1,0 +1,8 @@
+name: SEC-579-go-server-misconfig
+description: "Default ServeMux used; prefer explicit handler."
+severity: warning
+type: ast_match
+match:
+  ast: "http.ListenAndServe($ADDR, nil)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-343-py-multiprocessing-fork
+description: "Verify Process args are picklable."
+severity: info
+type: ast_match
+match:
+  ast: "multiprocessing.Process($ARGS)"
+  language: python
+  file_glob: "**/*.py"

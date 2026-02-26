@@ -1,0 +1,8 @@
+name: COR-503-js-instanceof-frame
+description: "instanceof fails across frames; use Array.isArray()."
+severity: warning
+type: ast_match
+match:
+  ast: "$X instanceof Array"
+  language: javascript
+  file_glob: "**/*.js"

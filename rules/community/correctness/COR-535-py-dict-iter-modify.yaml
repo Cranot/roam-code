@@ -1,0 +1,8 @@
+name: COR-535-py-dict-iter-modify
+description: "Verify dict is not modified during iteration."
+severity: info
+type: ast_match
+match:
+  ast: "for $KEY in $DICT:"
+  language: python
+  file_glob: "**/*.py"

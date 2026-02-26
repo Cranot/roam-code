@@ -1,0 +1,8 @@
+name: PERF-171-rust-string-from-loop
+description: "String::from in loop allocates; reuse buffer."
+severity: info
+type: ast_match
+match:
+  ast: "String::from($S)"
+  language: rust
+  file_glob: "**/*.rs"

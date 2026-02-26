@@ -1,0 +1,8 @@
+name: PERF-240-go-strings-builder
+description: "strings.Builder is efficient for string building."
+severity: info
+type: ast_match
+match:
+  ast: "strings.Builder{}"
+  language: go
+  file_glob: "**/*.go"

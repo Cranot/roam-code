@@ -1,0 +1,8 @@
+name: SEC-573-php-email-injection
+description: "Email header injection risk via user-controlled headers."
+severity: warning
+type: ast_match
+match:
+  ast: "mail($TO, $SUBJECT, $BODY, $HEADERS)"
+  language: php
+  file_glob: "**/*.php"

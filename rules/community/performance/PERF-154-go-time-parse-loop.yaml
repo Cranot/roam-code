@@ -1,0 +1,8 @@
+name: PERF-154-go-time-parse-loop
+description: "time.Parse in loop; pre-parse or use Unix timestamps."
+severity: info
+type: ast_match
+match:
+  ast: "time.Parse($LAYOUT, $VALUE)"
+  language: go
+  file_glob: "**/*.go"

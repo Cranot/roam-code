@@ -1,0 +1,8 @@
+name: SEC-512-rb-unsafe-file-ops
+description: "Setting 777 permissions is insecure."
+severity: warning
+type: ast_match
+match:
+  ast: "FileUtils.chmod(0777, $PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

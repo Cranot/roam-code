@@ -1,0 +1,8 @@
+name: COR-352-py-atexit-register
+description: "atexit handlers may not run on crash; use try/finally."
+severity: info
+type: ast_match
+match:
+  ast: "atexit.register($FUNC)"
+  language: python
+  file_glob: "**/*.py"

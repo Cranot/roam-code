@@ -1,0 +1,12 @@
+name: "ARCH-236-no-frontend-to-backend-direct"
+description: "Frontend should not import backend modules."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/frontend/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/backend/**"
+    kind: [function, method, class]
+  max_distance: 1

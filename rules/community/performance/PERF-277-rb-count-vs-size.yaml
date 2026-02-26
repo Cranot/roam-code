@@ -1,0 +1,8 @@
+name: PERF-277-rb-count-vs-size
+description: "count fires SQL; use size if loaded or length if array."
+severity: info
+type: ast_match
+match:
+  ast: "$REL.count"
+  language: ruby
+  file_glob: "**/*.rb"

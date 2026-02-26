@@ -1,0 +1,8 @@
+name: SEC-335-php-path-traversal
+description: "Path traversal via concatenated file_get_contents()."
+severity: error
+type: ast_match
+match:
+  ast: "file_get_contents($PATH . $INPUT)"
+  language: php
+  file_glob: "**/*.php"
