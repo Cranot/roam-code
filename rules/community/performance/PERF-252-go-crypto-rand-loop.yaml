@@ -1,0 +1,8 @@
+name: PERF-252-go-crypto-rand-loop
+description: "crypto/rand.Read in loop; batch random reads."
+severity: info
+type: ast_match
+match:
+  ast: "rand.Read($BUF)"
+  language: go
+  file_glob: "**/*.go"

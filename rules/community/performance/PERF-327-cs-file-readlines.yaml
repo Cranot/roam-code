@@ -1,0 +1,8 @@
+name: PERF-327-cs-file-readlines
+description: "ReadLines is lazy; efficient for large files."
+severity: info
+type: ast_match
+match:
+  ast: "File.ReadLines($PATH)"
+  language: csharp
+  file_glob: "**/*.cs"

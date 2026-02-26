@@ -1,0 +1,8 @@
+name: COR-349-py-string-encode-decode
+description: "Redundant encode/decode cycle; verify necessity."
+severity: info
+type: ast_match
+match:
+  ast: "$S.encode($ENC).decode($ENC)"
+  language: python
+  file_glob: "**/*.py"

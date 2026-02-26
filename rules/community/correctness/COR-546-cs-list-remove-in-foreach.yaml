@@ -1,0 +1,8 @@
+name: COR-546-cs-list-remove-in-foreach
+description: "Removing during foreach throws InvalidOperation."
+severity: error
+type: ast_match
+match:
+  ast: "$LIST.Remove($ELEM)"
+  language: csharp
+  file_glob: "**/*.cs"

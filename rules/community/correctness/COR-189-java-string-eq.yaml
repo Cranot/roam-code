@@ -1,0 +1,8 @@
+name: COR-189-java-string-eq
+description: "String comparison with == checks reference; use .equals()."
+severity: warning
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: java
+  file_glob: "**/*.java"

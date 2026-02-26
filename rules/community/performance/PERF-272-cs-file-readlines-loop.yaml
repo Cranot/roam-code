@@ -1,0 +1,8 @@
+name: PERF-272-cs-file-readlines-loop
+description: "ReadAllLines in loop loads entire file; use ReadLines."
+severity: warning
+type: ast_match
+match:
+  ast: "File.ReadAllLines($PATH)"
+  language: csharp
+  file_glob: "**/*.cs"

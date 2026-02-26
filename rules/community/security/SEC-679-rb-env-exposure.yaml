@@ -1,0 +1,8 @@
+name: SEC-679-rb-env-exposure
+description: "Verify ENV value is not logged with secrets."
+severity: info
+type: ast_match
+match:
+  ast: "ENV[$KEY]"
+  language: ruby
+  file_glob: "**/*.rb"

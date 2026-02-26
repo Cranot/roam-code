@@ -1,0 +1,8 @@
+name: PERF-258-java-hashmap-grow
+description: "HashMap without initial capacity may resize frequently."
+severity: info
+type: ast_match
+match:
+  ast: "new HashMap()"
+  language: java
+  file_glob: "**/*.java"

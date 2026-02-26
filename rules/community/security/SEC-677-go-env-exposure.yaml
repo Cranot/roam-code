@@ -1,0 +1,8 @@
+name: SEC-677-go-env-exposure
+description: "Verify env var is not logged with secrets."
+severity: info
+type: ast_match
+match:
+  ast: "os.Getenv($KEY)"
+  language: go
+  file_glob: "**/*.go"

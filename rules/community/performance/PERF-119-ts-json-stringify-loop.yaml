@@ -1,0 +1,8 @@
+name: PERF-119-ts-json-stringify-loop
+description: "JSON.stringify in loop is expensive; cache if possible."
+severity: info
+type: ast_match
+match:
+  ast: "JSON.stringify($OBJ)"
+  language: typescript
+  file_glob: "**/*.ts"

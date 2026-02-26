@@ -1,0 +1,8 @@
+name: COR-498-php-fclose-missing
+description: "fopen must be closed with fclose."
+severity: warning
+type: ast_match
+match:
+  ast: "fopen($PATH, $MODE)"
+  language: php
+  file_glob: "**/*.php"

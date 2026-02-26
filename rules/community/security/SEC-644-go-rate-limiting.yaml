@@ -1,0 +1,8 @@
+name: SEC-644-go-rate-limiting
+description: "HTTP handler; verify authentication and rate limiting."
+severity: info
+type: ast_match
+match:
+  ast: "mux.HandleFunc($PATH, $HANDLER)"
+  language: go
+  file_glob: "**/*.go"

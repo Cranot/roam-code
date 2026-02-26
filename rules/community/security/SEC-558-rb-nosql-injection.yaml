@@ -1,0 +1,8 @@
+name: SEC-558-rb-nosql-injection
+description: "Verify MongoDB find is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "$COLLECTION.find($QUERY)"
+  language: ruby
+  file_glob: "**/*.rb"

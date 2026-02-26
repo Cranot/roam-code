@@ -1,0 +1,8 @@
+name: COR-543-go-map-write-concurrent
+description: "Concurrent map write causes fatal error; use sync.Map."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP[$KEY] = $VALUE"
+  language: go
+  file_glob: "**/*.go"

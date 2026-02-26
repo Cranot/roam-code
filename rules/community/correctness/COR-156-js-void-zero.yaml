@@ -1,0 +1,8 @@
+name: COR-156-js-void-zero
+description: "Avoid void 0; use undefined directly."
+severity: info
+type: ast_match
+match:
+  ast: "void 0"
+  language: javascript
+  file_glob: "**/*.js"

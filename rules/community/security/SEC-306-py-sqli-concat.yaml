@@ -1,0 +1,8 @@
+name: SEC-306-py-sqli-concat
+description: "SQL injection via concatenation in engine.execute()."
+severity: error
+type: ast_match
+match:
+  ast: "db.engine.execute($SQL + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

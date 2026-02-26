@@ -1,0 +1,8 @@
+name: COR-243-rust-clone-on-ref
+description: "Clone may be unnecessary; consider borrowing instead."
+severity: info
+type: ast_match
+match:
+  ast: "$X.clone()"
+  language: rust
+  file_glob: "**/*.rs"

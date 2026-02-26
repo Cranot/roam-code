@@ -1,0 +1,11 @@
+name: DF-061-java-cross-fn-log-inj
+description: "Cross-function log injection: parameter flows to log."
+severity: info
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(', 'request.getHeader(']
+  sinks: ['logger.info(', 'LOG.info(', 'log.info(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: PERF-148-go-goroutine-leak
+description: "Goroutine without cancellation context may leak."
+severity: info
+type: ast_match
+match:
+  ast: "go $FUNC()"
+  language: go
+  file_glob: "**/*.go"

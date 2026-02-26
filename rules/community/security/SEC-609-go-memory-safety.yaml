@@ -1,0 +1,8 @@
+name: SEC-609-go-memory-safety
+description: "unsafe.Pointer bypasses type safety."
+severity: warning
+type: ast_match
+match:
+  ast: "unsafe.Pointer($X)"
+  language: go
+  file_glob: "**/*.go"

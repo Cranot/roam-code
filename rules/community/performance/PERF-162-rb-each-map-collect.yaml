@@ -1,0 +1,8 @@
+name: PERF-162-rb-each-map-collect
+description: "Use map if building new array instead of each."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.each { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

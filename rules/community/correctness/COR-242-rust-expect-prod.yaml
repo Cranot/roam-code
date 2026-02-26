@@ -1,0 +1,8 @@
+name: COR-242-rust-expect-prod
+description: "expect() panics on None/Err; handle error gracefully."
+severity: info
+type: ast_match
+match:
+  ast: "$X.expect($MSG)"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: COR-431-rb-define-method
+description: "define_method creates slow methods; use def if possible."
+severity: info
+type: ast_match
+match:
+  ast: "define_method($NAME) { $BODY }"
+  language: ruby
+  file_glob: "**/*.rb"

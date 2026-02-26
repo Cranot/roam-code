@@ -1,0 +1,8 @@
+name: SEC-430-py-cmdi
+description: "Command injection via concatenation in os.system()."
+severity: error
+type: ast_match
+match:
+  ast: "os.system($CMD + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-630-go-zip-slip
+description: "Zip slip risk; validate entry names before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "zip.OpenReader($PATH)"
+  language: go
+  file_glob: "**/*.go"

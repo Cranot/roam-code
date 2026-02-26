@@ -1,0 +1,8 @@
+name: SEC-474-cs-ldap-injection
+description: "LDAP injection via concatenated DirectorySearcher."
+severity: error
+type: ast_match
+match:
+  ast: "DirectorySearcher($FILTER + $INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

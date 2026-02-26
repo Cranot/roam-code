@@ -1,0 +1,8 @@
+name: SEC-652-go-websocket-security
+description: "Verify WebSocket uses wss:// for encryption."
+severity: warning
+type: ast_match
+match:
+  ast: "websocket.Dial($URL, $PROTO, $ORIGIN)"
+  language: go
+  file_glob: "**/*.go"

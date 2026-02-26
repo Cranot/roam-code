@@ -1,0 +1,8 @@
+name: COR-294-ts-number-parsefloat
+description: "parseFloat accepts trailing garbage; validate input."
+severity: info
+type: ast_match
+match:
+  ast: "parseFloat($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

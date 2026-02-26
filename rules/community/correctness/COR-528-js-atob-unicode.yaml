@@ -1,0 +1,8 @@
+name: COR-528-js-atob-unicode
+description: "atob returns Latin1; use TextDecoder for Unicode."
+severity: warning
+type: ast_match
+match:
+  ast: "atob($STR)"
+  language: javascript
+  file_glob: "**/*.js"

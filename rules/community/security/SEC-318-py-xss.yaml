@@ -1,0 +1,8 @@
+name: SEC-318-py-xss
+description: "XSS risk via Jinja2 Markup() bypassing escaping."
+severity: error
+type: ast_match
+match:
+  ast: "Markup($INPUT)"
+  language: python
+  file_glob: "**/*.py"

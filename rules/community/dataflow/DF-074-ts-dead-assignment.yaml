@@ -1,0 +1,8 @@
+name: DF-074-ts-dead-assignment
+description: "Variable assigned but never read before reassignment or end of scope."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [dead_assignment]
+  file_glob: "**/*.ts"
+  max_matches: 200

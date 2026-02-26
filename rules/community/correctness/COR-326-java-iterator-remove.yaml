@@ -1,0 +1,8 @@
+name: COR-326-java-iterator-remove
+description: "Verify iterator.remove() is called correctly."
+severity: info
+type: ast_match
+match:
+  ast: "$ITER.remove()"
+  language: java
+  file_glob: "**/*.java"

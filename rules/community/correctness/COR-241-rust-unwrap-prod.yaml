@@ -1,0 +1,8 @@
+name: COR-241-rust-unwrap-prod
+description: "unwrap() panics on None/Err; use expect() or handle error."
+severity: warning
+type: ast_match
+match:
+  ast: "$X.unwrap()"
+  language: rust
+  file_glob: "**/*.rs"

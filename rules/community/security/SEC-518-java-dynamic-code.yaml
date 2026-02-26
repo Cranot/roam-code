@@ -1,0 +1,8 @@
+name: SEC-518-java-dynamic-code
+description: "Dynamic class loading may instantiate untrusted classes."
+severity: warning
+type: ast_match
+match:
+  ast: "Class.forName($NAME)"
+  language: java
+  file_glob: "**/*.java"

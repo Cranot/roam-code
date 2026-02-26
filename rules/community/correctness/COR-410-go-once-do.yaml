@@ -1,0 +1,8 @@
+name: COR-410-go-once-do
+description: "sync.Once.Do panics if func panics; handle errors."
+severity: info
+type: ast_match
+match:
+  ast: "$ONCE.Do($FUNC)"
+  language: go
+  file_glob: "**/*.go"

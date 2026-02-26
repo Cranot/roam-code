@@ -1,0 +1,8 @@
+name: COR-475-py-asyncio-gather
+description: "Verify all coroutines handle errors in gather."
+severity: info
+type: ast_match
+match:
+  ast: "asyncio.gather($COROS)"
+  language: python
+  file_glob: "**/*.py"

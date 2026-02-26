@@ -1,0 +1,12 @@
+name: "ARCH-225-no-service-to-middleware"
+description: "Services should not depend on middleware."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/middleware/**"
+    kind: [function, method, class]
+  max_distance: 1

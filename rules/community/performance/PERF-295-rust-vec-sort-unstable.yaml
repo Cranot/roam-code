@@ -1,0 +1,8 @@
+name: PERF-295-rust-vec-sort-unstable
+description: "Use sort_unstable for better performance if order of equals doesn't matter."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.sort()"
+  language: rust
+  file_glob: "**/*.rs"

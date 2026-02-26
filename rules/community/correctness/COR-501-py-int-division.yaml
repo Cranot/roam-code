@@ -1,0 +1,8 @@
+name: COR-501-py-int-division
+description: "Division may produce float; use // for integer division."
+severity: info
+type: ast_match
+match:
+  ast: "$A / $B"
+  language: python
+  file_glob: "**/*.py"

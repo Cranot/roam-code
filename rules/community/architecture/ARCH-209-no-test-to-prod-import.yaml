@@ -1,0 +1,12 @@
+name: "ARCH-209-no-test-to-prod-import"
+description: "Test utilities should not be imported in production code."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/test*/**"
+    kind: [function, method, class]
+  max_distance: 1

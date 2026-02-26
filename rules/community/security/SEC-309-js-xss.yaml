@@ -1,0 +1,8 @@
+name: SEC-309-js-xss
+description: "XSS risk via document.writeln()."
+severity: error
+type: ast_match
+match:
+  ast: "document.writeln($INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

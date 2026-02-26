@@ -1,0 +1,8 @@
+name: SEC-462-py-tls-insecure
+description: "TLS certificate verification disabled; vulnerable to MITM."
+severity: error
+type: ast_match
+match:
+  ast: "verify=False"
+  language: python
+  file_glob: "**/*.py"

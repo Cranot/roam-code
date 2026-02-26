@@ -1,0 +1,8 @@
+name: STY-rust-eprintln-prod
+description: "eprintln! in library code; use log crate."
+severity: info
+type: ast_match
+match:
+  ast: "eprintln!($FMT)"
+  language: rust
+  file_glob: "**/*.rs"

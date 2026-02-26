@@ -1,0 +1,8 @@
+name: COR-149-py-unreachable-after-return
+description: "Code after return is unreachable."
+severity: info
+type: ast_match
+match:
+  ast: "return $X"
+  language: python
+  file_glob: "**/*.py"

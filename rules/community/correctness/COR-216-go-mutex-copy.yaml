@@ -1,0 +1,8 @@
+name: COR-216-go-mutex-copy
+description: "Copying a mutex copies its lock state."
+severity: error
+type: ast_match
+match:
+  ast: "$M = $OTHER"
+  language: go
+  file_glob: "**/*.go"

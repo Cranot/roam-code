@@ -1,0 +1,8 @@
+name: COR-394-java-file-delete
+description: "File.delete() silently fails; use Files.delete()."
+severity: warning
+type: ast_match
+match:
+  ast: "$FILE.delete()"
+  language: java
+  file_glob: "**/*.java"

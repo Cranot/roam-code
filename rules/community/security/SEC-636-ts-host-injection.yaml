@@ -1,0 +1,8 @@
+name: SEC-636-ts-host-injection
+description: "Host header may be spoofed; validate against allowlist."
+severity: info
+type: ast_match
+match:
+  ast: "req.hostname"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-237-rb-class-variable
+description: "Class variables are shared across hierarchy; use class instance variable."
+severity: warning
+type: ast_match
+match:
+  ast: "@@$VAR = $VALUE"
+  language: ruby
+  file_glob: "**/*.rb"

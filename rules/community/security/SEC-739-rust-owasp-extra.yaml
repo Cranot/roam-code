@@ -1,0 +1,8 @@
+name: SEC-739-rust-owasp-extra
+description: "Verify command path is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "std::process::Command::new($CMD)"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: COR-258-php-exit-statement
+description: "exit() in library code; throw exception instead."
+severity: warning
+type: ast_match
+match:
+  ast: "exit($CODE)"
+  language: php
+  file_glob: "**/*.php"

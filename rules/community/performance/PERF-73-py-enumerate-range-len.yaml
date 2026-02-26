@@ -1,0 +1,8 @@
+name: PERF-73-py-enumerate-range-len
+description: "Use enumerate() for index+value access."
+severity: info
+type: ast_match
+match:
+  ast: "for $I in range(len($LIST))"
+  language: python
+  file_glob: "**/*.py"

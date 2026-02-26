@@ -1,0 +1,8 @@
+name: STY-php-print-r
+description: "print_r debug output left in code."
+severity: warning
+type: ast_match
+match:
+  ast: "print_r($OBJ)"
+  language: php
+  file_glob: "**/*.php"

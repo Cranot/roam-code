@@ -1,0 +1,8 @@
+name: COR-323-go-string-builder-reset
+description: "StringBuilder Reset; verify it is intentional."
+severity: info
+type: ast_match
+match:
+  ast: "$SB.Reset()"
+  language: go
+  file_glob: "**/*.go"

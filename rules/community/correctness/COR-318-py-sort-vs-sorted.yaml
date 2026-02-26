@@ -1,0 +1,8 @@
+name: COR-318-py-sort-vs-sorted
+description: "sorted() creates new list; use .sort() if in-place is ok."
+severity: info
+type: ast_match
+match:
+  ast: "sorted($LIST)"
+  language: python
+  file_glob: "**/*.py"

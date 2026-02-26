@@ -1,0 +1,8 @@
+name: COR-453-cs-parse-double
+description: "Parse throws on invalid input; use TryParse."
+severity: warning
+type: ast_match
+match:
+  ast: "double.Parse($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

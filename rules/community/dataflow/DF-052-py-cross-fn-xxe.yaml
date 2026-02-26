@@ -1,0 +1,11 @@
+name: DF-052-py-cross-fn-xxe
+description: "Cross-function XXE: user data flows to XML parser."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.data', 'request.get_data(']
+  sinks: ['etree.parse(', 'etree.fromstring(', 'xml.etree.ElementTree.parse(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.py"

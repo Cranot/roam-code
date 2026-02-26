@@ -1,0 +1,8 @@
+name: PERF-94-js-queryselectorall-loop
+description: "querySelectorAll in loop; cache the NodeList."
+severity: warning
+type: ast_match
+match:
+  ast: "document.querySelectorAll($SEL)"
+  language: javascript
+  file_glob: "**/*.js"

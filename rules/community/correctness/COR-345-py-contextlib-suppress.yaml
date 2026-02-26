@@ -1,0 +1,8 @@
+name: COR-345-py-contextlib-suppress
+description: "contextlib.suppress hides exceptions; use sparingly."
+severity: info
+type: ast_match
+match:
+  ast: "contextlib.suppress($EXC)"
+  language: python
+  file_glob: "**/*.py"

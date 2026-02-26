@@ -1,0 +1,8 @@
+name: PERF-69-py-dict-get-default
+description: "dict.get() is fine; verify default is not expensive to compute."
+severity: info
+type: ast_match
+match:
+  ast: "$DICT.get($KEY, $DEFAULT)"
+  language: python
+  file_glob: "**/*.py"

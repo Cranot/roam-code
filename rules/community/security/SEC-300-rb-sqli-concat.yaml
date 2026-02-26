@@ -1,0 +1,8 @@
+name: SEC-300-rb-sqli-concat
+description: "SQL injection via string concatenation in where()."
+severity: error
+type: ast_match
+match:
+  ast: "where($SQL + $INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

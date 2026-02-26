@@ -1,0 +1,8 @@
+name: COR-484-go-channel-range
+description: "Range over channel; verify channel is eventually closed."
+severity: info
+type: ast_match
+match:
+  ast: "for $V := range $CH { $BODY }"
+  language: go
+  file_glob: "**/*.go"

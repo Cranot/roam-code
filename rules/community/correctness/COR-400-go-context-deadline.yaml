@@ -1,0 +1,8 @@
+name: COR-400-go-context-deadline
+description: "WithDeadline must call cancel; defer cancel()."
+severity: warning
+type: ast_match
+match:
+  ast: "context.WithDeadline($CTX, $T)"
+  language: go
+  file_glob: "**/*.go"

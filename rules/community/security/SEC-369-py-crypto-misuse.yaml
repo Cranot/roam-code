@@ -1,0 +1,8 @@
+name: SEC-369-py-crypto-misuse
+description: "SHA-1 is deprecated for security; use SHA-256+."
+severity: warning
+type: ast_match
+match:
+  ast: "hashlib.sha1($DATA)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-509-py-unsafe-file-ops
+description: "Setting 777 permissions is insecure."
+severity: warning
+type: ast_match
+match:
+  ast: "os.chmod($PATH, 0o777)"
+  language: python
+  file_glob: "**/*.py"

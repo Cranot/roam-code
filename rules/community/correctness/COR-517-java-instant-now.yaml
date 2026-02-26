@@ -1,0 +1,8 @@
+name: COR-517-java-instant-now
+description: "Instant.now() for timestamps; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "Instant.now()"
+  language: java
+  file_glob: "**/*.java"

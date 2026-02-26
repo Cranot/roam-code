@@ -1,0 +1,11 @@
+name: DF-043-java-cross-fn-redirect
+description: "Cross-function open redirect: parameter flows to redirect."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(']
+  sinks: ['response.sendRedirect(', 'RequestDispatcher']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.java"

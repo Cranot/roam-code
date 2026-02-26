@@ -1,0 +1,8 @@
+name: PERF-306-py-weakref-dict
+description: "Weak reference dict avoids memory leaks for caches."
+severity: info
+type: ast_match
+match:
+  ast: "weakref.WeakValueDictionary()"
+  language: python
+  file_glob: "**/*.py"

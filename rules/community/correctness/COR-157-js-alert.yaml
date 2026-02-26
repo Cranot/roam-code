@@ -1,0 +1,8 @@
+name: COR-157-js-alert
+description: "alert() in production code; remove debugging call."
+severity: warning
+type: ast_match
+match:
+  ast: "alert($MSG)"
+  language: javascript
+  file_glob: "**/*.js"

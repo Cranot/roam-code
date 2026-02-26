@@ -1,0 +1,8 @@
+name: COR-268-cs-lock-this
+description: "lock(this) is dangerous; use private lock object."
+severity: warning
+type: ast_match
+match:
+  ast: "lock (this)"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: COR-248-rust-transmute
+description: "transmute is unsafe and error-prone; use safe alternatives."
+severity: error
+type: ast_match
+match:
+  ast: "std::mem::transmute($X)"
+  language: rust
+  file_glob: "**/*.rs"

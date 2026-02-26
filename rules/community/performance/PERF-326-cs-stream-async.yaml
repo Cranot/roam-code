@@ -1,0 +1,8 @@
+name: PERF-326-cs-stream-async
+description: "Async stream I/O; good for non-blocking."
+severity: info
+type: ast_match
+match:
+  ast: "await $STREAM.ReadAsync($BUFFER)"
+  language: csharp
+  file_glob: "**/*.cs"

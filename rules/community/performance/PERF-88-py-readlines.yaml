@@ -1,0 +1,8 @@
+name: PERF-88-py-readlines
+description: "readlines() loads all lines; iterate file object directly."
+severity: info
+type: ast_match
+match:
+  ast: "$F.readlines()"
+  language: python
+  file_glob: "**/*.py"

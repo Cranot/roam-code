@@ -1,0 +1,8 @@
+name: SEC-459-py-jwt-session
+description: "Session cookie not HttpOnly; accessible via JavaScript."
+severity: warning
+type: ast_match
+match:
+  ast: "SESSION_COOKIE_HTTPONLY = False"
+  language: python
+  file_glob: "**/*.py"

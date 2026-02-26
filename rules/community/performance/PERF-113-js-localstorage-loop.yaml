@@ -1,0 +1,8 @@
+name: PERF-113-js-localstorage-loop
+description: "localStorage in loop is synchronous I/O; batch reads."
+severity: info
+type: ast_match
+match:
+  ast: "localStorage.getItem($KEY)"
+  language: javascript
+  file_glob: "**/*.js"

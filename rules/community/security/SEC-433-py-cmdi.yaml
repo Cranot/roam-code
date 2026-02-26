@@ -1,0 +1,8 @@
+name: SEC-433-py-cmdi
+description: "Command injection risk with shell=True in Popen."
+severity: error
+type: ast_match
+match:
+  ast: "subprocess.Popen($CMD, shell=True)"
+  language: python
+  file_glob: "**/*.py"

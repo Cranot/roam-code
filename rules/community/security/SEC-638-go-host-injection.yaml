@@ -1,0 +1,8 @@
+name: SEC-638-go-host-injection
+description: "Host header may be spoofed; validate against allowlist."
+severity: info
+type: ast_match
+match:
+  ast: "r.Host"
+  language: go
+  file_glob: "**/*.go"

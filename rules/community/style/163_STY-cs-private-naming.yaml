@@ -1,0 +1,9 @@
+name: STY-cs-private-naming
+description: "C# private fields should use _camelCase."
+severity: info
+type: symbol_match
+match:
+  kind: function
+  file_glob: "**/*.cs"
+  require:
+    name_regex: "^[A-Z].*_"

@@ -1,0 +1,8 @@
+name: PERF-275-rb-find-each
+description: "all.each loads everything; use find_each for batching."
+severity: warning
+type: ast_match
+match:
+  ast: "$MODEL.all.each { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

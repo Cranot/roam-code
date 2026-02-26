@@ -1,0 +1,8 @@
+name: SEC-583-py-server-misconfig
+description: "XSS filter disabled; enable for browser protection."
+severity: warning
+type: ast_match
+match:
+  ast: "SECURE_BROWSER_XSS_FILTER = False"
+  language: python
+  file_glob: "**/*.py"

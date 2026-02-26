@@ -1,0 +1,8 @@
+name: SEC-629-js-zip-slip
+description: "Zip slip risk; validate paths before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "unzip($PATH, $DEST)"
+  language: javascript
+  file_glob: "**/*.js"

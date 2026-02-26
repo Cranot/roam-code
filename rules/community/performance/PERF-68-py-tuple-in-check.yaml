@@ -1,0 +1,8 @@
+name: PERF-68-py-tuple-in-check
+description: "Consider set for membership test instead of tuple."
+severity: info
+type: ast_match
+match:
+  ast: "$X in ($ITEMS,)"
+  language: python
+  file_glob: "**/*.py"

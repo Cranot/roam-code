@@ -1,0 +1,8 @@
+name: COR-219-go-close-nil-chan
+description: "Closing nil channel panics; verify channel is non-nil."
+severity: warning
+type: ast_match
+match:
+  ast: "close($CH)"
+  language: go
+  file_glob: "**/*.go"

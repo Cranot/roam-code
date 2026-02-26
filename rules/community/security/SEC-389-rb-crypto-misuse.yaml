@@ -1,0 +1,8 @@
+name: SEC-389-rb-crypto-misuse
+description: "MD5 is cryptographically broken; use SHA-256+."
+severity: warning
+type: ast_match
+match:
+  ast: "Digest::MD5.hexdigest($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: PERF-259-java-string-chars
+description: "charAt in loop; use toCharArray for iteration."
+severity: info
+type: ast_match
+match:
+  ast: "$STR.charAt($IDX)"
+  language: java
+  file_glob: "**/*.java"

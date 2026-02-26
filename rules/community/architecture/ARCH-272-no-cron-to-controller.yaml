@@ -1,0 +1,12 @@
+name: "ARCH-272-no-cron-to-controller"
+description: "Cron jobs should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/cron/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

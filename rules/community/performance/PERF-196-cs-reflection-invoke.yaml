@@ -1,0 +1,8 @@
+name: PERF-196-cs-reflection-invoke
+description: "Reflection Invoke is slow; use delegates or compiled expressions."
+severity: warning
+type: ast_match
+match:
+  ast: "$METHOD.Invoke($OBJ, $ARGS)"
+  language: csharp
+  file_glob: "**/*.cs"

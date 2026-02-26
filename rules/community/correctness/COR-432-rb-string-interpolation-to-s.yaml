@@ -1,0 +1,8 @@
+name: COR-432-rb-string-interpolation-to-s
+description: "to_s in interpolation is redundant."
+severity: info
+type: ast_match
+match:
+  ast: ""#{$X.to_s}""
+  language: ruby
+  file_glob: "**/*.rb"

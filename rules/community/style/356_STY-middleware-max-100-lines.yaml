@@ -1,0 +1,9 @@
+name: "STY-middleware-max-100-lines"
+description: "Functions in middleware/ should be <= 100 lines."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "middleware/**"
+  require:
+    max_symbol_lines: 100

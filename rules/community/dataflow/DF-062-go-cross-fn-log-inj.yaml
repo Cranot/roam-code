@@ -1,0 +1,11 @@
+name: DF-062-go-cross-fn-log-inj
+description: "Cross-function log injection: request data flows to log."
+severity: info
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['r.URL.Query()', 'r.FormValue(']
+  sinks: ['log.Println(', 'log.Printf(', 'slog.Info(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: STY-cs-console-writeline
+description: "Console.WriteLine in production; use ILogger."
+severity: info
+type: ast_match
+match:
+  ast: "Console.WriteLine($MSG)"
+  language: csharp
+  file_glob: "**/*.cs"

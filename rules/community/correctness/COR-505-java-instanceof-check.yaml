@@ -1,0 +1,8 @@
+name: COR-505-java-instanceof-check
+description: "instanceof before cast; verify no ClassCastException."
+severity: info
+type: ast_match
+match:
+  ast: "$X instanceof $TYPE"
+  language: java
+  file_glob: "**/*.java"

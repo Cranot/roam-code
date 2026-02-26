@@ -1,0 +1,8 @@
+name: PERF-182-php-file-put-contents-loop
+description: "file_put_contents in loop; batch writes."
+severity: warning
+type: ast_match
+match:
+  ast: "file_put_contents($PATH, $DATA)"
+  language: php
+  file_glob: "**/*.php"

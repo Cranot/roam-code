@@ -1,0 +1,8 @@
+name: SEC-322-py-path-traversal
+description: "Path traversal via concatenated file open()."
+severity: error
+type: ast_match
+match:
+  ast: "open($PATH + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

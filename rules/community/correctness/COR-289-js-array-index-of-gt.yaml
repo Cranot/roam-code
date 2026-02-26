@@ -1,0 +1,8 @@
+name: COR-289-js-array-index-of-gt
+description: "Use Array.includes() instead of indexOf > -1."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.indexOf($ELEM) > -1"
+  language: javascript
+  file_glob: "**/*.js"

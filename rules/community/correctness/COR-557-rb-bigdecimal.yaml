@@ -1,0 +1,8 @@
+name: COR-557-rb-bigdecimal
+description: "BigDecimal for precise arithmetic; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "BigDecimal($VALUE)"
+  language: ruby
+  file_glob: "**/*.rb"

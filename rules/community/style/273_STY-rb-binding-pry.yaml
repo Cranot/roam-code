@@ -1,0 +1,8 @@
+name: STY-rb-binding-pry
+description: "Debugger breakpoint left in code."
+severity: error
+type: ast_match
+match:
+  ast: "binding.pry"
+  language: ruby
+  file_glob: "**/*.rb"

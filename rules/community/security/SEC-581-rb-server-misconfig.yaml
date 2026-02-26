@@ -1,0 +1,8 @@
+name: SEC-581-rb-server-misconfig
+description: "Verify Sinatra runs with proper security settings."
+severity: warning
+type: ast_match
+match:
+  ast: "Sinatra::Base"
+  language: ruby
+  file_glob: "**/*.rb"

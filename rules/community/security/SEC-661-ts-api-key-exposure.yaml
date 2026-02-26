@@ -1,0 +1,8 @@
+name: SEC-661-ts-api-key-exposure
+description: "Verify authorization header value is not hardcoded."
+severity: info
+type: ast_match
+match:
+  ast: "Authorization: $VALUE"
+  language: typescript
+  file_glob: "**/*.ts"

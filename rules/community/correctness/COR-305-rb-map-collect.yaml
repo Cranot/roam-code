@@ -1,0 +1,8 @@
+name: COR-305-rb-map-collect
+description: "Use map instead of collect for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "collect { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

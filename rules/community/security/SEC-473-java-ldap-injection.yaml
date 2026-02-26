@@ -1,0 +1,8 @@
+name: SEC-473-java-ldap-injection
+description: "LDAP injection via concatenated search filter."
+severity: error
+type: ast_match
+match:
+  ast: "search($BASE, $FILTER + $INPUT, $CONTROLS)"
+  language: java
+  file_glob: "**/*.java"

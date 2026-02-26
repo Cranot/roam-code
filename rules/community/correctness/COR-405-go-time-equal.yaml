@@ -1,0 +1,8 @@
+name: COR-405-go-time-equal
+description: "time.Time == may fail; use .Equal() method."
+severity: warning
+type: ast_match
+match:
+  ast: "$T1 == $T2"
+  language: go
+  file_glob: "**/*.go"

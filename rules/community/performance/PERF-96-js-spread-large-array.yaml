@@ -1,0 +1,8 @@
+name: PERF-96-js-spread-large-array
+description: "Spread creates new array; use push for append."
+severity: info
+type: ast_match
+match:
+  ast: "[...$ARR, $ELEM]"
+  language: javascript
+  file_glob: "**/*.js"

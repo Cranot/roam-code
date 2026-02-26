@@ -1,0 +1,8 @@
+name: COR-436-php-count-false
+description: "count() on non-array may return 0 or 1; check type first."
+severity: warning
+type: ast_match
+match:
+  ast: "count($VAR)"
+  language: php
+  file_glob: "**/*.php"

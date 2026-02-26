@@ -1,0 +1,8 @@
+name: SEC-358-java-deser
+description: "Unsafe Java deserialization via ObjectInputStream."
+severity: error
+type: ast_match
+match:
+  ast: "ObjectInputStream($STREAM)"
+  language: java
+  file_glob: "**/*.java"

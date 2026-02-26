@@ -1,0 +1,8 @@
+name: PERF-236-js-classlist-toggle
+description: "classList changes trigger reflow; batch operations."
+severity: info
+type: ast_match
+match:
+  ast: "$EL.classList.toggle($CLS)"
+  language: javascript
+  file_glob: "**/*.js"

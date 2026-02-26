@@ -1,0 +1,8 @@
+name: PERF-163-rb-hash-merge-loop
+description: "Hash.merge in loop creates copies; use merge! or update."
+severity: warning
+type: ast_match
+match:
+  ast: "$HASH.merge($OTHER)"
+  language: ruby
+  file_glob: "**/*.rb"

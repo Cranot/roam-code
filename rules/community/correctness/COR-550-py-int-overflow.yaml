@@ -1,0 +1,8 @@
+name: COR-550-py-int-overflow
+description: "Large exponent may cause MemoryError."
+severity: info
+type: ast_match
+match:
+  ast: "$A ** $B"
+  language: python
+  file_glob: "**/*.py"

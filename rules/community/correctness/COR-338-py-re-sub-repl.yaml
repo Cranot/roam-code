@@ -1,0 +1,8 @@
+name: COR-338-py-re-sub-repl
+description: "Verify regex replacement is not user-controlled."
+severity: info
+type: ast_match
+match:
+  ast: "re.sub($PATTERN, $REPL, $STRING)"
+  language: python
+  file_glob: "**/*.py"

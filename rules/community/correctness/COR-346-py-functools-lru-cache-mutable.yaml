@@ -1,0 +1,8 @@
+name: COR-346-py-functools-lru-cache-mutable
+description: "lru_cache on method leaks instances; use __hash__."
+severity: info
+type: ast_match
+match:
+  ast: "@lru_cache"
+  language: python
+  file_glob: "**/*.py"

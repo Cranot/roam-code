@@ -1,0 +1,8 @@
+name: PERF-307-js-array-splice-large
+description: "splice on large array is O(n); use linked list for frequent inserts."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.splice($IDX, $COUNT)"
+  language: javascript
+  file_glob: "**/*.js"

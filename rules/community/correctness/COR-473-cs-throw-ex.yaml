@@ -1,0 +1,8 @@
+name: COR-473-cs-throw-ex
+description: "throw ex loses stack trace; use throw; to re-throw."
+severity: warning
+type: ast_match
+match:
+  ast: "throw $EX"
+  language: csharp
+  file_glob: "**/*.cs"

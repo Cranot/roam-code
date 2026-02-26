@@ -1,0 +1,8 @@
+name: PERF-193-cs-string-endswith-ordinal
+description: "Use StringComparison.Ordinal for perf-sensitive comparisons."
+severity: info
+type: ast_match
+match:
+  ast: "$S.EndsWith($SUFFIX)"
+  language: csharp
+  file_glob: "**/*.cs"

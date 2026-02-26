@@ -1,0 +1,8 @@
+name: SEC-598-js-csrf
+description: "CSRF protection disabled in request."
+severity: warning
+type: ast_match
+match:
+  ast: "csrf: false"
+  language: javascript
+  file_glob: "**/*.js"

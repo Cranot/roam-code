@@ -1,0 +1,8 @@
+name: PERF-89-py-numpy-append-loop
+description: "np.append in loop is O(n^2); pre-allocate array."
+severity: warning
+type: ast_match
+match:
+  ast: "np.append($ARR, $VALS)"
+  language: python
+  file_glob: "**/*.py"

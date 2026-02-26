@@ -1,0 +1,8 @@
+name: COR-533-php-mb-detect-encoding
+description: "mb_detect_encoding is unreliable; specify encoding explicitly."
+severity: warning
+type: ast_match
+match:
+  ast: "mb_detect_encoding($STR)"
+  language: php
+  file_glob: "**/*.php"

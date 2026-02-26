@@ -1,0 +1,8 @@
+name: COR-176-js-empty-function
+description: "Empty function body; add implementation or TODO."
+severity: info
+type: ast_match
+match:
+  ast: "function $NAME() {}"
+  language: javascript
+  file_glob: "**/*.js"

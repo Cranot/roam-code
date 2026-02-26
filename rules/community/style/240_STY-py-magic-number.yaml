@@ -1,0 +1,8 @@
+name: STY-py-magic-number
+description: "Magic number in condition; extract to named constant."
+severity: info
+type: ast_match
+match:
+  ast: "if $X == $NUM"
+  language: python
+  file_glob: "**/*.py"

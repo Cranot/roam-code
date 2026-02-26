@@ -1,0 +1,12 @@
+name: "ARCH-258-spring-no-repo-in-controller"
+description: "Spring controllers should not use repositories directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/controller/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/repository/**"
+    kind: [function, method, class]
+  max_distance: 1

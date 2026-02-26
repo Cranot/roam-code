@@ -1,0 +1,8 @@
+name: COR-536-py-list-iter-modify
+description: "Verify list is not modified during iteration."
+severity: info
+type: ast_match
+match:
+  ast: "for $ITEM in $LIST:"
+  language: python
+  file_glob: "**/*.py"

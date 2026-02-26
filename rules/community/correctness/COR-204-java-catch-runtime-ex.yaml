@@ -1,0 +1,8 @@
+name: COR-204-java-catch-runtime-ex
+description: "Catching RuntimeException may mask programming errors."
+severity: info
+type: ast_match
+match:
+  ast: "catch (RuntimeException $E)"
+  language: java
+  file_glob: "**/*.java"

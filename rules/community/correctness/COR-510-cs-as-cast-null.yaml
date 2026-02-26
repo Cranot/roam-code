@@ -1,0 +1,8 @@
+name: COR-510-cs-as-cast-null
+description: "'as' cast returns null on failure; check before use."
+severity: warning
+type: ast_match
+match:
+  ast: "$X as $TYPE"
+  language: csharp
+  file_glob: "**/*.cs"

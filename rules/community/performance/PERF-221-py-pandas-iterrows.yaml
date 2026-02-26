@@ -1,0 +1,8 @@
+name: PERF-221-py-pandas-iterrows
+description: "iterrows is slow; use vectorized operations or apply."
+severity: warning
+type: ast_match
+match:
+  ast: "$DF.iterrows()"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: STY-go-empty-if-body
+description: "Empty if body; add implementation or remove."
+severity: warning
+type: ast_match
+match:
+  ast: "if $COND { }"
+  language: go
+  file_glob: "**/*.go"

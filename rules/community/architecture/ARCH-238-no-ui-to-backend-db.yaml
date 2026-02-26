@@ -1,0 +1,12 @@
+name: "ARCH-238-no-ui-to-backend-db"
+description: "UI components should not access database directly."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/components/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

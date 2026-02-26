@@ -1,0 +1,12 @@
+name: "ARCH-270-no-worker-to-http"
+description: "Background workers should not depend on HTTP layer."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/workers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/http/**"
+    kind: [function, method, class]
+  max_distance: 1

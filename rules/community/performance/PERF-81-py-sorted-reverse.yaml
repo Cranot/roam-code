@@ -1,0 +1,8 @@
+name: PERF-81-py-sorted-reverse
+description: "sorted() creates new list; use .sort(reverse=True) if in-place ok."
+severity: info
+type: ast_match
+match:
+  ast: "sorted($LIST, reverse=True)"
+  language: python
+  file_glob: "**/*.py"

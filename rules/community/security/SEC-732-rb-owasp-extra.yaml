@@ -1,0 +1,8 @@
+name: SEC-732-rb-owasp-extra
+description: "Kernel.exec replaces process; verify command is safe."
+severity: warning
+type: ast_match
+match:
+  ast: "Kernel.exec($CMD)"
+  language: ruby
+  file_glob: "**/*.rb"

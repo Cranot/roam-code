@@ -1,0 +1,12 @@
+name: "ARCH-231-no-repo-to-view"
+description: "Repositories should not depend on views."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  max_distance: 1

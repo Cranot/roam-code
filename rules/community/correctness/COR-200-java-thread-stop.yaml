@@ -1,0 +1,8 @@
+name: COR-200-java-thread-stop
+description: "Thread.stop() is deprecated and unsafe."
+severity: error
+type: ast_match
+match:
+  ast: "$THREAD.stop()"
+  language: java
+  file_glob: "**/*.java"

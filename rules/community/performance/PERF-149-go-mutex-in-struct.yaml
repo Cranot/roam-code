@@ -1,0 +1,8 @@
+name: PERF-149-go-mutex-in-struct
+description: "Mutex in struct; verify it is not inadvertently copied."
+severity: info
+type: ast_match
+match:
+  ast: "sync.Mutex"
+  language: go
+  file_glob: "**/*.go"

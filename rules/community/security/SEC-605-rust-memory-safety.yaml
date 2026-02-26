@@ -1,0 +1,8 @@
+name: SEC-605-rust-memory-safety
+description: "Raw null pointer; ensure safety invariants."
+severity: warning
+type: ast_match
+match:
+  ast: "std::ptr::null()"
+  language: rust
+  file_glob: "**/*.rs"

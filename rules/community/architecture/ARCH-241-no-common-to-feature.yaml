@@ -1,0 +1,12 @@
+name: "ARCH-241-no-common-to-feature"
+description: "Common modules should not depend on feature modules."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/common/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/features/**"
+    kind: [function, method, class]
+  max_distance: 1

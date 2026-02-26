@@ -1,0 +1,8 @@
+name: COR-179-ts-eq-undefined
+description: "Use === undefined for strict undefined comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == undefined"
+  language: typescript
+  file_glob: "**/*.ts"

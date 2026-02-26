@@ -1,0 +1,8 @@
+name: PERF-299-php-str-contains-loop
+description: "str_contains in loop; batch checks with regex."
+severity: info
+type: ast_match
+match:
+  ast: "str_contains($HAYSTACK, $NEEDLE)"
+  language: php
+  file_glob: "**/*.php"

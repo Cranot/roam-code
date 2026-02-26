@@ -1,0 +1,11 @@
+name: DF-089-go-cross-fn-ssrf
+description: "Cross-function SSRF: request data flows to HTTP client."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['r.URL.Query()', 'r.FormValue(']
+  sinks: ['http.Get(', 'http.Post(', 'http.NewRequest(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

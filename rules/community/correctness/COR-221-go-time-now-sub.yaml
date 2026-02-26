@@ -1,0 +1,8 @@
+name: COR-221-go-time-now-sub
+description: "Use time.Since(t) instead of time.Now().Sub(t)."
+severity: info
+type: ast_match
+match:
+  ast: "time.Now().Sub($T)"
+  language: go
+  file_glob: "**/*.go"

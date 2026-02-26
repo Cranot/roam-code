@@ -1,0 +1,8 @@
+name: COR-285-py-old-style-class
+description: "Class without explicit base; inherit from object in Py2."
+severity: info
+type: ast_match
+match:
+  ast: "class $NAME:"
+  language: python
+  file_glob: "**/*.py"

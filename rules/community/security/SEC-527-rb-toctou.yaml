@@ -1,0 +1,8 @@
+name: SEC-527-rb-toctou
+description: "TOCTOU race between exist? and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "File.exist?($PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

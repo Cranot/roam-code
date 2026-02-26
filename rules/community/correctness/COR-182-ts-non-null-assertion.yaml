@@ -1,0 +1,8 @@
+name: COR-182-ts-non-null-assertion
+description: "Non-null assertion may hide null bugs; add proper check."
+severity: info
+type: ast_match
+match:
+  ast: "$X!"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,12 @@
+name: "ARCH-247-no-event-to-controller"
+description: "Events should not depend on controllers."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/events/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,12 @@
+name: "ARCH-260-gin-no-db-in-handler"
+description: "Gin handlers should not access database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/handlers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/database/**"
+    kind: [function, method, class]
+  max_distance: 1

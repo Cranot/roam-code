@@ -1,0 +1,8 @@
+name: PERF-217-py-importlib-reload
+description: "Module reload is expensive; restructure code."
+severity: warning
+type: ast_match
+match:
+  ast: "importlib.reload($MODULE)"
+  language: python
+  file_glob: "**/*.py"

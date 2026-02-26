@@ -1,0 +1,8 @@
+name: STY-py-test-assert-none
+description: "Use assertIsNone instead of assert x is None."
+severity: info
+type: ast_match
+match:
+  ast: "assert $X is None"
+  language: python
+  file_glob: "**/*.py"

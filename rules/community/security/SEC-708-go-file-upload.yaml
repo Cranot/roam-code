@@ -1,0 +1,8 @@
+name: SEC-708-go-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "r.FormFile($NAME)"
+  language: go
+  file_glob: "**/*.go"

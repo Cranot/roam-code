@@ -1,0 +1,8 @@
+name: COR-266-cs-string-eq-operator
+description: "String comparison may need culture-aware comparison."
+severity: info
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: csharp
+  file_glob: "**/*.cs"

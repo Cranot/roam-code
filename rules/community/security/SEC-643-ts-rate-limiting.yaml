@@ -1,0 +1,8 @@
+name: SEC-643-ts-rate-limiting
+description: "POST endpoint; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "router.post($PATH, $HANDLER)"
+  language: typescript
+  file_glob: "**/*.ts"

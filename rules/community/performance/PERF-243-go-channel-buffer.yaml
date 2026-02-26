@@ -1,0 +1,8 @@
+name: PERF-243-go-channel-buffer
+description: "Unbuffered channel; use buffer if producer/consumer async."
+severity: info
+type: ast_match
+match:
+  ast: "make(chan $TYPE)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: PERF-90-py-pandas-append-loop
+description: "DataFrame.append in loop is O(n^2); collect and concat."
+severity: warning
+type: ast_match
+match:
+  ast: "$DF.append($ROW)"
+  language: python
+  file_glob: "**/*.py"

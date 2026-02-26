@@ -1,0 +1,8 @@
+name: STY-php-die-debug
+description: "die() for debugging; use proper error handling."
+severity: warning
+type: ast_match
+match:
+  ast: "die($MSG)"
+  language: php
+  file_glob: "**/*.php"

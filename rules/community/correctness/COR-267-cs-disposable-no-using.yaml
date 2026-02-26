@@ -1,0 +1,8 @@
+name: COR-267-cs-disposable-no-using
+description: "IDisposable without using statement may leak resources."
+severity: info
+type: ast_match
+match:
+  ast: "new $TYPE($ARGS)"
+  language: csharp
+  file_glob: "**/*.cs"

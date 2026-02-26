@@ -1,0 +1,8 @@
+name: PERF-250-go-regex-find-loop
+description: "Regex FindString in loop; verify regex is compiled once."
+severity: info
+type: ast_match
+match:
+  ast: "$RE.FindString($S)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-247-rust-unreachable
+description: "unreachable!() panics if reached; verify logic is sound."
+severity: info
+type: ast_match
+match:
+  ast: "unreachable!()"
+  language: rust
+  file_glob: "**/*.rs"

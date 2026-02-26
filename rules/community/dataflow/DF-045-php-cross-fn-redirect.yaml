@@ -1,0 +1,11 @@
+name: DF-045-php-cross-fn-redirect
+description: "Cross-function open redirect: superglobal flows to redirect."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['$_GET', '$_POST', '$_REQUEST']
+  sinks: ['header("Location:', 'redirect(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.php"

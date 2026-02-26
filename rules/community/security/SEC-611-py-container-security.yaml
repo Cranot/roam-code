@@ -1,0 +1,8 @@
+name: SEC-611-py-container-security
+description: "Container running in privileged mode is insecure."
+severity: error
+type: ast_match
+match:
+  ast: "privileged=True"
+  language: python
+  file_glob: "**/*.py"

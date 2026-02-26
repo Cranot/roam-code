@@ -1,0 +1,8 @@
+name: SEC-535-py-log-sensitive
+description: "Potential printing of sensitive data to stdout."
+severity: info
+type: ast_match
+match:
+  ast: "print($PASSWORD)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-554-java-integer-max
+description: "Near Integer.MAX_VALUE; check for overflow."
+severity: info
+type: ast_match
+match:
+  ast: "Integer.MAX_VALUE"
+  language: java
+  file_glob: "**/*.java"

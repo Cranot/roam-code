@@ -1,0 +1,8 @@
+name: SEC-458-py-jwt-session
+description: "Session cookie not Secure; vulnerable on HTTP."
+severity: warning
+type: ast_match
+match:
+  ast: "SESSION_COOKIE_SECURE = False"
+  language: python
+  file_glob: "**/*.py"

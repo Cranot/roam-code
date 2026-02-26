@@ -1,0 +1,8 @@
+name: STY-java-system-err
+description: "System.err.println in production; use logger."
+severity: info
+type: ast_match
+match:
+  ast: "System.err.println($MSG)"
+  language: java
+  file_glob: "**/*.java"

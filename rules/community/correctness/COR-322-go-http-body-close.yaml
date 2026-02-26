@@ -1,0 +1,8 @@
+name: COR-322-go-http-body-close
+description: "Verify defer resp.Body.Close() is called after nil check."
+severity: info
+type: ast_match
+match:
+  ast: "resp.Body.Close()"
+  language: go
+  file_glob: "**/*.go"

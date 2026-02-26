@@ -1,0 +1,8 @@
+name: PERF-202-go-n-plus-1-query
+description: "SQL query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "db.QueryRow($SQL)"
+  language: go
+  file_glob: "**/*.go"

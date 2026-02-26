@@ -1,0 +1,8 @@
+name: PERF-175-php-count-in-loop
+description: "count() in loop condition; cache the count."
+severity: warning
+type: ast_match
+match:
+  ast: "count($ARR)"
+  language: php
+  file_glob: "**/*.php"

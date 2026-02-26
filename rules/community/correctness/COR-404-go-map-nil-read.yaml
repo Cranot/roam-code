@@ -1,0 +1,8 @@
+name: COR-404-go-map-nil-read
+description: "Reading from nil map returns zero value; writing panics."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP[$KEY]"
+  language: go
+  file_glob: "**/*.go"

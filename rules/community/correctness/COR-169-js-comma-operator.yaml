@@ -1,0 +1,8 @@
+name: COR-169-js-comma-operator
+description: "Comma operator discards left operand; may be unintentional."
+severity: info
+type: ast_match
+match:
+  ast: "($X, $Y)"
+  language: javascript
+  file_glob: "**/*.js"

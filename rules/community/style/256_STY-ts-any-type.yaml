@@ -1,0 +1,8 @@
+name: STY-ts-any-type
+description: "Avoid 'as any'; use proper type."
+severity: warning
+type: ast_match
+match:
+  ast: "$X as any"
+  language: typescript
+  file_glob: "**/*.ts"

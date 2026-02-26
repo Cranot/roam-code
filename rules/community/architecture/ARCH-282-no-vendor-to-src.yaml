@@ -1,0 +1,12 @@
+name: "ARCH-282-no-vendor-to-src"
+description: "Vendor code should not depend on source."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/vendor/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  max_distance: 1

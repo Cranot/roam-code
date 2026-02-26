@@ -1,0 +1,8 @@
+name: PERF-312-rust-box-leak
+description: "Box::leak creates permanent allocation; verify intent."
+severity: warning
+type: ast_match
+match:
+  ast: "Box::leak($X)"
+  language: rust
+  file_glob: "**/*.rs"

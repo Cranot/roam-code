@@ -1,0 +1,8 @@
+name: COR-234-rb-rescue-exception
+description: "Rescuing Exception catches signal/exit; use StandardError."
+severity: warning
+type: ast_match
+match:
+  ast: "rescue Exception"
+  language: ruby
+  file_glob: "**/*.rb"

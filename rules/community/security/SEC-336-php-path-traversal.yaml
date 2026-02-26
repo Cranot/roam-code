@@ -1,0 +1,8 @@
+name: SEC-336-php-path-traversal
+description: "Path traversal and LFI via concatenated include()."
+severity: error
+type: ast_match
+match:
+  ast: "include($PATH . $INPUT)"
+  language: php
+  file_glob: "**/*.php"

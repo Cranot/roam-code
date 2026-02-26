@@ -1,0 +1,8 @@
+name: COR-465-java-log-and-throw
+description: "Log and throw creates duplicate log entries."
+severity: info
+type: ast_match
+match:
+  ast: "catch ($TYPE $E) { $LOG; throw $E; }"
+  language: java
+  file_glob: "**/*.java"

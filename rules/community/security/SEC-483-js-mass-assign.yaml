@@ -1,0 +1,8 @@
+name: SEC-483-js-mass-assign
+description: "Direct __proto__ assignment enables prototype pollution."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.__proto__ = $VALUE"
+  language: javascript
+  file_glob: "**/*.js"

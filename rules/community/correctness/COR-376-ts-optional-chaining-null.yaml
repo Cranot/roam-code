@@ -1,0 +1,8 @@
+name: COR-376-ts-optional-chaining-null
+description: "Optional chaining on function call; verify callable."
+severity: info
+type: ast_match
+match:
+  ast: "$OBJ?.($ARGS)"
+  language: typescript
+  file_glob: "**/*.ts"

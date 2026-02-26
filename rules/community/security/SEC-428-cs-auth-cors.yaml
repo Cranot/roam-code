@@ -1,0 +1,8 @@
+name: SEC-428-cs-auth-cors
+description: "Open redirect risk if user controls redirect target."
+severity: warning
+type: ast_match
+match:
+  ast: "Redirect($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

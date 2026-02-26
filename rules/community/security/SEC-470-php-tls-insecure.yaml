@@ -1,0 +1,8 @@
+name: SEC-470-php-tls-insecure
+description: "Disabled SSL host verification in cURL."
+severity: error
+type: ast_match
+match:
+  ast: "CURLOPT_SSL_VERIFYHOST, 0"
+  language: php
+  file_glob: "**/*.php"

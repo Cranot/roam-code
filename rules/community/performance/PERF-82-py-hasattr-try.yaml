@@ -1,0 +1,8 @@
+name: PERF-82-py-hasattr-try
+description: "hasattr() calls getattr internally; use try/except for speed."
+severity: info
+type: ast_match
+match:
+  ast: "hasattr($OBJ, $ATTR)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-146-go-json-marshal-loop
+description: "json.Marshal in loop allocates; use json.Encoder."
+severity: info
+type: ast_match
+match:
+  ast: "json.Marshal($OBJ)"
+  language: go
+  file_glob: "**/*.go"

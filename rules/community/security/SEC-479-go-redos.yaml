@@ -1,0 +1,8 @@
+name: SEC-479-go-redos
+description: "Regex from user input may cause ReDoS."
+severity: info
+type: ast_match
+match:
+  ast: "regexp.Compile($INPUT)"
+  language: go
+  file_glob: "**/*.go"

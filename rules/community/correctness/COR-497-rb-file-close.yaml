@@ -1,0 +1,8 @@
+name: COR-497-rb-file-close
+description: "File.new must be closed; use File.open with block."
+severity: warning
+type: ast_match
+match:
+  ast: "File.new($PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

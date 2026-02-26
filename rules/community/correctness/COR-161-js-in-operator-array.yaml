@@ -1,0 +1,8 @@
+name: COR-161-js-in-operator-array
+description: "'in' checks index, not value; use includes()."
+severity: warning
+type: ast_match
+match:
+  ast: "$KEY in $ARR"
+  language: javascript
+  file_glob: "**/*.js"

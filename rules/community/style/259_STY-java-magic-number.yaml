@@ -1,0 +1,8 @@
+name: STY-java-magic-number
+description: "Magic number in condition; extract to constant."
+severity: info
+type: ast_match
+match:
+  ast: "if ($X == $NUM)"
+  language: java
+  file_glob: "**/*.java"

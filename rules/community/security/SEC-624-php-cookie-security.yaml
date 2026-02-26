@@ -1,0 +1,8 @@
+name: SEC-624-php-cookie-security
+description: "Verify setcookie has secure and httponly parameters."
+severity: warning
+type: ast_match
+match:
+  ast: "setcookie($NAME, $VALUE)"
+  language: php
+  file_glob: "**/*.php"

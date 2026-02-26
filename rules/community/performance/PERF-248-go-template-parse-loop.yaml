@@ -1,0 +1,8 @@
+name: PERF-248-go-template-parse-loop
+description: "Template parsing in loop; parse once."
+severity: warning
+type: ast_match
+match:
+  ast: "template.New($NAME).Parse($TMPL)"
+  language: go
+  file_glob: "**/*.go"

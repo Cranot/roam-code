@@ -1,0 +1,8 @@
+name: COR-558-php-bcmath
+description: "bcmath for precise arithmetic; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "bcadd($A, $B, $SCALE)"
+  language: php
+  file_glob: "**/*.php"

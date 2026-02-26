@@ -1,0 +1,8 @@
+name: SEC-496-py-info-exposure
+description: "Debugger breakpoint left in production code."
+severity: warning
+type: ast_match
+match:
+  ast: "pdb.set_trace()"
+  language: python
+  file_glob: "**/*.py"

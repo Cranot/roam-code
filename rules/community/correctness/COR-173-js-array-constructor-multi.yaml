@@ -1,0 +1,8 @@
+name: COR-173-js-array-constructor-multi
+description: "Array constructor is confusing; use array literal."
+severity: info
+type: ast_match
+match:
+  ast: "new Array($A, $B)"
+  language: javascript
+  file_glob: "**/*.js"

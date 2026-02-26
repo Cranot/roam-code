@@ -1,0 +1,8 @@
+name: COR-464-java-catch-ignore
+description: "Empty catch block silently ignores exception."
+severity: warning
+type: ast_match
+match:
+  ast: "catch ($TYPE $E) { }"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-399-go-context-timeout
+description: "WithTimeout must call cancel; defer cancel()."
+severity: warning
+type: ast_match
+match:
+  ast: "context.WithTimeout($CTX, $DUR)"
+  language: go
+  file_glob: "**/*.go"

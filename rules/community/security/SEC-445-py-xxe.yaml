@@ -1,0 +1,8 @@
+name: SEC-445-py-xxe
+description: "XXE risk in lxml etree.parse()."
+severity: error
+type: ast_match
+match:
+  ast: "etree.parse($INPUT)"
+  language: python
+  file_glob: "**/*.py"

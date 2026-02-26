@@ -1,0 +1,8 @@
+name: SEC-719-py-owasp-extra
+description: "Loading shared library may execute untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "ctypes.cdll.LoadLibrary($PATH)"
+  language: python
+  file_glob: "**/*.py"

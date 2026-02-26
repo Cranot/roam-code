@@ -1,0 +1,8 @@
+name: SEC-516-js-dynamic-code
+description: "Dynamic require() may load untrusted modules."
+severity: warning
+type: ast_match
+match:
+  ast: "require($VAR)"
+  language: javascript
+  file_glob: "**/*.js"

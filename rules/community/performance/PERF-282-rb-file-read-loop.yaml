@@ -1,0 +1,8 @@
+name: PERF-282-rb-file-read-loop
+description: "File.read in loop; batch I/O."
+severity: info
+type: ast_match
+match:
+  ast: "File.read($PATH)"
+  language: ruby
+  file_glob: "**/*.rb"

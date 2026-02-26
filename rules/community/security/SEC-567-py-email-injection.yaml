@@ -1,0 +1,8 @@
+name: SEC-567-py-email-injection
+description: "Verify SMTP connection uses TLS."
+severity: warning
+type: ast_match
+match:
+  ast: "smtplib.SMTP($HOST)"
+  language: python
+  file_glob: "**/*.py"

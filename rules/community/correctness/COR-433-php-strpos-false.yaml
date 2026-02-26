@@ -1,0 +1,8 @@
+name: COR-433-php-strpos-false
+description: "strpos returns false or 0; use === false for check."
+severity: warning
+type: ast_match
+match:
+  ast: "strpos($HAYSTACK, $NEEDLE)"
+  language: php
+  file_glob: "**/*.php"

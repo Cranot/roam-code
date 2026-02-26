@@ -1,0 +1,8 @@
+name: COR-472-cs-catch-when
+description: "Catch with filter; verify condition is correct."
+severity: info
+type: ast_match
+match:
+  ast: "catch ($TYPE $E) when ($COND)"
+  language: csharp
+  file_glob: "**/*.cs"

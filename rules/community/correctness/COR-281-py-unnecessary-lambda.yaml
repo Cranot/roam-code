@@ -1,0 +1,8 @@
+name: COR-281-py-unnecessary-lambda
+description: "Unnecessary lambda wrapping a function call."
+severity: info
+type: ast_match
+match:
+  ast: "lambda $X: $FUNC($X)"
+  language: python
+  file_glob: "**/*.py"

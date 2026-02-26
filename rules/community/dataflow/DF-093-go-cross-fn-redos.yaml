@@ -1,0 +1,11 @@
+name: DF-093-go-cross-fn-redos
+description: "Cross-function ReDoS: request data flows to regexp.Compile."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['r.URL.Query()', 'r.FormValue(']
+  sinks: ['regexp.Compile(', 'regexp.MustCompile(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.go"

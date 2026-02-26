@@ -1,0 +1,12 @@
+name: "ARCH-266-no-graphql-to-db"
+description: "GraphQL resolvers should not access database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/graphql/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

@@ -1,0 +1,8 @@
+name: STY-php-var-dump
+description: "var_dump debug output left in code."
+severity: warning
+type: ast_match
+match:
+  ast: "var_dump($OBJ)"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: SEC-305-py-sqli-concat
+description: "SQL injection via concatenation in SQLAlchemy execute()."
+severity: error
+type: ast_match
+match:
+  ast: "session.execute($SQL + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

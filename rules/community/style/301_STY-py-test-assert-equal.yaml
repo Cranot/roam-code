@@ -1,0 +1,8 @@
+name: STY-py-test-assert-equal
+description: "Use assertEqual for better error messages."
+severity: info
+type: ast_match
+match:
+  ast: "assert $X == $Y"
+  language: python
+  file_glob: "**/*.py"

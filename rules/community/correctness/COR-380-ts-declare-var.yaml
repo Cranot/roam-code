@@ -1,0 +1,8 @@
+name: COR-380-ts-declare-var
+description: "declare var; prefer declare const or declare let."
+severity: info
+type: ast_match
+match:
+  ast: "declare var $NAME"
+  language: typescript
+  file_glob: "**/*.ts"

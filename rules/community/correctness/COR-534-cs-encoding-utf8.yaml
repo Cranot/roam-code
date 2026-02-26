@@ -1,0 +1,8 @@
+name: COR-534-cs-encoding-utf8
+description: "UTF-8 encoding; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "Encoding.UTF8.GetBytes($STR)"
+  language: csharp
+  file_glob: "**/*.cs"

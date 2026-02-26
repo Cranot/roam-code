@@ -1,0 +1,8 @@
+name: SEC-625-cs-cookie-security
+description: "Verify cookie has Secure and HttpOnly options."
+severity: warning
+type: ast_match
+match:
+  ast: "Response.Cookies.Append($NAME, $VALUE)"
+  language: csharp
+  file_glob: "**/*.cs"

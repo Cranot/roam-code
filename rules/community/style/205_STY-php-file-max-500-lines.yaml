@@ -1,0 +1,9 @@
+name: "STY-php-file-max-500-lines"
+description: "Files over 500 lines should be split."
+severity: info
+type: symbol_match
+match:
+  kind: [function, class]
+  file_glob: "**/*.php"
+  require:
+    max_file_lines: 500

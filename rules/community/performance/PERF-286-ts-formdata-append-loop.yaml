@@ -1,0 +1,8 @@
+name: PERF-286-ts-formdata-append-loop
+description: "FormData.append in loop; batch if possible."
+severity: info
+type: ast_match
+match:
+  ast: "$FD.append($KEY, $VALUE)"
+  language: typescript
+  file_glob: "**/*.ts"

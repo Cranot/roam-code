@@ -1,0 +1,8 @@
+name: COR-227-go-append-no-assign
+description: "append() result must be assigned back to the slice."
+severity: error
+type: ast_match
+match:
+  ast: "append($SLICE, $ELEM)"
+  language: go
+  file_glob: "**/*.go"

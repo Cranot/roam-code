@@ -1,0 +1,8 @@
+name: COR-458-py-logging-exception
+description: "logging.exception includes stack trace; verify in except block."
+severity: info
+type: ast_match
+match:
+  ast: "logging.exception($MSG)"
+  language: python
+  file_glob: "**/*.py"

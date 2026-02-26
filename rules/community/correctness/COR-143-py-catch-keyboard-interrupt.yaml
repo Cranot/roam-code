@@ -1,0 +1,8 @@
+name: COR-143-py-catch-keyboard-interrupt
+description: "Catching KeyboardInterrupt prevents Ctrl+C; re-raise it."
+severity: warning
+type: ast_match
+match:
+  ast: "except KeyboardInterrupt:"
+  language: python
+  file_glob: "**/*.py"

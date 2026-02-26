@@ -1,0 +1,8 @@
+name: SEC-349-php-ssrf
+description: "SSRF risk via user-controlled CURLOPT_URL."
+severity: error
+type: ast_match
+match:
+  ast: "curl_setopt($CH, CURLOPT_URL, $INPUT)"
+  language: php
+  file_glob: "**/*.php"

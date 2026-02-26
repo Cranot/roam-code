@@ -1,0 +1,12 @@
+name: "ARCH-227-no-service-to-template"
+description: "Services should not depend on templates."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/services/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/templates/**"
+    kind: [function, method, class]
+  max_distance: 1

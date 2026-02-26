@@ -1,0 +1,8 @@
+name: PERF-244-go-filepath-walk
+description: "filepath.Walk allocates per entry; use WalkDir."
+severity: info
+type: ast_match
+match:
+  ast: "filepath.Walk($ROOT, $FN)"
+  language: go
+  file_glob: "**/*.go"

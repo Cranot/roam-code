@@ -1,0 +1,8 @@
+name: COR-485-go-select-timeout
+description: "time.After in select leaks timer; use time.NewTimer."
+severity: warning
+type: ast_match
+match:
+  ast: "time.After($DUR)"
+  language: go
+  file_glob: "**/*.go"

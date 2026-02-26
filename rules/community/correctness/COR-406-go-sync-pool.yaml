@@ -1,0 +1,8 @@
+name: COR-406-go-sync-pool
+description: "sync.Pool items may be collected; do not store state."
+severity: info
+type: ast_match
+match:
+  ast: "sync.Pool{}"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: PERF-97-js-object-spread-loop
+description: "Object spread in loop creates copies; mutate directly."
+severity: info
+type: ast_match
+match:
+  ast: "{...$OBJ, $KEY: $VAL}"
+  language: javascript
+  file_glob: "**/*.js"

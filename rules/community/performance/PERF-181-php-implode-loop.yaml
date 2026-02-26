@@ -1,0 +1,8 @@
+name: PERF-181-php-implode-loop
+description: "implode in loop; build array and implode once."
+severity: info
+type: ast_match
+match:
+  ast: "implode($GLUE, $ARR)"
+  language: php
+  file_glob: "**/*.php"

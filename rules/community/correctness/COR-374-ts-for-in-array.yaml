@@ -1,0 +1,8 @@
+name: COR-374-ts-for-in-array
+description: "for...in on arrays iterates keys, not values; use for...of."
+severity: warning
+type: ast_match
+match:
+  ast: "for ($KEY in $ARR)"
+  language: typescript
+  file_glob: "**/*.ts"

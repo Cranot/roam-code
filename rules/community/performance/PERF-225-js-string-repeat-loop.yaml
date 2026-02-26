@@ -1,0 +1,8 @@
+name: PERF-225-js-string-repeat-loop
+description: "String.repeat in loop; build once."
+severity: info
+type: ast_match
+match:
+  ast: "$S.repeat($N)"
+  language: javascript
+  file_glob: "**/*.js"

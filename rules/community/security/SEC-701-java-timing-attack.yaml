@@ -1,0 +1,8 @@
+name: SEC-701-java-timing-attack
+description: "Good: using constant-time comparison."
+severity: info
+type: ast_match
+match:
+  ast: "MessageDigest.isEqual($A, $B)"
+  language: java
+  file_glob: "**/*.java"

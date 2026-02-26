@@ -1,0 +1,8 @@
+name: COR-264-php-array-push
+description: "Use $arr[] = $elem instead of array_push for single element."
+severity: info
+type: ast_match
+match:
+  ast: "array_push($ARR, $ELEM)"
+  language: php
+  file_glob: "**/*.php"

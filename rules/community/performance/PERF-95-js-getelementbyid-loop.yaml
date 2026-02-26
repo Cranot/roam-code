@@ -1,0 +1,8 @@
+name: PERF-95-js-getelementbyid-loop
+description: "getElementById in loop; cache the element."
+severity: warning
+type: ast_match
+match:
+  ast: "document.getElementById($ID)"
+  language: javascript
+  file_glob: "**/*.js"

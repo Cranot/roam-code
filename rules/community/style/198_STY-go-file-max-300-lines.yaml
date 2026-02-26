@@ -1,0 +1,9 @@
+name: "STY-go-file-max-300-lines"
+description: "Files over 300 lines should be split."
+severity: info
+type: symbol_match
+match:
+  kind: [function, class]
+  file_glob: "**/*.go"
+  require:
+    max_file_lines: 300

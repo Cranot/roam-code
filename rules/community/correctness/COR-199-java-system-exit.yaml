@@ -1,0 +1,8 @@
+name: COR-199-java-system-exit
+description: "System.exit() in library code; throw exception instead."
+severity: warning
+type: ast_match
+match:
+  ast: "System.exit($CODE)"
+  language: java
+  file_glob: "**/*.java"

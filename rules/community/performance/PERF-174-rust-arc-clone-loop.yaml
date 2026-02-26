@@ -1,0 +1,8 @@
+name: PERF-174-rust-arc-clone-loop
+description: "Arc::clone in loop bumps refcount; verify necessity."
+severity: info
+type: ast_match
+match:
+  ast: "Arc::clone($X)"
+  language: rust
+  file_glob: "**/*.rs"

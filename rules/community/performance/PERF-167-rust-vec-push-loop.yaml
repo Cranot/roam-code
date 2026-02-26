@@ -1,0 +1,8 @@
+name: PERF-167-rust-vec-push-loop
+description: "Vec.push may reallocate; use with_capacity for known sizes."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.push($ELEM)"
+  language: rust
+  file_glob: "**/*.rs"

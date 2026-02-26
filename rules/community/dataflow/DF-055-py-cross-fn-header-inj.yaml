@@ -1,0 +1,11 @@
+name: DF-055-py-cross-fn-header-inj
+description: "Cross-function header injection: user input flows to response header."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.args', 'request.headers']
+  sinks: ['make_response().headers[', 'response.headers[']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.py"

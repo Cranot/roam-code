@@ -1,0 +1,8 @@
+name: COR-332-java-raw-type
+description: "Raw type ArrayList; specify generic parameter."
+severity: warning
+type: ast_match
+match:
+  ast: "new ArrayList()"
+  language: java
+  file_glob: "**/*.java"

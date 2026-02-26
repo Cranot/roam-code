@@ -1,0 +1,8 @@
+name: COR-284-py-isinstance-str
+description: "Python 3 str check is fine; verify not checking bytes."
+severity: info
+type: ast_match
+match:
+  ast: "isinstance($X, str)"
+  language: python
+  file_glob: "**/*.py"

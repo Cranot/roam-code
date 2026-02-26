@@ -1,0 +1,8 @@
+name: COR-238-rb-eval-string
+description: "eval() with string is error-prone; use safer alternatives."
+severity: error
+type: ast_match
+match:
+  ast: "eval($STR)"
+  language: ruby
+  file_glob: "**/*.rb"

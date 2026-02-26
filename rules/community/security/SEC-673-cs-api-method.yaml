@@ -1,0 +1,8 @@
+name: SEC-673-cs-api-method
+description: "Route without HTTP method attribute; add method restriction."
+severity: info
+type: ast_match
+match:
+  ast: "[Route($PATH)]"
+  language: csharp
+  file_glob: "**/*.cs"

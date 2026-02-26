@@ -1,0 +1,8 @@
+name: STY-js-nested-ternary
+description: "Nested ternary is hard to read; use if/else."
+severity: info
+type: ast_match
+match:
+  ast: "$A ? $B : $C ? $D : $E"
+  language: javascript
+  file_glob: "**/*.js"

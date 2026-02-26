@@ -1,0 +1,8 @@
+name: COR-548-py-float-equality
+description: "Float equality comparison may be imprecise; use math.isclose."
+severity: info
+type: ast_match
+match:
+  ast: "$A == $B"
+  language: python
+  file_glob: "**/*.py"

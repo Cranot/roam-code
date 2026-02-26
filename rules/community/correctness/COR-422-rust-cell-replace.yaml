@@ -1,0 +1,8 @@
+name: COR-422-rust-cell-replace
+description: "Cell.replace; verify interior mutability is needed."
+severity: info
+type: ast_match
+match:
+  ast: "$CELL.replace($VALUE)"
+  language: rust
+  file_glob: "**/*.rs"

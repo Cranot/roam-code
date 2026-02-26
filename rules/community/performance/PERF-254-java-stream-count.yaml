@@ -1,0 +1,8 @@
+name: PERF-254-java-stream-count
+description: "stream.count() consumes entire stream; use size if collection."
+severity: info
+type: ast_match
+match:
+  ast: "$STREAM.count()"
+  language: java
+  file_glob: "**/*.java"

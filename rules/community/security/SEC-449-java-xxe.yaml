@@ -1,0 +1,8 @@
+name: SEC-449-java-xxe
+description: "XXE risk; disable external entities."
+severity: error
+type: ast_match
+match:
+  ast: "XMLInputFactory.newInstance()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: SEC-475-php-ldap-injection
+description: "LDAP injection via concatenated ldap_search()."
+severity: error
+type: ast_match
+match:
+  ast: "ldap_search($CONN, $BASE, $FILTER . $INPUT)"
+  language: php
+  file_glob: "**/*.php"

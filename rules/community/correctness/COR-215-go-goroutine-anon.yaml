@@ -1,0 +1,8 @@
+name: COR-215-go-goroutine-anon
+description: "Anonymous goroutine may capture loop variables."
+severity: warning
+type: ast_match
+match:
+  ast: "go func() { $BODY }()"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-151-js-eq-null
+description: "Use === null for strict null comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == null"
+  language: javascript
+  file_glob: "**/*.js"

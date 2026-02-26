@@ -1,0 +1,8 @@
+name: PERF-116-ts-spread-large-array
+description: "Spread creates new array; use push for append."
+severity: info
+type: ast_match
+match:
+  ast: "[...$ARR, $ELEM]"
+  language: typescript
+  file_glob: "**/*.ts"

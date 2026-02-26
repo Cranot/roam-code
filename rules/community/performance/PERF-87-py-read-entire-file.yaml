@@ -1,0 +1,8 @@
+name: PERF-87-py-read-entire-file
+description: "Reading entire file into memory; use chunked reading for large files."
+severity: info
+type: ast_match
+match:
+  ast: "$F.read()"
+  language: python
+  file_glob: "**/*.py"

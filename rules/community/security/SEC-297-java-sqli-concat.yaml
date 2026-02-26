@@ -1,0 +1,8 @@
+name: SEC-297-java-sqli-concat
+description: "SQL injection via concatenation in prepareStatement()."
+severity: error
+type: ast_match
+match:
+  ast: "connection.prepareStatement($SQL + $INPUT)"
+  language: java
+  file_glob: "**/*.java"

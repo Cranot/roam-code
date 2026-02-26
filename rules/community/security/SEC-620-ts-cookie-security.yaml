@@ -1,0 +1,8 @@
+name: SEC-620-ts-cookie-security
+description: "Verify cookie has Secure and HttpOnly flags."
+severity: warning
+type: ast_match
+match:
+  ast: "res.cookie($NAME, $VALUE)"
+  language: typescript
+  file_glob: "**/*.ts"

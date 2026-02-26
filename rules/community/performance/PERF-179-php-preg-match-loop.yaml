@@ -1,0 +1,8 @@
+name: PERF-179-php-preg-match-loop
+description: "preg_match in loop; compile regex with preg_* functions."
+severity: info
+type: ast_match
+match:
+  ast: "preg_match($PATTERN, $INPUT)"
+  language: php
+  file_glob: "**/*.php"

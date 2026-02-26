@@ -1,0 +1,12 @@
+name: "ARCH-217-no-domain-to-adapters"
+description: "Domain should not depend on adapters."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/domain/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/adapters/**"
+    kind: [function, method, class]
+  max_distance: 1

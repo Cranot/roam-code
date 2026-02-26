@@ -1,0 +1,8 @@
+name: PERF-74-py-dict-comprehension-slow
+description: "Use dict comprehension {k:v for k,v in iter} instead."
+severity: info
+type: ast_match
+match:
+  ast: "dict([($K, $V) for $K, $V in $ITER])"
+  language: python
+  file_glob: "**/*.py"

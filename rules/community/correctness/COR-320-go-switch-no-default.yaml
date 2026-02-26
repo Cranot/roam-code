@@ -1,0 +1,8 @@
+name: COR-320-go-switch-no-default
+description: "Switch without default case; consider adding one."
+severity: info
+type: ast_match
+match:
+  ast: "switch $EXPR { case $A: $BODY }"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-162-js-double-negation
+description: "Double negation for boolean coercion; use Boolean() for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "!!$X"
+  language: javascript
+  file_glob: "**/*.js"

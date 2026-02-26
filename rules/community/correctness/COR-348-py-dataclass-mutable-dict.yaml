@@ -1,0 +1,8 @@
+name: COR-348-py-dataclass-mutable-dict
+description: "Mutable default in dataclass field; use default_factory."
+severity: error
+type: ast_match
+match:
+  ast: "field(default={})"
+  language: python
+  file_glob: "**/*.py"

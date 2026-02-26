@@ -1,0 +1,8 @@
+name: PERF-133-java-reflection-getmethod
+description: "Reflection getMethod is slow; cache Method object."
+severity: warning
+type: ast_match
+match:
+  ast: "$CLASS.getMethod($NAME, $ARGS)"
+  language: java
+  file_glob: "**/*.java"

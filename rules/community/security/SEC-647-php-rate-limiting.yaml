@@ -1,0 +1,8 @@
+name: SEC-647-php-rate-limiting
+description: "POST route; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "Route::post($PATH, $HANDLER)"
+  language: php
+  file_glob: "**/*.php"

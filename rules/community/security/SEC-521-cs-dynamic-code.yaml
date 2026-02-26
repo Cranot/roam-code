@@ -1,0 +1,8 @@
+name: SEC-521-cs-dynamic-code
+description: "Dynamic assembly loading may execute untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "Assembly.Load($NAME)"
+  language: csharp
+  file_glob: "**/*.cs"

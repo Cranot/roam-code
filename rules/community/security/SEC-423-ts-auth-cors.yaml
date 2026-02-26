@@ -1,0 +1,8 @@
+name: SEC-423-ts-auth-cors
+description: "Open redirect risk if user controls redirect target."
+severity: warning
+type: ast_match
+match:
+  ast: "res.redirect($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

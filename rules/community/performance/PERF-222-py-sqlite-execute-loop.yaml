@@ -1,0 +1,8 @@
+name: PERF-222-py-sqlite-execute-loop
+description: "Single execute in loop; use executemany."
+severity: warning
+type: ast_match
+match:
+  ast: "$CONN.execute($SQL)"
+  language: python
+  file_glob: "**/*.py"

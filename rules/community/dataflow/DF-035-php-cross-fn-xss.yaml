@@ -1,0 +1,11 @@
+name: DF-035-php-cross-fn-xss
+description: "Cross-function XSS: superglobal flows to output."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['$_GET', '$_POST', '$_REQUEST', '$_COOKIE']
+  sinks: ['echo', 'print', 'printf(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

@@ -1,0 +1,11 @@
+name: DF-051-java-cross-fn-ssti
+description: "Cross-function SSTI: parameter flows to template engine."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(']
+  sinks: ['Velocity.evaluate(', 'freemarker.Template(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.java"

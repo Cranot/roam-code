@@ -1,0 +1,8 @@
+name: PERF-207-js-n-plus-1-fetch
+description: "fetch in loop; use Promise.all for parallel requests."
+severity: warning
+type: ast_match
+match:
+  ast: "fetch($URL)"
+  language: javascript
+  file_glob: "**/*.js"

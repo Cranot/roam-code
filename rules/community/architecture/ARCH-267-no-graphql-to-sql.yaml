@@ -1,0 +1,12 @@
+name: "ARCH-267-no-graphql-to-sql"
+description: "GraphQL resolvers should use services, not raw SQL."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/graphql/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/sql/**"
+    kind: [function, method, class]
+  max_distance: 1

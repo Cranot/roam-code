@@ -1,0 +1,8 @@
+name: COR-230-go-empty-select
+description: "Empty select blocks forever; verify this is intentional."
+severity: warning
+type: ast_match
+match:
+  ast: "select {}"
+  language: go
+  file_glob: "**/*.go"

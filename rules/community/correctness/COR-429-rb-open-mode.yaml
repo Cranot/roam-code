@@ -1,0 +1,8 @@
+name: COR-429-rb-open-mode
+description: "Verify file open mode is appropriate."
+severity: info
+type: ast_match
+match:
+  ast: "File.open($PATH, $MODE)"
+  language: ruby
+  file_glob: "**/*.rb"

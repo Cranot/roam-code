@@ -1,0 +1,8 @@
+name: STY-py-test-assert-true
+description: "Use assertTrue or assert x instead of assert x == True."
+severity: info
+type: ast_match
+match:
+  ast: "assert $X == True"
+  language: python
+  file_glob: "**/*.py"

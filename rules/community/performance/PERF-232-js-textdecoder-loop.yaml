@@ -1,0 +1,8 @@
+name: PERF-232-js-textdecoder-loop
+description: "TextDecoder creation in loop; reuse instance."
+severity: info
+type: ast_match
+match:
+  ast: "new TextDecoder()"
+  language: javascript
+  file_glob: "**/*.js"

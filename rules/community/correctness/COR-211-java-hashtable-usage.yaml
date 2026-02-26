@@ -1,0 +1,8 @@
+name: COR-211-java-hashtable-usage
+description: "Hashtable is synchronized; use HashMap or ConcurrentHashMap."
+severity: info
+type: ast_match
+match:
+  ast: "new Hashtable()"
+  language: java
+  file_glob: "**/*.java"

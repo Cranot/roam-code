@@ -1,0 +1,8 @@
+name: COR-259-php-at-suppressor
+description: "Error suppressor @ hides errors; handle them properly."
+severity: warning
+type: ast_match
+match:
+  ast: "@$FUNC($ARGS)"
+  language: php
+  file_glob: "**/*.php"

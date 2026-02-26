@@ -1,0 +1,8 @@
+name: SEC-520-php-dynamic-code
+description: "Dynamic function call may invoke untrusted functions."
+severity: warning
+type: ast_match
+match:
+  ast: "call_user_func($FUNC, $ARGS)"
+  language: php
+  file_glob: "**/*.php"

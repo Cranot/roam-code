@@ -1,0 +1,8 @@
+name: SEC-712-cs-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "IFormFile"
+  language: csharp
+  file_glob: "**/*.cs"

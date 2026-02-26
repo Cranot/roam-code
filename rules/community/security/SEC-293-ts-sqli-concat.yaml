@@ -1,0 +1,8 @@
+name: SEC-293-ts-sqli-concat
+description: "SQL injection via string concatenation in db.query()."
+severity: error
+type: ast_match
+match:
+  ast: "db.query($SQL + $INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

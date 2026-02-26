@@ -1,0 +1,8 @@
+name: SEC-327-js-path-traversal
+description: "Path traversal risk in Express res.sendFile()."
+severity: error
+type: ast_match
+match:
+  ast: "res.sendFile($INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

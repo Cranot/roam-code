@@ -1,0 +1,8 @@
+name: SEC-461-java-jwt-session
+description: "Verify JWT signing key is not hardcoded."
+severity: warning
+type: ast_match
+match:
+  ast: "Jwts.parser().setSigningKey($KEY)"
+  language: java
+  file_glob: "**/*.java"

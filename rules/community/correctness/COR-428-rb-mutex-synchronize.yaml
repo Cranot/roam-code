@@ -1,0 +1,8 @@
+name: COR-428-rb-mutex-synchronize
+description: "Verify mutex protects the correct shared state."
+severity: info
+type: ast_match
+match:
+  ast: "$MUTEX.synchronize { $BODY }"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: PERF-141-go-fmt-sprintf-loop
+description: "fmt.Sprintf in loop allocates; use strings.Builder."
+severity: info
+type: ast_match
+match:
+  ast: "fmt.Sprintf($FMT, $ARGS)"
+  language: go
+  file_glob: "**/*.go"

@@ -1,0 +1,8 @@
+name: COR-559-cs-decimal-use
+description: "Use decimal for financial calculations; good practice."
+severity: info
+type: ast_match
+match:
+  ast: "decimal $VAR = $VALUE"
+  language: csharp
+  file_glob: "**/*.cs"

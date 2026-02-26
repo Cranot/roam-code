@@ -1,0 +1,8 @@
+name: COR-482-java-reentrant-lock
+description: "ReentrantLock; verify unlock in finally block."
+severity: warning
+type: ast_match
+match:
+  ast: "ReentrantLock()"
+  language: java
+  file_glob: "**/*.java"

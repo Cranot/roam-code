@@ -1,0 +1,8 @@
+name: COR-124-py-exit-in-lib
+description: "sys.exit() in library code; raise an exception instead."
+severity: warning
+type: ast_match
+match:
+  ast: "sys.exit($CODE)"
+  language: python
+  file_glob: "**/*.py"

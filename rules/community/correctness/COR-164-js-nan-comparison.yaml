@@ -1,0 +1,8 @@
+name: COR-164-js-nan-comparison
+description: "NaN === NaN is always false; use Number.isNaN()."
+severity: error
+type: ast_match
+match:
+  ast: "$X === NaN"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-336-py-class-slots-dict
+description: "Use tuple or list for __slots__, not dict."
+severity: warning
+type: ast_match
+match:
+  ast: "__slots__ = {$ITEMS}"
+  language: python
+  file_glob: "**/*.py"

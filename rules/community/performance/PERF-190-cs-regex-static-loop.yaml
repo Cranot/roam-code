@@ -1,0 +1,8 @@
+name: PERF-190-cs-regex-static-loop
+description: "Static Regex methods recompile; cache Regex instance."
+severity: warning
+type: ast_match
+match:
+  ast: "Regex.IsMatch($INPUT, $PATTERN)"
+  language: csharp
+  file_glob: "**/*.cs"

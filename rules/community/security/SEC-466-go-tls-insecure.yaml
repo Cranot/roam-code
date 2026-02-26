@@ -1,0 +1,8 @@
+name: SEC-466-go-tls-insecure
+description: "TLS InsecureSkipVerify disables certificate validation."
+severity: error
+type: ast_match
+match:
+  ast: "InsecureSkipVerify: true"
+  language: go
+  file_glob: "**/*.go"

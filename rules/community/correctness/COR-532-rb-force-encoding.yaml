@@ -1,0 +1,8 @@
+name: COR-532-rb-force-encoding
+description: "force_encoding changes encoding tag without transcoding."
+severity: warning
+type: ast_match
+match:
+  ast: "$S.force_encoding($ENC)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: PERF-102-js-getcomputedstyle
+description: "getComputedStyle forces layout; avoid in loops."
+severity: warning
+type: ast_match
+match:
+  ast: "getComputedStyle($EL)"
+  language: javascript
+  file_glob: "**/*.js"

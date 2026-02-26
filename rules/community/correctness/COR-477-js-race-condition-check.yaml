@@ -1,0 +1,8 @@
+name: COR-477-js-race-condition-check
+description: "Promise.race; first rejection wins. Use Promise.any if needed."
+severity: info
+type: ast_match
+match:
+  ast: "Promise.race($PROMISES)"
+  language: javascript
+  file_glob: "**/*.js"

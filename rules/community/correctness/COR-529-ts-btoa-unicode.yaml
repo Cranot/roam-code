@@ -1,0 +1,8 @@
+name: COR-529-ts-btoa-unicode
+description: "btoa fails on non-Latin1; use TextEncoder for Unicode."
+severity: warning
+type: ast_match
+match:
+  ast: "btoa($STR)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: PERF-219-py-csv-reader-loop
+description: "CSV reader creation in loop; create once."
+severity: info
+type: ast_match
+match:
+  ast: "csv.reader($FILE)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-281-rb-regexp-match-loop
+description: "Regex match in loop; compile once with Regexp.new."
+severity: info
+type: ast_match
+match:
+  ast: "$S.match($PATTERN)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,9 @@
+name: STY-java-class-naming
+description: "Java class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.java"
+  require:
+    name_regex: "^[a-z]"

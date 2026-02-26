@@ -1,0 +1,8 @@
+name: COR-448-cs-using-dispose
+description: "Manual Dispose; prefer using statement."
+severity: info
+type: ast_match
+match:
+  ast: "$OBJ.Dispose()"
+  language: csharp
+  file_glob: "**/*.cs"

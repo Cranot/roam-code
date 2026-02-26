@@ -1,0 +1,8 @@
+name: COR-427-rb-thread-new
+description: "Thread.new; verify exception handling inside thread."
+severity: warning
+type: ast_match
+match:
+  ast: "Thread.new { $BODY }"
+  language: ruby
+  file_glob: "**/*.rb"

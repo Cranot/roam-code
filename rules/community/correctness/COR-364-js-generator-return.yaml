@@ -1,0 +1,8 @@
+name: COR-364-js-generator-return
+description: "Generator return value is often ignored; verify usage."
+severity: info
+type: ast_match
+match:
+  ast: "function* $NAME($ARGS) { return $X }"
+  language: javascript
+  file_glob: "**/*.js"

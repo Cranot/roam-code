@@ -1,0 +1,8 @@
+name: SEC-348-rb-ssrf
+description: "SSRF risk via Kernel#open with user-controlled URL."
+severity: error
+type: ast_match
+match:
+  ast: "open($INPUT)"
+  language: ruby
+  file_glob: "**/*.rb"

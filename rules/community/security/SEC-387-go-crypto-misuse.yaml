@@ -1,0 +1,8 @@
+name: SEC-387-go-crypto-misuse
+description: "SHA-1 is deprecated for security; use SHA-256+."
+severity: warning
+type: ast_match
+match:
+  ast: "sha1.New()"
+  language: go
+  file_glob: "**/*.go"

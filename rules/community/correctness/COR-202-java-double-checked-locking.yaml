@@ -1,0 +1,8 @@
+name: COR-202-java-double-checked-locking
+description: "Double-checked locking requires volatile field."
+severity: warning
+type: ast_match
+match:
+  ast: "if ($X == null) { synchronized($LOCK) { $BODY } }"
+  language: java
+  file_glob: "**/*.java"

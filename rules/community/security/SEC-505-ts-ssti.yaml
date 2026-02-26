@@ -1,0 +1,8 @@
+name: SEC-505-ts-ssti
+description: "Function constructor with user input enables injection."
+severity: error
+type: ast_match
+match:
+  ast: "Function($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

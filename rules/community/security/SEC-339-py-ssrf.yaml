@@ -1,0 +1,8 @@
+name: SEC-339-py-ssrf
+description: "SSRF risk via user-controlled URL in requests.post()."
+severity: error
+type: ast_match
+match:
+  ast: "requests.post($URL + $INPUT, $ARGS)"
+  language: python
+  file_glob: "**/*.py"

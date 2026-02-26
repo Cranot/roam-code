@@ -1,0 +1,12 @@
+name: "ARCH-257-rails-no-model-in-view"
+description: "Rails views should not directly query models."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  max_distance: 1

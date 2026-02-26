@@ -1,0 +1,8 @@
+name: SEC-546-py-http-headers
+description: "CSRF cookie not Secure; vulnerable on HTTP."
+severity: warning
+type: ast_match
+match:
+  ast: "CSRF_COOKIE_SECURE = False"
+  language: python
+  file_glob: "**/*.py"

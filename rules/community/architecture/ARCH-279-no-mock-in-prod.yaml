@@ -1,0 +1,12 @@
+name: "ARCH-279-no-mock-in-prod"
+description: "Mock implementations should not be used in production."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/mock/**"
+    kind: [function, method, class]
+  max_distance: 1

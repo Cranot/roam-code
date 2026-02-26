@@ -1,0 +1,12 @@
+name: "ARCH-273-no-migration-to-model"
+description: "Migrations should not import models."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/migrations/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  max_distance: 1

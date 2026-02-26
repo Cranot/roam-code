@@ -1,0 +1,8 @@
+name: SEC-463-py-tls-insecure
+description: "Unverified SSL context disables certificate checking."
+severity: error
+type: ast_match
+match:
+  ast: "ssl._create_unverified_context()"
+  language: python
+  file_glob: "**/*.py"

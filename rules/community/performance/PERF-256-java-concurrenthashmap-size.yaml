@@ -1,0 +1,8 @@
+name: PERF-256-java-concurrenthashmap-size
+description: "ConcurrentHashMap.size() may be approximate; use mappingCount."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.size()"
+  language: java
+  file_glob: "**/*.java"

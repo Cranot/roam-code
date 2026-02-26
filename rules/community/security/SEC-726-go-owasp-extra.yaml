@@ -1,0 +1,8 @@
+name: SEC-726-go-owasp-extra
+description: "template.JS marks input as safe; verify it is trusted."
+severity: warning
+type: ast_match
+match:
+  ast: "template.JS($INPUT)"
+  language: go
+  file_glob: "**/*.go"

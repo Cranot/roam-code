@@ -1,0 +1,8 @@
+name: COR-300-java-concat-in-loop
+description: "String concatenation in loop; use StringBuilder."
+severity: warning
+type: ast_match
+match:
+  ast: "$S = $S + $PART"
+  language: java
+  file_glob: "**/*.java"

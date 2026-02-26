@@ -1,0 +1,8 @@
+name: COR-171-js-proto-access
+description: "__proto__ is deprecated; use Object.getPrototypeOf()."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.__proto__"
+  language: javascript
+  file_glob: "**/*.js"

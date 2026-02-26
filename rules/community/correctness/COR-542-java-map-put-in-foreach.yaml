@@ -1,0 +1,8 @@
+name: COR-542-java-map-put-in-foreach
+description: "Modifying map during forEach may throw ConcurrentModification."
+severity: warning
+type: ast_match
+match:
+  ast: "$MAP.put($KEY, $VALUE)"
+  language: java
+  file_glob: "**/*.java"

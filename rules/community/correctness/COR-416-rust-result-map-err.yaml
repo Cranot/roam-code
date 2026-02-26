@@ -1,0 +1,8 @@
+name: COR-416-rust-result-map-err
+description: "Verify map_err transformation preserves error context."
+severity: info
+type: ast_match
+match:
+  ast: "$RES.map_err($F)"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,9 @@
+name: STY-php-class-naming
+description: "PHP class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.php"
+  require:
+    name_regex: "^[a-z]"

@@ -1,0 +1,8 @@
+name: COR-544-rb-array-delete-in-each
+description: "Deleting during each changes indices; use reject."
+severity: warning
+type: ast_match
+match:
+  ast: "$ARR.delete($ELEM)"
+  language: ruby
+  file_glob: "**/*.rb"

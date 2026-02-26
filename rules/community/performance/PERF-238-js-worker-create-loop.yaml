@@ -1,0 +1,8 @@
+name: PERF-238-js-worker-create-loop
+description: "Worker creation in loop; use worker pool."
+severity: warning
+type: ast_match
+match:
+  ast: "new Worker($URL)"
+  language: javascript
+  file_glob: "**/*.js"

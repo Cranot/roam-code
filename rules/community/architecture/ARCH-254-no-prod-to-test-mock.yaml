@@ -1,0 +1,12 @@
+name: "ARCH-254-no-prod-to-test-mock"
+description: "Production code should not import test mocks."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/mocks/**"
+    kind: [function, method, class]
+  max_distance: 1

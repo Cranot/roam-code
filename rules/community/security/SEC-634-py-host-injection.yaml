@@ -1,0 +1,8 @@
+name: SEC-634-py-host-injection
+description: "Host header may be spoofed; validate against allowlist."
+severity: info
+type: ast_match
+match:
+  ast: "request.host"
+  language: python
+  file_glob: "**/*.py"

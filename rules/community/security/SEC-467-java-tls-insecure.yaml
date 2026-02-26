@@ -1,0 +1,8 @@
+name: SEC-467-java-tls-insecure
+description: "Trust-all certificate manager disables TLS verification."
+severity: error
+type: ast_match
+match:
+  ast: "TrustAllCerts"
+  language: java
+  file_glob: "**/*.java"

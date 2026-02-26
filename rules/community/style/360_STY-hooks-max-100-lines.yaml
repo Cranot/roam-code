@@ -1,0 +1,9 @@
+name: "STY-hooks-max-100-lines"
+description: "Functions in hooks/ should be <= 100 lines."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "hooks/**"
+  require:
+    max_symbol_lines: 100

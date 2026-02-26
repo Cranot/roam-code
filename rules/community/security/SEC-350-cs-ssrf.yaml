@@ -1,0 +1,8 @@
+name: SEC-350-cs-ssrf
+description: "SSRF risk via user-controlled URL in HttpClient."
+severity: error
+type: ast_match
+match:
+  ast: "HttpClient.GetAsync($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

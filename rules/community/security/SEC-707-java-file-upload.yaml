@@ -1,0 +1,8 @@
+name: SEC-707-java-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "MultipartFile"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,12 @@
+name: "ARCH-245-no-core-to-plugins"
+description: "Core should not depend on plugins."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/core/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/plugins/**"
+    kind: [function, method, class]
+  max_distance: 1

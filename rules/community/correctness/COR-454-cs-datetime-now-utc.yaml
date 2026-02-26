@@ -1,0 +1,8 @@
+name: COR-454-cs-datetime-now-utc
+description: "DateTime.Now is local time; use DateTime.UtcNow."
+severity: info
+type: ast_match
+match:
+  ast: "DateTime.Now"
+  language: csharp
+  file_glob: "**/*.cs"

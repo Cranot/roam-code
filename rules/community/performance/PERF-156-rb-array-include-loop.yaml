@@ -1,0 +1,8 @@
+name: PERF-156-rb-array-include-loop
+description: "Array.include? is O(n); use Set for frequent lookups."
+severity: warning
+type: ast_match
+match:
+  ast: "$ARR.include?($ELEM)"
+  language: ruby
+  file_glob: "**/*.rb"

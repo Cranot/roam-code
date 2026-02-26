@@ -1,0 +1,8 @@
+name: SEC-694-cs-integer-overflow
+description: "Unchecked arithmetic; may silently overflow."
+severity: info
+type: ast_match
+match:
+  ast: "unchecked($EXPR)"
+  language: csharp
+  file_glob: "**/*.cs"

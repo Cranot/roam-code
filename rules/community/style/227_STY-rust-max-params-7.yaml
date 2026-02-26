@@ -1,0 +1,9 @@
+name: "STY-rust-max-params-7"
+description: "Functions with more than 7 parameters should use an options object."
+severity: info
+type: symbol_match
+match:
+  kind: [function, method]
+  file_glob: "**/*.rs"
+  require:
+    max_params: 7

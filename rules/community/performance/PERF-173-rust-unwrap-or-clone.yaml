@@ -1,0 +1,8 @@
+name: PERF-173-rust-unwrap-or-clone
+description: "unwrap_or evaluates eagerly; use unwrap_or_else."
+severity: info
+type: ast_match
+match:
+  ast: "$X.unwrap_or($DEFAULT.clone())"
+  language: rust
+  file_glob: "**/*.rs"

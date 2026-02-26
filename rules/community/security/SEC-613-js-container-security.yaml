@@ -1,0 +1,8 @@
+name: SEC-613-js-container-security
+description: "Container privileged mode is insecure."
+severity: error
+type: ast_match
+match:
+  ast: "privileged: true"
+  language: javascript
+  file_glob: "**/*.js"

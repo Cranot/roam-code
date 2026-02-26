@@ -1,0 +1,8 @@
+name: STY-js-ternary-boolean
+description: "Ternary returning boolean; use the condition directly."
+severity: info
+type: ast_match
+match:
+  ast: "$COND ? true : false"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-500-cs-httpclient-create
+description: "HttpClient should be reused; use IHttpClientFactory."
+severity: warning
+type: ast_match
+match:
+  ast: "new HttpClient()"
+  language: csharp
+  file_glob: "**/*.cs"

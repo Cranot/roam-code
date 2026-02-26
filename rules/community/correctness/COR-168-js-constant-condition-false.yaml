@@ -1,0 +1,8 @@
+name: COR-168-js-constant-condition-false
+description: "Constant false condition makes code unreachable."
+severity: warning
+type: ast_match
+match:
+  ast: "if (false)"
+  language: javascript
+  file_glob: "**/*.js"

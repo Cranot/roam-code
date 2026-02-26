@@ -1,0 +1,8 @@
+name: SEC-326-js-path-traversal
+description: "Path traversal via concatenated fs.readFileSync()."
+severity: error
+type: ast_match
+match:
+  ast: "fs.readFileSync($PATH + $INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

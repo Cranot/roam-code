@@ -1,0 +1,8 @@
+name: COR-556-go-int-overflow-check
+description: "Near MaxInt64; verify no overflow."
+severity: info
+type: ast_match
+match:
+  ast: "math.MaxInt64"
+  language: go
+  file_glob: "**/*.go"

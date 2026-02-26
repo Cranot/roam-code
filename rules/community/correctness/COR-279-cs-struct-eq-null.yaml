@@ -1,0 +1,8 @@
+name: COR-279-cs-struct-eq-null
+description: "Struct cannot be null unless nullable; remove check."
+severity: info
+type: ast_match
+match:
+  ast: "$S == null"
+  language: csharp
+  file_glob: "**/*.cs"

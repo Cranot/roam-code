@@ -1,0 +1,12 @@
+name: "ARCH-206-no-config-to-controller"
+description: "Config should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/config/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

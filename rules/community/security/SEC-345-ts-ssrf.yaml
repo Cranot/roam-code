@@ -1,0 +1,8 @@
+name: SEC-345-ts-ssrf
+description: "SSRF risk via user-controlled URL in axios.get()."
+severity: error
+type: ast_match
+match:
+  ast: "axios.get($URL + $INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

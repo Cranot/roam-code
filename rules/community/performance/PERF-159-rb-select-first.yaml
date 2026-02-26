@@ -1,0 +1,8 @@
+name: PERF-159-rb-select-first
+description: "Use find/detect instead of select.first."
+severity: warning
+type: ast_match
+match:
+  ast: "$ARR.select { $BLOCK }.first"
+  language: ruby
+  file_glob: "**/*.rb"

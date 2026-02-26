@@ -1,0 +1,8 @@
+name: STY-js-test-expect-truthy
+description: "toBeTruthy is broad; use specific matcher."
+severity: info
+type: ast_match
+match:
+  ast: "expect($X).toBeTruthy()"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: SEC-344-ts-ssrf
+description: "SSRF risk via user-controlled URL in fetch()."
+severity: error
+type: ast_match
+match:
+  ast: "fetch($URL + $INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

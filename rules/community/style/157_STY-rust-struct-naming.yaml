@@ -1,0 +1,9 @@
+name: STY-rust-struct-naming
+description: "Rust struct names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.rs"
+  require:
+    name_regex: "^[a-z]"

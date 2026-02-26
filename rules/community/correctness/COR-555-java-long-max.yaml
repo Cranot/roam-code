@@ -1,0 +1,8 @@
+name: COR-555-java-long-max
+description: "Near Long.MAX_VALUE; check for overflow."
+severity: info
+type: ast_match
+match:
+  ast: "Long.MAX_VALUE"
+  language: java
+  file_glob: "**/*.java"

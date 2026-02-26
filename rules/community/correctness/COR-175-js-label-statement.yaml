@@ -1,0 +1,8 @@
+name: COR-175-js-label-statement
+description: "Labels are confusing; restructure code to avoid them."
+severity: info
+type: ast_match
+match:
+  ast: "$LABEL: $STMT"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: COR-195-java-thread-run
+description: "Calling run() instead of start() executes synchronously."
+severity: error
+type: ast_match
+match:
+  ast: "$THREAD.run()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: SEC-346-go-ssrf
+description: "SSRF risk via user-controlled URL in http.Get()."
+severity: error
+type: ast_match
+match:
+  ast: "http.Get($URL + $INPUT)"
+  language: go
+  file_glob: "**/*.go"

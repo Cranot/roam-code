@@ -1,0 +1,8 @@
+name: SEC-560-cs-nosql-injection
+description: "Verify MongoDB filter is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "collection.Find($FILTER)"
+  language: csharp
+  file_glob: "**/*.cs"

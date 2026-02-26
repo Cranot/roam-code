@@ -1,0 +1,11 @@
+name: DF-039-go-cross-fn-path-trav
+description: "Cross-function path traversal: query param flows to file open."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['r.URL.Query()', 'r.FormValue(']
+  sinks: ['os.Open(', 'os.ReadFile(', 'ioutil.ReadFile(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

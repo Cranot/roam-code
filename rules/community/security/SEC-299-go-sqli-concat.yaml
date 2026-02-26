@@ -1,0 +1,8 @@
+name: SEC-299-go-sqli-concat
+description: "SQL injection via string concatenation in db.Exec()."
+severity: error
+type: ast_match
+match:
+  ast: "db.Exec($SQL + $INPUT)"
+  language: go
+  file_glob: "**/*.go"

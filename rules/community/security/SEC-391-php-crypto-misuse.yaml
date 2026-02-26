@@ -1,0 +1,8 @@
+name: SEC-391-php-crypto-misuse
+description: "MD5 is cryptographically broken; use hash('sha256')."
+severity: warning
+type: ast_match
+match:
+  ast: "md5($DATA)"
+  language: php
+  file_glob: "**/*.php"

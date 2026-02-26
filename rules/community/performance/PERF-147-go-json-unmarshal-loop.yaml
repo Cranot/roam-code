@@ -1,0 +1,8 @@
+name: PERF-147-go-json-unmarshal-loop
+description: "json.Unmarshal in loop; use json.Decoder."
+severity: info
+type: ast_match
+match:
+  ast: "json.Unmarshal($DATA, $OBJ)"
+  language: go
+  file_glob: "**/*.go"

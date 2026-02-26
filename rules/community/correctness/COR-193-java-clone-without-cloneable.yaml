@@ -1,0 +1,8 @@
+name: COR-193-java-clone-without-cloneable
+description: "clone() without Cloneable throws CloneNotSupportedException."
+severity: warning
+type: ast_match
+match:
+  ast: "public Object clone()"
+  language: java
+  file_glob: "**/*.java"

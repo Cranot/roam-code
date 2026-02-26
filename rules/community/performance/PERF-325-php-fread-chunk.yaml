@@ -1,0 +1,8 @@
+name: PERF-325-php-fread-chunk
+description: "fread with chunk size; efficient for large files."
+severity: info
+type: ast_match
+match:
+  ast: "fread($FH, $SIZE)"
+  language: php
+  file_glob: "**/*.php"

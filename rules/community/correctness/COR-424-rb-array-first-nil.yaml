@@ -1,0 +1,8 @@
+name: COR-424-rb-array-first-nil
+description: "Array.first returns nil on empty array; check for nil."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.first"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: COR-445-cs-async-void
+description: "async void is fire-and-forget; use async Task."
+severity: warning
+type: ast_match
+match:
+  ast: "async void $METHOD($ARGS)"
+  language: csharp
+  file_glob: "**/*.cs"

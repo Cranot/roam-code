@@ -1,0 +1,8 @@
+name: COR-466-go-err-check-nil
+description: "Returning without wrapping error loses context."
+severity: info
+type: ast_match
+match:
+  ast: "if err != nil { return }"
+  language: go
+  file_glob: "**/*.go"

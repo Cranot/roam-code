@@ -1,0 +1,8 @@
+name: SEC-645-java-rate-limiting
+description: "POST mapping; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "@PostMapping($PATH)"
+  language: java
+  file_glob: "**/*.java"

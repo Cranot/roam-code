@@ -1,0 +1,8 @@
+name: STY-rb-pp-debug
+description: "pp() debug output left in code."
+severity: warning
+type: ast_match
+match:
+  ast: "pp($OBJ)"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: SEC-604-rust-memory-safety
+description: "transmute is unsafe; prefer safe alternatives."
+severity: warning
+type: ast_match
+match:
+  ast: "std::mem::transmute($X)"
+  language: rust
+  file_glob: "**/*.rs"

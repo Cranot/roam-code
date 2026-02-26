@@ -1,0 +1,8 @@
+name: SEC-460-go-jwt-session
+description: "Verify JWT parse callback validates algorithm."
+severity: warning
+type: ast_match
+match:
+  ast: "jwt.Parse($TOKEN, $FUNC)"
+  language: go
+  file_glob: "**/*.go"

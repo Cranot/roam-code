@@ -1,0 +1,12 @@
+name: "ARCH-280-no-stub-in-prod"
+description: "Stub implementations should not be used in production."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/stubs/**"
+    kind: [function, method, class]
+  max_distance: 1

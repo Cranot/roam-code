@@ -1,0 +1,8 @@
+name: STY-go-init-function
+description: "init() function; verify it is necessary."
+severity: info
+type: ast_match
+match:
+  ast: "func init()"
+  language: go
+  file_glob: "**/*.go"

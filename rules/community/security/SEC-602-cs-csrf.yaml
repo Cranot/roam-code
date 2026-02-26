@@ -1,0 +1,8 @@
+name: SEC-602-cs-csrf
+description: "Anti-forgery token validation disabled."
+severity: warning
+type: ast_match
+match:
+  ast: "[IgnoreAntiforgeryToken]"
+  language: csharp
+  file_glob: "**/*.cs"

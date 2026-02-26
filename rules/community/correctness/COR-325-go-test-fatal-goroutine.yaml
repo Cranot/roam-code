@@ -1,0 +1,8 @@
+name: COR-325-go-test-fatal-goroutine
+description: "t.Fatal in goroutine does not stop the test."
+severity: error
+type: ast_match
+match:
+  ast: "t.Fatal($MSG)"
+  language: go
+  file_glob: "**/*.go"

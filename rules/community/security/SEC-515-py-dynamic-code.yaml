@@ -1,0 +1,8 @@
+name: SEC-515-py-dynamic-code
+description: "Dynamic import may load untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "importlib.import_module($MODULE)"
+  language: python
+  file_glob: "**/*.py"

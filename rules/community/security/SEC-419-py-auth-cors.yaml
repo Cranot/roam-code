@@ -1,0 +1,8 @@
+name: SEC-419-py-auth-cors
+description: "Open redirect risk if user controls redirect target."
+severity: warning
+type: ast_match
+match:
+  ast: "redirect($INPUT)"
+  language: python
+  file_glob: "**/*.py"

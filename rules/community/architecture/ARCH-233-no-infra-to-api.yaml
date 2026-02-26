@@ -1,0 +1,12 @@
+name: "ARCH-233-no-infra-to-api"
+description: "Infrastructure should not depend on API layer."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/infrastructure/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  max_distance: 1

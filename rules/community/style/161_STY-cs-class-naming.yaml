@@ -1,0 +1,9 @@
+name: STY-cs-class-naming
+description: "C# class names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: class
+  file_glob: "**/*.cs"
+  require:
+    name_regex: "^[a-z]"

@@ -1,0 +1,8 @@
+name: PERF-285-ts-url-create-loop
+description: "URL parsing in loop; cache parsed URLs."
+severity: info
+type: ast_match
+match:
+  ast: "new URL($STR)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-397-java-iterator-hasnext
+description: "Calling next() without hasNext() may throw NoSuchElement."
+severity: warning
+type: ast_match
+match:
+  ast: "$IT.next()"
+  language: java
+  file_glob: "**/*.java"

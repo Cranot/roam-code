@@ -1,0 +1,8 @@
+name: COR-552-js-infinity-check
+description: "Infinity from division; verify bounds checking."
+severity: info
+type: ast_match
+match:
+  ast: "Infinity"
+  language: javascript
+  file_glob: "**/*.js"

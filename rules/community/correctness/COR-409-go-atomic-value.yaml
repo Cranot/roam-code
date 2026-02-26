@@ -1,0 +1,8 @@
+name: COR-409-go-atomic-value
+description: "atomic.Value must store consistent types."
+severity: info
+type: ast_match
+match:
+  ast: "atomic.Value{}"
+  language: go
+  file_glob: "**/*.go"

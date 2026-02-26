@@ -1,0 +1,8 @@
+name: PERF-136-java-regex-compile-inline
+description: "Inline Pattern.compile; cache Pattern for reuse."
+severity: warning
+type: ast_match
+match:
+  ast: "Pattern.compile($PATTERN).matcher($INPUT)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: PERF-98-js-array-from-loop
+description: "Array.from() in loop; cache the result."
+severity: info
+type: ast_match
+match:
+  ast: "Array.from($ITER)"
+  language: javascript
+  file_glob: "**/*.js"

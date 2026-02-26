@@ -1,0 +1,8 @@
+name: COR-439-php-preg-last-error
+description: "Check preg_last_error() after preg_* calls."
+severity: info
+type: ast_match
+match:
+  ast: "preg_match($PATTERN, $INPUT)"
+  language: php
+  file_glob: "**/*.php"

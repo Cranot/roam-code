@@ -1,0 +1,8 @@
+name: PERF-294-rust-to-owned-loop
+description: "to_owned in loop allocates; minimize conversions."
+severity: info
+type: ast_match
+match:
+  ast: "$S.to_owned()"
+  language: rust
+  file_glob: "**/*.rs"

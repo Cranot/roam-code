@@ -1,0 +1,8 @@
+name: COR-413-rust-into-iter-ref
+description: "into_iter() consumes the collection; use iter() to borrow."
+severity: info
+type: ast_match
+match:
+  ast: "$VEC.into_iter()"
+  language: rust
+  file_glob: "**/*.rs"

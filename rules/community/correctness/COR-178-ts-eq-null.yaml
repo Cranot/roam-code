@@ -1,0 +1,8 @@
+name: COR-178-ts-eq-null
+description: "Use === null for strict null comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == null"
+  language: typescript
+  file_glob: "**/*.ts"

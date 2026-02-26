@@ -1,0 +1,8 @@
+name: SEC-529-php-toctou
+description: "TOCTOU race between file_exists() and file operation."
+severity: info
+type: ast_match
+match:
+  ast: "file_exists($PATH)"
+  language: php
+  file_glob: "**/*.php"

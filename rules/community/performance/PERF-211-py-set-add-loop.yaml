@@ -1,0 +1,8 @@
+name: PERF-211-py-set-add-loop
+description: "set.add in loop; consider set comprehension."
+severity: info
+type: ast_match
+match:
+  ast: "$SET.add($ELEM)"
+  language: python
+  file_glob: "**/*.py"

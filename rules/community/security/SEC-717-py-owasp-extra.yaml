@@ -1,0 +1,8 @@
+name: SEC-717-py-owasp-extra
+description: "Recursive deletion; verify path is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "shutil.rmtree($PATH)"
+  language: python
+  file_glob: "**/*.py"

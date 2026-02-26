@@ -1,0 +1,8 @@
+name: COR-419-rust-mem-replace
+description: "mem::replace; verify replacement semantics."
+severity: info
+type: ast_match
+match:
+  ast: "std::mem::replace($DEST, $SRC)"
+  language: rust
+  file_glob: "**/*.rs"

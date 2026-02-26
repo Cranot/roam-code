@@ -1,0 +1,11 @@
+name: DF-091-js-cross-fn-redos
+description: "Cross-function ReDoS: request data flows to RegExp constructor."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['req.query', 'req.body']
+  sinks: ['new RegExp(', 'RegExp(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.js"

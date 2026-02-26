@@ -1,0 +1,8 @@
+name: COR-217-go-range-pointer
+description: "Taking address of range variable captures loop pointer."
+severity: error
+type: ast_match
+match:
+  ast: "for $K, $V := range $SLICE { &$V }"
+  language: go
+  file_glob: "**/*.go"

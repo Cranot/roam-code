@@ -1,0 +1,8 @@
+name: SEC-320-js-xss
+description: "Potential XSS via dynamic src attribute."
+severity: error
+type: ast_match
+match:
+  ast: "$EL.src = $INPUT"
+  language: javascript
+  file_glob: "**/*.js"

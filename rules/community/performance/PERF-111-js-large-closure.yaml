@@ -1,0 +1,8 @@
+name: PERF-111-js-large-closure
+description: "Nested closures retain outer scope; watch for memory leaks."
+severity: info
+type: ast_match
+match:
+  ast: "function($ARGS) { return function($INNER) { $BODY } }"
+  language: javascript
+  file_glob: "**/*.js"

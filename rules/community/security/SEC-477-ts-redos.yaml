@@ -1,0 +1,8 @@
+name: SEC-477-ts-redos
+description: "Regex from user input may cause ReDoS."
+severity: info
+type: ast_match
+match:
+  ast: "new RegExp($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

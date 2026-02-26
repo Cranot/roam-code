@@ -1,0 +1,8 @@
+name: COR-360-js-object-create-null
+description: "Object without prototype; toString/valueOf will fail."
+severity: info
+type: ast_match
+match:
+  ast: "Object.create(null)"
+  language: javascript
+  file_glob: "**/*.js"

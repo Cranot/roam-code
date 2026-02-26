@@ -1,0 +1,8 @@
+name: SEC-471-cs-tls-insecure
+description: "Custom TLS callback may bypass certificate validation."
+severity: error
+type: ast_match
+match:
+  ast: "ServerCertificateValidationCallback = $FUNC"
+  language: csharp
+  file_glob: "**/*.cs"

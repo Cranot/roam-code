@@ -1,0 +1,8 @@
+name: COR-296-ts-parseint-no-radix
+description: "parseInt without radix; add radix parameter."
+severity: warning
+type: ast_match
+match:
+  ast: "parseInt($INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

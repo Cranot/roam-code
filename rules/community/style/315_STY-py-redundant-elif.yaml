@@ -1,0 +1,8 @@
+name: STY-py-redundant-elif
+description: "elif True is always taken; simplify to else."
+severity: warning
+type: ast_match
+match:
+  ast: "elif True:"
+  language: python
+  file_glob: "**/*.py"

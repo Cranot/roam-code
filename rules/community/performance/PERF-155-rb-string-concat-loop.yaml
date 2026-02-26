@@ -1,0 +1,8 @@
+name: PERF-155-rb-string-concat-loop
+description: "String concatenation in loop; use StringIO or join."
+severity: info
+type: ast_match
+match:
+  ast: "$S += $PART"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: STY-go-test-t-log
+description: "t.Log in test is fine; use t.Error for failures."
+severity: info
+type: ast_match
+match:
+  ast: "t.Log($MSG)"
+  language: go
+  file_glob: "**/*.go"

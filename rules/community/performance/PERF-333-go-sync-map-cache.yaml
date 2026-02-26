@@ -1,0 +1,8 @@
+name: PERF-333-go-sync-map-cache
+description: "sync.Map as cache; verify cleanup of stale entries."
+severity: info
+type: ast_match
+match:
+  ast: "sync.Map{}"
+  language: go
+  file_glob: "**/*.go"

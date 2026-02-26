@@ -1,0 +1,8 @@
+name: STY-js-console-log
+description: "console.log in production; use proper logging."
+severity: info
+type: ast_match
+match:
+  ast: "console.log($MSG)"
+  language: javascript
+  file_glob: "**/*.js"

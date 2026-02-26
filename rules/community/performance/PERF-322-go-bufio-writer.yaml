@@ -1,0 +1,8 @@
+name: PERF-322-go-bufio-writer
+description: "Buffered writer; verify Flush is called."
+severity: info
+type: ast_match
+match:
+  ast: "bufio.NewWriter($W)"
+  language: go
+  file_glob: "**/*.go"

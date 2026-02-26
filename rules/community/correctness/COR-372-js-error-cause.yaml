@@ -1,0 +1,8 @@
+name: COR-372-js-error-cause
+description: "Error cause is good practice for error chaining."
+severity: info
+type: ast_match
+match:
+  ast: "new Error($MSG, { cause: $ERR })"
+  language: javascript
+  file_glob: "**/*.js"

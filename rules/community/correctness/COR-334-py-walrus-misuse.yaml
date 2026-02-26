@@ -1,0 +1,8 @@
+name: COR-334-py-walrus-misuse
+description: "Walrus operator in simple if; verify it adds clarity."
+severity: info
+type: ast_match
+match:
+  ast: "if ($X := $EXPR)"
+  language: python
+  file_glob: "**/*.py"

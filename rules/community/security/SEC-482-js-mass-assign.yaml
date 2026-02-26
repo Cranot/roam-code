@@ -1,0 +1,8 @@
+name: SEC-482-js-mass-assign
+description: "Prototype pollution risk via Object.assign with user input."
+severity: warning
+type: ast_match
+match:
+  ast: "Object.assign($TARGET, $INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

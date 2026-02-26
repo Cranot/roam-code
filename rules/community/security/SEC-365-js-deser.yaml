@@ -1,0 +1,8 @@
+name: SEC-365-js-deser
+description: "Unsafe deserialization via node-serialize."
+severity: error
+type: ast_match
+match:
+  ast: "serialize.unserialize($DATA)"
+  language: javascript
+  file_glob: "**/*.js"

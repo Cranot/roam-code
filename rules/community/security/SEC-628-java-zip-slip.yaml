@@ -1,0 +1,8 @@
+name: SEC-628-java-zip-slip
+description: "Zip slip risk; validate entry names before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "ZipInputStream($STREAM)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-191-java-hashcode-no-equals
+description: "hashCode() without equals() violates the contract."
+severity: error
+type: ast_match
+match:
+  ast: "public int hashCode()"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,11 @@
+name: DF-087-js-cross-fn-ssrf
+description: "Cross-function SSRF: request data flows to HTTP client."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['req.query', 'req.body', 'req.params']
+  sinks: ['fetch(', 'axios.get(', 'axios.post(', 'http.get(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.js"

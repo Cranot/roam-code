@@ -1,0 +1,8 @@
+name: SEC-332-java-path-traversal
+description: "Path traversal via concatenated File constructor."
+severity: error
+type: ast_match
+match:
+  ast: "new File($PATH + $INPUT)"
+  language: java
+  file_glob: "**/*.java"

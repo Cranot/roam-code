@@ -1,0 +1,8 @@
+name: COR-293-js-number-parsefloat
+description: "parseFloat accepts trailing garbage; validate input."
+severity: info
+type: ast_match
+match:
+  ast: "parseFloat($INPUT)"
+  language: javascript
+  file_glob: "**/*.js"

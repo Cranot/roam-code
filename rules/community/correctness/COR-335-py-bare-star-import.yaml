@@ -1,0 +1,8 @@
+name: COR-335-py-bare-star-import
+description: "Star import pollutes namespace; import explicitly."
+severity: warning
+type: ast_match
+match:
+  ast: "from $MODULE import *"
+  language: python
+  file_glob: "**/*.py"

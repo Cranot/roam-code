@@ -1,0 +1,8 @@
+name: PERF-303-php-pdo-prepare-loop
+description: "PDO prepare in loop; prepare once, execute many."
+severity: warning
+type: ast_match
+match:
+  ast: "$PDO->prepare($SQL)"
+  language: php
+  file_glob: "**/*.php"

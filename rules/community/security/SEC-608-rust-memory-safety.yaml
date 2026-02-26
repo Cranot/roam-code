@@ -1,0 +1,8 @@
+name: SEC-608-rust-memory-safety
+description: "uninitialized is UB; use MaybeUninit."
+severity: warning
+type: ast_match
+match:
+  ast: "std::mem::uninitialized()"
+  language: rust
+  file_glob: "**/*.rs"

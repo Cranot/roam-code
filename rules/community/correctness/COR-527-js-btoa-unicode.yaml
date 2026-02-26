@@ -1,0 +1,8 @@
+name: COR-527-js-btoa-unicode
+description: "btoa fails on non-Latin1; use TextEncoder for Unicode."
+severity: warning
+type: ast_match
+match:
+  ast: "btoa($STR)"
+  language: javascript
+  file_glob: "**/*.js"

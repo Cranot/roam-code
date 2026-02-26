@@ -1,0 +1,8 @@
+name: DF-068-rb-unused-param
+description: "Function parameter is never used in the function body."
+severity: info
+type: dataflow_match
+match:
+  patterns: [unused_param]
+  file_glob: "**/*.rb"
+  max_matches: 200

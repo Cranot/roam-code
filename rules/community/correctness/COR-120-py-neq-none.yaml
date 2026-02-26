@@ -1,0 +1,8 @@
+name: COR-120-py-neq-none
+description: "Use 'is not None' instead of '!= None' for None comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "$X != None"
+  language: python
+  file_glob: "**/*.py"

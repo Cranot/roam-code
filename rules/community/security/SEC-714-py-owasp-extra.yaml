@@ -1,0 +1,8 @@
+name: SEC-714-py-owasp-extra
+description: "Dynamic code compilation may execute untrusted code."
+severity: warning
+type: ast_match
+match:
+  ast: "compile($CODE)"
+  language: python
+  file_glob: "**/*.py"

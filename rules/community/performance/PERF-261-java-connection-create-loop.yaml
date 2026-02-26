@@ -1,0 +1,8 @@
+name: PERF-261-java-connection-create-loop
+description: "Creating DB connection in loop; use connection pool."
+severity: error
+type: ast_match
+match:
+  ast: "DriverManager.getConnection($URL)"
+  language: java
+  file_glob: "**/*.java"

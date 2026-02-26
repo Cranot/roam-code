@@ -1,0 +1,8 @@
+name: SEC-432-py-cmdi
+description: "Command injection risk with shell=True."
+severity: error
+type: ast_match
+match:
+  ast: "subprocess.call($CMD, shell=True)"
+  language: python
+  file_glob: "**/*.py"

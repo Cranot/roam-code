@@ -1,0 +1,8 @@
+name: COR-403-go-slice-nil-check
+description: "nil slice works with len/append; nil check may be unnecessary."
+severity: info
+type: ast_match
+match:
+  ast: "if $S == nil"
+  language: go
+  file_glob: "**/*.go"

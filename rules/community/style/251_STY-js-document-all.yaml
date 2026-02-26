@@ -1,0 +1,8 @@
+name: STY-js-document-all
+description: "document.all is non-standard; use querySelector."
+severity: warning
+type: ast_match
+match:
+  ast: "document.all"
+  language: javascript
+  file_glob: "**/*.js"

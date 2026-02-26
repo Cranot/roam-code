@@ -1,0 +1,8 @@
+name: SEC-469-php-tls-insecure
+description: "Disabled SSL peer verification in cURL."
+severity: error
+type: ast_match
+match:
+  ast: "CURLOPT_SSL_VERIFYPEER, false"
+  language: php
+  file_glob: "**/*.php"

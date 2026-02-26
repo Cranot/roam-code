@@ -1,0 +1,8 @@
+name: COR-170-js-assignment-in-condition
+description: "Assignment in condition; did you mean === ?"
+severity: warning
+type: ast_match
+match:
+  ast: "if ($X = $Y)"
+  language: javascript
+  file_glob: "**/*.js"

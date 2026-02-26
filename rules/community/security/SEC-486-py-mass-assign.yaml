@@ -1,0 +1,8 @@
+name: SEC-486-py-mass-assign
+description: "Dynamic setattr may enable mass assignment."
+severity: warning
+type: ast_match
+match:
+  ast: "setattr($OBJ, $ATTR, $VALUE)"
+  language: python
+  file_glob: "**/*.py"

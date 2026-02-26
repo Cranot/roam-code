@@ -1,0 +1,8 @@
+name: SEC-364-cs-deser
+description: "Unsafe deserialization via NetDataContractSerializer."
+severity: error
+type: ast_match
+match:
+  ast: "NetDataContractSerializer.Deserialize($STREAM)"
+  language: csharp
+  file_glob: "**/*.cs"

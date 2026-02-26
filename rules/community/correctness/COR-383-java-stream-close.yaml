@@ -1,0 +1,8 @@
+name: COR-383-java-stream-close
+description: "Files.lines() must be closed; use try-with-resources."
+severity: warning
+type: ast_match
+match:
+  ast: "Files.lines($PATH)"
+  language: java
+  file_glob: "**/*.java"

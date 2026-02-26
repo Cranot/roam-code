@@ -1,0 +1,8 @@
+name: PERF-194-cs-dictionary-trygetvalue
+description: "Use TryGetValue instead of ContainsKey + indexer."
+severity: info
+type: ast_match
+match:
+  ast: "$DICT.ContainsKey($KEY)"
+  language: csharp
+  file_glob: "**/*.cs"

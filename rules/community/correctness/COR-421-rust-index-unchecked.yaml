@@ -1,0 +1,8 @@
+name: COR-421-rust-index-unchecked
+description: "Array indexing may panic; use .get() for safety."
+severity: info
+type: ast_match
+match:
+  ast: "$SLICE[$IDX]"
+  language: rust
+  file_glob: "**/*.rs"

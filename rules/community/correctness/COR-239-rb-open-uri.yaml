@@ -1,0 +1,8 @@
+name: COR-239-rb-open-uri
+description: "Kernel#open with user input is dangerous; use URI.open."
+severity: warning
+type: ast_match
+match:
+  ast: "open($URI)"
+  language: ruby
+  file_glob: "**/*.rb"

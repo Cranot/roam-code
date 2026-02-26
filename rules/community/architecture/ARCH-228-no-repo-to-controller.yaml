@@ -1,0 +1,12 @@
+name: "ARCH-228-no-repo-to-controller"
+description: "Repositories should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/repositories/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

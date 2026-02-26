@@ -1,0 +1,8 @@
+name: COR-187-ts-async-no-await
+description: "Async function without await is unnecessary."
+severity: warning
+type: ast_match
+match:
+  ast: "async function $NAME($ARGS) { return $X }"
+  language: typescript
+  file_glob: "**/*.ts"

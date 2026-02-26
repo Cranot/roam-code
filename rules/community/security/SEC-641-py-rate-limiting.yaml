@@ -1,0 +1,8 @@
+name: SEC-641-py-rate-limiting
+description: "Email sending; verify rate limiting to prevent spam."
+severity: info
+type: ast_match
+match:
+  ast: "send_email($TO, $SUBJECT, $BODY)"
+  language: python
+  file_glob: "**/*.py"

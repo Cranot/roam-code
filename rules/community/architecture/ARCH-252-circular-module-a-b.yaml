@@ -1,0 +1,12 @@
+name: "ARCH-252-circular-module-a-b"
+description: "Circular dependency between modules."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/modules/a/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/modules/b/**"
+    kind: [function, method, class]
+  max_distance: 1

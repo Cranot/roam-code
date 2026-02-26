@@ -1,0 +1,8 @@
+name: PERF-160-rb-sort-by-reverse
+description: "Use sort_by with negation instead of sort_by.reverse."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.sort_by { $BLOCK }.reverse"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: COR-306-rust-string-to-string
+description: "Unnecessary to_string(); consider borrowing &str."
+severity: info
+type: ast_match
+match:
+  ast: "$S.to_string()"
+  language: rust
+  file_glob: "**/*.rs"

@@ -1,0 +1,8 @@
+name: PERF-206-py-n-plus-1-http
+description: "HTTP request in loop; batch into single request."
+severity: warning
+type: ast_match
+match:
+  ast: "requests.get($URL)"
+  language: python
+  file_glob: "**/*.py"

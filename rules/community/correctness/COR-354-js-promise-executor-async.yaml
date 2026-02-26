@@ -1,0 +1,8 @@
+name: COR-354-js-promise-executor-async
+description: "Async promise executor is an anti-pattern."
+severity: error
+type: ast_match
+match:
+  ast: "new Promise(async ($RESOLVE, $REJECT) => $BODY)"
+  language: javascript
+  file_glob: "**/*.js"

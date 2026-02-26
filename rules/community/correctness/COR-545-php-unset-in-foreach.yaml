@@ -1,0 +1,8 @@
+name: COR-545-php-unset-in-foreach
+description: "Unsetting array during foreach may skip elements."
+severity: warning
+type: ast_match
+match:
+  ast: "unset($ARR[$KEY])"
+  language: php
+  file_glob: "**/*.php"

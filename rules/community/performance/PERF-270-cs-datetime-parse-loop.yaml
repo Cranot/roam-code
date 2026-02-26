@@ -1,0 +1,8 @@
+name: PERF-270-cs-datetime-parse-loop
+description: "DateTime.Parse in loop; batch parsing."
+severity: info
+type: ast_match
+match:
+  ast: "DateTime.Parse($INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

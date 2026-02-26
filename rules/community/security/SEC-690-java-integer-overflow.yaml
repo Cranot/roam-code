@@ -1,0 +1,8 @@
+name: SEC-690-java-integer-overflow
+description: "Integer multiplication may overflow; use Math.multiplyExact."
+severity: info
+type: ast_match
+match:
+  ast: "$A * $B"
+  language: java
+  file_glob: "**/*.java"

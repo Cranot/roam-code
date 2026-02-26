@@ -1,0 +1,8 @@
+name: SEC-637-java-host-injection
+description: "Server name from Host header may be spoofed."
+severity: info
+type: ast_match
+match:
+  ast: "request.getServerName()"
+  language: java
+  file_glob: "**/*.java"

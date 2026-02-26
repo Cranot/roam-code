@@ -1,0 +1,8 @@
+name: PERF-276-rb-pluck-vs-map
+description: "Use pluck instead of map for single attribute."
+severity: warning
+type: ast_match
+match:
+  ast: "$REL.map { |$R| $R.$ATTR }"
+  language: ruby
+  file_glob: "**/*.rb"

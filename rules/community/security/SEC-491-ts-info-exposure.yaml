@@ -1,0 +1,8 @@
+name: SEC-491-ts-info-exposure
+description: "Stack trace in HTTP response."
+severity: warning
+type: ast_match
+match:
+  ast: "res.send($ERR.stack)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-210-java-vector-usage
+description: "Vector is synchronized; use ArrayList unless thread-safety needed."
+severity: info
+type: ast_match
+match:
+  ast: "new Vector()"
+  language: java
+  file_glob: "**/*.java"

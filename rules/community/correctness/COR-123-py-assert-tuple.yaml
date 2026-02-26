@@ -1,0 +1,8 @@
+name: COR-123-py-assert-tuple
+description: "Assert with tuple is always truthy; remove parentheses."
+severity: error
+type: ast_match
+match:
+  ast: "assert($X, $Y)"
+  language: python
+  file_glob: "**/*.py"

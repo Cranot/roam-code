@@ -1,0 +1,8 @@
+name: PERF-107-js-array-concat-loop
+description: "Array.concat in loop creates copies; use push.apply."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.concat($OTHER)"
+  language: javascript
+  file_glob: "**/*.js"

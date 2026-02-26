@@ -1,0 +1,8 @@
+name: STY-py-test-print
+description: "print in test; use logging or assertions instead."
+severity: info
+type: ast_match
+match:
+  ast: "print($MSG)"
+  language: python
+  file_glob: "**/*.py"

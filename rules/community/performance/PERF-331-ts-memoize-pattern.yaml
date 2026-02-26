@@ -1,0 +1,8 @@
+name: PERF-331-ts-memoize-pattern
+description: "Caching pattern; verify cache invalidation."
+severity: info
+type: ast_match
+match:
+  ast: "$CACHE[$KEY]"
+  language: typescript
+  file_glob: "**/*.ts"

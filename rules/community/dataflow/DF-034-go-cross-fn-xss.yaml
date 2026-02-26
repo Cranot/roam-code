@@ -1,0 +1,11 @@
+name: DF-034-go-cross-fn-xss
+description: "Cross-function XSS: request input flows to response writer."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['r.URL.Query()', 'r.FormValue(', 'r.Body']
+  sinks: ['fmt.Fprintf(w', 'w.Write(', 'template.HTML(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.go"

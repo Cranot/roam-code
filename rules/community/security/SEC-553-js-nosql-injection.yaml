@@ -1,0 +1,8 @@
+name: SEC-553-js-nosql-injection
+description: "Verify aggregation pipeline is not user-controlled."
+severity: warning
+type: ast_match
+match:
+  ast: "$COLLECTION.aggregate($PIPELINE)"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: PERF-283-ts-map-entries-loop
+description: "Map.entries() creates iterator; cache if reused."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP.entries()"
+  language: typescript
+  file_glob: "**/*.ts"

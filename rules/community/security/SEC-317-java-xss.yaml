@@ -1,0 +1,8 @@
+name: SEC-317-java-xss
+description: "XSS risk via direct response writer output."
+severity: error
+type: ast_match
+match:
+  ast: "response.getWriter().write($INPUT)"
+  language: java
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: PERF-245-go-ioutil-readall
+description: "ioutil.ReadAll is deprecated; use io.ReadAll."
+severity: info
+type: ast_match
+match:
+  ast: "ioutil.ReadAll($READER)"
+  language: go
+  file_glob: "**/*.go"

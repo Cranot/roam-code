@@ -1,0 +1,12 @@
+name: "ARCH-276-no-cli-to-web"
+description: "CLI commands should not depend on web layer."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/cli/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/web/**"
+    kind: [function, method, class]
+  max_distance: 1

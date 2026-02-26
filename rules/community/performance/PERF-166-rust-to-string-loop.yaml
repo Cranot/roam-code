@@ -1,0 +1,8 @@
+name: PERF-166-rust-to-string-loop
+description: "to_string() in loop allocates; minimize conversions."
+severity: info
+type: ast_match
+match:
+  ast: "$X.to_string()"
+  language: rust
+  file_glob: "**/*.rs"

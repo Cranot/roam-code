@@ -1,0 +1,8 @@
+name: SEC-549-py-nosql-injection
+description: "NoSQL injection via string concatenation in find()."
+severity: warning
+type: ast_match
+match:
+  ast: "$DB.find($QUERY + $INPUT)"
+  language: python
+  file_glob: "**/*.py"

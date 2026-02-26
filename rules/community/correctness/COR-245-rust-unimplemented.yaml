@@ -1,0 +1,8 @@
+name: COR-245-rust-unimplemented
+description: "unimplemented!() panics at runtime; implement before release."
+severity: warning
+type: ast_match
+match:
+  ast: "unimplemented!()"
+  language: rust
+  file_glob: "**/*.rs"

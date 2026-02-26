@@ -1,0 +1,8 @@
+name: SEC-571-java-email-injection
+description: "Verify email parameters are sanitized."
+severity: warning
+type: ast_match
+match:
+  ast: "Transport.send($MSG)"
+  language: java
+  file_glob: "**/*.java"

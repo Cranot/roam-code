@@ -1,0 +1,8 @@
+name: PERF-170-rust-box-new-loop
+description: "Box::new in loop allocates on heap; minimize allocations."
+severity: info
+type: ast_match
+match:
+  ast: "Box::new($X)"
+  language: rust
+  file_glob: "**/*.rs"

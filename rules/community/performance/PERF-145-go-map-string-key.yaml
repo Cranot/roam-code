@@ -1,0 +1,8 @@
+name: PERF-145-go-map-string-key
+description: "Map with string key; consider using int key for hot paths."
+severity: info
+type: ast_match
+match:
+  ast: "$MAP[$KEY]"
+  language: go
+  file_glob: "**/*.go"

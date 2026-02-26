@@ -1,0 +1,8 @@
+name: COR-519-go-time-format
+description: "Verify Go time format uses reference time 2006-01-02."
+severity: info
+type: ast_match
+match:
+  ast: "$T.Format($LAYOUT)"
+  language: go
+  file_glob: "**/*.go"

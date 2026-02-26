@@ -1,0 +1,8 @@
+name: COR-398-go-context-cancel
+description: "WithCancel must call cancel; defer cancel()."
+severity: warning
+type: ast_match
+match:
+  ast: "context.WithCancel($CTX)"
+  language: go
+  file_glob: "**/*.go"

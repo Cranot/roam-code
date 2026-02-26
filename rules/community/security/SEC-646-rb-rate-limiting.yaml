@@ -1,0 +1,8 @@
+name: SEC-646-rb-rate-limiting
+description: "POST route; verify rate limiting is applied."
+severity: info
+type: ast_match
+match:
+  ast: "post $PATH, to: $CONTROLLER"
+  language: ruby
+  file_glob: "**/*.rb"

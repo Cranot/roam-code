@@ -1,0 +1,8 @@
+name: SEC-539-go-log-sensitive
+description: "Potential logging of sensitive data."
+severity: info
+type: ast_match
+match:
+  ast: "log.Println($PASSWORD)"
+  language: go
+  file_glob: "**/*.go"

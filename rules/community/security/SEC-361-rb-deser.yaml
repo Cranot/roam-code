@@ -1,0 +1,8 @@
+name: SEC-361-rb-deser
+description: "Unsafe YAML deserialization; use YAML.safe_load()."
+severity: error
+type: ast_match
+match:
+  ast: "YAML.load($DATA)"
+  language: ruby
+  file_glob: "**/*.rb"

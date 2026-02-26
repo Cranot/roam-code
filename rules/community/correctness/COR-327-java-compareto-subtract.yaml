@@ -1,0 +1,8 @@
+name: COR-327-java-compareto-subtract
+description: "compareTo via subtraction may overflow; use Integer.compare."
+severity: warning
+type: ast_match
+match:
+  ast: "return $A - $B"
+  language: java
+  file_glob: "**/*.java"

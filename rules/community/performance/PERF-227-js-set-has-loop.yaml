@@ -1,0 +1,8 @@
+name: PERF-227-js-set-has-loop
+description: "Set.has is O(1); good for membership testing."
+severity: info
+type: ast_match
+match:
+  ast: "$SET.has($ELEM)"
+  language: javascript
+  file_glob: "**/*.js"

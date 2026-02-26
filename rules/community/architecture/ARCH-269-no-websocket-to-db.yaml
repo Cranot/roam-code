@@ -1,0 +1,12 @@
+name: "ARCH-269-no-websocket-to-db"
+description: "WebSocket handlers should not access database directly."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/websocket/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/db/**"
+    kind: [function, method, class]
+  max_distance: 1

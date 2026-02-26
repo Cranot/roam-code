@@ -1,0 +1,8 @@
+name: COR-488-cs-interlocked-increment
+description: "Interlocked is for atomic operations; verify usage."
+severity: info
+type: ast_match
+match:
+  ast: "Interlocked.Increment(ref $VAR)"
+  language: csharp
+  file_glob: "**/*.cs"

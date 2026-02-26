@@ -1,0 +1,8 @@
+name: COR-509-php-gettype-check
+description: "gettype returns strings; use is_* functions instead."
+severity: info
+type: ast_match
+match:
+  ast: "gettype($X)"
+  language: php
+  file_glob: "**/*.php"

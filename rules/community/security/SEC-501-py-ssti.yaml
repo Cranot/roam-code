@@ -1,0 +1,8 @@
+name: SEC-501-py-ssti
+description: "SSTI via Jinja2 from_string() with user input."
+severity: error
+type: ast_match
+match:
+  ast: "Environment().from_string($INPUT)"
+  language: python
+  file_glob: "**/*.py"

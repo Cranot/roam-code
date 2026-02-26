@@ -1,0 +1,8 @@
+name: SEC-511-go-unsafe-file-ops
+description: "Creating directories with 0777 is insecure."
+severity: warning
+type: ast_match
+match:
+  ast: "os.MkdirAll($PATH, 0777)"
+  language: go
+  file_glob: "**/*.go"

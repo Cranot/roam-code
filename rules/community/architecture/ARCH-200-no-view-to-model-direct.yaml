@@ -1,0 +1,12 @@
+name: "ARCH-200-no-view-to-model-direct"
+description: "Views should not directly access database models."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/views/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/models/**"
+    kind: [function, method, class]
+  max_distance: 1

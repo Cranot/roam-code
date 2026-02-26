@@ -1,0 +1,8 @@
+name: STY-py-multiple-return
+description: "Returning 4+ values; use dataclass or namedtuple."
+severity: info
+type: ast_match
+match:
+  ast: "return $A, $B, $C, $D"
+  language: python
+  file_glob: "**/*.py"

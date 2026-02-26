@@ -1,0 +1,8 @@
+name: COR-206-java-string-indexof-not-minus-one
+description: "indexOf > 0 misses index 0; use >= 0 or != -1."
+severity: error
+type: ast_match
+match:
+  ast: "$STR.indexOf($S) > 0"
+  language: java
+  file_glob: "**/*.java"

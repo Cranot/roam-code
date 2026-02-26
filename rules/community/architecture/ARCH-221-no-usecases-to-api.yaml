@@ -1,0 +1,12 @@
+name: "ARCH-221-no-usecases-to-api"
+description: "Use cases should not depend on API layer."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/usecases/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/api/**"
+    kind: [function, method, class]
+  max_distance: 1

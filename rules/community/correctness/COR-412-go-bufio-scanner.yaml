@@ -1,0 +1,8 @@
+name: COR-412-go-bufio-scanner
+description: "Scanner has default 64KB buffer; increase for large lines."
+severity: info
+type: ast_match
+match:
+  ast: "bufio.NewScanner($READER)"
+  language: go
+  file_glob: "**/*.go"

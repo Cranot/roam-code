@@ -1,0 +1,8 @@
+name: PERF-287-ts-createelement-loop
+description: "createElement in loop; use DocumentFragment."
+severity: warning
+type: ast_match
+match:
+  ast: "document.createElement($TAG)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: COR-391-java-array-asList
+description: "Arrays.asList returns fixed-size list; cannot add/remove."
+severity: info
+type: ast_match
+match:
+  ast: "Arrays.asList($ARR)"
+  language: java
+  file_glob: "**/*.java"

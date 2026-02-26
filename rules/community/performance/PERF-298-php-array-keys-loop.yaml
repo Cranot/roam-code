@@ -1,0 +1,8 @@
+name: PERF-298-php-array-keys-loop
+description: "array_keys allocates; use foreach with key if only iterating."
+severity: info
+type: ast_match
+match:
+  ast: "array_keys($ARR)"
+  language: php
+  file_glob: "**/*.php"

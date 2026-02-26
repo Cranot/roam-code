@@ -1,0 +1,8 @@
+name: SEC-478-java-redos
+description: "Regex from user input may cause ReDoS."
+severity: info
+type: ast_match
+match:
+  ast: "Pattern.compile($INPUT)"
+  language: java
+  file_glob: "**/*.java"

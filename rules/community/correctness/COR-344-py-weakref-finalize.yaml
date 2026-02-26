@@ -1,0 +1,8 @@
+name: COR-344-py-weakref-finalize
+description: "Weak reference finalizer; ensure no circular refs."
+severity: info
+type: ast_match
+match:
+  ast: "weakref.finalize($OBJ, $FUNC)"
+  language: python
+  file_glob: "**/*.py"

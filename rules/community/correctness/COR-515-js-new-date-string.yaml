@@ -1,0 +1,8 @@
+name: COR-515-js-new-date-string
+description: "Date constructor with string is unreliable; parse explicitly."
+severity: warning
+type: ast_match
+match:
+  ast: "new Date($STR)"
+  language: javascript
+  file_glob: "**/*.js"

@@ -1,0 +1,8 @@
+name: PERF-186-cs-linq-count-loop
+description: "LINQ Count() enumerates entire sequence; use .Count property."
+severity: warning
+type: ast_match
+match:
+  ast: "$SEQ.Count()"
+  language: csharp
+  file_glob: "**/*.cs"

@@ -1,0 +1,8 @@
+name: COR-314-py-string-endswith-tuple
+description: "Use endswith((x, y)) instead of chained endswith."
+severity: info
+type: ast_match
+match:
+  ast: "$S.endswith($X) or $S.endswith($Y)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-147-py-isinstance-tuple
+description: "Use isinstance(x, (T1, T2)) instead of multiple isinstance calls."
+severity: info
+type: ast_match
+match:
+  ast: "isinstance($X, $T1) or isinstance($X, $T2)"
+  language: python
+  file_glob: "**/*.py"

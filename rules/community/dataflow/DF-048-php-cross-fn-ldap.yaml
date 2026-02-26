@@ -1,0 +1,11 @@
+name: DF-048-php-cross-fn-ldap
+description: "Cross-function LDAP injection: superglobal flows to LDAP."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['$_GET', '$_POST']
+  sinks: ['ldap_search(', 'ldap_list(']
+  max_chain_length: 5
+  min_confidence: 0.5
+  file_glob: "**/*.php"

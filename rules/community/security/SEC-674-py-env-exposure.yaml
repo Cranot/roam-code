@@ -1,0 +1,8 @@
+name: SEC-674-py-env-exposure
+description: "Verify environment variables do not contain secrets in logs."
+severity: info
+type: ast_match
+match:
+  ast: "os.environ"
+  language: python
+  file_glob: "**/*.py"

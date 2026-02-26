@@ -1,0 +1,8 @@
+name: SEC-513-php-unsafe-file-ops
+description: "Setting 0777 permissions is insecure."
+severity: warning
+type: ast_match
+match:
+  ast: "chmod($PATH, 0777)"
+  language: php
+  file_glob: "**/*.php"

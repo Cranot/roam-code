@@ -1,0 +1,8 @@
+name: PERF-223-py-http-session-create
+description: "Creating Session in loop; reuse session."
+severity: warning
+type: ast_match
+match:
+  ast: "requests.Session()"
+  language: python
+  file_glob: "**/*.py"

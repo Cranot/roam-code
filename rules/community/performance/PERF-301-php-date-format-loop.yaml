@@ -1,0 +1,8 @@
+name: PERF-301-php-date-format-loop
+description: "date() in loop; create DateTime once."
+severity: info
+type: ast_match
+match:
+  ast: "date($FORMAT, $TIMESTAMP)"
+  language: php
+  file_glob: "**/*.php"

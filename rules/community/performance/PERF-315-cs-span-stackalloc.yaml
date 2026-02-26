@@ -1,0 +1,8 @@
+name: PERF-315-cs-span-stackalloc
+description: "stackalloc is fast but limited; verify size is bounded."
+severity: info
+type: ast_match
+match:
+  ast: "stackalloc $TYPE[$SIZE]"
+  language: csharp
+  file_glob: "**/*.cs"

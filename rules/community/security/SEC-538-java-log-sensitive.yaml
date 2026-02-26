@@ -1,0 +1,8 @@
+name: SEC-538-java-log-sensitive
+description: "Potential printing of sensitive data."
+severity: info
+type: ast_match
+match:
+  ast: "System.out.println($PASSWORD)"
+  language: java
+  file_glob: "**/*.java"

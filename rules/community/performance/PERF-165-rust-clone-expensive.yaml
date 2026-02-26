@@ -1,0 +1,8 @@
+name: PERF-165-rust-clone-expensive
+description: "clone() may be expensive; consider borrowing."
+severity: info
+type: ast_match
+match:
+  ast: "$X.clone()"
+  language: rust
+  file_glob: "**/*.rs"

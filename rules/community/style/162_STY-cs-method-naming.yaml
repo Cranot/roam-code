@@ -1,0 +1,9 @@
+name: STY-cs-method-naming
+description: "C# method names should use PascalCase."
+severity: info
+type: symbol_match
+match:
+  kind: method
+  file_glob: "**/*.cs"
+  require:
+    name_regex: "^[a-z]"

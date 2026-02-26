@@ -1,0 +1,11 @@
+name: DF-060-js-cross-fn-log-inj
+description: "Cross-function log injection: request data flows to log."
+severity: info
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['req.query', 'req.body', 'req.headers']
+  sinks: ['console.log(', 'logger.info(', 'winston.log(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.js"

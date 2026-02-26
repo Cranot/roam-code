@@ -1,0 +1,8 @@
+name: COR-236-rb-sleep-in-test
+description: "sleep() in tests is flaky; use proper synchronization."
+severity: warning
+type: ast_match
+match:
+  ast: "sleep($DUR)"
+  language: ruby
+  file_glob: "**/*.rb"

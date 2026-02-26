@@ -1,0 +1,8 @@
+name: PERF-242-go-sync-map
+description: "sync.Map is slower than mutex+map for most cases."
+severity: info
+type: ast_match
+match:
+  ast: "sync.Map{}"
+  language: go
+  file_glob: "**/*.go"

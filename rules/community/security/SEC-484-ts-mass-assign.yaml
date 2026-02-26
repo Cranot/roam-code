@@ -1,0 +1,8 @@
+name: SEC-484-ts-mass-assign
+description: "Prototype pollution risk via Object.assign."
+severity: warning
+type: ast_match
+match:
+  ast: "Object.assign($TARGET, $INPUT)"
+  language: typescript
+  file_glob: "**/*.ts"

@@ -1,0 +1,8 @@
+name: SEC-444-cs-cmdi
+description: "Command injection in Process.Start()."
+severity: error
+type: ast_match
+match:
+  ast: "Process.Start($CMD + $INPUT)"
+  language: csharp
+  file_glob: "**/*.cs"

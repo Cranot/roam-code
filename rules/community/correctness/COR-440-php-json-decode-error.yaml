@@ -1,0 +1,8 @@
+name: COR-440-php-json-decode-error
+description: "json_decode returns null on error; check json_last_error()."
+severity: warning
+type: ast_match
+match:
+  ast: "json_decode($INPUT)"
+  language: php
+  file_glob: "**/*.php"

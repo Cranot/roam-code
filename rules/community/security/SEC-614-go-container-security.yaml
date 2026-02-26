@@ -1,0 +1,8 @@
+name: SEC-614-go-container-security
+description: "Container privileged mode is insecure."
+severity: error
+type: ast_match
+match:
+  ast: "Privileged: true"
+  language: go
+  file_glob: "**/*.go"

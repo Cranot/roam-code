@@ -1,0 +1,8 @@
+name: COR-287-py-return-or-none
+description: "'or None' is redundant; falsy values already return None."
+severity: info
+type: ast_match
+match:
+  ast: "return $X or None"
+  language: python
+  file_glob: "**/*.py"

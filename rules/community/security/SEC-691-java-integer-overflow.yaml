@@ -1,0 +1,8 @@
+name: SEC-691-java-integer-overflow
+description: "Integer addition may overflow; use Math.addExact."
+severity: info
+type: ast_match
+match:
+  ast: "$A + $B"
+  language: java
+  file_glob: "**/*.java"

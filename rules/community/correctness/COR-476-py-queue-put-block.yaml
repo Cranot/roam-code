@@ -1,0 +1,8 @@
+name: COR-476-py-queue-put-block
+description: "Queue.put blocks by default; use put_nowait or timeout."
+severity: info
+type: ast_match
+match:
+  ast: "$QUEUE.put($ITEM)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: PERF-279-rb-each-with-object
+description: "Use each_with_object instead of inject for building."
+severity: info
+type: ast_match
+match:
+  ast: "$ARR.inject($INIT) { $BLOCK }"
+  language: ruby
+  file_glob: "**/*.rb"

@@ -1,0 +1,8 @@
+name: SEC-676-ts-env-exposure
+description: "Verify process.env values are not logged."
+severity: info
+type: ast_match
+match:
+  ast: "process.env"
+  language: typescript
+  file_glob: "**/*.ts"

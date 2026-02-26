@@ -1,0 +1,8 @@
+name: SEC-632-php-zip-slip
+description: "Zip slip risk; validate entry names before extraction."
+severity: error
+type: ast_match
+match:
+  ast: "ZipArchive::open($PATH)"
+  language: php
+  file_glob: "**/*.php"

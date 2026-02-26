@@ -1,0 +1,11 @@
+name: DF-049-py-cross-fn-ssti
+description: "Cross-function SSTI: user input flows to template engine."
+severity: error
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.args', 'request.form', 'request.json']
+  sinks: ['render_template_string(', 'Template(', 'Environment().from_string(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.py"

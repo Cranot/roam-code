@@ -1,0 +1,11 @@
+name: DF-092-java-cross-fn-redos
+description: "Cross-function ReDoS: parameter flows to Pattern.compile."
+severity: warning
+type: dataflow_match
+match:
+  patterns: [inter_source_to_sink]
+  sources: ['request.getParameter(']
+  sinks: ['Pattern.compile(', 'Pattern.matches(']
+  max_chain_length: 4
+  min_confidence: 0.5
+  file_glob: "**/*.java"

@@ -1,0 +1,8 @@
+name: COR-370-js-weakref-deref
+description: "WeakRef.deref() may return undefined; check before use."
+severity: warning
+type: ast_match
+match:
+  ast: "$REF.deref()"
+  language: javascript
+  file_glob: "**/*.js"

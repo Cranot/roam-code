@@ -1,0 +1,8 @@
+name: SEC-399-go-crypto-misuse
+description: "math/rand is not cryptographically secure; use crypto/rand."
+severity: warning
+type: ast_match
+match:
+  ast: "rand.Intn($N)"
+  language: go
+  file_glob: "**/*.go"

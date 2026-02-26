@@ -1,0 +1,8 @@
+name: COR-342-py-thread-daemon
+description: "Daemon threads are killed abruptly; ensure cleanup."
+severity: info
+type: ast_match
+match:
+  ast: "$THREAD.daemon = True"
+  language: python
+  file_glob: "**/*.py"

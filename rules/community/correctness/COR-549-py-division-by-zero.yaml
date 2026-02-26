@@ -1,0 +1,8 @@
+name: COR-549-py-division-by-zero
+description: "Verify divisor is not zero."
+severity: info
+type: ast_match
+match:
+  ast: "$A / $B"
+  language: python
+  file_glob: "**/*.py"

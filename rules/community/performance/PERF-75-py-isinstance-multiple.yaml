@@ -1,0 +1,8 @@
+name: PERF-75-py-isinstance-multiple
+description: "Use isinstance(x, (T1, T2)) tuple for efficiency."
+severity: info
+type: ast_match
+match:
+  ast: "isinstance($X, $T1) or isinstance($X, $T2)"
+  language: python
+  file_glob: "**/*.py"

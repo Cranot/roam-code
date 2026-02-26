@@ -1,0 +1,8 @@
+name: COR-142-py-len-compare-gt-zero
+description: "Use 'if x' instead of 'len(x) > 0' for non-emptiness check."
+severity: info
+type: ast_match
+match:
+  ast: "len($X) > 0"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-307-rust-vec-deref
+description: "Use &*vec or vec.as_slice() for clarity."
+severity: info
+type: ast_match
+match:
+  ast: "&$VEC[..]"
+  language: rust
+  file_glob: "**/*.rs"

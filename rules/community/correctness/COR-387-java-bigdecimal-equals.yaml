@@ -1,0 +1,8 @@
+name: COR-387-java-bigdecimal-equals
+description: "BigDecimal.equals checks scale; use compareTo."
+severity: warning
+type: ast_match
+match:
+  ast: "$BD.equals($OTHER)"
+  language: java
+  file_glob: "**/*.java"

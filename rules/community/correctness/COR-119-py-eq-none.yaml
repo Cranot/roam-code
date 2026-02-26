@@ -1,0 +1,8 @@
+name: COR-119-py-eq-none
+description: "Use 'is None' instead of '== None' for None comparison."
+severity: warning
+type: ast_match
+match:
+  ast: "$X == None"
+  language: python
+  file_glob: "**/*.py"

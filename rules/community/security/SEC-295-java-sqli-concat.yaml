@@ -1,0 +1,8 @@
+name: SEC-295-java-sqli-concat
+description: "SQL injection via string concatenation in executeQuery()."
+severity: error
+type: ast_match
+match:
+  ast: "statement.executeQuery($SQL + $INPUT)"
+  language: java
+  file_glob: "**/*.java"

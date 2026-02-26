@@ -1,0 +1,8 @@
+name: SEC-736-php-owasp-extra
+description: "preg_replace with /e modifier is eval-like (PHP < 7)."
+severity: warning
+type: ast_match
+match:
+  ast: "preg_replace($PATTERN, $REPLACE, $INPUT)"
+  language: php
+  file_glob: "**/*.php"

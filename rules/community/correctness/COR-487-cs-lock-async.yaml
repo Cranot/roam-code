@@ -1,0 +1,8 @@
+name: COR-487-cs-lock-async
+description: "Cannot await inside lock; use SemaphoreSlim."
+severity: error
+type: ast_match
+match:
+  ast: "lock ($OBJ) { await $TASK }"
+  language: csharp
+  file_glob: "**/*.cs"

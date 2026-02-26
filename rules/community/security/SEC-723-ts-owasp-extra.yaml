@@ -1,0 +1,8 @@
+name: SEC-723-ts-owasp-extra
+description: "Synchronous command execution; verify input sanitized."
+severity: warning
+type: ast_match
+match:
+  ast: "child_process.execSync($CMD)"
+  language: typescript
+  file_glob: "**/*.ts"

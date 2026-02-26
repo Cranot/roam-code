@@ -1,0 +1,8 @@
+name: SEC-709-rb-file-upload
+description: "Verify uploaded file type, size, and content are validated."
+severity: warning
+type: ast_match
+match:
+  ast: "params[:file]"
+  language: ruby
+  file_glob: "**/*.rb"

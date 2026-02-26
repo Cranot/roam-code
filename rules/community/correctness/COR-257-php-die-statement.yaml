@@ -1,0 +1,8 @@
+name: COR-257-php-die-statement
+description: "die() abruptly terminates; throw exception instead."
+severity: warning
+type: ast_match
+match:
+  ast: "die($MSG)"
+  language: php
+  file_glob: "**/*.php"

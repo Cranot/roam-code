@@ -1,0 +1,8 @@
+name: STY-py-todo-comment
+description: "TODO comment found; track in issue tracker."
+severity: info
+type: ast_match
+match:
+  ast: "# TODO"
+  language: python
+  file_glob: "**/*.py"

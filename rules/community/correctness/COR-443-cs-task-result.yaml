@@ -1,0 +1,8 @@
+name: COR-443-cs-task-result
+description: "Task.Result blocks; use await instead."
+severity: warning
+type: ast_match
+match:
+  ast: "$TASK.Result"
+  language: csharp
+  file_glob: "**/*.cs"

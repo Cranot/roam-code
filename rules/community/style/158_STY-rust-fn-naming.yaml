@@ -1,0 +1,9 @@
+name: STY-rust-fn-naming
+description: "Rust function names should use snake_case."
+severity: info
+type: symbol_match
+match:
+  kind: function
+  file_glob: "**/*.rs"
+  require:
+    name_regex: "[A-Z]"

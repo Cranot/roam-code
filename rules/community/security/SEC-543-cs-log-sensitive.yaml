@@ -1,0 +1,8 @@
+name: SEC-543-cs-log-sensitive
+description: "Potential printing of sensitive data."
+severity: info
+type: ast_match
+match:
+  ast: "Console.WriteLine($PASSWORD)"
+  language: csharp
+  file_glob: "**/*.cs"

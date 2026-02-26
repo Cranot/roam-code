@@ -1,0 +1,8 @@
+name: COR-144-py-except-broad-reraise
+description: "Catching and re-raising Exception loses traceback; use bare raise."
+severity: info
+type: ast_match
+match:
+  ast: "except Exception as $E: raise $E"
+  language: python
+  file_glob: "**/*.py"

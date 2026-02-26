@@ -1,0 +1,8 @@
+name: STY-py-star-import
+description: "Wildcard import pollutes namespace; import explicitly."
+severity: warning
+type: ast_match
+match:
+  ast: "from $MODULE import *"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: SEC-582-py-server-misconfig
+description: "Empty ALLOWED_HOSTS in Django; set to specific hosts."
+severity: warning
+type: ast_match
+match:
+  ast: "ALLOWED_HOSTS = []"
+  language: python
+  file_glob: "**/*.py"

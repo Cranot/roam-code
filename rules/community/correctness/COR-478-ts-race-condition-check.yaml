@@ -1,0 +1,8 @@
+name: COR-478-ts-race-condition-check
+description: "Promise.race; first rejection wins. Use Promise.any if needed."
+severity: info
+type: ast_match
+match:
+  ast: "Promise.race($PROMISES)"
+  language: typescript
+  file_glob: "**/*.ts"

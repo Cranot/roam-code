@@ -1,0 +1,8 @@
+name: COR-220-go-string-to-byte-loop
+description: "Repeated string-to-byte conversion in loop allocates."
+severity: info
+type: ast_match
+match:
+  ast: "[]byte($STR)"
+  language: go
+  file_glob: "**/*.go"

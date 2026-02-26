@@ -1,0 +1,8 @@
+name: SEC-355-py-deser
+description: "Unsafe deserialization via shelve.open()."
+severity: error
+type: ast_match
+match:
+  ast: "shelve.open($PATH)"
+  language: python
+  file_glob: "**/*.py"

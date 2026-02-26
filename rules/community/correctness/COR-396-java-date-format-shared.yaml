@@ -1,0 +1,8 @@
+name: COR-396-java-date-format-shared
+description: "SimpleDateFormat is not thread-safe; use DateTimeFormatter."
+severity: warning
+type: ast_match
+match:
+  ast: "SimpleDateFormat($PATTERN)"
+  language: java
+  file_glob: "**/*.java"

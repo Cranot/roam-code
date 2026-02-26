@@ -1,0 +1,8 @@
+name: COR-521-rb-time-now
+description: "Time.now is local time; use Time.now.utc for UTC."
+severity: info
+type: ast_match
+match:
+  ast: "Time.now"
+  language: ruby
+  file_glob: "**/*.rb"

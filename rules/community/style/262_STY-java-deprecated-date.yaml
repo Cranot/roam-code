@@ -1,0 +1,8 @@
+name: STY-java-deprecated-date
+description: "java.util.Date is legacy; use java.time API."
+severity: info
+type: ast_match
+match:
+  ast: "new Date()"
+  language: java
+  file_glob: "**/*.java"

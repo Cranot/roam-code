@@ -1,0 +1,8 @@
+name: PERF-180-php-array-unique-large
+description: "array_unique on large array is slow; use array_flip."
+severity: info
+type: ast_match
+match:
+  ast: "array_unique($ARR)"
+  language: php
+  file_glob: "**/*.php"

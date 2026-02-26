@@ -1,0 +1,8 @@
+name: STY-rust-if-let-else
+description: "if let...else; consider match for exhaustiveness."
+severity: info
+type: ast_match
+match:
+  ast: "if let $PATTERN = $EXPR { $BODY } else { $ELSE }"
+  language: rust
+  file_glob: "**/*.rs"

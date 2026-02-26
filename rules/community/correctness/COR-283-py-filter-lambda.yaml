@@ -1,0 +1,8 @@
+name: COR-283-py-filter-lambda
+description: "Use list comprehension instead of filter with lambda."
+severity: info
+type: ast_match
+match:
+  ast: "filter(lambda $X: $EXPR, $ITER)"
+  language: python
+  file_glob: "**/*.py"

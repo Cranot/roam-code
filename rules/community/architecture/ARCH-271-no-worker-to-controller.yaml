@@ -1,0 +1,12 @@
+name: "ARCH-271-no-worker-to-controller"
+description: "Background workers should not depend on controllers."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/workers/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/controllers/**"
+    kind: [function, method, class]
+  max_distance: 1

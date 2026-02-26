@@ -1,0 +1,8 @@
+name: COR-197-java-wait-not-in-sync
+description: "wait() must be called within synchronized block."
+severity: warning
+type: ast_match
+match:
+  ast: "$OBJ.wait()"
+  language: java
+  file_glob: "**/*.java"

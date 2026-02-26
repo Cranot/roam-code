@@ -1,0 +1,8 @@
+name: COR-384-java-optional-of-nullable
+description: "Optional.of throws on null; use Optional.ofNullable."
+severity: warning
+type: ast_match
+match:
+  ast: "Optional.of($VALUE)"
+  language: java
+  file_glob: "**/*.java"

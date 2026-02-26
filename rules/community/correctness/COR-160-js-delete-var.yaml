@@ -1,0 +1,8 @@
+name: COR-160-js-delete-var
+description: "delete on variables is a no-op in strict mode."
+severity: warning
+type: ast_match
+match:
+  ast: "delete $VAR"
+  language: javascript
+  file_glob: "**/*.js"

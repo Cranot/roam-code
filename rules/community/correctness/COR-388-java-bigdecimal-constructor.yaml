@@ -1,0 +1,8 @@
+name: COR-388-java-bigdecimal-constructor
+description: "BigDecimal(double) is imprecise; use BigDecimal.valueOf."
+severity: warning
+type: ast_match
+match:
+  ast: "new BigDecimal($DOUBLE)"
+  language: java
+  file_glob: "**/*.java"

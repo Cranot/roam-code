@@ -1,0 +1,8 @@
+name: PERF-201-java-n-plus-1-query
+description: "SQL query in loop may indicate N+1 problem."
+severity: warning
+type: ast_match
+match:
+  ast: "$STMT.executeQuery($SQL)"
+  language: java
+  file_glob: "**/*.java"

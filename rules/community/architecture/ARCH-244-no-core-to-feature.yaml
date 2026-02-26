@@ -1,0 +1,12 @@
+name: "ARCH-244-no-core-to-feature"
+description: "Core should not depend on feature modules."
+severity: error
+type: path_match
+match:
+  from:
+    file_glob: "**/core/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/features/**"
+    kind: [function, method, class]
+  max_distance: 1

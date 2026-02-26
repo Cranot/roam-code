@@ -1,0 +1,8 @@
+name: SEC-711-php-file-upload
+description: "Verify upload destination is restricted."
+severity: warning
+type: ast_match
+match:
+  ast: "move_uploaded_file($SRC, $DEST)"
+  language: php
+  file_glob: "**/*.php"

@@ -1,0 +1,8 @@
+name: STY-py-multiple-statements
+description: "Multiple statements on one line; split for readability."
+severity: info
+type: ast_match
+match:
+  ast: "$A; $B"
+  language: python
+  file_glob: "**/*.py"

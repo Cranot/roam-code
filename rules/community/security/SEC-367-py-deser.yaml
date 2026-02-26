@@ -1,0 +1,8 @@
+name: SEC-367-py-deser
+description: "Unsafe deserialization via cloudpickle.loads()."
+severity: error
+type: ast_match
+match:
+  ast: "cloudpickle.loads($DATA)"
+  language: python
+  file_glob: "**/*.py"

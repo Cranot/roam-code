@@ -1,0 +1,12 @@
+name: "ARCH-284-no-proto-to-src"
+description: "Proto definitions should not depend on source."
+severity: warning
+type: path_match
+match:
+  from:
+    file_glob: "**/proto/**"
+    kind: [function, method, class]
+  to:
+    file_glob: "**/src/**"
+    kind: [function, method, class]
+  max_distance: 1

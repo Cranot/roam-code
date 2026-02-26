@@ -1,0 +1,8 @@
+name: COR-460-js-catch-empty-error
+description: "Empty catch block; at minimum log the error."
+severity: warning
+type: ast_match
+match:
+  ast: "catch ($ERR) { }"
+  language: javascript
+  file_glob: "**/*.js"

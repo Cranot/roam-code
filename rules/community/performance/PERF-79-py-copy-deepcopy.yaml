@@ -1,0 +1,8 @@
+name: PERF-79-py-copy-deepcopy
+description: "deepcopy() is expensive; consider shallow copy or constructor."
+severity: info
+type: ast_match
+match:
+  ast: "copy.deepcopy($OBJ)"
+  language: python
+  file_glob: "**/*.py"

@@ -1,0 +1,8 @@
+name: COR-310-cs-tostring-on-string
+description: "Calling ToString() on a string is redundant."
+severity: info
+type: ast_match
+match:
+  ast: "$STR.ToString()"
+  language: csharp
+  file_glob: "**/*.cs"

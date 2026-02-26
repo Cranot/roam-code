@@ -1,0 +1,8 @@
+name: COR-450-cs-dictionary-add
+description: "Dictionary.Add throws on duplicate; use indexer or TryAdd."
+severity: warning
+type: ast_match
+match:
+  ast: "$DICT.Add($KEY, $VALUE)"
+  language: csharp
+  file_glob: "**/*.cs"
