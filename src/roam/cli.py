@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 137 invokable command names (136 canonical commands + 1 legacy alias).
+# Total: 144 invokable command names (143 canonical commands + 1 legacy alias).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
@@ -154,6 +154,13 @@ _COMMANDS = {
     "verify-imports": ("roam.commands.cmd_verify_imports", "verify_imports_cmd"),
     "vulns": ("roam.commands.cmd_vulns", "vulns"),
     "metrics": ("roam.commands.cmd_metrics", "metrics"),
+    "congestion": ("roam.commands.cmd_congestion", "congestion"),
+    "adrs": ("roam.commands.cmd_adrs", "adrs"),
+    "flag-dead": ("roam.commands.cmd_flag_dead", "flag_dead"),
+    "test-scaffold": ("roam.commands.cmd_test_scaffold", "test_scaffold"),
+    "sbom": ("roam.commands.cmd_sbom", "sbom"),
+    "triage": ("roam.commands.cmd_triage", "triage"),
+    "ci-setup": ("roam.commands.cmd_ci_setup", "ci_setup"),
 }
 
 # Command categories for organized --help display
@@ -178,6 +185,8 @@ _CATEGORIES = {
         "schema",
         "mcp",
         "mcp-setup",
+        "ci-setup",
+        "adrs",
     ],
     "Daily Workflow": [
         "preflight",
@@ -203,6 +212,7 @@ _CATEGORIES = {
         "annotations",
         "plan",
         "syntax-check",
+        "triage",
     ],
     "Codebase Health": [
         "health",
@@ -288,9 +298,12 @@ _CATEGORIES = {
         "vuln-map",
         "vuln-reach",
         "vulns",
+        "sbom",
+        "congestion",
     ],
     "Refactoring": [
         "dead",
+        "flag-dead",
         "duplicates",
         "safe-delete",
         "split",
@@ -308,6 +321,7 @@ _CATEGORIES = {
         "intent",
         "closure",
         "mutate",
+        "test-scaffold",
     ],
 }
 

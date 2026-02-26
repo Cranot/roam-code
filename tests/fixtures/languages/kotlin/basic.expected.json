@@ -1,0 +1,191 @@
+{
+  "symbols": [
+    {
+      "name": "topLevelFunction",
+      "kind": "function",
+      "line": 7,
+      "scope": null
+    },
+    {
+      "name": "User",
+      "kind": "class",
+      "line": 12,
+      "scope": null
+    },
+    {
+      "name": "isAdult",
+      "kind": "field",
+      "line": 15,
+      "scope": "User"
+    },
+    {
+      "name": "greet",
+      "kind": "method",
+      "line": 19,
+      "scope": "User"
+    },
+    {
+      "name": "internalHelper",
+      "kind": "method",
+      "line": 24,
+      "scope": "User"
+    },
+    {
+      "name": "Address",
+      "kind": "class",
+      "line": 29,
+      "scope": "User"
+    },
+    {
+      "name": "fullAddress",
+      "kind": "method",
+      "line": 30,
+      "scope": "Address"
+    },
+    {
+      "name": "Repository",
+      "kind": "interface",
+      "line": 35,
+      "scope": null
+    },
+    {
+      "name": "findById",
+      "kind": "method",
+      "line": 36,
+      "scope": "Repository"
+    },
+    {
+      "name": "save",
+      "kind": "method",
+      "line": 37,
+      "scope": "Repository"
+    },
+    {
+      "name": "Person",
+      "kind": "class",
+      "line": 41,
+      "scope": null
+    },
+    {
+      "name": "fullName",
+      "kind": "method",
+      "line": 46,
+      "scope": "Person"
+    },
+    {
+      "name": "DatabaseConfig",
+      "kind": "object",
+      "line": 50,
+      "scope": null
+    },
+    {
+      "name": "host",
+      "kind": "field",
+      "line": 51,
+      "scope": "DatabaseConfig"
+    },
+    {
+      "name": "port",
+      "kind": "field",
+      "line": 52,
+      "scope": "DatabaseConfig"
+    },
+    {
+      "name": "connectionString",
+      "kind": "method",
+      "line": 54,
+      "scope": "DatabaseConfig"
+    },
+    {
+      "name": "Service",
+      "kind": "class",
+      "line": 58,
+      "scope": null
+    },
+    {
+      "name": "DEFAULT_TIMEOUT",
+      "kind": "field",
+      "line": 60,
+      "scope": "Service"
+    },
+    {
+      "name": "create",
+      "kind": "method",
+      "line": 62,
+      "scope": "Service"
+    },
+    {
+      "name": "execute",
+      "kind": "method",
+      "line": 65,
+      "scope": "Service"
+    },
+    {
+      "name": "Status",
+      "kind": "enum",
+      "line": 69,
+      "scope": null
+    },
+    {
+      "name": "Result",
+      "kind": "class",
+      "line": 77,
+      "scope": null
+    },
+    {
+      "name": "Success",
+      "kind": "class",
+      "line": 78,
+      "scope": "Result"
+    },
+    {
+      "name": "Error",
+      "kind": "class",
+      "line": 79,
+      "scope": "Result"
+    },
+    {
+      "name": "Loading",
+      "kind": "object",
+      "line": 80,
+      "scope": "Result"
+    },
+    {
+      "name": "Container",
+      "kind": "class",
+      "line": 84,
+      "scope": null
+    },
+    {
+      "name": "get",
+      "kind": "method",
+      "line": 85,
+      "scope": "Container"
+    },
+    {
+      "name": "isEmail",
+      "kind": "function",
+      "line": 92,
+      "scope": null
+    },
+    {
+      "name": "UserMap",
+      "kind": "typealias",
+      "line": 97,
+      "scope": null
+    }
+  ],
+  "inheritance": [
+    {
+      "child": "Success",
+      "parent": "Result",
+      "relationship": "extends"
+    },
+    {
+      "child": "Error",
+      "parent": "Result",
+      "relationship": "extends"
+    }
+  ],
+  "references": []
+}

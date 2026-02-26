@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 from typing import Iterable
 
@@ -2209,19 +2210,19 @@ def main() -> int:
 
     if args.check:
         if not args.out.exists():
-            print(f"ERROR: output file does not exist: {args.out}")
+            sys.stderr.write(f"ERROR: output file does not exist: {args.out}\n")
             return 1
         existing = args.out.read_text(encoding="utf-8")
         if existing != rendered:
-            print(f"ERROR: {args.out} is out of date. Regenerate with:")
-            print(f"  python {Path(__file__).as_posix()} --tracker {args.tracker} --out {args.out}")
+            sys.stderr.write(f"ERROR: {args.out} is out of date. Regenerate with:\n")
+            sys.stderr.write(f"  python {Path(__file__).as_posix()} --tracker {args.tracker} --out {args.out}\n")
             return 1
-        print(f"OK: {args.out} is in sync.")
+        sys.stdout.write(f"OK: {args.out} is in sync.\n")
         return 0
 
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(rendered, encoding="utf-8")
-    print(f"Wrote {args.out}")
+    sys.stdout.write(f"Wrote {args.out}\n")
     return 0
 
 

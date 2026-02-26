@@ -15,8 +15,8 @@ def _read(path: str) -> str:
 
 def test_cli_surface_counts():
     counts = cli_surface_counts()
-    assert counts["command_names"] == 137
-    assert counts["canonical_commands"] == 136
+    assert counts["command_names"] == 144
+    assert counts["canonical_commands"] == 143
     assert counts["alias_names"] == 1
     assert counts["alias_groups"] == [["algo", "math"]]
 
@@ -29,7 +29,7 @@ def test_mcp_surface_counts():
 
 
 def test_docs_use_reconciled_command_count_copy():
-    expected = "137 commands"
+    expected = "144 commands"
     assert expected in _read("README.md")
     assert expected in _read("CLAUDE.md")
     assert expected in _read("llms-install.md")
@@ -38,5 +38,5 @@ def test_docs_use_reconciled_command_count_copy():
 def test_collect_surface_counts_shape():
     payload = collect_surface_counts()
     assert set(payload.keys()) == {"cli", "mcp"}
-    assert payload["cli"]["canonical_commands"] == 136
+    assert payload["cli"]["canonical_commands"] == 143
     assert payload["mcp"]["registered_tools"] == 101

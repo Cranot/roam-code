@@ -120,7 +120,8 @@ _quiet_mode = False
 
 def _log(msg: str):
     if not _quiet_mode:
-        print(msg, file=sys.stderr, flush=True)
+        sys.stderr.write(f"{msg}\n")
+        sys.stderr.flush()
 
 
 def _compute_file_health_scores(conn, G=None):
@@ -494,7 +495,8 @@ class Indexer:
     def _log(self, msg: str):
         """Log a message to stderr, respecting quiet mode."""
         if not self._quiet:
-            print(msg, file=sys.stderr, flush=True)
+            sys.stderr.write(f"{msg}\n")
+            sys.stderr.flush()
 
     def run(
         self,
