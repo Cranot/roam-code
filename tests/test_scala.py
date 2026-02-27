@@ -1,4 +1,5 @@
 """Tests for the Scala Tier 1 extractor."""
+
 from __future__ import annotations
 
 import pytest
