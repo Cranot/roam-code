@@ -14,7 +14,7 @@ authors = [
 ]
 keywords = ["code-intelligence", "static-analysis", "mcp-server", "tree-sitter", "architecture", "code-graph", "ai-coding", "graph-analysis", "code-quality", "cli", "codebase", "code-analysis", "ai-tools", "mcp"]
 classifiers = [
-    "Development Status :: 4 - Beta",
+    "Development Status :: 5 - Production/Stable",
     "Environment :: Console",
     "Intended Audience :: Developers",
     "Operating System :: OS Independent",
@@ -38,7 +38,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://github.com/Cranot/roam-code"
-Documentation = "https://github.com/Cranot/roam-code#readme"
+Documentation = "https://cranot.github.io/roam-code/"
 Repository = "https://github.com/Cranot/roam-code"
 Issues = "https://github.com/Cranot/roam-code/issues"
 

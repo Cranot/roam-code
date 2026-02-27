@@ -330,7 +330,7 @@ runs:
         echo "gate-passed=${GATE_RESULT}" >> "${GITHUB_OUTPUT}"
 
         if [ "${GATE_RESULT}" = "false" ]; then
-          echo "::error::Quality gate failed: ${{ inputs.gate }}"
+          echo "::error::Quality gate failed: ${GATE_EXPR}"
           exit 5
         fi
       env:
@@ -518,7 +518,7 @@ runs:
           const path = require('path');
 
           // ${{ github.action_path }} resolves to the action's root directory,
-          // which works both for remote (uses: cosmohac/roam-code@main) and
+          // which works both for remote (uses: Cranot/roam-code@main) and
           // local (uses: ./) references.
           const scriptPath = path.join('${{ github.action_path }}', '.github', 'scripts', 'pr-comment.js');
           const script = require(scriptPath);

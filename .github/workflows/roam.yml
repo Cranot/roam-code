@@ -33,7 +33,7 @@ jobs:
 
       # Uses the published action from PyPI/GitHub, not the local source.
       # Change to `uses: ./` to test the local action instead.
-      - uses: cosmohac/roam-code@main
+      - uses: Cranot/roam-code@main
         with:
           commands: 'health pr-risk'
           sarif: 'true'

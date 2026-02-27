@@ -1,6 +1,6 @@
 # Agent Code Quality Evaluation
 
-Benchmark that measures code quality produced by AI coding agents using [roam-code](https://github.com/cosmohac/roam-code) as the evaluator.
+Benchmark that measures code quality produced by AI coding agents using [roam-code](https://github.com/Cranot/roam-code) as the evaluator.
 
 ## Agents Under Test
 

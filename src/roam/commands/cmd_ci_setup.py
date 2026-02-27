@@ -73,7 +73,7 @@ jobs:
         with:
           fetch-depth: 0  # Full history needed for pr-risk and git analysis
 
-      - uses: cosmohac/roam-code@main
+      - uses: Cranot/roam-code@main
         with:
           commands: 'health check-rules pr-risk'
           sarif: 'true'

@@ -111,7 +111,7 @@ pipelines:
                       {'title': 'Gate Threshold', 'type': 'NUMBER', 'value': gate},
                       {'title': 'Rule Violations', 'type': 'NUMBER', 'value': violations},
                   ],
-                  'link': 'https://github.com/cosmohac/roam-code',
+                  'link': 'https://github.com/Cranot/roam-code',
               }
 
               body = json.dumps(report).encode()

@@ -48,7 +48,7 @@ body:
     attributes:
       label: roam-code version
       description: "Output of `roam --version`"
-      placeholder: "e.g., roam-code 11.0.0"
+      placeholder: "e.g., roam-code 11.1.1"
     validations:
       required: true
 
