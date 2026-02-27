@@ -368,7 +368,7 @@ h2 {
   margin-left: 0.5rem;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
   font-size: 0.7rem;
-  color: #64748b;
+  color: #94a3b8;
 }
 
 .terminal-body {
@@ -667,6 +667,7 @@ h2 {
   margin-bottom: 0.75rem;
 }
 
+.step h3,
 .step h4 {
   margin: 0 0 0.5rem;
   font-size: 1rem;
@@ -837,7 +838,7 @@ h2 {
 .footer-bottom p {
   margin: 0;
   font-size: 0.78rem;
-  color: #475569;
+  color: #64748b;
 }
 
 .footer-bottom a {

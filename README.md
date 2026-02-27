@@ -237,7 +237,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam reset [--hard]` | Reset the roam index and cached data. `--hard` removes all `.roam/` artifacts |
 | `roam clean [--all]` | Remove stale or orphaned index entries without a full rebuild |
 | `roam understand` | Full codebase briefing: tech stack, architecture, key abstractions, health, conventions, complexity overview, entry points |
-| `roam onboard` | Structured onboarding guide: architecture map, key files, suggested reading order, and first tasks |
+| `roam onboard` | Alias for `understand` |
 | `roam tour [--write PATH]` | Auto-generated onboarding guide: top symbols, reading order, entry points, language breakdown. `--write` saves to Markdown |
 | `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
 | `roam agent-export [--format F] [--write]` | Generate agent-context bundle from project analysis (`AGENTS.md` + provider-specific overlays) |
@@ -309,7 +309,7 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
 | `roam alerts` | Health degradation trend detection (Mann-Kendall + Sen's slope) |
 | `roam forecast [--symbol S] [--horizon N] [--alert-only]` | Predict when metrics will exceed thresholds: Theil-Sen regression on snapshot history + churn-weighted per-symbol risk |
-| `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 1 on violation) |
+| `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 5 on violation) |
 | `roam bisect [--metric M] [--range R]` | Architectural git bisect: find the commit that degraded a specific metric |
 | `roam ingest-trace <file> [--otel\|--jaeger\|--zipkin\|--generic]` | Ingest runtime trace data (OpenTelemetry, Jaeger, Zipkin) for hotspot overlay |
 | `roam hotspots [--runtime] [--discrepancy]` | Runtime hotspot analysis: find symbols missed by static analysis but critical at runtime |
@@ -552,7 +552,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam --json <command>` | Structured JSON output with consistent envelope |
 | `roam --compact <command>` | Token-efficient output: TSV tables, minimal JSON envelope |
 | `roam --sarif <command>` | SARIF 2.1.0 output for dead, health, complexity, rules, secrets, and algo (GitHub/CI integration) |
-| `roam <command> --gate EXPR` | CI quality gate (e.g., `--gate score>=70`). Exit code 1 on failure |
+| `roam health --gate` | CI quality gate. Reads `.roam-gates.yml` thresholds. Exit code 5 on failure |
 
 </details>
 
@@ -697,7 +697,7 @@ Blueprint  Bridge        fan-in:18   reach:34  moderate  Coupling point between 
 $ roam describe --write
 Wrote CLAUDE.md (98 lines)  # auto-detects: CLAUDE.md, AGENTS.md, .cursor/rules, etc.
 
-$ roam health --gate score>=70
+$ roam health --gate
 Health: 78/100 — PASS
 ```
 
@@ -803,7 +803,7 @@ Run `roam --help` for all commands. Use `roam --json <cmd>` for structured outpu
 | "What breaks if I change X?" | `roam impact <symbol>` | No direct equivalent |
 | "What tests to run?" | `roam affected-tests <name>` | Grep for imports (misses indirect) |
 | "What's causing this bug?" | `roam diagnose <name>` | Manual call-chain tracing |
-| "Codebase health score for CI" | `roam health --gate score>=70` | No equivalent |
+| "Codebase health score for CI" | `roam health --gate` | No equivalent |
 
 </details>
 
@@ -1049,20 +1049,24 @@ jobs:
 
       - uses: Cranot/roam-code@main
         with:
-          command: health --gate score>=70
+          commands: health
+          gate: "score>=70"
+          sarif: true
           comment: true
-          fail-on-violation: true
 ```
 
 Use `roam init` to auto-generate this workflow.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `command` | `health` | Roam command to run |
-| `python-version` | `3.12` | Python version |
-| `comment` | `false` | Post results as PR comment |
-| `fail-on-violation` | `false` | Fail the job on violations |
-| `roam-version` | (latest) | Pin to a specific version |
+| `commands` | `health` | Space-separated roam commands to run |
+| `gate` | (empty) | Quality gate expression (e.g., `score>=70`). Exit 5 on failure |
+| `sarif` | `false` | Upload SARIF results to GitHub Code Scanning |
+| `comment` | `true` | Post sticky PR comment with results |
+| `python-version` | `3.11` | Python version |
+| `version` | `latest` | Pin to a specific roam-code version |
+| `cache` | `true` | Cache the SQLite index between runs |
+| `changed-only` | `false` | Incremental mode: adapt commands to changed files |
 
 <details>
 <summary><strong>GitLab CI</strong></summary>
@@ -1075,7 +1079,7 @@ roam-analysis:
     - pip install roam-code
   script:
     - roam index
-    - roam health --gate score>=70
+    - roam health --gate
     - roam --json pr-risk origin/main..HEAD > roam-report.json
   artifacts:
     paths:
@@ -1094,7 +1098,7 @@ Universal pattern:
 ```bash
 pip install roam-code
 roam index
-roam health --gate score>=70    # exit 1 on failure
+roam health --gate               # exit 5 on failure (reads .roam-gates.yml)
 roam --json health > report.json
 ```
 
@@ -1133,9 +1137,9 @@ Zero infrastructure, zero vendor lock-in, zero data leaving your network.
 
 **Week 1-2 (pilot):** 1-2 developers run `roam init` on one repo. Use `roam preflight` before changes, `roam pr-risk` before PRs.
 
-**Week 3-4 (expand):** Add `roam health --gate score>=60` to CI as a non-blocking check.
+**Week 3-4 (expand):** Add `roam health --gate` to CI as a non-blocking check (configure thresholds in `.roam-gates.yml`).
 
-**Month 2+ (standardize):** Tighten to `--gate score>=70`. Expand to additional repos. Track trajectory with `roam trends`.
+**Month 2+ (standardize):** Tighten gate thresholds. Expand to additional repos. Track trajectory with `roam trends`.
 
 </details>
 
@@ -1189,12 +1193,13 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 
 | Ruby | `.rb` | classes, modules, methods, singleton methods, constants | require, require_relative, include/extend, calls, ClassName.new | class inheritance |
 | Kotlin | `.kt` `.kts` | classes, interfaces, enums, objects, functions, methods, properties | imports, calls, type refs | extends, implements |
+| Swift | `.swift` | classes, structs, enums, protocols, functions, methods, properties | imports, calls, type refs | extends, conforms |
 | JSONC | `.jsonc` | via JSON grammar | -- | -- |
 | MDX | `.mdx` | via Markdown grammar | -- | -- |
 
 ### Tier 2 -- Generic extraction
 
-Swift (`.swift`), Scala (`.scala` `.sc`)
+Scala (`.scala` `.sc`)
 
 Tier 2 languages get symbol extraction and basic inheritance via a generic tree-sitter walker.
 
@@ -1404,7 +1409,7 @@ Static analysis trade-offs:
 - **Static analysis primarily** -- can't trace dynamic dispatch, reflection, or eval'd code. Runtime trace ingestion (`roam ingest-trace`) adds production data but requires external trace export
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve
 - **Limited cross-language edges** -- Salesforce, Protobuf, REST API, and multi-repo edges are supported, but not arbitrary FFI
-- **Tier 2 languages** (Swift, Scala) get basic symbol extraction only
+- **Tier 2 languages** (Scala) get basic symbol extraction only
 - **Large monorepos** (100k+ files) may have slow initial indexing
 
 ## Troubleshooting
@@ -1441,7 +1446,7 @@ Delete `.roam/` from your project root to clean up local data.
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e ".[dev]"   # includes pytest, ruff
-pytest tests/              # ~5700 tests, Python 3.9-3.13
+pytest tests/              # ~5500 tests, Python 3.9-3.13
 
 # Or use Make targets:
 make dev      # install with dev extras
@@ -1530,7 +1535,7 @@ roam-code/
 │       ├── formatter.py               # Token-efficient formatting
 │       ├── sarif.py                   # SARIF 2.1.0 output
 │       └── schema_registry.py         # JSON envelope schema versioning
-└── tests/                             # ~5700 tests across 186 test files
+└── tests/                             # ~5500 tests across 186 test files
 ```
 
 </details>
@@ -1574,7 +1579,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 git clone https://github.com/Cranot/roam-code.git
 cd roam-code
 pip install -e .
-pytest tests/   # all ~5700 tests must pass
+pytest tests/   # all ~5500 tests must pass
 ```
 
 Good first contributions: add a [Tier 1 language](src/roam/languages/) (see `go_lang.py` or `php_lang.py` as templates), improve reference resolution, add benchmark repos, extend SARIF converters, add MCP tools.
