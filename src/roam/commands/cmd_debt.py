@@ -515,7 +515,11 @@ def debt(ctx, limit, by_kind, threshold, roi):
                     to_json(
                         json_envelope(
                             "debt",
-                            summary={"verdict": "no debt data — run roam index first", "total_files": 0, "total_debt": 0},
+                            summary={
+                                "verdict": "no debt data — run roam index first",
+                                "total_files": 0,
+                                "total_debt": 0,
+                            },
                             items=[],
                         )
                     )
@@ -538,9 +542,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
         _n_gods = stats["files_with_god_components"]
         _n_hotspots = stats["hotspot_files"]
         _debt_label = (
-            "low debt" if stats["mean_debt"] < 0.1
-            else "moderate debt" if stats["mean_debt"] < 0.3
-            else "high debt"
+            "low debt" if stats["mean_debt"] < 0.1 else "moderate debt" if stats["mean_debt"] < 0.3 else "high debt"
         )
         _debt_verdict = (
             f"{_debt_label}: {_n_cycles} cycle files, "

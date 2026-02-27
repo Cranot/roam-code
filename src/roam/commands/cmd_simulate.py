@@ -37,10 +37,7 @@ def _run_simulation(ctx, op_name, apply_fn, op_args_fn):
     with open_db(readonly=True) as conn:
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if sym_count > _MAX_GRAPH_SYMBOLS:
-            msg = (
-                f"Warning: large graph ({sym_count} symbols) -- "
-                "simulation may be slow."
-            )
+            msg = f"Warning: large graph ({sym_count} symbols) -- simulation may be slow."
             if not json_mode:
                 click.echo(msg, err=True)
 

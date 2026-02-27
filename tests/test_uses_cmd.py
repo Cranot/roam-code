@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -66,10 +65,7 @@ def uses_project(tmp_path):
         "        return w.run()\n"
     )
 
-    (proj / "isolated.py").write_text(
-        "def standalone():\n"
-        "    return 42\n"
-    )
+    (proj / "isolated.py").write_text("def standalone():\n    return 42\n")
 
     git_init(proj)
     index_in_process(proj)
@@ -133,10 +129,7 @@ class TestUsesJSON:
         for edge_kind, entries in consumers.items():
             for entry in entries:
                 missing = required_keys - set(entry.keys())
-                assert not missing, (
-                    f"Consumer under edge_kind='{edge_kind}' missing keys: {missing}. "
-                    f"Got: {entry}"
-                )
+                assert not missing, f"Consumer under edge_kind='{edge_kind}' missing keys: {missing}. Got: {entry}"
 
     def test_json_no_callers(self, cli_runner, uses_project, monkeypatch):
         """standalone has no callers so consumers dict should be empty."""
@@ -223,9 +216,7 @@ class TestUsesDetection:
             assert isinstance(edge_kind, str), f"edge kind key should be str, got {type(edge_kind)}"
             # Known edge kinds that roam uses
             known = {"call", "import", "inherits", "implements", "uses_trait", "template"}
-            assert edge_kind in known or edge_kind, (
-                f"Unexpected empty edge kind key"
-            )
+            assert edge_kind in known or edge_kind, "Unexpected empty edge kind key"
 
     def test_inheritance(self, cli_runner, uses_project, monkeypatch):
         """BaseProcessor should have Worker listed as an inheritor or consumer."""
@@ -237,9 +228,7 @@ class TestUsesDetection:
         all_names = []
         for entries in consumers.values():
             all_names.extend(e["name"] for e in entries)
-        assert "Worker" in all_names, (
-            f"Expected Worker as a consumer of BaseProcessor, got: {all_names}"
-        )
+        assert "Worker" in all_names, f"Expected Worker as a consumer of BaseProcessor, got: {all_names}"
 
     def test_total_files_matches_consumer_locations(self, cli_runner, uses_project, monkeypatch):
         """total_files in summary should match distinct files in consumer entries."""

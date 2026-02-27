@@ -99,13 +99,7 @@ def non_php_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
     (proj / "app.py").write_text(
-        "def main():\n"
-        '    """Main entry point."""\n'
-        "    return 'hello'\n"
-        "\n"
-        "\n"
-        "def helper():\n"
-        "    return 42\n"
+        'def main():\n    """Main entry point."""\n    return \'hello\'\n\n\ndef helper():\n    return 42\n'
     )
     git_init(proj)
     index_in_process(proj)

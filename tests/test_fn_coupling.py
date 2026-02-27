@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-import subprocess
 import pytest
 
 from tests.conftest import (
     assert_json_envelope,
-    git_init,
     git_commit,
+    git_init,
     index_in_process,
     invoke_cli,
     parse_json_output,
@@ -22,30 +21,18 @@ def coupling_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "auth.py").write_text(
-        "def login(user):\n    return True\n"
-    )
-    (proj / "audit.py").write_text(
-        "def log_access(user):\n    print(user)\n"
-    )
+    (proj / "auth.py").write_text("def login(user):\n    return True\n")
+    (proj / "audit.py").write_text("def log_access(user):\n    print(user)\n")
     git_init(proj)
 
     # Second commit: change both files together
-    (proj / "auth.py").write_text(
-        "def login(user):\n    return user is not None\n"
-    )
-    (proj / "audit.py").write_text(
-        "def log_access(user):\n    print(f'Access: {user}')\n"
-    )
+    (proj / "auth.py").write_text("def login(user):\n    return user is not None\n")
+    (proj / "audit.py").write_text("def log_access(user):\n    print(f'Access: {user}')\n")
     git_commit(proj, "update both")
 
     # Third commit: change both again
-    (proj / "auth.py").write_text(
-        "def login(user):\n    return user is not None and len(user) > 0\n"
-    )
-    (proj / "audit.py").write_text(
-        "def log_access(user):\n    print(f'Access granted: {user}')\n"
-    )
+    (proj / "auth.py").write_text("def login(user):\n    return user is not None and len(user) > 0\n")
+    (proj / "audit.py").write_text("def log_access(user):\n    print(f'Access granted: {user}')\n")
     git_commit(proj, "update both again")
 
     index_in_process(proj)

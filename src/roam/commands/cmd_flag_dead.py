@@ -199,11 +199,7 @@ def scan_file_for_flags(file_path: str) -> list[dict]:
                         default_value = None
                         default_match = _DEFAULT_VALUE_RE.search(remainder)
                         if default_match:
-                            default_value = (
-                                default_match.group(1)
-                                or default_match.group(2)
-                                or default_match.group(3)
-                            )
+                            default_value = default_match.group(1) or default_match.group(2) or default_match.group(3)
 
                         findings.append(
                             {
@@ -247,9 +243,7 @@ def scan_project_for_flags(
         file_paths = _walk_for_files(root)
 
     # Test/fixture path detection
-    test_segments = frozenset(
-        {"tests", "test", "__tests__", "spec", "fixtures", "docs", "examples"}
-    )
+    test_segments = frozenset({"tests", "test", "__tests__", "spec", "fixtures", "docs", "examples"})
     test_file_re = re.compile(r"^test_.*|.*_test\.[^.]+$", re.IGNORECASE)
 
     all_findings: list[dict] = []
@@ -339,16 +333,10 @@ def analyze_flags(
     for flag_name, flag_findings in sorted(by_flag.items()):
         count = len(flag_findings)
         providers = sorted({f["provider"] for f in flag_findings})
-        locations = [
-            {"file": f["file"], "line": f["line"]} for f in flag_findings
-        ]
+        locations = [{"file": f["file"], "line": f["line"]} for f in flag_findings]
 
         # Collect all default values seen for this flag
-        defaults = [
-            f["default_value"]
-            for f in flag_findings
-            if f["default_value"] is not None
-        ]
+        defaults = [f["default_value"] for f in flag_findings if f["default_value"] is not None]
         unique_defaults = sorted(set(defaults)) if defaults else []
 
         # --- Staleness heuristics ---
@@ -370,9 +358,7 @@ def analyze_flags(
         if unique_defaults and len(unique_defaults) == 1:
             val = unique_defaults[0].lower() if unique_defaults[0] else ""
             if val in ("false", "true", "0", "1", "nil", "null", "none"):
-                reasons.append(
-                    f"always checked with same default ({unique_defaults[0]})"
-                )
+                reasons.append(f"always checked with same default ({unique_defaults[0]})")
                 if staleness == "ok":
                     staleness = "suspect"
 
@@ -447,9 +433,7 @@ def flag_dead(ctx, config_path, include_tests):
         known_stale = _load_known_stale(config_path)
 
     # Scan for flag usage
-    findings = scan_project_for_flags(
-        project_root, include_tests=include_tests
-    )
+    findings = scan_project_for_flags(project_root, include_tests=include_tests)
 
     # Analyze flags for staleness
     flag_summaries = analyze_flags(findings, known_stale=known_stale)
@@ -458,16 +442,10 @@ def flag_dead(ctx, config_path, include_tests):
     total_flags = len(flag_summaries)
     total_references = sum(f["count"] for f in flag_summaries)
     stale_count = sum(1 for f in flag_summaries if f["staleness"] == "stale")
-    likely_stale_count = sum(
-        1 for f in flag_summaries if f["staleness"] == "likely-stale"
-    )
-    suspect_count = sum(
-        1 for f in flag_summaries if f["staleness"] == "suspect"
-    )
+    likely_stale_count = sum(1 for f in flag_summaries if f["staleness"] == "likely-stale")
+    suspect_count = sum(1 for f in flag_summaries if f["staleness"] == "suspect")
     ok_count = sum(1 for f in flag_summaries if f["staleness"] == "ok")
-    files_affected = len(
-        {loc["file"] for f in flag_summaries for loc in f["locations"]}
-    )
+    files_affected = len({loc["file"] for f in flag_summaries for loc in f["locations"]})
 
     if total_flags == 0:
         verdict = "No feature flags detected"
@@ -482,10 +460,7 @@ def flag_dead(ctx, config_path, include_tests):
         if ok_count:
             parts.append(f"{ok_count} ok")
         status_str = ", ".join(parts)
-        verdict = (
-            f"{total_flags} flags found across {files_affected} files "
-            f"({status_str})"
-        )
+        verdict = f"{total_flags} flags found across {files_affected} files ({status_str})"
 
     # --- JSON output ---
     if json_mode:
@@ -533,9 +508,7 @@ def flag_dead(ctx, config_path, include_tests):
     rows = []
     for f in flag_summaries:
         staleness_label = f["staleness"].upper()
-        defaults_str = (
-            ", ".join(f["default_values"]) if f["default_values"] else "-"
-        )
+        defaults_str = ", ".join(f["default_values"]) if f["default_values"] else "-"
         reasons_str = "; ".join(f["reasons"]) if f["reasons"] else "-"
         rows.append(
             [
@@ -557,9 +530,7 @@ def flag_dead(ctx, config_path, include_tests):
     click.echo()
 
     # Per-flag location details for stale/likely-stale/suspect flags
-    flagged = [
-        f for f in flag_summaries if f["staleness"] != "ok"
-    ]
+    flagged = [f for f in flag_summaries if f["staleness"] != "ok"]
     if flagged:
         click.echo(f"  {len(flagged)} flags with staleness indicators:")
         click.echo()
@@ -572,27 +543,14 @@ def flag_dead(ctx, config_path, include_tests):
             click.echo()
 
     # Totals
-    click.echo(
-        f"  {total_flags} flags, {total_references} references, "
-        f"{files_affected} files"
-    )
+    click.echo(f"  {total_flags} flags, {total_references} references, {files_affected} files")
     if stale_count or likely_stale_count or suspect_count:
         click.echo()
         click.echo("  Recommendations:")
         if stale_count:
-            click.echo(
-                f"  - {stale_count} known-stale flags should be removed"
-            )
+            click.echo(f"  - {stale_count} known-stale flags should be removed")
         if likely_stale_count:
-            click.echo(
-                f"  - {likely_stale_count} likely-stale flags (single reference) "
-                "should be reviewed for removal"
-            )
+            click.echo(f"  - {likely_stale_count} likely-stale flags (single reference) should be reviewed for removal")
         if suspect_count:
-            click.echo(
-                f"  - {suspect_count} suspect flags have constant defaults "
-                "or are concentrated in single files"
-            )
-        click.echo(
-            "  - Verify flag status in your feature flag dashboard before removing"
-        )
+            click.echo(f"  - {suspect_count} suspect flags have constant defaults or are concentrated in single files")
+        click.echo("  - Verify flag status in your feature flag dashboard before removing")

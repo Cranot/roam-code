@@ -45,9 +45,7 @@ def laravel_project(tmp_path):
     # Frontend that references /users but not /orphaned-endpoint
     resources = proj / "resources" / "js"
     resources.mkdir(parents=True)
-    (resources / "api.js").write_text(
-        "export const fetchUsers = () => fetch('/api/users');\n"
-    )
+    (resources / "api.js").write_text("export const fetchUsers = () => fetch('/api/users');\n")
 
     git_init(proj)
     index_in_process(proj)

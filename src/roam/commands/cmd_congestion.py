@@ -140,21 +140,23 @@ def _compute_congestion(
             reverse=True,
         )[:5]
 
-        entries.append({
-            "path": r["path"],
-            "language": r["language"] or "",
-            "line_count": r["line_count"] or 0,
-            "recent_authors": recent_authors,
-            "recent_commits": recent_commits,
-            "recent_churn": recent_churn,
-            "all_time_churn": all_time_churn,
-            "all_time_commits": all_time_commits,
-            "all_time_authors": all_time_authors,
-            "complexity": round(complexity, 1),
-            "congestion_score": congestion_score,
-            "risk": risk,
-            "top_contributors": top_contributors,
-        })
+        entries.append(
+            {
+                "path": r["path"],
+                "language": r["language"] or "",
+                "line_count": r["line_count"] or 0,
+                "recent_authors": recent_authors,
+                "recent_commits": recent_commits,
+                "recent_churn": recent_churn,
+                "all_time_churn": all_time_churn,
+                "all_time_commits": all_time_commits,
+                "all_time_authors": all_time_authors,
+                "complexity": round(complexity, 1),
+                "congestion_score": congestion_score,
+                "risk": risk,
+                "top_contributors": top_contributors,
+            }
+        )
 
     # Sort by congestion score descending
     entries.sort(key=lambda e: e["congestion_score"], reverse=True)
@@ -246,27 +248,19 @@ def congestion(ctx, window, min_authors, limit):
                 f"(window={window}d)"
             )
         else:
-            verdict = (
-                f"{congested_count} congested files detected "
-                f"(window={window}d, min-authors={min_authors})"
-            )
+            verdict = f"{congested_count} congested files detected (window={window}d, min-authors={min_authors})"
 
         # Recommendations
         recommendations: list[str] = []
         if critical_count > 0:
             crit_paths = [e["path"] for e in entries if e["risk"] == "critical"][:3]
-            recommendations.append(
-                f"Split or assign ownership for critical files: {', '.join(crit_paths)}"
-            )
+            recommendations.append(f"Split or assign ownership for critical files: {', '.join(crit_paths)}")
         if high_count > 0:
             recommendations.append(
-                f"{high_count} high-risk files need coordination -- "
-                "consider feature flags or module extraction"
+                f"{high_count} high-risk files need coordination -- consider feature flags or module extraction"
             )
         if congested_count > 5:
-            recommendations.append(
-                "Run 'roam orchestrate' to partition work across agents/developers"
-            )
+            recommendations.append("Run 'roam orchestrate' to partition work across agents/developers")
 
         # --- JSON output ---
         if json_mode:
@@ -307,15 +301,17 @@ def congestion(ctx, window, min_authors, limit):
 
             tbl_rows = []
             for e in entries[:limit]:
-                tbl_rows.append([
-                    e["path"],
-                    str(e["recent_authors"]),
-                    str(e["recent_commits"]),
-                    str(e["recent_churn"]),
-                    f"{e['complexity']:.0f}" if e["complexity"] else "-",
-                    f"{e['congestion_score']:.1f}",
-                    e["risk"].upper(),
-                ])
+                tbl_rows.append(
+                    [
+                        e["path"],
+                        str(e["recent_authors"]),
+                        str(e["recent_commits"]),
+                        str(e["recent_churn"]),
+                        f"{e['complexity']:.0f}" if e["complexity"] else "-",
+                        f"{e['congestion_score']:.1f}",
+                        e["risk"].upper(),
+                    ]
+                )
             click.echo(
                 format_table(
                     ["File", "Authors", "Commits", "Churn", "Complexity", "Score", "Risk"],
@@ -333,8 +329,7 @@ def congestion(ctx, window, min_authors, limit):
                 click.echo("  Top congested files -- contributors:")
                 for e in top_entries:
                     contribs = ", ".join(
-                        f"{c['author']} ({c['commits']}c/{c['churn']}L)"
-                        for c in e["top_contributors"][:4]
+                        f"{c['author']} ({c['commits']}c/{c['churn']}L)" for c in e["top_contributors"][:4]
                     )
                     click.echo(f"    {e['path']}: {contribs}")
                 click.echo()

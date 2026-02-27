@@ -925,7 +925,9 @@ def describe(ctx, write, force, agent_prompt, out_file):
 
         # Gather compact verdict data
         _total_files = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-        _lang_counts = Counter(f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"])
+        _lang_counts = Counter(
+            f["language"] for f in conn.execute("SELECT language FROM files").fetchall() if f["language"]
+        )
         _top_lang = _lang_counts.most_common(1)[0][0] if _lang_counts else "unknown"
         _n_langs = len(_lang_counts)
 

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import json
 import pytest
 
 from tests.conftest import (
@@ -42,7 +41,18 @@ class TestTriageAdd:
         monkeypatch.chdir(triage_project)
         result = invoke_cli(
             cli_runner,
-            ["triage", "add", "--rule", "hardcoded-secret", "--file", "main.py", "--reason", "test data", "--status", "safe"],
+            [
+                "triage",
+                "add",
+                "--rule",
+                "hardcoded-secret",
+                "--file",
+                "main.py",
+                "--reason",
+                "test data",
+                "--status",
+                "safe",
+            ],
             cwd=triage_project,
         )
         assert result.exit_code == 0
@@ -51,7 +61,18 @@ class TestTriageAdd:
         monkeypatch.chdir(triage_project)
         invoke_cli(
             cli_runner,
-            ["triage", "add", "--rule", "sql-injection", "--file", "main.py", "--reason", "parameterized", "--status", "safe"],
+            [
+                "triage",
+                "add",
+                "--rule",
+                "sql-injection",
+                "--file",
+                "main.py",
+                "--reason",
+                "parameterized",
+                "--status",
+                "safe",
+            ],
             cwd=triage_project,
         )
         result = invoke_cli(cli_runner, ["triage", "list"], cwd=triage_project)
@@ -62,7 +83,18 @@ class TestTriageAdd:
         monkeypatch.chdir(triage_project)
         invoke_cli(
             cli_runner,
-            ["triage", "add", "--rule", "xss-vuln", "--file", "main.py", "--reason", "sanitized", "--status", "acknowledged"],
+            [
+                "triage",
+                "add",
+                "--rule",
+                "xss-vuln",
+                "--file",
+                "main.py",
+                "--reason",
+                "sanitized",
+                "--status",
+                "acknowledged",
+            ],
             cwd=triage_project,
         )
         result = invoke_cli(cli_runner, ["triage", "check", "xss-vuln", "main.py"], cwd=triage_project)

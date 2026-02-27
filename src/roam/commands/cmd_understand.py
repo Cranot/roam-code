@@ -636,8 +636,10 @@ def understand(ctx, full, tour_mode, mermaid_mode, agent_mode, skeleton_dir):
             if len(languages) > 3:
                 _lang_names += f"+{len(languages) - 3}more"
             _health_label = (
-                "healthy" if health["health_score"] >= 70
-                else "moderate" if health["health_score"] >= 40
+                "healthy"
+                if health["health_score"] >= 70
+                else "moderate"
+                if health["health_score"] >= 40
                 else "unhealthy"
             )
             _understand_verdict = (
@@ -757,9 +759,7 @@ def _understand_text(
     build_str = build_tool or "unknown"
 
     _health_label = (
-        "healthy" if health["health_score"] >= 70
-        else "moderate" if health["health_score"] >= 40
-        else "unhealthy"
+        "healthy" if health["health_score"] >= 70 else "moderate" if health["health_score"] >= 40 else "unhealthy"
     )
     _understand_verdict = (
         f"{_health_label} {len(languages)}-lang project "

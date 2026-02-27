@@ -3,10 +3,10 @@
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from roam.exit_codes import EXIT_GATE_FAILURE
-
 from tests.conftest import (
     assert_json_envelope,
     git_init,
@@ -24,22 +24,16 @@ def docs_project(tmp_path):
     (proj / ".gitignore").write_text(".roam/\n")
 
     (proj / "documented.py").write_text(
-        'def well_documented():\n'
+        "def well_documented():\n"
         '    """This function has great docs."""\n'
-        '    return 42\n'
-        '\n'
-        'def also_documented():\n'
+        "    return 42\n"
+        "\n"
+        "def also_documented():\n"
         '    """Another well-documented function."""\n'
-        '    return 99\n'
+        "    return 99\n"
     )
 
-    (proj / "undocumented.py").write_text(
-        'def missing_docs():\n'
-        '    return 1\n'
-        '\n'
-        'def also_missing():\n'
-        '    return 2\n'
-    )
+    (proj / "undocumented.py").write_text("def missing_docs():\n    return 1\n\ndef also_missing():\n    return 2\n")
 
     git_init(proj)
     index_in_process(proj)

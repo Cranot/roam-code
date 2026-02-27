@@ -26,7 +26,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -107,11 +106,7 @@ def single_function_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "tiny.py").write_text(
-        "def only_function():\n"
-        '    """The sole function in this file."""\n'
-        "    return 42\n"
-    )
+    (proj / "tiny.py").write_text('def only_function():\n    """The sole function in this file."""\n    return 42\n')
 
     git_init(proj)
     index_in_process(proj)
@@ -150,17 +145,13 @@ class TestSplitSmoke:
 class TestSplitJSON:
     def test_json_envelope_contract(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         assert_json_envelope(data, "split")
 
     def test_json_summary_has_verdict(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         summary = data.get("summary", {})
         assert "verdict" in summary, f"Missing 'verdict' in summary: {summary}"
@@ -169,9 +160,7 @@ class TestSplitJSON:
 
     def test_json_summary_has_groups(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         summary = data.get("summary", {})
         assert "groups" in summary, f"Missing 'groups' in summary: {summary}"
@@ -179,9 +168,7 @@ class TestSplitJSON:
 
     def test_json_summary_has_total_symbols(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         summary = data.get("summary", {})
         assert "total_symbols" in summary, f"Missing 'total_symbols' in summary: {summary}"
@@ -189,9 +176,7 @@ class TestSplitJSON:
 
     def test_json_has_groups_array(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         assert "groups" in data, f"Missing 'groups' key: {list(data.keys())}"
         assert isinstance(data["groups"], list)
@@ -199,9 +184,7 @@ class TestSplitJSON:
     def test_json_group_fields(self, cli_runner, clustered_project, monkeypatch):
         """Each group in the groups array should have label, size, symbols, etc."""
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         groups = data.get("groups", [])
         if not groups:
@@ -215,18 +198,14 @@ class TestSplitJSON:
     def test_json_too_few_symbols(self, cli_runner, single_function_project, monkeypatch):
         """JSON output for a tiny file still produces valid envelope."""
         monkeypatch.chdir(single_function_project)
-        result = invoke_cli(
-            cli_runner, ["split", "tiny.py"], cwd=single_function_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "tiny.py"], cwd=single_function_project, json_mode=True)
         data = parse_json_output(result, "split")
         assert_json_envelope(data, "split")
         assert data["summary"]["groups"] == 0
 
     def test_json_has_path(self, cli_runner, clustered_project, monkeypatch):
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         assert "path" in data, f"Missing 'path' in JSON output: {list(data.keys())}"
 
@@ -247,9 +226,7 @@ class TestSplitText:
         result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project)
         lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert lines, "Output is empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
 
     def test_shows_group_info(self, cli_runner, clustered_project, monkeypatch):
         """Text output should mention 'Group' when groups are detected."""
@@ -273,33 +250,27 @@ class TestSplitDetection:
     def test_detects_multiple_groups(self, cli_runner, clustered_project, monkeypatch):
         """A file with distinct symbol clusters should yield 2+ groups."""
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["split", "processor.py"], cwd=clustered_project, json_mode=True)
         data = parse_json_output(result, "split")
         groups = data.get("groups", [])
-        assert len(groups) >= 1, (
-            f"Expected at least 1 group, got {len(groups)}: {data['summary']}"
-        )
+        assert len(groups) >= 1, f"Expected at least 1 group, got {len(groups)}: {data['summary']}"
         total_symbols = sum(g["size"] for g in groups)
-        assert total_symbols >= 3, (
-            f"Expected at least 3 symbols across groups, got {total_symbols}"
-        )
+        assert total_symbols >= 3, f"Expected at least 3 symbols across groups, got {total_symbols}"
 
     def test_min_group_option(self, cli_runner, clustered_project, monkeypatch):
         """--min-group=5 should raise the bar for group membership."""
         monkeypatch.chdir(clustered_project)
         result = invoke_cli(
-            cli_runner, ["split", "processor.py", "--min-group", "5"],
-            cwd=clustered_project, json_mode=True,
+            cli_runner,
+            ["split", "processor.py", "--min-group", "5"],
+            cwd=clustered_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "split")
         # With min-group=5, some groups may be filtered out
         groups = data.get("groups", [])
         for g in groups:
-            assert g["size"] >= 5, (
-                f"Group '{g['label']}' has size {g['size']} but min-group is 5"
-            )
+            assert g["size"] >= 5, f"Group '{g['label']}' has size {g['size']} but min-group is 5"
 
 
 # ---------------------------------------------------------------------------
@@ -311,7 +282,5 @@ class TestSplitErrors:
     def test_nonexistent_file(self, cli_runner, clustered_project, monkeypatch):
         """split on a nonexistent path should exit with code 1."""
         monkeypatch.chdir(clustered_project)
-        result = invoke_cli(
-            cli_runner, ["split", "does_not_exist.py"], cwd=clustered_project
-        )
+        result = invoke_cli(cli_runner, ["split", "does_not_exist.py"], cwd=clustered_project)
         assert result.exit_code != 0

@@ -36,12 +36,7 @@ def drift_project(tmp_path):
     types = proj / "frontend" / "types"
     types.mkdir(parents=True)
     (types / "user.ts").write_text(
-        "export interface User {\n"
-        "  id: number;\n"
-        "  name: string;\n"
-        "  email: string;\n"
-        "  avatar: string;\n"
-        "}\n"
+        "export interface User {\n  id: number;\n  name: string;\n  email: string;\n  avatar: string;\n}\n"
     )
 
     git_init(proj)

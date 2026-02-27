@@ -16,8 +16,10 @@ import click
 
 from roam.commands.codeowners_helpers import (
     find_codeowners,
-    parse_codeowners as _parse_codeowners_file,
     resolve_owners,
+)
+from roam.commands.codeowners_helpers import (
+    parse_codeowners as _parse_codeowners_file,
 )
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, find_project_root, open_db

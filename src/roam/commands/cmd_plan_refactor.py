@@ -333,8 +333,7 @@ def plan_refactor(ctx, symbol, operation, target_file, max_steps):
         if _symbol_count > _MAX_SIM_SYMBOLS:
             previews = []
             click.echo(
-                f"NOTE: Simulation previews skipped ({_symbol_count} symbols, "
-                "use smaller codebase for simulation)",
+                f"NOTE: Simulation previews skipped ({_symbol_count} symbols, use smaller codebase for simulation)",
                 err=True,
             )
         else:

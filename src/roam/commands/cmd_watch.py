@@ -109,8 +109,8 @@ def _guardian_drift_summary(
     max_files: int = 250,
 ) -> dict:
     """Return compact ownership-drift summary for architecture guardian mode."""
-    from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
     from roam.commands.cmd_drift import compute_drift_score, compute_file_ownership
+    from roam.commands.codeowners_helpers import find_codeowners, parse_codeowners, resolve_owners
 
     co_path = find_codeowners(project_root)
     if co_path is None:

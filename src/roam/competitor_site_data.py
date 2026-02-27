@@ -1715,7 +1715,6 @@ def _decision_entries(
     return entries
 
 
-
 def _parse_matrix_confidence(lines: list[str]) -> dict[str, dict[str, object]]:
     heading = next((line for line in lines if line.startswith("## Matrix Recheck Log")), "")
     if not heading:

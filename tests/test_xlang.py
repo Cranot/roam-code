@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -214,9 +213,7 @@ class TestXLangText:
     def test_verdict_line_present_no_bridges(self, cli_runner, python_only_project, monkeypatch):
         monkeypatch.chdir(python_only_project)
         result = invoke_cli(cli_runner, ["x-lang"], cwd=python_only_project)
-        assert "VERDICT:" in result.output, (
-            f"Expected 'VERDICT:' in output, got:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected 'VERDICT:' in output, got:\n{result.output}"
 
     def test_output_mentions_bridges(self, cli_runner, python_only_project, monkeypatch):
         """Text output should reference 'bridges' in some form."""
@@ -230,6 +227,4 @@ class TestXLangText:
     def test_verdict_line_present_proto_project(self, cli_runner, proto_python_project, monkeypatch):
         monkeypatch.chdir(proto_python_project)
         result = invoke_cli(cli_runner, ["x-lang"], cwd=proto_python_project)
-        assert "VERDICT:" in result.output, (
-            f"Expected 'VERDICT:' in output, got:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected 'VERDICT:' in output, got:\n{result.output}"

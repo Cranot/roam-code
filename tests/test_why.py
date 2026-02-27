@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -63,8 +62,8 @@ def why_project(tmp_path):
         "\n"
         "def fetch_user(user_id: int):\n"
         '    """Fetch a user record from the DB."""\n'
-        "    conn = connect_db(\"sqlite:///app.db\")\n"
-        "    rows = query_db(conn, f\"SELECT * FROM users WHERE id={user_id}\")\n"
+        '    conn = connect_db("sqlite:///app.db")\n'
+        '    rows = query_db(conn, f"SELECT * FROM users WHERE id={user_id}")\n'
         "    return rows[0] if rows else None\n"
     )
 
@@ -121,9 +120,7 @@ class TestWhySmoke:
     def test_batch_mode_exits_zero(self, cli_runner, why_project, monkeypatch):
         """Passing multiple symbol names should work (batch table mode)."""
         monkeypatch.chdir(why_project)
-        result = invoke_cli(
-            cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project
-        )
+        result = invoke_cli(cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project)
         assert result.exit_code == 0
 
 
@@ -186,9 +183,7 @@ class TestWhyJSON:
 
     def test_json_batch_mode_returns_multiple_symbols(self, cli_runner, why_project, monkeypatch):
         monkeypatch.chdir(why_project)
-        result = invoke_cli(
-            cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project, json_mode=True)
         data = parse_json_output(result, "why")
         assert data["summary"]["symbols"] == 2
         assert len(data["symbols"]) == 2
@@ -264,18 +259,12 @@ class TestWhyText:
         monkeypatch.chdir(why_project)
         result = invoke_cli(cli_runner, ["why", "totally_nonexistent_sym_xyz_999"], cwd=why_project)
         # Should emit some kind of "not found" text, not crash silently
-        assert (
-            "not found" in result.output.lower()
-            or "Symbol not found" in result.output
-            or result.exit_code != 0
-        )
+        assert "not found" in result.output.lower() or "Symbol not found" in result.output or result.exit_code != 0
 
     def test_batch_mode_shows_table(self, cli_runner, why_project, monkeypatch):
         """Batch mode (2+ symbols) renders a compact table instead of detailed output."""
         monkeypatch.chdir(why_project)
-        result = invoke_cli(
-            cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project
-        )
+        result = invoke_cli(cli_runner, ["why", "authenticate", "fetch_user"], cwd=why_project)
         assert result.exit_code == 0
         # Both symbol names should appear somewhere in the table
         assert "authenticate" in result.output

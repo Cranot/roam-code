@@ -66,9 +66,7 @@ def index(ctx, force, verbose, quiet):
             ).fetchone()[0]
             coverage = (parsed_ok * 100 / parseable_count) if parseable_count else 0
 
-            _index_verdict = (
-                f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
-            )
+            _index_verdict = f"indexed {file_count} files, {sym_count} symbols, {edge_count} edges"
 
             if json_mode:
                 click.echo(

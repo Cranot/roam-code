@@ -300,10 +300,7 @@ def split(ctx, path, min_group):
                 f"({len(group_data)} groups, {len(symbols)} symbols)"
             )
         else:
-            _split_verdict = (
-                f"{_split_fname}: no split candidates "
-                f"({len(group_data)} groups, {len(symbols)} symbols)"
-            )
+            _split_verdict = f"{_split_fname}: no split candidates ({len(group_data)} groups, {len(symbols)} symbols)"
 
         if json_mode:
             click.echo(

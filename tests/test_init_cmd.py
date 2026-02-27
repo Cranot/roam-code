@@ -11,7 +11,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixture: a git-init'd project that has NOT been indexed yet.
 # init calls ensure_index() internally, so we must NOT pre-index here.
@@ -34,14 +33,10 @@ def fresh_project(tmp_path):
         "\n\n"
         "class Config:\n"
         '    """Application configuration."""\n'
-        '    DEBUG = False\n'
+        "    DEBUG = False\n"
         '    VERSION = "1.0.0"\n'
     )
-    (proj / "utils.py").write_text(
-        "def helper(x):\n"
-        '    """A helper function."""\n'
-        "    return x * 2\n"
-    )
+    (proj / "utils.py").write_text('def helper(x):\n    """A helper function."""\n    return x * 2\n')
     git_init(proj)
     return proj
 
@@ -115,17 +110,13 @@ class TestInitText:
     def test_verdict_line_present(self, cli_runner, fresh_project, monkeypatch):
         monkeypatch.chdir(fresh_project)
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
-        assert "VERDICT:" in result.output, (
-            f"Expected 'VERDICT:' in output, got:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected 'VERDICT:' in output, got:\n{result.output}"
 
     def test_output_mentions_indexed_or_index(self, cli_runner, fresh_project, monkeypatch):
         monkeypatch.chdir(fresh_project)
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
         lower = result.output.lower()
-        assert "index" in lower or "indexed" in lower, (
-            f"Expected 'index' or 'indexed' in output, got:\n{result.output}"
-        )
+        assert "index" in lower or "indexed" in lower, f"Expected 'index' or 'indexed' in output, got:\n{result.output}"
 
     def test_output_mentions_roam_commands(self, cli_runner, fresh_project, monkeypatch):
         """The welcome text should reference next steps (roam commands)."""
@@ -149,7 +140,7 @@ class TestInitSideEffects:
         )
         result = invoke_cli(cli_runner, ["init"], cwd=fresh_project)
         assert result.exit_code == 0
-        assert roam_dir.exists(), f".roam/ directory not created after init"
+        assert roam_dir.exists(), ".roam/ directory not created after init"
         assert roam_dir.is_dir()
 
     def test_index_db_created(self, cli_runner, fresh_project, monkeypatch):

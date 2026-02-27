@@ -224,9 +224,7 @@ class QueryEngine:
                         "simple_identifier",
                         "name",
                     ):
-                        name = source[child.start_byte : child.end_byte].decode(
-                            "utf-8", errors="replace"
-                        )
+                        name = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
                         scopes.add(name)
                         break
             current = current.parent
@@ -248,9 +246,7 @@ class QueryEngine:
             ):
                 for child in current.children:
                     if child.type in ("type_identifier", "identifier", "simple_identifier", "name"):
-                        return source[child.start_byte : child.end_byte].decode(
-                            "utf-8", errors="replace"
-                        )
+                        return source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
             current = current.parent
         return None
 
@@ -288,11 +284,7 @@ class QueryEngine:
         # Extract symbols
         for pattern in self.config.symbols:
             try:
-                symbols.extend(
-                    self._extract_symbols_from_pattern(
-                        pattern, root, source_bytes, file_path
-                    )
-                )
+                symbols.extend(self._extract_symbols_from_pattern(pattern, root, source_bytes, file_path))
             except Exception as e:
                 errors.append(f"Symbol pattern error: {e}")
 
@@ -300,11 +292,7 @@ class QueryEngine:
         for ref_type, patterns in self.config.references.items():
             for pattern in patterns:
                 try:
-                    references.extend(
-                        self._extract_references_from_pattern(
-                            pattern, root, source_bytes, file_path
-                        )
-                    )
+                    references.extend(self._extract_references_from_pattern(pattern, root, source_bytes, file_path))
                 except Exception as e:
                     errors.append(f"Reference pattern error ({ref_type}): {e}")
 
@@ -312,11 +300,7 @@ class QueryEngine:
         for inh_type, patterns in self.config.inheritance.items():
             for pattern in patterns:
                 try:
-                    inheritance.extend(
-                        self._extract_inheritance_from_pattern(
-                            pattern, root, source_bytes, file_path
-                        )
-                    )
+                    inheritance.extend(self._extract_inheritance_from_pattern(pattern, root, source_bytes, file_path))
                 except Exception as e:
                     errors.append(f"Inheritance pattern error ({inh_type}): {e}")
 
@@ -367,9 +351,7 @@ class QueryEngine:
                 if name_node is None:
                     continue
 
-                name = source[name_node.start_byte : name_node.end_byte].decode(
-                    "utf-8", errors="replace"
-                )
+                name = source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
 
                 # Skip empty or invalid names
                 if not name or not re.match(r"^[\w_]", name):
@@ -387,11 +369,7 @@ class QueryEngine:
 
                 # Special handling for Kotlin class_declaration
                 # Check first child to distinguish class/interface/enum
-                if (
-                    self.config.language == "kotlin"
-                    and def_node.type == "class_declaration"
-                    and kind == "class"
-                ):
+                if self.config.language == "kotlin" and def_node.type == "class_declaration" and kind == "class":
                     if def_node.child_count > 0:
                         first_child = def_node.children[0]
                         first_type = first_child.type
@@ -420,9 +398,7 @@ class QueryEngine:
                     sig_nodes = captures_dict.get(pattern.signature_capture, [])
                     for n in sig_nodes:
                         if self._is_child_of(n, def_node):
-                            signature = source[n.start_byte : n.end_byte].decode(
-                                "utf-8", errors="replace"
-                            )
+                            signature = source[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
                             break
 
                 # Get docstring if configured
@@ -435,9 +411,7 @@ class QueryEngine:
                         )
 
                 # Get full node text
-                node_text = source[def_node.start_byte : def_node.end_byte].decode(
-                    "utf-8", errors="replace"
-                )
+                node_text = source[def_node.start_byte : def_node.end_byte].decode("utf-8", errors="replace")
 
                 symbols.append(
                     ExtractedSymbol(
@@ -487,9 +461,7 @@ class QueryEngine:
             if name_node is None:
                 continue
 
-            name = source[name_node.start_byte : name_node.end_byte].decode(
-                "utf-8", errors="replace"
-            )
+            name = source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
 
             if not name:
                 continue
@@ -534,12 +506,10 @@ class QueryEngine:
 
             for child_node in child_nodes:
                 for parent_node in parent_nodes:
-                    child_name = source[
-                        child_node.start_byte : child_node.end_byte
-                    ].decode("utf-8", errors="replace")
-                    parent_name = source[
-                        parent_node.start_byte : parent_node.end_byte
-                    ].decode("utf-8", errors="replace")
+                    child_name = source[child_node.start_byte : child_node.end_byte].decode("utf-8", errors="replace")
+                    parent_name = source[parent_node.start_byte : parent_node.end_byte].decode(
+                        "utf-8", errors="replace"
+                    )
 
                     if not child_name or not parent_name:
                         continue

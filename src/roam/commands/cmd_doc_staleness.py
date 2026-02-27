@@ -34,7 +34,8 @@ def _run_git_blame(file_path, project_root):
             ["git", "blame", "-t", "--", file_path],
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
             cwd=str(project_root),
         )

@@ -64,7 +64,7 @@ def report_project(tmp_path):
         '    """Handle login request."""\n'
         "    token = authenticate(user, pw)\n"
         "    conn = connect(dsn)\n"
-        "    return {\"token\": token, \"db\": conn}\n"
+        '    return {"token": token, "db": conn}\n'
     )
 
     git_init(proj)
@@ -146,34 +146,26 @@ class TestReportJSON:
     def test_run_json_envelope(self, cli_runner, report_project, monkeypatch):
         """Running a preset in JSON mode should produce a valid envelope."""
         monkeypatch.chdir(report_project)
-        result = invoke_cli(
-            cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True)
         data = parse_json_output(result, "report")
         assert_json_envelope(data, "report")
 
     def test_run_json_summary_has_verdict(self, cli_runner, report_project, monkeypatch):
         monkeypatch.chdir(report_project)
-        result = invoke_cli(
-            cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True)
         data = parse_json_output(result, "report")
         assert "verdict" in data["summary"]
 
     def test_run_json_summary_has_preset_field(self, cli_runner, report_project, monkeypatch):
         monkeypatch.chdir(report_project)
-        result = invoke_cli(
-            cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True)
         data = parse_json_output(result, "report")
         assert "preset" in data["summary"]
         assert data["summary"]["preset"] == "first-contact"
 
     def test_run_json_has_sections_list(self, cli_runner, report_project, monkeypatch):
         monkeypatch.chdir(report_project)
-        result = invoke_cli(
-            cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["report", "first-contact"], cwd=report_project, json_mode=True)
         data = parse_json_output(result, "report")
         assert "sections" in data
         assert isinstance(data["sections"], list)
@@ -211,10 +203,7 @@ class TestReportText:
         monkeypatch.chdir(report_project)
         result = invoke_cli(cli_runner, ["report", "first-contact"], cwd=report_project)
         # first-contact has sections: Map, Health, Weather, Layers, Coupling
-        assert any(
-            section in result.output
-            for section in ["Map", "Health", "Weather", "Layers", "Coupling"]
-        )
+        assert any(section in result.output for section in ["Map", "Health", "Weather", "Layers", "Coupling"])
 
     def test_run_shows_preset_name_in_output(self, cli_runner, report_project, monkeypatch):
         monkeypatch.chdir(report_project)

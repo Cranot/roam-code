@@ -105,17 +105,11 @@ def php_migration_project(tmp_path):
     migrations_dir = proj / "database" / "migrations"
     migrations_dir.mkdir(parents=True)
 
-    (migrations_dir / "2023_01_01_000001_create_orders_table.php").write_text(
-        _MIGRATION_WITH_ISSUES
-    )
-    (migrations_dir / "2023_01_01_000002_create_users_table.php").write_text(
-        _MIGRATION_CLEAN
-    )
+    (migrations_dir / "2023_01_01_000001_create_orders_table.php").write_text(_MIGRATION_WITH_ISSUES)
+    (migrations_dir / "2023_01_01_000002_create_users_table.php").write_text(_MIGRATION_CLEAN)
 
     # Minimal PHP app file so the index has at least one non-migration file
-    (proj / "app.php").write_text(
-        "<?php\n\nrequire 'vendor/autoload.php';\n\necho 'hello';\n"
-    )
+    (proj / "app.php").write_text("<?php\n\nrequire 'vendor/autoload.php';\n\necho 'hello';\n")
 
     git_init(proj)
     index_in_process(proj)
@@ -131,12 +125,8 @@ def non_php_project(tmp_path):
     proj = tmp_path / "py_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "main.py").write_text(
-        "def main():\n    return 'hello'\n"
-    )
-    (proj / "utils.py").write_text(
-        "def helper(x):\n    return x + 1\n"
-    )
+    (proj / "main.py").write_text("def main():\n    return 'hello'\n")
+    (proj / "utils.py").write_text("def helper(x):\n    return x + 1\n")
     git_init(proj)
     index_in_process(proj)
     return proj
@@ -151,25 +141,19 @@ class TestMigrationSafetySmoke:
     def test_exits_zero_php_project(self, cli_runner, php_migration_project, monkeypatch):
         """Command exits 0 even when idempotency issues are found."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=php_migration_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=php_migration_project)
         assert result.exit_code == 0
 
     def test_exits_zero_non_php_project(self, cli_runner, non_php_project, monkeypatch):
         """Command exits 0 for a project with no PHP migration files."""
         monkeypatch.chdir(non_php_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=non_php_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=non_php_project)
         assert result.exit_code == 0
 
     def test_limit_flag_accepted(self, cli_runner, php_migration_project, monkeypatch):
         """--limit flag is accepted without error."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety", "--limit", "5"], cwd=php_migration_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety", "--limit", "5"], cwd=php_migration_project)
         assert result.exit_code == 0
 
     def test_include_archive_flag_accepted(self, cli_runner, php_migration_project, monkeypatch):
@@ -221,9 +205,7 @@ class TestMigrationSafetyJSON:
             json_mode=True,
         )
         data = parse_json_output(result, "migration-safety")
-        assert "verdict" in data["summary"], (
-            "summary must include a 'verdict' field"
-        )
+        assert "verdict" in data["summary"], "summary must include a 'verdict' field"
         assert isinstance(data["summary"]["verdict"], str)
 
     def test_json_summary_has_total(self, cli_runner, php_migration_project, monkeypatch):
@@ -296,9 +278,7 @@ class TestMigrationSafetyJSON:
         assert len(findings) > 0, "Expected at least one finding from the buggy migration"
         for finding in findings:
             for field in ("file", "line", "confidence", "issue", "fix", "category"):
-                assert field in finding, (
-                    f"Finding missing required field '{field}': {finding}"
-                )
+                assert field in finding, f"Finding missing required field '{field}': {finding}"
 
     def test_json_detects_high_confidence_issues(self, cli_runner, php_migration_project, monkeypatch):
         """High-confidence findings are present for the Schema::create and Schema::drop issues."""
@@ -311,9 +291,7 @@ class TestMigrationSafetyJSON:
         )
         data = parse_json_output(result, "migration-safety")
         high_findings = [f for f in data["findings"] if f["confidence"] == "high"]
-        assert len(high_findings) >= 1, (
-            "Expected at least one high-confidence finding (Schema::create or Schema::drop)"
-        )
+        assert len(high_findings) >= 1, "Expected at least one high-confidence finding (Schema::create or Schema::drop)"
 
     def test_json_non_php_empty_findings(self, cli_runner, non_php_project, monkeypatch):
         """Non-PHP project produces a valid envelope with zero findings."""
@@ -339,39 +317,27 @@ class TestMigrationSafetyText:
     def test_verdict_line_present(self, cli_runner, php_migration_project, monkeypatch):
         """Text output starts with a VERDICT: line."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=php_migration_project
-        )
-        assert "VERDICT:" in result.output, (
-            f"Expected 'VERDICT:' in output, got:\n{result.output[:300]}"
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=php_migration_project)
+        assert "VERDICT:" in result.output, f"Expected 'VERDICT:' in output, got:\n{result.output[:300]}"
 
     def test_verdict_line_is_first_line(self, cli_runner, php_migration_project, monkeypatch):
         """VERDICT: is the first non-empty line of text output."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=php_migration_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=php_migration_project)
         lines = [l for l in result.output.splitlines() if l.strip()]
         assert lines, "Output should not be empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First output line should start with 'VERDICT:', got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First output line should start with 'VERDICT:', got: {lines[0]!r}"
 
     def test_verdict_line_non_php_project(self, cli_runner, non_php_project, monkeypatch):
         """VERDICT: line is present even when there are no issues."""
         monkeypatch.chdir(non_php_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=non_php_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=non_php_project)
         assert "VERDICT:" in result.output
 
     def test_findings_reported_in_output(self, cli_runner, php_migration_project, monkeypatch):
         """Issues from the buggy migration appear in text output."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=php_migration_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=php_migration_project)
         # The output should mention either 'high' confidence or specific issue keywords
         output_lower = result.output.lower()
         assert "high" in output_lower or "create" in output_lower or "drop" in output_lower, (
@@ -381,9 +347,7 @@ class TestMigrationSafetyText:
     def test_migration_file_path_in_output(self, cli_runner, php_migration_project, monkeypatch):
         """Text output references the migration file that contains issues."""
         monkeypatch.chdir(php_migration_project)
-        result = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=php_migration_project
-        )
+        result = invoke_cli(cli_runner, ["migration-safety"], cwd=php_migration_project)
         # The problematic migration file name should appear in the output
         assert "create_orders_table" in result.output or "orders" in result.output, (
             f"Expected orders migration to be mentioned:\n{result.output[:500]}"
@@ -401,13 +365,9 @@ class TestMigrationSafetyText:
         data = parse_json_output(result, "migration-safety")
         # Findings from the clean migration should not include create_without_check
         clean_create_issues = [
-            f for f in data["findings"]
-            if f["category"] == "create_without_check"
-            and "users" in f.get("issue", "")
+            f for f in data["findings"] if f["category"] == "create_without_check" and "users" in f.get("issue", "")
         ]
-        assert len(clean_create_issues) == 0, (
-            "The guarded Schema::create('users') should NOT be flagged as unsafe"
-        )
+        assert len(clean_create_issues) == 0, "The guarded Schema::create('users') should NOT be flagged as unsafe"
 
 
 # ---------------------------------------------------------------------------
@@ -471,9 +431,7 @@ class TestMigrationSafetyFilters:
             json_mode=True,
         )
         data = parse_json_output(result, "migration-safety")
-        assert len(data["findings"]) <= 1, (
-            f"Expected at most 1 finding with --limit 1, got {len(data['findings'])}"
-        )
+        assert len(data["findings"]) <= 1, f"Expected at most 1 finding with --limit 1, got {len(data['findings'])}"
 
     def test_include_archive_skips_archive_by_default(self, cli_runner, tmp_path, monkeypatch):
         """Migrations in archive/ subdirectory are skipped unless --include-archive is given."""
@@ -484,9 +442,7 @@ class TestMigrationSafetyFilters:
         # Put a buggy migration inside an archive/ subdirectory
         archive_dir = proj / "database" / "migrations" / "archive"
         archive_dir.mkdir(parents=True)
-        (archive_dir / "2020_01_01_000001_old_migration.php").write_text(
-            _MIGRATION_WITH_ISSUES
-        )
+        (archive_dir / "2020_01_01_000001_old_migration.php").write_text(_MIGRATION_WITH_ISSUES)
 
         # Also place a minimal PHP file so index has something
         (proj / "index.php").write_text("<?php echo 'hi';\n")
@@ -497,13 +453,9 @@ class TestMigrationSafetyFilters:
         monkeypatch.chdir(proj)
 
         # Without --include-archive: archived migration should be excluded
-        result_default = invoke_cli(
-            cli_runner, ["migration-safety"], cwd=proj, json_mode=True
-        )
+        result_default = invoke_cli(cli_runner, ["migration-safety"], cwd=proj, json_mode=True)
         data_default = parse_json_output(result_default, "migration-safety")
-        assert data_default["summary"]["total"] == 0, (
-            "Archive migrations should be excluded by default"
-        )
+        assert data_default["summary"]["total"] == 0, "Archive migrations should be excluded by default"
 
         # With --include-archive: archived migration findings should appear
         result_archive = invoke_cli(
@@ -513,9 +465,7 @@ class TestMigrationSafetyFilters:
             json_mode=True,
         )
         data_archive = parse_json_output(result_archive, "migration-safety")
-        assert data_archive["summary"]["total"] >= 1, (
-            "Archive migrations should be included with --include-archive"
-        )
+        assert data_archive["summary"]["total"] >= 1, "Archive migrations should be included with --include-archive"
 
     def test_confidence_filter_exits_zero_no_matches(self, cli_runner, non_php_project, monkeypatch):
         """--confidence high on a project with no PHP files exits 0 with empty findings."""

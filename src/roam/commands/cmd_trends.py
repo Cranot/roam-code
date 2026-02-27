@@ -35,10 +35,7 @@ def _sparkline(values):
         return ""
     mn, mx = min(values), max(values)
     rng = mx - mn or 1
-    return "".join(
-        _SPARKS[min(len(_SPARKS) - 1, int((v - mn) / rng * (len(_SPARKS) - 1)))]
-        for v in values
-    )
+    return "".join(_SPARKS[min(len(_SPARKS) - 1, int((v - mn) / rng * (len(_SPARKS) - 1)))] for v in values)
 
 
 def _ascii_sparkline(values: list[float]) -> str:
@@ -806,8 +803,18 @@ def _build_cohort_analysis(conn, days: int) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _render_timeline_json(ctx, cmd_name, snap_dicts, assertions, assertion_results, analysis, anomalies_flag,
-                          do_forecast, analyze_flag, fail_on_anomaly):
+def _render_timeline_json(
+    ctx,
+    cmd_name,
+    snap_dicts,
+    assertions,
+    assertion_results,
+    analysis,
+    anomalies_flag,
+    do_forecast,
+    analyze_flag,
+    fail_on_anomaly,
+):
     """Render JSON output for the timeline mode."""
     summary = {
         "snapshots": len(snap_dicts),
@@ -1076,8 +1083,17 @@ def trends(
 
     # Mode 4: Default — health snapshot timeline
     _handle_timeline(
-        ctx, cmd_name, json_mode, count, since_date, assertions,
-        fail_on_anomaly, anomalies, do_forecast, analyze, sensitivity,
+        ctx,
+        cmd_name,
+        json_mode,
+        count,
+        since_date,
+        assertions,
+        fail_on_anomaly,
+        anomalies,
+        do_forecast,
+        analyze,
+        sensitivity,
     )
 
 
@@ -1378,9 +1394,7 @@ def _handle_metric_view(ctx, cmd_name, json_mode, days, metric):
         )
     elif improving > 0:
         verdict = (
-            f"{tracked_count} metrics tracked over {days} days "
-            f"({total_snapshots} snapshots) -- "
-            f"all stable or improving"
+            f"{tracked_count} metrics tracked over {days} days ({total_snapshots} snapshots) -- all stable or improving"
         )
     else:
         verdict = f"{tracked_count} metrics tracked over {days} days ({total_snapshots} snapshots) -- stable"
@@ -1605,8 +1619,19 @@ def _handle_compare(ctx, cmd_name, json_mode, since_tag):
             click.echo(f"  - {rec}")
 
 
-def _handle_timeline(ctx, cmd_name, json_mode, count, since_date, assertions,
-                     fail_on_anomaly, anomalies_flag, do_forecast, analyze_flag, sensitivity):
+def _handle_timeline(
+    ctx,
+    cmd_name,
+    json_mode,
+    count,
+    since_date,
+    assertions,
+    fail_on_anomaly,
+    anomalies_flag,
+    do_forecast,
+    analyze_flag,
+    sensitivity,
+):
     """Default mode: health snapshot timeline with optional anomaly detection."""
     do_analysis = analyze_flag or anomalies_flag or do_forecast or fail_on_anomaly
 
@@ -1675,11 +1700,24 @@ def _handle_timeline(ctx, cmd_name, json_mode, count, since_date, assertions,
 
         if json_mode:
             _render_timeline_json(
-                ctx, cmd_name, snap_dicts, assertions, assertion_results,
-                analysis, anomalies_flag, do_forecast, analyze_flag, fail_on_anomaly,
+                ctx,
+                cmd_name,
+                snap_dicts,
+                assertions,
+                assertion_results,
+                analysis,
+                anomalies_flag,
+                do_forecast,
+                analyze_flag,
+                fail_on_anomaly,
             )
             return
 
         _render_timeline_text(
-            snap_dicts, chrono, assertions, assertion_results, analysis, fail_on_anomaly,
+            snap_dicts,
+            chrono,
+            assertions,
+            assertion_results,
+            analysis,
+            fail_on_anomaly,
         )

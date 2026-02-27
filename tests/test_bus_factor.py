@@ -8,13 +8,11 @@ import pytest
 
 from tests.conftest import (
     assert_json_envelope,
-    git_commit,
     git_init,
     index_in_process,
     invoke_cli,
     parse_json_output,
 )
-
 
 # ===========================================================================
 # Fixture: Python project with git history
@@ -65,7 +63,7 @@ def bus_project(tmp_path):
     (src / "utils.py").write_text(
         "def format_output(data):\n"
         '    """Format data for output."""\n'
-        '    return str(data)\n'
+        "    return str(data)\n"
         "\n"
         "\n"
         "def parse_input(raw):\n"
@@ -111,7 +109,7 @@ def bus_project(tmp_path):
     (src / "utils.py").write_text(
         "def format_output(data):\n"
         '    """Format data for output (Bob revision)."""\n'
-        '    return repr(data)\n'
+        "    return repr(data)\n"
         "\n"
         "\n"
         "def parse_input(raw):\n"
@@ -271,9 +269,7 @@ class TestBusFactorJSON:
         result = invoke_cli(cli_runner, ["bus-factor"], cwd=bus_project, json_mode=True)
         data = parse_json_output(result, "bus-factor")
         for d in data.get("directories", []):
-            assert d["bus_factor"] >= 1, (
-                f"bus_factor should be >= 1 for {d.get('directory')}, got {d['bus_factor']}"
-            )
+            assert d["bus_factor"] >= 1, f"bus_factor should be >= 1 for {d.get('directory')}, got {d['bus_factor']}"
 
     def test_json_entropy_in_range(self, cli_runner, bus_project, monkeypatch):
         """Entropy values are in [0.0, 1.0]."""
@@ -281,9 +277,7 @@ class TestBusFactorJSON:
         result = invoke_cli(cli_runner, ["bus-factor"], cwd=bus_project, json_mode=True)
         data = parse_json_output(result, "bus-factor")
         for d in data.get("directories", []):
-            assert 0.0 <= d["entropy"] <= 1.0, (
-                f"entropy out of range for {d.get('directory')}: {d['entropy']}"
-            )
+            assert 0.0 <= d["entropy"] <= 1.0, f"entropy out of range for {d.get('directory')}: {d['entropy']}"
 
     def test_json_brain_methods_flag(self, cli_runner, bus_project, monkeypatch):
         """--brain-methods adds brain_methods key to JSON output."""

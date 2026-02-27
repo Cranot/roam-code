@@ -843,7 +843,8 @@ def _run_roam_subprocess(args: list[str], root: str = ".") -> dict:
             cmd,
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             cwd=root,
             timeout=60,
         )

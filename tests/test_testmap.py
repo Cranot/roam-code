@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ===========================================================================
 # Fixture: project with source and test files
 # ===========================================================================
@@ -126,11 +125,7 @@ def no_tests_project(tmp_path):
     proj = tmp_path / "notests_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "app.py").write_text(
-        "def important_function():\n"
-        '    """No tests exist for this."""\n'
-        "    return 42\n"
-    )
+    (proj / "app.py").write_text('def important_function():\n    """No tests exist for this."""\n    return 42\n')
     git_init(proj)
     index_in_process(proj)
     return proj
@@ -286,18 +281,14 @@ class TestTestMapJSON:
     def test_json_file_path_envelope(self, cli_runner, testmap_project, monkeypatch):
         """JSON output for file-path mode follows the roam envelope contract."""
         monkeypatch.chdir(testmap_project)
-        result = invoke_cli(
-            cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True)
         data = parse_json_output(result, "test-map")
         assert_json_envelope(data, command="test-map")
 
     def test_json_file_mode_has_test_importers(self, cli_runner, testmap_project, monkeypatch):
         """File-path mode JSON output includes test_importers list."""
         monkeypatch.chdir(testmap_project)
-        result = invoke_cli(
-            cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True)
         data = parse_json_output(result, "test-map")
         assert "test_importers" in data, f"Missing 'test_importers': {list(data.keys())}"
         assert isinstance(data["test_importers"], list)
@@ -305,18 +296,14 @@ class TestTestMapJSON:
     def test_json_file_mode_has_path(self, cli_runner, testmap_project, monkeypatch):
         """File-path mode JSON output includes the path field."""
         monkeypatch.chdir(testmap_project)
-        result = invoke_cli(
-            cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["test-map", "src/calculator.py"], cwd=testmap_project, json_mode=True)
         data = parse_json_output(result, "test-map")
         assert "path" in data, f"Missing 'path': {list(data.keys())}"
 
     def test_json_no_tests_project(self, cli_runner, no_tests_project, monkeypatch):
         """Symbol in a project with no tests has zero direct_tests."""
         monkeypatch.chdir(no_tests_project)
-        result = invoke_cli(
-            cli_runner, ["test-map", "important_function"], cwd=no_tests_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["test-map", "important_function"], cwd=no_tests_project, json_mode=True)
         data = parse_json_output(result, "test-map")
         summary = data.get("summary", {})
         assert summary.get("direct_tests", 0) == 0

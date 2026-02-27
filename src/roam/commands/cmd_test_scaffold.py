@@ -262,7 +262,7 @@ def _scaffold_go(symbols, source_path, framework="testing"):
             if sig:
                 lines.append(f"\t// signature: {sig}")
             lines.append(f"\t// TODO: test {name}")
-            lines.append("\tt.Skip(\"not implemented\")")
+            lines.append('\tt.Skip("not implemented")')
             lines.append("}")
             lines.append("")
 
@@ -523,14 +523,10 @@ def _find_already_tested(conn, symbols, test_file_path):
     tested = set()
 
     # Check if test file exists in the DB
-    test_file = conn.execute(
-        "SELECT id FROM files WHERE path = ?", (test_file_path,)
-    ).fetchone()
+    test_file = conn.execute("SELECT id FROM files WHERE path = ?", (test_file_path,)).fetchone()
     if not test_file:
         # Also try suffix match
-        test_file = conn.execute(
-            "SELECT id FROM files WHERE path LIKE ?", (f"%{test_file_path}",)
-        ).fetchone()
+        test_file = conn.execute("SELECT id FROM files WHERE path LIKE ?", (f"%{test_file_path}",)).fetchone()
     if not test_file:
         return tested
 
@@ -619,9 +615,7 @@ def test_scaffold(ctx, name, write, framework):
 
         # Try file lookup first (if has slash or common extension)
         if "/" in name_norm or "." in name_norm:
-            file_row = conn.execute(
-                "SELECT * FROM files WHERE path = ?", (name_norm,)
-            ).fetchone()
+            file_row = conn.execute("SELECT * FROM files WHERE path = ?", (name_norm,)).fetchone()
             if not file_row:
                 file_row = conn.execute(
                     "SELECT * FROM files WHERE path LIKE ? LIMIT 1",
@@ -636,10 +630,14 @@ def test_scaffold(ctx, name, write, framework):
             if is_test_file(source_path):
                 msg = f"Skipping: {source_path} is already a test file"
                 if json_mode:
-                    click.echo(to_json(json_envelope(
-                        "test-scaffold",
-                        summary={"verdict": msg, "scaffolded": 0},
-                    )))
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "test-scaffold",
+                                summary={"verdict": msg, "scaffolded": 0},
+                            )
+                        )
+                    )
                 else:
                     click.echo(f"VERDICT: {msg}")
                 return
@@ -654,9 +652,7 @@ def test_scaffold(ctx, name, write, framework):
 
             source_path = sym["file_path"]
             # Look up language from the file
-            frow = conn.execute(
-                "SELECT language FROM files WHERE path = ?", (source_path,)
-            ).fetchone()
+            frow = conn.execute("SELECT language FROM files WHERE path = ?", (source_path,)).fetchone()
             language = (frow["language"] if frow else None) or "unknown"
 
             target_symbols = _collect_symbols_for_symbol(conn, sym)
@@ -664,11 +660,15 @@ def test_scaffold(ctx, name, write, framework):
         if not target_symbols:
             msg = f"No testable symbols found in {source_path or name}"
             if json_mode:
-                click.echo(to_json(json_envelope(
-                    "test-scaffold",
-                    summary={"verdict": msg, "scaffolded": 0},
-                    symbols=[],
-                )))
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "test-scaffold",
+                            summary={"verdict": msg, "scaffolded": 0},
+                            symbols=[],
+                        )
+                    )
+                )
             else:
                 click.echo(f"VERDICT: {msg}")
             return
@@ -696,16 +696,20 @@ def test_scaffold(ctx, name, write, framework):
             if not untested:
                 msg = f"All {len(target_symbols)} symbols already have tests in {test_path}"
                 if json_mode:
-                    click.echo(to_json(json_envelope(
-                        "test-scaffold",
-                        summary={
-                            "verdict": msg,
-                            "scaffolded": 0,
-                            "already_tested": len(already_tested),
-                        },
-                        test_path=test_path,
-                        already_tested=sorted(already_tested),
-                    )))
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "test-scaffold",
+                                summary={
+                                    "verdict": msg,
+                                    "scaffolded": 0,
+                                    "already_tested": len(already_tested),
+                                },
+                                test_path=test_path,
+                                already_tested=sorted(already_tested),
+                            )
+                        )
+                    )
                 else:
                     click.echo(f"VERDICT: {msg}")
                     click.echo(f"Test file: {test_path}")
@@ -743,24 +747,28 @@ def test_scaffold(ctx, name, write, framework):
                 for s in target_symbols
             ]
 
-            click.echo(to_json(json_envelope(
-                "test-scaffold",
-                summary={
-                    "verdict": verdict,
-                    "scaffolded": scaffolded,
-                    "skipped": skipped,
-                    "total_symbols": total_symbols,
-                    "language": language,
-                    "framework": framework or _default_framework(language),
-                    "test_file_exists": test_file_exists,
-                    "written": write,
-                },
-                source_path=source_path,
-                test_path=test_path,
-                symbols=symbols_data,
-                kinds=testable_kinds,
-                scaffold=scaffold_text,
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "test-scaffold",
+                        summary={
+                            "verdict": verdict,
+                            "scaffolded": scaffolded,
+                            "skipped": skipped,
+                            "total_symbols": total_symbols,
+                            "language": language,
+                            "framework": framework or _default_framework(language),
+                            "test_file_exists": test_file_exists,
+                            "written": write,
+                        },
+                        source_path=source_path,
+                        test_path=test_path,
+                        symbols=symbols_data,
+                        kinds=testable_kinds,
+                        scaffold=scaffold_text,
+                    )
+                )
+            )
             if write and scaffolded > 0:
                 _write_scaffold(test_path, scaffold_text, test_file_exists)
             return

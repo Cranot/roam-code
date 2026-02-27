@@ -30,7 +30,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -102,11 +101,7 @@ def multi_snapshot_project(tmp_path):
 
     # Add more files and re-index a few times to build history
     for i in range(1, 5):
-        (proj / f"module_{i}.py").write_text(
-            f"def func_{i}():\n"
-            f'    """Module {i} function."""\n'
-            f"    return {i}\n"
-        )
+        (proj / f"module_{i}.py").write_text(f'def func_{i}():\n    """Module {i} function."""\n    return {i}\n')
         git_commit(proj, f"add module_{i}")
         out, rc = index_in_process(proj)
         assert rc == 0, f"roam index iteration {i} failed:\n{out}"
@@ -131,9 +126,7 @@ class TestAlertsCmdSmoke:
         """Text output contains a VERDICT line."""
         result = invoke_cli(cli_runner, ["alerts"], cwd=fresh_project)
         assert result.exit_code == 0
-        assert "VERDICT:" in result.output, (
-            f"Expected VERDICT: in output:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected VERDICT: in output:\n{result.output}"
 
     def test_output_is_non_empty(self, fresh_project, cli_runner):
         """alerts produces non-empty output."""
@@ -158,9 +151,7 @@ class TestAlertsCmdSmoke:
         """Text output contains VERDICT when snapshot history exists."""
         result = invoke_cli(cli_runner, ["alerts"], cwd=multi_snapshot_project)
         assert result.exit_code == 0
-        assert "VERDICT:" in result.output, (
-            f"Expected VERDICT: in snapshot output:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected VERDICT: in snapshot output:\n{result.output}"
 
 
 # ---------------------------------------------------------------------------
@@ -215,9 +206,7 @@ class TestAlertsCmdJson:
         result = invoke_cli(cli_runner, ["alerts"], cwd=fresh_project, json_mode=True)
         data = parse_json_output(result, "alerts")
         summary = data.get("summary", {})
-        assert "snapshots_analyzed" in summary, (
-            f"Missing 'snapshots_analyzed' in summary: {summary}"
-        )
+        assert "snapshots_analyzed" in summary, f"Missing 'snapshots_analyzed' in summary: {summary}"
         assert isinstance(summary["snapshots_analyzed"], int)
         assert summary["snapshots_analyzed"] >= 0
 
@@ -234,9 +223,7 @@ class TestAlertsCmdJson:
         data = parse_json_output(result, "alerts")
         total = data["summary"]["total"]
         actual = len(data["alerts"])
-        assert actual == total, (
-            f"summary.total={total} does not match alerts array length={actual}"
-        )
+        assert actual == total, f"summary.total={total} does not match alerts array length={actual}"
 
     def test_json_alerts_have_required_fields(self, fresh_project, cli_runner):
         """When alerts are present, each entry has the required fields."""
@@ -254,15 +241,11 @@ class TestAlertsCmdJson:
         data = parse_json_output(result, "alerts")
         valid_levels = {"CRITICAL", "WARNING", "INFO"}
         for alert in data.get("alerts", []):
-            assert alert["level"] in valid_levels, (
-                f"Unexpected level '{alert['level']}' in: {alert}"
-            )
+            assert alert["level"] in valid_levels, f"Unexpected level '{alert['level']}' in: {alert}"
 
     def test_json_envelope_with_snapshots(self, multi_snapshot_project, cli_runner):
         """JSON envelope contract holds when snapshot history exists."""
-        result = invoke_cli(
-            cli_runner, ["alerts"], cwd=multi_snapshot_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["alerts"], cwd=multi_snapshot_project, json_mode=True)
         data = parse_json_output(result, "alerts")
         assert_json_envelope(data, "alerts")
 
@@ -292,9 +275,7 @@ class TestAlertsCmdText:
         out_lower = result.output.lower()
         # Either there are alert lines OR an all-clear / VERDICT with no-alert language
         has_alert_content = "alert" in out_lower
-        assert has_alert_content, (
-            f"Expected 'alert' to appear in output:\n{result.output}"
-        )
+        assert has_alert_content, f"Expected 'alert' to appear in output:\n{result.output}"
 
     def test_text_verdict_is_first_content_line(self, fresh_project, cli_runner):
         """The first non-empty output line starts with 'VERDICT:'."""
@@ -302,9 +283,7 @@ class TestAlertsCmdText:
         assert result.exit_code == 0
         lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert lines, "Output is empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
 
 
 # ---------------------------------------------------------------------------
@@ -380,34 +359,80 @@ class TestAlertsInternals:
         from roam.commands.cmd_alerts import _check_trends
 
         snaps = [
-            {"cycles": 1, "health_score": 90, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 3, "health_score": 88, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 6, "health_score": 85, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 10, "health_score": 80, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 15, "health_score": 74, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
+            {
+                "cycles": 1,
+                "health_score": 90,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 3,
+                "health_score": 88,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 6,
+                "health_score": 85,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 10,
+                "health_score": 80,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 15,
+                "health_score": 74,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
         ]
         alerts = _check_trends(snaps)
         cycle_alerts = [a for a in alerts if a["metric"] == "cycles"]
-        assert len(cycle_alerts) >= 1, (
-            f"Expected trend alert for rising cycles: {alerts}"
-        )
+        assert len(cycle_alerts) >= 1, f"Expected trend alert for rising cycles: {alerts}"
 
     def test_check_trends_stable_series_no_alert(self):
         """A stable series produces no trend alerts."""
         from roam.commands.cmd_alerts import _check_trends
 
         snaps = [
-            {"cycles": 3, "health_score": 85, "god_components": 1,
-             "bottlenecks": 2, "dead_exports": 5, "layer_violations": 0},
-            {"cycles": 3, "health_score": 85, "god_components": 1,
-             "bottlenecks": 2, "dead_exports": 5, "layer_violations": 0},
-            {"cycles": 3, "health_score": 85, "god_components": 1,
-             "bottlenecks": 2, "dead_exports": 5, "layer_violations": 0},
+            {
+                "cycles": 3,
+                "health_score": 85,
+                "god_components": 1,
+                "bottlenecks": 2,
+                "dead_exports": 5,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 3,
+                "health_score": 85,
+                "god_components": 1,
+                "bottlenecks": 2,
+                "dead_exports": 5,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 3,
+                "health_score": 85,
+                "god_components": 1,
+                "bottlenecks": 2,
+                "dead_exports": 5,
+                "layer_violations": 0,
+            },
         ]
         alerts = _check_trends(snaps)
         assert alerts == [], f"Expected no alerts for stable data, got: {alerts}"
@@ -425,43 +450,61 @@ class TestAlertsInternals:
         from roam.commands.cmd_alerts import _check_rate_of_change
 
         snaps = [
-            {"cycles": 5, "health_score": 85, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 20, "health_score": 60, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
+            {
+                "cycles": 5,
+                "health_score": 85,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 20,
+                "health_score": 60,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
         ]
         alerts = _check_rate_of_change(snaps)
         # cycles jumped 300% — should fire
         cycle_alerts = [a for a in alerts if a["metric"] == "cycles"]
-        assert len(cycle_alerts) >= 1, (
-            f"Expected rate-of-change alert for cycles, got: {alerts}"
-        )
+        assert len(cycle_alerts) >= 1, f"Expected rate-of-change alert for cycles, got: {alerts}"
 
     def test_check_rate_of_change_small_worsening_no_alert(self):
         """A worsening change under 20% does not trigger a rate-of-change alert."""
         from roam.commands.cmd_alerts import _check_rate_of_change
 
         snaps = [
-            {"cycles": 10, "health_score": 85, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
-            {"cycles": 11, "health_score": 83, "god_components": 0,
-             "bottlenecks": 0, "dead_exports": 0, "layer_violations": 0},
+            {
+                "cycles": 10,
+                "health_score": 85,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
+            {
+                "cycles": 11,
+                "health_score": 83,
+                "god_components": 0,
+                "bottlenecks": 0,
+                "dead_exports": 0,
+                "layer_violations": 0,
+            },
         ]
         alerts = _check_rate_of_change(snaps)
         cycle_alerts = [a for a in alerts if a["metric"] == "cycles"]
-        assert len(cycle_alerts) == 0, (
-            f"Unexpected alert for small change: {cycle_alerts}"
-        )
+        assert len(cycle_alerts) == 0, f"Unexpected alert for small change: {cycle_alerts}"
 
     def test_deduplicate_keeps_highest_severity(self):
         """_deduplicate keeps the highest-severity alert when metric+direction clash."""
         from roam.commands.cmd_alerts import _deduplicate
 
         alerts = [
-            {"level": "INFO", "metric": "cycles", "message": "msg1",
-             "current_value": 5, "trend_direction": "up"},
-            {"level": "WARNING", "metric": "cycles", "message": "msg2",
-             "current_value": 5, "trend_direction": "up"},
+            {"level": "INFO", "metric": "cycles", "message": "msg1", "current_value": 5, "trend_direction": "up"},
+            {"level": "WARNING", "metric": "cycles", "message": "msg2", "current_value": 5, "trend_direction": "up"},
         ]
         deduped = _deduplicate(alerts)
         assert len(deduped) == 1
@@ -472,10 +515,8 @@ class TestAlertsInternals:
         from roam.commands.cmd_alerts import _deduplicate
 
         alerts = [
-            {"level": "CRITICAL", "metric": "health_score", "message": "low",
-             "current_value": 40},
-            {"level": "WARNING", "metric": "cycles", "message": "high",
-             "current_value": 12, "trend_direction": "up"},
+            {"level": "CRITICAL", "metric": "health_score", "message": "low", "current_value": 40},
+            {"level": "WARNING", "metric": "cycles", "message": "high", "current_value": 12, "trend_direction": "up"},
         ]
         deduped = _deduplicate(alerts)
         assert len(deduped) == 2

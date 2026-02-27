@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+
 import pytest
 
 from tests.conftest import (
@@ -20,9 +21,7 @@ def sbom_project(tmp_path):
     proj = tmp_path / "sbom_proj"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "main.py").write_text(
-        "import requests\n\ndef fetch(url):\n    return requests.get(url)\n"
-    )
+    (proj / "main.py").write_text("import requests\n\ndef fetch(url):\n    return requests.get(url)\n")
     (proj / "requirements.txt").write_text("requests==2.31.0\nclick>=8.0\n")
     git_init(proj)
     index_in_process(proj)
@@ -81,7 +80,9 @@ class TestSbomJSON:
         result = invoke_cli(cli_runner, ["sbom"], cwd=sbom_project, json_mode=True)
         data = parse_json_output(result, "sbom")
         # Should contain SBOM document
-        assert "sbom" in data or "document" in data or "components" in data["summary"] or "dependencies" in data["summary"]
+        assert (
+            "sbom" in data or "document" in data or "components" in data["summary"] or "dependencies" in data["summary"]
+        )
 
 
 class TestSbomText:

@@ -7,7 +7,6 @@ import pytest
 from tests.conftest import (
     assert_json_envelope,
     git_init,
-    git_commit,
     index_in_process,
     invoke_cli,
     parse_json_output,
@@ -21,11 +20,7 @@ def staleness_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "module.py").write_text(
-        'def greet(name):\n'
-        '    """Say hello to the user."""\n'
-        '    return f"Hello, {name}"\n'
-    )
+    (proj / "module.py").write_text('def greet(name):\n    """Say hello to the user."""\n    return f"Hello, {name}"\n')
     git_init(proj)
     index_in_process(proj)
     return proj

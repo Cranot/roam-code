@@ -88,7 +88,8 @@ def _check_git() -> dict:
             ["git", "--version"],
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=5,
         )
         version_line = result.stdout.strip() if result.returncode == 0 else ""

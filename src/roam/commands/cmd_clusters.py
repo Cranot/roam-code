@@ -316,7 +316,9 @@ def clusters(ctx, min_size, mermaid_mode):
         visible_pre = [r for r in rows if r["size"] >= min_size]
         if visible_pre:
             largest_pre = max(visible_pre, key=lambda r: r["size"])
-            verdict_text = f"{len(visible_pre)} clusters, largest: {largest_pre['cluster_label']}({largest_pre['size']} syms)"
+            verdict_text = (
+                f"{len(visible_pre)} clusters, largest: {largest_pre['cluster_label']}({largest_pre['size']} syms)"
+            )
         else:
             verdict_text = "no clusters detected"
         click.echo(f"VERDICT: {verdict_text}\n")

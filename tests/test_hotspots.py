@@ -19,12 +19,9 @@ from click.testing import CliRunner
 sys.path.insert(0, str(Path(__file__).parent))
 from conftest import (
     assert_json_envelope,
-    git_init,
-    index_in_process,
     invoke_cli,
     parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -118,9 +115,7 @@ class TestHotspotsDefaultMode:
         """Text output begins with a VERDICT line when no runtime data exists."""
         result = invoke_cli(cli_runner, ["hotspots"], cwd=plain_project)
         assert result.exit_code == 0
-        assert "VERDICT:" in result.output, (
-            f"Expected VERDICT line in output:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected VERDICT line in output:\n{result.output}"
 
     def test_json_exits_zero_without_runtime_data(self, plain_project, cli_runner):
         """hotspots --json exits 0 even without runtime data."""
@@ -149,9 +144,7 @@ class TestHotspotsDefaultMode:
         # Either the no-data message or a zero-hotspot verdict is acceptable
         has_no_data = "no runtime" in out_lower or "ingest" in out_lower
         has_zero = "0 runtime" in out_lower or "no runtime hotspot" in out_lower
-        assert has_no_data or has_zero, (
-            f"Expected no-data message or zero-hotspot verdict:\n{result.output}"
-        )
+        assert has_no_data or has_zero, f"Expected no-data message or zero-hotspot verdict:\n{result.output}"
 
     def test_help_flag(self, cli_runner):
         """hotspots --help exits 0 and mentions relevant terms."""
@@ -173,37 +166,23 @@ class TestHotspotsSecurityMode:
 
     def test_exits_zero_with_security_flag(self, security_project, cli_runner):
         """hotspots --security exits 0 on a project with known sinks."""
-        result = invoke_cli(
-            cli_runner, ["hotspots", "--security"], cwd=security_project
-        )
-        assert result.exit_code == 0, (
-            f"hotspots --security failed:\n{result.output}"
-        )
+        result = invoke_cli(cli_runner, ["hotspots", "--security"], cwd=security_project)
+        assert result.exit_code == 0, f"hotspots --security failed:\n{result.output}"
 
     def test_verdict_line_present_security_mode(self, security_project, cli_runner):
         """Text output begins with VERDICT: in security mode."""
-        result = invoke_cli(
-            cli_runner, ["hotspots", "--security"], cwd=security_project
-        )
+        result = invoke_cli(cli_runner, ["hotspots", "--security"], cwd=security_project)
         assert result.exit_code == 0
-        assert "VERDICT:" in result.output, (
-            f"Expected VERDICT: line:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected VERDICT: line:\n{result.output}"
 
     def test_exits_zero_security_no_sinks(self, plain_project, cli_runner):
         """--security exits 0 cleanly on a project with no dangerous calls."""
-        result = invoke_cli(
-            cli_runner, ["hotspots", "--security"], cwd=plain_project
-        )
-        assert result.exit_code == 0, (
-            f"hotspots --security failed on clean project:\n{result.output}"
-        )
+        result = invoke_cli(cli_runner, ["hotspots", "--security"], cwd=plain_project)
+        assert result.exit_code == 0, f"hotspots --security failed on clean project:\n{result.output}"
 
     def test_no_sinks_verdict_message(self, plain_project, cli_runner):
         """On a clean project, the verdict says no hotspots were detected."""
-        result = invoke_cli(
-            cli_runner, ["hotspots", "--security"], cwd=plain_project
-        )
+        result = invoke_cli(cli_runner, ["hotspots", "--security"], cwd=plain_project)
         assert result.exit_code == 0
         out_lower = result.output.lower()
         assert "no security hotspot" in out_lower or "0 security hotspot" in out_lower, (
@@ -212,15 +191,11 @@ class TestHotspotsSecurityMode:
 
     def test_detects_sinks_in_project(self, security_project, cli_runner):
         """--security detects eval, os.system, and pickle.load in the fixture project."""
-        result = invoke_cli(
-            cli_runner, ["hotspots", "--security"], cwd=security_project
-        )
+        result = invoke_cli(cli_runner, ["hotspots", "--security"], cwd=security_project)
         assert result.exit_code == 0
         out_lower = result.output.lower()
         # At least one sink pattern title or count must appear
-        assert "security hotspot" in out_lower, (
-            f"Expected sinks to be reported:\n{result.output}"
-        )
+        assert "security hotspot" in out_lower, f"Expected sinks to be reported:\n{result.output}"
 
     def test_json_envelope_security_mode(self, security_project, cli_runner):
         """JSON output in --security mode follows the envelope contract."""
@@ -300,9 +275,7 @@ class TestHotspotsSecurityMode:
         data = parse_json_output(result, "hotspots")
         valid_severities = {"critical", "high", "medium"}
         for hs in data.get("hotspots", []):
-            assert hs["severity"] in valid_severities, (
-                f"Unexpected severity '{hs['severity']}' in: {hs}"
-            )
+            assert hs["severity"] in valid_severities, f"Unexpected severity '{hs['severity']}' in: {hs}"
 
     def test_json_hotspots_count_matches_summary(self, security_project, cli_runner):
         """The hotspots array length matches summary['total']."""
@@ -315,9 +288,7 @@ class TestHotspotsSecurityMode:
         data = parse_json_output(result, "hotspots")
         total = data["summary"]["total"]
         actual = len(data.get("hotspots", []))
-        assert actual == total, (
-            f"summary.total={total} does not match hotspots array length={actual}"
-        )
+        assert actual == total, f"summary.total={total} does not match hotspots array length={actual}"
 
     def test_signals_field_in_json(self, security_project, cli_runner):
         """JSON envelope contains a 'signals' dict with entrypoints and files_scanned."""
@@ -350,9 +321,7 @@ class TestHotspotsFlags:
             ["hotspots", "--security", "--runtime"],
             cwd=plain_project,
         )
-        assert result.exit_code != 0, (
-            "Expected non-zero exit when combining --security with --runtime"
-        )
+        assert result.exit_code != 0, "Expected non-zero exit when combining --security with --runtime"
         assert "Cannot combine" in result.output
 
     def test_security_and_discrepancy_flags_conflict(self, plain_project, cli_runner):
@@ -362,7 +331,5 @@ class TestHotspotsFlags:
             ["hotspots", "--security", "--discrepancy"],
             cwd=plain_project,
         )
-        assert result.exit_code != 0, (
-            "Expected non-zero exit when combining --security with --discrepancy"
-        )
+        assert result.exit_code != 0, "Expected non-zero exit when combining --security with --discrepancy"
         assert "Cannot combine" in result.output

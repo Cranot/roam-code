@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ===========================================================================
 # Fixture: Python project with multiple files and import relationships
 # ===========================================================================

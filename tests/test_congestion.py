@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-import json
-import os
 import subprocess
+
 import pytest
 
 from tests.conftest import (
@@ -23,23 +22,14 @@ def congestion_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "hot_file.py").write_text(
-        "def process():\n"
-        "    return 1\n"
-    )
-    (proj / "cold_file.py").write_text(
-        "def helper():\n"
-        "    return 2\n"
-    )
+    (proj / "hot_file.py").write_text("def process():\n    return 1\n")
+    (proj / "cold_file.py").write_text("def helper():\n    return 2\n")
     git_init(proj)
 
     # Simulate second author editing hot_file
     subprocess.run(["git", "config", "user.name", "Dev2"], cwd=proj, capture_output=True)
     subprocess.run(["git", "config", "user.email", "dev2@test.com"], cwd=proj, capture_output=True)
-    (proj / "hot_file.py").write_text(
-        "def process():\n"
-        "    return 1\n\ndef added_by_dev2():\n    pass\n"
-    )
+    (proj / "hot_file.py").write_text("def process():\n    return 1\n\ndef added_by_dev2():\n    pass\n")
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
     subprocess.run(["git", "commit", "-m", "dev2 changes"], cwd=proj, capture_output=True)
 
@@ -47,8 +37,7 @@ def congestion_project(tmp_path):
     subprocess.run(["git", "config", "user.name", "Dev3"], cwd=proj, capture_output=True)
     subprocess.run(["git", "config", "user.email", "dev3@test.com"], cwd=proj, capture_output=True)
     (proj / "hot_file.py").write_text(
-        "def process():\n"
-        "    return 1\n\ndef added_by_dev2():\n    pass\n\ndef added_by_dev3():\n    pass\n"
+        "def process():\n    return 1\n\ndef added_by_dev2():\n    pass\n\ndef added_by_dev3():\n    pass\n"
     )
     subprocess.run(["git", "add", "."], cwd=proj, capture_output=True)
     subprocess.run(["git", "commit", "-m", "dev3 changes"], cwd=proj, capture_output=True)
