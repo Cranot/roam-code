@@ -7,6 +7,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [11.1.3] - 2026-02-27
+
+### Fixed
+- PyPI: 11.1.2 package was missing `SqlExtractor` (published before SQL was added). This release is the first PyPI version with SQL DDL support.
+
 ## [11.1.2] - 2026-02-27
 
 ### Added
@@ -464,7 +469,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Incremental indexing via mtime + hash change detection
 - Git integration: churn, blame, co-change analysis
 
-[Unreleased]: https://github.com/Cranot/roam-code/compare/v11.1.2...HEAD
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v11.1.3...HEAD
+[11.1.3]: https://github.com/Cranot/roam-code/compare/v11.1.2...v11.1.3
 [11.1.2]: https://github.com/Cranot/roam-code/compare/v11.1.1...v11.1.2
 [11.1.1]: https://github.com/Cranot/roam-code/compare/v11.1.0...v11.1.1
 [11.1.0]: https://github.com/Cranot/roam-code/compare/v11.0.0...v11.1.0
