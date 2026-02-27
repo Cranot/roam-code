@@ -16,8 +16,6 @@ import click
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import (
-    abbrev_kind,
-    format_table,
     json_envelope,
     loc,
     to_json,
