@@ -68,11 +68,7 @@ class TestTestScaffoldJSON:
         data = parse_json_output(result, "test-scaffold")
         # Should have scaffold text or lines or symbols
         has_content = (
-            "scaffold" in data
-            or "content" in data
-            or "lines" in data
-            or "test_path" in data
-            or "symbols" in data
+            "scaffold" in data or "content" in data or "lines" in data or "test_path" in data or "symbols" in data
         )
         assert has_content, f"Expected scaffold content in JSON, got keys: {list(data.keys())}"
 
@@ -92,7 +88,9 @@ class TestTestScaffoldText:
 
     def test_scaffold_with_framework(self, cli_runner, scaffold_project, monkeypatch):
         monkeypatch.chdir(scaffold_project)
-        result = invoke_cli(cli_runner, ["test-scaffold", "calculator.py", "--framework", "unittest"], cwd=scaffold_project)
+        result = invoke_cli(
+            cli_runner, ["test-scaffold", "calculator.py", "--framework", "unittest"], cwd=scaffold_project
+        )
         assert result.exit_code == 0
 
 

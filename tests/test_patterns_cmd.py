@@ -27,7 +27,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -209,9 +208,7 @@ class TestPatternsSmoke:
     def test_pattern_filter_accepted(self, cli_runner, pattern_project, monkeypatch):
         """--pattern filter option is accepted."""
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns", "--pattern", "singleton"], cwd=pattern_project
-        )
+        result = invoke_cli(cli_runner, ["patterns", "--pattern", "singleton"], cwd=pattern_project)
         assert result.exit_code == 0
 
 
@@ -223,17 +220,13 @@ class TestPatternsSmoke:
 class TestPatternsJSON:
     def test_json_envelope_contract(self, cli_runner, pattern_project, monkeypatch):
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         assert_json_envelope(data, "patterns")
 
     def test_json_summary_has_verdict(self, cli_runner, pattern_project, monkeypatch):
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         summary = data.get("summary", {})
         assert "verdict" in summary, f"Missing 'verdict' in summary: {summary}"
@@ -242,9 +235,7 @@ class TestPatternsJSON:
 
     def test_json_summary_has_total(self, cli_runner, pattern_project, monkeypatch):
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         summary = data.get("summary", {})
         assert "total_patterns" in summary
@@ -252,9 +243,7 @@ class TestPatternsJSON:
 
     def test_json_summary_has_types_found(self, cli_runner, pattern_project, monkeypatch):
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         summary = data.get("summary", {})
         assert "types_found" in summary
@@ -262,9 +251,7 @@ class TestPatternsJSON:
 
     def test_json_has_patterns_dict(self, cli_runner, pattern_project, monkeypatch):
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         assert "patterns" in data, f"Missing 'patterns' key: {list(data.keys())}"
         assert isinstance(data["patterns"], dict)
@@ -272,9 +259,7 @@ class TestPatternsJSON:
     def test_json_pattern_instance_fields(self, cli_runner, pattern_project, monkeypatch):
         """Each pattern instance should have name, kind, location, confidence."""
         monkeypatch.chdir(pattern_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=pattern_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         for ptype, pdata in data.get("patterns", {}).items():
             assert "instances" in pdata, f"Missing 'instances' in pattern type {ptype}"
@@ -288,9 +273,7 @@ class TestPatternsJSON:
     def test_json_no_patterns_envelope(self, cli_runner, plain_project, monkeypatch):
         """JSON output for a plain project still produces valid envelope."""
         monkeypatch.chdir(plain_project)
-        result = invoke_cli(
-            cli_runner, ["patterns"], cwd=plain_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["patterns"], cwd=plain_project, json_mode=True)
         data = parse_json_output(result, "patterns")
         assert_json_envelope(data, "patterns")
         assert data["summary"]["total_patterns"] == 0
@@ -312,9 +295,7 @@ class TestPatternsText:
         result = invoke_cli(cli_runner, ["patterns"], cwd=pattern_project)
         lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert lines, "Output is empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
 
     def test_no_patterns_verdict(self, cli_runner, plain_project, monkeypatch):
         """No-pattern project says 'no patterns detected' in verdict."""
@@ -333,25 +314,25 @@ class TestPatternsDetection:
         """Should detect the create_shape factory function."""
         monkeypatch.chdir(pattern_project)
         result = invoke_cli(
-            cli_runner, ["patterns", "--pattern", "factory"], cwd=pattern_project,
+            cli_runner,
+            ["patterns", "--pattern", "factory"],
+            cwd=pattern_project,
             json_mode=True,
         )
         data = parse_json_output(result, "patterns")
         factory_data = data.get("patterns", {}).get("factory")
-        assert factory_data is not None, (
-            f"Expected factory pattern, got types: {list(data.get('patterns', {}).keys())}"
-        )
+        assert factory_data is not None, f"Expected factory pattern, got types: {list(data.get('patterns', {}).keys())}"
         assert factory_data["count"] >= 1
         names = [inst["name"] for inst in factory_data["instances"]]
-        assert any("create_shape" in n for n in names), (
-            f"Expected create_shape in factory instances, got: {names}"
-        )
+        assert any("create_shape" in n for n in names), f"Expected create_shape in factory instances, got: {names}"
 
     def test_detects_singleton(self, cli_runner, pattern_project, monkeypatch):
         """Should detect the AppConfig singleton class."""
         monkeypatch.chdir(pattern_project)
         result = invoke_cli(
-            cli_runner, ["patterns", "--pattern", "singleton"], cwd=pattern_project,
+            cli_runner,
+            ["patterns", "--pattern", "singleton"],
+            cwd=pattern_project,
             json_mode=True,
         )
         data = parse_json_output(result, "patterns")
@@ -362,15 +343,15 @@ class TestPatternsDetection:
             pytest.skip("Singleton not detected -- may need richer fixtures")
         assert singleton_data["count"] >= 1
         names = [inst["name"] for inst in singleton_data["instances"]]
-        assert any("AppConfig" in n for n in names), (
-            f"Expected AppConfig in singleton instances, got: {names}"
-        )
+        assert any("AppConfig" in n for n in names), f"Expected AppConfig in singleton instances, got: {names}"
 
     def test_detects_observer(self, cli_runner, pattern_project, monkeypatch):
         """Should detect the EventBus observer pattern."""
         monkeypatch.chdir(pattern_project)
         result = invoke_cli(
-            cli_runner, ["patterns", "--pattern", "observer"], cwd=pattern_project,
+            cli_runner,
+            ["patterns", "--pattern", "observer"],
+            cwd=pattern_project,
             json_mode=True,
         )
         data = parse_json_output(result, "patterns")
@@ -379,15 +360,15 @@ class TestPatternsDetection:
             pytest.skip("Observer not detected -- may need richer fixtures")
         assert observer_data["count"] >= 1
         names = [inst["name"] for inst in observer_data["instances"]]
-        assert any("EventBus" in n for n in names), (
-            f"Expected EventBus in observer instances, got: {names}"
-        )
+        assert any("EventBus" in n for n in names), f"Expected EventBus in observer instances, got: {names}"
 
     def test_pattern_filter_narrows_results(self, cli_runner, pattern_project, monkeypatch):
         """Using --pattern factory should only return factory results."""
         monkeypatch.chdir(pattern_project)
         result = invoke_cli(
-            cli_runner, ["patterns", "--pattern", "factory"], cwd=pattern_project,
+            cli_runner,
+            ["patterns", "--pattern", "factory"],
+            cwd=pattern_project,
             json_mode=True,
         )
         data = parse_json_output(result, "patterns")

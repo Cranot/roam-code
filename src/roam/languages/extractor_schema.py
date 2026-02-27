@@ -46,8 +46,6 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-import yaml
-
 # ---------------------------------------------------------------------------
 # Schema Data Classes
 # ---------------------------------------------------------------------------
@@ -198,6 +196,8 @@ class LanguageConfig:
     @classmethod
     def load(cls, path: Path) -> "LanguageConfig":
         """Load from a YAML file."""
+        import yaml
+
         with open(path, encoding="utf-8") as f:
             data = yaml.safe_load(f)
         return cls.from_yaml(data)

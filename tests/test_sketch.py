@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -41,7 +40,7 @@ def sketch_project(tmp_path):
         "\n"
         "    def display(self) -> str:\n"
         '        """Return formatted product string."""\n'
-        "        return f\"{self.name}: ${self.price:.2f}\"\n"
+        '        return f"{self.name}: ${self.price:.2f}"\n'
         "\n"
         "    def apply_discount(self, pct: float) -> float:\n"
         '        """Return discounted price."""\n'
@@ -75,7 +74,7 @@ def sketch_project(tmp_path):
         "\n"
         "def checkout(cart: Cart) -> dict:\n"
         '    """Process checkout and return receipt."""\n'
-        "    return {\"total\": cart.total(), \"items\": len(cart.items)}\n"
+        '    return {"total": cart.total(), "items": len(cart.items)}\n'
     )
 
     (src / "utils.py").write_text(
@@ -170,9 +169,7 @@ class TestSketchJSON:
     def test_json_no_symbols_envelope(self, cli_runner, sketch_project, monkeypatch):
         """Nonexistent directory should still return a valid envelope with zero counts."""
         monkeypatch.chdir(sketch_project)
-        result = invoke_cli(
-            cli_runner, ["sketch", "nonexistent_dir_xyz"], cwd=sketch_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["sketch", "nonexistent_dir_xyz"], cwd=sketch_project, json_mode=True)
         data = parse_json_output(result, "sketch")
         assert_json_envelope(data, "sketch")
         # file_count and symbol_count should be 0
@@ -184,9 +181,7 @@ class TestSketchJSON:
     def test_json_files_entries_have_symbol_fields(self, cli_runner, sketch_project, monkeypatch):
         """Each symbol entry in the files dict should have name, kind, and line_start."""
         monkeypatch.chdir(sketch_project)
-        result = invoke_cli(
-            cli_runner, ["sketch", "--full", "src"], cwd=sketch_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["sketch", "--full", "src"], cwd=sketch_project, json_mode=True)
         data = parse_json_output(result, "sketch")
         files = data.get("files", {})
         if not files:

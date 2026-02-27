@@ -2,13 +2,10 @@
 
 from __future__ import annotations
 
-import json
-import os
 import pytest
 
 from tests.conftest import (
     assert_json_envelope,
-    git_commit,
     git_init,
     index_in_process,
     invoke_cli,
@@ -25,14 +22,8 @@ def adr_project(tmp_path):
     # Source files
     src = proj / "src"
     src.mkdir()
-    (src / "auth.py").write_text(
-        "def authenticate(user, password):\n"
-        "    return user if password else None\n"
-    )
-    (src / "db.py").write_text(
-        "def connect():\n"
-        "    return 'connection'\n"
-    )
+    (src / "auth.py").write_text("def authenticate(user, password):\n    return user if password else None\n")
+    (src / "db.py").write_text("def connect():\n    return 'connection'\n")
 
     # ADR directory with 3 ADRs
     adr_dir = proj / "docs" / "adr"
@@ -50,9 +41,7 @@ def adr_project(tmp_path):
         "## Decision\n\nUse JWT tokens in `src/auth.py`.\n"
     )
     (adr_dir / "0003-deprecated-xml.md").write_text(
-        "# ADR 3: Drop XML Support\n\n"
-        "## Status\n\nDeprecated\n\n"
-        "## Context\n\nXML is no longer used.\n"
+        "# ADR 3: Drop XML Support\n\n## Status\n\nDeprecated\n\n## Context\n\nXML is no longer used.\n"
     )
 
     git_init(proj)

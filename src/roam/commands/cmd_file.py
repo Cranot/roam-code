@@ -244,10 +244,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
                 obj = _skeleton_to_json(frow, symbols, kind_counts, parent_ids)
                 _fname = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
                 _kind_str = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
-                _file_verdict = (
-                    f"{_fname}: {len(symbols)} symbols ({_kind_str}), "
-                    f"{frow['line_count']} LOC"
-                )
+                _file_verdict = f"{_fname}: {len(symbols)} symbols ({_kind_str}), {frow['line_count']} LOC"
                 click.echo(
                     to_json(
                         json_envelope(
@@ -271,10 +268,7 @@ def file_cmd(ctx, paths, full, changed, deps_of):
 
             _fname_txt = frow["path"].split("/")[-1] if "/" in frow["path"] else frow["path"]
             _kind_str_txt = ", ".join(f"{c} {k}" for k, c in kind_counts.most_common(3))
-            _file_verdict_txt = (
-                f"{_fname_txt}: {len(symbols)} symbols ({_kind_str_txt}), "
-                f"{frow['line_count']} LOC"
-            )
+            _file_verdict_txt = f"{_fname_txt}: {len(symbols)} symbols ({_kind_str_txt}), {frow['line_count']} LOC"
             click.echo(f"VERDICT: {_file_verdict_txt}")
             click.echo()
             text_lines = _render_skeleton_text(frow, symbols, kind_counts, parent_ids)
@@ -297,9 +291,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
             for frow, symbols, kind_counts, parent_ids in file_results:
                 files_json.append(_skeleton_to_json(frow, symbols, kind_counts, parent_ids))
             total_symbols = sum(f["symbol_count"] for f in files_json)
-            _multi_verdict = (
-                f"{len(files_json)} files, {total_symbols} total symbols"
-                + (f", {len(missing)} not indexed" if missing else "")
+            _multi_verdict = f"{len(files_json)} files, {total_symbols} total symbols" + (
+                f", {len(missing)} not indexed" if missing else ""
             )
             click.echo(
                 to_json(
@@ -319,9 +312,8 @@ def file_cmd(ctx, paths, full, changed, deps_of):
 
         # Text output
         _total_syms_txt = sum(len(s) for _, s, _, _ in file_results)
-        _multi_verdict_txt = (
-            f"{len(file_results)} files, {_total_syms_txt} total symbols"
-            + (f", {len(missing)} not indexed" if missing else "")
+        _multi_verdict_txt = f"{len(file_results)} files, {_total_syms_txt} total symbols" + (
+            f", {len(missing)} not indexed" if missing else ""
         )
         click.echo(f"VERDICT: {_multi_verdict_txt}")
         click.echo()

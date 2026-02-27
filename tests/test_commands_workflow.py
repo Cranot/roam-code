@@ -625,7 +625,12 @@ class TestDigest:
         assert result.exit_code == 0
         output = result.output
         # Either shows digest or tells us no snapshots exist
-        assert "Digest" in output or "No snapshots" in output or "snapshot" in output.lower() or "compare" in output.lower()
+        assert (
+            "Digest" in output
+            or "No snapshots" in output
+            or "snapshot" in output.lower()
+            or "compare" in output.lower()
+        )
 
     def test_digest_json(self, indexed_project, cli_runner, monkeypatch):
         """--json returns envelope."""

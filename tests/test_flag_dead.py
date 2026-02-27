@@ -48,10 +48,7 @@ def flag_project(tmp_path):
     )
 
     # File with no flags
-    (proj / "utils.py").write_text(
-        "def format_name(first, last):\n"
-        "    return f'{first} {last}'\n"
-    )
+    (proj / "utils.py").write_text("def format_name(first, last):\n    return f'{first} {last}'\n")
 
     git_init(proj)
     index_in_process(proj)

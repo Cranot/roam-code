@@ -27,7 +27,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -245,17 +244,13 @@ class TestConventionsSmoke:
 class TestConventionsJSON:
     def test_json_envelope_contract(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert_json_envelope(data, "conventions")
 
     def test_json_summary_has_verdict(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         summary = data.get("summary", {})
         assert "verdict" in summary, f"Missing 'verdict' in summary: {summary}"
@@ -264,9 +259,7 @@ class TestConventionsJSON:
 
     def test_json_summary_has_outlier_count(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         summary = data.get("summary", {})
         assert "outlier_count" in summary, f"Missing 'outlier_count': {summary}"
@@ -274,9 +267,7 @@ class TestConventionsJSON:
 
     def test_json_summary_has_total_symbols(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         summary = data.get("summary", {})
         assert "total_symbols_analyzed" in summary
@@ -285,18 +276,14 @@ class TestConventionsJSON:
 
     def test_json_has_naming_dict(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert "naming" in data, f"Missing 'naming' key: {list(data.keys())}"
         assert isinstance(data["naming"], dict)
 
     def test_json_has_files_dict(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert "files" in data, f"Missing 'files' key: {list(data.keys())}"
         assert isinstance(data["files"], dict)
@@ -304,27 +291,21 @@ class TestConventionsJSON:
 
     def test_json_has_imports_dict(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert "imports" in data, f"Missing 'imports' key: {list(data.keys())}"
         assert isinstance(data["imports"], dict)
 
     def test_json_has_exports_dict(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert "exports" in data, f"Missing 'exports' key: {list(data.keys())}"
         assert isinstance(data["exports"], dict)
 
     def test_json_has_violations_list(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         assert "violations" in data, f"Missing 'violations': {list(data.keys())}"
         assert isinstance(data["violations"], list)
@@ -346,9 +327,7 @@ class TestConventionsText:
         result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project)
         lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert lines, "Output is empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
 
     def test_shows_naming_section(self, cli_runner, consistent_project, monkeypatch):
         monkeypatch.chdir(consistent_project)
@@ -375,9 +354,7 @@ class TestConventionsNaming:
     def test_detects_snake_case_functions(self, cli_runner, consistent_project, monkeypatch):
         """Functions in the consistent project should be detected as snake_case."""
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         naming = data.get("naming", {})
         functions_info = naming.get("functions", {})
@@ -390,9 +367,7 @@ class TestConventionsNaming:
     def test_detects_pascal_case_classes(self, cli_runner, consistent_project, monkeypatch):
         """Classes in the consistent project should be detected as PascalCase."""
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         naming = data.get("naming", {})
         classes_info = naming.get("classes", {})
@@ -405,41 +380,31 @@ class TestConventionsNaming:
     def test_consistent_project_has_few_outliers(self, cli_runner, consistent_project, monkeypatch):
         """A consistently-named project should have very few outliers."""
         monkeypatch.chdir(consistent_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=consistent_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=consistent_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         outlier_count = data["summary"]["outlier_count"]
         total = data["summary"]["total_symbols_analyzed"]
         # Allow up to 20% outliers (single-word names may classify ambiguously)
         if total > 0:
             outlier_ratio = outlier_count / total
-            assert outlier_ratio < 0.3, (
-                f"Too many outliers: {outlier_count}/{total} = {outlier_ratio:.1%}"
-            )
+            assert outlier_ratio < 0.3, f"Too many outliers: {outlier_count}/{total} = {outlier_ratio:.1%}"
 
     def test_mixed_naming_detects_outliers(self, cli_runner, mixed_naming_project, monkeypatch):
         """A project with camelCase in a snake_case codebase should find outliers."""
         monkeypatch.chdir(mixed_naming_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=mixed_naming_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=mixed_naming_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         violations = data.get("violations", [])
         # We have at least 3 camelCase outliers: formatOutput, serializeResult, loadConfig
         # They may or may not be detected depending on how multiword detection works
         # Just verify the violations list is populated or outlier_count > 0
         outlier_count = data["summary"]["outlier_count"]
-        assert outlier_count >= 1, (
-            f"Expected at least 1 naming outlier, got {outlier_count}"
-        )
+        assert outlier_count >= 1, f"Expected at least 1 naming outlier, got {outlier_count}"
 
     def test_mixed_naming_violation_fields(self, cli_runner, mixed_naming_project, monkeypatch):
         """Each violation should have name, kind, actual_style, expected_style."""
         monkeypatch.chdir(mixed_naming_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=mixed_naming_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=mixed_naming_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         violations = data.get("violations", [])
         if not violations:
@@ -461,44 +426,53 @@ class TestClassifyCase:
 
     def test_snake_case(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("get_user_name") == "snake_case"
         assert classify_case("parse_email") == "snake_case"
 
     def test_camel_case(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("getUserName") == "camelCase"
         assert classify_case("parseEmail") == "camelCase"
 
     def test_pascal_case(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("UserAccount") == "PascalCase"
         assert classify_case("AdminConfig") == "PascalCase"
 
     def test_upper_snake(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("MAX_RETRIES") == "UPPER_SNAKE"
         assert classify_case("DB_HOST") == "UPPER_SNAKE"
 
     def test_single_word_lower(self):
         from roam.commands.cmd_conventions import classify_case
+
         # Single lowercase words are classified as snake_case-compatible
         assert classify_case("validate") == "snake_case"
 
     def test_single_word_pascal(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("User") == "PascalCase"
 
     def test_dunder_returns_none(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("__init__") is None
         assert classify_case("__str__") is None
 
     def test_too_short_returns_none(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("x") is None
 
     def test_skip_names_return_none(self):
         from roam.commands.cmd_conventions import classify_case
+
         assert classify_case("constructor") is None
         assert classify_case("toString") is None
 
@@ -512,9 +486,7 @@ class TestConventionsMixedLanguage:
     def test_mixed_language_has_naming(self, cli_runner, mixed_language_project, monkeypatch):
         """A mixed Python/JS project should still detect naming conventions."""
         monkeypatch.chdir(mixed_language_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=mixed_language_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=mixed_language_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         naming = data.get("naming", {})
         assert len(naming) >= 1, f"Expected at least 1 naming group, got: {naming}"
@@ -522,11 +494,7 @@ class TestConventionsMixedLanguage:
     def test_mixed_language_files_counted(self, cli_runner, mixed_language_project, monkeypatch):
         """File organization should count both Python and JS files."""
         monkeypatch.chdir(mixed_language_project)
-        result = invoke_cli(
-            cli_runner, ["conventions"], cwd=mixed_language_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["conventions"], cwd=mixed_language_project, json_mode=True)
         data = parse_json_output(result, "conventions")
         files = data.get("files", {})
-        assert files["total_files"] >= 2, (
-            f"Expected at least 2 files, got: {files['total_files']}"
-        )
+        assert files["total_files"] >= 2, f"Expected at least 2 files, got: {files['total_files']}"

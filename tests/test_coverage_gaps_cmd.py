@@ -26,10 +26,8 @@ from tests.conftest import (
     assert_json_envelope,
     git_init,
     index_in_process,
-    invoke_cli,
     parse_json_output,
 )
-
 
 # ---------------------------------------------------------------------------
 # Local helper: invoke coverage-gaps directly via its Click command object
@@ -111,9 +109,7 @@ def gated_project(tmp_path, monkeypatch):
 
     # public.py: entry point that does NOT call the gate
     (proj / "public.py").write_text(
-        "def public_endpoint(data):\n"
-        '    """Public endpoint — no auth check performed."""\n'
-        "    return data\n"
+        'def public_endpoint(data):\n    """Public endpoint — no auth check performed."""\n    return data\n'
     )
 
     git_init(proj)
@@ -129,11 +125,7 @@ def empty_project(tmp_path, monkeypatch):
     proj = tmp_path / "empty_repo"
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
-    (proj / "utils.py").write_text(
-        "def add(a, b):\n"
-        '    """Add two numbers."""\n'
-        "    return a + b\n"
-    )
+    (proj / "utils.py").write_text('def add(a, b):\n    """Add two numbers."""\n    return a + b\n')
     git_init(proj)
     monkeypatch.chdir(proj)
     out, rc = index_in_process(proj, "--force")
@@ -348,9 +340,7 @@ class TestCoverageGapsText:
             cwd=gated_project,
         )
         assert result.exit_code == 0
-        assert "Coverage Gaps" in result.output, (
-            f"Expected 'Coverage Gaps' header in output:\n{result.output}"
-        )
+        assert "Coverage Gaps" in result.output, f"Expected 'Coverage Gaps' header in output:\n{result.output}"
 
     def test_text_output_mentions_gates(self, cli_runner, gated_project):
         """Text output names the gate symbol(s) found."""
@@ -360,9 +350,7 @@ class TestCoverageGapsText:
             cwd=gated_project,
         )
         assert result.exit_code == 0
-        assert "require_auth" in result.output, (
-            f"Expected 'require_auth' in text output:\n{result.output}"
-        )
+        assert "require_auth" in result.output, f"Expected 'require_auth' in text output:\n{result.output}"
 
     def test_text_output_reports_entry_counts(self, cli_runner, gated_project):
         """Text output contains 'Entry points:' summary line."""
@@ -372,9 +360,7 @@ class TestCoverageGapsText:
             cwd=gated_project,
         )
         assert result.exit_code == 0
-        assert "Entry points:" in result.output, (
-            f"Expected 'Entry points:' in output:\n{result.output}"
-        )
+        assert "Entry points:" in result.output, f"Expected 'Entry points:' in output:\n{result.output}"
 
     def test_text_output_preset_mode_has_verdict_or_header(self, cli_runner, gated_project):
         """Preset mode text output contains either VERDICT: or a Coverage Gaps header."""
@@ -410,6 +396,4 @@ class TestCoverageGapsText:
             cwd=gated_project,
         )
         assert result.exit_code == 0
-        assert "Coverage Gaps" in result.output, (
-            f"Expected 'Coverage Gaps' in output:\n{result.output}"
-        )
+        assert "Coverage Gaps" in result.output, f"Expected 'Coverage Gaps' in output:\n{result.output}"
