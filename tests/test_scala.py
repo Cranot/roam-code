@@ -63,6 +63,11 @@ class TestClasses:
         assert "x" in names
         assert "y" in names
 
+    def test_generic_class(self):
+        symbols, _ = _parse("class Container[T](val item: T)")
+        s = [s for s in symbols if s["name"] == "Container"][0]
+        assert "[T]" in s["signature"]
+
     def test_abstract_class(self):
         symbols, _ = _parse("abstract class Animal(val name: String)")
         assert "Animal" in _sym_names(symbols, "class")
@@ -153,6 +158,11 @@ class TestFunctions:
         assert "(name: String)" in s["signature"]
         assert ": String" in s["signature"]
 
+    def test_generic_function(self):
+        symbols, _ = _parse("def transform[A, B](f: A => B): B = f(???)")
+        s = [s for s in symbols if s["name"] == "transform"][0]
+        assert "[A, B]" in s["signature"]
+
     def test_method_in_class(self):
         code = """class Svc {
           def run(): Unit = {}
@@ -242,6 +252,18 @@ class TestInheritance:
         _, refs = _parse("trait SpecialLogger extends Logger")
         inherits = _ref_names(refs, "inherits")
         assert "Logger" in inherits
+
+    def test_generic_extends(self):
+        _, refs = _parse("class MyList extends Comparable[Int]")
+        inherits = _ref_names(refs, "inherits")
+        assert "Comparable" in inherits
+
+    def test_generic_with_trait(self):
+        _, refs = _parse("class Foo extends Bar[String] with Ordered[Int]")
+        inherits = _ref_names(refs, "inherits")
+        implements = _ref_names(refs, "implements")
+        assert "Bar" in inherits
+        assert "Ordered" in implements
 
     def test_case_class_extends(self):
         _, refs = _parse("case class Circle(r: Double) extends Shape")

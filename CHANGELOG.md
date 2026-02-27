@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 ## [11.1.2] - 2026-02-27
 
 ### Added
+- **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` — full support for tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference their source tables (27 languages total)
 - **Scala promoted to Tier 1** with dedicated `ScalaExtractor` — full support for classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance
 - `server.json` for official MCP Registry submission (`registry.modelcontextprotocol.io`)
 - MCP registry submission guide prepared for 9 directories
@@ -463,7 +464,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 - Incremental indexing via mtime + hash change detection
 - Git integration: churn, blame, co-change analysis
 
-[Unreleased]: https://github.com/Cranot/roam-code/compare/v11.0.0...HEAD
+[Unreleased]: https://github.com/Cranot/roam-code/compare/v11.1.2...HEAD
+[11.1.2]: https://github.com/Cranot/roam-code/compare/v11.1.1...v11.1.2
+[11.1.1]: https://github.com/Cranot/roam-code/compare/v11.1.0...v11.1.1
+[11.1.0]: https://github.com/Cranot/roam-code/compare/v11.0.0...v11.1.0
 [11.0.0]: https://github.com/Cranot/roam-code/compare/v10.0.1...v11.0.0
 [10.0.1]: https://github.com/Cranot/roam-code/compare/v10.0.0...v10.0.1
 [10.0.0]: https://github.com/Cranot/roam-code/compare/v9.1.0...v10.0.0
