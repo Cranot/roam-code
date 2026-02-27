@@ -21,7 +21,7 @@ from roam.surface_counts import collect_surface_counts
 def test_site_payload_has_expected_shape_and_count():
     payload = build_site_payload()
 
-    assert payload["tracker_file"] == "reports/competitor_tracker.md"
+    assert payload["tracker_file"] == "internal/competitor_tracker.md"
     assert payload["tracker_updated"]
     assert "competitors" in payload
     assert "methodology" in payload

@@ -57,8 +57,8 @@ All tests must pass before submitting a PR.
 ruff check src/ tests/
 ```
 
-The project uses ruff with `target-version = "py39"` and `line-length = 100`.
-Selected rule sets: E, F, W, I (pyflakes, pycodestyle, isort).
+The project uses ruff with `target-version = "py39"` and `line-length = 120`.
+Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print statements).
 
 ### Code Style
 
@@ -82,7 +82,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v10.0.1          # pin to a release tag
+    rev: v11.1.0          # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
@@ -222,8 +222,8 @@ roam-code is organized into these key areas:
 | `src/roam/graph/` | NetworkX graph algorithms (PageRank, SCC, clustering, layers) |
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
-| `src/roam/mcp_server.py` | MCP server with 61 tools |
-| `tests/` | Test suite (71 test files) |
+| `src/roam/mcp_server.py` | MCP server with 101 tools |
+| `tests/` | Test suite (186 test files) |
 
 For full architectural details, see [CLAUDE.md](CLAUDE.md).
 

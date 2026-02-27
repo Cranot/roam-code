@@ -21,6 +21,7 @@ htmlcov/
 
 # Roam index
 .roam/
+.roam.db
 
 # Conductor
 .context/
@@ -59,3 +60,6 @@ benchmarks/oss-eval/results/
 # Generated command-audit reports
 reports/command_audit_*.md
 reports/command_audit_latest.md
+
+# Internal docs (not public)
+internal/

@@ -8,7 +8,7 @@ on:
     paths:
       - "docs/site/**"
       - ".github/workflows/pages.yml"
-      - "reports/competitor_tracker.md"
+      - "internal/competitor_tracker.md"
       - "src/roam/competitor_site_data.py"
   workflow_dispatch:
 

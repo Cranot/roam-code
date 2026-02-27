@@ -30,7 +30,7 @@
     <p>
       Scored by project maintainers. 44/45 criteria are binary or count-based.
       Use the weight sliders to apply your own priorities.
-      All data is in <a href="https://github.com/Cranot/roam-code/blob/main/reports/competitor_tracker.md">the open-source tracker</a>.
+      All data is in <code>docs/site/data/landscape.json</code>.
     </p>
   </div>
 
@@ -38,28 +38,28 @@
     <h1>Code Intelligence Landscape</h1>
     <p class="lede">
       What each code intelligence tool can and can't build, based on architecture.
-      9 tools scored across 45 criteria. Interactive map, weight sliders, and honest competitor analysis.
+      18 tools scored across 45 criteria. Interactive map, weight sliders, and honest competitor analysis.
     </p>
     <div class="hero-stats">
       <article>
-        <h2 id="competitor-count">9</h2>
+        <h2 id="competitor-count">18</h2>
         <p>Tools analyzed</p>
       </article>
       <article>
-        <h2 id="roam-mcp-count">99</h2>
+        <h2 id="roam-mcp-count">101</h2>
         <p>roam MCP tools (23 core)</p>
       </article>
       <article>
-        <h2 id="roam-cli-count">135</h2>
+        <h2 id="roam-cli-count">139</h2>
         <p>roam CLI commands</p>
       </article>
       <article>
-        <h2 id="last-updated">2026-02-23</h2>
+        <h2 id="last-updated">2026-02-27</h2>
         <p>Last matrix refresh</p>
       </article>
     </div>
     <div class="hero-links">
-      <a class="btn primary" href="https://github.com/Cranot/roam-code/blob/main/reports/competitor_tracker.md">Open Source Tracker</a>
+      <a class="btn primary" href="./data/landscape.json">View Landscape Data</a>
     </div>
   </header>
 
@@ -70,7 +70,7 @@
         <p>Y-axis: analysis depth. X-axis: agent readiness. Click any point for details.</p>
       </div>
       <p class="formula-note">
-        9 tools scored across <strong>45 criteria</strong> in <strong>7 categories</strong>.
+        18 tools scored across <strong>45 criteria</strong> in <strong>7 categories</strong>.
         Adjust weights below to apply your own priorities.
       </p>
       <div class="map-grid">
@@ -170,9 +170,9 @@
             <div class="comp-section beats-us">
               <h4>Where they beat us</h4>
               <ul>
-                <li>Full dataflow analysis -- we don't trace data through variables within functions</li>
-                <li>Taint propagation -- we can't track untrusted data source-to-sink</li>
-                <li>Rule depth -- 6,500 rules vs our ~50 cross-language detectors</li>
+                <li>Full dataflow analysis -- deeper intra-function tracking with type-aware precision</li>
+                <li>Taint propagation -- full source-to-sink tracking across call boundaries</li>
+                <li>Rule depth -- 6,500 rules vs our 2,480+ cross-language rules</li>
                 <li>Enterprise governance workflows and team management</li>
               </ul>
             </div>
@@ -330,8 +330,8 @@
             <div class="comp-section cannot">
               <h4>What they architecturally can't build</h4>
               <ul>
-                <li>No graph algorithms -- SCIP indexes symbols but doesn't model a queryable relationship graph</li>
-                <li>No PageRank, SCC, Louvain, Fiedler, or any graph-theoretic analysis</li>
+                <li>Limited graph algorithms -- SCIP indexes symbols; added Tarjan SCC in v8.1 but no queryable relationship graph</li>
+                <li>No PageRank, Louvain, Fiedler, or spectral analysis</li>
                 <li>No git history analysis (churn, co-change, blame, entropy)</li>
                 <li>No architecture simulation, topology fingerprinting, or health scoring</li>
                 <li>No vulnerability analysis or algo anti-pattern detection</li>
@@ -436,7 +436,7 @@
                 <li>Only Louvain -- no PageRank centrality, no SCC/Tarjan, no spectral (Fiedler)</li>
                 <li>No git history integration at all</li>
                 <li>No architecture simulation, health scoring, or vulnerability analysis</li>
-                <li>14 MCP tools vs 96 -- limited agent vocabulary</li>
+                <li>14 MCP tools vs 101 -- limited agent vocabulary</li>
               </ul>
             </div>
             <div class="comp-section beats-us">
@@ -601,7 +601,7 @@
               <strong>Can:</strong> PageRank centrality, cycle detection, community clustering, architecture simulation,
               impact analysis, co-change coupling, churn hotspots, multi-agent partitioning, topology fingerprinting.
               <br>
-              <strong>Cannot:</strong> Intra-function dataflow tracking, taint propagation, type inference, virtual dispatch resolution.
+              <strong>Cannot:</strong> Full taint propagation, type inference, virtual dispatch resolution.
             </dd>
             <dt>CFG + DFG + Rules (SonarQube, CodeQL)</dt>
             <dd>
@@ -667,7 +667,7 @@
         1 (documentation quality) is subjective and marked as such.
       </p>
       <p>
-        Snapshot date: <strong>February 23, 2026</strong>. Vendor claims change quickly; this page is
+        Snapshot date: <strong>February 27, 2026</strong>. Vendor claims change quickly; this page is
         version-pinned and refreshed with explicit evidence notes.
       </p>
     </section>
