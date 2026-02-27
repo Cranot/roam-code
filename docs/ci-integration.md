@@ -29,7 +29,7 @@ jobs:
         with:
           fetch-depth: 0
 
-      - uses: cosmohac/roam-code@main
+      - uses: Cranot/roam-code@main
         with:
           commands: 'health pr-risk'
           sarif: 'true'
@@ -45,7 +45,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `latest` | roam-code version to install from PyPI. Use a pinned version for reproducibility (e.g., `10.0.1`). |
+| `version` | `latest` | roam-code version to install from PyPI. Use a pinned version for reproducibility (e.g., `11.1.1`). |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
 | `changed-depth` | `3` | Dependency depth used when computing changed+dependent file scope in `changed-only` mode. |
@@ -194,7 +194,7 @@ Set `changed-only: 'true'` to run incremental PR analysis.
 Example:
 
 ```yaml
-- uses: cosmohac/roam-code@main
+- uses: Cranot/roam-code@main
   with:
     commands: 'verify pr-risk api-changes'
     changed-only: 'true'
@@ -216,7 +216,7 @@ Any roam command can be passed via the `commands` input. Common choices:
 | `breaking` | Detect breaking API changes |
 | `conventions` | Naming convention violations |
 
-Run `roam --help` for all 96 commands.
+Run `roam --help` for all 139 commands.
 
 ## Exit Codes
 
@@ -233,7 +233,7 @@ Run `roam --help` for all 96 commands.
 ### Multiple commands with strict gate
 
 ```yaml
-- uses: cosmohac/roam-code@main
+- uses: Cranot/roam-code@main
   with:
     commands: 'health complexity dead'
     sarif-commands: 'health complexity dead'
@@ -245,7 +245,7 @@ Run `roam --help` for all 96 commands.
 ### PR risk only, no comment
 
 ```yaml
-- uses: cosmohac/roam-code@main
+- uses: Cranot/roam-code@main
   id: roam
   with:
     commands: 'pr-risk'
@@ -259,9 +259,9 @@ Run `roam --help` for all 96 commands.
 ### Pinned version without caching
 
 ```yaml
-- uses: cosmohac/roam-code@v10.0.1
+- uses: Cranot/roam-code@v11.1.1
   with:
-    version: '10.0.1'
+    version: '11.1.1'
     cache: 'false'
     commands: 'health'
 ```
@@ -269,7 +269,7 @@ Run `roam --help` for all 96 commands.
 ### Use outputs in subsequent steps
 
 ```yaml
-- uses: cosmohac/roam-code@main
+- uses: Cranot/roam-code@main
   id: analysis
   with:
     commands: 'health'

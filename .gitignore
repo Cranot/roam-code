@@ -57,9 +57,8 @@ benchmarks/oss-eval/results/
 **/build-mingw/
 **/cmake-build-*/
 
-# Generated command-audit reports
-reports/command_audit_*.md
-reports/command_audit_latest.md
+# Internal reports (not public)
+reports/
 
 # Internal docs (not public)
 internal/

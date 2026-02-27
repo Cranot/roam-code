@@ -8,8 +8,6 @@ on:
     paths:
       - "docs/site/**"
       - ".github/workflows/pages.yml"
-      - "internal/competitor_tracker.md"
-      - "src/roam/competitor_site_data.py"
   workflow_dispatch:
 
 permissions:
@@ -30,14 +28,6 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.12"
-
-      - name: Generate site data from tracker
-        run: python src/roam/competitor_site_data.py --out docs/site/data/landscape.json
 
       - name: Setup Pages
         uses: actions/configure-pages@v5

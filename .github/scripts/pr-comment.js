@@ -140,7 +140,7 @@ function buildComment(env = process.env) {
 
   lines.push(
     '---',
-    `*[roam-code](https://github.com/cosmohac/roam-code) analysis | Commands: \`${commandsRun}\`*`,
+    `*[roam-code](https://github.com/Cranot/roam-code) analysis | Commands: \`${commandsRun}\`*`,
   );
 
   return clampComment(lines.join('\n'));
