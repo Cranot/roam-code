@@ -64,6 +64,12 @@ $ roam diff                    # blast radius of uncommitted changes
 
 ## What's New in v11
 
+### v11.1.2 -- SQL + Scala Tier 1, 27 Languages
+- **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` -- tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference source tables. Database-schema projects now work with `roam health`, `roam layers`, `roam impact`, `roam coupling` and all graph commands.
+- **Scala promoted to Tier 1** with dedicated `ScalaExtractor` -- classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance. Full `extends` + `with` trait mixin resolution.
+- **27 languages** with 16 dedicated Tier 1 extractors.
+- `server.json` for official MCP Registry submission.
+
 ### v11.1.1 -- Command Quality Audit
 - **Full command audit**: all 139 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
 - **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
