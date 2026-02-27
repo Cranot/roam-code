@@ -1,0 +1,10 @@
+name: ts-console-log
+description: "Leftover console.log() call — debug output in production code."
+severity: warning
+type: ast_match
+match:
+  ast: "console.log($EXPR)"
+  language: typescript
+  file_glob: "**/*.{ts,tsx,mts,cts}"
+exempt:
+  files: ["**/tests/**", "**/test/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*"]
