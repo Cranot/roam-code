@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*139 commands · 101 MCP tools · 27 languages · 100% local*
+*140 commands · 102 MCP tools · 27 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -64,6 +64,11 @@ $ roam diff                    # blast radius of uncommitted changes
 
 ## What's New in v11
 
+### v11.2 -- AST Clone Detection + Debug Artifact Rules
+- **`roam clones`**: New AST structural clone detection via subtree hashing. Finds Type-2 clones (identical control flow, different identifiers/literals) with Jaccard similarity scoring, Union-Find clustering, and automated refactoring suggestions. More precise than the metric-based `duplicates` command.
+- **9 debug artifact rules** (COR-560 through COR-568): Detect leftover `print()`, `breakpoint()`, `pdb.set_trace()`, `console.log()`, `debugger`, and `System.out.println()` in Python, JavaScript, TypeScript, and Java code. All use `ast_match` type with test file exemptions.
+- **140 commands, 102 MCP tools**.
+
 ### v11.1.2 -- SQL + Scala Tier 1, 27 Languages
 - **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` -- tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference source tables. Database-schema projects now work with `roam health`, `roam layers`, `roam impact`, `roam coupling` and all graph commands.
 - **Scala promoted to Tier 1** with dedicated `ScalaExtractor` -- classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance. Full `extends` + `with` trait mixin resolution.
@@ -71,7 +76,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - `server.json` for official MCP Registry submission.
 
 ### v11.1.1 -- Command Quality Audit
-- **Full command audit**: all 139 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
+- **Full command audit**: all 140 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
 - **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
 - **7 new commands**: `roam congestion`, `roam adrs`, `roam flag-dead`, `roam test-scaffold`, `roam sbom`, `roam triage`, `roam ci-setup`.
 - **CI templates**: `roam ci-setup` generates pipelines for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and Bitbucket.
@@ -226,7 +231,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 139 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 140 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -484,6 +489,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam safe-zones` | Graph-based containment boundaries |
 | `roam coverage-gaps` | Unprotected entry points with no path to gate symbols |
 | `roam duplicates [--threshold T] [--min-lines N]` | Semantic duplicate detector: functionally equivalent code clusters with divergent edge-case handling |
+| `roam clones [--threshold T] [--min-lines N] [--scope P]` | AST structural clone detection: Type-2 clones via subtree hashing (more precise than `duplicates`) |
 
 ### Exploration
 
@@ -822,7 +828,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-101 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+102 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 **MCP v2 highlights (v11):**
 - In-process MCP execution (no subprocess shell-out per call)
@@ -889,6 +895,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_bisect_blame` | Architectural git bisect |
 | `roam_doc_intent` | Doc-to-code linking |
 | `roam_cut_analysis` | Minimum graph cut analysis |
+| `roam_clones` | AST structural clone detection (Type-2 clones) |
 | `roam_annotate_symbol` | Attach persistent notes to symbols |
 | `roam_get_annotations` | View stored annotations |
 | `roam_relate` | Show relationship between two symbols |
@@ -1465,8 +1472,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (139 commands)
-│   ├── mcp_server.py                  # MCP server (101 tools, 10 resources, 5 prompts)
+│   ├── cli.py                         # Click CLI (140 commands)
+│   ├── mcp_server.py                  # MCP server (102 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1560,7 +1567,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 139 CLI commands and 101 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 140 CLI commands and 102 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

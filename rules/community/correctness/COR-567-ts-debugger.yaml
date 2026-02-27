@@ -1,0 +1,10 @@
+name: ts-debugger
+description: "Leftover debugger statement — pauses execution in browser devtools."
+severity: error
+type: ast_match
+match:
+  ast: "debugger"
+  language: typescript
+  file_glob: "**/*.{ts,tsx,mts,cts}"
+exempt:
+  files: ["**/tests/**", "**/test/**", "**/__tests__/**"]

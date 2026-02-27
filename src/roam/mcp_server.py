@@ -2114,6 +2114,37 @@ def duplicates_tool(threshold: float = 0.75, min_lines: int = 5, scope: str = ""
     return _run_roam(args, root)
 
 
+@_tool(name="roam_clones")
+def clones_tool(threshold: float = 0.70, min_lines: int = 5, scope: str = "", top: int = 10, root: str = ".") -> dict:
+    """Detect near-duplicate code via AST structural hashing (Type-2 clones).
+
+    WHEN TO USE: Call this to find functions with identical control flow
+    structure but different identifiers/literals. More precise than
+    ``roam_duplicates`` (which uses metric-based similarity). Best for
+    detecting copy-pasted code across files.
+
+    Parameters
+    ----------
+    threshold:
+        Minimum Jaccard similarity 0.0-1.0 (default 0.70).
+    min_lines:
+        Minimum function size to consider (default 5).
+    scope:
+        Limit analysis to files under this path prefix.
+    top:
+        Show only top N clusters (default 10, 0=all).
+
+    Returns: clone clusters with AST similarity scores, member functions,
+    patterns, and refactoring suggestions.
+    """
+    args = ["clones", "--threshold", str(threshold), "--min-lines", str(min_lines)]
+    if scope:
+        args.extend(["--scope", scope])
+    if top:
+        args.extend(["--top", str(top)])
+    return _run_roam(args, root)
+
+
 @_tool(
     name="roam_vibe_check",
     description="AI rot score (0-100): 8-pattern taxonomy of AI code anti-patterns.",

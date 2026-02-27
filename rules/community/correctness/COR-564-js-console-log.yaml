@@ -1,0 +1,10 @@
+name: js-console-log
+description: "Leftover console.log() call — debug output in production code."
+severity: warning
+type: ast_match
+match:
+  ast: "console.log($EXPR)"
+  language: javascript
+  file_glob: "**/*.{js,jsx,mjs,cjs}"
+exempt:
+  files: ["**/tests/**", "**/test/**", "**/__tests__/**", "**/*.test.*", "**/*.spec.*"]
