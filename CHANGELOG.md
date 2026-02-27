@@ -7,10 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [11.1.2] - 2026-02-27
+
+### Added
+- **Scala promoted to Tier 1** with dedicated `ScalaExtractor` — full support for classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance
+- `server.json` for official MCP Registry submission (`registry.modelcontextprotocol.io`)
+- MCP registry submission guide prepared for 9 directories
+
 ### Fixed
 - CI: lazy `import yaml` in `extractor_schema.py` (PyYAML is optional)
 - CI: `TYPE_CHECKING` guard for networkx import in `cmd_visualize.py`
 - CI: skip language corpus tests when yaml/QueryCursor unavailable
+- Registry docstring no longer mentions Scala as Tier 2
 
 ## [11.1.1] - 2026-02-27
 
