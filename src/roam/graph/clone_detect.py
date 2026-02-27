@@ -25,7 +25,6 @@ from collections import Counter, defaultdict
 from dataclasses import dataclass, field
 from pathlib import Path
 
-
 # Node types whose text values are normalized (treated as equivalent)
 _NORMALIZED_LEAF_TYPES = frozenset(
     {
