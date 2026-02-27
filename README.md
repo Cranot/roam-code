@@ -1404,7 +1404,7 @@ Static analysis trade-offs:
 - **Static analysis primarily** -- can't trace dynamic dispatch, reflection, or eval'd code. Runtime trace ingestion (`roam ingest-trace`) adds production data but requires external trace export
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve
 - **Limited cross-language edges** -- Salesforce, Protobuf, REST API, and multi-repo edges are supported, but not arbitrary FFI
-- **Tier 2 languages** (Kotlin, Swift, Scala) get basic symbol extraction only
+- **Tier 2 languages** (Swift, Scala) get basic symbol extraction only
 - **Large monorepos** (100k+ files) may have slow initial indexing
 
 ## Troubleshooting
@@ -1515,7 +1515,7 @@ roam-code/
 │   │   ├── engine.py                  # YAML rule parser + graph query evaluator
 │   │   ├── builtin.py                 # 10 built-in governance rules
 │   │   ├── ast_match.py               # AST pattern matching with $METAVAR captures
-│   │   └── dataflow.py                # Inter-procedural dataflow analysis
+│   │   └── dataflow.py                # Intra-procedural dataflow analysis
 │   ├── runtime/
 │   │   ├── trace_ingest.py            # OpenTelemetry/Jaeger/Zipkin ingestion
 │   │   └── hotspots.py                # Runtime hotspot analysis
