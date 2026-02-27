@@ -1421,7 +1421,7 @@ Static analysis trade-offs:
 | `database is locked` | `roam index --force` to rebuild |
 | Unicode errors on Windows | `chcp 65001` for UTF-8 |
 | Symbol resolves to wrong file | Use `file:symbol` syntax: `roam symbol myfile:MyFunction` |
-| Health score seems wrong | `roam health --json` for factor breakdown |
+| Health score seems wrong | `roam --json health` for factor breakdown |
 | Index stale after `git pull` | `roam index` (incremental). After major refactors: `roam index --force` |
 
 ## Update / Uninstall
