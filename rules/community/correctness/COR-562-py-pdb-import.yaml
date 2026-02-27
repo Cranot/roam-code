@@ -1,0 +1,10 @@
+name: py-pdb-import
+description: "Leftover pdb/ipdb import — debugger module in production code."
+severity: error
+type: ast_match
+match:
+  ast: "import pdb"
+  language: python
+  file_glob: "**/*.py"
+exempt:
+  files: ["**/tests/**", "**/test_**"]

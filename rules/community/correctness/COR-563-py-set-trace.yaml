@@ -1,0 +1,10 @@
+name: py-set-trace
+description: "Leftover pdb.set_trace() call — debugger in production code."
+severity: error
+type: ast_match
+match:
+  ast: "pdb.set_trace()"
+  language: python
+  file_glob: "**/*.py"
+exempt:
+  files: ["**/tests/**", "**/test_**"]

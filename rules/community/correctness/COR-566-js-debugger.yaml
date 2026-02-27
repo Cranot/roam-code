@@ -1,0 +1,10 @@
+name: js-debugger
+description: "Leftover debugger statement — pauses execution in browser devtools."
+severity: error
+type: ast_match
+match:
+  ast: "debugger"
+  language: javascript
+  file_glob: "**/*.{js,jsx,mjs,cjs}"
+exempt:
+  files: ["**/tests/**", "**/test/**", "**/__tests__/**"]

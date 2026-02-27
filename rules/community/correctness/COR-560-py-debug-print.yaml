@@ -1,0 +1,10 @@
+name: py-debug-print
+description: "Leftover debug print() statement (print with DEBUG/TODO/HACK/FIXME prefix)."
+severity: warning
+type: ast_match
+match:
+  ast: "print($EXPR)"
+  language: python
+  file_glob: "**/*.py"
+exempt:
+  files: ["**/tests/**", "**/test_**"]

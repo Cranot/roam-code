@@ -1,0 +1,10 @@
+name: py-breakpoint
+description: "Leftover breakpoint() call — debugger entry point in production code."
+severity: error
+type: ast_match
+match:
+  ast: "breakpoint()"
+  language: python
+  file_glob: "**/*.py"
+exempt:
+  files: ["**/tests/**", "**/test_**"]

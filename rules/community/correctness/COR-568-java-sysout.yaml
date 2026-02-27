@@ -1,0 +1,10 @@
+name: java-sysout-debug
+description: "Leftover System.out.println() — use a logger instead."
+severity: warning
+type: ast_match
+match:
+  ast: "System.out.println($EXPR)"
+  language: java
+  file_glob: "**/*.java"
+exempt:
+  files: ["**/test/**", "**/tests/**", "**/Test*.java"]
