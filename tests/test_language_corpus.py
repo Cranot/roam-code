@@ -12,6 +12,15 @@ from pathlib import Path
 
 import pytest
 
+# These are optional dependencies — skip the entire module if unavailable
+yaml = pytest.importorskip("yaml", reason="PyYAML not installed")
+
+# QueryCursor was added in tree-sitter 0.23+; older versions (e.g. on Python 3.9) lack it
+try:
+    from tree_sitter import QueryCursor  # noqa: F401
+except ImportError:
+    pytest.skip("tree-sitter too old (no QueryCursor)", allow_module_level=True)
+
 # Add src to path for imports
 SRC = Path(__file__).resolve().parents[1] / "src"
 if str(SRC) not in sys.path:
