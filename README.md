@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*139 commands · 101 MCP tools · 26 languages · 100% local*
+*139 commands · 101 MCP tools · 27 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -26,7 +26,7 @@ Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Ro
 Codebase ──> [Index] ──> Semantic Graph ──> 139 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
-           26 languages   + edges            govern
+           27 languages   + edges            govern
            git history    + metrics          refactor
            runtime traces + architecture     orchestrate
 ```
@@ -1193,15 +1193,11 @@ Cross-language edges mean `roam impact AccountService` shows blast radius across
 
 | Ruby | `.rb` | classes, modules, methods, singleton methods, constants | require, require_relative, include/extend, calls, ClassName.new | class inheritance |
 | Kotlin | `.kt` `.kts` | classes, interfaces, enums, objects, functions, methods, properties | imports, calls, type refs | extends, implements |
+| Scala | `.scala` `.sc` | classes, traits, objects, case classes, functions, methods, val/var, type aliases | imports, calls, `new` | extends, with (trait mixins) |
+| SQL (DDL) | `.sql` | tables, columns, views, functions, triggers, schemas, types (enums), sequences | foreign keys, view table deps, trigger table/function refs | -- |
 | Swift | `.swift` | classes, structs, enums, protocols, functions, methods, properties | imports, calls, type refs | extends, conforms |
 | JSONC | `.jsonc` | via JSON grammar | -- | -- |
 | MDX | `.mdx` | via Markdown grammar | -- | -- |
-
-### Tier 2 -- Generic extraction
-
-Scala (`.scala` `.sc`)
-
-Tier 2 languages get symbol extraction and basic inheritance via a generic tree-sitter walker.
 
 ## Performance
 
@@ -1255,7 +1251,7 @@ Codebase
     |
 [1] Discovery ──── git ls-files (respects .gitignore + .roamignore)
     |
-[2] Parse ──────── tree-sitter AST per file (26 languages)
+[2] Parse ──────── tree-sitter AST per file (27 languages)
     |
 [3] Extract ────── symbols + references (calls, imports, inheritance)
     |
@@ -1409,7 +1405,7 @@ Static analysis trade-offs:
 - **Static analysis primarily** -- can't trace dynamic dispatch, reflection, or eval'd code. Runtime trace ingestion (`roam ingest-trace`) adds production data but requires external trace export
 - **Import resolution is heuristic** -- complex re-exports or conditional imports may not resolve
 - **Limited cross-language edges** -- Salesforce, Protobuf, REST API, and multi-repo edges are supported, but not arbitrary FFI
-- **Tier 2 languages** (Scala) get basic symbol extraction only
+- **Tier 2 languages** get basic symbol extraction only via generic tree-sitter walker
 - **Large monorepos** (100k+ files) may have slow initial indexing
 
 ## Troubleshooting
@@ -1483,7 +1479,7 @@ roam-code/
 │   ├── languages/
 │   │   ├── base.py                    # Abstract LanguageExtractor
 │   │   ├── registry.py                # Language detection + aliasing
-│   │   ├── *_lang.py                  # One file per language (20 dedicated + generic)
+│   │   ├── *_lang.py                  # One file per language (21 dedicated + generic)
 │   │   └── generic_lang.py            # Tier 2 fallback
 │   ├── bridges/
 │   │   ├── base.py, registry.py       # Cross-language bridge framework

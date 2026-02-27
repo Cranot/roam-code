@@ -34,6 +34,7 @@ _DEDICATED_EXTRACTORS = frozenset(
         "kotlin",
         "swift",
         "scala",
+        "sql",
     }
 )
 
@@ -55,6 +56,7 @@ _SUPPORTED_LANGUAGES = frozenset(
         "kotlin",
         "swift",
         "scala",
+        "sql",
         "vue",
         "svelte",
         # Aliased languages (parsed via grammar aliases)
@@ -208,6 +210,10 @@ def _create_extractor(language: str) -> "LanguageExtractor":
         from .scala_lang import ScalaExtractor
 
         return ScalaExtractor()
+    elif language == "sql":
+        from .sql_lang import SqlExtractor
+
+        return SqlExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor

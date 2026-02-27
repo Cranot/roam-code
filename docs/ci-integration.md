@@ -45,7 +45,7 @@ uploads SARIF findings to GitHub Code Scanning, and enforces quality gates.
 
 | Input | Default | Description |
 |-------|---------|-------------|
-| `version` | `latest` | roam-code version to install from PyPI. Use a pinned version for reproducibility (e.g., `11.1.1`). |
+| `version` | `latest` | roam-code version to install from PyPI. Use a pinned version for reproducibility (e.g., `11.1.2`). |
 | `commands` | `health` | Space-separated roam commands to run. Each command produces JSON output that feeds into the PR comment and quality gate. |
 | `changed-only` | `false` | Incremental CI mode. Adapts supported commands to changed files and transitive dependents (when detectable). |
 | `changed-depth` | `3` | Dependency depth used when computing changed+dependent file scope in `changed-only` mode. |
@@ -259,9 +259,9 @@ Run `roam --help` for all 139 commands.
 ### Pinned version without caching
 
 ```yaml
-- uses: Cranot/roam-code@v11.1.1
+- uses: Cranot/roam-code@v11.1.2
   with:
-    version: '11.1.1'
+    version: '11.1.2'
     cache: 'false'
     commands: 'health'
 ```

@@ -12,7 +12,7 @@ license = "MIT"
 authors = [
     {name = "CosmoHac"},
 ]
-keywords = ["code-intelligence", "static-analysis", "mcp-server", "tree-sitter", "architecture", "code-graph", "ai-coding", "graph-analysis", "code-quality", "cli", "codebase", "code-analysis", "ai-tools", "mcp"]
+keywords = ["code-intelligence", "static-analysis", "mcp-server", "tree-sitter", "architecture", "code-graph", "ai-coding", "graph-analysis", "code-quality", "cli", "codebase", "code-analysis", "ai-tools", "mcp", "sql"]
 classifiers = [
     "Development Status :: 5 - Production/Stable",
     "Environment :: Console",

@@ -68,14 +68,18 @@ class ScalaExtractor(LanguageExtractor):
 
     # ---- Symbol extraction ----
 
-    def _walk_symbols(self, node, source, symbols, parent_name):
+    _MAX_DEPTH = 50
+
+    def _walk_symbols(self, node, source, symbols, parent_name, _depth=0):
+        if _depth > self._MAX_DEPTH:
+            return
         for child in node.children:
             if child.type == "class_definition":
-                self._extract_class(child, source, symbols, parent_name)
+                self._extract_class(child, source, symbols, parent_name, _depth)
             elif child.type == "trait_definition":
-                self._extract_trait(child, source, symbols, parent_name)
+                self._extract_trait(child, source, symbols, parent_name, _depth)
             elif child.type == "object_definition":
-                self._extract_object(child, source, symbols, parent_name)
+                self._extract_object(child, source, symbols, parent_name, _depth)
             elif child.type in ("function_definition", "function_declaration"):
                 self._extract_function(child, source, symbols, parent_name)
             elif child.type in ("val_definition", "val_declaration"):
@@ -87,7 +91,7 @@ class ScalaExtractor(LanguageExtractor):
             elif child.type == "type_definition":
                 self._extract_type_alias(child, source, symbols, parent_name)
 
-    def _extract_class(self, node, source, symbols, parent_name):
+    def _extract_class(self, node, source, symbols, parent_name, _depth=0):
         name = self._get_identifier(node, source)
         if not name:
             return
@@ -105,6 +109,9 @@ class ScalaExtractor(LanguageExtractor):
             prefix += "case "
 
         sig = f"{prefix}class {name}"
+        type_params = self._find_child(node, "type_parameters")
+        if type_params:
+            sig += self.node_text(type_params, source)
         params_node = self._find_child(node, "class_parameters")
         if params_node:
             sig += self.node_text(params_node, source)
@@ -139,9 +146,9 @@ class ScalaExtractor(LanguageExtractor):
         # Walk body
         body = self._find_child(node, "template_body")
         if body:
-            self._walk_symbols(body, source, symbols, qualified)
+            self._walk_symbols(body, source, symbols, qualified, _depth + 1)
 
-    def _extract_trait(self, node, source, symbols, parent_name):
+    def _extract_trait(self, node, source, symbols, parent_name, _depth=0):
         name = self._get_identifier(node, source)
         if not name:
             return
@@ -150,6 +157,9 @@ class ScalaExtractor(LanguageExtractor):
 
         sig = "sealed trait " if is_sealed else "trait "
         sig += name
+        type_params = self._find_child(node, "type_parameters")
+        if type_params:
+            sig += self.node_text(type_params, source)
 
         qualified = f"{parent_name}.{name}" if parent_name else name
 
@@ -175,9 +185,9 @@ class ScalaExtractor(LanguageExtractor):
 
         body = self._find_child(node, "template_body")
         if body:
-            self._walk_symbols(body, source, symbols, qualified)
+            self._walk_symbols(body, source, symbols, qualified, _depth + 1)
 
-    def _extract_object(self, node, source, symbols, parent_name):
+    def _extract_object(self, node, source, symbols, parent_name, _depth=0):
         name = self._get_identifier(node, source)
         if not name:
             return
@@ -211,7 +221,7 @@ class ScalaExtractor(LanguageExtractor):
 
         body = self._find_child(node, "template_body")
         if body:
-            self._walk_symbols(body, source, symbols, qualified)
+            self._walk_symbols(body, source, symbols, qualified, _depth + 1)
 
     def _extract_function(self, node, source, symbols, parent_name):
         name = self._get_identifier(node, source)
@@ -227,6 +237,9 @@ class ScalaExtractor(LanguageExtractor):
         if is_override:
             sig += "override "
         sig += f"def {name}"
+        type_params = self._find_child(node, "type_parameters")
+        if type_params:
+            sig += self.node_text(type_params, source)
 
         params = self._find_child(node, "parameters")
         if params:
@@ -398,7 +411,14 @@ class ScalaExtractor(LanguageExtractor):
             for i, sub in enumerate(child.children):
                 if sub.type == ":" and i + 1 < len(child.children):
                     type_node = child.children[i + 1]
-                    if type_node.type == "type_identifier":
+                    if type_node.type in (
+                        "type_identifier",
+                        "generic_type",
+                        "compound_type",
+                        "infix_type",
+                        "tuple_type",
+                        "function_type",
+                    ):
                         sig += f": {self.node_text(type_node, source)}"
                     break
 
@@ -420,15 +440,20 @@ class ScalaExtractor(LanguageExtractor):
     # ---- Inheritance reference extraction ----
 
     def _extract_extends_refs(self, extends_node, source, class_name):
-        """Extract inherits/implements refs from an extends_clause."""
-        # First type_identifier after 'extends' is the superclass
-        # Additional type_identifiers after 'with' are trait mixins
+        """Extract inherits/implements refs from an extends_clause.
+
+        Handles both plain types (``extends Animal``) and generic types
+        (``extends Comparable[Int]``) by extracting the first
+        ``type_identifier`` from ``generic_type`` nodes.
+        """
+        # First type after 'extends' is the superclass.
+        # Additional types after 'with' are trait mixins.
         after_with = False
         for child in extends_node.children:
             if child.type == "with":
                 after_with = True
-            elif child.type == "type_identifier":
-                target = self.node_text(child, source)
+            elif child.type in ("type_identifier", "generic_type"):
+                target = self._first_type_identifier(child, source)
                 if target:
                     ref_kind = "implements" if after_with else "inherits"
                     self._pending_inherits.append(
@@ -566,6 +591,19 @@ class ScalaExtractor(LanguageExtractor):
                 self._walk_refs(child, source, refs, scope_name)
 
     # ---- Helpers ----
+
+    def _first_type_identifier(self, node, source) -> str | None:
+        """Return the text of the first ``type_identifier`` in *node*.
+
+        If *node* itself is a ``type_identifier``, return its text directly.
+        Otherwise search direct children (handles ``generic_type`` wrappers).
+        """
+        if node.type == "type_identifier":
+            return self.node_text(node, source)
+        for child in node.children:
+            if child.type == "type_identifier":
+                return self.node_text(child, source)
+        return None
 
     def _get_identifier(self, node, source) -> str | None:
         """Get the identifier (name) from a node."""
