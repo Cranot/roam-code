@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- CI: lazy `import yaml` in `extractor_schema.py` (PyYAML is optional)
+- CI: `TYPE_CHECKING` guard for networkx import in `cmd_visualize.py`
+- CI: skip language corpus tests when yaml/QueryCursor unavailable
+
+## [11.1.1] - 2026-02-27
+
+### Fixed
+- `roam algo`: list-prepend detector SQL missing `calls_in_loops` columns, causing false positives (5 -> 3 findings)
+- `roam intent --undocumented`: wrong DB table reference
+- `roam rules --ci`: use `EXIT_GATE_FAILURE=5` instead of exit code 1
+- `roam fan`: incorrect verdict labels
+- `roam coupling`: missing VERDICT line
+- `roam visualize`: lazy-load import fix
+- `cmd_report.py`: stale `snapshot`/`trend` command references updated to `trends`
+- `cmd_missing_index.py`: `re.compile` hoisted from loop to module level
+- CODEOWNERS `@`-prefix: strip at comparison point in suggest-reviewers, not in shared parser
+- Surface count consistency across README, cli.py, CLAUDE.md (139 canonical, 137 cmd files)
+
+### Removed
+- `cmd_trend.py`, `cmd_snapshot.py`, `cmd_digest.py`, `cmd_onboard.py` -- consolidated into `cmd_trends.py` and `cmd_understand.py`
+- 15 unused variables across 12 source files (ruff F841 sweep)
+- Dead loop in `cmd_partition.py`, unused `hashlib` import in `cmd_sbom.py`
+- Dead helpers `_find_section_line_range()` and `_parse_roam_trails()` in `competitor_site_data.py`
+
+### Added
+- `codeowners_helpers.py` -- shared CODEOWNERS parsing extracted from `cmd_codeowners.py`
+- `graph/stats.py` -- shared graph statistics helper
+- ~30 new test files (~700+ tests): alerts, auth-gaps, bus-factor, conventions, coverage-gaps, entry-points, hotspots, init, migration-safety, missing-index, n1, patterns, report, risk, sketch, split, testmap, tour, uses, why, xlang, and more
+- All command docstrings updated with cross-references to related commands
+- Token budget added to ~15 commands that were missing it
+
+## [11.1.0] - 2026-02-25
+
+### Added
+- **7 new commands:** `roam adrs`, `roam ci-setup`, `roam congestion`, `roam coverage-gaps`, `roam doc-staleness`, `roam flag-dead`, `roam over-fetch`
+- **YAML-based language extractors:** declarative tree-sitter query definitions in `src/roam/languages/extractors/*.yaml`
+- **Kotlin promoted to Tier 1** via YAML extractor architecture with context-aware kind resolution
+- **CI workflow templates:** `roam ci-setup` generates GitHub Actions, GitLab CI, and Azure Pipelines configs
+- **Community rules expanded** to 2480+ YAML rules across architecture, correctness, dataflow, performance, security, and style categories
+- **Architecture Guardian:** `roam watch --guardian` with CI workflow for automated architecture drift detection
+- Dev tooling: `dev/command_audit.py`, `dev/repo_hygiene.py`, `dev/env_doctor.py`, `dev/todo_guard.py`
+- Integration tutorials for Claude Code, Cursor, Gemini CLI, Codex, and Amp
+- OSS benchmark harness with reproducible evaluation framework
+- Search v2 ONNX semantic backend for improved recall
+
 ## [11.0.0] - 2026-02-25
 
 ### Added

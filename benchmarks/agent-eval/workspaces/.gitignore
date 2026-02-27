@@ -1,6 +1,0 @@
-# Prevent benchmark workspace artifacts from polluting the repo
-node_modules/
-.git/
-dist/
-build/
-*.lock

@@ -1,6 +1,0 @@
-node_modules
-.astro
-dist
-.vscode
-.DS_Store
-coverage

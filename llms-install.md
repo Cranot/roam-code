@@ -78,4 +78,4 @@ Add to your MCP config:
 | `roam context <symbol>` | Files and line ranges to read |
 | `roam diff` | Blast radius of uncommitted changes |
 
-Run `roam --help` for all 137 invokable command names (143 canonical + `math` legacy alias).
+Run `roam --help` for all 142 invokable command names (139 canonical + 3 alias pairs).

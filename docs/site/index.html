@@ -216,7 +216,7 @@ Complete blast radius</span></div>
             <ul class="honest-list">
               <li>Maps code structure: symbols, call graphs, dependency layers, git history, architecture metrics</li>
               <li>Resolves cross-file references using name-based heuristics -- works well for most codebases</li>
-              <li>Supports 26 languages via tree-sitter with full extraction for 11 Tier 1 languages</li>
+              <li>Supports 26 languages via tree-sitter, all with full symbol extraction</li>
               <li>Detects 23 algorithm anti-patterns with Big-O improvements and language-aware fix suggestions</li>
             </ul>
           </div>
@@ -423,8 +423,8 @@ Complete blast radius</span></div>
           Via <strong>CI</strong>: GitHub Actions, GitLab CI, Azure DevOps. JSON + SARIF output.
         </p>
         <p>
-          26 languages via tree-sitter: Python, TypeScript, JavaScript, Java, Go, Rust, C/C++, C#, PHP, Ruby, and 16 more.
-          11 Tier 1 languages have full symbol extraction. The rest get core coverage.
+          26 languages via tree-sitter: Python, TypeScript, JavaScript, Java, Go, Rust, C/C++, C#, PHP, Ruby, Kotlin, and 15 more.
+          All 26 languages have full symbol extraction via native extractors or YAML-defined grammars.
         </p>
       </section>
 
@@ -432,7 +432,7 @@ Complete blast radius</span></div>
       <section class="scope-section">
         <h2>The full surface</h2>
         <p class="section-desc">
-          roam has 144 invokable CLI commands and 101 MCP tools. That's a lot for a human to memorize.
+          roam has 142 invokable CLI commands and 101 MCP tools. That's a lot for a human to memorize.
           It's not designed for that. It's designed for AI agents, which use commands as a vocabulary -- calling
           whatever they need, when they need it.
         </p>

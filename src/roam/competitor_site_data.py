@@ -1,7 +1,7 @@
 """Generate site data for the competitive landscape page.
 
 Source of truth:
-- reports/competitor_tracker.md (matrix + decision tables)
+- internal/competitor_tracker.md (matrix + decision tables)
 - SCORING_RUBRIC (7 categories, 45 binary/tiered criteria, 100 pts total)
 - CRITERIA_DATA (per-competitor criterion values)
 """
@@ -338,17 +338,17 @@ CRITERIA_DATA: dict[str, dict[str, object]] = {
         "token_budget": True,
         "tool_presets": True,
         "sarif_output": True,
-        "cli_commands_count": 136,
+        "cli_commands_count": 139,
         "compound_batch": True,
         "local_zero_api": True,
         "vuln_scanning": True,
         "reachability_from_vulns": True,
         "secret_detection": "remediation",
         "quality_gates": True,
-        "rule_count": 1049,
+        "rule_count": 2480,
         "open_source": "full",
         "free_tier": True,
-        "github_stars": 200,
+        "github_stars": 286,
         "ci_cd_integration": True,
         "ide_integration": False,
         "multi_platform": True,
@@ -370,7 +370,7 @@ CRITERIA_DATA: dict[str, dict[str, object]] = {
         "dataflow_taint": "none",
         "languages_supported": 12,
         "pagerank_centrality": False,
-        "cycle_detection_scc": False,
+        "cycle_detection_scc": True,
         "community_detection": False,
         "topological_layers": False,
         "architecture_simulation": False,
@@ -1583,7 +1583,7 @@ def _repo_root() -> Path:
     start = Path(__file__).resolve()
     for parent in [start, *start.parents]:
         # Primary check: both reports dir and docs site exist
-        tracker = parent / "reports" / "competitor_tracker.md"
+        tracker = parent / "internal" / "competitor_tracker.md"
         site_dir = parent / "docs" / "site"
         if tracker.exists() and site_dir.exists():
             return parent
@@ -1595,7 +1595,7 @@ def _repo_root() -> Path:
 
 
 def default_tracker_path() -> Path:
-    return _repo_root() / "reports" / "competitor_tracker.md"
+    return _repo_root() / "internal" / "competitor_tracker.md"
 
 
 def default_output_path() -> Path:
@@ -2170,7 +2170,7 @@ def main() -> int:
         "--tracker",
         type=Path,
         default=default_tracker_path(),
-        help="Path to reports/competitor_tracker.md",
+        help="Path to internal/competitor_tracker.md",
     )
     parser.add_argument(
         "--out",

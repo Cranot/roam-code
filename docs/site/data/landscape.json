@@ -1,7 +1,7 @@
 {
-  "tracker_updated": "24 February 2026",
-  "tracker_updated_iso": "2026-02-24",
-  "tracker_file": "reports/competitor_tracker.md",
+  "tracker_updated": "27 February 2026",
+  "tracker_updated_iso": "2026-02-27",
+  "tracker_file": "internal/competitor_tracker.md",
   "competitors": [
     {
       "name": "roam-code",
@@ -237,7 +237,7 @@
               {
                 "id": "cli_commands_count",
                 "label": "CLI commands",
-                "value": 136,
+                "value": 139,
                 "points": 3,
                 "max": 3,
                 "type": "tiered"
@@ -293,7 +293,7 @@
               {
                 "id": "rule_count",
                 "label": "Rule count",
-                "value": 1049,
+                "value": 2480,
                 "points": 2,
                 "max": 3,
                 "type": "tiered"
@@ -325,7 +325,7 @@
               {
                 "id": "github_stars",
                 "label": "GitHub stars",
-                "value": 200,
+                "value": 286,
                 "points": 0,
                 "max": 3,
                 "type": "tiered"
@@ -446,7 +446,7 @@
       "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 99 MCP tools, 134 CLI commands.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "measured",
       "version_evaluated": "11.0.0",
       "repo_url": "https://github.com/Cranot/roam-code"
@@ -894,7 +894,7 @@
       "note": "6,500+ rules with CFG/DFG and taint tracking across 30 languages. Server-based deployment (Docker/cloud).",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "mixed",
       "stars_note": "~10.2k stars is the main SonarQube product; the MCP server extension has ~389 stars.",
       "version_evaluated": "26.2.0",
@@ -1343,7 +1343,7 @@
       "note": "Full dataflow and taint tracking with a custom query language (QL). GitHub-owned. Security-focused.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "mixed",
       "version_evaluated": "2.24.2",
       "repo_url": "https://github.com/github/codeql"
@@ -1791,7 +1791,7 @@
       "note": "Git-based behavioral analysis: temporal coupling, team dynamics, code health trends. 15 languages.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "mixed",
       "version_evaluated": "7.3",
       "repo_url": "https://codescene.com"
@@ -1801,17 +1801,17 @@
       "category": "mcp_server",
       "category_label": "MCP Server",
       "stars": "59",
-      "mcp": "76–92 (core 14)",
+      "mcp": "76\u201392 (core 14)",
       "local": true,
       "cli_commands": "N/A",
       "graph": "SCIP symbol graph",
-      "arch": 22,
+      "arch": 28,
       "agent": 71,
       "scores": {
-        "total": 35,
+        "total": 37,
         "max_total": 100,
         "map_x": 71,
-        "map_y": 22,
+        "map_y": 28,
         "categories": [
           {
             "id": "static_analysis",
@@ -1888,7 +1888,7 @@
           {
             "id": "graph_intelligence",
             "label": "Graph Intelligence",
-            "score": 0,
+            "score": 2,
             "max": 10,
             "criteria": [
               {
@@ -1902,8 +1902,8 @@
               {
                 "id": "cycle_detection_scc",
                 "label": "Cycle detection (SCC)",
-                "value": false,
-                "points": 0,
+                "value": true,
+                "points": 2,
                 "max": 2,
                 "type": "binary"
               },
@@ -2239,7 +2239,7 @@
       "note": "SCIP-based semantic indexing with compound and batch MCP operations. Precise symbol resolution across 12+ languages.",
       "confidence": "High",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "mixed",
       "mcp_note": "MCP count varies across sources (76-92 reported); core unique tools ~14.",
       "version_evaluated": "v8.1.0",
@@ -2688,7 +2688,7 @@
       "note": "Tree-sitter AST parsing + NetworkX graph analysis. 14 MCP tools. Local, open source.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "estimated",
       "version_evaluated": "v0.7.3",
       "repo_url": "https://github.com/nahisaho/CodeGraphMCPServer"
@@ -3136,7 +3136,7 @@
       "note": "Invented SCIP indexing protocol. Code search + cross-repo navigation. Amp agent spun off Dec 2025.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "estimated",
       "version_evaluated": "6.12",
       "repo_url": "https://sourcegraph.com/amp"
@@ -3584,7 +3584,7 @@
       "note": "Fast AST-based pattern matching with a community rules marketplace. 3,500+ rules across 30 languages.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "estimated",
       "version_evaluated": "v1.152.0",
       "repo_url": "https://github.com/semgrep/semgrep"
@@ -4032,7 +4032,7 @@
       "note": "Rust-based code intelligence MCP server. Universal AST, graph analysis, 20 tools. Local, open source.",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-02-24",
+      "last_verified": "2026-02-27",
       "claim_type": "estimated",
       "version_evaluated": "v0.4.6",
       "repo_url": "https://github.com/rustic-ai/codeprism"
@@ -4055,9 +4055,9 @@
       "GitHub star counts may conflate main product repos with MCP extension repos."
     ],
     "reproducibility": {
-      "tracker": "reports/competitor_tracker.md",
+      "tracker": "internal/competitor_tracker.md",
       "generator": "src/roam/competitor_site_data.py",
-      "generated_at_reference": "2026-02-24"
+      "generated_at_reference": "2026-02-27"
     }
   },
   "rubric": [
