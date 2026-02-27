@@ -236,8 +236,14 @@ class ScalaExtractor(LanguageExtractor):
         for i, child in enumerate(node.children):
             if child.type == ":" and i + 1 < len(node.children):
                 ret_type = node.children[i + 1]
-                if ret_type.type in ("type_identifier", "generic_type", "compound_type",
-                                      "infix_type", "tuple_type", "function_type"):
+                if ret_type.type in (
+                    "type_identifier",
+                    "generic_type",
+                    "compound_type",
+                    "infix_type",
+                    "tuple_type",
+                    "function_type",
+                ):
                     sig += f": {self.node_text(ret_type, source)}"
                 break
 
@@ -274,8 +280,14 @@ class ScalaExtractor(LanguageExtractor):
         for i, child in enumerate(node.children):
             if child.type == ":" and i + 1 < len(node.children):
                 type_node = node.children[i + 1]
-                if type_node.type in ("type_identifier", "generic_type", "compound_type",
-                                       "infix_type", "tuple_type", "function_type"):
+                if type_node.type in (
+                    "type_identifier",
+                    "generic_type",
+                    "compound_type",
+                    "infix_type",
+                    "tuple_type",
+                    "function_type",
+                ):
                     sig += f": {self.node_text(type_node, source)}"
                 break
 
