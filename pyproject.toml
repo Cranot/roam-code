@@ -41,6 +41,7 @@ Homepage = "https://github.com/Cranot/roam-code"
 Documentation = "https://cranot.github.io/roam-code/"
 Repository = "https://github.com/Cranot/roam-code"
 Issues = "https://github.com/Cranot/roam-code/issues"
+Changelog = "https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md"
 
 [project.scripts]
 roam = "roam.cli:cli"

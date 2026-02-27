@@ -34,11 +34,11 @@ roam --version
 
 ```bash
 cd /path/to/your/project
-roam init        # index + generate agent instructions
+roam init        # index + fitness rules + CI workflow
 ```
 
-This creates `.roam/index.db` (the codebase graph) and writes a
-`CLAUDE.md` with roam-aware agent instructions.
+This creates `.roam/index.db` (the codebase graph), `.roam/fitness.yaml`
+(architectural rules), and `.github/workflows/roam.yml` (CI workflow).
 
 ## MCP server setup
 
@@ -78,4 +78,4 @@ Add to your MCP config:
 | `roam context <symbol>` | Files and line ranges to read |
 | `roam diff` | Blast radius of uncommitted changes |
 
-Run `roam --help` for all 142 invokable command names (139 canonical + 3 alias pairs).
+Run `roam --help` for all 139 commands (+3 alias pairs: 142 total entries).

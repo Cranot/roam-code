@@ -223,7 +223,7 @@ roam-code is organized into these key areas:
 | `src/roam/bridges/` | Cross-language symbol resolution |
 | `src/roam/output/` | Formatting, JSON envelopes, SARIF output |
 | `src/roam/mcp_server.py` | MCP server with 101 tools |
-| `tests/` | Test suite (216 test files) |
+| `tests/` | Test suite (186 test files) |
 
 For full architectural details, see the [Architecture Guide](redactedarchitecture.html).
 
