@@ -3,6 +3,8 @@ import re
 import sys
 from pathlib import Path
 
+import pytest
+
 ROOT = Path(__file__).resolve().parents[1]
 SRC = ROOT / "src"
 if str(SRC) not in sys.path:
@@ -14,8 +16,15 @@ from roam.competitor_site_data import (
     build_site_payload,
     compute_scores,
     default_output_path,
+    default_tracker_path,
 )
 from roam.surface_counts import collect_surface_counts
+
+# Skip entire module when the internal tracker file is not present (e.g. CI)
+pytestmark = pytest.mark.skipif(
+    not default_tracker_path().exists(),
+    reason="internal/competitor_tracker.md not available (gitignored)",
+)
 
 
 def test_site_payload_has_expected_shape_and_count():
