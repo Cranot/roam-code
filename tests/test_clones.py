@@ -302,6 +302,7 @@ class TestCloneDetectCoreAlgorithm:
 
     def test_jaccard_bags_identical(self):
         from collections import Counter
+
         from roam.graph.clone_detect import _jaccard_bags
 
         a = Counter({1: 3, 2: 2, 3: 1})
@@ -310,6 +311,7 @@ class TestCloneDetectCoreAlgorithm:
 
     def test_jaccard_bags_disjoint(self):
         from collections import Counter
+
         from roam.graph.clone_detect import _jaccard_bags
 
         a = Counter({1: 1, 2: 1})
@@ -318,6 +320,7 @@ class TestCloneDetectCoreAlgorithm:
 
     def test_jaccard_bags_partial(self):
         from collections import Counter
+
         from roam.graph.clone_detect import _jaccard_bags
 
         a = Counter({1: 2, 2: 1})
@@ -328,6 +331,7 @@ class TestCloneDetectCoreAlgorithm:
 
     def test_jaccard_bags_empty(self):
         from collections import Counter
+
         from roam.graph.clone_detect import _jaccard_bags
 
         assert _jaccard_bags(Counter(), Counter()) == 1.0
@@ -377,7 +381,7 @@ class TestDebugArtifactRules:
 
     def test_breakpoint_rule_detects(self, tmp_path):
         """breakpoint() rule should detect breakpoint calls in Python code."""
-        from roam.rules.engine import evaluate_rule, load_rules
+        from roam.rules.engine import load_rules
 
         rules_dir = Path(__file__).parent.parent / "rules" / "community" / "correctness"
         rule_path = rules_dir / "COR-561-py-breakpoint.yaml"
