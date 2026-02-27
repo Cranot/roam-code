@@ -85,7 +85,7 @@
               {
                 "id": "languages_supported",
                 "label": "Languages supported",
-                "value": 26,
+                "value": 27,
                 "points": 2,
                 "max": 2,
                 "type": "tiered"
@@ -443,12 +443,12 @@
       "status": "Graph-first code intelligence CLI + MCP server",
       "relationship": "self",
       "peer": true,
-      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 99 MCP tools, 134 CLI commands.",
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 101 MCP tools, 139 CLI commands.",
       "confidence": "Medium",
       "source_count": 1,
       "last_verified": "2026-02-27",
       "claim_type": "measured",
-      "version_evaluated": "11.0.0",
+      "version_evaluated": "11.1.2",
       "repo_url": "https://github.com/Cranot/roam-code"
     },
     {

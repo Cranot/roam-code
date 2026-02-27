@@ -4,6 +4,7 @@
   --paper: #ffffff;
   --ink: #112033;
   --ink-soft: #3d5266;
+  --ink-muted: #6b7f96;
   --line: #dbe5ef;
   --accent: #0e6f95;
   --accent-strong: #0a4f6a;
@@ -16,6 +17,10 @@
 
 * {
   box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
 }
 
 html,
@@ -74,6 +79,11 @@ body {
   color: var(--ink-soft);
   font-size: 0.88rem;
   font-weight: 500;
+  transition: color 0.15s;
+}
+
+.nav-links a:hover {
+  color: var(--accent);
 }
 
 .nav-links a.active {
@@ -112,10 +122,12 @@ h1 {
 
 .callout {
   border: 1px solid #c8dfeb;
+  border-left: 3px solid var(--accent);
   background: var(--accent-soft);
   border-radius: var(--radius);
   padding: 0.9rem 1rem;
   margin-top: 1rem;
+  font-size: 0.92rem;
 }
 
 .section {
@@ -150,11 +162,18 @@ h1 {
   border-radius: 7px;
   background: #fbfdff;
   padding: 0.75rem 0.8rem;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+.step:hover {
+  border-color: var(--accent);
+  box-shadow: 0 2px 12px rgba(14, 111, 149, 0.08);
 }
 
 .step h3 {
   margin-top: 0;
   font-size: 0.98rem;
+  color: var(--accent-strong);
 }
 
 code,
@@ -167,18 +186,27 @@ code {
   border-radius: 4px;
   background: #e9f1f8;
   padding: 0.12rem 0.3rem;
+  color: var(--ink);
 }
 
 pre {
   margin: 0.55rem 0 0.2rem;
   border-radius: 7px;
-  border: 1px solid #cad8e6;
+  border: 1px solid #1a3040;
   background: #0f1f2a;
   color: #e8f3ff;
   padding: 0.7rem 0.8rem;
   overflow-x: auto;
   font-size: 0.86rem;
-  line-height: 1.45;
+  line-height: 1.55;
+  position: relative;
+}
+
+pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  border-radius: 0;
 }
 
 .table-wrap {
@@ -195,16 +223,25 @@ th,
 td {
   border-bottom: 1px solid var(--line);
   text-align: left;
-  padding: 0.52rem 0.5rem;
+  padding: 0.55rem 0.6rem;
   vertical-align: top;
 }
 
 th {
   background: var(--bg-soft);
-  font-size: 0.8rem;
+  font-size: 0.78rem;
   text-transform: uppercase;
   letter-spacing: 0.04em;
   color: #405566;
+  font-weight: 600;
+}
+
+tbody tr {
+  transition: background-color 0.12s;
+}
+
+tbody tr:hover {
+  background: #f4f8fc;
 }
 
 .badge {
@@ -252,6 +289,67 @@ footer {
 .footer-links a {
   color: var(--accent-strong);
   text-decoration: none;
+  transition: color 0.15s;
+}
+
+.footer-links a:hover {
+  color: var(--accent);
+  text-decoration: underline;
+}
+
+/* ====== Links in content ====== */
+
+.section a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+.section a:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+footer a {
+  color: var(--accent);
+  text-decoration: none;
+  transition: color 0.15s;
+}
+
+footer a:hover {
+  color: var(--accent-strong);
+  text-decoration: underline;
+}
+
+/* ====== Focus states for accessibility ====== */
+
+a:focus-visible,
+button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 2px;
+}
+
+/* ====== Section h3 subtle numbering ====== */
+
+.section h3 {
+  color: var(--ink);
+}
+
+/* ====== List refinements ====== */
+
+.section ul,
+.section ol {
+  color: var(--ink-soft);
+  line-height: 1.65;
+}
+
+.section li {
+  margin-bottom: 0.3rem;
+}
+
+.section li code {
+  font-size: 0.88em;
 }
 
 @media (max-width: 860px) {
