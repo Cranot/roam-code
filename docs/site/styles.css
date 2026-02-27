@@ -143,7 +143,8 @@ h1 {
   box-shadow: var(--shadow-sm);
 }
 
-.hero-stats h2 {
+.hero-stats h2,
+.hero-stats .stat-number {
   margin: 0;
   font-size: 1.2rem;
   font-family: "IBM Plex Mono", ui-monospace, monospace;
