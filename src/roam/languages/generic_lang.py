@@ -153,7 +153,7 @@ class GenericExtractor(LanguageExtractor):
 
     Looks for common node types and extracts symbols by finding the
     first identifier child as the name. Does not do import resolution.
-    Used for Ruby, PHP, C#, Kotlin, Swift, Scala, etc.
+    Used for tier-2 languages without dedicated extractors.
     """
 
     def __init__(self, language: str = "unknown"):

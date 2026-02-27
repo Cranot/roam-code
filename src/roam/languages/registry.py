@@ -33,6 +33,7 @@ _DEDICATED_EXTRACTORS = frozenset(
         "ruby",
         "kotlin",
         "swift",
+        "scala",
     }
 )
 
@@ -203,6 +204,10 @@ def _create_extractor(language: str) -> "LanguageExtractor":
         from .swift_lang import SwiftExtractor
 
         return SwiftExtractor()
+    elif language == "scala":
+        from .scala_lang import ScalaExtractor
+
+        return ScalaExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor
@@ -250,7 +255,7 @@ def get_extractor(language: str) -> "LanguageExtractor":
     """Get an extractor instance for a language.
 
     Returns a dedicated extractor for tier-1 languages, or a GenericExtractor
-    for tier-2 languages (e.g. Scala).
+    for tier-2 languages.
 
     Args:
         language: Language name string.

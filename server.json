@@ -1,0 +1,39 @@
+{
+  "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
+  "name": "io.github.cranot/roam-code",
+  "description": "Instant codebase comprehension for AI coding agents. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 101 MCP tools, 10 resources, 5 prompts. 26 languages. 100% local, zero API keys.",
+  "version": "11.1.2",
+  "packages": [
+    {
+      "registry_name": "pypi",
+      "name": "roam-code",
+      "version": "11.1.2",
+      "runtime": "python",
+      "runtime_arguments": [],
+      "environment_variables": [
+        {
+          "name": "ROAM_MCP_PRESET",
+          "description": "Tool preset: core (23 tools, default), full (101 tools), review, refactor, debug, architecture",
+          "required": false,
+          "default": "core"
+        }
+      ]
+    }
+  ],
+  "tools": {
+    "count": 101
+  },
+  "resources": {
+    "count": 10
+  },
+  "prompts": {
+    "count": 5
+  },
+  "remotes": [],
+  "repository": {
+    "url": "https://github.com/Cranot/roam-code",
+    "source": "github"
+  },
+  "websiteUrl": "redacted",
+  "license": "MIT"
+}
