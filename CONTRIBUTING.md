@@ -82,7 +82,7 @@ Add the following to your project's `.pre-commit-config.yaml`:
 ```yaml
 repos:
   - repo: https://github.com/Cranot/roam-code
-    rev: v11.1.1          # pin to a release tag
+    rev: v11.1.2          # pin to a release tag
     hooks:
       - id: roam-secrets        # secret scanning -- no index required
       - id: roam-syntax-check   # tree-sitter syntax validation -- no index required
