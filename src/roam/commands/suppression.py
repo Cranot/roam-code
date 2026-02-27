@@ -245,9 +245,7 @@ def save_suppression(
         Optional author identifier (e.g. email).
     """
     if status not in VALID_STATUSES:
-        raise ValueError(
-            f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_STATUSES))}"
-        )
+        raise ValueError(f"Invalid status '{status}'. Must be one of: {', '.join(sorted(VALID_STATUSES))}")
 
     root = Path(project_root)
     existing = load_suppressions(root)
@@ -255,11 +253,7 @@ def save_suppression(
     # Check for duplicates
     norm_file = file.replace("\\", "/")
     for sup in existing:
-        if (
-            sup.get("rule") == rule
-            and sup.get("file", "").replace("\\", "/") == norm_file
-            and sup.get("line") == line
-        ):
+        if sup.get("rule") == rule and sup.get("file", "").replace("\\", "/") == norm_file and sup.get("line") == line:
             # Already suppressed -- nothing to do
             return
 

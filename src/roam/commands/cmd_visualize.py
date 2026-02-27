@@ -3,8 +3,12 @@
 from __future__ import annotations
 
 import re
+from typing import TYPE_CHECKING
 
 import click
+
+if TYPE_CHECKING:
+    import networkx as nx
 
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import open_db

@@ -135,34 +135,26 @@ def compare_extraction(
     ]
 
     # Sort for comparison
-    expected_symbols_sorted = sorted(
-        expected_symbols, key=lambda s: (s.get("line", 0), s.get("name", ""))
-    )
-    actual_symbols_sorted = sorted(
-        actual_symbols, key=lambda s: (s["line"], s["name"])
-    )
+    expected_symbols_sorted = sorted(expected_symbols, key=lambda s: (s.get("line", 0), s.get("name", "")))
+    actual_symbols_sorted = sorted(actual_symbols, key=lambda s: (s["line"], s["name"]))
 
     if len(expected_symbols_sorted) != len(actual_symbols_sorted):
         discrepancies.append(
-            f"Symbol count mismatch: expected {len(expected_symbols_sorted)}, "
-            f"got {len(actual_symbols_sorted)}"
+            f"Symbol count mismatch: expected {len(expected_symbols_sorted)}, got {len(actual_symbols_sorted)}"
         )
 
     for exp, act in zip(expected_symbols_sorted, actual_symbols_sorted):
         if exp.get("name") != act["name"]:
             discrepancies.append(
-                f"Symbol name mismatch at line {exp.get('line')}: "
-                f"expected '{exp.get('name')}', got '{act['name']}'"
+                f"Symbol name mismatch at line {exp.get('line')}: expected '{exp.get('name')}', got '{act['name']}'"
             )
         if exp.get("kind") and exp.get("kind") != act["kind"]:
             discrepancies.append(
-                f"Symbol kind mismatch for '{act['name']}': "
-                f"expected '{exp.get('kind')}', got '{act['kind']}'"
+                f"Symbol kind mismatch for '{act['name']}': expected '{exp.get('kind')}', got '{act['kind']}'"
             )
         if exp.get("scope") and exp.get("scope") != act["scope"]:
             discrepancies.append(
-                f"Symbol scope mismatch for '{act['name']}': "
-                f"expected '{exp.get('scope')}', got '{act['scope']}'"
+                f"Symbol scope mismatch for '{act['name']}': expected '{exp.get('scope')}', got '{act['scope']}'"
             )
 
     # Compare inheritance
@@ -176,17 +168,12 @@ def compare_extraction(
         for i in result.inheritance
     ]
 
-    expected_inh_sorted = sorted(
-        expected_inheritance, key=lambda i: (i.get("child", ""), i.get("parent", ""))
-    )
-    actual_inh_sorted = sorted(
-        actual_inheritance, key=lambda i: (i["child"], i["parent"])
-    )
+    expected_inh_sorted = sorted(expected_inheritance, key=lambda i: (i.get("child", ""), i.get("parent", "")))
+    actual_inh_sorted = sorted(actual_inheritance, key=lambda i: (i["child"], i["parent"]))
 
     if len(expected_inh_sorted) != len(actual_inh_sorted):
         discrepancies.append(
-            f"Inheritance count mismatch: expected {len(expected_inh_sorted)}, "
-            f"got {len(actual_inh_sorted)}"
+            f"Inheritance count mismatch: expected {len(expected_inh_sorted)}, got {len(actual_inh_sorted)}"
         )
 
     for exp, act in zip(expected_inh_sorted, actual_inh_sorted):
@@ -207,17 +194,12 @@ def compare_extraction(
             }
             for r in result.references
         ]
-        expected_refs_sorted = sorted(
-            expected_refs, key=lambda r: (r.get("line", 0), r.get("name", ""))
-        )
-        actual_refs_sorted = sorted(
-            actual_refs, key=lambda r: (r["line"], r["name"])
-        )
+        expected_refs_sorted = sorted(expected_refs, key=lambda r: (r.get("line", 0), r.get("name", "")))
+        actual_refs_sorted = sorted(actual_refs, key=lambda r: (r["line"], r["name"]))
 
         if len(expected_refs_sorted) != len(actual_refs_sorted):
             discrepancies.append(
-                f"Reference count mismatch: expected {len(expected_refs_sorted)}, "
-                f"got {len(actual_refs_sorted)}"
+                f"Reference count mismatch: expected {len(expected_refs_sorted)}, got {len(actual_refs_sorted)}"
             )
 
     return discrepancies

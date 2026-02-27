@@ -294,12 +294,8 @@ class TestMissingIndexJSON:
         data = parse_json_output(result, "missing-index")
         findings = data["findings"]
         # At least one finding should reference the 'phone' column
-        phone_findings = [
-            f for f in findings if "phone" in f.get("columns", []) or "phone" in str(f.get("issue", ""))
-        ]
-        assert len(phone_findings) >= 1, (
-            f"Expected a finding for unindexed 'phone' column. All findings: {findings}"
-        )
+        phone_findings = [f for f in findings if "phone" in f.get("columns", []) or "phone" in str(f.get("issue", ""))]
+        assert len(phone_findings) >= 1, f"Expected a finding for unindexed 'phone' column. All findings: {findings}"
 
     def test_json_finding_has_required_keys(self, cli_runner, php_project, monkeypatch):
         """Each finding dict contains the required structural keys."""
@@ -321,9 +317,7 @@ class TestMissingIndexJSON:
         data = parse_json_output(result, "missing-index")
         valid_levels = {"high", "medium", "low"}
         for f in data["findings"]:
-            assert f["confidence"] in valid_levels, (
-                f"Unexpected confidence '{f['confidence']}' in finding: {f}"
-            )
+            assert f["confidence"] in valid_levels, f"Unexpected confidence '{f['confidence']}' in finding: {f}"
 
     def test_json_no_findings_non_php(self, cli_runner, non_php_project, monkeypatch):
         """Non-PHP project produces zero findings."""
@@ -373,13 +367,9 @@ class TestMissingIndexJSON:
         )
         data = parse_json_output(result, "missing-index")
         for f in data["findings"]:
-            assert f.get("table") == "users", (
-                f"Expected only 'users' table with --table users, got: {f.get('table')}"
-            )
+            assert f.get("table") == "users", f"Expected only 'users' table with --table users, got: {f.get('table')}"
 
-    def test_json_table_filter_no_results_unknown_table(
-        self, cli_runner, php_project, monkeypatch
-    ):
+    def test_json_table_filter_no_results_unknown_table(self, cli_runner, php_project, monkeypatch):
         """--table on a non-existent table yields zero findings."""
         monkeypatch.chdir(php_project)
         result = invoke_cli(
@@ -417,9 +407,7 @@ class TestMissingIndexText:
         monkeypatch.chdir(php_project)
         result = invoke_cli(cli_runner, ["missing-index"], cwd=php_project)
         assert result.exit_code == 0
-        assert "VERDICT:" in result.output, (
-            f"Expected 'VERDICT:' in output but got:\n{result.output}"
-        )
+        assert "VERDICT:" in result.output, f"Expected 'VERDICT:' in output but got:\n{result.output}"
 
     def test_verdict_first_non_empty_line(self, cli_runner, php_project, monkeypatch):
         """The first non-empty output line starts with 'VERDICT:'."""
@@ -437,9 +425,7 @@ class TestMissingIndexText:
         monkeypatch.chdir(php_project)
         result = invoke_cli(cli_runner, ["missing-index"], cwd=php_project)
         assert result.exit_code == 0
-        assert "Indexes found:" in result.output, (
-            f"Expected 'Indexes found:' in output but got:\n{result.output}"
-        )
+        assert "Indexes found:" in result.output, f"Expected 'Indexes found:' in output but got:\n{result.output}"
 
     def test_migrations_scanned_line_present(self, cli_runner, php_project, monkeypatch):
         """Text output contains the 'Migrations scanned:' summary line."""
@@ -473,9 +459,7 @@ class TestMissingIndexText:
         monkeypatch.chdir(php_project)
         result = invoke_cli(cli_runner, ["missing-index"], cwd=php_project)
         assert result.exit_code == 0
-        assert "users" in result.output.lower(), (
-            f"Expected 'users' table name in text output:\n{result.output}"
-        )
+        assert "users" in result.output.lower(), f"Expected 'users' table name in text output:\n{result.output}"
 
     def test_confidence_filter_text_output(self, cli_runner, php_project, monkeypatch):
         """--confidence high produces valid VERDICT: output."""

@@ -27,7 +27,6 @@ from conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -113,11 +112,7 @@ def minimal_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "only.py").write_text(
-        "def sole_function():\n"
-        '    """The only function."""\n'
-        "    return 1\n"
-    )
+    (proj / "only.py").write_text('def sole_function():\n    """The only function."""\n    return 1\n')
 
     git_init(proj)
     index_in_process(proj)
@@ -148,17 +143,13 @@ class TestEntryPointsSmoke:
     def test_protocol_filter_accepted(self, cli_runner, entry_project, monkeypatch):
         """--protocol filter option is accepted."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points", "--protocol", "Export"], cwd=entry_project
-        )
+        result = invoke_cli(cli_runner, ["entry-points", "--protocol", "Export"], cwd=entry_project)
         assert result.exit_code == 0
 
     def test_limit_option_accepted(self, cli_runner, entry_project, monkeypatch):
         """--limit option is accepted."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points", "--limit", "5"], cwd=entry_project
-        )
+        result = invoke_cli(cli_runner, ["entry-points", "--limit", "5"], cwd=entry_project)
         assert result.exit_code == 0
 
 
@@ -170,17 +161,13 @@ class TestEntryPointsSmoke:
 class TestEntryPointsJSON:
     def test_json_envelope_contract(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         assert_json_envelope(data, "entry-points")
 
     def test_json_summary_has_verdict(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         summary = data.get("summary", {})
         assert "verdict" in summary, f"Missing 'verdict' in summary: {summary}"
@@ -189,9 +176,7 @@ class TestEntryPointsJSON:
 
     def test_json_summary_has_total(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         summary = data.get("summary", {})
         assert "total" in summary, f"Missing 'total' in summary: {summary}"
@@ -200,9 +185,7 @@ class TestEntryPointsJSON:
 
     def test_json_summary_has_by_protocol(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         summary = data.get("summary", {})
         assert "by_protocol" in summary, f"Missing 'by_protocol' in summary: {summary}"
@@ -210,9 +193,7 @@ class TestEntryPointsJSON:
 
     def test_json_has_entry_points_array(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         assert "entry_points" in data, f"Missing 'entry_points': {list(data.keys())}"
         assert isinstance(data["entry_points"], list)
@@ -221,9 +202,7 @@ class TestEntryPointsJSON:
     def test_json_entry_point_fields(self, cli_runner, entry_project, monkeypatch):
         """Each entry point should have name, kind, protocol, file, line, fan_out."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         for ep in data.get("entry_points", []):
             assert "name" in ep, f"Missing 'name' in entry point: {ep}"
@@ -235,9 +214,7 @@ class TestEntryPointsJSON:
     def test_json_coverage_field_present(self, cli_runner, entry_project, monkeypatch):
         """Each entry point should have a coverage_pct field."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         for ep in data.get("entry_points", []):
             assert "coverage_pct" in ep, f"Missing 'coverage_pct' in entry point: {ep}"
@@ -245,15 +222,11 @@ class TestEntryPointsJSON:
 
     def test_json_total_matches_array_length(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         total = data["summary"]["total"]
         actual = len(data["entry_points"])
-        assert actual == total, (
-            f"summary.total={total} != entry_points length={actual}"
-        )
+        assert actual == total, f"summary.total={total} != entry_points length={actual}"
 
 
 # ---------------------------------------------------------------------------
@@ -272,9 +245,7 @@ class TestEntryPointsText:
         result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project)
         lines = [ln for ln in result.output.splitlines() if ln.strip()]
         assert lines, "Output is empty"
-        assert lines[0].startswith("VERDICT:"), (
-            f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
-        )
+        assert lines[0].startswith("VERDICT:"), f"First non-empty line should start with VERDICT:, got: {lines[0]!r}"
 
     def test_shows_entry_points_header(self, cli_runner, entry_project, monkeypatch):
         monkeypatch.chdir(entry_project)
@@ -291,47 +262,33 @@ class TestEntryPointsDetection:
     def test_finds_main_entry_point(self, cli_runner, entry_project, monkeypatch):
         """main() should be detected as an entry point."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         names = [ep["name"] for ep in data.get("entry_points", [])]
-        assert any("main" in n for n in names), (
-            f"Expected 'main' among entry points, got: {names}"
-        )
+        assert any("main" in n for n in names), f"Expected 'main' among entry points, got: {names}"
 
     def test_main_has_main_protocol(self, cli_runner, entry_project, monkeypatch):
         """main() should be classified with 'Main' protocol."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         main_eps = [ep for ep in data.get("entry_points", []) if ep["name"] == "main"]
         if not main_eps:
             pytest.skip("main not found as entry point")
-        assert main_eps[0]["protocol"] == "Main", (
-            f"Expected Main protocol for main(), got: {main_eps[0]['protocol']}"
-        )
+        assert main_eps[0]["protocol"] == "Main", f"Expected Main protocol for main(), got: {main_eps[0]['protocol']}"
 
     def test_handle_request_detected(self, cli_runner, entry_project, monkeypatch):
         """handle_request should be detected as an entry point."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         names = [ep["name"] for ep in data.get("entry_points", [])]
-        assert any("handle_request" in n for n in names), (
-            f"Expected 'handle_request' among entry points, got: {names}"
-        )
+        assert any("handle_request" in n for n in names), f"Expected 'handle_request' among entry points, got: {names}"
 
     def test_internally_called_symbols_not_entry_points(self, cli_runner, entry_project, monkeypatch):
         """validate and transform should NOT be entry points (they have callers)."""
         monkeypatch.chdir(entry_project)
-        result = invoke_cli(
-            cli_runner, ["entry-points"], cwd=entry_project, json_mode=True
-        )
+        result = invoke_cli(cli_runner, ["entry-points"], cwd=entry_project, json_mode=True)
         data = parse_json_output(result, "entry-points")
         names = [ep["name"] for ep in data.get("entry_points", [])]
         # These have internal callers so should not appear
@@ -346,21 +303,23 @@ class TestEntryPointsDetection:
         """--protocol Main should only return Main-protocol entries."""
         monkeypatch.chdir(entry_project)
         result = invoke_cli(
-            cli_runner, ["entry-points", "--protocol", "Main"],
-            cwd=entry_project, json_mode=True,
+            cli_runner,
+            ["entry-points", "--protocol", "Main"],
+            cwd=entry_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "entry-points")
         for ep in data.get("entry_points", []):
-            assert ep["protocol"] == "Main", (
-                f"Expected Main protocol with filter, got: {ep['protocol']}"
-            )
+            assert ep["protocol"] == "Main", f"Expected Main protocol with filter, got: {ep['protocol']}"
 
     def test_limit_caps_results(self, cli_runner, entry_project, monkeypatch):
         """--limit 1 should return at most 1 entry point."""
         monkeypatch.chdir(entry_project)
         result = invoke_cli(
-            cli_runner, ["entry-points", "--limit", "1"],
-            cwd=entry_project, json_mode=True,
+            cli_runner,
+            ["entry-points", "--limit", "1"],
+            cwd=entry_project,
+            json_mode=True,
         )
         data = parse_json_output(result, "entry-points")
         assert len(data.get("entry_points", [])) <= 1

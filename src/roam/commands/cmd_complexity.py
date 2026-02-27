@@ -286,9 +286,7 @@ def _by_file_output(conn, rows, json_mode):
     if json_mode:
         _bf_max = file_summaries[0]["max_complexity"] if file_summaries else 0
         _bf_file = file_summaries[0]["file"].split("/")[-1] if file_summaries else "none"
-        _bf_verdict = (
-            f"{len(file_summaries)} files analyzed, worst file: {_bf_file} (max={_bf_max:.0f})"
-        )
+        _bf_verdict = f"{len(file_summaries)} files analyzed, worst file: {_bf_file} (max={_bf_max:.0f})"
         click.echo(
             to_json(
                 json_envelope(
@@ -353,9 +351,7 @@ def _bumpy_road(conn, json_mode, limit, threshold):
         return
 
     if json_mode:
-        _br_verdict = (
-            f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
-        )
+        _br_verdict = f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
         click.echo(
             to_json(
                 json_envelope(
@@ -383,9 +379,7 @@ def _bumpy_road(conn, json_mode, limit, threshold):
         )
         return
 
-    _br_verdict_txt = (
-        f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
-    )
+    _br_verdict_txt = f"{len(rows)} bumpy-road files found (3+ functions with complexity >= {min_score})"
     click.echo(f"VERDICT: {_br_verdict_txt}")
     click.echo()
     click.echo(f"Bumpy-road files (3+ functions with complexity >= {min_score}):\n")

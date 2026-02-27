@@ -2175,10 +2175,7 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     runtime_db_operation = str(runtime_db_operation).upper()
     precision = (finding.get("precision") or "medium").lower()
     evidence = finding.get("evidence", {}) if isinstance(finding.get("evidence"), dict) else {}
-    ambiguous_io_only = bool(
-        finding.get("task_id") == "io-in-loop"
-        and evidence.get("ambiguous_io_only")
-    )
+    ambiguous_io_only = bool(finding.get("task_id") == "io-in-loop" and evidence.get("ambiguous_io_only"))
     caller_threshold = 5
     if precision == "medium":
         caller_threshold = 8
@@ -2200,9 +2197,7 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     if runtime_hot:
         finding["confidence"] = _boost_confidence(finding["confidence"])
         runtime_very_hot = (
-            runtime_calls >= 5000
-            or (runtime_p99 is not None and runtime_p99 >= 800)
-            or runtime_error >= 0.05
+            runtime_calls >= 5000 or (runtime_p99 is not None and runtime_p99 >= 800) or runtime_error >= 0.05
         )
         if runtime_very_hot:
             finding["confidence"] = _boost_confidence(finding["confidence"])

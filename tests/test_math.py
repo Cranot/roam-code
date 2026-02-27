@@ -399,9 +399,7 @@ class TestAlgoCLI:
         proj = project_factory(
             {
                 "algo.py": (
-                    "import requests\n"
-                    + "\n".join(io_funcs)
-                    + "\n"
+                    "import requests\n" + "\n".join(io_funcs) + "\n"
                     "def bubble_sort(arr):\n"
                     "    for i in range(len(arr)):\n"
                     "        for j in range(len(arr) - 1):\n"

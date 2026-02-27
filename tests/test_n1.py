@@ -12,7 +12,6 @@ from tests.conftest import (
     parse_json_output,
 )
 
-
 # ---------------------------------------------------------------------------
 # Fixtures
 # ---------------------------------------------------------------------------
@@ -103,17 +102,8 @@ def python_only_project(tmp_path):
     proj.mkdir()
     (proj / ".gitignore").write_text(".roam/\n")
 
-    (proj / "app.py").write_text(
-        "def compute(x):\n"
-        "    return x * 2\n"
-        "\n"
-        "def main():\n"
-        "    return compute(21)\n"
-    )
-    (proj / "utils.py").write_text(
-        "def format_value(v):\n"
-        "    return str(v)\n"
-    )
+    (proj / "app.py").write_text("def compute(x):\n    return x * 2\n\ndef main():\n    return compute(21)\n")
+    (proj / "utils.py").write_text("def format_value(v):\n    return str(v)\n")
 
     git_init(proj)
     index_in_process(proj)

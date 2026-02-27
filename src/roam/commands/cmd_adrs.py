@@ -32,11 +32,11 @@ _ADR_DIRS = [
 
 # Filename patterns that indicate an ADR (case-insensitive matching)
 _ADR_FILE_PATTERNS = [
-    re.compile(r"^\d{4}-.*\.md$", re.IGNORECASE),       # 0001-use-react.md
-    re.compile(r"^adr-\d+.*\.md$", re.IGNORECASE),      # adr-001-use-react.md
-    re.compile(r"^ADR-\d+.*\.md$"),                       # ADR-001-use-react.md
-    re.compile(r"^\d{4}_.*\.md$", re.IGNORECASE),        # 0001_use_react.md
-    re.compile(r"^\d+-.*\.md$", re.IGNORECASE),          # 1-use-react.md (short number)
+    re.compile(r"^\d{4}-.*\.md$", re.IGNORECASE),  # 0001-use-react.md
+    re.compile(r"^adr-\d+.*\.md$", re.IGNORECASE),  # adr-001-use-react.md
+    re.compile(r"^ADR-\d+.*\.md$"),  # ADR-001-use-react.md
+    re.compile(r"^\d{4}_.*\.md$", re.IGNORECASE),  # 0001_use_react.md
+    re.compile(r"^\d+-.*\.md$", re.IGNORECASE),  # 1-use-react.md (short number)
 ]
 
 # Statuses recognized in ADR documents
@@ -59,7 +59,8 @@ def _git_ls_files(project_root: Path) -> list[str] | None:
             cwd=str(project_root),
             capture_output=True,
             text=True,
-            encoding="utf-8", errors="replace",
+            encoding="utf-8",
+            errors="replace",
             timeout=30,
         )
         if result.returncode != 0:
@@ -123,12 +124,8 @@ _YAML_KV_RE = re.compile(r"^(\w[\w-]*)\s*:\s*(.+)$", re.MULTILINE)
 _TITLE_RE = re.compile(r"^#\s+(.+)", re.MULTILINE)
 
 # Status patterns in body text (e.g., "Status: Accepted" or "## Status\nAccepted")
-_STATUS_HEADING_RE = re.compile(
-    r"^#+\s*status\s*\n+\s*(\w+)", re.IGNORECASE | re.MULTILINE
-)
-_STATUS_INLINE_RE = re.compile(
-    r"(?:^|\n)\s*\*?\*?status\*?\*?\s*:\s*(\w+)", re.IGNORECASE
-)
+_STATUS_HEADING_RE = re.compile(r"^#+\s*status\s*\n+\s*(\w+)", re.IGNORECASE | re.MULTILINE)
+_STATUS_INLINE_RE = re.compile(r"(?:^|\n)\s*\*?\*?status\*?\*?\s*:\s*(\w+)", re.IGNORECASE)
 
 # Date patterns
 _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
@@ -136,12 +133,13 @@ _DATE_RE = re.compile(r"\b(\d{4}-\d{2}-\d{2})\b")
 # Module/file references: paths ending in common source extensions, or
 # dotted module names that look like qualified Python/Java names
 _FILE_REF_RE = re.compile(
-    r"(?:`([^`]+\.\w{1,5})`"               # backtick-quoted file paths
+    r"(?:`([^`]+\.\w{1,5})`"  # backtick-quoted file paths
     r"|(?:^|\s)([\w/\\.-]+\.(?:py|js|ts|go|java|rs|rb|cpp|c|cs|php|kt|swift|scala)))"
-    r"", re.MULTILINE
+    r"",
+    re.MULTILINE,
 )
 _MODULE_REF_RE = re.compile(
-    r"(?:`([\w.]+)`)"                        # backtick-quoted dotted names
+    r"(?:`([\w.]+)`)"  # backtick-quoted dotted names
 )
 
 
@@ -259,7 +257,7 @@ def _parse_adr(project_root: Path, rel_path: str) -> dict | None:
     fm_match = _FRONTMATTER_RE.match(content)
     if fm_match:
         frontmatter = _parse_simple_yaml(fm_match.group(1))
-        body = content[fm_match.end():]
+        body = content[fm_match.end() :]
 
     filename = os.path.basename(rel_path)
 

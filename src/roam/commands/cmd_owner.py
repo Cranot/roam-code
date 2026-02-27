@@ -193,7 +193,9 @@ def _show_file_owner(conn, project_root, file_row):
             break
 
     top_pct = round(info["authors"][0][1] * 100 / info["total"]) if info["authors"] else 0
-    file_verdict = f"top owner: {info['main_dev']} ({top_pct}%), bus factor {bus_factor}, {len(info['authors'])} contributors"
+    file_verdict = (
+        f"top owner: {info['main_dev']} ({top_pct}%), bus factor {bus_factor}, {len(info['authors'])} contributors"
+    )
     click.echo(f"VERDICT: {file_verdict}\n")
     click.echo(f"{file_path}")
     click.echo()
@@ -267,7 +269,9 @@ def _show_dir_owner(conn, project_root, path, dir_files):
         if cumulative >= total_churn * 0.8:
             break
 
-    dir_verdict = f"top owner: {main_dev}, bus factor {bus_factor}, {len(rows)} contributor{'s' if len(rows) != 1 else ''}"
+    dir_verdict = (
+        f"top owner: {main_dev}, bus factor {bus_factor}, {len(rows)} contributor{'s' if len(rows) != 1 else ''}"
+    )
     click.echo(f"VERDICT: {dir_verdict}\n")
     click.echo(f"{path}/ ({len(dir_files)} files)")
     click.echo()

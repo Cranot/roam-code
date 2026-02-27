@@ -42,10 +42,7 @@ def cut(ctx, between, leak_edges, top_n):
 
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
         if sym_count > _MAX_GRAPH_SYMBOLS and not between:
-            msg = (
-                f"Graph too large ({sym_count} symbols) for cut analysis. "
-                "Index a subdirectory to reduce graph size."
-            )
+            msg = f"Graph too large ({sym_count} symbols) for cut analysis. Index a subdirectory to reduce graph size."
             if json_mode:
                 click.echo(
                     to_json(

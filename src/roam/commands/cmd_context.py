@@ -12,16 +12,16 @@ from roam.commands.context_helpers import (
     batch_context,
     gather_annotations,
     gather_symbol_context,
-    get_coupling,
-    get_symbol_metrics,
-    get_graph_metrics,
-    get_file_churn,
     get_affected_tests_bfs,
     get_blast_radius,
     get_cluster_info,
-    get_similar_symbols,
+    get_coupling,
     get_entry_points_reaching,
+    get_file_churn,
     get_file_context,
+    get_graph_metrics,
+    get_similar_symbols,
+    get_symbol_metrics,
 )
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, file_not_found_hint, find_symbol, symbol_not_found
@@ -745,8 +745,7 @@ def _render_single_json(data, budget=0):
 def _render_file_text(data):
     fname = os.path.basename(data["file_path"])
     verdict = (
-        f"{fname}: {data['symbol_count']} symbols, "
-        f"{len(data['callers'])} caller files, {len(data['tests'])} test files"
+        f"{fname}: {data['symbol_count']} symbols, {len(data['callers'])} caller files, {len(data['tests'])} test files"
     )
     click.echo(f"VERDICT: {verdict}")
     click.echo()
@@ -815,8 +814,7 @@ def _render_file_text(data):
 def _render_file_json(data, budget=0):
     fname = os.path.basename(data["file_path"])
     verdict = (
-        f"{fname}: {data['symbol_count']} symbols, "
-        f"{len(data['callers'])} caller files, {len(data['tests'])} test files"
+        f"{fname}: {data['symbol_count']} symbols, {len(data['callers'])} caller files, {len(data['tests'])} test files"
     )
     summary = {
         "verdict": verdict,
@@ -877,27 +875,19 @@ def _render_batch_text(data):
             f"{loc(s['file_path'], c['line_start'])}"
         )
         click.echo(
-            f"  Callers: {len(c['non_test_callers'])}  "
-            f"Callees: {len(c['callees'])}  "
-            f"Tests: {len(c['test_callers'])}"
+            f"  Callers: {len(c['non_test_callers'])}  Callees: {len(c['callees'])}  Tests: {len(c['test_callers'])}"
         )
         click.echo()
 
     if shared_callers:
         click.echo(f"Shared callers ({len(shared_callers)}):")
-        rows = [
-            [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
-            for c in shared_callers[:15]
-        ]
+        rows = [[abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])] for c in shared_callers[:15]]
         click.echo(format_table(["kind", "name", "location"], rows))
         click.echo()
 
     if shared_callees:
         click.echo(f"Shared callees ({len(shared_callees)}):")
-        rows = [
-            [abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])]
-            for c in shared_callees[:15]
-        ]
+        rows = [[abbrev_kind(c["kind"]), c["name"], loc(c["file_path"], c["line_start"])] for c in shared_callees[:15]]
         click.echo(format_table(["kind", "name", "location"], rows))
         click.echo()
 

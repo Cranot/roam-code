@@ -158,11 +158,11 @@ class TestQueryEngine:
 
     def test_kotlin_simple_extraction(self, kotlin_engine: QueryEngine):
         """Test simple Kotlin extraction."""
-        source = '''
+        source = """
 class User(val name: String) {
     fun greet(): String = "Hello"
 }
-'''
+"""
         result = kotlin_engine.extract(source, "test.kt")
 
         assert len(result.errors) == 0, f"Extraction errors: {result.errors}"
@@ -181,10 +181,10 @@ class User(val name: String) {
 
     def test_kotlin_inheritance_extraction(self, kotlin_engine: QueryEngine):
         """Test Kotlin inheritance extraction."""
-        source = '''
+        source = """
 open class Animal(val name: String)
 class Dog(name: String) : Animal(name)
-'''
+"""
         result = kotlin_engine.extract(source, "test.kt")
 
         assert len(result.errors) == 0, f"Extraction errors: {result.errors}"
