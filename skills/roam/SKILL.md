@@ -137,10 +137,10 @@ roam preflight src/auth/login.py
 ```
 
 ### `roam health`
-Composite score (0-100). Use `--gate score>=70` for CI.
+Composite score (0-100). Use `--gate` for CI (reads `.roam-gates.yml`).
 ```bash
 roam health
-roam health --gate score>=70    # exit 1 on failure
+roam health --gate               # exit 5 on failure
 ```
 
 ### `roam diff`

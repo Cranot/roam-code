@@ -3,8 +3,16 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>roam -- Code Intelligence Landscape</title>
+  <title>roam &mdash; Code Intelligence Landscape</title>
   <meta name="description" content="Architecture-level analysis of code intelligence tools. What each tool can and can't build, and why.">
+  <link rel="canonical" href="redactedlandscape.html">
+  <meta property="og:title" content="roam - Code Intelligence Landscape">
+  <meta property="og:description" content="Architecture-level analysis of code intelligence tools. What each tool can and can't build, and why.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="redactedlandscape.html">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="roam - Code Intelligence Landscape">
+  <meta name="twitter:description" content="Architecture-level analysis of code intelligence tools. What each tool can and can't build, and why.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500&family=Space+Grotesk:wght@400;500;700&display=swap" rel="stylesheet">
@@ -13,15 +21,17 @@
 <body>
 
   <!-- Sticky nav matching the landing page -->
-  <nav class="site-nav">
-    <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
-    <div class="nav-right">
-      <a href="./index.html" class="nav-back">Product Page</a>
-      <a href="./getting-started.html" class="nav-link">Getting Started</a>
-      <a href="./integration-tutorials.html" class="nav-link">Integrations</a>
-      <a href="./command-reference.html" class="nav-link">Command Reference</a>
-      <a href="./architecture.html" class="nav-link">Architecture</a>
-      <a href="https://github.com/Cranot/roam-code" class="nav-link">GitHub</a>
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <div class="nav-links">
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="./command-reference.html">Command Reference</a>
+        <a href="./architecture.html">Architecture</a>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="./landscape.html" class="active">Research</a>
+      </div>
     </div>
   </nav>
 
@@ -38,23 +48,23 @@
     <h1>Code Intelligence Landscape</h1>
     <p class="lede">
       What each code intelligence tool can and can't build, based on architecture.
-      18 tools scored across 45 criteria. Interactive map, weight sliders, and honest competitor analysis.
+      18 tools scored across 45 criteria. Interactive map, weight sliders, and evidence-based competitor analysis.
     </p>
     <div class="hero-stats">
       <article>
-        <h2 id="competitor-count">18</h2>
+        <p class="stat-number" id="competitor-count">18</p>
         <p>Tools analyzed</p>
       </article>
       <article>
-        <h2 id="roam-mcp-count">101</h2>
+        <p class="stat-number" id="roam-mcp-count">101</p>
         <p>roam MCP tools (23 core)</p>
       </article>
       <article>
-        <h2 id="roam-cli-count">139</h2>
+        <p class="stat-number" id="roam-cli-count">139</p>
         <p>roam CLI commands</p>
       </article>
       <article>
-        <h2 id="last-updated">2026-02-27</h2>
+        <p class="stat-number" id="last-updated">2026-02-27</p>
         <p>Last matrix refresh</p>
       </article>
     </div>
@@ -674,7 +684,14 @@
   </main>
 
   <footer class="footer section">
-    <p>roam code intelligence landscape &middot; evidence-based &middot; <a href="./index.html">Product page</a></p>
+    <p>roam code intelligence landscape &middot; evidence-based</p>
+    <div class="footer-links" style="margin-top:0.5rem;justify-content:center;">
+      <a href="./index.html">Home</a>
+      <a href="./getting-started.html">Getting Started</a>
+      <a href="./command-reference.html">Command Reference</a>
+      <a href="https://github.com/Cranot/roam-code">GitHub</a>
+      <a href="https://pypi.org/project/roam-code/">PyPI</a>
+    </div>
   </footer>
 
   <script src="./app.js"></script>

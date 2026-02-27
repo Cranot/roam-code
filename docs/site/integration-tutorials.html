@@ -3,15 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>roam-code Integration Tutorials</title>
+  <title>roam &mdash; Integration Tutorials</title>
   <meta name="description" content="End-to-end MCP integration tutorials for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph).">
+  <link rel="canonical" href="redactedintegration-tutorials.html">
+  <meta property="og:title" content="roam - Integration Tutorials">
+  <meta property="og:description" content="End-to-end MCP integration tutorials for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph).">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="redactedintegration-tutorials.html">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="roam - Integration Tutorials">
+  <meta name="twitter:description" content="End-to-end MCP integration tutorials for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph).">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./docs.css">
 </head>
 <body>
-  <nav class="site-nav">
+  <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
       <div class="nav-links">
@@ -19,6 +27,7 @@
         <a href="./integration-tutorials.html" class="active">Integrations</a>
         <a href="./command-reference.html">Command Reference</a>
         <a href="./architecture.html">Architecture</a>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
         <a href="./landscape.html">Research</a>
       </div>
     </div>
@@ -62,7 +71,7 @@
 claude mcp add roam-code -- roam mcp</code></pre>
       <h3>2. Verify tool visibility</h3>
       <pre><code>roam mcp --list-tools
-roam mcp --preset core</code></pre>
+ROAM_MCP_PRESET=core roam mcp</code></pre>
       <h3>3. First end-to-end workflow</h3>
       <pre><code>roam init
 roam context PaymentService
@@ -80,7 +89,7 @@ roam preflight PaymentService</code></pre>
       <pre><code>roam init
 roam understand
 roam check-rules --severity error
-roam health --gate "score&gt;=70,tangle_ratio&lt;=0.10"</code></pre>
+roam health --gate</code></pre>
     </section>
 
     <section class="section">
@@ -93,7 +102,7 @@ roam health --gate "score&gt;=70,tangle_ratio&lt;=0.10"</code></pre>
       <pre><code>roam init
 roam search-semantic "authentication flow"
 roam trace AuthController AuthRepository
-roam test-gaps --staged</code></pre>
+roam test-gaps --changed</code></pre>
     </section>
 
     <section class="section">
@@ -105,7 +114,7 @@ codex --mcp roam-code="roam mcp"</code></pre>
       <p>Add emitted JSON to <code>~/.codex/config.json</code> for repeat sessions.</p>
       <h3>3. Refactor-safe loop</h3>
       <pre><code>roam init
-roam suggest-refactoring --top 10
+roam suggest-refactoring --limit 10
 roam plan-refactor PaymentService
 roam debt --roi</code></pre>
     </section>
@@ -128,7 +137,7 @@ roam debt --roi</code></pre>
       <h3>2. Validate and run a first path</h3>
       <pre><code>roam init
 roam mcp --list-tools
-roam deps --top 20
+roam deps src/
 roam layers</code></pre>
     </section>
 
@@ -138,16 +147,18 @@ roam layers</code></pre>
         <li><code>roam mcp --list-tools</code> shows non-empty tool output.</li>
         <li><code>roam context &lt;symbol&gt;</code> returns ranked files/lines.</li>
         <li><code>roam check-rules</code> runs without configuration errors.</li>
-        <li><code>roam health --gate "score&gt;=70"</code> returns deterministic gate output.</li>
+        <li><code>roam health --gate</code> returns deterministic gate output.</li>
       </ul>
     </section>
 
     <footer>
       <p>Next: pair with the <a href="./command-reference.html">command reference</a> and <a href="./architecture.html">architecture guide</a> for deeper operational context.</p>
       <div class="footer-links">
-        <a href="./getting-started.html">Getting Started</a>
         <a href="./index.html">Home</a>
-        <a href="https://github.com/Cranot/roam-code#integration-with-ai-coding-tools">README Integration Section</a>
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./command-reference.html">Command Reference</a>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
       </div>
     </footer>
   </main>

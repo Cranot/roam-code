@@ -3,15 +3,23 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>roam-code Command Reference</title>
+  <title>roam &mdash; Command Reference</title>
   <meta name="description" content="Command reference with examples for exploration, impact analysis, governance, CI, and MCP workflows.">
+  <link rel="canonical" href="redactedcommand-reference.html">
+  <meta property="og:title" content="roam - Command Reference">
+  <meta property="og:description" content="Command reference with examples for exploration, impact analysis, governance, CI, and MCP workflows.">
+  <meta property="og:type" content="article">
+  <meta property="og:url" content="redactedcommand-reference.html">
+  <meta name="twitter:card" content="summary">
+  <meta name="twitter:title" content="roam - Command Reference">
+  <meta name="twitter:description" content="Command reference with examples for exploration, impact analysis, governance, CI, and MCP workflows.">
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./docs.css">
 </head>
 <body>
-  <nav class="site-nav">
+  <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="./index.html" class="site-logo">roam<span class="logo-dot">.</span></a>
       <div class="nav-links">
@@ -19,6 +27,7 @@
         <a href="./integration-tutorials.html">Integrations</a>
         <a href="./command-reference.html" class="active">Command Reference</a>
         <a href="./architecture.html">Architecture</a>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
         <a href="./landscape.html">Research</a>
       </div>
     </div>
@@ -50,7 +59,7 @@
             <tr><td><code>roam impact</code></td><td><code>roam impact PaymentService</code></td><td>Blast radius and likely affected areas.</td></tr>
             <tr><td><code>roam preflight</code></td><td><code>roam preflight PaymentService</code></td><td>Safety check before edits.</td></tr>
             <tr><td><code>roam diff</code></td><td><code>roam diff --staged</code></td><td>Understand current change set risk.</td></tr>
-            <tr><td><code>roam health</code></td><td><code>roam health --gate "score&gt;=70"</code></td><td>Track and enforce architecture health.</td></tr>
+            <tr><td><code>roam health</code></td><td><code>roam health --gate</code></td><td>Track and enforce architecture health (gate thresholds via <code>.roam-gates.yml</code>).</td></tr>
           </tbody>
         </table>
       </div>
@@ -66,14 +75,15 @@
           <tbody>
             <tr><td><code>roam search</code></td><td><code>roam search auth</code></td><td>Name matches over indexed symbols.</td></tr>
             <tr><td><code>roam search-semantic</code></td><td><code>roam search-semantic "database connection pool" --backend auto</code></td><td>Hybrid BM25 + TF-IDF + optional local ONNX semantic retrieval with pre-indexed framework packs for cold-start queries.</td></tr>
-            <tr><td><code>roam symbols</code></td><td><code>roam symbols src/auth/service.py</code></td><td>Symbol list in one file.</td></tr>
-            <tr><td><code>roam callers</code></td><td><code>roam callers login</code></td><td>Who calls a symbol.</td></tr>
-            <tr><td><code>roam callees</code></td><td><code>roam callees login</code></td><td>What a symbol calls.</td></tr>
+            <tr><td><code>roam symbol</code></td><td><code>roam symbol src/auth/service.py</code></td><td>Symbol list in one file.</td></tr>
+            <tr><td><code>roam uses</code></td><td><code>roam uses login</code></td><td>Who calls a symbol (callers and consumers).</td></tr>
+            <tr><td><code>roam fan</code></td><td><code>roam fan login</code></td><td>Fan-in/fan-out for a symbol.</td></tr>
             <tr><td><code>roam trace</code></td><td><code>roam trace LoginController UserRepo</code></td><td>Path through the call graph.</td></tr>
-            <tr><td><code>roam deps</code></td><td><code>roam deps --top 20</code></td><td>Module dependency graph summary.</td></tr>
+            <tr><td><code>roam deps</code></td><td><code>roam deps src/</code></td><td>Module dependency graph summary.</td></tr>
             <tr><td><code>roam layers</code></td><td><code>roam layers</code></td><td>Detected architecture layering.</td></tr>
-            <tr><td><code>roam clusters</code></td><td><code>roam clusters --top 10</code></td><td>Louvain module communities.</td></tr>
-            <tr><td><code>roam hotspots</code></td><td><code>roam hotspots --limit 20</code></td><td>Complexity/churn hotspots.</td></tr>
+            <tr><td><code>roam clusters</code></td><td><code>roam clusters --min-size 3</code></td><td>Louvain module communities.</td></tr>
+            <tr><td><code>roam hotspots</code></td><td><code>roam hotspots</code></td><td>Complexity/churn hotspots.</td></tr>
+            <tr><td><code>roam algo</code></td><td><code>roam algo</code></td><td>Detect 23 algorithm anti-patterns with Big-O improvements and fix suggestions.</td></tr>
             <tr><td><code>roam visualize</code></td><td><code>roam visualize --format mermaid</code></td><td>Diagram output for architecture views.</td></tr>
           </tbody>
         </table>
@@ -91,11 +101,11 @@
             <tr><td><code>roam check-rules</code></td><td><code>roam check-rules --severity error</code></td><td>Run built-in and custom governance rules.</td></tr>
             <tr><td><code>roam rules</code></td><td><code>roam rules --rules-dir rules/community</code></td><td>Evaluate YAML rule packs (path/symbol/AST).</td></tr>
             <tr><td><code>roam rules --init</code></td><td><code>roam rules --init</code></td><td>Generate starter custom rules.</td></tr>
-            <tr><td><code>roam smells</code></td><td><code>roam smells --top 30</code></td><td>Code smell detector catalog.</td></tr>
-            <tr><td><code>roam secrets</code></td><td><code>roam secrets --sarif</code></td><td>Secret leakage detection with remediation hints.</td></tr>
-            <tr><td><code>roam vulns</code></td><td><code>roam vulns --json</code></td><td>Dependency vulnerability scan and reachability.</td></tr>
-            <tr><td><code>roam test-gaps</code></td><td><code>roam test-gaps --staged</code></td><td>Changed code lacking nearby tests.</td></tr>
-            <tr><td><code>roam verify-imports</code></td><td><code>roam verify-imports --staged</code></td><td>Import hallucination and unresolved reference checks.</td></tr>
+            <tr><td><code>roam smells</code></td><td><code>roam smells --min-severity warning</code></td><td>Code smell detector catalog.</td></tr>
+            <tr><td><code>roam secrets</code></td><td><code>roam --sarif secrets</code></td><td>Secret leakage detection with remediation hints.</td></tr>
+            <tr><td><code>roam vulns</code></td><td><code>roam --json vulns</code></td><td>Dependency vulnerability scan and reachability.</td></tr>
+            <tr><td><code>roam test-gaps</code></td><td><code>roam test-gaps --changed</code></td><td>Changed code lacking nearby tests.</td></tr>
+            <tr><td><code>roam verify-imports</code></td><td><code>roam verify-imports --file src/auth/service.py</code></td><td>Import hallucination and unresolved reference checks.</td></tr>
           </tbody>
         </table>
       </div>
@@ -109,14 +119,14 @@
             <tr><th>Command</th><th>Example</th><th>Purpose</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>roam semantic-diff</code></td><td><code>roam semantic-diff --range HEAD~1..HEAD</code></td><td>Structural deltas: symbols, signatures, imports.</td></tr>
-            <tr><td><code>roam api-changes</code></td><td><code>roam api-changes --range HEAD~1..HEAD</code></td><td>Breaking API risk detection.</td></tr>
-            <tr><td><code>roam affected</code></td><td><code>roam affected --staged</code></td><td>Files/tests likely impacted by current edits.</td></tr>
+            <tr><td><code>roam semantic-diff</code></td><td><code>roam semantic-diff --base HEAD~1</code></td><td>Structural deltas: symbols, signatures, imports.</td></tr>
+            <tr><td><code>roam api-changes</code></td><td><code>roam api-changes --base HEAD~1</code></td><td>Breaking API risk detection.</td></tr>
+            <tr><td><code>roam affected</code></td><td><code>roam affected --changed</code></td><td>Files/tests likely impacted by current edits.</td></tr>
             <tr><td><code>roam safe-delete</code></td><td><code>roam safe-delete old_helper</code></td><td>Evidence-based dead code removal check.</td></tr>
             <tr><td><code>roam docs-coverage</code></td><td><code>roam docs-coverage --threshold 70</code></td><td>Doc coverage + stale-doc drift + PageRank-ranked missing docs.</td></tr>
             <tr><td><code>roam simulate</code></td><td><code>roam simulate move AuthService src/core/</code></td><td>Counterfactual architecture changes without editing files.</td></tr>
             <tr><td><code>roam partition</code></td><td><code>roam partition --agents 3</code></td><td>Split work for multi-agent execution.</td></tr>
-            <tr><td><code>roam orchestrate</code></td><td><code>roam orchestrate --goal "refactor auth"</code></td><td>Generate an agent task graph and dependencies.</td></tr>
+            <tr><td><code>roam orchestrate</code></td><td><code>roam orchestrate --agents 3</code></td><td>Generate an agent task graph and dependencies.</td></tr>
           </tbody>
         </table>
       </div>
@@ -130,12 +140,12 @@
             <tr><th>Command</th><th>Example</th><th>Purpose</th></tr>
           </thead>
           <tbody>
-            <tr><td><code>roam mcp</code></td><td><code>roam mcp --preset core</code></td><td>Run MCP server with constrained/default tool set.</td></tr>
+            <tr><td><code>roam mcp</code></td><td><code>ROAM_MCP_PRESET=core roam mcp</code></td><td>Run MCP server with constrained tool set (presets: core, review, refactor, debug, architecture, full).</td></tr>
             <tr><td><code>roam mcp --list-tools</code></td><td><code>roam mcp --list-tools</code></td><td>Inspect tool catalog and metadata.</td></tr>
             <tr><td><code>roam mcp-setup</code></td><td><code>roam mcp-setup cursor</code></td><td>Generate client configuration.</td></tr>
             <tr><td><code>roam hooks</code></td><td><code>roam hooks install</code></td><td>Auto-index on post-merge/post-checkout flows.</td></tr>
             <tr><td><code>roam watch</code></td><td><code>roam watch --webhook-port 8787 --guardian --guardian-report .roam/guardian.jsonl</code></td><td>Daemon mode with polling/webhook refresh plus optional continuous architecture-guardian snapshots.</td></tr>
-            <tr><td><code>roam dashboard</code></td><td><code>roam dashboard --json</code></td><td>Single endpoint for key quality/project metrics.</td></tr>
+            <tr><td><code>roam dashboard</code></td><td><code>roam --json dashboard</code></td><td>Single endpoint for key quality/project metrics.</td></tr>
           </tbody>
         </table>
       </div>
@@ -150,17 +160,18 @@
         <li>Use <code>--detail</code> only when you need full context dumps.</li>
       </ul>
       <pre><code>roam --json context PaymentService
-roam --sarif health --gate "score&gt;=75"
+roam --sarif health --gate
 roam --budget 600 impact PaymentService</code></pre>
     </section>
 
     <footer>
       <p>Need architecture internals? Continue to the <a href="./architecture.html">architecture guide with diagram</a>. For client setup workflows, use <a href="./integration-tutorials.html">integration tutorials</a>.</p>
       <div class="footer-links">
-        <a href="./integration-tutorials.html">Integrations</a>
-        <a href="./getting-started.html">Getting Started</a>
         <a href="./index.html">Home</a>
-        <a href="https://github.com/Cranot/roam-code#readme">Full README</a>
+        <a href="./getting-started.html">Getting Started</a>
+        <a href="./integration-tutorials.html">Integrations</a>
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
       </div>
     </footer>
   </main>
