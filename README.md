@@ -1,3 +1,5 @@
+[![MseeP.ai Security Assessment Badge](https://mseep.net/pr/cranot-roam-code-badge.png)](https://mseep.ai/app/cranot-roam-code)
+
 <div align="center">
 
 # roam-code
