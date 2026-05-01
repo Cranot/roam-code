@@ -95,6 +95,14 @@ _CORE_TOOLS = {
     "roam_retrieve",
     "roam_critique",
     "roam_fleet_plan",
+    # v12.1 — boolean oracles (5) — 1-token answers for agent prompts
+    "roam_oracle_symbol_exists",
+    "roam_oracle_route_exists",
+    "roam_oracle_is_test_only",
+    "roam_oracle_is_reachable_from_entry",
+    "roam_oracle_is_clone_of",
+    # v12.1 — LLM-augmented taint classification (1)
+    "roam_taint_classify",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -2255,6 +2263,194 @@ def critique_patch(
                 "command": "roam_critique",
             }
         )
+
+
+# ---------------------------------------------------------------------------
+# v12.1 — Boolean oracles (5)
+# ---------------------------------------------------------------------------
+# Each oracle returns a single yes/no fact about the indexed graph. Direct
+# response to CKB v9.2's `symbolExists` / `analyzeOutgoingImpact` pattern —
+# 1-token answers keep agent prompts tight. All five wrap pure-function
+# implementations in `commands.cmd_oracle` so the same logic runs from CLI
+# and from MCP.
+
+
+@_tool(
+    name="roam_oracle_symbol_exists",
+    description="Boolean oracle: does any symbol with this name (or qualified name) exist in the indexed graph?",
+)
+def oracle_symbol_exists(name: str, root: str = ".") -> dict:
+    """Yes/no: is there an indexed symbol matching this name?
+
+    WHEN TO USE: cheapest possible existence check before generating
+    references to a symbol that might have been renamed/removed. Returns
+    ``{"value": bool, "reason": str}`` plus the standard envelope.
+
+    Differs from ``roam_search_symbol`` (which lists matches with metadata)
+    — this returns just a boolean for tight agent prompts. Matches name OR
+    qualified_name OR ``%.<name>`` suffix on qualified_name.
+    """
+    return _run_roam(["oracle", "symbol-exists", name], root)
+
+
+@_tool(
+    name="roam_oracle_route_exists",
+    description="Boolean oracle: does any HTTP route handler match this URL path?",
+)
+def oracle_route_exists(path: str, root: str = ".") -> dict:
+    """Yes/no: is there a route handler for this URL path?
+
+    WHEN TO USE: before generating a fetch/request to a backend endpoint
+    — confirm the route actually exists. Reads ``cross_repo_edges``
+    (populated by ``roam ws resolve``) when available; falls back to
+    scanning route-handler-shaped symbols (``app.get/post/...``,
+    ``Route::get/...``, ``@app.get(...)``).
+    """
+    return _run_roam(["oracle", "route-exists", path], root)
+
+
+@_tool(
+    name="roam_oracle_is_test_only",
+    description="Boolean oracle: are ALL callers of this symbol in test files?",
+)
+def oracle_is_test_only(name: str, root: str = ".") -> dict:
+    """Yes/no: do all callers of this symbol live in test files?
+
+    WHEN TO USE: before deleting a symbol or marking it as dead. A ``True``
+    answer means the symbol exists only to support tests and likely
+    targets *production* code that's been gone for a while; combine with
+    ``roam_safe_delete`` for full evidence.
+
+    Returns ``False`` for orphan symbols (no callers at all) — orphans get
+    a separate signal via ``roam_dead_code`` aging. ``True`` requires
+    every caller's enclosing file to have ``file_role = 'test'``.
+    """
+    return _run_roam(["oracle", "is-test-only", name], root)
+
+
+@_tool(
+    name="roam_oracle_is_reachable_from_entry",
+    description="Boolean oracle: can BFS reach this symbol from any entry point in the call graph?",
+)
+def oracle_is_reachable_from_entry(name: str, max_hops: int = 10, root: str = ".") -> dict:
+    """Yes/no: is this symbol reachable from any entry-point symbol?
+
+    WHEN TO USE: before treating a symbol as "live code" — confirm the
+    static call graph actually has a path from an entry point (``main``,
+    a Click command, an HTTP route, an event handler, anything tagged
+    ``is_entry = 1`` or living in a file with ``file_role = 'entry'``).
+
+    BFS over ``edges.kind IN ('calls', 'references')`` up to ``max_hops``
+    deep. ``False`` from this oracle is the strongest signal a symbol is
+    truly unreachable — combine with ``roam_safe_delete`` for the full
+    evidence bundle.
+
+    Parameters
+    ----------
+    max_hops: BFS depth cap (default 10). Increase for very deep graphs;
+        decrease for quick sanity checks.
+    """
+    args = ["oracle", "is-reachable-from-entry", name]
+    if max_hops != 10:
+        args.extend(["--max-hops", str(max_hops)])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_oracle_is_clone_of",
+    description="Boolean oracle: does this symbol participate in a persisted clone cluster?",
+)
+def oracle_is_clone_of(name: str, root: str = ".") -> dict:
+    """Yes/no: does this symbol have persisted clone siblings?
+
+    WHEN TO USE: before editing a symbol — if it's a clone, the same fix
+    likely needs to land on its siblings. Reads ``clone_pairs`` (populated
+    by ``roam clones --persist``); returns ``False`` with a hint when the
+    table is empty.
+    """
+    return _run_roam(["oracle", "is-clone-of", name], root)
+
+
+# ---------------------------------------------------------------------------
+# v12.1 — LLM-augmented taint classification (1)
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_taint_classify",
+    description=(
+        "Run `roam taint` then ask the agent's own LLM (via MCP sampling) to "
+        "classify each reachable finding as IDOR/AUTHZ/SQLI/XSS/CMD_INJECTION/etc. "
+        "with confidence + reasoning. Counter to Semgrep Multimodal — same LLM-"
+        "reasoning narrative without a hosted API key."
+    ),
+)
+async def taint_classify(
+    rules_dir: str = "",
+    rule: str = "",
+    skip_sanitized: bool = True,
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
+    """Run taint analysis + LLM classification of each reachable finding.
+
+    WHEN TO USE: when you need IDOR / broken-authz / business-logic
+    classification on top of a graph-reach taint result. The static engine
+    proves a path exists; this tool asks the agent's model what *kind*
+    of vulnerability that path constitutes. Sanitized findings are skipped
+    by default (they're already OpenVEX ``not_affected``).
+
+    Sampling is opt-in on the client side. When the client doesn't expose
+    ``ctx.sample`` (no sampling capability, or the tool ran outside MCP),
+    each finding is returned unchanged — the static taint output is the
+    floor, classification is the ceiling.
+
+    Parameters
+    ----------
+    rules_dir: directory of YAML taint rules (default = built-in pack).
+    rule: filter to a single rule id.
+    skip_sanitized: when True (default), skip findings the static engine
+        already marked sanitized. Set False to also classify ``not_affected``
+        results — useful for double-checking false-clean signals.
+    """
+
+    from roam.security.taint_classifier import (
+        ClassifyOptions,
+        classify_findings,
+    )
+
+    # First run roam taint --json to get the structured findings list.
+    args = ["taint"]
+    if rules_dir:
+        args.extend(["--rules-dir", rules_dir])
+    if rule:
+        args.extend(["--rule", rule])
+    base_result = _run_roam(args, root)
+
+    findings = base_result.get("findings") if isinstance(base_result, dict) else None
+    if not findings:
+        # Either taint failed or returned zero findings; pass through.
+        return base_result
+
+    # Now classify each finding via sampling. Graceful pass-through when no ctx.
+    options = ClassifyOptions(skip_sanitized=skip_sanitized)
+    classified = await classify_findings(findings, ctx, options=options)
+    out = dict(base_result)
+    out["findings"] = classified
+
+    # Roll classification labels into the summary so agents can see at a
+    # glance which categories were detected.
+    label_counts: dict[str, int] = {}
+    for f in classified:
+        cls = f.get("classification") or {}
+        lbl = cls.get("label")
+        if lbl:
+            label_counts[lbl] = label_counts.get(lbl, 0) + 1
+    summary = dict(out.get("summary") or {})
+    summary["classification_counts"] = label_counts
+    summary["classified_count"] = sum(label_counts.values())
+    out["summary"] = summary
+    return out
 
 
 @_tool(

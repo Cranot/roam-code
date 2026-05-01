@@ -1070,6 +1070,26 @@ class Indexer:
             else:
                 self._log("Skipping graph metrics (module not available)")
 
+            # v12.1: Django transitive inheritance + custom field resolution.
+            # Runs after graph metrics so the inheritance edges are settled.
+            # Best-effort — failure here doesn't fail the index.
+            try:
+                from roam.index.django_post import resolve_all_django
+
+                django_counts = resolve_all_django(conn, quiet=True)
+                if any(django_counts.values()):
+                    parts = []
+                    if django_counts.get("models_updated"):
+                        parts.append(f"{django_counts['models_updated']} model(s)")
+                    if django_counts.get("fields_updated"):
+                        parts.append(f"{django_counts['fields_updated']} field(s)")
+                    if django_counts.get("relationships_created"):
+                        parts.append(f"{django_counts['relationships_created']} relationship edge(s)")
+                    if parts:
+                        self._log(f"  Django: {', '.join(parts)}")
+            except Exception as e:
+                self._log(f"  Django post-resolver skipped: {e}")
+
             # Git history
             analyze_git = _try_import_git_stats()
             if analyze_git is not None:

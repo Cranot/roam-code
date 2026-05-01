@@ -240,7 +240,13 @@ def _is_skippable(rel_path: str) -> bool:
 
 
 def _git_ls_files(root: Path) -> list[str] | None:
-    """Try to list files using git ls-files. Returns None if git unavailable."""
+    """Try to list files using git ls-files. Returns None if git unavailable.
+
+    Uses ``worktree_git_env`` so parallel agents in sibling worktrees don't
+    contend on ``.git/index.lock``.
+    """
+    from roam.git_utils import worktree_git_env
+
     try:
         result = subprocess.run(
             ["git", "ls-files", "--cached", "--others", "--exclude-standard"],
@@ -250,6 +256,7 @@ def _git_ls_files(root: Path) -> list[str] | None:
             encoding="utf-8",
             errors="replace",
             timeout=30,
+            env=worktree_git_env(root),
         )
         if result.returncode != 0:
             return None

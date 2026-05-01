@@ -135,6 +135,9 @@
             <tr><td><code>roam fleet plan</code></td><td><code>roam fleet plan "split auth refactor" --n-agents 4 --adapter composio</code></td><td>Graph-aware fleet planner — Louvain partition + co-change + PageRank anchors emit <code>.roam-fleet.json</code> for Composio Agent Orchestrator, GitHub Copilot CLI <code>/fleet</code>, or raw runtimes.</td></tr>
             <tr><td><code>roam fleet verify</code></td><td><code>roam fleet verify .roam-fleet.json</code></td><td>Re-check a manifest for residual cross-task file overlap.</td></tr>
             <tr><td><code>roam ask</code></td><td><code>roam ask "is it safe to delete UserSession"</code></td><td>One-phrase intent classifier over a 12-recipe registry — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling. <code>roam ask --list</code> shows the recipe book.</td></tr>
+            <tr><td><code>roam oracle</code></td><td><code>roam oracle symbol-exists UserSession</code></td><td>Boolean oracles — 1-token yes/no answers for agents. Subcommands: <code>symbol-exists</code>, <code>route-exists</code>, <code>is-test-only</code>, <code>is-reachable-from-entry</code>, <code>is-clone-of</code>. (v12.1)</td></tr>
+            <tr><td><code>roam index-export</code></td><td><code>roam index-export bundle.tar.gz --sign --key cosign.key</code></td><td>Export the indexed <code>.roam/index.db</code> as a portable, integrity-checked tarball with optional cosign signature. Manifest carries SHA-256 of the bundle for tamper detection. (v12.1)</td></tr>
+            <tr><td><code>roam index-import</code></td><td><code>roam index-import bundle.tar.gz --cosign-bundle bundle.bundle</code></td><td>Import a portable index bundle. Verifies manifest sha256 + optional cosign signature; refuses to overwrite without <code>--force</code>. (v12.1)</td></tr>
           </tbody>
         </table>
       </div>

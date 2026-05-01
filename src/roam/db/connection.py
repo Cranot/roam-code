@@ -197,6 +197,14 @@ def ensure_schema(conn: sqlite3.Connection):
     _safe_alter(conn, "graph_metrics", "clustering_coefficient", "REAL DEFAULT 0")
     _safe_alter(conn, "graph_metrics", "debt_score", "REAL DEFAULT 0")
 
+    # v12.1: Django framework awareness (ported from upstream fork/roam-code)
+    _safe_alter(conn, "symbols", "framework_type", "TEXT")
+    _safe_alter(conn, "symbols", "field_type", "TEXT")
+    _safe_alter(conn, "symbols", "field_base_type", "TEXT")
+    _safe_alter(conn, "symbols", "field_metadata", "TEXT")
+    _safe_alter(conn, "edges", "call_function", "TEXT")
+    conn.execute("CREATE INDEX IF NOT EXISTS idx_symbols_framework_type ON symbols(framework_type)")
+
     # v11: drop redundant idx_edges_kind (subsumed by idx_edges_kind_target)
     conn.execute("DROP INDEX IF EXISTS idx_edges_kind")
     # TF-IDF semantic search table — recreate with ON DELETE CASCADE if missing

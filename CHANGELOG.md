@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.1.0] - 2026-05-01
+
+### Added
+- **`roam oracle <name>`** — boolean-oracle command group with 5 subcommands giving 1-token yes/no answers to agents: `symbol-exists`, `route-exists`, `is-test-only`, `is-reachable-from-entry`, `is-clone-of`. MCP tools: `roam_oracle_*`. Direct counter to CKB v9.2's `symbolExists` pattern.
+- **`roam_taint_classify` (MCP only)** — LLM-augmented taint classification. Runs `roam taint` then asks the agent's own model (via MCP sampling) to label each reachable finding as IDOR / AUTHZ / SQLI / XSS / CMD_INJECTION / PATH_TRAVERSAL / SSRF / etc. with confidence + reasoning. Counter to Semgrep Multimodal — same LLM-reasoning narrative without a hosted API key. Sequential for v12.1; concurrency-bounded gather lands in v12.2.
+- **`roam index-export <bundle.tar.gz>`** + **`roam index-import <bundle.tar.gz>`** — portable, integrity-checked roam index bundles. Manifest carries SHA-256 of the bundled `index.db`; import verifies before extracting. Optional cosign signing (`--sign --key ...` or `--sign --keyless`). Counter to Cursor's "92% similar codebase = reuse teammate's index" without a vendor cloud.
+- **`roam eval-retrieve --emit-format coderag|beir`** — bench-portable JSONL emit for public retrieval-leaderboard submission. CodeRAG-Bench-compatible `ctxs` array + BEIR-style trec_eval run files. Pair with `--emit-out <path>` and `--emit-k N`.
+- **Django bridge** — full implicit-relationship resolution: admin → model (via `@admin.register` / `admin.site.register`), serializer/form/filterset → model (via `Meta.model`), `@receiver(sender=Model)`, `path()`/`re_path()`/`include()` URL trees, DRF `router.register()`, `@app.task`/`@shared_task` tagging. Companion `index/django_post.py` resolves transitive Django model inheritance + custom field metadata after the per-file extraction phase. New schema columns: `symbols.framework_type`, `field_type`, `field_metadata`; `edges.call_function`. Ported from `upstream fork/roam-code` — credit upstream fork author.
+- **`roam.git_utils.worktree_git_env(cwd)`** — sets `GIT_INDEX_FILE` per worktree so parallel agents in sibling worktrees don't contend on `.git/index.lock`. Wired into `discovery.py`, `git_stats.py`, `changed_files.py`, `cmd_index_bundle.py`. Ported from `upstream fork/roam-code-sf` — credit upstream fork author.
+
+### Fixed
+- **BLOCKER (taint engine)**: source-as-sanitizer false-clean OpenVEX claim. When a rule listed the same name as both source and sanitizer (or via LIKE-suffix overlap), every reachable path was emitted as `not_affected/inline_mitigations_already_exist`. Fix: drop overlap before BFS.
+- **HIGH (rerank)**: `rerank.py:_pagerank_scores` IN-clause violated CLAUDE.md `batched_in()` rule when `--k > 80` (1000+ placeholders > `SQLITE_MAX_VARIABLE_NUMBER=999`).
+- **`oracle_is_clone_of`** queried wrong columns (`name_a`/`name_b` vs schema's `qname_a`/`qname_b`) — would always false-negative. Now uses `qname_a/b` + suffix LIKE match.
+- **`cmd_index_bundle`** treated `cosign_available()` (which returns `(bool, str)`) as a bare bool — the "binary missing" message never fired. Now unpacks the tuple correctly in both export and import flows.
+- **`cmd_index_bundle._verify_bundle`** now catches `tarfile.ReadError` / `CompressionError` / `EOFError` and surfaces a clean `ValueError("bundle is corrupted...")` instead of an uncaught traceback.
+- **`oracle_is_reachable_from_entry`** clamps `max_hops` to `[1, 1000]` to avoid confusing "unreachable within -5 hops" messages.
+
+### Changed
+- Surface counts: **150 CLI commands** (147 → 150: +3 for `oracle`, `index-export`, `index-import`), **112 MCP tools** (106 → 112: +6 for 5 oracles + `roam_taint_classify`), **33 core preset** (27 → 33: all 6 added to core).
+- Test coverage: **80 new tests** across `test_oracle.py`, `test_git_utils.py`, `test_eval_retrieve.py`, `test_index_bundle.py`, `test_taint_classifier.py`, `test_bridge_django.py`.
+
+## [12.0.0] - 2026-05-01
+
+### Added
+- **`roam retrieve "<task>"`** — graph-aware FTS5 + structural reranker (personalised PageRank + clone-canonical signal + lexical baseline) + token-budget cap. Returns ranked spans with justification tags. MCP tool: `roam_retrieve`.
+- **`roam critique`** — graph-grounded patch verifier. `git diff | roam critique` gets findings ranked by severity. The killer signal is **clones-not-edited**. Exits 5 on high severity (CI-gateable). MCP tool: `roam_critique`.
+- **`roam fleet plan`** — Louvain + dark-matter co-change + PageRank multi-agent partitioner. Emits `roam-fleet/v1` manifest with raw / Composio / GitHub Copilot CLI adapters. MCP tool: `roam_fleet_plan`.
+- **`roam ask`** — 12-recipe TF-IDF intent classifier dispatching `preflight/retrieve/critique/fleet/diagnose/trace/...` in-process.
+- **`roam taint`** — graph-reach BFS + 5 starter rule packs (sqli, xss, path-traversal, command-injection, deserialization). OpenVEX-correct status + justification strings (no `code_not_reachable`).
+- **`roam cga emit`** — in-toto v1 statement (predicate type `roam-code.dev/CodeGraph/v1`) with Merkle root + edge-bundle digest + optional taint reachability claims. Cosign keyless or offline signing.
+- **`roam eval-retrieve`** — recall@K JSONL harness + weight-sweep mode rotating α/β/γ/δ/ε vectors.
+- New CI workflow `.github/workflows/cga-attestation.yml` running real cosign offline-key + keyless OIDC + tamper-detection sanity check.
+- Bench infrastructure (`bench/retrieve/roam_self.jsonl`, 30 hand-curated tasks; recall@20 = 0.503).
+
+### Changed
+- Surface counts: 147 CLI commands, 106 MCP tools, 27 core preset.
+- Tests: 6073+ across 240+ files.
+
 ## [11.1.3] - 2026-02-27
 
 ### Fixed

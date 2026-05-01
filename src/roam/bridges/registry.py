@@ -49,3 +49,7 @@ def _auto_discover():
         from roam.bridges import bridge_config  # noqa: F401
     except ImportError:
         pass
+    try:
+        from roam.bridges import bridge_django  # noqa: F401
+    except ImportError:
+        pass

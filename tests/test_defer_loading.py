@@ -159,6 +159,13 @@ class TestDeferLoading:
             "roam_retrieve",
             "roam_critique",
             "roam_fleet_plan",
+            # v12.1 — boolean oracles (5) + LLM-augmented taint classify (1)
+            "roam_oracle_symbol_exists",
+            "roam_oracle_route_exists",
+            "roam_oracle_is_test_only",
+            "roam_oracle_is_reachable_from_entry",
+            "roam_oracle_is_clone_of",
+            "roam_taint_classify",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"
