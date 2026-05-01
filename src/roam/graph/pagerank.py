@@ -42,9 +42,14 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
     try:
         return nx.pagerank(G, alpha=alpha)
     except ImportError:
-        # numpy not installed — fall back to degree-based ranking
-        max_deg = max((G.degree(n) for n in G), default=1) or 1
-        return {n: G.degree(n) / max_deg for n in G}
+        # numpy/scipy not installed — degree-based fallback. Normalise
+        # so the result still satisfies the "scores sum to ~1" contract
+        # the docstring promises and that ``personalized_pagerank``'s
+        # fallback also produces — otherwise a chain comparison like
+        # ``seeded[head] > global_pr[head]`` mixes scales.
+        raw = {n: G.degree(n) for n in G}
+        total = sum(raw.values()) or 1.0
+        return {n: v / total for n, v in raw.items()}
 
 
 def personalized_pagerank(
