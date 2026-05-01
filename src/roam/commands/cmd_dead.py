@@ -1114,6 +1114,7 @@ def dead(
                 return
             if json_mode:
                 summary = {
+                    "verdict": "no dead exports",
                     "safe": 0,
                     "review": 0,
                     "intentional": 0,
@@ -1281,7 +1282,14 @@ def dead(
                     d["decay_score"] = ext["decay_score"]
                 return d
 
+            total = n_safe + n_review + n_intent
+            verdict = (
+                f"{total} dead export(s): {n_safe} safe, {n_review} review, {n_intent} intentional"
+                if total
+                else "no dead exports"
+            )
             summary = {
+                "verdict": verdict,
                 "safe": n_safe,
                 "review": n_review,
                 "intentional": n_intent,
