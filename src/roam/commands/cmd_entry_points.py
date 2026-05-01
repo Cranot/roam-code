@@ -103,7 +103,13 @@ _NAME_PATTERNS = [
     ("Scheduled", re.compile(r"cron|schedule|periodic|tick", re.IGNORECASE)),
     ("Message", re.compile(r"consume|subscriber|on_message|process_message", re.IGNORECASE)),
     ("CLI", re.compile(r"^cmd_|_command$|_cmd$", re.IGNORECASE)),
-    ("HTTP", re.compile(r"_view$|_endpoint$|_controller$|_handler$", re.IGNORECASE)),
+    # HTTP name patterns: only the strong endpoint/controller suffixes.
+    # ``_view$`` and ``_handler$`` matched too broadly — dogfood notes
+    # 2026-05-01 caught ``_extract_create_view`` (a SQL parser method)
+    # and ``error_handler`` (signal handler) being classified as HTTP
+    # routes. The decorator pattern above already catches genuine
+    # ``@app.route`` etc. — name fallback can be conservative.
+    ("HTTP", re.compile(r"_endpoint$|_controller$", re.IGNORECASE)),
 ]
 
 
