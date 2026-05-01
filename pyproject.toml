@@ -89,6 +89,12 @@ dev = [
     # tests use ``@pytest.mark.asyncio`` to verify the MCP-sampling-based
     # taint classifier under a controlled async loop.
     "pytest-asyncio>=0.23",
+    # scipy is required by ``nx.pagerank`` on networkx 3.x; without it,
+    # the personalized-pagerank tests exercise the degree-based fallback
+    # which doesn't honour ``alpha`` and trivially fails the
+    # alpha-override / chain-propagation invariants. Production users
+    # without scipy still get the (less accurate but correct) fallback.
+    "scipy>=1.11",
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
