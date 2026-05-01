@@ -22,33 +22,83 @@ from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import run_retrieve
 
 
-def _retrieve_confidence(candidates: list[dict]) -> str:
+def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     """Classify the confidence of a retrieve result.
 
     Returns ``"low"`` when the top result probably doesn't match the
-    query, ``"ok"`` otherwise. Heuristics:
+    query, ``"ok"`` otherwise. Heuristic (redacted,
+    two iterations):
 
-    * **Top score < 0.35** — the highest-ranked candidate has weak
-      structural+lexical signal. On a real match the structural
-      reranker typically pushes the top score above 0.5.
-    * **Top - 5th < 0.10** — scores bunched into a narrow band
-      indicates lexical hits scattered across many unrelated
-      symbols (the "trace the login flow" failure mode where the
-      query has no real answer in the index).
+    * **Token coverage** — count distinct query tokens that appear
+      across the top-5 candidate paths. If only 1 token is covered
+      across all 5 (e.g. "trace login flow" → only "trace" matches
+      anywhere), the answer is almost certainly junk: the lexical
+      hits are tracking one common word.
+    * **Score signals** — also flag when top score is < 0.30 AND
+      top-vs-fifth spread is < 0.10 (scores bunched at the noise
+      floor).
 
-    ``"low"`` only when *both* signals fire — single-signal trips
-    catch too many real matches with diverse top-N spread.
+    Either signal trips low-confidence; the token-coverage check
+    catches the original "trace the login flow" failure mode that
+    the score-only heuristic missed (top was 1.1 but covered just
+    one query token).
     """
     if not candidates:
         return "low"
     scores = [float(c.get("score") or 0.0) for c in candidates if c.get("score") is not None]
     if not scores:
         return "ok"
+
+    # Score-based check
     top = scores[0]
     fifth = scores[min(4, len(scores) - 1)]
-    weak_top = top < 0.35
-    bunched = (top - fifth) < 0.10
-    return "low" if weak_top and bunched else "ok"
+    if top < 0.30 and (top - fifth) < 0.10:
+        return "low"
+
+    # Token-coverage check across top-10 path+name. Match against both
+    # path AND symbol name — a test like ``test_implements_edge`` in
+    # ``test_comprehensive.py`` covers "implements" via name even though
+    # the path doesn't. Trip low-confidence when ≥3 query tokens were
+    # supplied but ≤1 of them surfaces *anywhere* in the top-10. That
+    # catches "trace the login flow" (top-10 has "trace" everywhere
+    # but never "login" or "flow") while letting "AST clone detection
+    # implemented" pass (clone, implements, detect all surface).
+    if task and candidates:
+        try:
+            from roam.retrieve.seeds import extract_tokens
+
+            tokens = extract_tokens(task)
+        except Exception:
+            tokens = []
+        if len(tokens) >= 2:
+            lowered = {t.lower() for t in tokens if len(t) >= 4}
+            covered: set[str] = set()
+            for c in candidates[:10]:
+                surface = (
+                    (c.get("file_path") or c.get("file") or "")
+                    + " "
+                    + (c.get("name") or "")
+                    + " "
+                    + (c.get("qualified_name") or "")
+                ).lower()
+                for tok in lowered:
+                    if tok in surface:
+                        covered.add(tok)
+                    elif len(tok) >= 7:
+                        # Prefix match for plurals/derivations: "detection"
+                        # → look for "detect", "implementing" → "implement".
+                        # Length floor ≥7 means the prefix has ≥4 chars
+                        # which is past the noise floor for path tokens.
+                        if tok[:-3] in surface and len(tok[:-3]) >= 4:
+                            covered.add(tok)
+            # Trip when ≥2 query tokens were supplied but ≤1 covered
+            # in top-10. Catches "trace login flow" (only "trace"
+            # matches, "login"/"flow" never appear) without firing
+            # on "AST clone detection implemented" where "clone" and
+            # "implemented" both surface in top-10.
+            if len(lowered) >= 2 and len(covered) <= 1:
+                return "low"
+    return "ok"
 
 
 @click.command()
@@ -149,7 +199,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
         )
 
     candidates = result["candidates"]
-    confidence = _retrieve_confidence(candidates)
+    confidence = _retrieve_confidence(candidates, task_str)
     base_verdict = (
         f"{len(candidates)} span{'s' if len(candidates) != 1 else ''} "
         f"({result['budget_used']}/{result['budget']} tokens, "

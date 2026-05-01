@@ -167,19 +167,20 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
         return False, f"no symbol named '{name}'"
     target_ids = {int(r[0]) for r in target_rows}
 
-    # Entry-point definition must match ``cmd_understand._find_entry_points``
-    # so the oracle is consistent with the rest of the surface area. Per
-    # the redacted, the previous logic looked for an
-    # ``is_entry`` column (doesn't exist on the schema) or a ``file_role
-    # = 'entry'`` value (no files have that role — the actual roles are
-    # source/test/config/docs/script/build/ci/generated). The result was
-    # a confidently-wrong "no entry-point symbols indexed" verdict on
-    # any indexed repo.
+    # Entry-point definition (redacted, two iterations):
     #
-    # Operational definition: a file with no incoming ``file_edges``
-    # (nothing imports it) AND containing at least one symbol *is* an
-    # entry point. CLI scripts, top-level modules, and tests all
-    # satisfy this — close enough for reachability analysis.
+    # First attempt — files with no incoming ``file_edges``. Caught the
+    # previous bug (``no entry-point symbols indexed`` on every query)
+    # but mis-classified ``cli`` itself: ``src/roam/cli.py`` IS imported
+    # by tests + internal helpers so it had incoming edges and wasn't
+    # an entry point. The user expects ``is-reachable cli`` to be True.
+    #
+    # Second attempt — same import-graph definition PLUS name-based
+    # fallback for canonical entry symbols (``cli``, ``main``,
+    # ``__main__``, ``run``, ``app``, ``serve``). Anything with one of
+    # these names IS treated as an entry point regardless of whether
+    # someone imported its file. Catches the "main is the entry point
+    # but tests import it" case without false-positives elsewhere.
     try:
         entry_rows = conn.execute(
             """
@@ -191,6 +192,14 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
         entry_ids = {int(r[0]) for r in entry_rows}
     except sqlite3.OperationalError:
         entry_ids = set()
+
+    try:
+        named_entry_rows = conn.execute(
+            "SELECT id FROM symbols WHERE name IN ('cli', 'main', '__main__', 'run', 'app', 'serve', 'entrypoint')"
+        ).fetchall()
+        entry_ids.update(int(r[0]) for r in named_entry_rows)
+    except sqlite3.OperationalError:
+        pass
 
     if not entry_ids:
         return False, "no entry-point symbols indexed (run `roam init` to (re)build the index)"
