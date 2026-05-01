@@ -81,6 +81,10 @@ learned = [
 dev = [
     "pytest>=7.0",
     "pytest-xdist>=3.0",
+    # pytest-asyncio is required by tests/test_taint_classifier.py — those
+    # tests use ``@pytest.mark.asyncio`` to verify the MCP-sampling-based
+    # taint classifier under a controlled async loop.
+    "pytest-asyncio>=0.23",
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
@@ -92,10 +96,17 @@ where = ["src"]
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q --tb=short"
+# v12.2: pytest-asyncio strict-mode + auto fixture loop scope. Avoids the
+# 11 PytestUnknownMarkWarning warnings on `@pytest.mark.asyncio` in
+# test_taint_classifier.py when pytest-asyncio is installed (it ships
+# under the `[dev]` extra).
+asyncio_mode = "strict"
+asyncio_default_fixture_loop_scope = "function"
 markers = [
     "smoke: fast, high-signal tests for local iteration",
     "core: broader local suite for pre-push checks",
     "slow: marks tests as slow (deselect with '-m \"not slow\"')",
+    "asyncio: marks async tests requiring pytest-asyncio (skip when missing)",
 ]
 
 [tool.ruff]
