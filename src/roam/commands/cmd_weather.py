@@ -112,11 +112,16 @@ def weather(ctx, count):
             )
             return
 
+        # Score is geometric mean of churn_norm × cmplx_norm. Empirically
+        # the top-N rows fall in 1.0-3.0 — formatting with ``.0f`` rounded
+        # everything to 1, killing the discrimination the column is
+        # supposed to provide (redacted). Two decimals
+        # restore signal.
         table_rows = []
         for score, churn, complexity, commits, authors, reason, path in scored[:count]:
             table_rows.append(
                 [
-                    f"{score:.0f}",
+                    f"{score:.2f}",
                     str(churn),
                     f"{complexity:.1f}",
                     str(commits),
@@ -130,7 +135,7 @@ def weather(ctx, count):
             _top_path, _top_churn, _top_score = scored[0][6], scored[0][1], scored[0][0]
             _verdict = (
                 f"{len(scored[:count])} hotspots; top: {_top_path.split('/')[-1]}"
-                f"(churn={_top_churn}, score={_top_score:.0f})"
+                f"(churn={_top_churn}, score={_top_score:.2f})"
             )
         else:
             _verdict = "no hotspots found"

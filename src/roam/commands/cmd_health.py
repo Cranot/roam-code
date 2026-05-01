@@ -473,18 +473,34 @@ def health(ctx, no_framework, gate):
             """Sigmoid health factor: 1 for no issues, → 0 for many."""
             return math.exp(-value / scale) if scale > 0 else 1.0
 
-        god_critical = sum(1 for g in god_items if g.get("severity") == "CRITICAL")
-        god_signal = god_critical * 3 + len(god_items) * 0.5
-        bn_critical = sum(1 for b in bn_items if b.get("severity") == "CRITICAL")
-        bn_signal = bn_critical * 2 + len(bn_items) * 0.3
+        # Score signals — count *actionable* items only. Utilities
+        # (string/path/datetime helpers) are expected to have high fan-in
+        # and would dominate the formula otherwise. Per dogfood notes
+        # 2026-05-01: this repo had 50 god components total but 27 were
+        # expected utilities; the old formula penalised the score for
+        # all 50 and produced a misleading 2/100 verdict. The display
+        # already classifies them ("23 actionable, 27 expected utilities");
+        # the score should match the display.
+        god_actionable = [g for g in god_items if g.get("category") == "actionable"]
+        god_critical = sum(1 for g in god_actionable if g.get("severity") == "CRITICAL")
+        # Normalise by codebase size so a 14k-symbol repo with 23 actionable
+        # god components (0.16%) doesn't score the same as a 100-symbol
+        # repo with 23 (23%). 1k symbols is the unit; signal scales linearly.
+        size_norm = max(1.0, total_symbols / 1000.0)
+        god_signal = (god_critical * 3 + len(god_actionable) * 0.5) / size_norm
+        bn_actionable_items = [b for b in bn_items if b.get("category") == "actionable"]
+        bn_critical = sum(1 for b in bn_actionable_items if b.get("severity") == "CRITICAL")
+        bn_signal = (bn_critical * 2 + len(bn_actionable_items) * 0.3) / size_norm
 
         coverage_import = imported_coverage_overview(conn)
 
         # Base factors (weights sum to 1.0 before optional imported coverage).
+        # Scales tuned post-normalisation so a normal repo (low percent of
+        # actionable god components) scores in the 60-90 range.
         base_factors = [
             (_health_factor(tangle_ratio, 10), 0.30),  # tangle ratio
-            (_health_factor(god_signal, 5), 0.20),  # god components
-            (_health_factor(bn_signal, 4), 0.15),  # bottlenecks
+            (_health_factor(god_signal, 1.5), 0.20),  # god components (normalised /1k symbols)
+            (_health_factor(bn_signal, 1.0), 0.15),  # bottlenecks (normalised /1k symbols)
             (_health_factor(len(violations), 5), 0.15),  # layer violations
         ]
         # File-level health: map avg [0-10] to a factor

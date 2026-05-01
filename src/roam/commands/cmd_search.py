@@ -271,7 +271,16 @@ def search(ctx, pattern, full, kind_filter, explain):
         for r in rows:
             refs = ref_counts.get(r["id"], 0)
             pr = r["pagerank"] or 0
-            pr_str = f"{pr:.4f}" if pr > 0 else ""
+            # Per redacted: 4-decimal PR rounded all
+            # niche/test symbols to 0.0001 — the column lost
+            # discrimination. Use significant-figures formatting so
+            # 0.000123 → "0.000123" stays distinct from 0.0001.
+            if pr <= 0:
+                pr_str = ""
+            elif pr < 0.001:
+                pr_str = f"{pr:.2e}"
+            else:
+                pr_str = f"{pr:.4f}"
             qn = r["qualified_name"] or ""
             name_col = qn if qn and qn != r["name"] else r["name"]
             sig = format_signature(r["signature"], max_len=40) if r["signature"] else ""

@@ -22,6 +22,35 @@ from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import run_retrieve
 
 
+def _retrieve_confidence(candidates: list[dict]) -> str:
+    """Classify the confidence of a retrieve result.
+
+    Returns ``"low"`` when the top result probably doesn't match the
+    query, ``"ok"`` otherwise. Heuristics:
+
+    * **Top score < 0.35** — the highest-ranked candidate has weak
+      structural+lexical signal. On a real match the structural
+      reranker typically pushes the top score above 0.5.
+    * **Top - 5th < 0.10** — scores bunched into a narrow band
+      indicates lexical hits scattered across many unrelated
+      symbols (the "trace the login flow" failure mode where the
+      query has no real answer in the index).
+
+    ``"low"`` only when *both* signals fire — single-signal trips
+    catch too many real matches with diverse top-N spread.
+    """
+    if not candidates:
+        return "low"
+    scores = [float(c.get("score") or 0.0) for c in candidates if c.get("score") is not None]
+    if not scores:
+        return "ok"
+    top = scores[0]
+    fifth = scores[min(4, len(scores) - 1)]
+    weak_top = top < 0.35
+    bunched = (top - fifth) < 0.10
+    return "low" if weak_top and bunched else "ok"
+
+
 @click.command()
 @click.argument("task", nargs=-1, required=True)
 @click.option(
@@ -120,13 +149,22 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
         )
 
     candidates = result["candidates"]
-    verdict = (
+    confidence = _retrieve_confidence(candidates)
+    base_verdict = (
         f"{len(candidates)} span{'s' if len(candidates) != 1 else ''} "
         f"({result['budget_used']}/{result['budget']} tokens, "
         f"{len(result['seeds'])} seed{'s' if len(result['seeds']) != 1 else ''})"
         if candidates
         else "No candidates matched the task text"
     )
+    # R.5 (dogfood 2026-05-01): "trace the login flow" against a repo
+    # with no login flow returned 20 spans with no warning. The agent
+    # had no signal that the answer was junk. We now prepend a
+    # confidence tag to the verdict when (a) the top score is below
+    # an absolute floor or (b) scores are bunched within a narrow
+    # band — both indicators that lexical hits are spread thin
+    # rather than concentrated on a real match.
+    verdict = f"low confidence — {base_verdict}" if confidence == "low" else base_verdict
 
     if json_mode:
         click.echo(

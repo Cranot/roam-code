@@ -92,6 +92,22 @@ def structural_score(
     # consistently lifts the right files into top-K.
     path_token_boost = _path_token_boost(candidates, task)
 
+    # R.6 (dogfood 2026-05-01) — rule-YAML demotion. For
+    # implementation-style queries ("where is X", "how does Y work"),
+    # the rules/community/*.yaml files clog 30% of top-K because they
+    # contain literal token matches like "clone" or "match" but are
+    # never the answer. Apply a fixed negative score to candidates
+    # in rule-corpus paths *unless* the query is rule-shaped.
+    rule_yaml_penalty = _rule_yaml_penalty(candidates, task)
+
+    # R.7 (dogfood 2026-05-01) — cmd-companion boost. The
+    # ``commands/cmd_FOO.py`` file is the CLI wrapper for module
+    # ``FOO/``; the two are conceptually linked but share no tokens
+    # in their paths. When a candidate file is a cmd_FOO.py and any
+    # other candidate's path contains FOO as a component, lift the
+    # cmd file so it surfaces alongside its engine module.
+    cmd_companion_boost = _cmd_companion_boost(candidates)
+
     pr_scores = _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized)
     clone_tags = _clone_tags(conn, candidates)
     cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
@@ -142,6 +158,8 @@ def structural_score(
             + lexical_baseline * fts_norm
             + clone_boost
             + path_token_boost.get(sid, 0.0)
+            + cmd_companion_boost.get(sid, 0.0)
+            + rule_yaml_penalty.get(sid, 0.0)  # already negative
         )
 
         justifications: dict[str, object] = {}
@@ -222,6 +240,116 @@ def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
         # Up to 0.15 total: 0.075 first-hit, +0.04 each additional, capped.
         boost = min(0.15, 0.075 + 0.04 * (len(hits) - 1))
         out[sid] = boost
+    return out
+
+
+def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
+    """Penalise rule-corpus YAML files for implementation-style queries.
+
+    Rule files like ``rules/community/correctness/COR-*.yaml`` match
+    tokens like "clone", "match", "implement" because they are static-
+    analysis rules *about* those concepts — but they are never the
+    answer to "where is X implemented". The redacted
+    showed 6/20 top-K slots eaten by rule YAMLs for a single query.
+
+    Heuristic: only demote when the query looks like an
+    implementation question (starts with "where", "how", or
+    "find"/"locate"). Queries that mention "rule", "yaml", or
+    "lint" should *not* demote — the user wants the rule itself.
+
+    Magnitude: -0.20 (mirrors path_token_boost's max). Empirically
+    enough to displace the rule rows without entirely banning them.
+    """
+    if not task:
+        return {}
+    lowered_task = task.lower().strip()
+    impl_question = any(lowered_task.startswith(prefix) for prefix in ("where ", "how ", "find ", "locate "))
+    if not impl_question:
+        return {}
+    if any(word in lowered_task for word in ("rule", "yaml", "lint", "policy")):
+        return {}
+
+    out: dict[int, float] = {}
+    for c in candidates:
+        sid = int(c.get("symbol_id") or 0)
+        path = (c.get("file_path") or c.get("file") or "").replace("\\", "/").lower()
+        if not sid or not path:
+            continue
+        if path.startswith("rules/") or "/rules/community/" in path or path.endswith(".yaml") or path.endswith(".yml"):
+            out[sid] = -0.20
+    return out
+
+
+def _cmd_companion_boost(candidates: list[dict]) -> dict[int, float]:
+    """Lift ``commands/cmd_FOO.py`` when a *strongly-ranked* candidate
+    has ``FOO`` as a path component.
+
+    The CLI wrapper file is conceptually paired with its engine
+    module, but the two share no path tokens. The dogfood notes
+    2026-05-01 confirmed cmd-companion files systematically miss
+    top-K. This boost lifts them only when the engine module is
+    *itself* a strong match — using the strongest companion's
+    fts_score to scale the boost.
+
+    Selectivity: a +0.25 fixed boost lifts every cmd_*.py whenever
+    *any* candidate matches the stem, which over-promotes (e.g.
+    cmd_verify_imports, cmd_fleet, cmd_verify all surface for a
+    "patch verifier" query). Scaling by the companion's normalised
+    fts_score avoids this — weak companion → weak boost.
+
+    Boost magnitude: ``0.05 + 0.20 * (companion_fts_norm)``, capped
+    at 0.25. A companion at the top of the FTS distribution gets
+    the full 0.25; one at the bottom gets ~0.05 (still better than
+    nothing for the legitimate cmd_FOO.py companions, while leaving
+    the unrelated ones at the noise floor).
+    """
+    if not candidates:
+        return {}
+
+    fts_max = max((float(c.get("fts_score") or 0.0) for c in candidates), default=0.0)
+    if fts_max <= 0:
+        return {}
+
+    # Build {component: best_fts} for non-cmd candidates so we can
+    # later look up the strength of any cmd_FOO match.
+    component_strength: dict[str, float] = {}
+    cmd_candidates: list[tuple[int, str]] = []
+    for c in candidates:
+        path = (c.get("file_path") or c.get("file") or "").replace("\\", "/").lower()
+        if not path:
+            continue
+        sid = int(c.get("symbol_id") or 0)
+        if not sid:
+            continue
+        basename = path.rsplit("/", 1)[-1]
+        if basename.startswith("cmd_") and basename.endswith(".py"):
+            stem = basename[len("cmd_") : -len(".py")]
+            if stem:
+                cmd_candidates.append((sid, stem))
+            continue
+        fts = float(c.get("fts_score") or 0.0)
+        for piece in path.split("/"):
+            piece_clean = piece.replace(".py", "").replace(".js", "").replace(".ts", "")
+            for sub in piece_clean.replace("_", " ").replace("-", " ").split():
+                if len(sub) >= 4:
+                    if fts > component_strength.get(sub, 0.0):
+                        component_strength[sub] = fts
+
+    out: dict[int, float] = {}
+    for sid, stem in cmd_candidates:
+        best_fts = 0.0
+        for other, strength in component_strength.items():
+            if (
+                other == stem
+                or (len(stem) >= 4 and other.startswith(stem))
+                or (len(other) >= 4 and stem.startswith(other))
+            ):
+                if strength > best_fts:
+                    best_fts = strength
+        if best_fts <= 0:
+            continue
+        norm = best_fts / fts_max
+        out[sid] = min(0.25, 0.05 + 0.20 * norm)
     return out
 
 

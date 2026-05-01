@@ -138,14 +138,21 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
 
     ensure_index()
 
-    # Determine rules directory
+    # Determine rules directory. Project-local ``.roam/rules`` wins;
+    # otherwise the empty state mentions the bundled community corpus
+    # so first-time users can opt in (redacted —
+    # auto-evaluating 2489+ community rules silently was too slow).
     if rules_dir_opt:
         rules_dir = Path(rules_dir_opt)
     else:
         rules_dir = root / ".roam" / "rules"
 
     # Graceful handling when no rules directory exists
+    bundled_count = 0
     if not rules_dir.is_dir():
+        bundled = root / "rules" / "community"
+        if bundled.is_dir():
+            bundled_count = sum(1 for _ in bundled.rglob("*.yaml")) + sum(1 for _ in bundled.rglob("*.yml"))
         verdict = "no rules directory found"
         if sarif_mode:
             from roam.output.sarif import rules_to_sarif, write_sarif
@@ -173,6 +180,12 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
             click.echo(f"VERDICT: {verdict}")
             click.echo()
             click.echo(f"Create rules in {rules_dir} or run 'roam rules --init'.")
+            if bundled_count:
+                click.echo(f"\n{bundled_count} community rule(s) bundled at rules/community/.")
+                click.echo(
+                    "Evaluate them with `roam rules --rules-dir rules/community`"
+                    " or copy a subset into .roam/rules to keep eval fast."
+                )
         return
 
     from roam.rules.engine import evaluate_all

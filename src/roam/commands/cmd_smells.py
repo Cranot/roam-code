@@ -19,6 +19,35 @@ _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
 
 
+def _file_role_lookup(conn) -> dict[str, str]:
+    """Return a {path: file_role} map for tooling-exclusion filtering.
+
+    Uses the canonical ``files.file_role`` column populated at index
+    time. Falls back to an empty dict if the schema doesn't have that
+    column (very old indexes pre-v9).
+    """
+    try:
+        rows = conn.execute("SELECT path, file_role FROM files").fetchall()
+    except Exception:
+        return {}
+    return {
+        (r["path"] if hasattr(r, "keys") else r[0]): (r["file_role"] if hasattr(r, "keys") else r[1]) or ""
+        for r in rows
+    }
+
+
+def _short_loc(location: str) -> str:
+    """Render a location string compact: ``last/two/segments.py:line``.
+
+    Empty input → empty output. Lines without ``:line`` survive."""
+    if not location:
+        return ""
+    norm = location.replace("\\", "/")
+    parts = norm.split("/")
+    tail = "/".join(parts[-2:]) if len(parts) >= 2 else norm
+    return tail
+
+
 @click.command()
 @click.option(
     "--file",
@@ -33,8 +62,19 @@ _VALID_SEVERITIES = frozenset(_SEVERITY_ORDER)
     type=click.Choice(["critical", "warning", "info"], case_sensitive=False),
     help="Minimum severity to include (critical > warning > info)",
 )
+@click.option(
+    "--include-tooling",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include CI scripts, build scripts, dev tooling, and generated "
+        "files in the smell count. Excluded by default because high "
+        "complexity in one-shot scripts and codegen output is expected "
+        "and uninteresting — surfacing them dominates the headline number."
+    ),
+)
 @click.pass_context
-def smells(ctx, file_path, min_severity):
+def smells(ctx, file_path, min_severity, include_tooling):
     """Detect code smells: brain methods, god classes, deep nesting, and more.
 
     Unlike ``vibe-check`` (which detects AI-generated code anti-patterns via
@@ -52,6 +92,31 @@ def smells(ctx, file_path, min_severity):
 
     with open_db(readonly=True) as conn:
         findings = run_all_detectors(conn)
+
+        # Default: exclude tooling. Per redacted, the
+        # top-N critical smells were dominated by .github/scripts,
+        # benchmarks/, dev/, and generated files — none of which are
+        # source code a user would want to refactor. Their inclusion
+        # made the verdict ("Needs refactoring: 1689 smells") false-
+        # alarming. ``--include-tooling`` opts back into the full set.
+        excluded_tooling = 0
+        if not include_tooling:
+            tooling_roles = {"ci", "scripts", "build", "generated"}
+            tooling_path_hints = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
+            tooling_roles_per_file = _file_role_lookup(conn)
+            kept: list[dict] = []
+            for f in findings:
+                loc = (f.get("location") or "").replace("\\", "/")
+                file_path_only = loc.split(":", 1)[0] if loc else ""
+                role = tooling_roles_per_file.get(file_path_only)
+                if role in tooling_roles:
+                    excluded_tooling += 1
+                    continue
+                if any(hint.replace("\\", "/") in "/" + file_path_only for hint in tooling_path_hints):
+                    excluded_tooling += 1
+                    continue
+                kept.append(f)
+            findings = kept
 
         # Filter by file
         if file_path:
@@ -143,7 +208,10 @@ def smells(ctx, file_path, min_severity):
         click.echo()
 
         if not detail:
-            # Show top 5 only
+            # Show top 5 with truncated location so the user can jump
+            # straight to the offender. Per redacted:
+            # bare symbol names ("main", "buildComment") were
+            # ambiguous when the same name lived in multiple files.
             top = findings[:5]
             if top:
                 rows = [
@@ -151,18 +219,24 @@ def smells(ctx, file_path, min_severity):
                         f["severity"].upper(),
                         f["smell_id"],
                         f["symbol_name"],
+                        _short_loc(f.get("location") or ""),
                         f["description"],
                     ]
                     for f in top
                 ]
                 click.echo(
                     format_table(
-                        ["Sev", "Smell", "Symbol", "Description"],
+                        ["Sev", "Smell", "Symbol", "Where", "Description"],
                         rows,
                     )
                 )
                 if total_smells > 5:
                     click.echo(f"\n(+{total_smells - 5} more, run `roam --detail smells` for the full list)")
+            if not include_tooling and excluded_tooling:
+                click.echo(
+                    f"\n(excluded {excluded_tooling} smell(s) in tooling/scripts/ci/generated; "
+                    f"pass --include-tooling to surface them)"
+                )
             return
 
         # Full detail mode

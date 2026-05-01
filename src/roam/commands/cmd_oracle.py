@@ -87,33 +87,57 @@ def oracle_route_exists(conn: sqlite3.Connection, path: str) -> tuple[bool, str]
 
 
 def oracle_is_test_only(conn: sqlite3.Connection, name: str) -> tuple[bool, str]:
-    """Are ALL callers of this symbol in test files?
+    """Is this symbol used only by test code?
 
-    A symbol with no callers at all returns ``False`` (no evidence either
-    way). A symbol whose every caller's file role is ``test`` (per
-    ``files.file_role``) returns ``True``.
+    Resolution order (matches dogfood expectations 2026-05-01):
+
+    1. **Symbol lives in a test file** → ``True``. The previous heuristic
+       was "all callers in test files", but a test method like
+       ``test_check_count`` has zero callers (pytest invokes it by
+       reflection), and the heuristic returned ``False`` for the most
+       canonically test-only thing in the codebase. We now check the
+       symbol's *own* ``file_role`` first — anything in
+       ``file_role='test'`` is test-only by definition.
+    2. **Symbol is in a non-test file with all callers in test files**
+       → ``True``. Catches helpers that live in production but are
+       only ever called from tests (genuinely test-only).
+    3. **Symbol has no callers and is in a non-test file** → ``False``
+       with a clearer "orphan" reason than before.
     """
     if not name:
         return False, "empty query"
     target_rows = conn.execute(
-        "SELECT id FROM symbols WHERE name = ? OR qualified_name = ?",
+        """
+        SELECT s.id, COALESCE(f.file_role, 'unknown') AS role
+        FROM symbols s
+        JOIN files f ON f.id = s.file_id
+        WHERE s.name = ? OR s.qualified_name = ?
+        """,
         (name, name),
     ).fetchall()
     if not target_rows:
         return False, f"no symbol named '{name}'"
-    target_ids = [int(r[0]) for r in target_rows]
 
+    # 1) Symbol's own file_role is 'test' → trivially test-only.
+    own_test = [r for r in target_rows if r[1] == "test"]
+    if own_test and len(own_test) == len(target_rows):
+        return True, "symbol lives in a test file (file_role='test')"
+    # Mixed (e.g. same name in test + source) — fall through to caller
+    # analysis so the answer reflects actual usage.
+
+    target_ids = [int(r[0]) for r in target_rows]
     placeholders = ",".join("?" * len(target_ids))
     caller_rows = conn.execute(
         f"SELECT s.id, COALESCE(f.file_role, 'unknown') AS role "
         f"FROM edges e "
         f"JOIN symbols s ON s.id = e.source_id "
         f"JOIN files f ON f.id = s.file_id "
-        f"WHERE e.target_id IN ({placeholders}) AND e.kind IN ('calls', 'references')",
+        f"WHERE e.target_id IN ({placeholders}) AND e.kind IN ('call', 'reference', 'calls', 'references')",
         target_ids,
     ).fetchall()
     if not caller_rows:
-        return False, f"no callers found for '{name}' (orphan)"
+        # 3) No callers AND no callees lives in a test file ⇒ orphan in source.
+        return False, f"no callers found for '{name}' (orphan in source)"
     test_count = sum(1 for r in caller_rows if r[1] == "test")
     total = len(caller_rows)
     if test_count == total:
@@ -143,24 +167,33 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
         return False, f"no symbol named '{name}'"
     target_ids = {int(r[0]) for r in target_rows}
 
-    # Pull entry symbol ids. Conservative: prefer explicit `is_entry=1`,
-    # fall back to file_role='entry'.
+    # Entry-point definition must match ``cmd_understand._find_entry_points``
+    # so the oracle is consistent with the rest of the surface area. Per
+    # the redacted, the previous logic looked for an
+    # ``is_entry`` column (doesn't exist on the schema) or a ``file_role
+    # = 'entry'`` value (no files have that role — the actual roles are
+    # source/test/config/docs/script/build/ci/generated). The result was
+    # a confidently-wrong "no entry-point symbols indexed" verdict on
+    # any indexed repo.
+    #
+    # Operational definition: a file with no incoming ``file_edges``
+    # (nothing imports it) AND containing at least one symbol *is* an
+    # entry point. CLI scripts, top-level modules, and tests all
+    # satisfy this — close enough for reachability analysis.
     try:
-        entry_rows = conn.execute("SELECT s.id FROM symbols s WHERE s.is_entry = 1").fetchall()
+        entry_rows = conn.execute(
+            """
+            SELECT s.id FROM symbols s
+            JOIN files f ON f.id = s.file_id
+            WHERE f.id NOT IN (SELECT DISTINCT target_file_id FROM file_edges)
+            """
+        ).fetchall()
         entry_ids = {int(r[0]) for r in entry_rows}
     except sqlite3.OperationalError:
         entry_ids = set()
-    if not entry_ids:
-        try:
-            entry_rows = conn.execute(
-                "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id WHERE COALESCE(f.file_role, '') = 'entry'"
-            ).fetchall()
-            entry_ids = {int(r[0]) for r in entry_rows}
-        except sqlite3.OperationalError:
-            entry_ids = set()
 
     if not entry_ids:
-        return False, "no entry-point symbols indexed (run `roam index` first)"
+        return False, "no entry-point symbols indexed (run `roam init` to (re)build the index)"
 
     if entry_ids & target_ids:
         return True, "target is itself an entry point"
@@ -176,7 +209,7 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
             rows = conn.execute(
                 f"SELECT target_id FROM edges "
                 f"WHERE source_id IN ({placeholders}) "
-                f"  AND kind IN ('calls', 'references')",
+                f"  AND kind IN ('call', 'reference', 'calls', 'references')",
                 chunk,
             ).fetchall()
             for r in rows:

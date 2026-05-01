@@ -106,6 +106,42 @@ def _overall_risk(*severities: str) -> str:
     return "LOW"
 
 
+def _risk_driver(blast, tests, compl, coupl, convs, fitns) -> str:
+    """Identify the row driving the overall risk verdict.
+
+    Returns a one-line summary like ``complexity (cc=17, HIGH)`` so
+    an agent reading the preflight output knows *why* the overall
+    verdict is what it is — it doesn't have to scan all six rows
+    looking for the worst severity.
+
+    Tie-break by actionability: complexity > fitness > tests > coupling
+    > blast > conventions. A complexity warning is more actionable than
+    a convention warning even at equal severity.
+    """
+    rows = [
+        ("complexity", compl, f"cc={compl['max_cognitive_complexity']:.0f}"),
+        ("fitness", fitns, f"{fitns.get('rules_failed', 0)} rules would fail"),
+        ("tests", tests, f"{tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive"),
+        ("coupling", coupl, f"{coupl.get('coupled_files', 0)} coupled files"),
+        (
+            "blast radius",
+            blast,
+            f"{blast.get('affected_symbols', 0)} symbols in {blast.get('affected_files', 0)} files",
+        ),
+        ("conventions", convs, f"{convs.get('violation_count', 0)} violations"),
+    ]
+    # Find max severity
+    worst: tuple[int, str, str] | None = None
+    for label, row, detail in rows:
+        sev = row.get("severity", "OK").upper()
+        order = _SEVERITY_ORDER.get(sev, 0)
+        if order <= 1:  # OK / LOW — not driving the verdict
+            continue
+        if worst is None or order > worst[0]:
+            worst = (order, label, f"{label} ({detail}, {sev})")
+    return worst[2] if worst else ""
+
+
 def _severity_tag(sev: str) -> str:
     return f"[{sev}]"
 
@@ -707,6 +743,15 @@ def preflight(ctx, target, staged):
 
         # Overall
         click.echo(f"\n  Overall risk: {risk}")
+
+        # Risk driver — name the row that's pushing the verdict so an
+        # agent doesn't have to deduce it (redacted).
+        # Pick the highest-severity row, breaking ties by category
+        # priority (complexity > fitness > tests > coupling > blast >
+        # conventions — most actionable first).
+        driver = _risk_driver(blast, tests, compl, coupl, convs, fitns)
+        if driver:
+            click.echo(f"  Risk driver:  {driver}")
 
         # Suggested tests
         if tests["pytest_command"]:
