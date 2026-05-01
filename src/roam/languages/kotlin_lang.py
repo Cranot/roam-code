@@ -5,15 +5,30 @@ import re
 from .generic_lang import GenericExtractor
 
 
-# Belt-and-suspenders fallback for ``object Foo`` declarations the
-# tree-sitter Kotlin grammar may emit differently across versions.
-# Linux CI's tree-sitter-language-pack wheel produces a different node
-# shape than the Windows wheel, so AST-only matching missed them. The
-# regex catches all conventional spellings and is line-anchored to
-# avoid touching ``object`` *expressions* (e.g. ``val x = object : ...``).
+# Belt-and-suspenders fallbacks for top-level Kotlin declarations the
+# tree-sitter grammar may emit differently across versions. Linux CI's
+# tree-sitter-language-pack 1.6.x wheels produce node shapes that bypass
+# both ``object_declaration`` matching and ``enum_class_body`` child
+# detection. Each regex is line-anchored so we don't trip on
+# ``val x = object : T`` (object expression) or similar non-decl uses.
+_KOTLIN_MOD = (
+    r"(?:public\s+|private\s+|internal\s+|protected\s+)?"
+    r"(?:abstract\s+|open\s+|sealed\s+|final\s+|data\s+|inner\s+|companion\s+)*"
+)
 _OBJECT_DECL_RE = re.compile(
-    r"^(?:[\t ]*)(?:public\s+|private\s+|internal\s+|protected\s+)?"
-    r"(?:companion\s+|data\s+)?object\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:({\n]",
+    r"^[\t ]*" + _KOTLIN_MOD + r"object\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:({\n]",
+    re.MULTILINE,
+)
+_ENUM_DECL_RE = re.compile(
+    r"^[\t ]*" + _KOTLIN_MOD + r"enum\s+class\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<({:\s]",
+    re.MULTILINE,
+)
+_INTERFACE_DECL_RE = re.compile(
+    r"^[\t ]*" + _KOTLIN_MOD + r"(?:fun\s+)?interface\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<({:\s]",
+    re.MULTILINE,
+)
+_CLASS_DECL_RE = re.compile(
+    r"^[\t ]*" + _KOTLIN_MOD + r"class\s+([A-Za-z_][A-Za-z0-9_]*)\s*[<({:\s\n]",
     re.MULTILINE,
 )
 
@@ -33,32 +48,54 @@ class KotlinExtractor(GenericExtractor):
         return [".kt", ".kts"]
 
     def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
-        """Run the AST extraction, then add any ``object Foo`` decls the
-        AST shape didn't surface (grammar drift across Linux/Windows
-        tree-sitter wheels).
+        """Run the AST extraction, then add any top-level decls the AST
+        shape didn't surface (grammar drift across tree-sitter wheel
+        versions). We promote any *existing* fallback symbol's kind too,
+        so an ``enum class Color`` mis-classified as a plain ``class``
+        gets corrected to ``enum``.
         """
         symbols = super().extract_symbols(tree, source, file_path)
-        existing_names = {s.get("name") for s in symbols}
         try:
             text = source.decode("utf-8", errors="replace")
         except Exception:
             return symbols
-        for match in _OBJECT_DECL_RE.finditer(text):
-            name = match.group(1)
-            if name in existing_names:
-                continue
-            line = text.count("\n", 0, match.start()) + 1
-            symbols.append(
-                self._make_symbol(
-                    name=name,
-                    kind="class",
-                    line_start=line,
-                    line_end=line,
-                    qualified_name=name,
-                    signature=f"object {name}",
-                )
+
+        by_name = {s.get("name"): s for s in symbols if s.get("name")}
+
+        def _promote_or_add(name: str, kind: str, signature: str, line: int):
+            existing = by_name.get(name)
+            if existing is not None:
+                # Promote kind for grammar-misclassified declarations.
+                if existing.get("kind") == "class" and kind in ("enum", "interface"):
+                    existing["kind"] = kind
+                    if signature and not existing.get("signature"):
+                        existing["signature"] = signature
+                return
+            sym = self._make_symbol(
+                name=name,
+                kind=kind,
+                line_start=line,
+                line_end=line,
+                qualified_name=name,
+                signature=signature,
             )
-            existing_names.add(name)
+            symbols.append(sym)
+            by_name[name] = sym
+
+        # Order matters: enum and interface are *promotions* over plain
+        # ``class`` matches, so process them first.
+        for match in _ENUM_DECL_RE.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            _promote_or_add(match.group(1), "enum", f"enum class {match.group(1)}", line)
+        for match in _INTERFACE_DECL_RE.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            _promote_or_add(match.group(1), "interface", f"interface {match.group(1)}", line)
+        for match in _OBJECT_DECL_RE.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            _promote_or_add(match.group(1), "class", f"object {match.group(1)}", line)
+        for match in _CLASS_DECL_RE.finditer(text):
+            line = text.count("\n", 0, match.start()) + 1
+            _promote_or_add(match.group(1), "class", f"class {match.group(1)}", line)
         return symbols
 
     def _classify_node(self, node) -> str | None:
