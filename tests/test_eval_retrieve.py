@@ -432,3 +432,116 @@ class TestWeightSweepPlumbing:
             )
         # Smoke test: function returns a TaskResult with recall@K filled in.
         assert "src/auth.py" in result.retrieved_files or result.recall_at[20] >= 0.0
+
+
+# ---------------------------------------------------------------------------
+# Bench-portable emit formats — `--emit-format coderag` / `beir`
+# ---------------------------------------------------------------------------
+
+
+class TestBenchEmit:
+    """Public-leaderboard submission shapes: CodeRAG-Bench + BEIR/trec_eval."""
+
+    def _write_tasks(self, tmp_path, tasks):
+        path = tmp_path / "tasks.jsonl"
+        path.write_text("\n".join(json.dumps(t) for t in tasks) + "\n", encoding="utf-8")
+        return path
+
+    def test_coderag_emit_one_record_per_task(self, eval_project, tmp_path):
+        tasks_path = self._write_tasks(
+            tmp_path,
+            [
+                {"task_id": "t1", "task": "UserSession refresh", "expected_files": ["src/auth.py"]},
+                {"task_id": "t2", "task": "Invoice total", "expected_files": ["src/billing.py"]},
+            ],
+        )
+        out_path = tmp_path / "runs" / "coderag.jsonl"
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "eval-retrieve",
+                "--tasks",
+                str(tasks_path),
+                "--emit-format",
+                "coderag",
+                "--emit-out",
+                str(out_path),
+                "--emit-k",
+                "5",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        assert out_path.exists(), result.output
+        lines = out_path.read_text(encoding="utf-8").strip().splitlines()
+        assert len(lines) == 2  # one per task
+        records = [json.loads(line) for line in lines]
+        for rec in records:
+            assert set(rec) >= {"task_id", "query", "ctxs"}
+            assert isinstance(rec["ctxs"], list)
+            for ctx in rec["ctxs"]:
+                assert set(ctx) >= {"id", "title", "text", "score"}
+                # id format: <file>:<line_start>-<line_end>
+                assert ":" in ctx["id"] and "-" in ctx["id"]
+                assert isinstance(ctx["score"], float)
+
+    def test_beir_emit_one_record_per_doc(self, eval_project, tmp_path):
+        tasks_path = self._write_tasks(
+            tmp_path,
+            [
+                {"task_id": "qA", "task": "UserSession refresh", "expected_files": ["src/auth.py"]},
+            ],
+        )
+        out_path = tmp_path / "beir.jsonl"
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            [
+                "eval-retrieve",
+                "--tasks",
+                str(tasks_path),
+                "--emit-format",
+                "beir",
+                "--emit-out",
+                str(out_path),
+                "--emit-k",
+                "3",
+            ],
+        )
+        assert result.exit_code == 0, result.output
+        lines = out_path.read_text(encoding="utf-8").strip().splitlines()
+        # Up to 3 docs per query × 1 query = up to 3 lines.
+        assert 0 < len(lines) <= 3, f"expected 1-3 BEIR records, got {len(lines)}"
+        for ln, raw in enumerate(lines, 1):
+            rec = json.loads(raw)
+            assert set(rec) >= {"query_id", "doc_id", "rank", "score", "run_name"}
+            assert rec["query_id"] == "qA"
+            assert rec["rank"] == ln  # rank is 1-based, monotonically increasing
+
+    def test_emit_format_requires_emit_out(self, eval_project, tmp_path):
+        tasks_path = self._write_tasks(
+            tmp_path,
+            [{"task_id": "t1", "task": "x", "expected_files": ["src/auth.py"]}],
+        )
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["eval-retrieve", "--tasks", str(tasks_path), "--emit-format", "coderag"],
+        )
+        # Missing --emit-out should produce a UsageError (Click exit code 2).
+        assert result.exit_code != 0
+        assert "emit-out" in result.output.lower()
+
+    def test_default_format_is_roam(self, eval_project, tmp_path):
+        """Without --emit-format, behaviour matches v12.0 — the harness
+        runs and prints VERDICT plus per-task table."""
+        tasks_path = self._write_tasks(
+            tmp_path,
+            [{"task_id": "t1", "task": "UserSession", "expected_files": ["src/auth.py"]}],
+        )
+        runner = CliRunner()
+        result = runner.invoke(cli, ["eval-retrieve", "--tasks", str(tasks_path)])
+        assert result.exit_code == 0, result.output
+        assert "VERDICT:" in result.output
+        # Should NOT have written any extra runs file.
+        assert "runs" not in result.output.lower() or "Wrote" not in result.output
