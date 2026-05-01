@@ -210,7 +210,11 @@ def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
         hits = set()
         for token in lowered:
             for part in parts:
-                if part == token or (len(token) >= 4 and part.startswith(token)) or (len(part) >= 4 and token.startswith(part)):
+                if (
+                    part == token
+                    or (len(token) >= 4 and part.startswith(token))
+                    or (len(part) >= 4 and token.startswith(part))
+                ):
                     hits.add(token)
                     break
         if not hits:
