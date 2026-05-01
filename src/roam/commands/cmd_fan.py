@@ -107,25 +107,17 @@ _FRAMEWORK_NAMES = frozenset(
 )
 
 
-_TOOLING_PATH_HINTS = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
-
-
-def _is_tooling_path(path: str) -> bool:
-    """Return True for paths that belong to tooling/CI/benchmarks/dev.
-
-    Default-excluded from headline metrics so first-time users aren't
-    dominated by ``pr-comment.js`` and ``roam-bench.py`` rows.
-    Matches the hint set used by ``cmd_smells._file_role_lookup``.
-    """
-    if not path:
-        return False
-    p = "/" + path.replace("\\", "/")
-    return any(hint.replace("\\", "/") in p for hint in _TOOLING_PATH_HINTS)
+from roam.output.file_role_hints import is_excluded_path
 
 
 def _filter_tooling_rows(rows):
-    """Filter out rows whose ``file_path`` is in a tooling location."""
-    return [r for r in rows if not _is_tooling_path(r["file_path"] or "")]
+    """Filter out rows whose ``file_path`` is in a default-excluded
+    location (tooling, generated, examples, vendor, workspaces, etc.).
+
+    Uses the shared ``output.file_role_hints`` set so all headline
+    commands stay in sync.
+    """
+    return [r for r in rows if not is_excluded_path(r["file_path"] or "")]
 
 
 @click.command()

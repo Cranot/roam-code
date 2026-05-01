@@ -523,6 +523,17 @@ def _render_single_text(data):
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"=== Context for: {sym['name']}{task_suffix} ===")
+    # Python pivot v12.4: surface async + decorators above the
+    # signature so agents reading context know coroutine semantics
+    # without scanning source. ``sym`` is a sqlite3.Row which doesn't
+    # expose ``.get`` — guard each access with a key check.
+    _row_keys = sym.keys() if hasattr(sym, "keys") else []
+    if "is_async" in _row_keys and sym["is_async"]:
+        click.echo("  [async coroutine]")
+    decorators_str = (sym["decorators"] if "decorators" in _row_keys else "") or ""
+    if decorators_str:
+        for d in decorators_str.split(",")[:5]:
+            click.echo(f"  {d.strip()}")
     click.echo(
         f"{abbrev_kind(sym['kind'])}  "
         f"{sym['qualified_name'] or sym['name']}"

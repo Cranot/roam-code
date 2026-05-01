@@ -146,6 +146,9 @@ def ensure_schema(conn: sqlite3.Connection):
 
     # Migrations for columns added after initial schema
     _safe_alter(conn, "symbols", "default_value", "TEXT")
+    # Python pivot v12.4: is_async + decorators on symbols
+    _safe_alter(conn, "symbols", "is_async", "INTEGER DEFAULT 0")
+    _safe_alter(conn, "symbols", "decorators", "TEXT DEFAULT ''")
     _safe_alter(conn, "file_stats", "health_score", "REAL")
     _safe_alter(conn, "file_stats", "cochange_entropy", "REAL")
     _safe_alter(conn, "file_stats", "cognitive_load", "REAL")
