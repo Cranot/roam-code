@@ -358,17 +358,7 @@ def _group_dead(dead_items, by):
 # ---------------------------------------------------------------------------
 
 
-_TOOLING_PATH_HINTS = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
-
-
-def _is_tooling_path(path: str) -> bool:
-    """Same hint set as cmd_fan / cmd_smells. Excluded from dead-code
-    headline by default (redacted) — CI scripts are
-    expected to have unreferenced helper functions."""
-    if not path:
-        return False
-    p = "/" + path.replace("\\", "/")
-    return any(hint.replace("\\", "/") in p for hint in _TOOLING_PATH_HINTS)
+from roam.output.file_role_hints import is_excluded_path as _is_tooling_path
 
 
 def _analyze_dead(conn):

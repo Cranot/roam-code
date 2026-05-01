@@ -120,6 +120,36 @@ class PythonExtractor(LanguageExtractor):
                 decorators.append(self.node_text(child, source))
         return decorators
 
+    def _is_async_def(self, node) -> bool:
+        """Detect ``async def`` on a function_definition (or its
+        decorated_definition wrapper).
+
+        Tree-sitter-python emits ``async`` as an *unnamed* keyword
+        child of the function_definition node — distinct from the
+        named ``def`` and identifier children. For decorated_definition
+        wrappers we recurse into the inner function_definition.
+        """
+        # Drill into decorated_definition to find the inner function
+        target = node
+        if node.type == "decorated_definition":
+            for child in node.children:
+                if child.type == "function_definition":
+                    target = child
+                    break
+        if target.type != "function_definition":
+            return False
+        for child in target.children:
+            # ``async`` token comes before ``def`` in tree-sitter-python.
+            # Stop scanning once we hit ``def`` to avoid misclassification
+            # if anything in the body somehow shows up here.
+            if not child.is_named:
+                tok = child.type
+                if tok == "async":
+                    return True
+                if tok == "def":
+                    return False
+        return False
+
     def _visibility(self, name: str) -> str:
         if name.startswith("__") and not name.endswith("__"):
             return "private"
@@ -169,7 +199,13 @@ class PythonExtractor(LanguageExtractor):
             return
         name = self.node_text(name_node, source)
         params = node.child_by_field_name("parameters")
-        sig = f"def {name}({self._params_text(params, source)})"
+        # Python pivot v12.4: detect ``async def`` by scanning the
+        # node's leading non-named tokens. Tree-sitter-python emits
+        # ``async`` as an unnamed keyword child of the function_definition
+        # (or its decorated_definition wrapper) before the ``def`` token.
+        is_async = self._is_async_def(decorator_node or node)
+        sig_kw = "async def" if is_async else "def"
+        sig = f"{sig_kw} {name}({self._params_text(params, source)})"
         ret = node.child_by_field_name("return_type")
         if ret:
             sig += f" -> {self.node_text(ret, source)}"
@@ -197,6 +233,8 @@ class PythonExtractor(LanguageExtractor):
                 visibility=vis,
                 is_exported=is_exported,
                 parent_name=parent_name,
+                is_async=is_async,
+                decorators=",".join(decorators) if decorators else "",
             )
         )
 

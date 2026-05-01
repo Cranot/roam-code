@@ -160,9 +160,25 @@ def _format_explanation_text(expl: dict) -> list[str]:
     default=None,
     help="Filter by symbol kind (fn, cls, meth, var, iface, etc.)",
 )
+@click.option(
+    "--async",
+    "async_only",
+    is_flag=True,
+    help="Show only async functions/methods (requires Python pivot v12.4 schema).",
+)
+@click.option(
+    "--decorator",
+    "decorator_filter",
+    default=None,
+    help=(
+        "Filter to symbols carrying a decorator matching this substring "
+        "(case-insensitive). E.g. ``--decorator pytest.fixture`` finds all "
+        "fixtures. ``--decorator app.route`` finds Flask/FastAPI routes."
+    ),
+)
 @click.option("--explain", is_flag=True, help="Show score breakdown for each result")
 @click.pass_context
-def search(ctx, pattern, full, kind_filter, explain):
+def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, explain):
     """Find symbols matching a name substring (case-insensitive).
 
     Unlike ``grep`` (which searches file contents) and ``search-semantic``
@@ -180,6 +196,12 @@ def search(ctx, pattern, full, kind_filter, explain):
             abbrev_to_kind = {v: k for k, v in KIND_ABBREV.items()}
             full_kind = abbrev_to_kind.get(kind_filter, kind_filter)
             rows = [r for r in rows if r["kind"] == full_kind]
+        # Python pivot v12.4 — filter by async/decorator
+        if async_only:
+            rows = [r for r in rows if (r["is_async"] if "is_async" in r.keys() else 0)]
+        if decorator_filter:
+            needle = decorator_filter.lower()
+            rows = [r for r in rows if needle in (r["decorators"] or "").lower()]
 
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""

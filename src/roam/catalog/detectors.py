@@ -2300,6 +2300,17 @@ def _iter_registered_detectors():
     for det in _MATH_DETECTORS:
         yield det
 
+    # Python pivot v12.4 — language-specific idiom detectors. Wrapped
+    # in try/except so a regex bug in one detector can't block the
+    # algorithm pass.
+    try:
+        from roam.catalog.python_idioms import PYTHON_IDIOM_DETECTORS
+
+        for det in PYTHON_IDIOM_DETECTORS:
+            yield det
+    except Exception:
+        pass
+
     try:
         from roam.plugins import get_plugin_detectors
 

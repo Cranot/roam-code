@@ -20,7 +20,10 @@ def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict
     except Exception:
         return []
 
-    # Ensure every symbol dict has all required keys with defaults
+    # Ensure every symbol dict has all required keys with defaults.
+    # Python pivot v12.4 added ``is_async`` and ``decorators`` — they
+    # must pass through this normalisation or the indexer never sees
+    # them (caught by redacted R3).
     normalised = []
     for sym in symbols:
         normalised.append(
@@ -36,6 +39,8 @@ def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict
                 "is_exported": sym.get("is_exported", True),
                 "parent_name": sym.get("parent_name"),
                 "default_value": sym.get("default_value"),
+                "is_async": bool(sym.get("is_async", False)),
+                "decorators": sym.get("decorators") or "",
             }
         )
     return normalised

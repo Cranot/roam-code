@@ -93,16 +93,20 @@ def smells(ctx, file_path, min_severity, include_tooling):
     with open_db(readonly=True) as conn:
         findings = run_all_detectors(conn)
 
-        # Default: exclude tooling. Per redacted, the
-        # top-N critical smells were dominated by .github/scripts,
-        # benchmarks/, dev/, and generated files — none of which are
-        # source code a user would want to refactor. Their inclusion
-        # made the verdict ("Needs refactoring: 1689 smells") false-
-        # alarming. ``--include-tooling`` opts back into the full set.
+        # Default: exclude tooling, generated, examples, vendor, workspaces,
+        # docs. Per redacted + 2026-05-02 (Python pivot),
+        # the top-N critical smells were dominated by paths the user
+        # didn't write or doesn't want to refactor (``dev/``,
+        # ``.github/scripts/``, ``examples/``, ``workspaces/`` agent
+        # artifacts, vendored packages, codegen output). The shared
+        # path-hint set lives in ``roam.output.file_role_hints`` so all
+        # headline commands stay in sync. ``--include-tooling`` opts
+        # back into the full set.
+        from roam.output.file_role_hints import is_excluded_path
+
         excluded_tooling = 0
         if not include_tooling:
             tooling_roles = {"ci", "scripts", "build", "generated"}
-            tooling_path_hints = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
             tooling_roles_per_file = _file_role_lookup(conn)
             kept: list[dict] = []
             for f in findings:
@@ -112,7 +116,7 @@ def smells(ctx, file_path, min_severity, include_tooling):
                 if role in tooling_roles:
                     excluded_tooling += 1
                     continue
-                if any(hint.replace("\\", "/") in "/" + file_path_only for hint in tooling_path_hints):
+                if is_excluded_path(file_path_only):
                     excluded_tooling += 1
                     continue
                 kept.append(f)
