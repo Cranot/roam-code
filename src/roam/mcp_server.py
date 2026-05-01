@@ -169,6 +169,28 @@ _PRESETS: dict[str, set[str]] = {
         "roam_relate",
         "roam_agent_export",
     },
+    # v12.2: focused preset for the EU AI Act / NIS2 / FedRAMP buyer
+    # redacted the v12.2 redacted. Everything an auditor
+    # needs to verify a "trustable AI-assisted codebase" via roam.
+    "compliance": {
+        # Pre-change checks (read)
+        "roam_preflight",
+        "roam_uses",
+        "roam_impact",
+        # Patch verification (read)
+        "roam_critique",
+        "roam_diff",
+        # Security / supply chain (read + emit)
+        "roam_taint",
+        "roam_taint_classify",
+        "roam_secrets",
+        "roam_supply_chain",
+        "roam_sbom",
+        # Attestation chain (emit + verify)
+        "roam_attest",
+        "roam_cga_emit",
+        "roam_cga_verify",
+    },
     "full": set(),  # empty = all tools exposed
 }
 
@@ -227,9 +249,16 @@ _DESTRUCTIVE_TOOLS = {"roam_mutate"}
 _NON_IDEMPOTENT_TOOLS = _NON_READ_ONLY_TOOLS.copy()
 
 # Tools where task execution must be used (non-blocking by default).
+# v12.2: promote `roam_health`, `roam_understand`, `roam_simulate` to
+# required-task per MCP spec 2025-11-25 (SEP-1686). These all run >2s on
+# a 14k-symbol repo — blocking the client is wrong UX. Tasks/get + cancel
+# work end-to-end. roam was the first code-intel MCP server to ship this.
 _TASK_REQUIRED_TOOLS = {
     "roam_init",
     "roam_reindex",
+    "roam_health",
+    "roam_understand",
+    "roam_simulate",
 }
 
 # Long-running tools where task support is useful when FastMCP task extras exist.
@@ -242,7 +271,6 @@ _TASK_OPTIONAL_TOOLS = {
     "roam_forecast",
     "roam_path_coverage",
     "roam_search_semantic",
-    "roam_simulate",
     "roam_closure",
     "roam_cut_analysis",
     "roam_generate_plan",
@@ -2369,6 +2397,153 @@ def oracle_is_clone_of(name: str, root: str = ".") -> dict:
     table is empty.
     """
     return _run_roam(["oracle", "is-clone-of", name], root)
+
+
+# ---------------------------------------------------------------------------
+# v12.2 — compliance preset MCP tools (4): taint, sbom, cga_emit, cga_verify
+# Direct exposure of the security/attestation surface so agents in the
+# `compliance` preset can audit a codebase end-to-end without shelling
+# out. Counter to the v12.2 audit-finding gap (these were CLI-only).
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_taint",
+    description=(
+        "Graph-reach taint analysis. Returns OpenVEX-shaped findings "
+        "(spec-legal status + justification — never `code_not_reachable`). "
+        "5 starter rule packs: sqli, xss, path-traversal, cmd-injection, "
+        "deserialization. Pair with --ci to gate on findings (exit 5)."
+    ),
+)
+def taint(
+    rules_dir: str = "",
+    rule: str = "",
+    ci: bool = False,
+    root: str = ".",
+) -> dict:
+    """Run static taint analysis on the indexed graph.
+
+    WHEN TO USE: as the first stage of a security audit, before running
+    the LLM-augmented ``roam_taint_classify``. Returns reach-only
+    findings with OpenVEX-shaped status/justification fields ready for
+    SBOM/CGA embedding.
+    """
+    args = ["taint"]
+    if rules_dir:
+        args.extend(["--rules-dir", rules_dir])
+    if rule:
+        args.extend(["--rule", rule])
+    if ci:
+        args.append("--ci")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_sbom",
+    description=(
+        "Emit a Software Bill of Materials (CycloneDX 1.7 by default, or "
+        "SPDX 2.3) enriched with call-graph reachability — distinguishes "
+        "phantom dependencies from those actually exercised. Pair with "
+        "--aibom for the AIBOM extension required by EU AI Act Art. 50."
+    ),
+)
+def sbom(
+    fmt: str = "cyclonedx",
+    aibom: bool = False,
+    root: str = ".",
+) -> dict:
+    """Emit an SBOM in the requested format.
+
+    WHEN TO USE: regulatory artifact emission. The CycloneDX 1.7 path
+    embeds an AIBOM extension when ``aibom=True`` — binds AI-authored
+    commits to the indexed symbols they touched. Required for the
+    EU AI Act Art. 50 disclosure (effective 2026-08-02) and the GPAI
+    Code of Practice.
+
+    Parameters
+    ----------
+    fmt: ``"cyclonedx"`` (default) or ``"spdx"``.
+    aibom: include the AIBOM extension (CycloneDX only).
+    """
+    args = ["sbom", "--format", fmt, "--stdout"] if False else ["sbom", "--format", fmt]
+    if aibom:
+        args.append("--aibom")
+    # Unlike most other tools, sbom writes to a file by default. We pass
+    # an explicit --output so the result is captured in the JSON envelope
+    # and the agent can read it back.
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_cga_emit",
+    description=(
+        "Emit a Code Graph Attestation — in-toto v1 statement with "
+        "predicate type `roam-code.dev/CodeGraph/v1` (or `CodeGraph-"
+        "AIBOM/v1` with --aibom). Merkle root over symbol fingerprints + "
+        "edge-bundle digest. Optional cosign keyless or offline signing."
+    ),
+)
+def cga_emit(
+    include_taint: bool = False,
+    aibom: bool = False,
+    sign: bool = False,
+    key: str = "",
+    keyless: bool = False,
+    root: str = ".",
+) -> dict:
+    """Emit a Code Graph Attestation.
+
+    WHEN TO USE: at release / merge time. The attestation is reproducible
+    — same source tree + same git HEAD → same Merkle root. Pair with
+    cosign signing to add identity proof on top of the deterministic
+    fingerprint. With ``aibom=True`` the predicate promotes to
+    ``CodeGraph-AIBOM/v1`` and embeds AI-authored commit attribution.
+    """
+    args = ["cga", "emit"]
+    if include_taint:
+        args.append("--include-taint")
+    if aibom:
+        args.append("--aibom")
+    if sign:
+        args.append("--sign")
+        if key:
+            args.extend(["--key", key])
+        if keyless:
+            args.append("--keyless")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_cga_verify",
+    description=(
+        "Verify a Code Graph Attestation — re-derives the Merkle root + "
+        "edge-bundle digest from the live DB and compares to the bundled "
+        "predicate. Round-trips the cosign signature when a sibling "
+        "`.bundle` exists. Exits 5 on tamper (CI-gateable)."
+    ),
+)
+def cga_verify(
+    statement_path: str,
+    cosign_bundle: str = "",
+    cosign_key: str = "",
+    no_cosign: bool = False,
+    root: str = ".",
+) -> dict:
+    """Verify a CGA statement file against the live indexed DB.
+
+    WHEN TO USE: at audit / receipt time. Pair with the public key
+    distributed alongside the codebase to verify both the Merkle digest
+    AND the cosign identity in one call.
+    """
+    args = ["cga", "verify", statement_path]
+    if cosign_bundle:
+        args.extend(["--cosign-bundle", cosign_bundle])
+    if cosign_key:
+        args.extend(["--cosign-key", cosign_key])
+    if no_cosign:
+        args.append("--no-cosign")
+    return _run_roam(args, root)
 
 
 # ---------------------------------------------------------------------------
@@ -5257,7 +5432,16 @@ def roam_clean(root: str = ".") -> dict:
     default=None,
     help="emit client compatibility profile JSON and exit",
 )
-def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, compat_profile):
+@click.option(
+    "--card",
+    is_flag=True,
+    help=(
+        "Print the MCP Server Card (the .well-known/mcp-server-card.json "
+        "shape per spec 2025-11-25). Useful for piping into registry "
+        "submissions: ``roam mcp --card | jq .``."
+    ),
+)
+def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, compat_profile, card):
     """Start the roam MCP server.
 
     \b
@@ -5285,6 +5469,35 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
     if compat_profile:
         payload = _compat_profile_payload(compat_profile, ".")
         click.echo(json.dumps(payload, indent=2, sort_keys=True))
+        return
+
+    if card:
+        # MCP Server Card per blog.modelcontextprotocol.io/posts/2026-mcp-roadmap.
+        # Loaded from the canonical static file so the CLI and the hosted
+        # docs site agree byte-for-byte. First-mover discovery for the
+        # MCP ecosystem registries (PulseMCP, mcp.so, Smithery, etc.).
+        from pathlib import Path as _Path
+
+        card_path = (
+            _Path(__file__).resolve().parents[1].parent.parent
+            / "docs"
+            / "site"
+            / ".well-known"
+            / "mcp-server-card.json"
+        )
+        if not card_path.is_file():
+            # Fallback: walk up from the current module file two more levels.
+            card_path = (
+                _Path(__file__).resolve().parent.parent.parent
+                / "docs"
+                / "site"
+                / ".well-known"
+                / "mcp-server-card.json"
+            )
+        if not card_path.is_file():
+            click.echo("error: server card file not found", err=True)
+            raise SystemExit(1)
+        click.echo(card_path.read_text(encoding="utf-8").rstrip())
         return
 
     if mcp is None:

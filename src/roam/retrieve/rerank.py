@@ -46,6 +46,7 @@ def structural_score(
     use_personalized: bool = True,
     config_root: Path | None = None,
     lexical_baseline: float | None = None,
+    task: str = "",
 ) -> list[dict]:
     """Rerank *candidates* with structural signals.
 
@@ -85,16 +86,19 @@ def structural_score(
     clone_tags = _clone_tags(conn, candidates)
     cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
     runtime_scores = _runtime_scores(conn, candidate_ids)
+    semantic_scores = _semantic_scores(conn, candidate_ids, task)
 
     pr_max = max(pr_scores.values()) if pr_scores else 0.0
     fts_max = max((float(c.get("fts_score", 0.0)) for c in candidates), default=0.0)
     cochange_max = max(cochange_scores.values()) if cochange_scores else 0.0
     runtime_max = max(runtime_scores.values()) if runtime_scores else 0.0
+    semantic_max = max(semantic_scores.values()) if semantic_scores else 0.0
 
     alpha = float(weights.get("alpha", 0.40))
     beta = float(weights.get("beta", 0.25))
     delta = float(weights.get("delta", 0.15))
     epsilon = float(weights.get("epsilon", 0.05))
+    zeta = float(weights.get("zeta", 0.20))  # v12.2 semantic similarity
 
     # Lexical baseline: explicit kwarg > config > module default. Independent
     # of the alpha/beta/... structural weight vector. Without it, candidates
@@ -114,9 +118,19 @@ def structural_score(
 
         clone_info = clone_tags.get(sid)
         clone_boost = epsilon if clone_info else 0.0
+        # ζ semantic signal — contributes 0 unless the embeddings table is
+        # populated AND the [semantic] extras are installed. Robs from
+        # lexical_baseline implicitly because semantic and lexical compete
+        # for the same "what does this query mean" headroom.
+        semantic_norm = semantic_scores.get(sid, 0.0) / semantic_max if semantic_max > 0 else 0.0
 
         score = (
-            alpha * pr_norm + beta * cochange_norm + delta * runtime_norm + lexical_baseline * fts_norm + clone_boost
+            alpha * pr_norm
+            + beta * cochange_norm
+            + delta * runtime_norm
+            + zeta * semantic_norm
+            + lexical_baseline * fts_norm
+            + clone_boost
         )
 
         justifications: dict[str, object] = {}
@@ -189,6 +203,39 @@ def _runtime_scores(
         if score > 0:
             out[sid] = score
     return out
+
+
+def _semantic_scores(
+    conn: sqlite3.Connection,
+    candidate_ids: Iterable[int],
+    task: str,
+) -> dict[int, float]:
+    """Per-candidate ζ contribution: semantic similarity to *task*, in [0, 1].
+
+    Returns an empty dict (ζ contributes 0 to every candidate) when:
+
+    * The ``symbol_embeddings`` table is absent or empty.
+    * The optional ``[semantic]`` extras (onnxruntime + tokenizers) aren't
+      importable.
+    * The model files aren't on disk.
+
+    This is the v12.2 fifth signal. The reranker normalises across the
+    candidate set, so absolute magnitudes don't matter — only the
+    relative ordering of semantic similarity contributes.
+    """
+    if not task or not task.strip():
+        return {}
+    cand_set = list(candidate_ids)
+    if not cand_set:
+        return {}
+    try:
+        from roam.retrieve.semantic import semantic_score
+    except ImportError:
+        return {}
+    try:
+        return semantic_score(conn, cand_set, task)
+    except Exception:
+        return {}
 
 
 # ---------------------------------------------------------------------------

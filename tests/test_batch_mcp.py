@@ -739,12 +739,20 @@ class TestCoreToolsMembership:
         assert len(_CORE_TOOLS) >= 23, f"_CORE_TOOLS shrank below 23 ({len(_CORE_TOOLS)})"
 
     def test_presets_are_supersets_of_updated_core(self):
-        """All named presets must include the new batch tools."""
+        """All named presets must include the new batch tools.
+
+        v12.2 exception: ``compliance`` is intentionally a focused, narrow
+        subset for regulated buyers (preflight + taint + sbom + cga + …),
+        not core++. It deliberately omits batch tools because batch
+        semantics aren't useful for an audit attestation flow.
+        """
         from roam.mcp_server import _PRESETS
 
         for name, tools in _PRESETS.items():
             if name == "full":
                 continue  # full has empty set (no filtering)
+            if name == "compliance":
+                continue  # v12.2 — focused-subset preset, not core++
             assert "roam_batch_search" in tools, f"{name} missing roam_batch_search"
             assert "roam_batch_get" in tools, f"{name} missing roam_batch_get"
 

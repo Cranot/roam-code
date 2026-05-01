@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.1.0"
+version = "12.2.0"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -54,6 +54,29 @@ semantic = [
     "numpy>=1.24",
     "onnxruntime>=1.16",
     "tokenizers>=0.15",
+]
+leiden = [
+    # Strictly better community detection than Louvain (no badly-connected
+    # communities). Auto-detected at runtime; falls back to seeded Louvain
+    # when these aren't installed.
+    "igraph>=0.11",
+    "leidenalg>=0.10",
+]
+graph-fast = [
+    # rustworkx is a Rust-backed drop-in for many NetworkX algorithms;
+    # 3-100× speedup at >250k nodes per the v12.2 architecture review.
+    # Auto-detected via ``ROAM_GRAPH_BACKEND=rustworkx``.
+    "rustworkx>=0.14",
+]
+sbom = [
+    # CycloneDX 1.7 SBOM emit (with AIBOM extension) for `roam sbom`.
+    # Falls back to in-tree minimal emitter when not installed.
+    "cyclonedx-python-lib>=8.0",
+]
+learned = [
+    # LightGBM LambdaMART distillation for `roam retrieve --rerank learned`.
+    # Optional — current `--rerank fast` blend stays the default.
+    "lightgbm>=4.0",
 ]
 dev = [
     "pytest>=7.0",

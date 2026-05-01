@@ -62,7 +62,13 @@ def test_readme_has_v11_narrative_section():
     assert "## What's New in v11" in text
     assert "MCP v2" in text
     assert "92% reduction" in text
-    assert "1000x" in text
+    # v12.2: the "1000x" speedup claim was softened to a measured-cohort
+    # statement during the adversarial-review pass (the original number
+    # was unsourced and a competitor would screenshot it). The contract
+    # this test now enforces: the FTS5/BM25 perf narrative is still in
+    # the README, just no longer with a fragile multiplier.
+    assert "FTS5/BM25" in text
+    assert "milliseconds" in text
     assert "O(changed)" in text
     assert "SARIF" in text
 

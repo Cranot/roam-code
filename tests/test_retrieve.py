@@ -164,6 +164,7 @@ class TestPipeline:
             "gamma",
             "delta",
             "epsilon",
+            "zeta",  # v12.2: semantic similarity via bge-small + sqlite-vec
         }
 
 

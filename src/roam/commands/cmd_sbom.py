@@ -270,7 +270,7 @@ def _generate_cyclonedx(
 
     bom: dict = {
         "bomFormat": "CycloneDX",
-        "specVersion": "1.5",
+        "specVersion": "1.7",
         "version": 1,
         "serialNumber": f"urn:uuid:{serial}",
         "metadata": metadata,
@@ -413,8 +413,19 @@ def _generate_spdx(
     default=False,
     help="Skip call-graph reachability analysis (faster)",
 )
+@click.option(
+    "--aibom",
+    is_flag=True,
+    default=False,
+    help=(
+        "Embed the AIBOM extension (CycloneDX only) — bind AI-authored "
+        "commits (mined via committer email + Co-Authored-By trailers + "
+        "AI-keyword scan) to the indexed symbols they touched. Required "
+        "for EU AI Act Art. 50 disclosure (effective 2026-08-02)."
+    ),
+)
 @click.pass_context
-def sbom(ctx, fmt, output_path, no_reachability):
+def sbom(ctx, fmt, output_path, no_reachability, aibom):
     """Generate a Software Bill of Materials (SBOM) enriched with call-graph reachability.
 
     Produces CycloneDX 1.5 or SPDX 2.3 JSON output.  Each dependency is
@@ -467,6 +478,19 @@ def sbom(ctx, fmt, output_path, no_reachability):
         sbom_data = _generate_spdx(project_name, deps, reachability)
     else:
         sbom_data = _generate_cyclonedx(project_name, deps, reachability)
+
+    # AIBOM extension (CycloneDX 1.7 only) — bind AI-authored commits to
+    # indexed symbols. Required for EU AI Act Art. 50 disclosure.
+    if aibom and fmt.lower() == "cyclonedx":
+        try:
+            from roam.security.aibom_extension import build_aibom_block
+
+            ensure_index()
+            with open_db(readonly=True) as conn:
+                aibom_block = build_aibom_block(project_root, conn)
+            sbom_data["aibom"] = aibom_block
+        except Exception as exc:
+            sbom_data["aibom"] = {"error": str(exc), "version": "0.1"}
 
     # Build summary for verdict / JSON envelope
     total_deps = len(deps)

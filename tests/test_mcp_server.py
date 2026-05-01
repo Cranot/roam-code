@@ -304,7 +304,7 @@ class TestToolDecorator:
         assert "roam_reindex" in _NON_READ_ONLY_TOOLS
 
     def test_presets_all_defined(self):
-        """All 6 presets should be defined."""
+        """All 7 presets should be defined (v12.2 added 'compliance')."""
         from roam.mcp_server import _PRESETS
 
         assert set(_PRESETS.keys()) == {
@@ -313,16 +313,27 @@ class TestToolDecorator:
             "refactor",
             "debug",
             "architecture",
+            "compliance",  # v12.2 — EU AI Act / NIS2 audit subset
             "full",
         }
 
     def test_presets_are_supersets_of_core(self):
-        """Named presets (except full) should include all core tools."""
+        """Named presets should include all core tools.
+
+        Exception 1: ``full`` is the empty set sentinel (no filtering).
+        Exception 2 (v12.2): ``compliance`` is a focused, narrow subset
+        for regulated buyers — not a core++ shape — by design.
+        """
         from roam.mcp_server import _CORE_TOOLS, _PRESETS
 
         for name, tools in _PRESETS.items():
             if name == "full":
                 assert tools == set(), "full preset should be empty set (no filtering)"
+            elif name == "compliance":
+                # Must be NON-empty and stay tight (≤ 20 tools) to match the
+                # narrow "audit-only" framing.
+                assert len(tools) > 0
+                assert len(tools) <= 20, f"compliance preset too wide: {len(tools)} tools"
             else:
                 assert _CORE_TOOLS.issubset(tools), f"{name} preset missing core tools"
 
@@ -386,6 +397,7 @@ class TestExpandToolset:
             "refactor",
             "debug",
             "architecture",
+            "compliance",  # v12.2 — EU AI Act / NIS2 audit subset
             "full",
         }
 

@@ -46,6 +46,10 @@ DEFAULT_RETRIEVE_WEIGHTS: dict[str, float] = {
     "gamma": 0.15,  # inverse layer distance
     "delta": 0.15,  # runtime hotspot signal
     "epsilon": 0.05,  # clone-canonical boost
+    "zeta": 0.20,  # v12.2: semantic similarity (bge-small + sqlite-vec)
+    # Activates only when [semantic] extras are installed AND the
+    # symbol-embedding table is populated; otherwise contributes 0 and
+    # the original blend is preserved exactly.
 }
 
 DEFAULT_RETRIEVE: dict[str, Any] = {

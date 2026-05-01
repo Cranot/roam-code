@@ -77,7 +77,7 @@ def run_retrieve(
     # evidence — re-introduce here when A.13 ships and eval shows ≥3pt
     # recall@20 lift over 'fast'. For now only 'fast' triggers structural
     # rerank; 'off' falls back to lexical-only.
-    use_personalized = rerank == "fast"
+    use_personalized = rerank in ("fast", "learned")
     scored = structural_score(
         conn,
         first_stage,
@@ -85,7 +85,30 @@ def run_retrieve(
         weights,
         use_personalized=use_personalized,
         config_root=config_root,
+        task=task,
     )
+
+    # v12.2: optional learned-ranker overlay. Robs the score from the
+    # structural blend when a model is available; otherwise no-op.
+    if rerank == "learned":
+        try:
+            from roam.retrieve.learned_ranker import is_available
+            from roam.retrieve.learned_ranker import score as learned_score
+
+            if is_available():
+                learned_scores = learned_score(scored, task)
+                if learned_scores:
+                    # Replace the structural score with the learned model's
+                    # score, but keep all justifications for transparency.
+                    for c in scored:
+                        sid = int(c["symbol_id"])
+                        if sid in learned_scores:
+                            c["score"] = round(learned_scores[sid], 4)
+                            c.setdefault("justifications", {})["learned"] = round(learned_scores[sid], 4)
+                    scored.sort(key=lambda x: -x["score"])
+        except Exception:
+            # Silent fallback — keep the structural ranking
+            pass
 
     selected, budget_used = _apply_budget(scored, budget=budget, k=k, tokens_per_line=tokens_per_line)
 

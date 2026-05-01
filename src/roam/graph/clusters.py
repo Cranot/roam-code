@@ -1,4 +1,4 @@
-"""Louvain community detection for the symbol graph."""
+"""Community detection for the symbol graph (Leiden → Louvain → greedy)."""
 
 from __future__ import annotations
 
@@ -11,10 +11,56 @@ import networkx as nx
 from roam.db.connection import batched_in
 
 
-def detect_clusters(G: nx.DiGraph) -> dict[int, int]:
-    """Detect communities using Louvain on the undirected projection of *G*.
+def _try_leiden_communities(undirected: nx.Graph, out: list[set[int]]) -> bool:
+    """Run Leiden via the optional ``leidenalg`` + ``igraph`` extras.
 
-    Falls back to greedy modularity if Louvain is unavailable.
+    Returns ``True`` and fills *out* in place when Leiden succeeded, else
+    ``False`` so the caller can fall back to NetworkX Louvain. Leiden is
+    strictly better than Louvain per Traag et al. 2019 (Nature Sci. Rep.) —
+    no badly-connected communities, fully deterministic with the seed.
+
+    Install with::
+
+        pip install "roam-code[leiden]"
+
+    Skip with ``ROAM_LEIDEN=0`` (e.g., for offline / ABI-pin environments
+    where the C extension fails to load).
+    """
+    if os.environ.get("ROAM_LEIDEN", "1") == "0":
+        return False
+    try:
+        import igraph as ig  # type: ignore
+        import leidenalg  # type: ignore
+    except ImportError:
+        return False
+    try:
+        # Build an igraph from the undirected NetworkX graph. Map node ids
+        # so we can translate back. Edge weights default to 1.0.
+        node_list = list(undirected.nodes())
+        index_for: dict[int, int] = {n: i for i, n in enumerate(node_list)}
+        edges = [(index_for[u], index_for[v]) for u, v in undirected.edges() if u in index_for and v in index_for]
+        ig_graph = ig.Graph(n=len(node_list), edges=edges, directed=False)
+        partition = leidenalg.find_partition(
+            ig_graph,
+            leidenalg.ModularityVertexPartition,
+            seed=42,
+        )
+        for community in partition:
+            out.append({node_list[idx] for idx in community})
+        return True
+    except Exception:
+        # leidenalg / igraph ABI mismatch or memory pressure — fall back.
+        out.clear()
+        return False
+
+
+def detect_clusters(G: nx.DiGraph) -> dict[int, int]:
+    """Detect communities on the undirected projection of *G*.
+
+    Algorithm preference: **Leiden** (via optional ``[leiden]`` extra) →
+    seeded **Louvain** (NetworkX) → **greedy modularity** (NetworkX
+    classic, last-resort).
+
     Returns ``{node_id: cluster_id}``.
     """
     if len(G) == 0:
@@ -24,12 +70,21 @@ def detect_clusters(G: nx.DiGraph) -> dict[int, int]:
 
     # Remove isolates -- community detection on disconnected singletons just
     # assigns each its own community, which is not useful.
+    #
+    # Algorithm preference (best → fallback):
+    #   1. Leiden (via leidenalg + igraph extras): no badly-connected
+    #      communities, fully deterministic with seed. Strictly better than
+    #      Louvain per Traag et al. 2019 (Nature Sci. Rep.).
+    #   2. Louvain (NetworkX) with seed=42: deterministic but may produce
+    #      badly-connected communities — the Leiden paper's main critique.
+    #   3. Greedy modularity: very old NetworkX fallback for offline envs.
     communities: list[set[int]] = []
-    try:
-        communities = list(nx.community.louvain_communities(undirected, seed=42))
-    except (AttributeError, TypeError):
-        # NetworkX < 3.1 or missing optional dependency
-        communities = list(nx.community.greedy_modularity_communities(undirected))
+    if not _try_leiden_communities(undirected, communities):
+        try:
+            communities = list(nx.community.louvain_communities(undirected, seed=42))
+        except (AttributeError, TypeError):
+            # NetworkX < 3.1 or missing optional dependency
+            communities = list(nx.community.greedy_modularity_communities(undirected))
 
     mapping: dict[int, int] = {}
     for cluster_id, members in enumerate(communities):
