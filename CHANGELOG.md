@@ -7,6 +7,45 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.3.1] - 2026-05-02
+
+A polish patch from 10 more rounds of dogfooding. No surface changes,
+five papercut bugs fixed.
+
+### Fixed
+
+- **`roam dead --json`** was missing `summary.verdict`, the only
+  command in the surface area without it. Agents calling
+  `roam_dead_code` over MCP now get a verdict line consistent with
+  every other tool.
+- **`roam retrieve` UPPERCASE / mixed-case identifiers** previously
+  extracted zero tokens (e.g. `PERSONALIZED_PAGERANK` and
+  `Personalized_Pagerank` both returned no candidates). Now resolve
+  to the same FTS terms as `personalized_pagerank` via a new
+  `_UPPER_SNAKE_RE` and a lowercase-fallback re-snake pass.
+- **`roam retrieve` low-confidence false-positive** on real matches
+  with a high-scoring top-1 (e.g. `where is email sending` →
+  `send_welcome` at 0.900). Added a top-1-vs-2nd gap override: when
+  the gap is ≥ 0.30 the structural reranker has a unique winner and
+  the token-coverage check is skipped. Distinguishes real big-gap
+  matches from "one common word matches everything" failure modes.
+- **MCP server card** at `docs/site/.well-known/mcp-server-card.json`
+  was hardcoded to `"version": "12.2.0"`. Bumped to track the
+  package.
+- **`roam mcp --list-tools-json`** was missing `inputSchema` per
+  tool, breaking conformance for registry validators that expect a
+  drop-in proxy of the MCP `tools/list` response. Now includes
+  `tool.parameters` from FastMCP.
+
+### Verification
+
+- Bench held: recall@5 0.672, recall@10 0.786, recall@20 0.900.
+- 375 focused tests pass; full suite green on CI across 5 Python
+  versions + no-optional-deps lane.
+- 12 pre-commit re-checks: all 10 prior fixes from v12.3.0 still
+  working, JSON envelopes consistent, tooling exclusion clean,
+  tokenization matrix 5/5, confidence calibration 5/5.
+
 ## [12.3.0] - 2026-05-01
 
 A retrieve-quality + dogfood-correctness release. Recall@20 on the
