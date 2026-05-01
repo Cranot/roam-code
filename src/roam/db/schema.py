@@ -24,7 +24,15 @@ CREATE TABLE IF NOT EXISTS symbols (
     visibility TEXT DEFAULT 'public',
     is_exported INTEGER DEFAULT 1,
     parent_id INTEGER REFERENCES symbols(id) ON DELETE SET NULL,
-    default_value TEXT
+    default_value TEXT,
+    -- Python pivot v12.4: is_async marks ``async def`` functions/methods.
+    -- Lets agents distinguish coroutines from sync calls without
+    -- regex'ing the source. Used by retrieve, context, search.
+    is_async INTEGER DEFAULT 0,
+    -- Decorators applied to the symbol, comma-joined ("@property,@cached").
+    -- Empty when none. Captured by the Python extractor; other languages
+    -- may populate when the concept maps (TypeScript decorators).
+    decorators TEXT DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS edges (

@@ -67,8 +67,19 @@ def _severity_icon(sev: str) -> str:
     is_flag=True,
     help="Detect bumpy-road pattern: files with multiple medium-complexity functions",
 )
+@click.option(
+    "--include-tooling",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include CI scripts, examples, generated code, vendor, and "
+        "workspaces directories. Excluded by default — high complexity "
+        "in tooling/codegen is expected and uninteresting (Python pivot "
+        "dogfood 2026-05-02 found agent-generated workspaces dominating)."
+    ),
+)
 @click.pass_context
-def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
+def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling):
     """Show cognitive complexity metrics for functions and methods.
 
     Unlike ``health`` (which scores the whole codebase) and ``debt`` (which
@@ -117,6 +128,10 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
 
         where_clause = " AND ".join(where_parts) if where_parts else "1=1"
 
+        # Pull more rows than ``limit`` when default-excluding tooling
+        # so the displayed top-N still has the requested count after
+        # filtering. 5x is comfortable for typical exclusion shares.
+        fetch_limit = limit * 5 if not include_tooling else limit
         rows = conn.execute(
             f"""SELECT sm.*, s.name, s.qualified_name, s.kind,
                        s.line_start, s.line_end, f.path as file_path
@@ -126,8 +141,13 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road):
                 WHERE {where_clause}
                 ORDER BY sm.cognitive_complexity DESC
                 LIMIT ?""",
-            params + [limit],
+            params + [fetch_limit],
         ).fetchall()
+        if not include_tooling:
+            from roam.output.file_role_hints import is_excluded_path
+
+            rows = [r for r in rows if not is_excluded_path(r["file_path"] or "")]
+            rows = rows[:limit]
 
         if not rows:
             if sarif_mode:
