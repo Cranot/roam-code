@@ -1,6 +1,21 @@
 from __future__ import annotations
 
+import re
+
 from .generic_lang import GenericExtractor
+
+
+# Belt-and-suspenders fallback for ``object Foo`` declarations the
+# tree-sitter Kotlin grammar may emit differently across versions.
+# Linux CI's tree-sitter-language-pack wheel produces a different node
+# shape than the Windows wheel, so AST-only matching missed them. The
+# regex catches all conventional spellings and is line-anchored to
+# avoid touching ``object`` *expressions* (e.g. ``val x = object : ...``).
+_OBJECT_DECL_RE = re.compile(
+    r"^(?:[\t ]*)(?:public\s+|private\s+|internal\s+|protected\s+)?"
+    r"(?:companion\s+|data\s+)?object\s+([A-Za-z_][A-Za-z0-9_]*)\s*[:({\n]",
+    re.MULTILINE,
+)
 
 
 class KotlinExtractor(GenericExtractor):
@@ -16,6 +31,35 @@ class KotlinExtractor(GenericExtractor):
     @property
     def file_extensions(self) -> list[str]:
         return [".kt", ".kts"]
+
+    def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
+        """Run the AST extraction, then add any ``object Foo`` decls the
+        AST shape didn't surface (grammar drift across Linux/Windows
+        tree-sitter wheels).
+        """
+        symbols = super().extract_symbols(tree, source, file_path)
+        existing_names = {s.get("name") for s in symbols}
+        try:
+            text = source.decode("utf-8", errors="replace")
+        except Exception:
+            return symbols
+        for match in _OBJECT_DECL_RE.finditer(text):
+            name = match.group(1)
+            if name in existing_names:
+                continue
+            line = text.count("\n", 0, match.start()) + 1
+            symbols.append(
+                self._make_symbol(
+                    name=name,
+                    kind="class",
+                    line_start=line,
+                    line_end=line,
+                    qualified_name=name,
+                    signature=f"object {name}",
+                )
+            )
+            existing_names.add(name)
+        return symbols
 
     def _classify_node(self, node) -> str | None:
         # The Kotlin tree-sitter grammar shape varies across versions of
