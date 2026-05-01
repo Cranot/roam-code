@@ -50,6 +50,34 @@ jobs:
       - name: Run tests
         run: pytest tests/ -x -q -m "not slow"
 
+  # -- No-optional-deps lane: actually exercise fallback paths --------------
+  # The 2026-05-01 CI session caught a class of latent bugs where ImportError
+  # fallbacks (no scipy → degree-based PageRank, no leiden → Louvain, no
+  # onnxruntime → empty semantic scores) returned shapes that violated their
+  # documented contract. Tests passed because they happened to use the real
+  # library. This lane installs *only* the base dependencies + pytest, so
+  # ``tests/test_fallback_contracts.py`` actually runs the fallback path that
+  # production users without optional extras will hit. One Python version is
+  # enough; the matrix above covers grammar/version drift.
+  test-no-optional-deps:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install only the base dependencies (no [dev], no extras)
+        run: |
+          pip install -e .
+          pip install pytest pytest-xdist pytest-asyncio
+
+      - name: Run only the fallback-contract suite
+        run: pytest tests/test_fallback_contracts.py -v
+
   # -- Lint (ruff) -----------------------------------------------------------
   # Fast code style / lint gate. Only needs to pass on one Python version.
   lint:
