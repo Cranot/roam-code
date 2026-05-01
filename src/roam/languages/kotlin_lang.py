@@ -4,7 +4,6 @@ import re
 
 from .generic_lang import GenericExtractor
 
-
 # Belt-and-suspenders fallbacks for top-level Kotlin declarations the
 # tree-sitter grammar may emit differently across versions. Linux CI's
 # tree-sitter-language-pack 1.6.x wheels produce node shapes that bypass
