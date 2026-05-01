@@ -1,0 +1,21 @@
+id: js-ssrf
+description: Untrusted URL flowing into outbound HTTP request
+severity: warning
+cwe: CWE-918
+languages:
+  - javascript
+  - typescript
+sources:
+  - req.query
+  - req.body
+  - req.params
+sinks:
+  - fetch
+  - axios.get
+  - axios.post
+  - http.get
+  - https.get
+  - request.get
+sanitizers:
+  - validateUrl
+  - urlAllowList

@@ -64,14 +64,42 @@ roam init</code></pre>
         <article class="step">
           <h3>Step 3: Ask your first structural question</h3>
           <pre><code>roam context UserService
-roam impact UserService</code></pre>
-          <p>Get ranked reading order plus blast radius before changing code.</p>
+roam impact UserService
+roam retrieve "where does the login flow validate sessions"</code></pre>
+          <p>Get ranked reading order plus blast radius before changing code. <code>roam retrieve</code> takes a free-form task and returns budget-bounded spans ranked by personalised PageRank, clone signal, and lexical match.</p>
         </article>
         <article class="step">
           <h3>Step 4: Run a pre-change check</h3>
           <pre><code>roam preflight UserService
 roam health</code></pre>
           <p>Checks complexity, coupling, test impact, and architecture risk.</p>
+        </article>
+        <article class="step">
+          <h3>Step 5: Verify the patch before committing</h3>
+          <pre><code>git diff | roam critique
+# clones-not-edited check + blast-radius caller count
+# Exit 5 on high-severity findings — gate-able in CI.</code></pre>
+          <p>For the killer clones-not-edited check, run <code>roam clones --persist</code> once to populate the clone tables.</p>
+        </article>
+        <article class="step">
+          <h3>Step 6: Plan parallel agent work</h3>
+          <pre><code>roam fleet plan "split the auth refactor across 4 agents" \
+  --n-agents 4 --adapter composio --output .roam-fleet.json</code></pre>
+          <p>Graph-aware partition (Louvain + dark-matter co-change + PageRank anchors) emits a <code>.roam-fleet.json</code> envelope consumable by Composio Agent Orchestrator, GitHub Copilot CLI <code>/fleet</code>, or any raw fleet runtime.</p>
+        </article>
+        <article class="step">
+          <h3>Step 7: Sign a Code Graph Attestation</h3>
+          <pre><code>roam taint                                       # OpenVEX-correct reach analysis
+roam cga emit --include-taint --sign --key cosign.key
+roam cga verify .roam/attestations/&lt;sha&gt;.intoto.json</code></pre>
+          <p>Emits an in-toto v1 statement with the <code>roam-code.dev/CodeGraph/v1</code> predicate type — Merkle root over symbol fingerprints, edge bundle digest, and (with <code>--include-taint</code>) OpenVEX-shaped reachability claims. Signing via cosign is optional and skips gracefully when the binary is missing.</p>
+        </article>
+        <article class="step">
+          <h3>Step 8: One-phrase intent for everything else</h3>
+          <pre><code>roam ask "is it safe to delete UserSession"
+roam ask "where does login validate sessions"
+roam ask --list                                  # see the recipe registry</code></pre>
+          <p><code>roam ask</code> classifies a free-form question and dispatches the right composition of preflight/retrieve/critique/fleet/understand. No need to memorise the 147-command surface.</p>
         </article>
       </div>
     </section>

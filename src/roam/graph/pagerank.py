@@ -47,6 +47,73 @@ def compute_pagerank(G: nx.DiGraph, alpha: float | None = None) -> dict[int, flo
         return {n: G.degree(n) / max_deg for n in G}
 
 
+def personalized_pagerank(
+    G: nx.DiGraph,
+    seeds: dict[int, float] | list[int] | None,
+    alpha: float | None = None,
+) -> dict[int, float]:
+    """Compute personalised PageRank with mass concentrated on *seeds*.
+
+    Used by the retrieve reranker (A.1) to bias structural ranking toward
+    the symbols most relevant to a query. The seed nodes (e.g., symbols
+    mentioned in the query) get personalisation mass; everything else
+    pulls rank only via the link structure.
+
+    Parameters
+    ----------
+    G:
+        Directed call/import graph from ``build_symbol_graph``.
+    seeds:
+        Either a ``{node_id: weight}`` mapping (weights need not sum to 1
+        — they are normalised) **or** a list of node ids treated as
+        equal-weight. ``None`` or an empty mapping falls back to a
+        uniform distribution, which is equivalent to global PageRank.
+    alpha:
+        Damping factor. ``None`` (default) uses the same adaptive
+        cyclicity heuristic as :func:`compute_pagerank`.
+
+    Returns
+    -------
+    dict[int, float]
+        ``{symbol_id: score}`` for every node in *G*. Scores sum to ~1.0.
+
+    Notes
+    -----
+    Seeds that are not present in *G* are silently dropped — the caller
+    typically resolves "files mentioned in the task" to symbol ids and
+    not all of those will exist as graph nodes.
+    """
+    if len(G) == 0:
+        return {}
+
+    if seeds is None:
+        normalised: dict[int, float] = {}
+    elif isinstance(seeds, dict):
+        normalised = {n: float(w) for n, w in seeds.items() if n in G and w > 0}
+    else:
+        normalised = {n: 1.0 for n in seeds if n in G}
+
+    if alpha is None:
+        alpha = _optimal_alpha(G)
+
+    if not normalised:
+        return compute_pagerank(G, alpha=alpha)
+
+    total = sum(normalised.values())
+    if total > 0:
+        normalised = {n: w / total for n, w in normalised.items()}
+
+    try:
+        return nx.pagerank(G, alpha=alpha, personalization=normalised)
+    except ImportError:
+        # numpy not installed — degree-with-seed-boost fallback
+        max_deg = max((G.degree(n) for n in G), default=1) or 1
+        return {n: (G.degree(n) / max_deg) + (5.0 if n in normalised else 0.0) for n in G}
+    except nx.PowerIterationFailedConvergence:
+        # Rare on real graphs; fall back to a tolerant pagerank call
+        return nx.pagerank(G, alpha=alpha, personalization=normalised, max_iter=300, tol=1e-04)
+
+
 def compute_centrality(G: nx.DiGraph) -> dict[int, dict]:
     """Compute SNA metric vector for each symbol.
 

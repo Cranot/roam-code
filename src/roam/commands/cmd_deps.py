@@ -36,6 +36,21 @@ def deps(ctx, path, full):
                 (f"%{path}",),
             ).fetchone()
         if frow is None:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "deps",
+                            summary={
+                                "verdict": f"file not found: '{path}'",
+                                "error": "file_not_found",
+                            },
+                            file=path,
+                            hint=file_not_found_hint(path),
+                        )
+                    )
+                )
+                raise SystemExit(1)
             click.echo(file_not_found_hint(path))
             raise SystemExit(1)
 
@@ -97,7 +112,7 @@ def deps(ctx, path, full):
         if not detail:
             # Summary mode: show counts and top 5
             if imports:
-                click.echo("Imports (top 5, use --detail for full list):")
+                click.echo("Imports (top 5, run `roam --detail deps` or pass `--full` for the complete list):")
                 for i in imports[:5]:
                     names = used_from.get(i["id"], set())
                     sym_str = ", ".join(sorted(names)[:3])

@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 143 invokable command names (140 canonical commands + 3 alias pairs).
+# Total: 150 invokable command names (147 canonical commands + 3 alias pairs).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
@@ -160,11 +160,19 @@ _COMMANDS = {
     "triage": ("roam.commands.cmd_triage", "triage"),
     "ci-setup": ("roam.commands.cmd_ci_setup", "ci_setup"),
     "clones": ("roam.commands.cmd_clones", "clones"),
+    "retrieve": ("roam.commands.cmd_retrieve", "retrieve"),
+    "critique": ("roam.commands.cmd_critique", "critique"),
+    "fleet": ("roam.commands.cmd_fleet", "fleet"),
+    "ask": ("roam.commands.cmd_ask", "ask"),
+    "taint": ("roam.commands.cmd_taint", "taint"),
+    "cga": ("roam.commands.cmd_cga", "cga"),
+    "eval-retrieve": ("roam.commands.cmd_eval_retrieve", "eval_retrieve"),
 }
 
 # Command categories for organized --help display
 _CATEGORIES = {
     "Getting Started": [
+        "ask",
         "index",
         "watch",
         "init",
@@ -204,6 +212,9 @@ _CATEGORIES = {
         "verify-imports",
         "diff",
         "context",
+        "retrieve",
+        "critique",
+        "fleet",
         "affected-tests",
         "diagnose",
         "annotate",
@@ -234,6 +245,7 @@ _CATEGORIES = {
         "bisect",
         "ingest-trace",
         "hotspots",
+        "eval-retrieve",
     ],
     "Architecture": [
         "map",
@@ -297,6 +309,8 @@ _CATEGORIES = {
         "vuln-reach",
         "vulns",
         "sbom",
+        "taint",
+        "cga",
         "congestion",
     ],
     "Refactoring": [

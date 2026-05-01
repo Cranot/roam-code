@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*140 commands · 102 MCP tools · 27 languages · 100% local*
+*147 commands · 106 MCP tools · 27 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -57,17 +57,30 @@ Files to read:
 ```bash
 $ roam understand              # full codebase briefing
 $ roam context <name>          # files-to-read with exact line ranges
+$ roam retrieve "<task>"       # graph-aware spans for free-form natural-language tasks
 $ roam preflight <name>        # blast radius + tests + complexity + architecture rules
+$ roam critique                # verify a patch (`git diff | roam critique`)
 $ roam health                  # composite score (0-100)
 $ roam diff                    # blast radius of uncommitted changes
 ```
+
+## What's New in v12
+
+### v12.0 (in progress) -- Retrieval substrate + patch verifier
+- **`roam retrieve "<task>"`**: graph-aware context server. Hybrid first stage (FTS5) + structural reranker (personalised PageRank + clone-canonical signal + lexical baseline) + token-budget cap. Returns ranked spans with justification tags (`pagerank=...`, `clone_cluster=...`, `fts=...`) so callers can see *why* each span ranked. MCP tool: `roam_retrieve(task, budget, k, rerank, seed_files)`.
+- **`roam critique`**: graph-grounded patch verifier. Pipe `git diff | roam critique` to get findings ranked by severity. The killer signal is **clones-not-edited**: for every changed symbol with persisted clone siblings outside the diff, we flag the sibling as a likely missed change. Plus a blast-radius caller-count finding. Exits 5 on high severity (CI-gateable). MCP tool: `roam_critique(diff_text)`.
+- **`roam clones --persist`**: populate the `clone_pairs` and `clone_clusters` tables so downstream consumers (critique, retrieve) can query clones in O(1) instead of re-running detection.
+- **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
+- **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
+- **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
+- **147 CLI commands, 106 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` are CLI-only in v12.0; `roam_retrieve`, `roam_critique`, and `roam_fleet_plan` are exposed as MCP tools alongside the existing 103-tool surface). 27-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
 ### v11.2 -- AST Clone Detection + Debug Artifact Rules
 - **`roam clones`**: New AST structural clone detection via subtree hashing. Finds Type-2 clones (identical control flow, different identifiers/literals) with Jaccard similarity scoring, Union-Find clustering, and automated refactoring suggestions. More precise than the metric-based `duplicates` command.
 - **9 debug artifact rules** (COR-560 through COR-568): Detect leftover `print()`, `breakpoint()`, `pdb.set_trace()`, `console.log()`, `debugger`, and `System.out.println()` in Python, JavaScript, TypeScript, and Java code. All use `ast_match` type with test file exemptions.
-- **140 commands, 102 MCP tools**.
+- **140 commands, 102 MCP tools** (at v11.2.0 release).
 
 ### v11.1.2 -- SQL + Scala Tier 1, 27 Languages
 - **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` -- tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference source tables. Database-schema projects now work with `roam health`, `roam layers`, `roam impact`, `roam coupling` and all graph commands.
@@ -76,7 +89,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - `server.json` for official MCP Registry submission.
 
 ### v11.1.1 -- Command Quality Audit
-- **Full command audit**: all 140 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
+- **Full command audit**: all 147 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
 - **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
 - **7 new commands**: `roam congestion`, `roam adrs`, `roam flag-dead`, `roam test-scaffold`, `roam sbom`, `roam triage`, `roam ci-setup`.
 - **CI templates**: `roam ci-setup` generates pipelines for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and Bitbucket.
@@ -231,7 +244,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 140 commands are organized into 7 categories.
+The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 147 commands are organized into 7 categories.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -268,6 +281,13 @@ The [5 core commands](#core-commands) shown above cover ~80% of agent workflows.
 | `roam file <path> [--full] [--changed] [--deps-of PATH]` | File skeleton: all definitions with signatures, cognitive load index, health score |
 | `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics. Supports `file:symbol` disambiguation |
 | `roam context <symbol> [--task MODE] [--for-file PATH]` | AI-optimized context: definition + callers + callees + files-to-read with line ranges |
+| `roam retrieve <task> [--budget N] [--k N] [--seed-files PATH]` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget |
+| `roam critique [--input DIFF] [--intent TEXT] [--high-callers N]` | Verify a patch against the graph: clones-not-edited + blast radius + intent-vs-semantic-diff. Pipe `git diff` in. Exit 5 on high severity. |
+| `roam fleet plan <goal> [--n-agents N] [--adapter raw\|composio\|copilot]` | Graph-aware planner: Louvain partition + co-change + PageRank anchors → `.roam-fleet.json` for Composio/Copilot CLI/raw. |
+| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 12-recipe registry — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
+| `roam taint [--rules-dir PATH] [--rule NAME] [--ci]` | Graph-reach taint analysis with OpenVEX-correct VEX justifications. YAML rule packs (5 starter rules: Python command-injection / SQLi / path-traversal, JS XSS / SSRF). |
+| `roam cga emit [--include-taint] [--sign --key]` | Code Graph Attestation — in-toto v1 statement with `roam-code.dev/CodeGraph/v1` predicate, Merkle root + edge bundle digest. `--include-taint` embeds OpenVEX-shaped reachability claims from `roam taint`. `--sign` signs with cosign (graceful skip if absent); `roam cga verify` round-trips both predicate digest and cosign signature. |
+| `roam eval-retrieve [--tasks FILE] [--sweep] [--min-recall-at-20 N]` | Recall@K eval harness for `roam retrieve` — measures against a JSONL ground-truth file. CI-gateable. Baseline on this repo: recall@20 = 0.43 across 10 hand-crafted tasks. |
 | `roam search <pattern> [--kind KIND]` | Find symbols by name pattern, PageRank-ranked |
 | `roam grep <pattern> [-g glob] [-n N]` | Text search annotated with enclosing symbol context |
 | `roam deps <path> [--full]` | What a file imports and what imports it |
@@ -828,7 +848,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-102 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+103 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 **MCP v2 highlights (v11):**
 - In-process MCP execution (no subprocess shell-out per call)
@@ -836,7 +856,14 @@ roam mcp
 - Compound tools that collapse multi-step exploration/review flows into one call
 - Structured output schemas + tool annotations for safer planner behavior
 
-**Default preset:** `core` (24 tools: 23 core + `roam_expand_toolset` meta-tool).
+**MCP-native enhancements (v12):**
+- **Sampling-driven compression** -- pass `summarize=True` to `roam_explore`, `roam_understand`, `roam_health`, or `roam_repo_map`. The server asks the client's own LLM (no API keys) to compress the full envelope into a short briefing, dropping output from ~50 KB JSON to ~1-2 KB prose. Falls back gracefully when the client doesn't support sampling.
+- **Server-side session memory** -- `roam_context`, `roam_explore`, and `roam_retrieve` now remember symbols you've touched in the current session and auto-bias ranking without you threading `recent_symbols` through every call. Explicit args still win.
+- **Phase-aware progress** -- `roam_init`, `roam_reindex`, and `roam_orchestrate` stream real `discover -> parse -> extract -> resolve -> graph -> metrics` progress to the client, replacing the old 5/100 placeholders.
+- **Symbol & path completions** -- new `roam_complete(prefix, kind, limit)` tool returns just names from the FTS5 index (cheaper than `roam_search_symbol`). A protocol-level handler is also installed for clients that support `completion/complete`.
+- **Reactive resource invalidation** (opt-in) -- set `ROAM_MCP_WATCH=1` and the server watches the working tree, runs incremental reindex on file changes, and emits `notifications/resources/updated` for `roam://health`, `roam://summary`, etc., so subscribed clients see fresh data without polling.
+
+**Default preset:** `core` (25 tools: 24 core + `roam_expand_toolset` meta-tool).
 
 ```bash
 # Default
@@ -849,18 +876,23 @@ ROAM_MCP_PRESET=full roam mcp
 ROAM_MCP_LITE=0 roam mcp
 ```
 
-Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
+Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 101)</strong></summary>
+<summary><strong>MCP tool list (all 106)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
-| `roam_understand` | Full codebase briefing |
-| `roam_health` | Health score (0-100) + issues |
+| `roam_understand` | Full codebase briefing (supports `summarize=True` for sampled compression) |
+| `roam_health` | Health score (0-100) + issues (supports `summarize=True`) |
+| `roam_repo_map` | Project skeleton (supports `summarize=True`) |
 | `roam_preflight` | Pre-change safety check |
 | `roam_search_symbol` | Find symbols by name |
+| `roam_complete` | Prefix completion for symbols/paths/commands (FTS5-backed) |
 | `roam_context` | Files-to-read for modifying a symbol |
+| `roam_retrieve` | Graph-aware context for free-form tasks (FTS5 + structural rerank + token budget) |
+| `roam_critique` | Verify a patch against the graph (clones-not-edited + blast radius) |
+| `roam_fleet_plan` | Plan a multi-agent fleet — graph-aware partition emits .roam-fleet.json |
 | `roam_trace` | Dependency path between two symbols |
 | `roam_impact` | Blast radius of changing a symbol |
 | `roam_file_info` | File skeleton with all definitions |
@@ -869,7 +901,6 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_affected_tests` | Find tests affected by a change |
 | `roam_dead_code` | List unreferenced exports |
 | `roam_complexity_report` | Per-symbol cognitive complexity |
-| `roam_repo_map` | Project skeleton with key symbols |
 | `roam_tour` | Auto-generated onboarding guide |
 | `roam_diagnose` | Root cause analysis for debugging |
 | `roam_visualize` | Generate Mermaid or DOT architecture diagrams |
@@ -1472,8 +1503,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (140 commands)
-│   ├── mcp_server.py                  # MCP server (102 tools, 10 resources, 5 prompts)
+│   ├── cli.py                         # Click CLI (147 commands)
+│   ├── mcp_server.py                  # MCP server (106 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1567,7 +1598,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 140 CLI commands and 102 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 147 CLI commands and 106 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

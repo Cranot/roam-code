@@ -272,6 +272,59 @@ def indexed_project(python_project, monkeypatch):
     return python_project
 
 
+def make_src_project(tmp_path, files, *, src_dir="src"):
+    """Create a git-initialised project with files under ``src/`` and commit.
+
+    Replaces the ``_make_project`` helpers duplicated across
+    ``test_clones``, ``test_retrieve``, ``test_retrieve_seeds``. Use this
+    for the v12 test suites that need a per-test custom file layout.
+
+    The project is **not** indexed — call ``roam index`` (typically via
+    ``CliRunner``) to populate the DB, since several test classes
+    deliberately interleave index/clones/retrieve calls.
+
+    Parameters
+    ----------
+    tmp_path:
+        The pytest ``tmp_path`` fixture.
+    files:
+        Mapping of ``{relative_path_under_src: content}``. ``content``
+        is dedented before write.
+    src_dir:
+        Directory name under the project root (default ``src``).
+
+    Returns
+    -------
+    pathlib.Path
+        The project root directory.
+    """
+    import textwrap
+
+    proj = tmp_path / "proj"
+    proj.mkdir()
+    src = proj / src_dir
+    src.mkdir()
+    for name, content in files.items():
+        p = src / name
+        p.parent.mkdir(parents=True, exist_ok=True)
+        p.write_text(textwrap.dedent(content), encoding="utf-8")
+    subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
+    subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
+    subprocess.run(
+        ["git", "commit", "-m", "init", "--allow-empty"],
+        cwd=str(proj),
+        capture_output=True,
+        env={
+            **os.environ,
+            "GIT_AUTHOR_NAME": "test",
+            "GIT_AUTHOR_EMAIL": "t@t",
+            "GIT_COMMITTER_NAME": "test",
+            "GIT_COMMITTER_EMAIL": "t@t",
+        },
+    )
+    return proj
+
+
 @pytest.fixture
 def project_factory(tmp_path_factory):
     """Factory fixture for creating custom project layouts.

@@ -45,7 +45,16 @@ def test_readme_mcp_tool_list_matches_source():
     extra = sorted(readme_tools - source_tools)
     assert not missing, f"README missing MCP tools: {missing}"
     assert not extra, f"README has unknown MCP tools: {extra}"
-    assert "MCP tool list (all 101)" in text
+    # The collapsed-section header must quote the same integer as the
+    # tool list itself. Pre-v12 this drifted (header said "all 101" while
+    # there were 102 entries). Extract the literal and compare.
+    match = re.search(r"MCP tool list \(all (\d+)\)", text)
+    assert match, "README must contain a 'MCP tool list (all N)' header"
+    quoted = int(match.group(1))
+    assert quoted == len(source_tools) == len(readme_tools), (
+        f"README header says 'all {quoted}', source has {len(source_tools)}, "
+        f"README table has {len(readme_tools)} — these must agree"
+    )
 
 
 def test_readme_has_v11_narrative_section():

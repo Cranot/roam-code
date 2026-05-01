@@ -11,7 +11,16 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
-_MAX_GRAPH_SYMBOLS = 5000
+# Hard refusal threshold — beyond this, the spectral analysis (Fiedler vector
+# via algebraic_connectivity) runs O(n³) without a sparse-eigensolver hookup
+# and will exhaust memory or stall. Below this, we just warn.
+# Empirical: 13.8k symbols completes in ~11s; 50k symbols in ~5 min on a
+# stock laptop. The hard cap is the boundary above which "index a
+# subdirectory" really is the right answer.
+_HARD_CAP_SYMBOLS = 100_000
+# Soft warn threshold — above this we tell the user it'll take a moment but
+# we still run the analysis. Pre-v12 this was the hard refusal threshold.
+_WARN_THRESHOLD_SYMBOLS = 20_000
 
 
 def _format_pct_list(pcts: list[float]) -> str:
@@ -57,23 +66,35 @@ def fingerprint(ctx, compact, export_path, compare_path):
         from roam.graph.fingerprint import compare_fingerprints, compute_fingerprint
 
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-        if sym_count > _MAX_GRAPH_SYMBOLS:
+        if sym_count > _HARD_CAP_SYMBOLS:
             msg = (
-                f"Graph too large ({sym_count} symbols) for fingerprint analysis. "
-                "Index a subdirectory to reduce graph size."
+                f"Graph too large ({sym_count} symbols, hard cap {_HARD_CAP_SYMBOLS:,}) "
+                "for fingerprint analysis. Index a subdirectory to reduce graph size, "
+                "or override `_HARD_CAP_SYMBOLS` in cmd_fingerprint.py."
             )
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "fingerprint",
-                            summary={"verdict": msg, "symbol_count": sym_count},
+                            summary={
+                                "verdict": msg,
+                                "symbol_count": sym_count,
+                                "hard_cap": _HARD_CAP_SYMBOLS,
+                            },
                         )
                     )
                 )
             else:
                 click.echo(f"VERDICT: {msg}")
             return
+        if sym_count > _WARN_THRESHOLD_SYMBOLS and not json_mode:
+            click.echo(
+                f"  Note: {sym_count:,} symbols — spectral analysis may take a minute. (threshold {{:,}})".format(
+                    _WARN_THRESHOLD_SYMBOLS
+                ),
+                err=True,
+            )
 
         G = build_symbol_graph(conn)
         fp = compute_fingerprint(conn, G)

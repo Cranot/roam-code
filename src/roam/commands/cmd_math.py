@@ -58,7 +58,15 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     type=click.Choice(["balanced", "strict", "aggressive"], case_sensitive=False),
     help="Precision profile (strict reduces false positives; aggressive surfaces more candidates)",
 )
-@click.option("--limit", "-n", default=30, help="Max findings to show")
+@click.option(
+    "--top",
+    "--limit",
+    "-n",
+    "limit",
+    default=30,
+    type=int,
+    help="Max findings to show (alias: --limit, -n)",
+)
 @click.option(
     "--max-per-task",
     default=5,

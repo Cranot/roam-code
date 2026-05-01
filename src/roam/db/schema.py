@@ -332,4 +332,44 @@ CREATE TABLE IF NOT EXISTS taint_findings (
 );
 CREATE INDEX IF NOT EXISTS idx_taint_findings_source ON taint_findings(source_symbol_id);
 CREATE INDEX IF NOT EXISTS idx_taint_findings_sink ON taint_findings(sink_symbol_id);
+
+-- v12 (A.0): Persisted AST clone detection results.
+-- Populated by graph.clone_detect.store_clones(); queried by `roam clones`,
+-- `roam critique` (clone-not-edited check), and the retrieve reranker
+-- (clone-canonical-boost). Without this, every consumer re-runs detection
+-- (~5s on roam itself per query).
+CREATE TABLE IF NOT EXISTS clone_clusters (
+    id INTEGER PRIMARY KEY,
+    canonical_qname TEXT,
+    canonical_file TEXT,
+    canonical_func TEXT,
+    canonical_line INTEGER,
+    member_count INTEGER NOT NULL,
+    avg_similarity REAL NOT NULL,
+    pattern TEXT,
+    suggestion TEXT,
+    detected_at TEXT DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS clone_pairs (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    qname_a TEXT NOT NULL,
+    qname_b TEXT NOT NULL,
+    file_a TEXT NOT NULL,
+    file_b TEXT NOT NULL,
+    func_a TEXT NOT NULL,
+    func_b TEXT NOT NULL,
+    line_a INTEGER NOT NULL,
+    line_end_a INTEGER,
+    line_b INTEGER NOT NULL,
+    line_end_b INTEGER,
+    similarity REAL NOT NULL,
+    cluster_id INTEGER REFERENCES clone_clusters(id) ON DELETE SET NULL,
+    detected_at TEXT DEFAULT (datetime('now'))
+);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_qname_a ON clone_pairs(qname_a);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_qname_b ON clone_pairs(qname_b);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_cluster ON clone_pairs(cluster_id);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_file_a ON clone_pairs(file_a);
+CREATE INDEX IF NOT EXISTS idx_clone_pairs_file_b ON clone_pairs(file_b);
 """

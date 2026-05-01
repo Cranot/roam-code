@@ -39,6 +39,28 @@ def uses(ctx, name, full):
             ).fetchall()
 
         if not targets:
+            # JSON mode must always emit an envelope — never plaintext.
+            # Pre-v12, the plaintext hint was printed unconditionally and
+            # downstream parsers (recipe runner, MCP tool wrappers,
+            # `roam ask`) crashed on the non-JSON output.
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "uses",
+                            summary={
+                                "verdict": f"symbol not found: '{name}'",
+                                "total_consumers": 0,
+                                "total_files": 0,
+                                "error": "symbol_not_found",
+                            },
+                            symbol=name,
+                            consumers={},
+                            hint=symbol_not_found_hint(name),
+                        )
+                    )
+                )
+                raise SystemExit(1)
             click.echo(symbol_not_found_hint(name))
             raise SystemExit(1)
 
