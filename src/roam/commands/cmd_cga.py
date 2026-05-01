@@ -110,9 +110,25 @@ def _default_output_path(project_root: Path, statement: dict) -> Path:
         "browser flow."
     ),
 )
+@click.option(
+    "--aibom",
+    is_flag=True,
+    help=(
+        "Promote the predicate to ``CodeGraph-AIBOM/v1`` and embed an "
+        "AIBOM block binding AI-authored commits to the indexed symbols "
+        "they touched. Required for EU AI Act Art. 50 disclosure (effective "
+        "2026-08-02) and the GPAI Code of Practice provenance mandate. "
+        "Reference impl candidate for the in-toto attestation registry."
+    ),
+)
 @click.pass_context
-def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, key_path, keyless):
-    """Emit a Code Graph Attestation (in-toto v1, optionally cosign-signed)."""
+def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, key_path, keyless, aibom):
+    """Emit a Code Graph Attestation (in-toto v1, optionally cosign-signed).
+
+    With ``--aibom`` the predicate type promotes to
+    ``roam-code.dev/CodeGraph-AIBOM/v1`` and the predicate gains an
+    ``aibom`` block binding AI-authored commits to indexed symbols.
+    """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
 
@@ -137,6 +153,7 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
             conn,
             project_root=project_root,
             taint_findings=taint_findings,
+            include_aibom=aibom,
         )
 
     canonical = serialize_statement(statement)
@@ -198,7 +215,7 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
                         "edge_bundle_digest": pred["edge_bundle_digest"],
                         "symbol_count": pred["symbol_count"],
                         "edge_count": pred["edge_count"],
-                        "predicate_type": PREDICATE_TYPE,
+                        "predicate_type": statement.get("predicateType", PREDICATE_TYPE),
                         "statement_type": STATEMENT_TYPE,
                         "written_to": written_to,
                         "signed": bool(sign_result and sign_result.get("signed")),
@@ -212,7 +229,7 @@ def cga_emit(ctx, output_path, no_write, include_taint, taint_rules_dir, sign, k
         return
 
     click.echo(f"VERDICT: {verdict}")
-    click.echo(f"Predicate type: {PREDICATE_TYPE}")
+    click.echo(f"Predicate type: {statement.get('predicateType', PREDICATE_TYPE)}")
     click.echo(f"Statement type: {STATEMENT_TYPE}")
     click.echo(f"Languages:      {', '.join(pred['languages']) or '(none)'}")
     if written_to:

@@ -38,9 +38,14 @@ from roam.retrieve.pipeline import run_retrieve
 )
 @click.option(
     "--rerank",
-    type=click.Choice(["fast", "off"], case_sensitive=False),
+    type=click.Choice(["fast", "off", "learned"], case_sensitive=False),
     default=None,
-    help="'fast' = structural rerank with personalized PageRank (default). 'off' = lexical only.",
+    help=(
+        "'fast' = structural rerank (default). 'off' = lexical only. "
+        "'learned' = LightGBM LambdaMART trained on your bench (requires "
+        '``pip install "roam-code[learned]"`` + a trained model at '
+        "``$ROAM_LEARNED_MODEL``; falls back to 'fast' when unavailable)."
+    ),
 )
 @click.option(
     "--seed-files",

@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*150 commands · 112 MCP tools · 27 languages · 100% local*
+*150 commands · 116 MCP tools · 27 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -81,7 +81,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **150 CLI commands, 112 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`) and `roam_taint_classify` as MCP tools). 33-tool `core` preset is the default for token-budget-conscious clients.
+- **150 CLI commands, 116 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`) and `roam_taint_classify` as MCP tools). 33-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -112,7 +112,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - MCP token overhead for default core context dropped from ~36K to <3K tokens (about 92% reduction).
 
 ### Performance and Retrieval
-- Symbol search moved to SQLite FTS5/BM25: typical search moved from seconds to milliseconds (about 1000x on benchmarked paths).
+- Symbol search moved to SQLite FTS5/BM25: typical search moved from seconds to tens of milliseconds on the indexed cohort (mileage varies by repo size and query selectivity — see `bench/retrieve/` for the methodology).
 - Incremental indexing shifted from O(N) full-edge rebuild behavior to O(changed) updates.
 - DB/runtime optimizations (`mmap_size`, safer large-graph guards, batched writes) reduce first-run and reindex friction on larger repos.
 
@@ -252,7 +252,7 @@ roam health
 
 ## Commands
 
-The [5 core commands](#core-commands) shown above cover ~80% of agent workflows. All 150 commands are organized into 7 categories.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 145 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **150 commands organised into 7 categories**, but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -890,7 +890,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 112)</strong></summary>
+<summary><strong>MCP tool list (all 116)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -910,6 +910,10 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_oracle_is_reachable_from_entry` | Boolean oracle: can BFS reach this symbol from any entry-point? |
 | `roam_oracle_is_clone_of` | Boolean oracle: does this symbol participate in a persisted clone cluster? |
 | `roam_taint_classify` | LLM-augmented taint classification (IDOR/AUTHZ/SQLI/...) via MCP sampling |
+| `roam_taint` | Static taint analysis — graph-reach BFS with OpenVEX-correct findings |
+| `roam_sbom` | CycloneDX 1.7 / SPDX 2.3 SBOM emit with optional AIBOM extension (EU AI Act) |
+| `roam_cga_emit` | Emit a Code Graph Attestation (in-toto v1) with optional cosign signing |
+| `roam_cga_verify` | Verify a CGA statement — re-derives Merkle + edge digest, checks cosign signature |
 | `roam_trace` | Dependency path between two symbols |
 | `roam_impact` | Blast radius of changing a symbol |
 | `roam_file_info` | File skeleton with all definitions |
@@ -1521,7 +1525,7 @@ roam-code/
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
 │   ├── cli.py                         # Click CLI (150 commands)
-│   ├── mcp_server.py                  # MCP server (112 tools, 10 resources, 5 prompts)
+│   ├── mcp_server.py                  # MCP server (116 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1615,7 +1619,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 150 CLI commands and 112 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 150 CLI commands and 116 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.
