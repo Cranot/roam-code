@@ -106,9 +106,14 @@ def personalized_pagerank(
     try:
         return nx.pagerank(G, alpha=alpha, personalization=normalised)
     except ImportError:
-        # numpy not installed — degree-with-seed-boost fallback
-        max_deg = max((G.degree(n) for n in G), default=1) or 1
-        return {n: (G.degree(n) / max_deg) + (5.0 if n in normalised else 0.0) for n in G}
+        # numpy/scipy not installed — degree-with-seed-boost fallback,
+        # normalised so the result still satisfies the "scores sum to 1"
+        # contract that callers (and tests) rely on. Without the
+        # normalisation the raw values summed to ~7 on networkx 3.2.1
+        # (Python 3.9 install path).
+        raw = {n: G.degree(n) + (5.0 if n in normalised else 0.0) for n in G}
+        total = sum(raw.values()) or 1.0
+        return {n: v / total for n, v in raw.items()}
     except nx.PowerIterationFailedConvergence:
         # Rare on real graphs; fall back to a tolerant pagerank call
         return nx.pagerank(G, alpha=alpha, personalization=normalised, max_iter=300, tol=1e-04)
