@@ -2,10 +2,67 @@
 
 from __future__ import annotations
 
+import os
+import subprocess
+
 import click
 
-from roam.db.connection import db_exists
+from roam.db.connection import db_exists, find_project_root, open_db
 from roam.db.queries import SEARCH_SYMBOLS, SYMBOL_BY_NAME, SYMBOL_BY_QUALIFIED
+
+
+def _git_head_short() -> str | None:
+    """Return current ``HEAD`` short SHA, or ``None`` if git is unavailable."""
+    try:
+        root = find_project_root()
+    except Exception:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "rev-parse", "--short=12", "HEAD"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    return result.stdout.strip() or None
+
+
+def index_staleness_hint() -> str | None:
+    """Return a one-line ``hint`` string when the index appears stale.
+
+    Heuristic: compare the latest commit hash in ``git_commits`` against
+    ``git rev-parse HEAD``. When they differ (and HEAD isn't a parent of
+    the indexed commit), the index is missing recent commits — every
+    git-aware metric will be off (commit_count, churn, co-change). The
+    hint is suppressed when ``ROAM_NO_STALENESS_HINT=1`` is set so CI
+    pipelines that index then mutate the tree don't see noise.
+    """
+    if os.environ.get("ROAM_NO_STALENESS_HINT"):
+        return None
+    head = _git_head_short()
+    if not head:
+        return None
+    try:
+        with open_db(readonly=True) as conn:
+            row = conn.execute("SELECT hash FROM git_commits ORDER BY timestamp DESC LIMIT 1").fetchone()
+            if row is None:
+                return None
+            indexed_short = (row[0] or "")[:12]
+    except Exception:
+        return None
+    if not indexed_short or indexed_short == head:
+        return None
+    return (
+        f"index latest commit {indexed_short} != HEAD {head} — git-derived metrics "
+        f"(commits, churn, co-change, weather) may be stale. Run `roam index --force`."
+    )
+
 
 # Maximum suggestions returned by fts_suggestions()
 _MAX_FTS_SUGGESTIONS = 5

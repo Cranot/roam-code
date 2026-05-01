@@ -140,6 +140,11 @@ def weather(ctx, count):
         else:
             _verdict = "no hotspots found"
         click.echo(f"VERDICT: {_verdict}\n")
+        from roam.commands.resolve import index_staleness_hint as _stale_hint
+
+        _stale = _stale_hint()
+        if _stale:
+            click.echo(f"NOTE: {_stale}\n")
         click.echo("=== Hotspots (churn x complexity) ===")
         click.echo(
             format_table(

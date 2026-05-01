@@ -299,6 +299,8 @@ def _expand_via_file_neighbors(
     *,
     max_neighbors_per_file: int = 4,
     expansion_cap: int = 80,
+    seed_top_n: int = 30,
+    hub_threshold: int = 20,
 ) -> list[dict]:
     """Add symbols from files connected via ``file_edges`` to the seed
     files (the files that produced first-stage hits).
@@ -308,20 +310,33 @@ def _expand_via_file_neighbors(
     letting expansion dominate the lexical hits. We cap the expansion
     so a single hub file can't drag in hundreds of unrelated symbols.
 
-    Returns the original ``first_stage`` plus expansion symbols. The
-    structural reranker takes the merged list verbatim.
+    R.8 (redacted): two precision filters layered on top
+    of the original implementation —
+
+    * ``seed_top_n`` — only the top-N first-stage hits by fts_score
+      seed the expansion. Previously *all* 200 hits seeded; the
+      bottom-150 had near-zero fts and pulled in unrelated files.
+    * ``hub_threshold`` — files whose total file_edges degree exceeds
+      this are skipped as expansion seeds. Utility files (logger,
+      formatter, db.connection) are imported by 100+ other files; their
+      "neighbours" are the entire codebase, which is the leak the
+      dogfood notes flagged for ``seeds.py``.
+
+    Returns the original ``first_stage`` plus expansion symbols.
     """
     if not first_stage:
         return first_stage
 
+    # Sort by fts_score descending and take only the top-N as seeds.
+    sorted_by_fts = sorted(first_stage, key=lambda c: -float(c.get("fts_score") or 0.0))
+    strong_seeds = sorted_by_fts[: max(seed_top_n, 1)]
+
     seed_paths: dict[str, float] = {}
-    for c in first_stage:
+    for c in strong_seeds:
         path = c.get("file_path") or c.get("file") or ""
         score = float(c.get("fts_score") or 0.0)
         if not path:
             continue
-        # Keep the *best* score per file so expansion weight reflects
-        # the strongest seed for that file.
         if score > seed_paths.get(path, 0.0):
             seed_paths[path] = score
     if not seed_paths:
@@ -337,9 +352,34 @@ def _expand_via_file_neighbors(
     if not file_id_to_path:
         return first_stage
 
-    # Neighbour file ids via file_edges (both directions).
+    # Skip hub seeds — files with degree > hub_threshold pollute
+    # expansion with unrelated importers. Compute degree once across
+    # the seed set.
     seed_ids = list(file_id_to_path)
     placeholders = ",".join("?" for _ in seed_ids)
+    try:
+        degree_rows = conn.execute(
+            f"""
+            SELECT fid, SUM(d) AS total FROM (
+                SELECT source_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE source_file_id IN ({placeholders}) GROUP BY source_file_id
+                UNION ALL
+                SELECT target_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE target_file_id IN ({placeholders}) GROUP BY target_file_id
+            ) GROUP BY fid
+            """,
+            seed_ids + seed_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        degree_rows = []
+    hub_ids = {int(r["fid"]) for r in degree_rows if int(r["total"] or 0) > hub_threshold}
+    non_hub_seed_ids = [sid for sid in seed_ids if sid not in hub_ids]
+    if not non_hub_seed_ids:
+        return first_stage
+
+    # Neighbour file ids via file_edges (both directions), only from
+    # non-hub seeds.
+    placeholders = ",".join("?" for _ in non_hub_seed_ids)
     try:
         neighbor_rows = conn.execute(
             f"""
@@ -349,7 +389,7 @@ def _expand_via_file_neighbors(
             SELECT target_file_id AS seed_id, source_file_id AS neighbor_id
             FROM file_edges WHERE target_file_id IN ({placeholders})
             """,
-            seed_ids + seed_ids,
+            non_hub_seed_ids + non_hub_seed_ids,
         ).fetchall()
     except sqlite3.OperationalError:
         return first_stage

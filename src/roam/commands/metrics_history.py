@@ -43,20 +43,25 @@ def _compute_health_score(
         except Exception:
             pass
 
-    god_critical = sum(
-        1 for g in god_items if (g["degree"] > 150 if is_utility_path_fn(g["file"]) else g["degree"] > 50)
-    )
-    bn_critical = sum(
-        1 for b in bn_items if b["betweenness"] > bn_p90 * (1.5 if is_utility_path_fn(b["file"]) else 1.0)
-    )
+    # Score signal: actionable items only (utilities are expected to
+    # have high fan-in / high betweenness — penalising them tanks the
+    # score on healthy codebases). Normalised per 1k symbols so a 14k-
+    # symbol repo with 23 actionable god components (0.16%) doesn't
+    # score the same as a 100-symbol repo with 23 (23%). Mirrors the
+    # fix in cmd_health.py from the dogfood sprint 2026-05-01.
+    god_actionable = [g for g in god_items if not is_utility_path_fn(g["file"])]
+    bn_actionable = [b for b in bn_items if not is_utility_path_fn(b["file"])]
+    god_critical = sum(1 for g in god_actionable if g["degree"] > 50)
+    bn_critical = sum(1 for b in bn_actionable if b["betweenness"] > bn_p90)
 
-    god_signal = god_critical * 3 + len(god_items) * 0.5
-    bn_signal = bn_critical * 2 + len(bn_items) * 0.3
+    size_norm = max(1.0, symbols / 1000.0)
+    god_signal = (god_critical * 3 + len(god_actionable) * 0.5) / size_norm
+    bn_signal = (bn_critical * 2 + len(bn_actionable) * 0.3) / size_norm
 
     factors = [
         (_hf(tangle_r, 10), 0.30),
-        (_hf(god_signal, 5), 0.20),
-        (_hf(bn_signal, 4), 0.15),
+        (_hf(god_signal, 1.5), 0.20),
+        (_hf(bn_signal, 1.0), 0.15),
         (_hf(layer_violations, 5), 0.15),
     ]
     try:

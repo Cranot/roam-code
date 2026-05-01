@@ -358,6 +358,19 @@ def _group_dead(dead_items, by):
 # ---------------------------------------------------------------------------
 
 
+_TOOLING_PATH_HINTS = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
+
+
+def _is_tooling_path(path: str) -> bool:
+    """Same hint set as cmd_fan / cmd_smells. Excluded from dead-code
+    headline by default (redacted) — CI scripts are
+    expected to have unreferenced helper functions."""
+    if not path:
+        return False
+    p = "/" + path.replace("\\", "/")
+    return any(hint.replace("\\", "/") in p for hint in _TOOLING_PATH_HINTS)
+
+
 def _analyze_dead(conn):
     """Run the full dead code analysis.
 
@@ -366,6 +379,9 @@ def _analyze_dead(conn):
     rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
     # Exclude test files — their symbols are discovered by pytest, not imported
     rows = [r for r in rows if not _is_test_path(r["file_path"])]
+    # Exclude tooling/CI/benchmarks/dev — same default-exclusion that
+    # ``cmd_smells`` and ``cmd_fan`` apply.
+    rows = [r for r in rows if not _is_tooling_path(r["file_path"])]
     if not rows:
         return [], [], set()
 

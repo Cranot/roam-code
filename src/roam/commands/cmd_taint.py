@@ -68,8 +68,24 @@ def _default_rules_dir() -> Path:
     default=None,
     help="Only run rules whose id contains this substring.",
 )
+@click.option(
+    "--rules-pack",
+    "rules_pack",
+    type=click.Choice(
+        ["sqli", "xss", "ssrf", "path-traversal", "command-injection", "deserialization"],
+        case_sensitive=False,
+    ),
+    default=None,
+    help=(
+        "Run a single starter pack: sqli, xss, ssrf, path-traversal, "
+        "command-injection, or deserialization. Sugar over --rule for "
+        "discoverability — listed in MEMORY.md and external docs but "
+        "absent from the CLI before the dogfood sprint. Combinable with "
+        "--rules-dir to filter inside a custom pack directory."
+    ),
+)
 @click.pass_context
-def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter):
+def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
     """Reach-analysis from rule sources to sinks over the indexed edges.
 
     Each finding lists the source, the sink, the path that connects
@@ -83,6 +99,11 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter):
 
     rules_path = Path(rules_dir) if rules_dir else _default_rules_dir()
     rules = load_rules(rules_path)
+    if rules_pack:
+        # Pack name → substring matched against rule id (e.g. "sqli"
+        # matches "python-sqli", "xss" matches "js-xss").
+        pack_match = rules_pack.lower()
+        rules = [r for r in rules if pack_match in r.rule_id.lower()]
     if rule_filter:
         rules = [r for r in rules if rule_filter.lower() in r.rule_id.lower()]
 

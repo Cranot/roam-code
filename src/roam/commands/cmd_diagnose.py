@@ -315,6 +315,15 @@ def diagnose(ctx, name, depth):
 
         # Text output
         click.echo(f"VERDICT: {verdict}")
+        # Index-staleness hint (redacted): when index
+        # is older than HEAD, commit_count / churn columns are
+        # unreliable — surface this so the user knows whether to trust
+        # the numbers or re-index.
+        from roam.commands.resolve import index_staleness_hint as _stale_hint
+
+        _stale = _stale_hint()
+        if _stale:
+            click.echo(f"NOTE: {_stale}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")
         click.echo(f"  {loc(target_metrics['file_path'], sym['line_start'])}")

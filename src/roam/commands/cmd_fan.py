@@ -107,12 +107,43 @@ _FRAMEWORK_NAMES = frozenset(
 )
 
 
+_TOOLING_PATH_HINTS = ("/dev/", "/benchmarks/", "/.github/", "\\dev\\", "\\benchmarks\\", "\\.github\\")
+
+
+def _is_tooling_path(path: str) -> bool:
+    """Return True for paths that belong to tooling/CI/benchmarks/dev.
+
+    Default-excluded from headline metrics so first-time users aren't
+    dominated by ``pr-comment.js`` and ``roam-bench.py`` rows.
+    Matches the hint set used by ``cmd_smells._file_role_lookup``.
+    """
+    if not path:
+        return False
+    p = "/" + path.replace("\\", "/")
+    return any(hint.replace("\\", "/") in p for hint in _TOOLING_PATH_HINTS)
+
+
+def _filter_tooling_rows(rows):
+    """Filter out rows whose ``file_path`` is in a tooling location."""
+    return [r for r in rows if not _is_tooling_path(r["file_path"] or "")]
+
+
 @click.command()
 @click.argument("mode", default="symbol", type=click.Choice(["symbol", "file"]))
 @click.option("-n", "count", default=20, help="Number of items to show")
 @click.option("--no-framework", is_flag=True, help="Filter out framework/boilerplate symbols")
+@click.option(
+    "--include-tooling",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include CI scripts, dev tooling, build, and generated files. "
+        "Excluded by default — high fan-in in dev/.github/benchmarks "
+        "is expected and dominates the headline (redacted)."
+    ),
+)
 @click.pass_context
-def fan(ctx, mode, count, no_framework):
+def fan(ctx, mode, count, no_framework, include_tooling):
     """Show fan-in/fan-out: most connected symbols or files.
 
     Unlike ``coupling`` (which measures temporal co-change frequency), this
@@ -124,6 +155,10 @@ def fan(ctx, mode, count, no_framework):
     ensure_index()
 
     with open_db(readonly=True) as conn:
+        # Pull more rows than ``count`` when filtering, so the displayed
+        # top-N still has ``count`` entries after exclusions. 5x is a
+        # comfortable safety factor for typical tooling shares.
+        fetch_limit = count * 5 if not include_tooling else count
         if mode == "symbol":
             rows = conn.execute(
                 """
@@ -138,8 +173,12 @@ def fan(ctx, mode, count, no_framework):
                 ORDER BY total DESC
                 LIMIT ?
             """,
-                (count,),
+                (fetch_limit,),
             ).fetchall()
+
+            if not include_tooling:
+                rows = _filter_tooling_rows(rows)
+            rows = rows[:count]
 
             if no_framework:
                 rows = [r for r in rows if r["name"] not in _FRAMEWORK_NAMES]
