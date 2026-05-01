@@ -224,19 +224,25 @@ def extract_tokens(query: str) -> list[str]:
     for match in _PASCAL_RE.findall(query):
         _add(match)
 
-    # DOG.7 — natural-language fallback. If we already have strong
-    # identifier-shaped tokens, skip; otherwise mine lowercase nouns as
-    # weak seeds. We deliberately keep this last so it can never *replace*
-    # a stronger token, only supplement.
-    if not found:
-        for match in _LOWERCASE_NOUN_RE.findall(query):
-            tok = match.strip()
-            if len(tok) < 5:
-                continue
-            lower = tok.lower()
-            if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
-                continue
-            found[tok] = None
+    # DOG.7 / R.1 — natural-language supplement. Always mine lowercase
+    # domain nouns as additional seeds. The original DOG.7 ran this only
+    # as an all-or-nothing fallback, which discarded informative domain
+    # words like "language" and "extractor" whenever the query also
+    # happened to contain a PascalCase token. The 30-task self-bench
+    # showed that "where is the Ruby Tier 1 language extractor
+    # implemented" extracted only [Ruby, Tier] — and the Tier tail
+    # buried ruby_lang.py under test_dead_aging.py's TestDecayTier rows.
+    # Now we always include lowercase nouns; they ride alongside the
+    # Pascal/snake/dotted tokens and lift recall by adding domain
+    # signal that BM25 can score against.
+    for match in _LOWERCASE_NOUN_RE.findall(query):
+        tok = match.strip()
+        if len(tok) < 5:
+            continue
+        lower = tok.lower()
+        if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
+            continue
+        found[tok] = None
 
     return list(found)
 

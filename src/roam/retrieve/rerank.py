@@ -82,6 +82,16 @@ def structural_score(
 
     candidate_ids = {int(c["symbol_id"]) for c in candidates}
 
+    # R.3 — query-token boost. Files whose path contains a query token
+    # (case-insensitive, on path component boundaries) deserve a lift
+    # over structurally-similar peers that don't. The 30-task self-bench
+    # showed ``test_ruby.py`` losing to ``apex_lang.py`` for the query
+    # "Ruby Tier 1 language extractor": both score on "language" via
+    # FTS, but only ``test_ruby.py`` has "ruby" in its path. The boost
+    # is normalised so it can't dwarf the structural blend, but it
+    # consistently lifts the right files into top-K.
+    path_token_boost = _path_token_boost(candidates, task)
+
     pr_scores = _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized)
     clone_tags = _clone_tags(conn, candidates)
     cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
@@ -131,6 +141,7 @@ def structural_score(
             + zeta * semantic_norm
             + lexical_baseline * fts_norm
             + clone_boost
+            + path_token_boost.get(sid, 0.0)
         )
 
         justifications: dict[str, object] = {}
@@ -153,6 +164,60 @@ def structural_score(
         out.append({**c, "score": round(score, 4), "justifications": justifications})
 
     out.sort(key=lambda x: -x["score"])
+    return out
+
+
+def _path_token_boost(candidates: list[dict], task: str) -> dict[int, float]:
+    """Per-candidate boost for files whose path contains a task token.
+
+    Splits the path into components (``/`` and ``_`` and ``.``) and
+    intersects with the task tokens. A file like
+    ``src/roam/languages/ruby_lang.py`` matches "ruby" through the
+    ``ruby_lang`` component for the query "Ruby Tier 1 language
+    extractor", while ``src/roam/languages/aura_lang.py`` doesn't —
+    even though both score similarly on lexical/structural signal.
+
+    Magnitude is bounded at ~0.15 so it can lift relevant files into
+    top-K without dominating the structural blend.
+    """
+    if not task:
+        return {}
+    from roam.retrieve.seeds import extract_tokens
+
+    tokens = extract_tokens(task)
+    if not tokens:
+        return {}
+    lowered = {t.lower() for t in tokens if len(t) >= 3}
+    if not lowered:
+        return {}
+
+    out: dict[int, float] = {}
+    for c in candidates:
+        sid = int(c.get("symbol_id") or 0)
+        path = (c.get("file_path") or c.get("file") or "").lower()
+        if not path or not sid:
+            continue
+        # Split on /, _, ., - so "ruby_lang.py" → {"ruby","lang","py"}
+        parts = set()
+        for piece in path.replace("\\", "/").split("/"):
+            for sub in piece.replace(".", " ").replace("_", " ").replace("-", " ").split():
+                if len(sub) >= 3:
+                    parts.add(sub)
+        # Prefix-match either direction: query token "clone" matches path
+        # component "clones"; query token "extractor" matches path
+        # component "extractors". Cap both sides at length 4 so we don't
+        # over-match short tokens.
+        hits = set()
+        for token in lowered:
+            for part in parts:
+                if part == token or (len(token) >= 4 and part.startswith(token)) or (len(part) >= 4 and token.startswith(part)):
+                    hits.add(token)
+                    break
+        if not hits:
+            continue
+        # Up to 0.15 total: 0.075 first-hit, +0.04 each additional, capped.
+        boost = min(0.15, 0.075 + 0.04 * (len(hits) - 1))
+        out[sid] = boost
     return out
 
 

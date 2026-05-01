@@ -72,6 +72,14 @@ def run_retrieve(
     seeds = _resolve_seeds(conn, task, seed_files)
 
     first_stage = _first_stage(conn, task, top_n=max(first_stage_limit, k * 5), token_cap=token_cap)
+    # R.2 — pull in symbols from files structurally adjacent to the
+    # first-stage hits (imports both directions). The lexical query
+    # finds e.g. ``ruby_lang.py`` directly, but the eval expects also
+    # ``registry.py`` and ``test_ruby.py`` — neither shares query
+    # tokens. Expanding through file_edges restores those structurally-
+    # related files into the candidate pool so the structural reranker
+    # can score them.
+    first_stage = _expand_via_file_neighbors(conn, first_stage, max_neighbors_per_file=4, expansion_cap=80)
 
     # 'heavy' (ColBERT/jina-reranker-v3) was cut from MVP per CodeRAG-Bench
     # evidence — re-introduce here when A.13 ships and eval shows ≥3pt
@@ -285,6 +293,116 @@ def _like_first_stage(conn: sqlite3.Connection, tokens: list[str], *, top_n: int
     return list(accumulated.values())[:top_n]
 
 
+def _expand_via_file_neighbors(
+    conn: sqlite3.Connection,
+    first_stage: list[dict],
+    *,
+    max_neighbors_per_file: int = 4,
+    expansion_cap: int = 80,
+) -> list[dict]:
+    """Add symbols from files connected via ``file_edges`` to the seed
+    files (the files that produced first-stage hits).
+
+    Each added symbol gets a small ``fts_score`` (5% of the originating
+    seed file's median score) so structural rerank can lift it without
+    letting expansion dominate the lexical hits. We cap the expansion
+    so a single hub file can't drag in hundreds of unrelated symbols.
+
+    Returns the original ``first_stage`` plus expansion symbols. The
+    structural reranker takes the merged list verbatim.
+    """
+    if not first_stage:
+        return first_stage
+
+    seed_paths: dict[str, float] = {}
+    for c in first_stage:
+        path = c.get("file_path") or c.get("file") or ""
+        score = float(c.get("fts_score") or 0.0)
+        if not path:
+            continue
+        # Keep the *best* score per file so expansion weight reflects
+        # the strongest seed for that file.
+        if score > seed_paths.get(path, 0.0):
+            seed_paths[path] = score
+    if not seed_paths:
+        return first_stage
+
+    # Resolve seed paths to file ids in one batch.
+    placeholders = ",".join("?" for _ in seed_paths)
+    rows = conn.execute(
+        f"SELECT id, path FROM files WHERE path IN ({placeholders})",
+        list(seed_paths.keys()),
+    ).fetchall()
+    file_id_to_path: dict[int, str] = {int(r["id"]): r["path"] for r in rows}
+    if not file_id_to_path:
+        return first_stage
+
+    # Neighbour file ids via file_edges (both directions).
+    seed_ids = list(file_id_to_path)
+    placeholders = ",".join("?" for _ in seed_ids)
+    try:
+        neighbor_rows = conn.execute(
+            f"""
+            SELECT source_file_id AS seed_id, target_file_id AS neighbor_id
+            FROM file_edges WHERE source_file_id IN ({placeholders})
+            UNION
+            SELECT target_file_id AS seed_id, source_file_id AS neighbor_id
+            FROM file_edges WHERE target_file_id IN ({placeholders})
+            """,
+            seed_ids + seed_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return first_stage
+    if not neighbor_rows:
+        return first_stage
+
+    neighbor_to_seed: dict[int, int] = {}
+    for r in neighbor_rows:
+        nid = int(r["neighbor_id"])
+        sid = int(r["seed_id"])
+        if nid in file_id_to_path:
+            continue  # already a seed file — no need to expand to itself
+        neighbor_to_seed.setdefault(nid, sid)
+
+    if not neighbor_to_seed:
+        return first_stage
+
+    existing_symbol_ids = {int(c["symbol_id"]) for c in first_stage if c.get("symbol_id") is not None}
+    expansion: list[dict] = []
+    placeholders = ",".join("?" for _ in neighbor_to_seed)
+    sym_rows = conn.execute(
+        f"""
+        SELECT s.id AS symbol_id, s.name, s.qualified_name, s.kind,
+               s.line_start, s.line_end, f.id AS file_id, f.path AS file_path
+        FROM symbols s JOIN files f ON s.file_id = f.id
+        WHERE f.id IN ({placeholders})
+        ORDER BY f.id, s.line_start
+        """,
+        list(neighbor_to_seed.keys()),
+    ).fetchall()
+
+    per_file_count: dict[int, int] = {}
+    for row in sym_rows:
+        sid = int(row["symbol_id"])
+        if sid in existing_symbol_ids:
+            continue
+        fid = int(row["file_id"])
+        if per_file_count.get(fid, 0) >= max_neighbors_per_file:
+            continue
+        if len(expansion) >= expansion_cap:
+            break
+        seed_fid = neighbor_to_seed.get(fid)
+        seed_path = file_id_to_path.get(seed_fid, "") if seed_fid else ""
+        seed_score = seed_paths.get(seed_path, 0.0)
+        entry = dict(row)
+        entry["fts_score"] = seed_score * 0.05  # weak boost, not lexical hit
+        entry["expansion"] = True
+        expansion.append(entry)
+        per_file_count[fid] = per_file_count.get(fid, 0) + 1
+
+    return first_stage + expansion
+
+
 def _apply_budget(
     scored: list[dict],
     *,
@@ -292,21 +410,55 @@ def _apply_budget(
     k: int,
     tokens_per_line: int = DEFAULT_TOKENS_PER_LINE,
 ) -> tuple[list[dict], int]:
-    """Take the top items until *budget* tokens or *k* items, whichever first."""
+    """Take the top items until *budget* tokens or *k* items, whichever
+    first — with **file-level diversity** so a single hot file can't
+    monopolise the top-K.
+
+    Pass 1 takes the highest-scoring symbol from each unique file (in
+    score order). Pass 2 fills any remaining slots with lower-scoring
+    symbols from already-seen files. This solves the failure mode the
+    self-bench surfaced (run 2026-05-01): a 20-candidate window
+    collapsing to 5 unique files because of repeat hits inside hot test
+    files. The user-visible "where is X" task wants files first; if
+    they specifically need the multiple-symbols-per-file shape they
+    can pass ``k`` larger.
+    """
     selected: list[dict] = []
     used = 0
-    for item in scored:
+    seen_files: set[str] = set()
+    deferred: list[dict] = []
+
+    def _cost(item: dict) -> int:
         line_start = item.get("line_start") or 0
         line_end = item.get("line_end") or line_start
         line_count = max(1, int(line_end) - int(line_start) + 1)
-        cost = line_count * tokens_per_line
+        return line_count * tokens_per_line
 
+    def _add(item: dict) -> bool:
+        nonlocal used
+        cost = _cost(item)
         if budget and used + cost > budget and selected:
-            break
+            return False
         if k and len(selected) >= k:
-            break
-
+            return False
         selected.append({**item, "estimated_tokens": cost})
         used += cost
+        return True
+
+    # Pass 1: best-of-file (preserve score order)
+    for item in scored:
+        f = item.get("file_path") or item.get("file") or ""
+        if f in seen_files:
+            deferred.append(item)
+            continue
+        if not _add(item):
+            # budget/k exhausted on first pass — stop entirely
+            return selected, used
+        seen_files.add(f)
+
+    # Pass 2: fill leftover slots with deferred (lower-ranked) symbols
+    for item in deferred:
+        if not _add(item):
+            break
 
     return selected, used
