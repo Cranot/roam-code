@@ -18,7 +18,14 @@ class KotlinExtractor(GenericExtractor):
         return [".kt", ".kts"]
 
     def _classify_node(self, node) -> str | None:
-        if node.type == "object_declaration":
+        # The Kotlin tree-sitter grammar shape varies across versions of
+        # ``tree-sitter-language-pack``. Older versions emit
+        # ``object_declaration`` for ``object Foo``; newer versions
+        # collapse it under ``class_declaration`` with the first non-named
+        # child being the literal ``object`` token. We accept both so the
+        # extractor doesn't silently drop ``object`` symbols on either CI
+        # toolchain version.
+        if node.type in ("object_declaration", "object_literal"):
             return "class"
         if node.type == "class_declaration":
             token_types = {c.type for c in node.children if not c.is_named}
@@ -26,6 +33,10 @@ class KotlinExtractor(GenericExtractor):
                 return "interface"
             if "enum" in token_types or any(c.type == "enum_class_body" for c in node.children if c.is_named):
                 return "enum"
+            # Newer grammar variant: `object Foo` → class_declaration with
+            # a leading ``object`` token.
+            if "object" in token_types:
+                return "class"
             return "class"
         if node.type == "function_declaration":
             return "method" if self._in_type_context(node) else "function"
