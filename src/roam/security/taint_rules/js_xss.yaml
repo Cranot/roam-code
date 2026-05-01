@@ -1,0 +1,23 @@
+id: js-xss
+description: Untrusted input flowing into the DOM without escaping
+severity: error
+cwe: CWE-79
+languages:
+  - javascript
+  - typescript
+sources:
+  - req.query
+  - req.body
+  - req.params
+  - location.search
+  - URLSearchParams
+sinks:
+  - innerHTML
+  - outerHTML
+  - document.write
+  - eval
+  - dangerouslySetInnerHTML
+sanitizers:
+  - DOMPurify.sanitize
+  - escape
+  - textContent

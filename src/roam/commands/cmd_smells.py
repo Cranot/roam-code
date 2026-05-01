@@ -162,7 +162,7 @@ def smells(ctx, file_path, min_severity):
                     )
                 )
                 if total_smells > 5:
-                    click.echo(f"\n(+{total_smells - 5} more, use --detail for full list)")
+                    click.echo(f"\n(+{total_smells - 5} more, run `roam --detail smells` for the full list)")
             return
 
         # Full detail mode

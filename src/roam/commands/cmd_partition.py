@@ -13,6 +13,28 @@ from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, to_json
 
 # ---------------------------------------------------------------------------
+# Conflict-risk classifier (extracted for unit-testing — fleet planner
+# uses this label to decide parallel-vs-serial work order)
+# ---------------------------------------------------------------------------
+
+
+def _classify_conflict_risk(cross_edges: int, cochange_score: int) -> str:
+    """Return ``"LOW"`` / ``"MEDIUM"`` / ``"HIGH"`` for a partition.
+
+    Both bands are conjunctive: a single high signal escalates the label.
+    The pre-v12 version used ``OR`` on the medium band, which silently
+    classified ``cross_edges=2, cochange_score=200`` as MEDIUM when it
+    should be HIGH — fleet output then chose parallel work for what was
+    actually conflict-heavy. Caught by the v12 dogfood pass.
+    """
+    if cross_edges <= 3 and cochange_score <= 2:
+        return "LOW"
+    if cross_edges <= 10 and cochange_score <= 5:
+        return "MEDIUM"
+    return "HIGH"
+
+
+# ---------------------------------------------------------------------------
 # Role classification heuristics
 # ---------------------------------------------------------------------------
 
@@ -359,13 +381,7 @@ def compute_partition_manifest(
             if fid_a in partition_file_ids and fid_b not in partition_file_ids:
                 cochange_score += count
 
-        # Conflict risk label
-        if cross_edges <= 3 and cochange_score <= 2:
-            conflict_risk = "LOW"
-        elif cross_edges <= 10 or cochange_score <= 5:
-            conflict_risk = "MEDIUM"
-        else:
-            conflict_risk = "HIGH"
+        conflict_risk = _classify_conflict_risk(cross_edges, cochange_score)
 
         # Per-partition churn: sum of churn across files in this partition
         partition_churn = 0

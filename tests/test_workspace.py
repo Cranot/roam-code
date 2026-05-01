@@ -40,6 +40,14 @@ def _run_roam(args, cwd):
     return result
 
 
+# Workspace tests build per-module fixtures via subprocess `roam index`
+# calls. Under pytest-xdist, distinct modules run on different workers but
+# the indexer's writes to `.roam/index.db` (via SQLite + WAL) intermittently
+# race on cloud-synced filesystems (OneDrive/Dropbox). Pinning every test
+# in this module to a single xdist group fixes the flake. (DOG.5)
+pytestmark = pytest.mark.xdist_group("workspace_subprocess")
+
+
 @pytest.fixture(scope="module")
 def workspace_root(tmp_path_factory):
     """Create a workspace with a frontend and backend repo, each indexed."""
@@ -140,6 +148,14 @@ def workspace_root(tmp_path_factory):
     # Index both repos
     _run_roam(["index"], fe_root)
     _run_roam(["index"], be_root)
+
+    # Initialise the workspace (creates `.roam-workspace.json`). Without
+    # this, every test downstream of TestWsInit fails when run in
+    # isolation or under pytest-xdist (where ordering varies). DOG.5.
+    _run_roam(
+        ["ws", "init", str(fe_root), str(be_root), "--name", "fixture-ws"],
+        ws_root,
+    )
 
     return ws_root
 

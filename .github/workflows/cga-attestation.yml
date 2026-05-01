@@ -1,0 +1,156 @@
+# Real cosign integration for the v12 Code Graph Attestation chain.
+#
+# Why a separate workflow:
+#   - The unit suite mocks `subprocess.run` so the CGA + cosign code paths
+#     run on every developer machine without needing the cosign binary or
+#     Sigstore network access. That gives correctness coverage but does not
+#     prove the chain works end-to-end with the real binary + Fulcio + Rekor.
+#   - This workflow runs the *real* cosign binary in two modes:
+#       1. Offline keypair  (deterministic, no network, no secrets)
+#       2. Keyless OIDC     (Fulcio + Rekor, exercises the production path)
+#   - Both modes round-trip emit -> sign -> verify and exit 5 on tamper.
+#
+# Triggers:
+#   - push to main when attest/, security/, or this workflow changes
+#   - manual workflow_dispatch
+# Not gated on PRs to avoid flaking on Sigstore availability issues.
+
+name: CGA Attestation
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - 'src/roam/attest/**'
+      - 'src/roam/security/taint_engine.py'
+      - 'src/roam/commands/cmd_cga.py'
+      - 'src/roam/commands/cmd_taint.py'
+      - '.github/workflows/cga-attestation.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  id-token: write   # required for keyless OIDC signing
+
+jobs:
+  # -- Mode 1: offline keypair signing --------------------------------------
+  # Generates an ephemeral cosign keypair per run, signs and verifies.
+  # Deterministic, no network. This is the path most enterprise users will
+  # take for air-gapped or compliance-sensitive deployments.
+  offline-key:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history needed for git_stats during indexing
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install roam-code
+        run: pip install -e .
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Index the repo
+        run: |
+          roam index
+          roam clones --persist
+
+      - name: Generate ephemeral cosign keypair
+        env:
+          COSIGN_PASSWORD: ''   # empty password for ephemeral CI key
+        run: cosign generate-key-pair
+
+      - name: Emit signed CGA statement (offline)
+        env:
+          COSIGN_PASSWORD: ''
+        run: |
+          roam cga emit \
+            --include-taint \
+            --sign \
+            --key cosign.key \
+            --output .roam/cga-offline.intoto.json
+
+      - name: Verify CGA statement (offline round-trip)
+        run: |
+          roam cga verify \
+            .roam/cga-offline.intoto.json \
+            --cosign-key cosign.pub
+
+      - name: Tamper-detection sanity check
+        run: |
+          # Mutate one byte in the predicate. Verify must exit 5.
+          cp .roam/cga-offline.intoto.json .roam/cga-tampered.intoto.json
+          python -c "import json,pathlib; p=pathlib.Path('.roam/cga-tampered.intoto.json'); d=json.loads(p.read_text()); d['predicate']['edge_bundle_digest']='deadbeef'+d['predicate']['edge_bundle_digest'][8:]; p.write_text(json.dumps(d))"
+          set +e
+          roam cga verify .roam/cga-tampered.intoto.json --cosign-key cosign.pub
+          rc=$?
+          set -e
+          if [ "$rc" != "5" ]; then
+            echo "Expected verify to exit 5 on tamper; got $rc" >&2
+            exit 1
+          fi
+
+      - name: Upload offline statement
+        uses: actions/upload-artifact@v4
+        with:
+          name: cga-offline-attestation
+          path: |
+            .roam/cga-offline.intoto.json
+            .roam/cga-offline.intoto.bundle
+            cosign.pub
+
+  # -- Mode 2: keyless OIDC signing -----------------------------------------
+  # Uses GitHub's OIDC token + Fulcio + Rekor. This is the real Sigstore
+  # path — exercises code that the unit tests mock. Allowed to fail (Rekor
+  # outages should not break the build) but logs the failure mode.
+  keyless-oidc:
+    runs-on: ubuntu-latest
+    continue-on-error: true   # Sigstore network — soft gate
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install roam-code
+        run: pip install -e .
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Index the repo
+        run: |
+          roam index
+          roam clones --persist
+
+      - name: Emit + sign keyless
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          roam cga emit \
+            --include-taint \
+            --sign \
+            --keyless \
+            --output .roam/cga-keyless.intoto.json
+
+      - name: Verify keyless (Fulcio + Rekor round-trip)
+        env:
+          COSIGN_EXPERIMENTAL: '1'
+        run: |
+          roam cga verify .roam/cga-keyless.intoto.json
+
+      - name: Upload keyless statement
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cga-keyless-attestation
+          path: |
+            .roam/cga-keyless.intoto.json
+            .roam/cga-keyless.intoto.bundle

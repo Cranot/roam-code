@@ -56,9 +56,11 @@
           <tbody>
             <tr><td><code>roam understand</code></td><td><code>roam understand</code></td><td>Get a full codebase briefing before diving into files.</td></tr>
             <tr><td><code>roam context</code></td><td><code>roam context PaymentService</code></td><td>Ranked file/line reading plan for a symbol.</td></tr>
+            <tr><td><code>roam retrieve</code></td><td><code>roam retrieve "trace login flow" --budget 4000</code></td><td>Graph-aware spans for free-form natural-language tasks (FTS5 + structural rerank + token budget).</td></tr>
             <tr><td><code>roam impact</code></td><td><code>roam impact PaymentService</code></td><td>Blast radius and likely affected areas.</td></tr>
             <tr><td><code>roam preflight</code></td><td><code>roam preflight PaymentService</code></td><td>Safety check before edits.</td></tr>
             <tr><td><code>roam diff</code></td><td><code>roam diff --staged</code></td><td>Understand current change set risk.</td></tr>
+            <tr><td><code>roam critique</code></td><td><code>git diff | roam critique</code></td><td>Verify a patch (clones-not-edited + blast radius). Exit 5 on high severity.</td></tr>
             <tr><td><code>roam health</code></td><td><code>roam health --gate</code></td><td>Track and enforce architecture health (gate thresholds via <code>.roam-gates.yml</code>).</td></tr>
           </tbody>
         </table>
@@ -104,7 +106,10 @@
             <tr><td><code>roam smells</code></td><td><code>roam smells --min-severity warning</code></td><td>Code smell detector catalog.</td></tr>
             <tr><td><code>roam secrets</code></td><td><code>roam --sarif secrets</code></td><td>Secret leakage detection with remediation hints.</td></tr>
             <tr><td><code>roam vulns</code></td><td><code>roam --json vulns</code></td><td>Dependency vulnerability scan and reachability.</td></tr>
+            <tr><td><code>roam taint</code></td><td><code>roam taint --rule sqli --ci</code></td><td>Graph-reach taint analysis with OpenVEX-correct VEX justifications. Five starter rule packs (Python command-injection / SQLi / path-traversal, JS XSS / SSRF). Sanitizer-stop nodes; <code>code_not_reachable</code> never emitted.</td></tr>
+            <tr><td><code>roam cga emit</code></td><td><code>roam cga emit --include-taint --sign --key cosign.key</code></td><td>Code Graph Attestation — in-toto v1 statement, Merkle root + edge digest + OpenVEX reachability claims. Cosign signing optional with graceful skip. Verifier round-trips both predicate digest and signature.</td></tr>
             <tr><td><code>roam test-gaps</code></td><td><code>roam test-gaps --changed</code></td><td>Changed code lacking nearby tests.</td></tr>
+            <tr><td><code>roam eval-retrieve</code></td><td><code>roam eval-retrieve --tasks bench/retrieve/roam_self.jsonl --sweep</code></td><td>Recall@K eval harness for <code>roam retrieve</code>. JSONL ground-truth file. CI-gateable via <code>--min-recall-at-20</code>. <code>--sweep</code> rotates α/β/γ/δ/ε weight vectors.</td></tr>
             <tr><td><code>roam verify-imports</code></td><td><code>roam verify-imports --file src/auth/service.py</code></td><td>Import hallucination and unresolved reference checks.</td></tr>
           </tbody>
         </table>
@@ -127,6 +132,9 @@
             <tr><td><code>roam simulate</code></td><td><code>roam simulate move AuthService src/core/</code></td><td>Counterfactual architecture changes without editing files.</td></tr>
             <tr><td><code>roam partition</code></td><td><code>roam partition --agents 3</code></td><td>Split work for multi-agent execution.</td></tr>
             <tr><td><code>roam orchestrate</code></td><td><code>roam orchestrate --agents 3</code></td><td>Generate an agent task graph and dependencies.</td></tr>
+            <tr><td><code>roam fleet plan</code></td><td><code>roam fleet plan "split auth refactor" --n-agents 4 --adapter composio</code></td><td>Graph-aware fleet planner — Louvain partition + co-change + PageRank anchors emit <code>.roam-fleet.json</code> for Composio Agent Orchestrator, GitHub Copilot CLI <code>/fleet</code>, or raw runtimes.</td></tr>
+            <tr><td><code>roam fleet verify</code></td><td><code>roam fleet verify .roam-fleet.json</code></td><td>Re-check a manifest for residual cross-task file overlap.</td></tr>
+            <tr><td><code>roam ask</code></td><td><code>roam ask "is it safe to delete UserSession"</code></td><td>One-phrase intent classifier over a 12-recipe registry — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling. <code>roam ask --list</code> shows the recipe book.</td></tr>
           </tbody>
         </table>
       </div>

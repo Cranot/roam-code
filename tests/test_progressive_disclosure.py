@@ -346,8 +346,14 @@ class TestLayersProgressiveDisclosure:
         runner = CliRunner()
         result = invoke_cli(runner, ["layers"], cwd=indexed_project)
         assert result.exit_code == 0
-        # Summary mode should not show individual layer symbol breakdown but hint for --detail
-        assert "use --detail" in result.output or "No layers" in result.output
+        # Summary mode should not show individual layer symbol breakdown but hint for --detail.
+        # DOG.1 (2026-04-29) reworded "use --detail" to "run `roam --detail layers`"
+        # because `--detail` is a group-level flag, not a subcommand option.
+        assert (
+            "roam --detail layers" in result.output
+            or "use --detail" in result.output  # belt-and-braces for older builds
+            or "No layers" in result.output
+        )
 
     def test_layers_detail_shows_violations(self, indexed_project, monkeypatch):
         monkeypatch.chdir(indexed_project)

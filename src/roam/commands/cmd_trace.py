@@ -155,11 +155,43 @@ def trace(ctx, source, target, k_paths):
 
         src_ids = find_symbol_id(conn, source)
         if not src_ids:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "trace",
+                            summary={
+                                "verdict": f"symbol not found: '{source}'",
+                                "error": "symbol_not_found",
+                            },
+                            source=source,
+                            target=target,
+                            hint=symbol_not_found_hint(source),
+                        )
+                    )
+                )
+                raise SystemExit(1)
             click.echo(symbol_not_found_hint(source))
             raise SystemExit(1)
 
         tgt_ids = find_symbol_id(conn, target)
         if not tgt_ids:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "trace",
+                            summary={
+                                "verdict": f"symbol not found: '{target}'",
+                                "error": "symbol_not_found",
+                            },
+                            source=source,
+                            target=target,
+                            hint=symbol_not_found_hint(target),
+                        )
+                    )
+                )
+                raise SystemExit(1)
             click.echo(symbol_not_found_hint(target))
             raise SystemExit(1)
 

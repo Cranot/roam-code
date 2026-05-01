@@ -1,0 +1,21 @@
+id: python-sqli
+description: Untrusted input concatenated into raw SQL
+severity: error
+cwe: CWE-89
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.GET
+  - request.POST
+  - request.json
+sinks:
+  - cursor.execute
+  - connection.execute
+  - conn.execute
+  - db.execute
+  - session.execute
+sanitizers:
+  - sqlalchemy.bindparam
+  - escape
