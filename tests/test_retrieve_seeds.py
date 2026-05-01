@@ -103,12 +103,20 @@ class TestExtractTokens:
         for noise in ("where", "decide"):
             assert noise not in tokens, f"{noise} should be filtered"
 
-    def test_lowercase_fallback_only_when_no_strong_tokens(self):
-        """If a strong identifier-shaped token is present, skip the fallback."""
+    def test_lowercase_supplement_runs_alongside_strong_tokens(self):
+        """Lowercase domain nouns supplement (not replace) identifier-shaped tokens.
+
+        R.1 (2026-05-01): the original DOG.7 contract suppressed
+        lowercase nouns whenever any PascalCase/snake/dotted token was
+        present. The 30-task self-bench showed this discarding
+        informative domain words ("language", "extractor") and tanking
+        recall — e.g. "Ruby Tier 1 language extractor" extracted only
+        ``[Ruby, Tier]`` and lost to ``TestDecayTier`` rows under BM25.
+        Both classes of tokens now coexist.
+        """
         tokens = extract_tokens("where is UserSession used in critique")
-        # UserSession is the only strong token; lowercase fallback should be off.
         assert "UserSession" in tokens
-        assert "critique" not in tokens, "lowercase fallback must not run when strong tokens exist"
+        assert "critique" in tokens, "lowercase supplement must run alongside strong tokens"
 
     def test_short_lowercase_words_dropped(self):
         """Words <5 chars never enter via the NL fallback."""
