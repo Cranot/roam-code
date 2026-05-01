@@ -31,6 +31,11 @@ from typing import Any
 from roam.security.taint_engine import OPENVEX_JUSTIFICATIONS, OPENVEX_STATUSES
 
 PREDICATE_TYPE = "https://roam-code.dev/CodeGraph/v1"
+# v12.2: fused CodeGraph + AIBOM predicate. Owns the "structurally bound
+# AI authorship for tamper-evident codebases" lane that SLSA + SPDX +
+# CycloneDX 1.7 + OpenVEX leave gapped. Reference impl candidate for
+# the in-toto attestation registry.
+PREDICATE_TYPE_AIBOM = "https://roam-code.dev/CodeGraph-AIBOM/v1"
 STATEMENT_TYPE = "https://in-toto.io/Statement/v1"
 SCHEMA_VERSION = "1"
 
@@ -218,6 +223,7 @@ def build_cga_statement(
     project_root: Path,
     tool_version: str | None = None,
     taint_findings: list | None = None,
+    include_aibom: bool = False,
 ) -> dict[str, Any]:
     """Build the full in-toto v1 Statement wrapping the CGA predicate.
 
@@ -225,9 +231,15 @@ def build_cga_statement(
         {
           "_type": "https://in-toto.io/Statement/v1",
           "predicateType": "https://roam-code.dev/CodeGraph/v1",
+                              # → CodeGraph-AIBOM/v1 when include_aibom=True
           "subject": [{"name": "...", "digest": {...}}],
           "predicate": {...}
         }
+
+    With ``include_aibom=True``, the predicate type promotes to
+    ``CodeGraph-AIBOM/v1`` and embeds an ``aibom`` block binding
+    AI-authored commits to the indexed symbols they touched. Required
+    for EU AI Act Art. 50 disclosure (effective 2026-08-02).
     """
     sha = _git_commit_sha(project_root) or "unknown"
     remote = _git_remote_url(project_root)
@@ -236,16 +248,26 @@ def build_cga_statement(
         "name": subject_name,
         "digest": {"git_commit_sha1": sha},
     }
+    predicate = build_cga_predicate(
+        conn,
+        project_root=project_root,
+        tool_version=tool_version,
+        taint_findings=taint_findings,
+    )
+    predicate_type = PREDICATE_TYPE
+    if include_aibom:
+        try:
+            from roam.security.aibom_extension import build_aibom_block
+
+            predicate["aibom"] = build_aibom_block(project_root, conn)
+            predicate_type = PREDICATE_TYPE_AIBOM
+        except Exception as exc:
+            predicate["aibom_error"] = str(exc)
     return {
         "_type": STATEMENT_TYPE,
-        "predicateType": PREDICATE_TYPE,
+        "predicateType": predicate_type,
         "subject": [subject],
-        "predicate": build_cga_predicate(
-            conn,
-            project_root=project_root,
-            tool_version=tool_version,
-            taint_findings=taint_findings,
-        ),
+        "predicate": predicate,
     }
 
 
@@ -270,8 +292,11 @@ def verify_cga_statement(
     errors: list[str] = []
     if statement.get("_type") != STATEMENT_TYPE:
         errors.append(f"_type mismatch: got {statement.get('_type')!r}, expected {STATEMENT_TYPE!r}")
-    if statement.get("predicateType") != PREDICATE_TYPE:
-        errors.append(f"predicateType mismatch: got {statement.get('predicateType')!r}, expected {PREDICATE_TYPE!r}")
+    accepted_types = (PREDICATE_TYPE, PREDICATE_TYPE_AIBOM)
+    if statement.get("predicateType") not in accepted_types:
+        errors.append(
+            f"predicateType mismatch: got {statement.get('predicateType')!r}, expected one of {accepted_types!r}"
+        )
     predicate = statement.get("predicate") or {}
     if not isinstance(predicate, dict):
         return False, errors + ["predicate is not a JSON object"]
