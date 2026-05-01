@@ -811,7 +811,7 @@ def health(ctx, no_framework, gate):
                 for item in item_list
             ]
             if top_critical:
-                click.echo("Top CRITICAL issues (use --detail for full breakdown):")
+                click.echo("Top CRITICAL issues (run `roam --detail health` for the full breakdown):")
                 for item, kind in top_critical[:3]:
                     if kind == "cycle":
                         names = [s["name"] for s in item["symbols"][:3]]
@@ -826,7 +826,8 @@ def health(ctx, no_framework, gate):
                         )
             else:
                 click.echo(
-                    "(use --detail for full breakdown of cycles, god components, bottlenecks, and layer violations)"
+                    "(run `roam --detail health` for the full breakdown of "
+                    "cycles, god components, bottlenecks, and layer violations)"
                 )
             return
 

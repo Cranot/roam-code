@@ -1,9 +1,21 @@
-"""Dark matter detection: co-changing files with no structural dependency."""
+"""Dark matter detection: co-changing files with no structural dependency.
+
+Public helpers
+==============
+
+* :func:`dark_matter_edges` — full repo scan returning hidden file-pair
+  couplings ranked by NPMI.
+* :func:`co_change_score` — symbol-pair Jaccard score in [0, 1] used by
+  the retrieve reranker (β signal), the patch verifier (`roam critique`
+  dark-matter check), and the fleet planner's conflict-edge weighting.
+  One helper, three downstream consumers.
+"""
 
 from __future__ import annotations
 
 import math
 import re
+import sqlite3
 from difflib import SequenceMatcher
 from pathlib import Path
 
@@ -88,6 +100,144 @@ def dark_matter_edges(conn, *, min_cochanges: int = 3, min_npmi: float = 0.3) ->
 
     results.sort(key=lambda x: -x["npmi"])
     return results
+
+
+# ---------------------------------------------------------------------------
+# Symbol-level co-change score (β signal for retrieve, critique, fleet)
+# ---------------------------------------------------------------------------
+
+
+def file_co_change_score(
+    conn: sqlite3.Connection,
+    file_id_a: int,
+    file_id_b: int,
+) -> float:
+    """Jaccard-style co-change score between two file ids in [0, 1].
+
+    Returns 1.0 for two file ids that always change together; 0.0 when
+    they have never been touched in the same commit; ``0.0`` if either
+    file id is missing or has zero commits. Same-file pairs short-circuit
+    to ``0.0`` because the reranker shouldn't double-count a candidate
+    with itself.
+
+    Implementation:
+    * looks up the directional ``git_cochange`` row,
+    * uses ``file_stats.commit_count`` for each file's total touches,
+    * returns ``cochanges / (commits_a + commits_b - cochanges)``.
+
+    The function is *cheap* — three indexed reads — and intentionally
+    has no caching so it's safe to call inside a tight rerank loop on
+    a long-lived daemon connection.
+    """
+    if file_id_a == file_id_b:
+        return 0.0
+    a, b = (file_id_a, file_id_b) if file_id_a < file_id_b else (file_id_b, file_id_a)
+
+    row = conn.execute(
+        "SELECT cochange_count FROM git_cochange "
+        "WHERE (file_id_a = ? AND file_id_b = ?) "
+        "   OR (file_id_a = ? AND file_id_b = ?) "
+        "LIMIT 1",
+        (a, b, b, a),
+    ).fetchone()
+    if not row or not row[0]:
+        return 0.0
+    cochanges = float(row[0])
+
+    counts = conn.execute(
+        f"SELECT file_id, commit_count FROM file_stats WHERE file_id IN ({','.join('?' * 2)})",
+        (a, b),
+    ).fetchall()
+    commit_map: dict[int, int] = {r[0]: r[1] or 0 for r in counts}
+    ca = float(commit_map.get(a, 0))
+    cb = float(commit_map.get(b, 0))
+    union = ca + cb - cochanges
+    if union <= 0:
+        return 0.0
+    return min(1.0, cochanges / union)
+
+
+def co_change_score(
+    conn: sqlite3.Connection,
+    symbol_id_a: int,
+    symbol_id_b: int,
+) -> float:
+    """Jaccard-style co-change score between two symbols in [0, 1].
+
+    Resolves each symbol to its file id (one indexed read each) and
+    delegates to :func:`file_co_change_score`. Same-file pairs short
+    to ``0.0``; missing symbols return ``0.0``.
+
+    Used by:
+    * **retrieve reranker** — β contribution per candidate against the
+      seed file set;
+    * **critique** dark-matter check — surfaces files that *should*
+      have moved with the patch but didn't;
+    * **fleet planner** conflict-edge weighting.
+    """
+    if symbol_id_a == symbol_id_b:
+        return 0.0
+    rows = conn.execute(
+        f"SELECT id, file_id FROM symbols WHERE id IN ({','.join('?' * 2)})",
+        (symbol_id_a, symbol_id_b),
+    ).fetchall()
+    if len(rows) != 2:
+        return 0.0
+    file_map = {r[0]: r[1] for r in rows}
+    file_a = file_map.get(symbol_id_a)
+    file_b = file_map.get(symbol_id_b)
+    if file_a is None or file_b is None:
+        return 0.0
+    return file_co_change_score(conn, int(file_a), int(file_b))
+
+
+def co_change_score_to_seed_set(
+    conn: sqlite3.Connection,
+    candidate_symbol_id: int,
+    seed_symbol_ids: list[int] | set[int],
+) -> float:
+    """Max co-change score between *candidate* and any of the seed symbols.
+
+    The retrieve reranker uses this to populate β: a candidate that
+    co-changes strongly with *any* of the query's seed files inherits
+    its full weight. Returns 0.0 when the candidate's file shares no
+    history with the seed files.
+    """
+    if not seed_symbol_ids:
+        return 0.0
+    candidate_file_row = conn.execute(
+        "SELECT file_id FROM symbols WHERE id = ?",
+        (candidate_symbol_id,),
+    ).fetchone()
+    if not candidate_file_row or candidate_file_row[0] is None:
+        return 0.0
+    candidate_file = int(candidate_file_row[0])
+
+    seed_list = list(seed_symbol_ids)
+    if not seed_list:
+        return 0.0
+    seed_files: set[int] = set()
+    for chunk_start in range(0, len(seed_list), 400):
+        chunk = seed_list[chunk_start : chunk_start + 400]
+        rows = conn.execute(
+            f"SELECT DISTINCT file_id FROM symbols WHERE id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+        for row in rows:
+            if row[0] is not None:
+                seed_files.add(int(row[0]))
+
+    if not seed_files or seed_files == {candidate_file}:
+        return 0.0
+
+    best = 0.0
+    for sf in seed_files:
+        if sf == candidate_file:
+            continue
+        s = file_co_change_score(conn, candidate_file, sf)
+        if s > best:
+            best = s
+    return best
 
 
 # ---------------------------------------------------------------------------

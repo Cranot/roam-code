@@ -380,7 +380,7 @@ def layers(ctx, mermaid_mode):
 
         if not detail:
             # Summary mode: just show layer count + verdict
-            click.echo("(use --detail for per-layer symbol breakdown and violation list)")
+            click.echo("(run `roam --detail layers` for per-layer symbol breakdown and the violation list)")
             return
 
         for layer_info in formatted:

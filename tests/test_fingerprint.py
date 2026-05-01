@@ -240,3 +240,37 @@ class TestCLIFingerprint:
         result = runner.invoke(cli, ["fingerprint", "--help"])
         assert result.exit_code == 0
         assert "fingerprint" in result.output.lower() or "topology" in result.output.lower()
+
+
+# ---------------------------------------------------------------------------
+# DOG.3 — large-graph thresholds
+# ---------------------------------------------------------------------------
+
+
+class TestFingerprintScale:
+    """The pre-v12 5,000-symbol cap rejected every realistic codebase.
+
+    The new behaviour:
+    * Up to ``_WARN_THRESHOLD_SYMBOLS`` — runs silently.
+    * Between WARN and HARD — emits a stderr note, still runs.
+    * Above ``_HARD_CAP_SYMBOLS`` — refuses with an actionable message.
+    """
+
+    def test_thresholds_are_sane(self):
+        from roam.commands.cmd_fingerprint import (
+            _HARD_CAP_SYMBOLS,
+            _WARN_THRESHOLD_SYMBOLS,
+        )
+
+        assert _WARN_THRESHOLD_SYMBOLS < _HARD_CAP_SYMBOLS
+        # The pre-v12 cap was 5,000 — these floors keep us from regressing.
+        assert _WARN_THRESHOLD_SYMBOLS >= 10_000
+        assert _HARD_CAP_SYMBOLS >= 50_000
+
+    def test_legacy_constant_removed(self):
+        """`_MAX_GRAPH_SYMBOLS` was the v11 constant — must not return."""
+        from roam.commands import cmd_fingerprint
+
+        assert not hasattr(cmd_fingerprint, "_MAX_GRAPH_SYMBOLS"), (
+            "Old _MAX_GRAPH_SYMBOLS constant should not exist; use _WARN_THRESHOLD_SYMBOLS / _HARD_CAP_SYMBOLS instead."
+        )

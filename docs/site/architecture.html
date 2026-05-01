@@ -117,10 +117,18 @@
           <tbody>
             <tr><td>Index Pipeline</td><td><code>index/indexer.py</code>, <code>index/parser.py</code>, <code>index/symbols.py</code></td><td>Build and refresh the structural index from source + git.</td></tr>
             <tr><td>Storage</td><td><code>db/schema.py</code>, <code>db/connection.py</code></td><td>SQLite schema, migrations, batched query helpers.</td></tr>
-            <tr><td>Graph Intelligence</td><td><code>graph/builder.py</code>, <code>graph/layers.py</code>, <code>graph/clusters.py</code></td><td>Centrality, layering, communities, cycle analysis.</td></tr>
+            <tr><td>Graph Intelligence</td><td><code>graph/builder.py</code>, <code>graph/layers.py</code>, <code>graph/clusters.py</code>, <code>graph/pagerank.py</code> (incl. <code>personalized_pagerank</code>), <code>graph/clone_detect.py</code> (with persisted <code>clone_pairs</code>/<code>clone_clusters</code>)</td><td>Centrality, layering, communities, cycle analysis, AST clone clustering.</td></tr>
+            <tr><td>Retrieval</td><td><code>retrieve/pipeline.py</code>, <code>retrieve/rerank.py</code>, <code>retrieve/seeds.py</code></td><td>Graph-aware FTS5 + structural reranker for free-form natural-language tasks (<code>roam retrieve</code>). Personalized PageRank seeded from inferred or supplied symbols, blended with co-change + clone-canonical + runtime-hot signals.</td></tr>
+            <tr><td>Patch Verifier</td><td><code>critique/checks.py</code>, <code>critique/aggregator.py</code></td><td>Diff parsing + clones-not-edited + blast-radius + intent-alignment checks for <code>roam critique</code>; runtime-hot bump escalates findings on hot paths.</td></tr>
+            <tr><td>Eval Harness</td><td><code>eval/harness.py</code></td><td>JSONL ground-truth runner (<code>roam eval-retrieve</code>): recall@K calculator + weight-sweep mode that rotates &alpha;/&beta;/&gamma;/&delta;/&epsilon; vectors through <code>run_retrieve(weights=&hellip;)</code> for offline tuning.</td></tr>
+            <tr><td>Fleet Planner</td><td><code>fleet/manifest.py</code>, <code>fleet/adapters.py</code></td><td>Graph-aware multi-agent partitioner (<code>roam fleet plan</code>): Louvain communities + dark-matter co-change + PageRank anchors emit a <code>roam-fleet/v1</code> manifest with raw / Composio Agent Orchestrator / GitHub Copilot CLI adapters.</td></tr>
+            <tr><td>Intent Front-Door</td><td><code>ask/recipes.py</code>, <code>ask/classifier.py</code>, <code>ask/runner.py</code></td><td>One-phrase intent classifier (<code>roam ask</code>): TF-IDF over a recipe registry (<em>safe-delete-check, onboard, trace-task, verify-patch, plan-fleet</em>) with verb rules; dispatches in-process to the underlying CLI commands.</td></tr>
+            <tr><td>Taint &amp; Reachability</td><td><code>security/taint_engine.py</code>, <code>security/rules/*.yaml</code></td><td>Graph-reach BFS over edges with sanitizer-stop nodes (<code>roam taint</code>); 5 starter rule packs (sqli, xss, path-traversal, command-injection, deserialization). Findings carry OpenVEX-shaped status and justification strings (no <code>code_not_reachable</code>).</td></tr>
+            <tr><td>Code Graph Attestation</td><td><code>attest/cga.py</code></td><td>in-toto v1 statement builder with predicate type <code>roam-code.dev/CodeGraph/v1</code> (<code>roam cga emit</code>): Merkle root over symbol fingerprints + edge-bundle digest + optional OpenVEX-shaped reachability claims; cosign keyless or offline signing optional, with round-trip <code>cga verify</code>.</td></tr>
             <tr><td>Rule Engine</td><td><code>rules/builtin.py</code>, <code>rules/engine.py</code>, <code>rules/ast_match.py</code></td><td>Built-in rules plus user-defined YAML packs (path/symbol/AST/dataflow).</td></tr>
-            <tr><td>Interfaces</td><td><code>commands/cmd_*.py</code>, <code>mcp_server.py</code></td><td>Expose deterministic queries to CLI and MCP clients.</td></tr>
-            <tr><td>Output Contracts</td><td><code>output/formatter.py</code>, <code>output/sarif.py</code></td><td>Stable text/JSON/SARIF envelopes for agents and CI.</td></tr>
+            <tr><td>Config</td><td><code>config.py</code></td><td>Per-project <code>.roam/config.toml</code> loader (zero-dep TOML subset parser); tunable retrieve weights and budget defaults.</td></tr>
+            <tr><td>Interfaces</td><td><code>commands/cmd_*.py</code>, <code>mcp_server.py</code>, <code>mcp_extras/</code></td><td>Expose deterministic queries to CLI and MCP clients (presets: core / review / refactor / debug / architecture / full); sampling-driven compression, watcher-based invalidation, per-session memory.</td></tr>
+            <tr><td>Output Contracts</td><td><code>output/formatter.py</code>, <code>output/sarif.py</code>, <code>output/schema_registry.py</code></td><td>Stable text/JSON/SARIF envelopes for agents and CI; every <code>--json</code> error path returns a parseable envelope.</td></tr>
           </tbody>
         </table>
       </div>
@@ -149,6 +157,20 @@
   -> run health/rule checks
   -> aggregate verdict + risk factors
   -> render text or JSON envelope</code></pre>
+
+      <h3>Example: <code>roam cga emit --include-taint --sign --key cosign.key</code></h3>
+      <pre><code>CLI cmd_cga
+  -> ensure_index()
+  -> attest.cga.build_statement()
+       -> _symbol_fingerprints()       # Merkle root over (qname, kind, sig, path)
+       -> _edge_bundle_digest()        # graph snapshot fingerprint
+       -> security.taint_engine.run()  # graph-reach BFS, sanitizer stops
+            -> _finding_to_vex_claim() # OpenVEX status + justification
+  -> in-toto v1 Statement
+       (predicateType: roam-code.dev/CodeGraph/v1)
+  -> cosign sign-blob --bundle         # optional, graceful skip if absent
+  -> .roam/attestations/&lt;sha&gt;.intoto.json + .sig</code></pre>
+      <p><span class="badge ok">Property</span> The CGA chain is reproducible: same source tree + same git HEAD &rarr; same Merkle root &rarr; same predicate digest. Signing layers identity onto a deterministic fingerprint.</p>
       <p><span class="badge warn">Tradeoff</span> Static structure gives speed and determinism, but cannot model fully dynamic runtime behavior without trace ingestion.</p>
     </section>
 

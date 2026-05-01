@@ -1,0 +1,371 @@
+"""A.0.3 — seed inference for `roam retrieve`.
+
+When a user types a free-form task (or an MCP agent calls
+``retrieve_context(task=...)`` without ``--seed-files``), we still want
+the structural reranker to bias toward query-relevant symbols. This
+module extracts symbol-shaped tokens from the task text and resolves
+them to symbol ids via FTS5, returning a weighted seed map suitable for
+``personalized_pagerank``.
+
+Token classes captured (in priority order):
+
+1. **File paths** — ``api/handler.py``, ``src/foo.ts`` (anything matching
+   ``<word>.<ext>``).
+2. **Dotted attribute paths** — ``user.session``, ``module.func``.
+3. **snake_case multi-word identifiers** — ``user_session``,
+   ``handle_request`` (must contain at least one underscore).
+4. **PascalCase / camelCase identifiers** — ``UserSession``,
+   ``getUser`` (length ≥ 3).
+
+Each token is searched via FTS5 against the existing ``symbol_fts``
+virtual table; per-symbol scores are accumulated across tokens. The
+top ``max_seeds`` symbols (by accumulated BM25 weight) are returned.
+
+A LIKE-based fallback is used when FTS5 is not available (rare — only
+on builds without FTS5 support compiled into SQLite).
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+
+# ---------------------------------------------------------------------------
+# Token extraction
+# ---------------------------------------------------------------------------
+
+_FILE_RE = re.compile(r"([A-Za-z0-9_./-]+\.[A-Za-z]{1,8})\b")
+_DOTTED_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]+)+)\b")
+_SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b")
+_PASCAL_RE = re.compile(r"\b([A-Z][A-Za-z0-9]{2,})\b")
+# camelCase: lowercase start, ≥1 uppercase boundary (e.g. getUserById)
+_CAMEL_RE = re.compile(r"\b([a-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+)\b")
+# Lowercase nouns ≥5 chars — DOG.7 fallback for natural-language queries
+# like "where does critique decide finding severity" that contain zero
+# identifier-shaped tokens. Each domain word still has to clear the
+# extended stopword filter below before it becomes a seed.
+_LOWERCASE_NOUN_RE = re.compile(r"\b([a-z][a-z0-9]{4,})\b")
+
+# Short and very common words we never want as seeds. Keeps the seed list
+# focused on identifiers; the reranker adds non-seed structural signal.
+_STOPWORDS = frozenset(
+    {
+        "the",
+        "is",
+        "a",
+        "of",
+        "to",
+        "in",
+        "and",
+        "or",
+        "on",
+        "for",
+        "with",
+        "by",
+        "from",
+        "into",
+        "out",
+        "as",
+        "at",
+        "be",
+        "was",
+        "were",
+        "are",
+        "this",
+        "that",
+        "these",
+        "those",
+        "what",
+        "where",
+        "when",
+        "why",
+        "how",
+        "do",
+        "does",
+        "did",
+        "can",
+        "could",
+        "should",
+        "would",
+        "will",
+        "may",
+        "might",
+        "shall",
+        "must",
+        "have",
+        "has",
+        "had",
+        "get",
+        "set",
+        "add",
+        "remove",
+        "delete",
+        "use",
+        "make",
+        "create",
+        "find",
+        "try",
+        "any",
+        "all",
+        "some",
+        "none",
+        "not",
+        "so",
+        "if",
+        "yes",
+        "no",
+        "ok",
+        "true",
+        "false",
+    }
+)
+
+# Extra natural-language stopwords used only by the lowercase-noun
+# fallback. These are programming-context filler words that almost never
+# resolve to interesting symbols.
+_NL_EXTRA_STOPWORDS = frozenset(
+    {
+        # interrogatives / connectives
+        "where",
+        "when",
+        "while",
+        "after",
+        "before",
+        "during",
+        "until",
+        "would",
+        "should",
+        "could",
+        "might",
+        "shall",
+        "ought",
+        "their",
+        "there",
+        "these",
+        "those",
+        "which",
+        "whose",
+        "about",
+        "above",
+        "below",
+        "between",
+        "through",
+        "without",
+        "either",
+        "neither",
+        # generic verbs that are never identifier names
+        "decide",
+        "decides",
+        "check",
+        "checks",
+        "seems",
+        "looks",
+        "happens",
+        "running",
+        "trying",
+        "matters",
+        "exists",
+        # generic nouns we do NOT want as seeds
+        "thing",
+        "things",
+        "stuff",
+        "place",
+        "places",
+        "people",
+        "person",
+        # very common english fillers ≥5 chars
+        "really",
+        "still",
+        "always",
+        "never",
+        "often",
+        "actually",
+        "though",
+        "until",
+        "while",
+    }
+)
+
+# Two- and three-letter all-caps tokens we treat as English/initialisms,
+# not seeds: API, URL, ID, OK, etc. They produce too much FTS5 noise.
+_INITIALISM_RE = re.compile(r"^[A-Z]{2,3}$")
+
+
+def extract_tokens(query: str) -> list[str]:
+    """Return the unique symbol-shaped tokens found in *query*.
+
+    Order is stable but unspecified — callers should not rely on it.
+    Stop-words and short initialisms are filtered out.
+    """
+    if not query:
+        return []
+
+    found: dict[str, None] = {}  # use dict for insertion-order uniqueness
+
+    def _add(tok: str) -> None:
+        tok = tok.strip()
+        if len(tok) < 3:
+            return
+        if tok.lower() in _STOPWORDS:
+            return
+        if _INITIALISM_RE.match(tok):
+            return
+        found[tok] = None
+
+    # File paths first (longest, most specific) so they aren't shadowed.
+    for match in _FILE_RE.findall(query):
+        _add(match)
+    for match in _DOTTED_RE.findall(query):
+        _add(match)
+    for match in _SNAKE_RE.findall(query):
+        _add(match)
+    for match in _CAMEL_RE.findall(query):
+        _add(match)
+    for match in _PASCAL_RE.findall(query):
+        _add(match)
+
+    # DOG.7 — natural-language fallback. If we already have strong
+    # identifier-shaped tokens, skip; otherwise mine lowercase nouns as
+    # weak seeds. We deliberately keep this last so it can never *replace*
+    # a stronger token, only supplement.
+    if not found:
+        for match in _LOWERCASE_NOUN_RE.findall(query):
+            tok = match.strip()
+            if len(tok) < 5:
+                continue
+            lower = tok.lower()
+            if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
+                continue
+            found[tok] = None
+
+    return list(found)
+
+
+# ---------------------------------------------------------------------------
+# FTS5 / LIKE matching
+# ---------------------------------------------------------------------------
+
+# Same column weights as `search/index_embeddings.py` so behaviour matches
+# the rest of the search stack: name=10, qualified_name=5, signature=2,
+# kind=1, file_path=3.
+_BM25_WEIGHTS = "10.0, 5.0, 2.0, 1.0, 3.0"
+
+
+def _has_symbol_fts(conn: sqlite3.Connection) -> bool:
+    try:
+        row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
+        return row is not None
+    except sqlite3.OperationalError:
+        return False
+
+
+def _camel_split(text: str) -> str:
+    """Mirror of :func:`roam.search.index_embeddings._camel_split`.
+
+    The FTS5 indexer expands ``UserSession`` to ``User Session`` at insert
+    time (see ``search/index_embeddings.build_fts_index``). Query tokens
+    must be split the same way or MATCH returns zero rows.
+    """
+    if not text:
+        return ""
+    out = re.sub(r"([a-z])([A-Z])", r"\1 \2", text)
+    out = re.sub(r"([A-Z]+)([A-Z][a-z])", r"\1 \2", out)
+    return out
+
+
+def _fts5_query_for(token: str) -> str:
+    """Build a defensive FTS5 query for *token*.
+
+    Splits at camelCase / underscore / dot / slash boundaries (matching
+    the indexer's tokenisation) and OR-joins prefix matches so that
+    ``UserSession`` finds rows storing ``User Session`` and
+    ``handle_login`` finds rows whose ``name`` is exactly ``handle_login``.
+    """
+    safe = token.replace('"', "").replace("'", "")
+    if not safe:
+        return ""
+    expanded = _camel_split(safe).replace("_", " ").replace(".", " ").replace("/", " ")
+    parts = [p for p in expanded.split() if len(p) >= 2]
+    if not parts:
+        return ""
+    return " OR ".join(f'"{p}"*' for p in parts)
+
+
+def infer_seeds(
+    conn: sqlite3.Connection,
+    query: str,
+    max_seeds: int = 10,
+) -> dict[int, float]:
+    """Return ``{symbol_id: weight}`` seeds inferred from a free-form query.
+
+    Empty / token-less queries return ``{}``. The caller (typically the
+    retrieve pipeline) feeds the result into :func:`personalized_pagerank`.
+
+    Weights are accumulated BM25 scores; downstream consumers that need
+    them in [0, 1] should normalise themselves. ``personalized_pagerank``
+    already normalises so most callers don't have to.
+    """
+    if not query or not query.strip() or max_seeds <= 0:
+        return {}
+
+    tokens = extract_tokens(query)
+    if not tokens:
+        return {}
+
+    accumulated: dict[int, float] = {}
+
+    if _has_symbol_fts(conn):
+        candidate_limit = max(max_seeds * 3, 30)
+        for token in tokens:
+            fts_query = _fts5_query_for(token)
+            if not fts_query:
+                continue
+            try:
+                rows = conn.execute(
+                    f"SELECT sf.rowid, -bm25(symbol_fts, {_BM25_WEIGHTS}) AS score "
+                    f"FROM symbol_fts sf "
+                    f"WHERE symbol_fts MATCH ? "
+                    f"ORDER BY bm25(symbol_fts, {_BM25_WEIGHTS}) "
+                    f"LIMIT ?",
+                    (fts_query, candidate_limit),
+                ).fetchall()
+            except sqlite3.OperationalError:
+                # Malformed FTS5 token; skip rather than break the pipeline.
+                continue
+            for row in rows:
+                sym_id = int(row[0])
+                weight = float(row[1])
+                if weight <= 0:
+                    continue
+                accumulated[sym_id] = accumulated.get(sym_id, 0.0) + weight
+    else:
+        accumulated = _like_fallback(conn, tokens, max_seeds)
+
+    if not accumulated:
+        return {}
+
+    top = sorted(accumulated.items(), key=lambda kv: -kv[1])[:max_seeds]
+    return dict(top)
+
+
+def _like_fallback(
+    conn: sqlite3.Connection,
+    tokens: list[str],
+    max_seeds: int,
+) -> dict[int, float]:
+    """Used when FTS5 is unavailable. Slower but functional."""
+    accumulated: dict[int, float] = {}
+    candidate_limit = max(max_seeds * 3, 30)
+    for token in tokens:
+        like = f"%{token}%"
+        try:
+            rows = conn.execute(
+                "SELECT id FROM symbols WHERE name LIKE ? OR qualified_name LIKE ? LIMIT ?",
+                (like, like, candidate_limit),
+            ).fetchall()
+        except sqlite3.OperationalError:
+            continue
+        for row in rows:
+            sym_id = int(row[0])
+            accumulated[sym_id] = accumulated.get(sym_id, 0.0) + 1.0
+    return accumulated

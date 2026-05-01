@@ -153,6 +153,12 @@ class TestDeferLoading:
             # batch operations (2)
             "roam_batch_search",
             "roam_batch_get",
+            # mcp_extras (v12 — completion + future protocol-level helpers)
+            "roam_complete",
+            # v12 — retrieval / patch verification / agent fleet planning
+            "roam_retrieve",
+            "roam_critique",
+            "roam_fleet_plan",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"

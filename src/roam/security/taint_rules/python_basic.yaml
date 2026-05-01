@@ -1,0 +1,25 @@
+id: python-command-injection
+description: Untrusted user input flowing into shell-style command execution
+severity: error
+cwe: CWE-78
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.GET
+  - request.POST
+  - request.json
+  - input
+  - sys.stdin
+sinks:
+  - subprocess.run
+  - subprocess.call
+  - subprocess.Popen
+  - os.system
+  - os.popen
+  - eval
+  - exec
+sanitizers:
+  - shlex.quote
+  - shlex.split

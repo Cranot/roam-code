@@ -41,7 +41,15 @@ def _severity_icon(sev: str) -> str:
 
 @click.command("complexity")
 @click.argument("target", required=False, default=None)
-@click.option("--limit", "-n", default=20, help="Number of results to show")
+@click.option(
+    "--top",
+    "--limit",
+    "-n",
+    "limit",
+    default=20,
+    type=int,
+    help="Number of results to show (alias: --limit, -n)",
+)
 @click.option(
     "--threshold",
     "-t",

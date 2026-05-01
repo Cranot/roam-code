@@ -62,3 +62,6 @@ reports/
 
 # Internal docs (not public)
 internal/
+
+# Claude Code internal state (lockfiles, scheduled tasks, etc.)
+.claude/

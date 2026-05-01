@@ -182,6 +182,33 @@ class TestPartitionManifest:
         finally:
             os.chdir(old_cwd)
 
+    def test_classify_conflict_risk_bands(self):
+        """The pre-v12 version used OR on the medium band — that silently
+        classified high-cochange / low-cross-edges (or vice versa) as
+        MEDIUM. Both signals must escalate independently. Caught by the
+        v12 dogfood pass; this test prevents regression."""
+        from roam.commands.cmd_partition import _classify_conflict_risk
+
+        # LOW band — both signals conjunctively low
+        assert _classify_conflict_risk(0, 0) == "LOW"
+        assert _classify_conflict_risk(3, 2) == "LOW"
+
+        # MEDIUM band — both signals conjunctively moderate
+        assert _classify_conflict_risk(4, 3) == "MEDIUM"
+        assert _classify_conflict_risk(10, 5) == "MEDIUM"
+
+        # The v11 OR-bug: any single high signal escalates to HIGH.
+        assert _classify_conflict_risk(20, 0) == "HIGH", "high cross_edges with low cochange must escalate to HIGH"
+        assert _classify_conflict_risk(0, 200) == "HIGH", (
+            "high cochange_score with low cross_edges must escalate to HIGH"
+        )
+        # Just over the medium ceiling on one axis flips to HIGH
+        assert _classify_conflict_risk(11, 0) == "HIGH"
+        assert _classify_conflict_risk(0, 6) == "HIGH"
+
+        # Genuinely high on both → HIGH
+        assert _classify_conflict_risk(50, 100) == "HIGH"
+
     def test_partition_conflict_risk_valid_label(self, partition_project):
         """conflict_risk is LOW, MEDIUM, or HIGH."""
         from roam.commands.cmd_partition import compute_partition_manifest

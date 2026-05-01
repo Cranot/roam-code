@@ -57,6 +57,14 @@ def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[st
     Looks for references to HTTP methods (get/post/etc.) and extracts
     URL patterns from the corresponding source lines.
 
+    **Issue #19 guard**: ``app.get('/x', handler)`` / ``router.post(...)`` /
+    ``Route::get(...)`` / ``@app.get(...)`` are route *definitions*, not
+    client-side API calls — even if the file lives in a repo tagged as
+    ``frontend``. Polyglot monorepos with both UI and server code in the
+    same repo would otherwise generate false-positive cross-repo edges.
+    Source lines that match any of the backend route regexes (or whose
+    receiver is one of ``{app, router, server}``) are skipped.
+
     Returns a list of dicts: {symbol_id, url_pattern, http_method,
     file_path, line, symbol_name}
     """
@@ -91,6 +99,11 @@ def scan_frontend_api_calls(repo_db_path: Path, repo_root: Path) -> list[dict[st
 
             line_num = row["line"]
             file_path = row["file_path"]
+
+            # Issue #19 guard: skip route-definition syntax that looks
+            # like a client call.
+            if _looks_like_route_definition(repo_root / file_path, line_num):
+                continue
 
             # Read the source line to extract URL
             url = _extract_url_from_source(repo_root / file_path, line_num)
@@ -329,6 +342,60 @@ def build_cross_repo_edges(
 # ---------------------------------------------------------------------------
 # Internal helpers
 # ---------------------------------------------------------------------------
+
+
+_ROUTE_HANDLER_RECEIVERS = ("app", "router", "server", "fastify", "express")
+# Note: ``api`` is intentionally NOT here — ``api.get('/users')`` is the
+# canonical client-call shape. Server frameworks consistently use one of
+# the above receiver names.
+
+
+def _looks_like_route_definition(file_path: Path, line_num: int | None) -> bool:
+    """Return True when the source line at *line_num* defines a server route.
+
+    Mirrors the checks in :func:`_scan_file_for_routes` but at a single
+    line, so the per-edge frontend scanner can short-circuit before
+    creating a false-positive API call. Conservative — when in doubt
+    we keep the edge (returns False) so we don't suppress real calls.
+    """
+    if line_num is None:
+        return False
+    try:
+        text = file_path.read_text(encoding="utf-8", errors="replace").splitlines()
+        if line_num <= 0 or line_num > len(text):
+            return False
+        line = text[line_num - 1]
+    except (OSError, UnicodeDecodeError):
+        return False
+
+    if _EXPRESS_ROUTE_RE.search(line):
+        return True
+    if _PYTHON_ROUTE_RE.search(line):
+        return True
+    if _BACKEND_ROUTE_RE.search(line):
+        return True
+
+    # Receiver-name heuristic: `app.get(...)` / `router.post(...)` etc.
+    # The body before the dot is the receiver. We're conservative and
+    # only flag well-known server receivers.
+    receiver_match = re.search(
+        r"\b(" + "|".join(_ROUTE_HANDLER_RECEIVERS) + r")\s*\.\s*"
+        r"(get|post|put|delete|patch)\s*\(",
+        line,
+        re.IGNORECASE,
+    )
+    if receiver_match:
+        # Server receivers commonly take a 2nd argument that's a callable.
+        # The presence of `, function` / `, async function` / `, () =>`
+        # / `, async () =>` / `, handler` tightens the precision.
+        if re.search(r",\s*(?:async\s+)?(?:function|\([^)]*\)\s*=>|[a-zA-Z_]\w*)\s*[){]", line):
+            return True
+        # Even without a callable in the same line (multi-line handlers),
+        # a receiver of `app|router|server` plus a path argument is a
+        # strong route signal.
+        return True
+
+    return False
 
 
 def _extract_url_from_source(file_path: Path, line_num: int | None) -> str | None:

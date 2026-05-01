@@ -110,6 +110,21 @@ def split(ctx, path, min_group):
                 (f"%{path}",),
             ).fetchone()
         if frow is None:
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "split",
+                            summary={
+                                "verdict": f"file not found: '{path}'",
+                                "error": "file_not_found",
+                            },
+                            file=path,
+                            hint=file_not_found_hint(path),
+                        )
+                    )
+                )
+                raise SystemExit(1)
             click.echo(file_not_found_hint(path))
             raise SystemExit(1)
 

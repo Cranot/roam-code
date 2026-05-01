@@ -1316,7 +1316,7 @@ def dead(
                         f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}"
                     )
                 if len(high) > 5:
-                    click.echo(f"  (+{len(high) - 5} more — use --detail for full list)")
+                    click.echo(f"  (+{len(high) - 5} more — run `roam --detail dead` for the full list)")
             if need_extended and ext_summary:
                 click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}")
                 click.echo(f"  Median age: {ext_summary['median_age_days']} days")

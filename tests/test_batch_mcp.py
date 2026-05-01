@@ -727,11 +727,16 @@ class TestCoreToolsMembership:
 
         assert "roam_batch_get" in _CORE_TOOLS
 
-    def test_core_tools_count_is_23(self):
-        """_CORE_TOOLS should now contain 23 tools (21 original + 2 batch)."""
+    def test_core_tools_count_at_least_23(self):
+        """_CORE_TOOLS holds the curated subset shown by default to MCP
+        clients. v11 grew it to 23 (21 original + 2 batch). v12's
+        ``mcp_extras`` work pushed it to 24+. The hard floor is 23 — if
+        anything *removes* a tool from the curated set the test catches
+        it; growth is fine.
+        """
         from roam.mcp_server import _CORE_TOOLS
 
-        assert len(_CORE_TOOLS) == 23
+        assert len(_CORE_TOOLS) >= 23, f"_CORE_TOOLS shrank below 23 ({len(_CORE_TOOLS)})"
 
     def test_presets_are_supersets_of_updated_core(self):
         """All named presets must include the new batch tools."""

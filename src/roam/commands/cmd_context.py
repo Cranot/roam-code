@@ -1063,6 +1063,21 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
         with open_db(readonly=True) as conn:
             frow = _resolve_file(conn, for_file)
             if frow is None:
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "context",
+                                summary={
+                                    "verdict": f"file not found: '{for_file}'",
+                                    "error": "file_not_found",
+                                },
+                                file=for_file,
+                                hint=file_not_found_hint(for_file),
+                            )
+                        )
+                    )
+                    raise SystemExit(1)
                 click.echo(file_not_found_hint(for_file))
                 raise SystemExit(1)
             data = _gather_file(conn, frow)

@@ -192,6 +192,16 @@ def ws_init(ctx, repos, name):
             click.echo(f"  cd {r['abs_path']} && roam index")
     click.echo()
     click.echo("Run `roam ws resolve` to detect cross-repo API connections.")
+    # Issue #18: roles drive the auto-derivation of `connections`. Spell
+    # this out so users don't edit roles afterwards and end up with
+    # `connections: []` resolving to zero edges.
+    untagged = [r for r in resolved if r["role"] not in ("frontend", "backend")]
+    if untagged:
+        click.echo(
+            "  Tip: tag each repo as `role: frontend` or `role: backend` in "
+            ".roam-workspace.json so `ws resolve` can pair them automatically. "
+            f"Currently untagged: {', '.join(r['name'] for r in untagged[:5])}" + ("..." if len(untagged) > 5 else "")
+        )
 
 
 # ---------------------------------------------------------------------------
@@ -306,8 +316,51 @@ def ws_resolve(ctx):
         total_matched = 0
         all_matches = []
 
+        # Issue #18 guard: when `connections: []` is empty (the default
+        # after `ws init`, or after the user edits roles by hand without
+        # re-running init), auto-derive pairs from `role: frontend` ↔
+        # `role: backend` tags so `ws resolve` does *something* useful.
+        # The on-disk config is left alone — populate in-memory only.
+        connections = list(config.get("connections", []))
+        auto_derived = False
+        if not connections:
+            fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]
+            be_repos = [r for r in repo_infos if r.get("role") == "backend"]
+            if fe_repos and be_repos:
+                connections = [
+                    {"type": "rest-api", "frontend": fe["name"], "backend": be["name"]}
+                    for fe in fe_repos
+                    for be in be_repos
+                ]
+                auto_derived = True
+                if not json_mode:
+                    pairs = ", ".join(f"{c['frontend']} -> {c['backend']}" for c in connections)
+                    click.echo(
+                        f"  Note: connections array empty; auto-derived "
+                        f"{len(connections)} pair(s) from role tags: {pairs}",
+                        err=True,
+                    )
+                    click.echo(
+                        "  (edit `.roam-workspace.json` to override; re-run `roam ws init` to persist)",
+                        err=True,
+                    )
+            elif not json_mode:
+                missing = []
+                if not fe_repos:
+                    missing.append("a frontend role")
+                if not be_repos:
+                    missing.append("a backend role")
+                click.echo(
+                    f"  Warning: connections array is empty and no auto-derivation "
+                    f"possible (missing: {', '.join(missing)}). "
+                    f"Set `role: frontend` / `role: backend` on repos in "
+                    f".roam-workspace.json, then re-run `roam ws init` "
+                    f"or add `connections` entries manually.",
+                    err=True,
+                )
+
         # Process each connection pair
-        for conn_cfg in config.get("connections", []):
+        for conn_cfg in connections:
             if conn_cfg.get("type") != "rest-api":
                 continue
 

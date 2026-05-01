@@ -354,7 +354,7 @@ def clusters(ctx, min_size, mermaid_mode):
                 for r in visible[:5]:
                     click.echo(f"    [{r['cluster_id']}] {r['cluster_label']}  size={r['size']}")
                 if len(visible) > 5:
-                    click.echo(f"    (+{len(visible) - 5} more — use --detail for full breakdown)")
+                    click.echo(f"    (+{len(visible) - 5} more — run `roam --detail clusters` for the full breakdown)")
             return
 
         # Main table

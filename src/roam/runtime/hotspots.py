@@ -1,8 +1,97 @@
-"""Runtime hotspot analysis: compare static vs runtime rankings."""
+"""Runtime hotspot analysis: compare static vs runtime rankings.
+
+Public helpers
+==============
+
+* :func:`compute_hotspots` — full ranking comparison.
+* :func:`runtime_score` — symbol-level score in [0, 1] driven by call
+  count, p99 latency, and error rate. Used by the retrieve reranker as
+  the δ contribution and by ``roam critique``'s impact severity bump
+  on changed symbols. One helper, two downstream consumers.
+"""
 
 from __future__ import annotations
 
+import math
 import sqlite3
+
+
+def runtime_score(
+    conn: sqlite3.Connection,
+    symbol_id: int,
+    *,
+    log_baseline: float = 1000.0,
+) -> float:
+    """Return a [0, 1] runtime-importance score for a symbol.
+
+    Score = ``0.6·call_volume + 0.3·latency + 0.1·error_rate`` where:
+
+    * **call_volume** = ``log10(call_count + 1) / log10(log_baseline)``
+      capped at 1.0 (so a symbol with 1k+ calls saturates at 1.0; tunable
+      via ``log_baseline``).
+    * **latency** = ``min(p99 / 1000ms, 1.0)`` — anything ≥1s is maxed.
+    * **error_rate** is already in [0, 1].
+
+    Returns 0.0 when the symbol has no ``runtime_stats`` row — rather
+    than raising, so the reranker can call this for every candidate
+    without a separate "is hot?" check.
+    """
+    row = conn.execute(
+        "SELECT call_count, p99_latency_ms, error_rate FROM runtime_stats WHERE symbol_id = ? LIMIT 1",
+        (symbol_id,),
+    ).fetchone()
+    if not row:
+        return 0.0
+
+    call_count = max(0.0, float(row[0] or 0))
+    p99_ms = max(0.0, float(row[1] or 0))
+    error_rate = float(row[2] or 0)
+
+    if log_baseline <= 1:
+        log_baseline = 1000.0
+    log_div = math.log10(log_baseline) or 1.0
+    call_volume = min(1.0, math.log10(call_count + 1) / log_div)
+    latency = min(1.0, p99_ms / 1000.0)
+    err = max(0.0, min(1.0, error_rate))
+
+    return round(0.6 * call_volume + 0.3 * latency + 0.1 * err, 4)
+
+
+def runtime_score_max_for_symbols(
+    conn: sqlite3.Connection,
+    symbol_ids: list[int] | set[int],
+) -> float:
+    """Return the max ``runtime_score`` across a set of symbols.
+
+    Used by ``roam critique`` to bump the severity of an impact finding
+    when at least one direct caller of the changed symbol is on a hot
+    code-path. Returns 0.0 for an empty set or when none of the symbols
+    have runtime data.
+    """
+    seen = list(set(symbol_ids))
+    if not seen:
+        return 0.0
+    best = 0.0
+    for chunk_start in range(0, len(seen), 400):
+        chunk = seen[chunk_start : chunk_start + 400]
+        rows = conn.execute(
+            f"SELECT symbol_id, call_count, p99_latency_ms, error_rate "
+            f"FROM runtime_stats "
+            f"WHERE symbol_id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+        for row in rows:
+            call_count = max(0.0, float(row[1] or 0))
+            p99_ms = max(0.0, float(row[2] or 0))
+            error_rate = float(row[3] or 0)
+            log_div = math.log10(1000.0) or 1.0
+            call_volume = min(1.0, math.log10(call_count + 1) / log_div)
+            latency = min(1.0, p99_ms / 1000.0)
+            err = max(0.0, min(1.0, error_rate))
+            s = 0.6 * call_volume + 0.3 * latency + 0.1 * err
+            if s > best:
+                best = s
+    return round(best, 4)
 
 
 def compute_hotspots(conn: sqlite3.Connection) -> list[dict]:

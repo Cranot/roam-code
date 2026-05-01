@@ -434,7 +434,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
         shown = report["hotspots"] if detail else report["hotspots"][:10]
         if not detail:
             click.echo(
-                "Top security hotspots (showing {} of {}, use --detail for full list):".format(
+                "Top security hotspots (showing {} of {}, run `roam --detail hotspots --security` for the full list):".format(
                     len(shown),
                     total,
                 )
@@ -566,7 +566,7 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
 
     # Summary mode: show top 5 hotspots only
     if not detail:
-        click.echo(f"Top hotspots (showing 5 of {total}, use --detail for full list):")
+        click.echo(f"Top hotspots (showing 5 of {total}, run `roam --detail hotspots` for the full list):")
         for h in items[:5]:
             file_str = h["file_path"] or "-"
             symbol_loc = f"{file_str}::{h['symbol_name']}" if file_str != "-" else h["symbol_name"]

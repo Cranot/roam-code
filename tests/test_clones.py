@@ -3,41 +3,13 @@
 from __future__ import annotations
 
 import os
-import subprocess
-import textwrap
 from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
-
-
-def _make_project(tmp_path, files: dict[str, str]) -> Path:
-    """Create a minimal git project with given files."""
-    proj = tmp_path / "proj"
-    proj.mkdir()
-    src = proj / "src"
-    src.mkdir()
-    for name, content in files.items():
-        p = src / name
-        p.parent.mkdir(parents=True, exist_ok=True)
-        p.write_text(textwrap.dedent(content), encoding="utf-8")
-    subprocess.run(["git", "init"], cwd=str(proj), capture_output=True)
-    subprocess.run(["git", "add", "."], cwd=str(proj), capture_output=True)
-    subprocess.run(
-        ["git", "commit", "-m", "init", "--allow-empty"],
-        cwd=str(proj),
-        capture_output=True,
-        env={
-            **os.environ,
-            "GIT_AUTHOR_NAME": "test",
-            "GIT_AUTHOR_EMAIL": "t@t",
-            "GIT_COMMITTER_NAME": "test",
-            "GIT_COMMITTER_EMAIL": "t@t",
-        },
-    )
-    return proj
+from tests.conftest import make_src_project as _make_project
 
 
 class TestCloneDetectEngine:
@@ -351,6 +323,237 @@ class TestCloneDetectCoreAlgorithm:
         assert "handle" in tokens
         assert "http" in tokens
         assert "request" in tokens
+
+
+class TestClonePersistence:
+    """A.0 — persistence of clone detection results to clone_pairs / clone_clusters."""
+
+    def _two_clone_project(self, tmp_path) -> Path:
+        return _make_project(
+            tmp_path,
+            {
+                "a.py": """
+                def process_orders(items):
+                    results = []
+                    for item in items:
+                        if item.is_valid():
+                            value = item.calculate()
+                            results.append(value)
+                    return results
+            """,
+                "b.py": """
+                def handle_invoices(entries):
+                    output = []
+                    for entry in entries:
+                        if entry.is_valid():
+                            amount = entry.calculate()
+                            output.append(amount)
+                    return output
+            """,
+            },
+        )
+
+    def test_schema_tables_exist(self, tmp_path):
+        """clone_pairs and clone_clusters must exist after roam init."""
+        proj = _make_project(tmp_path, {"a.py": "x = 1\n"})
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            result = runner.invoke(cli, ["index"])
+            assert result.exit_code == 0, result.output
+
+            from roam.db.connection import open_db
+
+            with open_db(readonly=True) as conn:
+                tables = [
+                    r["name"]
+                    for r in conn.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table' "
+                        "AND name IN ('clone_pairs', 'clone_clusters')"
+                    ).fetchall()
+                ]
+            assert "clone_pairs" in tables
+            assert "clone_clusters" in tables
+        finally:
+            os.chdir(old_cwd)
+
+    def test_persist_flag_populates_tables(self, tmp_path):
+        """--persist writes clone_pairs and clone_clusters."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+
+            result = runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"])
+            assert result.exit_code == 0, result.output
+
+            from roam.db.connection import open_db
+
+            with open_db(readonly=True) as conn:
+                pair_count = conn.execute("SELECT COUNT(*) FROM clone_pairs").fetchone()[0]
+                cluster_count = conn.execute("SELECT COUNT(*) FROM clone_clusters").fetchone()[0]
+            assert pair_count >= 1, "expected at least one persisted clone pair"
+            assert cluster_count >= 1, "expected at least one persisted clone cluster"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_persist_replaces_not_appends(self, tmp_path):
+        """Running --persist twice must not duplicate rows."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+
+            with open_db(readonly=True) as conn:
+                first_pairs = conn.execute("SELECT COUNT(*) FROM clone_pairs").fetchone()[0]
+                first_clusters = conn.execute("SELECT COUNT(*) FROM clone_clusters").fetchone()[0]
+
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            with open_db(readonly=True) as conn:
+                second_pairs = conn.execute("SELECT COUNT(*) FROM clone_pairs").fetchone()[0]
+                second_clusters = conn.execute("SELECT COUNT(*) FROM clone_clusters").fetchone()[0]
+            assert first_pairs == second_pairs
+            assert first_clusters == second_clusters
+        finally:
+            os.chdir(old_cwd)
+
+    def test_no_persist_leaves_tables_empty(self, tmp_path):
+        """Without --persist, no rows are written."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50"]).exit_code == 0
+
+            from roam.db.connection import open_db
+
+            with open_db(readonly=True) as conn:
+                pair_count = conn.execute("SELECT COUNT(*) FROM clone_pairs").fetchone()[0]
+            assert pair_count == 0
+        finally:
+            os.chdir(old_cwd)
+
+    def test_get_clone_siblings_returns_pair(self, tmp_path):
+        """get_clone_siblings should find a stored sibling by file+func name."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import get_clone_siblings
+
+            with open_db(readonly=True) as conn:
+                pair = conn.execute("SELECT file_a, func_a, file_b, func_b FROM clone_pairs LIMIT 1").fetchone()
+                assert pair is not None
+                siblings = get_clone_siblings(conn, pair["file_a"], pair["func_a"])
+                assert any(
+                    s["sibling_file"] == pair["file_b"] and s["sibling_func"] == pair["func_b"] for s in siblings
+                ), f"expected sibling {pair['file_b']}:{pair['func_b']} in {siblings}"
+        finally:
+            os.chdir(old_cwd)
+
+    def test_get_clone_siblings_unknown_returns_empty(self, tmp_path):
+        """Unknown function returns empty list, not an error."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import get_clone_siblings
+
+            with open_db(readonly=True) as conn:
+                siblings = get_clone_siblings(conn, "nonexistent.py", "missing_func")
+            assert siblings == []
+        finally:
+            os.chdir(old_cwd)
+
+    def test_get_cluster_members_returns_all(self, tmp_path):
+        """get_cluster_members returns every member of a cluster."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import get_cluster_members
+
+            with open_db(readonly=True) as conn:
+                row = conn.execute("SELECT id, member_count FROM clone_clusters LIMIT 1").fetchone()
+                assert row is not None
+                members = get_cluster_members(conn, row["id"])
+            assert len(members) >= 2
+
+            for m in members:
+                assert "qname" in m
+                assert "file" in m
+                assert "func" in m
+                assert "line_start" in m
+        finally:
+            os.chdir(old_cwd)
+
+    def test_get_cluster_members_unknown_id_returns_empty(self, tmp_path):
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+            from roam.graph.clone_detect import get_cluster_members
+
+            with open_db(readonly=True) as conn:
+                members = get_cluster_members(conn, 999_999)
+            assert members == []
+        finally:
+            os.chdir(old_cwd)
+
+    def test_cluster_id_links_pairs(self, tmp_path):
+        """Every persisted pair should reference its cluster."""
+        proj = self._two_clone_project(tmp_path)
+        old_cwd = os.getcwd()
+        try:
+            os.chdir(str(proj))
+            runner = CliRunner()
+            assert runner.invoke(cli, ["index"]).exit_code == 0
+            assert runner.invoke(cli, ["clones", "--threshold", "0.50", "--persist"]).exit_code == 0
+
+            from roam.db.connection import open_db
+
+            with open_db(readonly=True) as conn:
+                rows = conn.execute("SELECT cluster_id FROM clone_pairs WHERE cluster_id IS NOT NULL").fetchall()
+                assert len(rows) >= 1, "expected pairs linked to clusters"
+
+                cluster_ids = {r["cluster_id"] for r in rows}
+                for cid in cluster_ids:
+                    exists = conn.execute("SELECT 1 FROM clone_clusters WHERE id = ?", (cid,)).fetchone()
+                    assert exists is not None, f"orphan cluster_id {cid} in clone_pairs"
+        finally:
+            os.chdir(old_cwd)
 
 
 class TestDebugArtifactRules:

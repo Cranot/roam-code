@@ -235,6 +235,21 @@ def file_cmd(ctx, paths, full, changed, deps_of):
         if len(unique_paths) == 1:
             frow = _resolve_file(conn, unique_paths[0])
             if frow is None:
+                if json_mode:
+                    click.echo(
+                        to_json(
+                            json_envelope(
+                                "file",
+                                summary={
+                                    "verdict": f"file not found: '{unique_paths[0]}'",
+                                    "error": "file_not_found",
+                                },
+                                file=unique_paths[0],
+                                hint=file_not_found_hint(unique_paths[0]),
+                            )
+                        )
+                    )
+                    raise SystemExit(1)
                 click.echo(file_not_found_hint(unique_paths[0]))
                 raise SystemExit(1)
 

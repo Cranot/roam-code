@@ -251,9 +251,10 @@ class TestToolDecorator:
             # batch operations (2)
             "roam_batch_search",
             "roam_batch_get",
-            # comprehension (5)
+            # comprehension (6)
             "roam_understand",
             "roam_search_symbol",
+            "roam_complete",
             "roam_context",
             "roam_file_info",
             "roam_deps",
@@ -271,13 +272,18 @@ class TestToolDecorator:
             "roam_complexity_report",
             "roam_diagnose",
             "roam_trace",
+            # v12 — retrieval / patch verification / agent fleet planning (3)
+            "roam_retrieve",
+            "roam_critique",
+            "roam_fleet_plan",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        assert len(_CORE_TOOLS) == 23
+        # v12.0 added retrieve / critique / fleet_plan to core (24 + 3 = 27).
+        assert len(_CORE_TOOLS) == 27
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
@@ -390,7 +396,8 @@ class TestExpandToolset:
         from roam.mcp_server import expand_toolset
 
         result = expand_toolset(preset="core")
-        assert result["tool_count"] == 23
+        # v12.0 added retrieve / critique / fleet_plan to core.
+        assert result["tool_count"] == 27
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset
@@ -858,10 +865,20 @@ class TestToolWrappers:
             async def info(self, _message):
                 return None
 
-        with patch("roam.mcp_server._run_roam") as mock:
-            mock.return_value = {"summary": {"verdict": "ok"}}
+        # When a Context with progress hooks is supplied, reindex now
+        # uses the phase-progress subprocess path. Patch that so we can
+        # assert on the reindex args without spawning a real subprocess.
+        async def fake_phase_progress(args, ctx=None, cwd=None, initial_message=""):
+            return 0, json.dumps({"summary": {"verdict": "ok"}}), ""
+
+        with patch(
+            "roam.mcp_extras.progress.run_with_phase_progress",
+            side_effect=fake_phase_progress,
+        ) as mock:
             result = asyncio.run(roam_reindex(force=True, ctx=_Ctx()))
-            mock.assert_called_once_with(["index", "--force"], ".")
+            mock.assert_called_once()
+            args = mock.call_args[0][0]
+            assert args == ["index", "--force"]
             assert result.get("force") is True
 
 
@@ -1004,7 +1021,7 @@ class TestCompoundOperations:
         overview = {"summary": {"verdict": "Python codebase, 85/100"}, "stack": ["python"]}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = overview
-            result = explore()
+            result = asyncio.run(explore())
             mock.assert_called_once_with(["understand"], ".")
         assert result["command"] == "explore"
         assert "understand" in result
@@ -1017,7 +1034,7 @@ class TestCompoundOperations:
         ctx = {"summary": {"verdict": "open_db context"}, "callers": []}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.side_effect = [overview, ctx]
-            result = explore(symbol="open_db")
+            result = asyncio.run(explore(symbol="open_db"))
             assert mock.call_count == 2
             assert mock.call_args_list[0][0][0] == ["understand"]
             assert mock.call_args_list[1][0][0] == ["context", "open_db", "--task", "understand"]
@@ -1032,10 +1049,12 @@ class TestCompoundOperations:
         ctx = {"summary": {"verdict": "open_db context"}, "callers": []}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.side_effect = [overview, ctx]
-            explore(
-                symbol="open_db",
-                session_hint="auth token refresh flow",
-                recent_symbols="AuthService,User",
+            asyncio.run(
+                explore(
+                    symbol="open_db",
+                    session_hint="auth token refresh flow",
+                    recent_symbols="AuthService,User",
+                )
             )
             assert mock.call_count == 2
             assert mock.call_args_list[1][0][0] == [
@@ -1176,7 +1195,7 @@ class TestCompoundOperations:
         overview = {"error": "No .roam directory found"}
         with patch("roam.mcp_server._run_roam") as mock:
             mock.return_value = overview
-            result = explore()
+            result = asyncio.run(explore())
         assert result["summary"]["errors"] == 1
         assert "_errors" in result
 

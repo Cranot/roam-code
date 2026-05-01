@@ -1,0 +1,22 @@
+id: python-path-traversal
+description: Untrusted input flowing into filesystem operations without sanitisation
+severity: error
+cwe: CWE-22
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.files
+  - input
+sinks:
+  - open
+  - os.path.join
+  - shutil.copy
+  - shutil.move
+  - pathlib.Path
+sanitizers:
+  - secure_filename
+  - werkzeug.utils.secure_filename
+  - os.path.normpath
+  - os.path.abspath

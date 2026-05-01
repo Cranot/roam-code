@@ -196,6 +196,7 @@ def relate(ctx, symbols, files, depth):
         # Resolve input symbols to node IDs
         input_ids = []
         input_names = {}  # id -> name
+        unresolved: list[str] = []
 
         for name in symbols:
             sym = find_symbol(conn, name)
@@ -205,8 +206,13 @@ def relate(ctx, symbols, files, depth):
                     input_ids.append(sid)
                     input_names[sid] = sym["name"]
             else:
-                click.echo(symbol_not_found_hint(name))
-                if not json_mode:
+                if json_mode:
+                    # Don't pollute the JSON envelope with a plaintext
+                    # hint. Track unresolved names and surface them in
+                    # the envelope's summary.
+                    unresolved.append(name)
+                else:
+                    click.echo(symbol_not_found_hint(name))
                     raise SystemExit(1)
 
         # Resolve symbols from --file paths

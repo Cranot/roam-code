@@ -489,6 +489,121 @@ def detect_clones(
 
 
 # ---------------------------------------------------------------------------
+# Persistence — populate clone_pairs and clone_clusters tables
+# ---------------------------------------------------------------------------
+
+
+def store_clones(conn, pairs: list[ClonePair], clusters: list[CloneCluster]) -> None:
+    """Persist detection results to clone_pairs and clone_clusters tables.
+
+    Truncates and replaces — clone results are always a complete snapshot,
+    not incremental. Called from `roam clones --persist` and (eventually)
+    the indexer's final stage.
+    """
+    conn.execute("DELETE FROM clone_pairs")
+    conn.execute("DELETE FROM clone_clusters")
+
+    cluster_id_map: dict[int, int] = {}
+    for c in clusters:
+        canonical = c.members[0] if c.members else {}
+        conn.execute(
+            "INSERT INTO clone_clusters "
+            "(id, canonical_qname, canonical_file, canonical_func, canonical_line, "
+            " member_count, avg_similarity, pattern, suggestion) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                c.cluster_id,
+                canonical.get("qualified_name"),
+                canonical.get("file"),
+                canonical.get("function"),
+                canonical.get("line_start"),
+                len(c.members),
+                c.avg_similarity,
+                c.pattern,
+                c.suggestion,
+            ),
+        )
+        cluster_id_map[c.cluster_id] = c.cluster_id
+
+    pair_to_cluster: dict[tuple[str, str], int] = {}
+    for c in clusters:
+        qnames = [m.get("qualified_name") for m in c.members]
+        for i in range(len(qnames)):
+            for j in range(i + 1, len(qnames)):
+                key = tuple(sorted((qnames[i], qnames[j])))
+                pair_to_cluster[key] = c.cluster_id
+
+    for p in pairs:
+        cluster_id = pair_to_cluster.get(tuple(sorted((p.qname_a, p.qname_b))))
+        conn.execute(
+            "INSERT INTO clone_pairs "
+            "(qname_a, qname_b, file_a, file_b, func_a, func_b, "
+            " line_a, line_end_a, line_b, line_end_b, similarity, cluster_id) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            (
+                p.qname_a,
+                p.qname_b,
+                p.file_a,
+                p.file_b,
+                p.func_a,
+                p.func_b,
+                p.line_a,
+                p.line_end_a,
+                p.line_b,
+                p.line_end_b,
+                p.similarity,
+                cluster_id,
+            ),
+        )
+
+
+def get_clone_siblings(conn, file_path: str, func_name: str) -> list[dict]:
+    """Return persisted clone siblings of a function.
+
+    Used by `roam critique` (the clone-not-edited check) and by the retrieve
+    reranker (clone-canonical-boost). Returns rows from clone_pairs where
+    the queried function appears as either side of the pair.
+
+    Each row: {sibling_qname, sibling_file, sibling_func, sibling_line,
+              sibling_line_end, similarity, cluster_id}.
+    Returns empty list if no clones persisted yet (run `roam clones --persist`).
+    """
+    qname = f"{file_path}:{func_name}"
+    rows = conn.execute(
+        "SELECT qname_b AS sibling_qname, file_b AS sibling_file, "
+        "       func_b AS sibling_func, line_b AS sibling_line, "
+        "       line_end_b AS sibling_line_end, similarity, cluster_id "
+        "FROM clone_pairs WHERE qname_a = ? "
+        "UNION "
+        "SELECT qname_a AS sibling_qname, file_a AS sibling_file, "
+        "       func_a AS sibling_func, line_a AS sibling_line, "
+        "       line_end_a AS sibling_line_end, similarity, cluster_id "
+        "FROM clone_pairs WHERE qname_b = ?",
+        (qname, qname),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def get_cluster_members(conn, cluster_id: int) -> list[dict]:
+    """Return all members of a clone cluster, derived from clone_pairs.
+
+    Used by the retrieve reranker to surface the canonical sibling and
+    deduplicate redundant matches.
+    """
+    rows = conn.execute(
+        "SELECT DISTINCT qname_a AS qname, file_a AS file, func_a AS func, "
+        "       line_a AS line_start, line_end_a AS line_end "
+        "FROM clone_pairs WHERE cluster_id = ? "
+        "UNION "
+        "SELECT DISTINCT qname_b AS qname, file_b AS file, func_b AS func, "
+        "       line_b AS line_start, line_end_b AS line_end "
+        "FROM clone_pairs WHERE cluster_id = ?",
+        (cluster_id, cluster_id),
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
+# ---------------------------------------------------------------------------
 # Pattern inference helpers
 # ---------------------------------------------------------------------------
 

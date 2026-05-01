@@ -39,6 +39,21 @@ try:
 except Exception:
     _TaskConfig = None
 
+# MCP-native enhancements (sampling, watcher, session, progress, completions).
+# Each module is best-effort -- import failures degrade gracefully.
+try:
+    from roam.mcp_extras import completions as _mcp_completions
+    from roam.mcp_extras import progress as _mcp_progress
+    from roam.mcp_extras import sampling as _mcp_sampling
+    from roam.mcp_extras import session as _mcp_session
+    from roam.mcp_extras import watcher as _mcp_watcher
+except Exception:
+    _mcp_completions = None  # type: ignore[assignment]
+    _mcp_progress = None  # type: ignore[assignment]
+    _mcp_sampling = None  # type: ignore[assignment]
+    _mcp_session = None  # type: ignore[assignment]
+    _mcp_watcher = None  # type: ignore[assignment]
+
 # ---------------------------------------------------------------------------
 # Tool presets — named sets of tools exposed to agents.
 # Default: "core" (23 tools + meta-tool = 24 total).
@@ -55,9 +70,10 @@ _CORE_TOOLS = {
     # batch operations (2) — replace 10-50 sequential calls with one
     "roam_batch_search",
     "roam_batch_get",
-    # comprehension (5)
+    # comprehension (6)
     "roam_understand",
     "roam_search_symbol",
+    "roam_complete",
     "roam_context",
     "roam_file_info",
     "roam_deps",
@@ -75,6 +91,10 @@ _CORE_TOOLS = {
     "roam_complexity_report",
     "roam_diagnose",
     "roam_trace",
+    # v12 — retrieval / patch verification / agent fleet planning (3)
+    "roam_retrieve",
+    "roam_critique",
+    "roam_fleet_plan",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -487,6 +507,54 @@ _SCHEMA_CONTEXT = _make_schema(
     files_to_read={"type": "array"},
 )
 
+_SCHEMA_RETRIEVE = _make_schema(
+    {
+        "candidates": {"type": "integer"},
+        "total_candidates": {"type": "integer"},
+        "budget": {"type": "integer"},
+        "budget_used": {"type": "integer"},
+        "k": {"type": "integer"},
+        "rerank": {"type": "string"},
+        "seed_count": {"type": "integer"},
+    },
+    task={"type": "string"},
+    weights={"type": "object", "description": "Reranker weight vector"},
+    seeds={"type": "array", "description": "Resolved seed symbols"},
+    candidates={
+        "type": "array",
+        "description": "Ranked code spans with file/line/score/justifications",
+    },
+)
+
+_SCHEMA_CRITIQUE = _make_schema(
+    {
+        "changed_files": {"type": "integer"},
+        "changed_symbols": {"type": "integer"},
+        "findings": {"type": "integer"},
+        "high_severity": {"type": "integer"},
+    },
+    severity_breakdown={"type": "object"},
+    findings={
+        "type": "array",
+        "description": "Ranked findings (severity-ordered): clones-not-edited, impact, etc.",
+    },
+    top_finding={"type": ["object", "null"]},
+    changed_symbols={"type": "array"},
+)
+
+_SCHEMA_FLEET_PLAN = _make_schema(
+    {
+        "agents": {"type": "integer"},
+        "conflict_hotspots": {"type": "integer"},
+        "overall_conflict_probability": {"type": "number"},
+        "adapter": {"type": "string"},
+    },
+    fleet={
+        "type": "object",
+        "description": "Adapter-formatted fleet manifest (raw / composio / copilot).",
+    },
+)
+
 _SCHEMA_IMPACT = _make_schema(
     {"total_affected": {"type": "integer"}, "target": {"type": "string"}},
     affected_symbols={"type": "array"},
@@ -896,6 +964,43 @@ async def _run_roam_async(args: list[str], root: str = ".") -> dict:
     return await asyncio.to_thread(_run_roam, args, root)
 
 
+def _parse_subprocess_result(args: list[str], exit_code: int, stdout: str, stderr: str) -> dict:
+    """Parse the (exit, stdout, stderr) tuple produced by phase-progress runs.
+
+    Mirrors the success / error handling in :func:`_run_roam_subprocess` so
+    callers get the same envelope shape regardless of which path was used.
+    """
+    from roam.exit_codes import EXIT_GATE_FAILURE
+
+    success_codes = {0, EXIT_GATE_FAILURE}
+    if exit_code in success_codes and stdout.strip():
+        try:
+            parsed = json.loads(stdout)
+        except json.JSONDecodeError as exc:
+            return _structured_error(
+                {
+                    "error": f"Failed to parse JSON output: {exc}",
+                    "error_code": "COMMAND_FAILED",
+                    "hint": "command produced invalid JSON output.",
+                }
+            )
+        if exit_code == EXIT_GATE_FAILURE:
+            parsed["gate_failure"] = True
+            parsed["exit_code"] = EXIT_GATE_FAILURE
+        return parsed
+
+    err_code, hint, _retryable = _classify_error(stderr, exit_code)
+    return _structured_error(
+        {
+            "error": stderr.strip() or "command failed",
+            "error_code": err_code,
+            "hint": hint,
+            "exit_code": exit_code,
+            "command": " ".join(args),
+        }
+    )
+
+
 async def _ctx_report_progress(
     ctx: _Context | None,
     progress: float,
@@ -951,6 +1056,28 @@ def _coerce_yes_no(value) -> bool | None:
             if parsed is not None:
                 return parsed
     return None
+
+
+async def _maybe_summarize(
+    result: dict,
+    *,
+    ctx: _Context | None,
+    summarize: bool,
+    task: str = "",
+    target: str = "",
+) -> dict:
+    """Apply MCP sampling-driven compression when requested + supported."""
+    if not summarize or _mcp_sampling is None or ctx is None:
+        return result
+    if not isinstance(result, dict):
+        return result
+    compressed = await _mcp_sampling.compress_with_sampling(
+        ctx,
+        result,
+        task=task,
+        target=target,
+    )
+    return _mcp_sampling.maybe_apply_compression(result, compressed)
 
 
 async def _confirm_force_reindex(ctx: _Context | None) -> bool | None:
@@ -1048,12 +1175,14 @@ def _append_context_personalization_args(
     description="Codebase exploration bundle: understand overview + optional symbol deep-dive in one call.",
     output_schema=_SCHEMA_EXPLORE,
 )
-def explore(
+async def explore(
     symbol: str = "",
     budget: int = 0,
     session_hint: str = "",
     recent_symbols: str = "",
+    summarize: bool = False,
     root: str = ".",
+    ctx: _Context | None = None,
 ) -> dict:
     """Full codebase exploration in one call.
 
@@ -1070,18 +1199,37 @@ def explore(
         Max output tokens (0 = unlimited). Truncates intelligently.
     session_hint:
         Optional conversation hint used to personalize context ranking.
+        If empty, the server uses any task hint cached for this MCP session.
     recent_symbols:
         Comma-separated recently discussed symbols for rank biasing.
+        If empty, the server fills this in from session memory.
+    summarize:
+        If True and the client supports MCP sampling, the server asks
+        the client's own LLM to compress the overview into a short
+        briefing. Reduces output from ~50KB JSON to ~1-2KB prose.
+        Falls back to the raw envelope when sampling is unavailable.
 
     Returns: codebase overview (tech stack, architecture, health) and
     optionally focused context for the given symbol.
     """
+    if _mcp_session is not None:
+        session_hint, recent_symbols = _mcp_session.merge_with_explicit(
+            ctx,
+            explicit_recent=recent_symbols,
+            explicit_hint=session_hint,
+        )
+        if symbol:
+            _mcp_session.remember_symbol(ctx, symbol)
+        if session_hint:
+            _mcp_session.remember_task_hint(ctx, session_hint)
+
     budget_args = ["--budget", str(budget)] if budget else []
     overview = _run_roam(budget_args + ["understand"], root)
 
     if not symbol:
         result = _compound_envelope("explore", [("understand", overview)])
-        return _apply_budget(result, budget)
+        result = _apply_budget(result, budget)
+        return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=session_hint, target="")
 
     ctx_args = budget_args + ["context", symbol, "--task", "understand"]
     _append_context_personalization_args(
@@ -1089,16 +1237,17 @@ def explore(
         session_hint=session_hint,
         recent_symbols=recent_symbols,
     )
-    ctx = _run_roam(ctx_args, root)
+    sym_ctx = _run_roam(ctx_args, root)
     result = _compound_envelope(
         "explore",
         [
             ("understand", overview),
-            ("context", ctx),
+            ("context", sym_ctx),
         ],
         target=symbol,
     )
-    return _apply_budget(result, budget)
+    result = _apply_budget(result, budget)
+    return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=session_hint, target=symbol)
 
 
 @_tool(
@@ -1627,6 +1776,8 @@ async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = No
 
     WHEN TO USE: first run in a repository without a `.roam/index.db`.
     This is task-enabled for non-blocking setup in MCP clients.
+    Streams phase-aware progress (discover → parse → extract → graph → metrics)
+    when the client supports MCP progress notifications.
     """
     args = ["init"]
     if yes:
@@ -1635,6 +1786,13 @@ async def roam_init(root: str = ".", yes: bool = True, ctx: _Context | None = No
         args.extend(["--root", root])
 
     await _ctx_info(ctx, "Starting roam initialization.")
+
+    if _mcp_progress is not None and ctx is not None:
+        exit_code, stdout, stderr = await _mcp_progress.run_with_phase_progress(
+            args, ctx=ctx, cwd=root, initial_message="initializing"
+        )
+        return _parse_subprocess_result(args, exit_code, stdout, stderr)
+
     await _ctx_report_progress(ctx, 5, total=100, message="initializing")
     result = await _run_roam_async(args, root)
     await _ctx_report_progress(ctx, 100, total=100, message="completed")
@@ -1689,9 +1847,17 @@ async def roam_reindex(
         args.append("--verbose")
 
     await _ctx_info(ctx, "Starting index refresh.")
-    await _ctx_report_progress(ctx, 5, total=100, message="indexing")
-    result = await _run_roam_async(args, root)
-    await _ctx_report_progress(ctx, 100, total=100, message="completed")
+
+    if _mcp_progress is not None and ctx is not None:
+        exit_code, stdout, stderr = await _mcp_progress.run_with_phase_progress(
+            args, ctx=ctx, cwd=root, initial_message="indexing"
+        )
+        result = _parse_subprocess_result(args, exit_code, stdout, stderr)
+    else:
+        await _ctx_report_progress(ctx, 5, total=100, message="indexing")
+        result = await _run_roam_async(args, root)
+        await _ctx_report_progress(ctx, 100, total=100, message="completed")
+
     if force and "error" not in result:
         result["force"] = True
     return result
@@ -1702,15 +1868,29 @@ async def roam_reindex(
     description="Full codebase briefing: stack, architecture, health, hotspots. Call FIRST in a new repo.",
     output_schema=_SCHEMA_UNDERSTAND,
 )
-def understand(root: str = ".") -> dict:
+async def understand(
+    root: str = ".",
+    summarize: bool = False,
+    ctx: _Context | None = None,
+) -> dict:
     """Get a full codebase briefing in a single call.
 
     Call this FIRST when starting work on a new or unfamiliar codebase.
     Covers tech stack, architecture (layers, clusters, entry points),
     health score, hotspots, conventions, and patterns. ~2-4K token output.
     Do NOT explore manually with Glob/Grep/Read -- use this instead.
-    Follow with search_symbol or context to drill into specifics."""
-    return _run_roam(["understand"], root)
+    Follow with search_symbol or context to drill into specifics.
+
+    Parameters
+    ----------
+    summarize:
+        If True and the client supports MCP sampling, returns a sampled
+        prose briefing instead of the full JSON envelope. Falls back to
+        the raw envelope when sampling is unavailable.
+    """
+    result = _run_roam(["understand"], root)
+    task = _mcp_session.session_hint(ctx) if _mcp_session is not None else ""
+    return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=task)
 
 
 @_tool(name="roam_onboard")
@@ -1736,14 +1916,28 @@ def onboard(detail: str = "normal", root: str = ".") -> dict:
     description="Codebase health score (0-100) with issue breakdown, cycles, bottlenecks.",
     output_schema=_SCHEMA_HEALTH,
 )
-def health(root: str = ".") -> dict:
+async def health(
+    root: str = ".",
+    summarize: bool = False,
+    ctx: _Context | None = None,
+) -> dict:
     """Codebase health score (0-100) with issue breakdown.
 
     Call this to assess overall code quality before deciding where to
     focus refactoring, or to check whether recent changes degraded health.
     Skip if you already called understand (includes health) or preflight
-    (includes it per-symbol)."""
-    return _run_roam(["health"], root)
+    (includes it per-symbol).
+
+    Parameters
+    ----------
+    summarize:
+        If True and the client supports MCP sampling, returns a sampled
+        prose summary that highlights the top 3 issues to fix. Falls
+        back to the raw envelope when sampling is unavailable.
+    """
+    result = _run_roam(["health"], root)
+    task = _mcp_session.session_hint(ctx) if _mcp_session is not None else ""
+    return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=task)
 
 
 @_tool(
@@ -1783,17 +1977,84 @@ def search_symbol(query: str, root: str = ".") -> dict:
 
 
 @_tool(
+    name="roam_complete",
+    description="Prefix completion for symbols / file paths / commands. Faster than search; returns just names.",
+)
+def complete(prefix: str, kind: str = "symbol", limit: int = 30, root: str = ".") -> dict:
+    """Autocomplete a partial symbol name, file path, or command.
+
+    WHEN TO USE: Call this when you have a partial identifier (e.g.
+    user typed ``user_lo``) and want a short list of valid completions
+    before invoking a heavier tool like ``context`` or ``preflight``.
+    Much cheaper than ``search_symbol`` because it only returns names.
+
+    Parameters
+    ----------
+    prefix:
+        Partial token to complete.
+    kind:
+        ``"symbol"`` (default), ``"path"``, ``"command"``, or ``"all"``.
+    limit:
+        Max completions to return (default 30).
+    root:
+        Project root for the index lookup.
+    """
+    if _mcp_completions is None:
+        return _structured_error(
+            {
+                "error": "completion module unavailable",
+                "error_code": "UNKNOWN",
+                "hint": "the mcp_extras package is missing or failed to import.",
+                "command": "roam_complete",
+            }
+        )
+    payload = _mcp_completions.complete_prefix(prefix, kind=kind, limit=limit, root=root)
+    total = sum(len(v) for v in payload.values())
+    return {
+        "command": "roam_complete",
+        "summary": {
+            "verdict": f"{total} completion{'s' if total != 1 else ''} for {prefix!r}",
+            "prefix": prefix,
+            "kind": kind,
+        },
+        **payload,
+    }
+
+
+@_tool(
     name="roam_context",
     description="Minimal files + line ranges needed to work with a symbol.",
     output_schema=_SCHEMA_CONTEXT,
 )
-def context(symbol: str, task: str = "", session_hint: str = "", recent_symbols: str = "", root: str = ".") -> dict:
+def context(
+    symbol: str,
+    task: str = "",
+    session_hint: str = "",
+    recent_symbols: str = "",
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
     """Get the minimal context needed to work with a specific symbol.
 
     Call this when you need to understand or modify a function, class,
     or method. Returns exact files and line ranges to read. More targeted
     than understand. For pre-change safety checks, prefer preflight
-    instead (includes context plus blast radius and tests)."""
+    instead (includes context plus blast radius and tests).
+
+    Session memory: if ``recent_symbols`` is empty, the server fills it
+    in from this MCP session's symbol history; if ``session_hint`` is
+    empty, the cached task hint is used. The ``symbol`` argument is
+    recorded into session memory after the call.
+    """
+    if _mcp_session is not None:
+        session_hint, recent_symbols = _mcp_session.merge_with_explicit(
+            ctx,
+            explicit_recent=recent_symbols,
+            explicit_hint=session_hint,
+        )
+        _mcp_session.remember_symbol(ctx, symbol)
+        if task:
+            _mcp_session.remember_task_hint(ctx, task)
     args = ["context", symbol]
     if task:
         args.extend(["--task", task])
@@ -1803,6 +2064,197 @@ def context(symbol: str, task: str = "", session_hint: str = "", recent_symbols:
         recent_symbols=recent_symbols,
     )
     return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_retrieve",
+    description="Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget.",
+    output_schema=_SCHEMA_RETRIEVE,
+)
+def retrieve_context(
+    task: str,
+    budget: int = 0,
+    k: int = 0,
+    rerank: str = "fast",
+    seed_files: str = "",
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
+    """Return ranked code spans for a free-form task.
+
+    WHEN TO USE: when you have a natural-language description of what
+    the user wants ("trace the login flow", "where is the n+1 query in
+    checkout") rather than a known symbol. Picks the right spans by
+    fusing FTS5 lexical match with structural ranking (personalised
+    PageRank biased on inferred or supplied seeds, plus clone-class
+    membership). Honours a token budget so the returned context fits
+    inside the agent's working window.
+
+    Differs from ``roam_context`` (which expects a symbol) and
+    ``roam_search`` (which only returns names without budget /
+    rerank). Reaches for the ``clone_pairs`` table populated by
+    ``roam clones --persist`` for the clone-canonical signal —
+    persisted clones are not required, but they make rankings sharper.
+
+    Parameters
+    ----------
+    task: free-form description of what to find.
+    budget: max output tokens (0 = use config default, typically 4000).
+    k: max number of spans to return (0 = use config default, typically 20).
+    rerank: ``"fast"`` (default — structural rerank with personalised PR)
+        or ``"off"`` (lexical only). The "heavy" mode (ColBERT/jina-v3) was
+        cut from the MVP per CodeRAG-Bench evidence; will be re-introduced
+        when eval proves ≥3pt recall@20 lift.
+    seed_files: comma-separated file paths to seed personalised PageRank
+        (e.g. ``"src/auth.py,src/session.py"``). Falls back to
+        symbol-token inference from *task* when empty.
+    """
+    if _mcp_session is not None:
+        _mcp_session.remember_task_hint(ctx, task)
+        # Inject session-recent symbols as additional seeds when caller didn't
+        # supply explicit ones -- a small budget to avoid drowning the rerank.
+        if not seed_files:
+            recent = _mcp_session.recent_symbols(ctx, limit=3)
+            if recent and not task.endswith(" ".join(recent)):
+                # Append symbol names as additional task tokens; the retrieve
+                # pipeline already extracts identifiers from the task string.
+                task = f"{task} {' '.join(recent)}".strip()
+    args = ["retrieve", task]
+    if budget:
+        args.extend(["--budget", str(budget)])
+    if k:
+        args.extend(["--k", str(k)])
+    if rerank:
+        args.extend(["--rerank", rerank])
+    for raw in (seed_files or "").split(","):
+        path = raw.strip()
+        if path:
+            args.extend(["--seed-files", path])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_fleet_plan",
+    description="Plan a multi-agent fleet for a goal — graph-aware partition (Louvain + co-change) emits .roam-fleet.json for Composio / Copilot CLI / raw.",
+    output_schema=_SCHEMA_FLEET_PLAN,
+)
+def fleet_plan(
+    goal: str,
+    n_agents: int = 0,
+    adapter: str = "raw",
+    branch_prefix: str = "fleet",
+    root: str = ".",
+) -> dict:
+    """Plan a multi-agent fleet for a free-form goal.
+
+    WHEN TO USE: when an agent runtime (Composio Agent Orchestrator,
+    GitHub Copilot CLI ``/fleet``, Cursor Background Agents) is about
+    to dispatch parallel sub-tasks across a codebase. Roam's planner
+    runs Louvain partitioning + dark-matter co-change + personalised
+    PageRank to emit a `.roam-fleet.json` envelope where every task
+    has a file scope, conflict-risk label, and a suggested branch
+    name. Competitors compute this with an LLM scoping pass over file
+    paths; roam-code computes it deterministically over the indexed
+    graph in seconds.
+
+    Parameters
+    ----------
+    goal: free-form description of the fleet's intent.
+    n_agents: number of agents (``0`` = auto-detect from cluster count).
+    adapter: ``"raw"`` (default), ``"composio"``, ``"copilot"``.
+    branch_prefix: prefix for suggested per-task branches
+        (e.g. ``"fleet/3-billing"``).
+    """
+    args = ["fleet", "plan", goal]
+    if n_agents:
+        args.extend(["--n-agents", str(n_agents)])
+    if adapter and adapter != "raw":
+        args.extend(["--adapter", adapter])
+    if branch_prefix and branch_prefix != "fleet":
+        args.extend(["--branch-prefix", branch_prefix])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_critique",
+    description="Verify a patch against the indexed graph (clones-not-edited + blast radius). Pipe a diff in `diff_text`.",
+    output_schema=_SCHEMA_CRITIQUE,
+)
+def critique_patch(
+    diff_text: str,
+    high_callers: int = 10,
+    root: str = ".",
+) -> dict:
+    """Verify a unified diff against the indexed roam graph.
+
+    WHEN TO USE: after generating or reviewing a patch, before merging.
+    Runs the killer **clones-not-edited** check (requires
+    ``roam clones --persist`` to have been run) plus a blast-radius
+    finding for symbols with a high direct-caller count. Output is
+    severity-ranked; the top finding is surfaced in ``top_finding``.
+
+    Differs from ``roam_diff`` (which gives the structural delta of
+    *uncommitted* changes against the working tree) and ``roam_pr_risk``
+    (which produces a vibe score). Critique grounds every finding in a
+    DB query.
+
+    Parameters
+    ----------
+    diff_text:
+        A unified diff. Pass the literal output of ``git diff`` /
+        ``gh pr diff <id>``.
+    high_callers:
+        Threshold for the blast-radius warning. Default 10.
+    """
+    import json as _json
+    import subprocess
+    import sys
+
+    if not diff_text or not diff_text.strip():
+        return _structured_error(
+            {
+                "error": "empty diff",
+                "error_code": "EMPTY_INPUT",
+                "hint": "pass the output of `git diff` (or `gh pr diff <id>`) as diff_text",
+                "command": "roam_critique",
+            }
+        )
+
+    # Use a JSON-mode subprocess so we get the structured envelope.
+    args = [sys.executable, "-m", "roam", "--json", "critique"]
+    if high_callers != 10:
+        args += ["--high-callers", str(high_callers)]
+    proc = subprocess.run(
+        args,
+        cwd=root,
+        input=diff_text,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=120,
+    )
+    # Exit code 5 = high-severity gate; not an error.
+    if proc.returncode not in (0, 5):
+        return _structured_error(
+            {
+                "error": (proc.stderr or "critique failed").strip()[:600],
+                "error_code": "RUN_FAILED",
+                "hint": "ensure the index is fresh (`roam index`) and the diff is well-formed",
+                "command": "roam_critique",
+            }
+        )
+    try:
+        return _json.loads(proc.stdout)
+    except _json.JSONDecodeError as exc:
+        return _structured_error(
+            {
+                "error": f"could not parse critique JSON: {exc}",
+                "error_code": "JSON_DECODE",
+                "hint": "this is a roam bug — please file an issue",
+                "command": "roam_critique",
+            }
+        )
 
 
 @_tool(
@@ -2291,7 +2743,12 @@ def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     name="roam_repo_map",
     description="Compact project skeleton with key symbols per file, by PageRank.",
 )
-def repo_map(budget: int = 0, root: str = ".") -> dict:
+async def repo_map(
+    budget: int = 0,
+    summarize: bool = False,
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
     """Show a compact project skeleton with key symbols.
 
     WHEN TO USE: Call this for a spatial overview of the repository
@@ -2303,6 +2760,9 @@ def repo_map(budget: int = 0, root: str = ".") -> dict:
     ----------
     budget:
         Approximate token budget for the output. 0 means no limit.
+    summarize:
+        If True and the client supports MCP sampling, returns a
+        narrative tour of the repo instead of the full skeleton.
 
     Returns: files grouped by directory with top symbols per file,
     annotated with kind and importance.
@@ -2310,7 +2770,9 @@ def repo_map(budget: int = 0, root: str = ".") -> dict:
     args = ["map"]
     if budget > 0:
         args.extend(["--budget", str(budget)])
-    return _run_roam(args, root)
+    result = _run_roam(args, root)
+    task = _mcp_session.session_hint(ctx) if _mcp_session is not None else ""
+    return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=task)
 
 
 @_tool(
@@ -3369,7 +3831,13 @@ def rules_check(ci: bool = False, rules_dir: str = "", root: str = ".") -> dict:
     name="roam_orchestrate",
     description="Partition codebase for parallel multi-agent work with exclusive write zones.",
 )
-def orchestrate(n_agents: int, files: list[str] | None = None, staged: bool = False, root: str = ".") -> dict:
+async def orchestrate(
+    n_agents: int,
+    files: list[str] | None = None,
+    staged: bool = False,
+    root: str = ".",
+    ctx: _Context | None = None,
+) -> dict:
     """Partition codebase for parallel multi-agent work (swarm orchestration).
 
     WHEN TO USE: Call this before splitting work across multiple AI agents.
@@ -3395,7 +3863,12 @@ def orchestrate(n_agents: int, files: list[str] | None = None, staged: bool = Fa
             args.extend(["--files", f])
     if staged:
         args.append("--staged")
-    return _run_roam(args, root)
+    if _mcp_progress is not None and ctx is not None:
+        exit_code, stdout, stderr = await _mcp_progress.run_with_phase_progress(
+            args, ctx=ctx, cwd=root, initial_message="partitioning"
+        )
+        return _parse_subprocess_result(args, exit_code, stdout, stderr)
+    return await _run_roam_async(args, root)
 
 
 @_tool(
@@ -4669,16 +5142,46 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
         else:
             sys.stderr.write("index is fresh.\n")
 
-    if transport == "stdio":
-        mcp.run()
-    elif transport == "sse":
-        mcp.run(transport="sse", host=host, port=port)
-    else:
+    # Register protocol-level completion handler (FTS5-backed symbol /
+    # path / command lookup). Best-effort -- silently no-ops on
+    # FastMCP versions that don't expose the hook.
+    if _mcp_completions is not None:
         try:
-            mcp.run(transport="streamable-http", host=host, port=port)
-        except TypeError:
-            # Older FastMCP versions may use "http" alias.
-            mcp.run(transport="http", host=host, port=port)
+            installed = _mcp_completions.install_completion_handler(mcp)
+            if installed:
+                sys.stderr.write("completion handler registered.\n")
+        except Exception as exc:
+            sys.stderr.write(f"completion handler not available: {exc}\n")
+
+    # Optional file watcher for auto-reindex + resource invalidation.
+    # Disabled by default; opt in with ROAM_MCP_WATCH=1 to keep the
+    # default footprint minimal for users who don't need reactive updates.
+    watch_handle = None
+    if _mcp_watcher is not None and os.environ.get("ROAM_MCP_WATCH", "0").lower() in ("1", "true", "yes"):
+        try:
+            watch_handle = _mcp_watcher.start_watcher(mcp)
+            if watch_handle is not None:
+                sys.stderr.write("file watcher started (ROAM_MCP_WATCH=1).\n")
+        except Exception as exc:
+            sys.stderr.write(f"watcher not available: {exc}\n")
+
+    try:
+        if transport == "stdio":
+            mcp.run()
+        elif transport == "sse":
+            mcp.run(transport="sse", host=host, port=port)
+        else:
+            try:
+                mcp.run(transport="streamable-http", host=host, port=port)
+            except TypeError:
+                # Older FastMCP versions may use "http" alias.
+                mcp.run(transport="http", host=host, port=port)
+    finally:
+        if watch_handle is not None:
+            try:
+                watch_handle.stop()
+            except Exception:
+                pass
 
 
 # ---------------------------------------------------------------------------

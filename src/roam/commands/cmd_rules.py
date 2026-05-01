@@ -101,8 +101,17 @@ exempt:
 @click.option("--init", "do_init", is_flag=True, help="Generate example rule files in .roam/rules/.")
 @click.option("--ci", "ci_mode", is_flag=True, help="Exit code 1 on error-severity violations.")
 @click.option("--rules-dir", "rules_dir_opt", default=None, help="Custom rules directory path.")
+@click.option(
+    "--top",
+    "--limit",
+    "top_n",
+    default=10,
+    type=int,
+    show_default=True,
+    help="Cap on violations shown per failing rule (alias: --limit). Pass 0 for unlimited.",
+)
 @click.pass_context
-def rules(ctx, do_init, ci_mode, rules_dir_opt):
+def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
     """Evaluate custom governance rules defined in .roam/rules/.
 
     Unlike ``check-rules`` (which evaluates pre-packaged structural rules),
@@ -241,7 +250,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
             click.echo(f"  [{status}] {name}")
         else:
             click.echo(f"  [{status}] [{sev}] {name} ({count} violation(s))")
-            for v in violations[:10]:
+            limit = count if top_n <= 0 else top_n
+            for v in violations[:limit]:
                 sym = v.get("symbol", "")
                 fpath = v.get("file", "")
                 line = v.get("line")
@@ -250,8 +260,8 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt):
                 click.echo(f"    - {sym} at {loc}")
                 if reason:
                     click.echo(f"      {reason}")
-            if count > 10:
-                click.echo(f"    (+{count - 10} more)")
+            if top_n > 0 and count > top_n:
+                click.echo(f"    (+{count - top_n} more — pass `--top N` or `--top 0` to see them)")
 
     if ci_mode and failed_errors > 0:
         from roam.exit_codes import EXIT_GATE_FAILURE

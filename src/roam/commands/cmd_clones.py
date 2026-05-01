@@ -39,8 +39,14 @@ from roam.output.formatter import (
 )
 @click.option("--scope", default=None, type=str, help="Limit to files under this path prefix")
 @click.option("--top", default=0, type=int, help="Show only top N clusters (0=all)")
+@click.option(
+    "--persist",
+    is_flag=True,
+    default=False,
+    help="Write results to clone_pairs and clone_clusters tables for downstream consumers (roam critique, roam retrieve).",
+)
 @click.pass_context
-def clones(ctx, threshold, min_lines, scope, top):
+def clones(ctx, threshold, min_lines, scope, top, persist):
     """Detect near-duplicate code via AST structural hashing.
 
     Re-parses source files and compares function AST structures via subtree
@@ -54,15 +60,18 @@ def clones(ctx, threshold, min_lines, scope, top):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
 
-    from roam.graph.clone_detect import detect_clones
+    from roam.graph.clone_detect import detect_clones, store_clones
 
-    with open_db(readonly=True) as conn:
+    with open_db(readonly=not persist) as conn:
         pairs, clusters = detect_clones(
             conn,
             min_similarity=threshold,
             min_lines=min_lines,
             scope=scope,
         )
+
+        if persist:
+            store_clones(conn, pairs, clusters)
 
         if top > 0:
             clusters = clusters[:top]
