@@ -276,14 +276,21 @@ class TestToolDecorator:
             "roam_retrieve",
             "roam_critique",
             "roam_fleet_plan",
+            # v12.1 — boolean oracles (5) + LLM-augmented taint classify (1)
+            "roam_oracle_symbol_exists",
+            "roam_oracle_route_exists",
+            "roam_oracle_is_test_only",
+            "roam_oracle_is_reachable_from_entry",
+            "roam_oracle_is_clone_of",
+            "roam_taint_classify",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # v12.0 added retrieve / critique / fleet_plan to core (24 + 3 = 27).
-        assert len(_CORE_TOOLS) == 27
+        # v12.1 added 5 boolean oracles + roam_taint_classify (27 + 6 = 33).
+        assert len(_CORE_TOOLS) == 33
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
@@ -396,8 +403,8 @@ class TestExpandToolset:
         from roam.mcp_server import expand_toolset
 
         result = expand_toolset(preset="core")
-        # v12.0 added retrieve / critique / fleet_plan to core.
-        assert result["tool_count"] == 27
+        # v12.1 added 5 oracles + taint_classify on top of v12.0's 27.
+        assert result["tool_count"] == 33
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

@@ -555,7 +555,13 @@ def _is_git_repo(path: Path) -> bool:
 
 
 def _run_git(cmd: list[str], *, cwd: Path, timeout: int = 120) -> subprocess.CompletedProcess | None:
-    """Run a git command, returning *None* on failure."""
+    """Run a git command, returning *None* on failure.
+
+    Uses ``worktree_git_env`` so parallel agents in sibling worktrees don't
+    contend on ``.git/index.lock``.
+    """
+    from roam.git_utils import worktree_git_env
+
     try:
         result = subprocess.run(
             cmd,
@@ -565,6 +571,7 @@ def _run_git(cmd: list[str], *, cwd: Path, timeout: int = 120) -> subprocess.Com
             timeout=timeout,
             encoding="utf-8",
             errors="replace",
+            env=worktree_git_env(cwd),
         )
     except (FileNotFoundError, subprocess.TimeoutExpired) as exc:
         log.warning("git command failed: %s", exc)

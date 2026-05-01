@@ -103,6 +103,9 @@ def get_changed_files(
     elif staged:
         cmd.append("--cached")
 
+    from roam.git_utils import worktree_git_env
+
+    git_env = worktree_git_env(root)
     try:
         result = subprocess.run(
             cmd,
@@ -112,6 +115,7 @@ def get_changed_files(
             timeout=10,
             encoding="utf-8",
             errors="replace",
+            env=git_env,
         )
         if result.returncode != 0:
             return []
@@ -129,6 +133,7 @@ def get_changed_files(
                 timeout=10,
                 encoding="utf-8",
                 errors="replace",
+                env=git_env,
             )
             if ut.returncode == 0 and ut.stdout.strip():
                 for line in ut.stdout.strip().splitlines():
