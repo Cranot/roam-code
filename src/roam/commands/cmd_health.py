@@ -772,6 +772,14 @@ def health(ctx, no_framework, gate):
 
         # --- Text output ---
         click.echo(f"VERDICT: {verdict}\n")
+        # Index-staleness hint — only when relevant. Surfaces here
+        # because git_file_changes feed health's tangle/coupling/churn
+        # signals; an out-of-date index quietly degrades all of them.
+        from roam.commands.resolve import index_staleness_hint as _stale_hint
+
+        _stale = _stale_hint()
+        if _stale:
+            click.echo(f"NOTE: {_stale}\n")
         issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
         parts = []
         if cycles:
