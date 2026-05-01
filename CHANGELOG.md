@@ -7,6 +7,129 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.3.0] - 2026-05-01
+
+A retrieve-quality + dogfood-correctness release. Recall@20 on the
+30-task self-bench moved from **0.486 → 0.900** across the day's
+iterations (+41.4 pp). Sixteen agent-facing bugs surfaced by deep
+dogfooding were fixed across two sprints. No new commands; existing
+commands give better answers.
+
+### Fixed — agent-facing correctness
+
+- **`roam health` score formula** — was reporting 2/100 on
+  structurally healthy codebases (tangle 0.5%, prop cost 0.0%) because
+  the geometric-mean factors penalised absolute counts of god
+  components / bottlenecks without normalising for codebase size *or*
+  discounting expected utilities. Now actionable items only,
+  normalised per 1k symbols. Same fix applied to
+  `metrics_history._compute_health_score` so `roam init`'s summary
+  agrees with `roam health`.
+- **`roam oracle is-test-only <name>`** — returned False (with reason
+  "orphan") for canonical test methods because pytest invokes them by
+  reflection (zero callers in the call graph). Now checks the symbol's
+  own `file_role` first — anything in `file_role='test'` is test-only
+  by definition, falling back to caller-graph analysis for production
+  helpers used only from tests.
+- **`roam oracle is-reachable-from-entry <name>`** — returned False
+  on every input because (a) the SQL queried `edges.kind IN ('calls',
+  'references')` (plural) but the schema uses `'call'`/`'reference'`
+  (singular), and (b) the entry-point definition relied on a non-
+  existent `is_entry` column / `file_role='entry'` value. Now uses
+  the same import-graph definition as `cmd_understand`, plus a
+  named-entry fallback so common entry symbols (`cli`, `main`, `run`,
+  `app`, `serve`) are recognized regardless of import shape.
+- **`roam smells` headline number included CI/dev tooling.** Top-N
+  critical smells were dominated by `.github/scripts/`, `benchmarks/`,
+  `dev/` files that aren't source code. Now respects `file_role` and
+  path hints (`/dev/`, `/benchmarks/`, `/.github/`). Default output
+  gains a truncated `Where` column. `--include-tooling` opts back in.
+- **`roam fan` and `roam dead`** — same tooling-exclusion default.
+  Top hub symbols and top dead exports no longer dominated by
+  `pr-comment.js` and `roam-bench.py`.
+- **`roam preflight` Risk driver line** — names the row driving the
+  overall verdict (`Risk driver: complexity (cc=17, HIGH)`). Saves
+  the agent the deduction step.
+- **`roam weather` Score column** — was rounding all values to `1`
+  via `.0f`. Now `.2f` to expose the geometric-mean discrimination.
+- **`roam search` PR display** — was rounding all niche/test symbols
+  to `0.0001`. Now scientific notation for `<0.001` so `1.07e-04`
+  stays distinct from `5.68e-05`.
+- **`roam rules` empty state** — silently said "no rules directory"
+  on a project that ships 2489 community rules at `rules/community/`.
+  Now mentions the count and how to opt in.
+- **`roam taint --rules-pack`** — flag was claimed in MEMORY/external
+  docs but didn't exist on the CLI. Added as a Choice (sqli, xss,
+  ssrf, path-traversal, command-injection, deserialization).
+- **`roam entry-points` HTTP false-positive** — the name-based
+  classifier matched `_view$|_handler$`, mis-tagging
+  `SqlExtractor._extract_create_view` and `error_handler` as HTTP
+  routes. Tightened to `_endpoint$|_controller$`; the decorator-pattern
+  arm catches the genuine routes.
+
+### Improved — retrieve quality
+
+Eight changes against the 30-task self-bench. **recall@5 0.289 →
+0.672 (+38.3 pp), recall@10 0.358 → 0.786 (+42.8 pp), recall@20
+0.486 → 0.900 (+41.4 pp).** Cross-repo regression test on a
+synthetic Python microservice returns 1.0 / 1.0 / 1.0 — the lift
+isn't an artifact of self-bench.
+
+- **Domain-noun supplement.** `extract_tokens()` now always includes
+  lowercase domain nouns alongside identifier-shaped tokens. The old
+  all-or-nothing fallback discarded words like "language" /
+  "extractor" whenever any PascalCase/snake/dotted token was found.
+- **File-level dedup in budget.** Top-K window now picks the
+  best-of-file before filling with deferred symbols. A 20-symbol
+  window no longer collapses to 5 unique files.
+- **File-edge neighbour expansion.** Pulls symbols from files
+  imported-by/importing the strongest first-stage hits so
+  structurally-related files (registry, tests, command companions)
+  enter the candidate pool. Hub-aware (degree > 20 disqualifies a
+  seed) and bounded to 80 expansion symbols.
+- **Path-token boost.** Files whose path contains a query token get a
+  boost (max 0.15). Prefix-tolerant on both sides with a 4-char floor
+  so plurals/derivations match.
+- **cmd-companion boost.** `commands/cmd_FOO.py` lifts when the
+  engine module `FOO/` is a strong candidate. Magnitude scales with
+  the companion's normalised fts_score so weak matches don't drag
+  unrelated cmd files into top-K.
+- **Rule-YAML demotion** for "where is X" queries. Excludes
+  `rules/community/*.yaml` from top-K when the query is implementation-
+  shaped (`where`, `how`, `find`, `locate`) and doesn't mention
+  rule/yaml/lint/policy.
+- **Low-confidence verdict.** When the top-3 candidate paths cover
+  ≤1 of ≥2 query tokens (or scores are bunched at the noise floor),
+  the verdict is prefixed `low confidence —`. Catches the "trace the
+  login flow" failure mode where every candidate matches one common
+  word but no real answer exists.
+
+### Added — small additions
+
+- **Index-staleness hint.** New
+  `commands/resolve.index_staleness_hint()` helper compares the
+  latest indexed commit hash against `git rev-parse HEAD`. When they
+  differ, `health`, `diagnose`, and `weather` print a `NOTE: index
+  latest commit X != HEAD Y — git-derived metrics may be stale. Run
+  roam index --force.` line. Suppressed via
+  `ROAM_NO_STALENESS_HINT=1` for CI.
+- **Bench-relevance hint** in `roam critique`. When the diff touches
+  a structurally-significant path (retrieve/, graph/, languages/,
+  security/taint/, critique/, oracle/health), the verifier suggests
+  the relevant pytest target + `roam eval-retrieve` invocation.
+  Hot-path table is path-prefix keyed; projects without these paths
+  get no hint.
+
+### Verification
+
+- Full test suite: 6216 passed, 12 skipped, 0 failed.
+- 26 new tests across `tests/test_fallback_contracts.py`,
+  `tests/test_extractor_grammar_drift.py`,
+  `tests/test_retrieve_cross_repo.py`.
+- New CI lane: `test-no-optional-deps` actually exercises the
+  ImportError fallback paths that previously slipped through.
+- 5 Python versions (3.9–3.13), Linux + cross-grammar-version drift.
+
 ## [12.1.0] - 2026-05-01
 
 ### Added
