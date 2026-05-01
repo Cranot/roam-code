@@ -5518,6 +5518,14 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
             ann = tool.annotations.model_dump(exclude_none=True) if tool.annotations else {}
             execution = tool.execution.model_dump(exclude_none=True) if tool.execution else {}
             meta = dict(tool.meta or {})
+            # Include the inputSchema (parameters) so this output is a
+            # complete proxy for the MCP ``tools/list`` response.
+            # Conformance checkers and registry validators expect
+            # inputSchema to be present (redacted).
+            try:
+                input_schema = tool.parameters
+            except AttributeError:
+                input_schema = getattr(tool, "input_schema", None) or getattr(tool, "inputSchema", None)
             payload_tools.append(
                 {
                     "name": tool.name,
@@ -5525,6 +5533,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
                     "description": tool.description,
                     "annotations": ann,
                     "task_support": execution.get("taskSupport") or meta.get("taskSupport"),
+                    "inputSchema": input_schema,
                 }
             )
         payload = {

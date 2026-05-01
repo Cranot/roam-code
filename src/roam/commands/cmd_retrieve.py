@@ -49,8 +49,19 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     if not scores:
         return "ok"
 
-    # Score-based check
+    # High-confidence override (redacted): a top-1 that
+    # significantly outranks the 2nd hit (gap ≥ 0.30 in normalised
+    # space) signals a unique winner — the structural reranker found
+    # one strong answer rather than many equal candidates. Skip the
+    # token-coverage check in that case.
+    # Distinguishes the email query ("where is email sending" →
+    # send_welcome at 0.900, 2nd at 0.275 → gap 0.625, real answer)
+    # from the trace query ("trace the login flow" → 1.014, 2nd 0.942
+    # → gap 0.072, all matching one common word).
     top = scores[0]
+    second = scores[1] if len(scores) > 1 else 0.0
+    if top - second >= 0.30:
+        return "ok"
     fifth = scores[min(4, len(scores) - 1)]
     if top < 0.30 and (top - fifth) < 0.10:
         return "low"

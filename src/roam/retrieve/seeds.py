@@ -37,6 +37,12 @@ import sqlite3
 _FILE_RE = re.compile(r"([A-Za-z0-9_./-]+\.[A-Za-z]{1,8})\b")
 _DOTTED_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]+)+)\b")
 _SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b")
+# UPPER_SNAKE / CONSTANT_NAME — added 2026-05-01 dogfood R13: queries
+# like ``PERSONALIZED_PAGERANK`` previously extracted zero tokens
+# because every regex required at least one lowercase character.
+# Captured tokens are lowercased before downstream FTS so the
+# ``UPPER_SNAKE`` query resolves to the same symbols as ``upper_snake``.
+_UPPER_SNAKE_RE = re.compile(r"\b([A-Z][A-Z0-9]+(?:_[A-Z0-9]+)+)\b")
 _PASCAL_RE = re.compile(r"\b([A-Z][A-Za-z0-9]{2,})\b")
 # camelCase: lowercase start, ≥1 uppercase boundary (e.g. getUserById)
 _CAMEL_RE = re.compile(r"\b([a-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+)\b")
@@ -219,6 +225,19 @@ def extract_tokens(query: str) -> list[str]:
         _add(match)
     for match in _SNAKE_RE.findall(query):
         _add(match)
+    # UPPER_SNAKE constants — lowercase before adding so they resolve
+    # to the same FTS terms as their snake_case usage.
+    for match in _UPPER_SNAKE_RE.findall(query):
+        _add(match.lower())
+    # Mixed-case snake (``Personalized_Pagerank``, ``foo_BarBaz``) —
+    # neither SNAKE nor UPPER_SNAKE catches these, and ``\b`` treats
+    # ``_`` as a word character so PASCAL doesn't fire on the
+    # individual halves. Lowercase + re-snake catches them. Ordered
+    # before CAMEL/PASCAL so the snake form (e.g. ``personalized_pagerank``)
+    # is registered first.
+    if "_" in query:
+        for match in _SNAKE_RE.findall(query.lower()):
+            _add(match)
     for match in _CAMEL_RE.findall(query):
         _add(match)
     for match in _PASCAL_RE.findall(query):
