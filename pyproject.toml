@@ -32,7 +32,11 @@ classifiers = [
 dependencies = [
     "click>=8.0",
     "tree-sitter>=0.23",
-    "tree-sitter-language-pack>=0.6",
+    # Pinned upper bound: 1.6.3's cp312 wheel ships a manylinux_2_34
+    # tarball that fails to register the ``tree_sitter_language_pack``
+    # module post-install (CI run 25217131296). 1.6.2 (cp310-abi3) works
+    # cleanly across 3.9–3.13.
+    "tree-sitter-language-pack>=0.6,<1.6.3",
     "networkx>=3.0",
 ]
 
