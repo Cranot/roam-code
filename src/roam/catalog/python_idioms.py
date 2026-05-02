@@ -164,6 +164,31 @@ _SQLALCHEMY_ALL_THEN_DOT = re.compile(
 # FastAPI Depends() — dependency injection chain.
 _FASTAPI_DEPENDS_RE = re.compile(r"\bDepends\s*\(\s*(\w+)\s*\)")
 
+# Flask. Surface routes (``@app.route``, ``@bp.route``, ``@blueprint.route``)
+# and known anti-patterns (``debug=True`` to ``app.run``, hard-coded
+# ``SECRET_KEY``, raw query parameters into SQL, missing CSRF protection).
+# Captures the route path so the finding can list it.
+_FLASK_ROUTE_RE = re.compile(
+    r"@\s*(?:\w+)\.route\s*\(\s*[\"']([^\"']+)[\"']",
+)
+# ``app.run(debug=True)`` — leaks the Werkzeug debugger to anyone who
+# can reach the host. Real-world CVE class.
+_FLASK_DEBUG_TRUE_RE = re.compile(
+    r"\.run\s*\([^)]*\bdebug\s*=\s*True",
+)
+# ``app.config['SECRET_KEY'] = '...'`` or
+# ``app.secret_key = '...'`` with a string literal. Flagged because
+# a literal SECRET_KEY in source is the canonical session-forgery
+# vector. Reads from env (``os.environ``, ``config(...)``) are safe.
+_FLASK_SECRET_KEY_LITERAL_RE = re.compile(
+    r"""(?:
+        (?:app|application)\.config\s*\[\s*[\"']SECRET_KEY[\"']\s*\]\s*=\s*[\"'][^\"']+[\"']
+        |
+        (?:app|application)\.secret_key\s*=\s*[\"'][^\"']+[\"']
+    )""",
+    re.VERBOSE,
+)
+
 # Late-binding closure: ``lambda x: i*x`` inside a loop where ``i``
 # changes per iteration. Pattern: ``for i in ...:\n  ... lambda``
 # in same body. Caller verifies same-loop scope.
@@ -1214,6 +1239,128 @@ def detect_fastapi_depends(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+def detect_flask_routes(conn: sqlite3.Connection) -> list[dict]:
+    """Inventory Flask ``@app.route`` / ``@blueprint.route`` decorators.
+
+    Info-level: surfaces routes so agents can discover the URL surface
+    (analogous to ``py-fastapi-depends`` for FastAPI). Each finding
+    names the route's URL path in the reason field.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        # Quick reject: skip files without any Flask context. We require
+        # ``flask`` import OR a ``.route(`` decorator pattern OR an
+        # ``@app.route`` style. The decorator regex itself is a strong
+        # enough signal but the prefilter saves a regex sweep on
+        # non-Flask files.
+        if "flask" not in text.lower() and ".route(" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _FLASK_ROUTE_RE.finditer(text):
+            url = match.group(1)
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-flask-routes",
+                    detected_way="route-decorator",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=f"Flask route registered at ``{url}``",
+                    confidence="high",
+                    fix="",
+                )
+            )
+    return findings
+
+
+def detect_flask_debug_true(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``app.run(debug=True)`` — leaks the Werkzeug debugger.
+
+    Real-world CVE class. The Werkzeug debugger exposes an interactive
+    Python REPL bound to the HTTP port; anyone who can reach the host
+    can run arbitrary code in the application's process.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        if ".run(" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _FLASK_DEBUG_TRUE_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-flask-debug-true",
+                    detected_way="debug-true",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``debug=True`` exposes the Werkzeug debugger; gate behind an env check",
+                    confidence="high",
+                    fix="app.run(debug=os.environ.get('FLASK_DEBUG') == '1')",
+                )
+            )
+    return findings
+
+
+def detect_flask_secret_key_literal(conn: sqlite3.Connection) -> list[dict]:
+    """Find a literal Flask ``SECRET_KEY`` in source.
+
+    A hard-coded SECRET_KEY in the repository compromises every signed
+    cookie / session token the app has issued — anyone with read access
+    to the source can forge sessions. Reads from environment variables
+    or config files are skipped (the regex requires a string literal
+    immediately after ``=``).
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        if "SECRET_KEY" not in text and "secret_key" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _FLASK_SECRET_KEY_LITERAL_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-flask-secret-key-literal",
+                    detected_way="hardcoded-secret",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``SECRET_KEY`` is a string literal in source — read from env / secret manager instead",
+                    confidence="high",
+                    fix="app.config['SECRET_KEY'] = os.environ['SECRET_KEY']",
+                )
+            )
+    return findings
+
+
 def detect_sync_calls_async_via_graph(conn: sqlite3.Connection) -> list[dict]:
     """Use the call graph to find sync functions calling async ones.
 
@@ -1477,6 +1624,9 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-django-n1", "django-orm", detect_django_n1),
     ("py-sqlalchemy-lazy", "sqla-lazy", detect_sqlalchemy_lazy),
     ("py-fastapi-depends", "fastapi-di", detect_fastapi_depends),
+    ("py-flask-routes", "flask-route", detect_flask_routes),
+    ("py-flask-debug-true", "flask-debug-leak", detect_flask_debug_true),
+    ("py-flask-secret-key-literal", "flask-hardcoded-secret", detect_flask_secret_key_literal),
     ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
     ("py-except-pass", "silent-swallow", detect_except_pass),
     ("py-broad-except", "catch-too-much", detect_broad_except),

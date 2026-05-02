@@ -1,0 +1,15 @@
+{
+  "detector": "py-flask-debug-true",
+  "fixtures": [
+    {
+      "file": "tp_flask_app.py",
+      "should_fire_lines": [28],
+      "rationale": "app.run(... debug=True) inside run() — Werkzeug debugger leak"
+    },
+    {
+      "file": "tn_safe_flask.py",
+      "should_fire_lines": [],
+      "rationale": "debug is gated by os.environ — should not fire"
+    }
+  ]
+}

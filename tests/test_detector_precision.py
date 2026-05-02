@@ -31,6 +31,7 @@ _DETECTORS = {
     "django_n1": python_idioms.detect_django_n1,
     "sqlalchemy_lazy": python_idioms.detect_sqlalchemy_lazy,
     "fastapi_depends": python_idioms.detect_fastapi_depends,
+    "flask": python_idioms.detect_flask_debug_true,
 }
 
 # Per-detector floor for precision and recall. Recall is high because
@@ -44,6 +45,7 @@ _THRESHOLDS = {
     "django_n1": {"precision": 1.0, "recall": 1.0},
     "sqlalchemy_lazy": {"precision": 1.0, "recall": 1.0},
     "fastapi_depends": {"precision": 1.0, "recall": 1.0},
+    "flask": {"precision": 1.0, "recall": 1.0},
 }
 
 
