@@ -138,14 +138,30 @@ def _top_contributor(ownership_shares: dict[str, float]) -> tuple[str, float]:
     help="Drift threshold (0-1, default 0.5)",
 )
 @click.option("--limit", default=30, help="Max items to display")
+@click.option(
+    "--by-team",
+    is_flag=True,
+    help=(
+        "Aggregate drift by declared owner / team and print an "
+        "ownership-realisation table — what fraction of each team's "
+        "declared files are actually owned by their declared owner."
+    ),
+)
 @click.pass_context
-def drift(ctx, threshold, limit):
+def drift(ctx, threshold, limit, by_team):
     """Detect ownership drift: where declared owners differ from actual contributors.
 
     Unlike ``codeowners`` (which shows static ownership coverage and unowned
     files), this command computes time-decayed ownership drift scores --
     highlighting files where declared CODEOWNERS no longer match recent commit
     activity. See also ``simulate-departure`` for bus-factor modeling.
+
+    With ``--by-team``, prints a summary table aggregating drift by
+    declared owner: how many files each team owns, how many of those are
+    drifting, and the team's *ownership-realisation rate* (fraction of
+    owned files where the declared owner is also the de-facto top
+    contributor). Low realisation = blurry team boundaries / poor
+    autonomy.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     budget = ctx.obj.get("budget", 0) if ctx.obj else 0
@@ -236,8 +252,12 @@ def drift(ctx, threshold, limit):
                 click.echo("VERDICT: No files matched by CODEOWNERS rules")
             return
 
-        # Compute time-decayed ownership and drift for each owned file
+        # Compute time-decayed ownership and drift for each owned file.
+        # Track every owned file (not just drifting ones) so --by-team
+        # can compute per-team ownership-realisation rates over the
+        # full team scope, not just the drifting subset.
         drift_entries: list[dict] = []
+        per_owner_files: dict[str, dict[str, int]] = defaultdict(lambda: {"owned": 0, "drifted": 0, "realised": 0})
         for fo in owned_files:
             shares = compute_file_ownership(conn, fo["file_id"], now_ts)
             if not shares:
@@ -246,6 +266,18 @@ def drift(ctx, threshold, limit):
 
             dscore = compute_drift_score(fo["owners"], shares)
             top_name, top_share = _top_contributor(shares)
+
+            for declared in fo["owners"]:
+                stats = per_owner_files[declared]
+                stats["owned"] += 1
+                if dscore >= threshold:
+                    stats["drifted"] += 1
+                # Realisation: declared owner string is also the actual
+                # top contributor. The CODEOWNERS owner can be a team
+                # ``@org/backend`` or an individual ``@alice`` — we
+                # match either by name component (alice == top_name).
+                if _matches_actual(declared, top_name):
+                    stats["realised"] += 1
 
             if dscore >= threshold:
                 drift_entries.append(
@@ -292,35 +324,34 @@ def drift(ctx, threshold, limit):
         else:
             verdict = f"{drift_count} files with ownership drift ({drift_pct}% of {total_owned} owned files)"
 
+        team_summary = _build_team_summary(per_owner_files) if per_owner_files else []
+
         # --- JSON output ---
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "drift",
-                        budget=budget,
-                        summary={
-                            "verdict": verdict,
-                            "total_files": len(all_files),
-                            "owned_files": total_owned,
-                            "drift_files": drift_count,
-                            "drift_pct": drift_pct,
-                            "avg_drift_score": avg_drift,
-                            "highest_drift": (
-                                {
-                                    "path": highest_entry["path"],
-                                    "score": highest_entry["drift_score"],
-                                }
-                                if highest_entry
-                                else None
-                            ),
-                            "threshold": threshold,
-                        },
-                        drift=drift_entries[:limit],
-                        recommendations=recommendations,
-                    )
-                )
-            )
+            envelope_payload: dict = {
+                "summary": {
+                    "verdict": verdict,
+                    "total_files": len(all_files),
+                    "owned_files": total_owned,
+                    "drift_files": drift_count,
+                    "drift_pct": drift_pct,
+                    "avg_drift_score": avg_drift,
+                    "highest_drift": (
+                        {
+                            "path": highest_entry["path"],
+                            "score": highest_entry["drift_score"],
+                        }
+                        if highest_entry
+                        else None
+                    ),
+                    "threshold": threshold,
+                },
+                "drift": drift_entries[:limit],
+                "recommendations": recommendations,
+            }
+            if by_team:
+                envelope_payload["team_summary"] = team_summary
+            click.echo(to_json(json_envelope("drift", budget=budget, **envelope_payload)))
             return
 
         # --- Text output ---
@@ -359,11 +390,66 @@ def drift(ctx, threshold, limit):
             click.echo(f"    Highest drift: {highest_entry['path']} ({highest_entry['drift_score']:.2f})")
         click.echo()
 
+        # --by-team summary table
+        if by_team and team_summary:
+            click.echo("  Team / Owner summary:")
+            click.echo(
+                format_table(
+                    ["Owner", "Files", "Drifted", "Realised", "Realisation %"],
+                    [
+                        [
+                            row["owner"],
+                            str(row["owned"]),
+                            f"{row['drifted']} ({row['drift_pct']}%)",
+                            str(row["realised"]),
+                            f"{row['realisation_pct']}%",
+                        ]
+                        for row in team_summary
+                    ],
+                )
+            )
+            click.echo()
+
         # Recommendations
         if recommendations:
             click.echo("  Recommendations:")
             for rec in recommendations:
                 click.echo(f"    - {rec}")
+
+
+def _matches_actual(declared: str, actual_top: str) -> bool:
+    """Loose match between a CODEOWNERS owner ('@alice', '@org/backend')
+    and a git author name. Strips the ``@`` and any ``org/`` prefix and
+    compares case-insensitively after normalisation. Falls back to a
+    substring check so 'Alice Cooper' matches '@alice'."""
+    if not declared or not actual_top:
+        return False
+    cleaned = declared.lstrip("@").rsplit("/", 1)[-1].lower()
+    actual = _normalise_name(actual_top).lower()
+    if not cleaned or not actual:
+        return False
+    return cleaned in actual or actual in cleaned
+
+
+def _build_team_summary(per_owner_files: dict[str, dict[str, int]]) -> list[dict]:
+    """Return a sorted list of per-team ownership stats."""
+    rows = []
+    for owner, s in per_owner_files.items():
+        owned = s["owned"]
+        if owned == 0:
+            continue
+        rows.append(
+            {
+                "owner": owner,
+                "owned": owned,
+                "drifted": s["drifted"],
+                "drift_pct": round(s["drifted"] * 100 / owned, 1),
+                "realised": s["realised"],
+                "realisation_pct": round(s["realised"] * 100 / owned, 1),
+            }
+        )
+    rows.sort(key=lambda r: (-r["owned"], r["owner"]))
+    return rows
 
 
 def _common_directory(paths: list[str]) -> str:
