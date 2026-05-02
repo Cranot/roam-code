@@ -1,0 +1,20 @@
+{
+  "detector": "py-django-n1",
+  "fixtures": [
+    {
+      "file": "tp_filter_in_loop.py",
+      "should_fire_lines": [9, 18],
+      "rationale": "filter() and get() inside loop bodies"
+    },
+    {
+      "file": "tp_all_then_for.py",
+      "should_fire_lines": [8, 15],
+      "rationale": "naked .all() followed immediately by a for-loop"
+    },
+    {
+      "file": "tn_eager_loading.py",
+      "should_fire_lines": [],
+      "rationale": "select_related / prefetch_related / outside-loop / in_bulk all defuse the pattern"
+    }
+  ]
+}

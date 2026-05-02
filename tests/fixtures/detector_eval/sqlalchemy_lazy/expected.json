@@ -1,0 +1,15 @@
+{
+  "detector": "py-sqlalchemy-lazy",
+  "fixtures": [
+    {
+      "file": "tp_lazy_attribute.py",
+      "should_fire_lines": [10, 17],
+      "rationale": "session.query(...).all() followed by attribute access on each row"
+    },
+    {
+      "file": "tn_eager_or_no_relationship.py",
+      "should_fire_lines": [],
+      "rationale": "joinedload / selectinload defuse the lazy-load; iterate-without-attribute is fine"
+    }
+  ]
+}
