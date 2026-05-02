@@ -4,6 +4,40 @@ from __future__ import annotations
 
 import os
 
+# Path-priority weights for cross-file symbol resolution. When the same
+# function name is defined in both a dev/ helper script and the canonical
+# src/ library, calls should resolve to the canonical definition. Higher
+# scores win; negative scores penalise.
+_PATH_SCORE_RULES = (
+    ("src/", 3),
+    ("/src/", 3),
+    ("lib/", 3),
+    ("/lib/", 3),
+    ("/dev/", -2),
+    ("/scripts/", -2),
+    ("/examples/", -2),
+    ("/tests/", -1),
+    ("/test/", -1),
+    ("dev/", -2),
+    ("scripts/", -2),
+    ("examples/", -2),
+    ("tests/", -1),
+    ("test/", -1),
+)
+
+
+def _path_score(path: str) -> int:
+    """Return a canonical-path weight for tie-breaking ambiguous symbol
+    resolution. Higher = more canonical."""
+    if not path:
+        return 0
+    p = path.replace("\\", "/")
+    score = 0
+    for needle, weight in _PATH_SCORE_RULES:
+        if needle in p:
+            score += weight
+    return score
+
 
 def resolve_references(
     references: list[dict],
@@ -330,11 +364,17 @@ def _best_match(
                     return exported[0]
                 return import_matched[0]
 
-    # Fall back: prefer exported symbols globally
+    # Fall back: prefer exported symbols globally, with a canonical-path
+    # bias as a tiebreak. Without the bias a dev/ helper script that
+    # defines its own ``open_db`` shadows the canonical
+    # ``src/roam/db/connection.py:open_db`` whenever the dev file is
+    # indexed first (e.g. alphabetically). The order is:
+    # 1) src/lib/ paths win over dev/scripts/tests
+    # 2) exported wins over local
+    # 3) deterministic by qualified_name as last tiebreak
     exported = [s for s in candidates if s.get("is_exported")]
-    if exported:
-        return exported[0]
-    return candidates[0]
+    pool = exported or candidates
+    return min(pool, key=lambda s: (-_path_score(s.get("file_path") or ""), s.get("qualified_name") or ""))
 
 
 def _closest_symbol(
