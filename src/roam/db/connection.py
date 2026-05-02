@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
 
@@ -140,7 +141,7 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     return conn
 
 
-def ensure_schema(conn: sqlite3.Connection):
+def ensure_schema(conn: sqlite3.Connection) -> None:
     """Create tables if they don't exist, and apply migrations."""
     conn.executescript(SCHEMA_SQL)
 
@@ -275,7 +276,15 @@ def _safe_alter(conn: sqlite3.Connection, table: str, column: str, col_type: str
 _BATCH_SIZE = 500  # leave room for extra params (SQLite limit 999)
 
 
-def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
+def batched_in(
+    conn: sqlite3.Connection,
+    sql: str,
+    ids,
+    *,
+    pre=(),
+    post=(),
+    batch_size: int = _BATCH_SIZE,
+) -> list:
     """Execute *sql* with ``{ph}`` placeholder(s) in batches.
 
     Handles single and double IN-clauses automatically::
@@ -307,7 +316,15 @@ def batched_in(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
     return rows
 
 
-def batched_count(conn, sql, ids, *, pre=(), post=(), batch_size=_BATCH_SIZE):
+def batched_count(
+    conn: sqlite3.Connection,
+    sql: str,
+    ids,
+    *,
+    pre=(),
+    post=(),
+    batch_size: int = _BATCH_SIZE,
+) -> int:
     """Like :func:`batched_in` but **sums** scalar results (for COUNT queries).
 
     Returns an integer total.
@@ -335,7 +352,7 @@ def db_exists(project_root: Path | None = None) -> bool:
 
 
 @contextmanager
-def open_db(readonly: bool = False, project_root: Path | None = None):
+def open_db(readonly: bool = False, project_root: Path | None = None) -> "Iterator[sqlite3.Connection]":
     """Context manager for database access. Creates schema if needed.
 
     Raises a descriptive ``click.ClickException`` if the database file is
