@@ -22,7 +22,7 @@ from tests.conftest import make_src_project as _make_project
 class TestRecipes:
     def test_v12_recipe_set(self):
         names = {r.name for r in RECIPES}
-        # The v12.0 expanded set (5 starter + 7 second-batch)
+        # The v12.0 expanded set + v12.8 fixture-impact recipe
         assert names == {
             # First batch
             "safe-delete-check",
@@ -38,12 +38,14 @@ class TestRecipes:
             "security-audit",
             "dead-code-sweep",
             "architecture-debt",
+            # v12.8 — pytest fixture impact
+            "fixture-impact",
         }
 
     def test_recipe_count(self):
-        # Lock in the 12-recipe surface — bump together with surface counts
+        # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 12
+        assert len(RECIPES) == 13
 
     def test_recipe_names_unique(self):
         names = [r.name for r in RECIPES]
