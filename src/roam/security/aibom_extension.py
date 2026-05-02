@@ -161,6 +161,43 @@ def _files_for_commit(repo_root: Path, sha: str) -> list[str]:
     return [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
 
 
+def _files_for_commits_batch(repo_root: Path, shas: list[str]) -> dict[str, list[str]]:
+    """Return ``{sha: [paths]}`` for many commits in one git invocation.
+
+    ``git show`` accepts multiple SHAs and emits a section per commit.
+    Replaces an N+1 of one ``git show`` per commit with a single call.
+    """
+    if not shas:
+        return {}
+    try:
+        r = subprocess.run(
+            ["git", "show", "--name-only", "--format=AIBOM_COMMIT_MARKER:%H", *shas],
+            cwd=str(repo_root),
+            capture_output=True,
+            text=True,
+            timeout=60,
+            encoding="utf-8",
+            errors="replace",
+            env=worktree_git_env(repo_root),
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return {sha: [] for sha in shas}
+    if r.returncode != 0:
+        return {sha: [] for sha in shas}
+
+    out: dict[str, list[str]] = {sha: [] for sha in shas}
+    current: str | None = None
+    for raw in r.stdout.splitlines():
+        line = raw.strip()
+        if line.startswith("AIBOM_COMMIT_MARKER:"):
+            current = line.split(":", 1)[1]
+            continue
+        if not line or current is None:
+            continue
+        out.setdefault(current, []).append(line)
+    return out
+
+
 def build_aibom_block(repo_root: Path, conn) -> dict:
     """Build the AIBOM extension block for embedding in a CycloneDX 1.7 SBOM.
 
@@ -204,10 +241,20 @@ def build_aibom_block(repo_root: Path, conn) -> dict:
             entry["binding"]["commits"].append(c["sha"])
 
     # Hydrate file scope (bounded to first 200 commits per component to
-    # keep the AIBOM size sane on large histories).
+    # keep the AIBOM size sane on large histories). Batches all commits
+    # across all components into one ``git show`` call to avoid an N+1
+    # against git.
+    all_shas: list[str] = []
+    seen: set[str] = set()
     for entry in by_committer.values():
         for sha in entry["binding"]["commits"][:200]:
-            for path in _files_for_commit(repo_root, sha):
+            if sha not in seen:
+                all_shas.append(sha)
+                seen.add(sha)
+    files_by_sha = _files_for_commits_batch(repo_root, all_shas)
+    for entry in by_committer.values():
+        for sha in entry["binding"]["commits"][:200]:
+            for path in files_by_sha.get(sha, ()):
                 entry["binding"]["files"].add(path)
 
     out_components: list[dict] = []
