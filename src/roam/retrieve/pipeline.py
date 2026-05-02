@@ -102,21 +102,32 @@ def run_retrieve(
         try:
             from roam.retrieve.learned_ranker import is_available
             from roam.retrieve.learned_ranker import score as learned_score
+        except ImportError:
+            # ``lightgbm`` not installed — that's the documented opt-in
+            # extra. Fall back to structural ranking silently.
+            is_available = lambda: False  # noqa: E731
+            learned_score = None  # type: ignore[assignment]
 
-            if is_available():
+        if learned_score is not None and is_available():
+            try:
                 learned_scores = learned_score(scored, task)
-                if learned_scores:
-                    # Replace the structural score with the learned model's
-                    # score, but keep all justifications for transparency.
-                    for c in scored:
-                        sid = int(c["symbol_id"])
-                        if sid in learned_scores:
-                            c["score"] = round(learned_scores[sid], 4)
-                            c.setdefault("justifications", {})["learned"] = round(learned_scores[sid], 4)
-                    scored.sort(key=lambda x: -x["score"])
-        except Exception:
-            # Silent fallback — keep the structural ranking
-            pass
+            except Exception as exc:
+                # Don't silently swallow runtime errors — they signal a
+                # real bug in the learned ranker we want surfaced. Log
+                # via the standard logger so CI captures it.
+                import logging
+
+                logging.getLogger(__name__).debug("learned ranker failed; falling back to structural: %s", exc)
+                learned_scores = None
+            if learned_scores:
+                # Replace the structural score with the learned model's
+                # score, but keep all justifications for transparency.
+                for c in scored:
+                    sid = int(c["symbol_id"])
+                    if sid in learned_scores:
+                        c["score"] = round(learned_scores[sid], 4)
+                        c.setdefault("justifications", {})["learned"] = round(learned_scores[sid], 4)
+                scored.sort(key=lambda x: -x["score"])
 
     selected, budget_used = _apply_budget(scored, budget=budget, k=k, tokens_per_line=tokens_per_line)
 
