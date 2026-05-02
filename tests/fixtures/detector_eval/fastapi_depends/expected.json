@@ -1,0 +1,15 @@
+{
+  "detector": "py-fastapi-depends",
+  "fixtures": [
+    {
+      "file": "tp_depends_chain.py",
+      "should_fire_lines": [13, 18, 24],
+      "rationale": "every function with a Depends() param is a node in the chain"
+    },
+    {
+      "file": "tn_no_depends.py",
+      "should_fire_lines": [],
+      "rationale": "no Depends() anywhere — informational detector should stay silent"
+    }
+  ]
+}
