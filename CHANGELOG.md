@@ -24,13 +24,51 @@ the implicit fixture dependency graph.
   fixture or ``test_*`` function, walks the implicit fixture-parameter
   dependency graph to show what each test transitively requires.
   Resolves through ``conftest.py`` chains the way pytest itself does.
+- **``--unused`` flag** — list fixtures with no dependents (orphaned
+  test infrastructure left behind by refactors).
+- **Scope and autouse parsing** — fixture chain output annotates each
+  node with ``[scope=session, autouse]`` badges so agents can reason
+  about test isolation.
 - **``edges.kind = 'pytest_fixture_dep'``** — new edge type. A pytest
   fixture's parameters are themselves fixtures, but that relationship
   is invisible to call-graph or import analysis. Indexing now derives
-  it as a post-processing step. Available to other commands and to
-  the ``preflight`` / ``impact`` blast-radius queries.
+  it as a post-processing step. Edges flow through the existing graph
+  builder, so ``roam impact`` and ``roam preflight`` automatically
+  include transitively-affected tests in their blast radius.
 - **``roam_pytest_fixtures``** MCP tool, surfaced under the
   ``refactor`` and ``debug`` presets.
+
+### Added — per-detector precision audit
+
+- **``tests/fixtures/detector_eval/``** — small labelled corpus per
+  Python detector with true-positive and true-negative cases plus an
+  ``expected.json`` ground truth.
+- **``tests/test_detector_precision.py``** — runner that indexes each
+  corpus, executes the detector, and asserts precision and recall
+  against per-detector floors so they cannot regress in CI.
+- **Initial baselines** — recall 1.0 across the board; precision 1.0
+  for ``py-django-n1``, ``py-sqlalchemy-lazy``, and
+  ``py-fastapi-depends`` after the next two fixes. Numbers published
+  on ``docs/site/language-precision.md``.
+
+### Fixed — false-positive classes in ORM detectors
+
+- **``py-django-n1``** no longer fires on
+  ``Model.objects.select_related(...).all()`` followed by a for-loop.
+  The detector now scans the queryset chain back from the ``.all()``
+  call for ``select_related(`` or ``prefetch_related(`` and skips
+  when found.
+- **``py-sqlalchemy-lazy``** no longer fires on queries that already
+  eager-load via ``joinedload``, ``selectinload``, ``contains_eager``,
+  or ``subqueryload`` in their ``.options(...)`` chain.
+
+### Improved — preflight ergonomics
+
+- **Suggested-tests cap** — ``roam preflight`` now caps the
+  ``Suggested tests:`` line at 15 test files with a ``# (+N more)``
+  suffix. Previously, preflight'ing a hot pytest fixture (one used by
+  hundreds of tests) dumped every test file in the repo into the
+  suggestion line.
 
 ### Added — documentation consistency CI check
 
@@ -43,6 +81,12 @@ the implicit fixture dependency graph.
   a real drift on first run: the docs-site landscape entry was
   reporting an older version and command count than the published
   package.
+
+### Added — internal-link audit in doc-consistency check
+
+- The doc-consistency test now verifies every ``docs/site/*.{md,html}``
+  link in README and CHANGELOG resolves to an existing file. Catches
+  silent rot when a docs page is renamed or removed.
 
 ### Added — public docs pages
 
