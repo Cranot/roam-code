@@ -212,7 +212,6 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         if decorator_filter:
             where_parts.append("LOWER(COALESCE(s.decorators, '')) LIKE ?")
             params.append(f"%{decorator_filter.lower()}%")
-        kind_clause = ""
         if kind_filter:
             abbrev_to_kind = {v: k for k, v in KIND_ABBREV.items()}
             full_kind = abbrev_to_kind.get(kind_filter, kind_filter)

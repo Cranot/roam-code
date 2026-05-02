@@ -322,7 +322,6 @@ def ws_resolve(ctx):
         # `role: backend` tags so `ws resolve` does *something* useful.
         # The on-disk config is left alone — populate in-memory only.
         connections = list(config.get("connections", []))
-        auto_derived = False
         if not connections:
             fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]
             be_repos = [r for r in repo_infos if r.get("role") == "backend"]
@@ -332,7 +331,6 @@ def ws_resolve(ctx):
                     for fe in fe_repos
                     for be in be_repos
                 ]
-                auto_derived = True
                 if not json_mode:
                     pairs = ", ".join(f"{c['frontend']} -> {c['backend']}" for c in connections)
                     click.echo(

@@ -253,11 +253,6 @@ class TestSuggestReviewersExclude:
 
         _make_unstaged_change(proj, "src/auth.py", "def login(): pass\n")
 
-        # Get all reviewers first
-        result_all = invoke_cli(cli_runner, ["suggest-reviewers", "--changed"], json_mode=True)
-        data_all = json.loads(result_all.output)
-        all_names = {r["name"] for r in data_all.get("reviewers", [])}
-
         # Now exclude bob
         result_ex = invoke_cli(cli_runner, ["suggest-reviewers", "--changed", "--exclude", "bob"], json_mode=True)
         data_ex = json.loads(result_ex.output)

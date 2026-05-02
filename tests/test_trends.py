@@ -384,7 +384,6 @@ class TestTrendsDays:
             cwd=trends_project_with_data,
             json_mode=True,
         )
-        data = _parse_json(result)
         # With days=0, only snapshots from "today" qualify.
         # Our snapshots were just created, so they should still show.
         # Just verify the command runs without error.

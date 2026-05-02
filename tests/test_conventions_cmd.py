@@ -394,10 +394,9 @@ class TestConventionsNaming:
         monkeypatch.chdir(mixed_naming_project)
         result = invoke_cli(cli_runner, ["conventions"], cwd=mixed_naming_project, json_mode=True)
         data = parse_json_output(result, "conventions")
-        violations = data.get("violations", [])
         # We have at least 3 camelCase outliers: formatOutput, serializeResult, loadConfig
         # They may or may not be detected depending on how multiword detection works
-        # Just verify the violations list is populated or outlier_count > 0
+        # Just verify outlier_count > 0
         outlier_count = data["summary"]["outlier_count"]
         assert outlier_count >= 1, f"Expected at least 1 naming outlier, got {outlier_count}"
 

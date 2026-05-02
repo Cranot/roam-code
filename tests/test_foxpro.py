@@ -662,8 +662,6 @@ def _build_synthetic_scx_sct(controls: list[dict]) -> tuple[bytes, bytes]:
 
     # Build records
     record_bytes = bytearray()
-    # Map from control dict key -> (field_name_for_char, displacement_for_char)
-    char_fields = {"platform": 1, "uniqueid": 9}  # displacement for PLATFORM, UNIQUEID
     # Map from control dict key -> displacement for memo fields
     memo_map = {
         "class_name": 19,

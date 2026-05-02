@@ -237,7 +237,9 @@ def ns_project(tmp_path_factory):
     old_cwd = os.getcwd()
     try:
         os.chdir(str(proj))
-        result = subprocess.run(
+        # Index — non-zero exit is tolerated (the test that uses this
+        # fixture verifies behaviour against a partial index too).
+        subprocess.run(
             [sys.executable, "-m", "roam", "index"],
             cwd=str(proj),
             capture_output=True,
