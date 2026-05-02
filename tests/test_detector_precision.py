@@ -42,8 +42,8 @@ _DETECTORS = {
 # floors as the detectors improve; lowering one is a regression and
 # requires intent.
 _THRESHOLDS = {
-    "django_n1": {"precision": 0.60, "recall": 1.0},
-    "sqlalchemy_lazy": {"precision": 0.50, "recall": 1.0},
+    "django_n1": {"precision": 1.0, "recall": 1.0},
+    "sqlalchemy_lazy": {"precision": 1.0, "recall": 1.0},
     "fastapi_depends": {"precision": 1.0, "recall": 1.0},
 }
 
@@ -64,6 +64,14 @@ def _run_detector_against(slug: str, detector_fn, tmp_path: Path, monkeypatch):
     """Copy the labelled fixtures into ``tmp_path``, index, run the
     detector, and group findings by file."""
     import shutil
+
+    from roam.catalog.python_idioms import _clear_file_text_cache
+
+    # The detector pipeline caches file text by (id(conn), file_id).
+    # Across tests, Python may reuse the same object id for a fresh
+    # connection, returning stale text from the previous test's
+    # tmp_path. Clear before every run.
+    _clear_file_text_cache()
 
     src = FIXTURE_ROOT / slug
     if not (src / "expected.json").exists():

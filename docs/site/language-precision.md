@@ -78,11 +78,11 @@ per detector. Numbers are baselines; the CI test
 `tests/test_detector_precision.py` enforces them as floors so they
 cannot regress.
 
-| Detector | Cases | Recall | Precision | Notable false positives |
+| Detector | Cases | Recall | Precision | Notes |
 |---|---|---|---|---|
-| `py-django-n1` | 6 TP, 4 TN | 1.00 | 0.67 | `.select_related(...).all()` followed by a `for` still fires (chained eager-loading not detected) |
-| `py-sqlalchemy-lazy` | 2 TP, 3 TN | 1.00 | 0.50 | `joinedload` / `selectinload` options on the query don't suppress the firing |
-| `py-fastapi-depends` | 3 TP, 2 TN | 1.00 | 1.00 | — |
+| `py-django-n1` | 6 TP, 4 TN | 1.00 | 1.00 | Suppresses on `select_related` / `prefetch_related` in the queryset chain |
+| `py-sqlalchemy-lazy` | 2 TP, 3 TN | 1.00 | 1.00 | Suppresses on `joinedload` / `selectinload` / `contains_eager` / `subqueryload` in `.options(...)` |
+| `py-fastapi-depends` | 3 TP, 2 TN | 1.00 | 1.00 | Informational detector; surfaces `Depends()` chains |
 
 The corpus is intentionally small (you can read every fixture in a few
 minutes) so contributors can extend it. Add a new labelled directory
