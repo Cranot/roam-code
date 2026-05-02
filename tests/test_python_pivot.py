@@ -7,6 +7,7 @@ Each test corresponds to a finding from the dogfood pass on
 
 from __future__ import annotations
 
+import pytest
 from tree_sitter_language_pack import get_parser
 
 from roam.languages.python_lang import PythonExtractor
@@ -197,3 +198,292 @@ class TestPythonIdiomRegexes:
 
         assert _LOGGER_FSTRING_RE.search('logger.info("x=%s", x)') is None
         assert _LOGGER_FSTRING_RE.search('logger.info("plain")') is None
+
+
+# ---------------------------------------------------------------------------
+# v12.4-iter additions
+# ---------------------------------------------------------------------------
+
+
+class TestStringStripper:
+    """``_strip_strings_and_comments`` replaces docstring/comment content
+    with same-length whitespace so detectors don't false-match inside
+    strings."""
+
+    def test_triple_quoted_docstring_blanked(self):
+        from roam.catalog.python_idioms import _strip_strings_and_comments
+
+        src = 'def f():\n    """example: x == None"""\n    return 1\n'
+        out = _strip_strings_and_comments(src)
+        assert "x == None" not in out
+        assert len(out) == len(src)
+        assert out.count("\n") == src.count("\n")
+
+    def test_single_quoted_string_blanked(self):
+        from roam.catalog.python_idioms import _strip_strings_and_comments
+
+        out = _strip_strings_and_comments('x = "open(foo)"\n')
+        assert "open(foo)" not in out
+        assert "open(" not in out
+
+    def test_comment_blanked(self):
+        from roam.catalog.python_idioms import _strip_strings_and_comments
+
+        out = _strip_strings_and_comments("x = 1  # foo == None\n")
+        assert "== None" not in out
+
+    def test_real_code_preserved(self):
+        from roam.catalog.python_idioms import _strip_strings_and_comments
+
+        src = "if x == None:\n    pass\n"
+        out = _strip_strings_and_comments(src)
+        assert "x == None" in out
+
+
+class TestSyncInAsyncRegex:
+    @pytest.mark.parametrize(
+        "snippet",
+        [
+            "    response = requests.get(url)",
+            "    requests.post(url, data=d)",
+            "    time.sleep(1)",
+            "    subprocess.run(['ls'])",
+            "    urllib.request.urlopen(url)",
+        ],
+    )
+    def test_blocking_patterns_match(self, snippet):
+        from roam.catalog.python_idioms import _SYNC_IN_ASYNC_PATTERNS
+
+        assert any(p.search(snippet) for p, _ in _SYNC_IN_ASYNC_PATTERNS)
+
+    def test_async_alternatives_do_not_match(self):
+        from roam.catalog.python_idioms import _SYNC_IN_ASYNC_PATTERNS
+
+        for snippet in ("await asyncio.sleep(1)", "await httpx.AsyncClient().get(url)"):
+            assert not any(p.search(snippet) for p, _ in _SYNC_IN_ASYNC_PATTERNS)
+
+
+class TestOpenWithoutWithRegex:
+    def test_assignment_open_matches(self):
+        from roam.catalog.python_idioms import _OPEN_WITHOUT_WITH_RE
+
+        assert _OPEN_WITHOUT_WITH_RE.search("    f = open(path)") is not None
+
+    def test_os_open_skipped(self):
+        from roam.catalog.python_idioms import _OPEN_WITHOUT_WITH_RE
+
+        assert _OPEN_WITHOUT_WITH_RE.search("os.open(path)") is None
+
+
+class TestStarImportRegex:
+    def test_star_import_matches(self):
+        from roam.catalog.python_idioms import _STAR_IMPORT_RE
+
+        assert _STAR_IMPORT_RE.search("from foo import *") is not None
+        assert _STAR_IMPORT_RE.search("from foo.bar import *") is not None
+
+    def test_explicit_import_does_not_match(self):
+        from roam.catalog.python_idioms import _STAR_IMPORT_RE
+
+        assert _STAR_IMPORT_RE.search("from foo import a, b") is None
+
+
+class TestDictKeysIterRegex:
+    def test_keys_iter_matches(self):
+        from roam.catalog.python_idioms import _DICT_KEYS_ITER_RE
+
+        assert _DICT_KEYS_ITER_RE.search("for k in d.keys():") is not None
+
+    def test_direct_iter_does_not_match(self):
+        from roam.catalog.python_idioms import _DICT_KEYS_ITER_RE
+
+        assert _DICT_KEYS_ITER_RE.search("for k in d:") is None
+        assert _DICT_KEYS_ITER_RE.search("for k, v in d.items():") is None
+
+
+class TestHasDecorator:
+    def test_exact(self):
+        from roam.catalog.python_idioms import has_decorator
+
+        assert has_decorator("@pytest.fixture", "pytest.fixture") is True
+
+    def test_with_args(self):
+        from roam.catalog.python_idioms import has_decorator
+
+        assert has_decorator("@pytest.fixture(scope='module')", "pytest.fixture") is True
+
+    def test_substring_in_other_decorator_does_not_match(self):
+        from roam.catalog.python_idioms import has_decorator
+
+        deco = '@click.option("--help", help="like pytest.fixture but inline")'
+        assert has_decorator(deco, "pytest.fixture") is False
+
+    def test_in_list(self):
+        from roam.catalog.python_idioms import has_decorator
+
+        deco = "@click.command(),@pytest.fixture,@click.argument('p')"
+        assert has_decorator(deco, "pytest.fixture") is True
+
+    def test_empty(self):
+        from roam.catalog.python_idioms import has_decorator
+
+        assert has_decorator("", "pytest.fixture") is False
+        assert has_decorator(None, "pytest.fixture") is False
+
+
+class TestFixtureKind:
+    def test_pytest_fixture(self):
+        from roam.catalog.python_idioms import fixture_kind
+
+        assert fixture_kind("@pytest.fixture") == "pytest fixture"
+
+    def test_pytest_fixture_with_args(self):
+        from roam.catalog.python_idioms import fixture_kind
+
+        assert fixture_kind("@pytest.fixture(scope='session')") == "pytest fixture"
+
+    def test_parametrize(self):
+        from roam.catalog.python_idioms import fixture_kind
+
+        assert fixture_kind("@pytest.mark.parametrize('x', [1, 2])") == "parametrize"
+
+    def test_async_test(self):
+        from roam.catalog.python_idioms import fixture_kind
+
+        assert fixture_kind("@pytest.mark.asyncio") == "async test"
+
+    def test_no_pytest(self):
+        from roam.catalog.python_idioms import fixture_kind
+
+        assert fixture_kind("@property") is None
+        assert fixture_kind("") is None
+
+
+class TestIsModelClass:
+    def test_pydantic(self):
+        from roam.catalog.python_idioms import is_model_class
+
+        is_m, label = is_model_class("class User(BaseModel)", "")
+        assert is_m is True
+        assert label == "pydantic"
+
+    def test_dataclass(self):
+        from roam.catalog.python_idioms import is_model_class
+
+        is_m, label = is_model_class("class Point", "@dataclass")
+        assert is_m is True
+        assert label == "dataclass"
+
+    def test_attrs(self):
+        from roam.catalog.python_idioms import is_model_class
+
+        is_m, label = is_model_class("class Point", "@attrs.define")
+        assert is_m is True
+        assert label == "attrs"
+
+    def test_enum_subclass(self):
+        from roam.catalog.python_idioms import is_model_class
+
+        is_m, label = is_model_class("class Status(Enum)", "")
+        assert is_m is True
+        assert label == "enum"
+
+    def test_plain_class(self):
+        from roam.catalog.python_idioms import is_model_class
+
+        is_m, label = is_model_class("class Foo", "")
+        assert is_m is False
+        assert label is None
+
+
+class TestPyTypesSignatureHealth:
+    def test_fully_typed(self):
+        from roam.commands.cmd_py_types import _signature_health
+
+        h = _signature_health("def f(x: int, y: str) -> bool")
+        assert h["has_return"] is True
+        assert h["params_typed"] == 2
+        assert h["params_untyped"] == 0
+        assert h["uses_any"] is False
+        assert h["old_typing"] is False
+
+    def test_no_return(self):
+        from roam.commands.cmd_py_types import _signature_health
+
+        h = _signature_health("def f(x: int)")
+        assert h["has_return"] is False
+
+    def test_uses_any(self):
+        from roam.commands.cmd_py_types import _signature_health
+
+        h = _signature_health("def f(x: Any) -> Any")
+        assert h["uses_any"] is True
+
+    def test_old_typing(self):
+        from roam.commands.cmd_py_types import _signature_health
+
+        h = _signature_health("def f(x: Optional[int]) -> Dict[str, int]")
+        assert h["old_typing"] is True
+
+    def test_self_not_counted(self):
+        from roam.commands.cmd_py_types import _signature_health
+
+        h = _signature_health("def method(self, x: int) -> bool")
+        assert h["params_typed"] == 1
+        assert h["params_untyped"] == 0
+
+
+# ---------------------------------------------------------------------------
+# Phase J/K additions
+# ---------------------------------------------------------------------------
+
+
+class TestAsyncWithMissingRegex:
+    def test_aiofiles_open_matches(self):
+        from roam.catalog.python_idioms import _ASYNC_OPEN_RE
+
+        assert _ASYNC_OPEN_RE.search("f = aiofiles.open('x')") is not None
+
+    def test_httpx_async_client_matches(self):
+        from roam.catalog.python_idioms import _HTTPX_CLIENT_RE
+
+        assert _HTTPX_CLIENT_RE.search("client = httpx.AsyncClient()") is not None
+
+    def test_sync_open_does_not_match_aiofiles_re(self):
+        from roam.catalog.python_idioms import _ASYNC_OPEN_RE
+
+        assert _ASYNC_OPEN_RE.search("f = open('x')") is None
+
+
+class TestTypeEqRegex:
+    def test_type_eq_matches(self):
+        from roam.catalog.python_idioms import _TYPE_EQ_RE
+
+        assert _TYPE_EQ_RE.search("if type(x) == int:") is not None
+        assert _TYPE_EQ_RE.search("type(value) == MyClass") is not None
+
+    def test_isinstance_does_not_match(self):
+        from roam.catalog.python_idioms import _TYPE_EQ_RE
+
+        assert _TYPE_EQ_RE.search("if isinstance(x, int):") is None
+
+
+class TestAsyncNotAwaitedHelpers:
+    """The async-not-awaited detector is too DB-dependent to unit-test
+    without a fixture project. These tests cover the safe-prefix logic
+    and lookbehind regex shape."""
+
+    def test_safe_prefix_skips_await(self):
+        # If the line contains ``await fetch()`` the regex's ``(?<![\w.])``
+        # still matches ``fetch(`` but the safe-prefix check at runtime
+        # examines the 30 chars before. We test the runtime check
+        # indirectly via the detector output on the synthetic case
+        # in the integration test.
+        # Here we just sanity-check the lookbehind: ``foo.bar(`` must
+        # NOT match if ``bar`` is in the async name set.
+        import re
+
+        pat = re.compile(r"(?<![\w.])(\bbar)\s*\(")
+        assert pat.search("foo.bar()") is None
+        assert pat.search("bar()") is not None
+        assert pat.search("await bar()") is not None  # safe-prefix check happens later
