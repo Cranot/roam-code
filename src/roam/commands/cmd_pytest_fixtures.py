@@ -21,8 +21,11 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6) -> list[dict]:
     """Walk ``pytest_fixture_dep`` edges out from ``symbol_id``.
 
     Returns a list of ``{depth, id, name, qualified_name, file_path,
-    line_start}`` dicts in BFS order (root first), capped at ``max_depth``.
+    line_start, scope, autouse}`` dicts in BFS order (root first),
+    capped at ``max_depth``.
     """
+    from roam.index.pytest_fixtures import _fixture_autouse, _fixture_scope
+
     visited = {symbol_id}
     out: list[dict] = []
     frontier: list[tuple[int, int]] = [(symbol_id, 0)]
@@ -33,7 +36,8 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6) -> list[dict]:
                 continue
             rows = conn.execute(
                 """
-                SELECT s.id, s.name, s.qualified_name, s.line_start, f.path AS file_path
+                SELECT s.id, s.name, s.qualified_name, s.line_start, s.decorators,
+                       f.path AS file_path
                 FROM edges e
                 JOIN symbols s ON e.target_id = s.id
                 JOIN files f ON s.file_id = f.id
@@ -54,6 +58,8 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6) -> list[dict]:
                         "qualified_name": r["qualified_name"],
                         "file_path": r["file_path"],
                         "line_start": r["line_start"],
+                        "scope": _fixture_scope(r["decorators"]),
+                        "autouse": _fixture_autouse(r["decorators"]),
                     }
                 )
                 next_frontier.append((r["id"], depth + 1))
@@ -65,12 +71,13 @@ def _project_summary(conn) -> dict:
     """Top-level counts when the user runs ``roam pytest-fixtures`` with
     no symbol argument."""
     total_fixtures = conn.execute(
-        """
+        f"""
         SELECT COUNT(*) FROM symbols s
         JOIN files f ON s.file_id = f.id
         WHERE f.language = 'python'
           AND s.kind IN ('function', 'method')
-          AND (s.decorators LIKE '%pytest.fixture%' OR s.decorators LIKE '%@fixture%')
+          AND {_FIXTURE_PREDICATE_SQL}
+          AND {_TEST_FILE_PREDICATE_SQL}
         """
     ).fetchone()[0]
     total_edges = conn.execute("SELECT COUNT(*) FROM edges WHERE kind = 'pytest_fixture_dep'").fetchone()[0]
@@ -97,6 +104,40 @@ def _project_summary(conn) -> dict:
     }
 
 
+# Match the same fixture-decorator predicate as the resolver: require
+# the ``@`` prefix so help-text mentions of ``pytest.fixture`` (e.g. in
+# Click ``--help`` strings) don't masquerade as fixtures.
+_FIXTURE_PREDICATE_SQL = (
+    "(s.decorators LIKE '%@pytest.fixture%' OR s.decorators LIKE '%@fixture%')"
+)
+_TEST_FILE_PREDICATE_SQL = (
+    "(f.file_role = 'test' OR f.path LIKE '%/conftest.py' OR f.path = 'conftest.py')"
+)
+
+
+def _fetch_unused(conn) -> list[dict]:
+    """Fixtures with zero ``pytest_fixture_dep`` dependents — i.e. dead
+    test infrastructure. Pytest discovery still finds them at runtime
+    (a future ``test_*`` could pick them up) so this is informational,
+    not a hard error.
+    """
+    rows = conn.execute(
+        f"""
+        SELECT s.id, s.name, s.qualified_name, s.line_start, f.path AS file_path
+        FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        LEFT JOIN edges e ON e.target_id = s.id AND e.kind = 'pytest_fixture_dep'
+        WHERE f.language = 'python'
+          AND s.kind IN ('function', 'method')
+          AND {_FIXTURE_PREDICATE_SQL}
+          AND {_TEST_FILE_PREDICATE_SQL}
+          AND e.id IS NULL
+        ORDER BY f.path, s.line_start
+        """
+    ).fetchall()
+    return [dict(r) for r in rows]
+
+
 @click.command("pytest-fixtures")
 @click.argument("symbol", required=False)
 @click.option(
@@ -106,8 +147,13 @@ def _project_summary(conn) -> dict:
     type=int,
     help="Cap the dependency walk at this depth.",
 )
+@click.option(
+    "--unused",
+    is_flag=True,
+    help="List fixtures with no dependents — orphaned test infrastructure.",
+)
 @click.pass_context
-def pytest_fixtures(ctx, symbol: str | None, max_depth: int):
+def pytest_fixtures(ctx, symbol: str | None, max_depth: int, unused: bool):
     """Show the pytest fixture chain for SYMBOL, or a project summary.
 
     With no SYMBOL, prints the project-wide fixture count and the top
@@ -115,12 +161,42 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int):
     (fixture or ``test_*`` function), walks the
     ``pytest_fixture_dep`` edges out from it and prints the chain.
 
+    With ``--unused``, lists fixtures that have no dependents — likely
+    dead test infrastructure left behind by refactors. Pytest still
+    discovers them at runtime, so this is informational.
+
     JSON output (with ``--json``) follows the standard envelope.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
     with open_db(readonly=True) as conn:
+        if unused:
+            rows = _fetch_unused(conn)
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "pytest-fixtures",
+                            summary={
+                                "verdict": f"{len(rows)} unused fixture(s)",
+                                "unused": len(rows),
+                            },
+                            unused=rows,
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {len(rows)} unused fixture(s)")
+            if not rows:
+                return
+            click.echo()
+            click.echo("Fixtures with no dependents:")
+            for row in rows:
+                line = f":{row['line_start']}" if row["line_start"] else ""
+                click.echo(f"  {row['name']:<32} {row['file_path']}{line}")
+            return
+
         if not symbol:
             summary = _project_summary(conn)
             if json_mode:
@@ -195,4 +271,10 @@ def pytest_fixtures(ctx, symbol: str | None, max_depth: int):
         for row in chain:
             indent = "  " * row["depth"]
             line = f":{row['line_start']}" if row["line_start"] else ""
-            click.echo(f"{indent}-> {row['name']:<28} {row['file_path']}{line}")
+            badges = []
+            if row.get("scope") and row["scope"] != "function":
+                badges.append(f"scope={row['scope']}")
+            if row.get("autouse"):
+                badges.append("autouse")
+            badge_str = f"  [{', '.join(badges)}]" if badges else ""
+            click.echo(f"{indent}-> {row['name']:<28} {row['file_path']}{line}{badge_str}")
