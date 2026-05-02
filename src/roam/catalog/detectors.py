@@ -18,6 +18,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import sqlite3
 
 from roam.catalog.tasks import best_way
 
@@ -302,7 +303,7 @@ def _guard_hints_from_source(language: str | None, snippet: str) -> list[str]:
 # ---------------------------------------------------------------------------
 
 
-def detect_manual_sort(conn):
+def detect_manual_sort(conn: sqlite3.Connection) -> list[dict]:
     """Symbols named *sort* with nested loops, comparisons, and subscript
     access (swap pattern).  No call to built-in sort."""
     rows = conn.execute(
@@ -339,7 +340,7 @@ def detect_manual_sort(conn):
     return results
 
 
-def detect_linear_search(conn):
+def detect_linear_search(conn: sqlite3.Connection) -> list[dict]:
     """Functions explicitly named *sorted*/*search_sorted* that loop with
     comparisons but don't call bisect/binarySearch.
 
@@ -391,8 +392,8 @@ def detect_linear_search(conn):
     return results
 
 
-def detect_list_membership(conn):
-    """Nested loops with equality comparisons — structural pattern for
+def detect_list_membership(conn: sqlite3.Connection) -> list[dict]:
+    """Nested loops with equality comparisons β€” structural pattern for
     O(n^2) membership testing regardless of function name."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -427,7 +428,7 @@ def detect_list_membership(conn):
     return results
 
 
-def detect_string_concat_loop(conn):
+def detect_string_concat_loop(conn: sqlite3.Connection) -> list[dict]:
     """Loops with accumulation patterns and string-related call hints.
 
     Relies primarily on the structural pattern (loop + accumulator) combined
@@ -485,7 +486,7 @@ def detect_string_concat_loop(conn):
     return results
 
 
-def detect_manual_dedup(conn):
+def detect_manual_dedup(conn: sqlite3.Connection) -> list[dict]:
     """Nested loops in dedup/unique-named functions without set usage."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -522,10 +523,10 @@ def detect_manual_dedup(conn):
     return results
 
 
-def detect_manual_maxmin(conn):
+def detect_manual_maxmin(conn: sqlite3.Connection) -> list[dict]:
     """Loops with comparisons in max/min-named functions.
 
-    Same Big-O (both O(n)) — this is an idiom improvement, flagged at low
+    Same Big-O (both O(n)) β€” this is an idiom improvement, flagged at low
     confidence.
     """
     rows = conn.execute(
@@ -565,10 +566,10 @@ def detect_manual_maxmin(conn):
     return results
 
 
-def detect_manual_accumulation(conn):
+def detect_manual_accumulation(conn: sqlite3.Connection) -> list[dict]:
     """Loops with accumulator in sum/total-named functions.
 
-    Same Big-O (both O(n)) — idiom improvement, flagged at low confidence.
+    Same Big-O (both O(n)) β€” idiom improvement, flagged at low confidence.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -603,7 +604,7 @@ def detect_manual_accumulation(conn):
     return results
 
 
-def detect_manual_power(conn):
+def detect_manual_power(conn: sqlite3.Connection) -> list[dict]:
     """Loop-based exponentiation in power/exponent-named functions."""
     try:
         rows = conn.execute(
@@ -656,7 +657,7 @@ def detect_manual_power(conn):
     return results
 
 
-def detect_manual_gcd(conn):
+def detect_manual_gcd(conn: sqlite3.Connection) -> list[dict]:
     """Manual GCD loops where built-in/standard helpers are available."""
     try:
         rows = conn.execute(
@@ -707,7 +708,7 @@ def detect_manual_gcd(conn):
     return results
 
 
-def detect_string_reverse(conn):
+def detect_string_reverse(conn: sqlite3.Connection) -> list[dict]:
     """Manual reversal loops in reverse-named functions."""
     try:
         rows = conn.execute(
@@ -753,7 +754,7 @@ def detect_string_reverse(conn):
     return results
 
 
-def detect_matrix_mult(conn):
+def detect_matrix_mult(conn: sqlite3.Connection) -> list[dict]:
     """Naive triple-loop matrix multiplication patterns."""
     try:
         rows = conn.execute(
@@ -810,10 +811,10 @@ def detect_matrix_mult(conn):
     return results
 
 
-def detect_naive_fibonacci(conn):
+def detect_naive_fibonacci(conn: sqlite3.Connection) -> list[dict]:
     """Recursive functions named *fib* without memoization.
 
-    O(2^n) -> O(n) — one of the strongest algorithmic improvements.
+    O(2^n) -> O(n) β€” one of the strongest algorithmic improvements.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -854,8 +855,8 @@ def detect_naive_fibonacci(conn):
     return results
 
 
-def detect_nested_lookup(conn):
-    """Nested loops with subscript access and comparisons — O(n*m) lookup.
+def detect_nested_lookup(conn: sqlite3.Connection) -> list[dict]:
+    """Nested loops with subscript access and comparisons β€” O(n*m) lookup.
 
     Suppresses known false positives: grid/matrix traversal (name hints),
     and requires both nested loops AND comparisons (not just nested loops
@@ -912,10 +913,10 @@ def detect_nested_lookup(conn):
     return results
 
 
-def detect_manual_groupby(conn):
+def detect_manual_groupby(conn: sqlite3.Connection) -> list[dict]:
     """Loops in group/categorize-named functions without defaultdict/groupby.
 
-    Same Big-O (both O(n)) — idiom improvement.
+    Same Big-O (both O(n)) β€” idiom improvement.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -953,11 +954,11 @@ def detect_manual_groupby(conn):
     return results
 
 
-def detect_busy_wait(conn):
-    """Loops that call sleep — polling / busy-wait pattern.
+def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
+    """Loops that call sleep β€” polling / busy-wait pattern.
 
     Suppresses intentional polling: functions named *poll*, *retry*,
-    *health_check*, *monitor*, *wait_for* — these are legitimate patterns.
+    *health_check*, *monitor*, *wait_for* β€” these are legitimate patterns.
     """
     rows = conn.execute(
         "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -969,7 +970,7 @@ def detect_busy_wait(conn):
         "AND ms.loop_depth >= 1"
     ).fetchall()
 
-    # Intentional polling patterns — suppress these
+    # Intentional polling patterns β€” suppress these
     _POLL_NAMES = {
         "poll",
         "retry",
@@ -1013,8 +1014,8 @@ def detect_busy_wait(conn):
 # ---------------------------------------------------------------------------
 
 
-def detect_regex_in_loop(conn):
-    """Regex compilation inside a loop — recompiles on every iteration.
+def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Regex compilation inside a loop β€” recompiles on every iteration.
 
     O(n*p) wasted compilation when O(p + n*m) is achievable by compiling
     once outside the loop.  Applies to all languages with regex engines.
@@ -1048,7 +1049,7 @@ def detect_regex_in_loop(conn):
         "MatchString",
     }
 
-    # Module-level regex prefixes — calls like `re.match()` recompile each time,
+    # Module-level regex prefixes β€” calls like `re.match()` recompile each time,
     # but `compiled_pattern.match()` does not.  Only flag the former.
     _REGEX_MODULE_PREFIXES = {"re.", "regexp.", "regex.", "Pattern."}
 
@@ -1059,7 +1060,7 @@ def detect_regex_in_loop(conn):
         calls = _iter_loop_calls(r)
         # Direct compile in loop is always bad
         compile_calls = _call_in(calls, _REGEX_COMPILE_CALLS)
-        # Convenience regex calls — only flag when called via the regex module
+        # Convenience regex calls β€” only flag when called via the regex module
         # (e.g. `re.findall`), NOT when called on a pre-compiled pattern object
         # (e.g. `_MY_RE.findall`).  Check qualified names for module prefix.
         qcalls = _json_list(_row_value(r, "calls_in_loops_qualified", ""))
@@ -1092,8 +1093,8 @@ def detect_regex_in_loop(conn):
     return results
 
 
-def detect_io_in_loop(conn):
-    """Database query, HTTP request, or file I/O inside a loop — N+1 pattern.
+def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Database query, HTTP request, or file I/O inside a loop β€” N+1 pattern.
 
     One of the most impactful performance anti-patterns in web applications.
     Each iteration incurs a full I/O round trip.
@@ -1347,8 +1348,8 @@ def detect_io_in_loop(conn):
     return results
 
 
-def detect_list_prepend(conn):
-    """insert(0, x), unshift(), or pop(0) inside a loop — O(n) per op
+def detect_list_prepend(conn: sqlite3.Connection) -> list[dict]:
+    """insert(0, x), unshift(), or pop(0) inside a loop β€” O(n) per op
     due to array shifting, O(n^2) total."""
     try:
         rows = conn.execute(
@@ -1373,7 +1374,7 @@ def detect_list_prepend(conn):
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
-    # deque operations are O(1) — suppress when popleft/appendleft are the ops
+    # deque operations are O(1) β€” suppress when popleft/appendleft are the ops
     _DEQUE_OPS = {"popleft", "appendleft", "extendleft"}
 
     results = []
@@ -1384,7 +1385,7 @@ def detect_list_prepend(conn):
         # If the only front-ops are deque methods, this is already optimal
         front_calls = _call_in(calls, {"insert", "unshift", "shift", "popleft", "appendleft", "extendleft"})
         if front_calls and all(_call_leaf(c) in _DEQUE_OPS for c in front_calls):
-            continue  # Already using deque — no issue
+            continue  # Already using deque β€” no issue
         # New indexes precompute the exact front-op signal.
         if _row_value(r, "front_ops_in_loop", None) == 1:
             results.append(
@@ -1398,7 +1399,7 @@ def detect_list_prepend(conn):
             )
             continue
         # Fallback heuristic (conservative): only list front APIs.
-        # Note: appendleft/popleft are deque O(1) ops — do NOT flag those.
+        # Note: appendleft/popleft are deque O(1) ops β€” do NOT flag those.
         if _call_in(calls, {"insert", "unshift", "shift"}):
             results.append(
                 _finding(
@@ -1412,7 +1413,7 @@ def detect_list_prepend(conn):
     return results
 
 
-def detect_sort_to_select(conn):
+def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
     """Calling sort on a collection and then only using the first/last element.
 
     O(n log n) sort when min()/max() is O(n), or heapq.nsmallest is O(n log k).
@@ -1473,7 +1474,7 @@ def detect_sort_to_select(conn):
     return results
 
 
-def detect_loop_lookup(conn):
+def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
     """.index(), .indexOf(), .contains(), .includes() called inside a loop.
 
     Each call is O(m) linear scan on the lookup collection, total O(n*m).
@@ -1549,13 +1550,13 @@ def detect_loop_lookup(conn):
 # ---------------------------------------------------------------------------
 
 
-def detect_branching_recursion(conn):
+def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     """Functions with 2+ self-call sites and no memoization.
 
     Generalizes fibonacci to any branching recursion: tree traversals,
     divide-and-conquer, DP problems.  O(2^n) -> O(n) with memoization.
     """
-    # self_call_count column may not exist in older DBs — fall back safely
+    # self_call_count column may not exist in older DBs β€” fall back safely
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
@@ -1573,11 +1574,11 @@ def detect_branching_recursion(conn):
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
-        # Skip fibonacci — already covered by detect_naive_fibonacci
+        # Skip fibonacci β€” already covered by detect_naive_fibonacci
         name_lower = (r["name"] or "").lower()
         if "fib" in name_lower:
             continue
-        # Skip tree/AST walkers — recursive traversal of children is
+        # Skip tree/AST walkers β€” recursive traversal of children is
         # intentional and doesn't have overlapping subproblems
         _WALKER_NAMES = {
             "walk",
@@ -1617,8 +1618,8 @@ def detect_branching_recursion(conn):
     return results
 
 
-def detect_quadratic_string(conn):
-    """String concatenation via += inside a loop — O(n^2) due to
+def detect_quadratic_string(conn: sqlite3.Connection) -> list[dict]:
+    """String concatenation via += inside a loop β€” O(n^2) due to
     immutable string reallocation in Python/Java/Go.
     """
     try:
@@ -1650,7 +1651,7 @@ def detect_quadratic_string(conn):
     return results
 
 
-def detect_loop_invariant_call(conn):
+def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
     """Calls inside loops whose arguments don't reference the loop variable.
 
     These can be hoisted before the loop to avoid repeated computation.
@@ -2300,7 +2301,7 @@ def _iter_registered_detectors():
     for det in _MATH_DETECTORS:
         yield det
 
-    # Python pivot v12.4 — language-specific idiom detectors. Wrapped
+    # Python pivot v12.4 β€” language-specific idiom detectors. Wrapped
     # in try/except so a regex bug in one detector can't block the
     # algorithm pass.
     try:

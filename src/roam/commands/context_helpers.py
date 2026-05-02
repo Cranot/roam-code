@@ -1,12 +1,13 @@
 """Data-gathering helpers for the context command.
 
 Extracted from cmd_context.py to reduce file size.  These functions
-query the index DB and return plain dicts — no rendering or CLI I/O.
+query the index DB and return plain dicts β€” no rendering or CLI I/O.
 """
 
 from __future__ import annotations
 
 import re
+import sqlite3
 from collections import deque
 
 from roam.commands.changed_files import is_test_file
@@ -434,7 +435,7 @@ def _load_neighborhood_edges(conn, seed_ids, forward, backward, max_depth):
 # ---------------------------------------------------------------------------
 
 
-def gather_annotations(conn, sym=None, file_path=None):
+def gather_annotations(conn: sqlite3.Connection, sym: dict | None = None, file_path: str | None = None):
     """Fetch active annotations for a symbol or file.
 
     Returns a list of annotation dicts (empty if none found).
@@ -444,7 +445,7 @@ def gather_annotations(conn, sym=None, file_path=None):
 
     if sym is not None:
         sym_id = sym["id"]
-        # sqlite3.Row lacks .get() — use try/except
+        # sqlite3.Row lacks .get() β€” use try/except
         try:
             qname = sym["qualified_name"] or sym["name"]
         except (KeyError, IndexError):
@@ -483,7 +484,7 @@ def gather_annotations(conn, sym=None, file_path=None):
 # ---------------------------------------------------------------------------
 
 
-def get_symbol_metrics(conn, sym_id):
+def get_symbol_metrics(conn: sqlite3.Connection, sym_id: int):
     """Fetch symbol_metrics row for a symbol, or None."""
     row = conn.execute("SELECT * FROM symbol_metrics WHERE symbol_id = ?", (sym_id,)).fetchone()
     if row is None:
@@ -499,7 +500,7 @@ def get_symbol_metrics(conn, sym_id):
     }
 
 
-def get_graph_metrics(conn, sym_id):
+def get_graph_metrics(conn: sqlite3.Connection, sym_id: int):
     """Fetch graph_metrics row for a symbol, or None."""
     row = conn.execute("SELECT * FROM graph_metrics WHERE symbol_id = ?", (sym_id,)).fetchone()
     if row is None:
@@ -522,7 +523,7 @@ def get_graph_metrics(conn, sym_id):
     return out
 
 
-def get_file_churn(conn, file_path):
+def get_file_churn(conn: sqlite3.Connection, file_path: str):
     """Fetch git churn stats for the file containing the symbol."""
     frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if frow is None:
@@ -537,7 +538,7 @@ def get_file_churn(conn, file_path):
     }
 
 
-def get_coupling(conn, file_path, limit=10):
+def get_coupling(conn: sqlite3.Connection, file_path: str, limit: int = 10):
     """Fetch temporal coupling partners for the symbol's file."""
     frow = conn.execute("SELECT id FROM files WHERE path = ?", (file_path,)).fetchone()
     if frow is None:
@@ -577,7 +578,7 @@ def get_coupling(conn, file_path, limit=10):
     return results
 
 
-def get_affected_tests_bfs(conn, sym_id, max_hops=8):
+def get_affected_tests_bfs(conn: sqlite3.Connection, sym_id: int, max_hops: int = 8):
     """BFS reverse-edge walk to find test symbols that transitively depend
     on the target symbol."""
     visited = {sym_id: (0, None)}
@@ -641,7 +642,7 @@ def get_affected_tests_bfs(conn, sym_id, max_hops=8):
     return tests
 
 
-def get_blast_radius(conn, sym_id):
+def get_blast_radius(conn: sqlite3.Connection, sym_id: int):
     """Compute downstream dependents count via BFS on reverse edges."""
     visited = {sym_id}
     queue = deque([sym_id])
@@ -670,7 +671,7 @@ def get_blast_radius(conn, sym_id):
     }
 
 
-def get_cluster_info(conn, sym_id):
+def get_cluster_info(conn: sqlite3.Connection, sym_id: int):
     """Fetch cluster membership for a symbol."""
     row = conn.execute(
         "SELECT cluster_id, cluster_label FROM clusters WHERE symbol_id = ?",
@@ -696,7 +697,7 @@ def get_cluster_info(conn, sym_id):
     }
 
 
-def get_similar_symbols(conn, sym, limit=10):
+def get_similar_symbols(conn: sqlite3.Connection, sym: dict, limit: int = 10):
     """Find symbols of the same kind in the same parent module."""
     file_path = sym["file_path"].replace("\\", "/")
     dir_path = file_path.rsplit("/", 1)[0] if "/" in file_path else ""
@@ -726,7 +727,7 @@ def get_similar_symbols(conn, sym, limit=10):
     ]
 
 
-def get_entry_points_reaching(conn, sym_id, limit=5):
+def get_entry_points_reaching(conn: sqlite3.Connection, sym_id: int, limit: int = 5):
     """Find entry points (in_degree=0) that can reach this symbol via
     forward BFS."""
     entry_rows = conn.execute(
@@ -775,7 +776,7 @@ def get_entry_points_reaching(conn, sym_id, limit=5):
     return results
 
 
-def get_file_context(conn, file_id, sym_id):
+def get_file_context(conn: sqlite3.Connection, file_id: int, sym_id: int):
     """Get all exported symbols in the same file."""
     rows = conn.execute(
         "SELECT name, kind, line_start, signature, docstring "
@@ -842,7 +843,7 @@ def gather_task_extras(conn, sym, ctx_data, task):
         extras["graph_centrality"] = get_graph_metrics(conn, sym_id)
 
     elif task == "understand":
-        # sqlite3.Row lacks .get() — use try/except for optional fields
+        # sqlite3.Row lacks .get() β€” use try/except for optional fields
         try:
             extras["docstring"] = sym["docstring"] or None
         except (KeyError, IndexError):
