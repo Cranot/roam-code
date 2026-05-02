@@ -105,11 +105,15 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
                 source = fp.read()
         except OSError:
             continue
-        if package_prefix not in source:
-            continue
         try:
             tree = ast.parse(source, filename=path)
         except SyntaxError:
+            continue
+        # Cheap prefilter: skip files that contain neither the package
+        # prefix (Shape A signal) nor any list/tuple literal of tuples
+        # (Shape B signal). The latter is hard to grep for, so just
+        # check ``[(`` which is a strong hint.
+        if package_prefix not in source and "[(" not in source and "[\n" not in source:
             continue
 
         source_sym_id = file_first_symbol.get(file_id)
@@ -117,43 +121,31 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
             continue
 
         for node in ast.walk(tree):
-            # Top-level assignment whose value is a Dict literal.
             if not isinstance(node, ast.Assign):
                 continue
-            if not isinstance(node.value, ast.Dict):
-                continue
-            for value in node.value.values:
-                # Each value must be a tuple of two string constants.
-                if not isinstance(value, ast.Tuple):
-                    continue
-                if len(value.elts) != 2:
-                    continue
-                mod_node, name_node = value.elts
-                if not (
-                    isinstance(mod_node, ast.Constant)
-                    and isinstance(mod_node.value, str)
-                    and isinstance(name_node, ast.Constant)
-                    and isinstance(name_node.value, str)
-                ):
-                    continue
-                mod_str = mod_node.value
-                name_str = name_node.value
-                if not mod_str.startswith(package_prefix):
-                    continue
-                # Look up the target symbol
-                target_ids = by_module_dotted.get((mod_str, name_str)) or by_qualified.get(name_str, [])
-                if not target_ids:
-                    continue
-                # Pick the first match (most-specific module path
-                # already filtered to one entry typically).
-                target_id = target_ids[0]
-                if target_id == source_sym_id:
-                    continue
-                key = (source_sym_id, target_id)
-                if key in seen:
-                    continue
-                seen.add(key)
-                edges_to_insert.append(key)
+            value = node.value
+
+            # Shape A: ``_NAME = {"key": ("module.path", "fn_name"), ...}``
+            # Lazy-import dispatch (cli._COMMANDS pattern).
+            if isinstance(value, ast.Dict):
+                for v in value.values:
+                    target_id = _resolve_string_pair_tuple(v, package_prefix, by_module_dotted, by_qualified)
+                    if target_id is None:
+                        continue
+                    _record_edge(target_id, source_sym_id, seen, edges_to_insert)
+
+            # Shape B: ``_NAME = [(..., fn_ref), ...]`` — list/tuple of
+            # tuples whose last element is a ``Name`` (a Python
+            # function reference). Catches the
+            # ``_PYTHON_IDIOM_DETECTORS = [("py-django-n1", "...",
+            # detect_django_n1), ...]`` pattern. Function references
+            # are looked up in the same file's symbol table.
+            elif isinstance(value, (ast.List, ast.Tuple)):
+                for v in value.elts:
+                    target_id = _resolve_function_ref_in_tuple(v, file_id, by_qualified, conn)
+                    if target_id is None:
+                        continue
+                    _record_edge(target_id, source_sym_id, seen, edges_to_insert)
 
     with conn:
         conn.execute("DELETE FROM edges WHERE kind = 'dispatch'")
@@ -163,3 +155,85 @@ def resolve_registry_dispatch(conn, package_prefix: str = "roam.") -> int:
                 edges_to_insert,
             )
     return len(edges_to_insert)
+
+
+def _resolve_string_pair_tuple(
+    value,
+    package_prefix: str,
+    by_module_dotted: dict[tuple[str, str], list[int]],
+    by_qualified: dict[str, list[int]],
+) -> int | None:
+    """For a dict-value of shape ``("module.path", "fn_name")`` return
+    the matching symbol id, or None if the shape doesn't match or the
+    target can't be resolved.
+    """
+    if not isinstance(value, ast.Tuple) or len(value.elts) != 2:
+        return None
+    mod_node, name_node = value.elts
+    if not (
+        isinstance(mod_node, ast.Constant)
+        and isinstance(mod_node.value, str)
+        and isinstance(name_node, ast.Constant)
+        and isinstance(name_node.value, str)
+    ):
+        return None
+    mod_str = mod_node.value
+    name_str = name_node.value
+    if not mod_str.startswith(package_prefix):
+        return None
+    target_ids = by_module_dotted.get((mod_str, name_str)) or by_qualified.get(name_str, [])
+    if not target_ids:
+        return None
+    return target_ids[0]
+
+
+def _resolve_function_ref_in_tuple(
+    value,
+    file_id: int,
+    by_qualified: dict[str, list[int]],
+    conn,
+) -> int | None:
+    """For a list/tuple element of shape ``(..., fn_name_reference)``
+    return the matching symbol id when ``fn_name_reference`` is an
+    ``ast.Name`` defined in the same file. Returns None for any other
+    shape.
+
+    Restricting same-file is intentional: cross-module function
+    references typically come in via ``import``, which the regular
+    extractor already records. This pass only fills the gap for inline
+    references inside literal containers that the extractor misses.
+    """
+    if not isinstance(value, ast.Tuple):
+        return None
+    if not value.elts:
+        return None
+    last = value.elts[-1]
+    if not isinstance(last, ast.Name):
+        return None
+    name = last.id
+    candidates = by_qualified.get(name, [])
+    if not candidates:
+        return None
+    # Prefer the candidate in the same file
+    rows = conn.execute(
+        f"SELECT id FROM symbols WHERE id IN ({','.join('?' * len(candidates))}) AND file_id = ?",
+        (*candidates, file_id),
+    ).fetchall()
+    if rows:
+        return int(rows[0][0])
+    return None
+
+
+def _record_edge(
+    target_id: int,
+    source_sym_id: int,
+    seen: set[tuple[int, int]],
+    edges_to_insert: list[tuple[int, int]],
+) -> None:
+    if target_id == source_sym_id:
+        return
+    key = (source_sym_id, target_id)
+    if key in seen:
+        return
+    seen.add(key)
+    edges_to_insert.append(key)
