@@ -290,6 +290,7 @@ class PythonExtractor(LanguageExtractor):
                 visibility=vis,
                 is_exported=is_exported,
                 parent_name=parent_name,
+                decorators=",".join(decorators) if decorators else "",
             )
         )
 
