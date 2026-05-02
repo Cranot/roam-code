@@ -1347,292 +1347,225 @@ class TestSignatures:
 # ===========================================================================
 
 
-class TestPythonCLI:
-    """CLI integration tests for Python extraction."""
+class TestFileSkeletonAcrossLanguages:
+    """``roam --json file <path>`` round-trips for each supported language.
 
-    def test_python_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct Python skeleton."""
-        proj = project_factory(
-            {
-                "models.py": (
-                    "class User:\n"
-                    '    """A user model."""\n'
-                    "    def __init__(self, name):\n"
-                    "        self.name = name\n"
-                    "    def greet(self):\n"
-                    '        return f"Hello {self.name}"\n'
-                    "    @property\n"
-                    "    def display_name(self):\n"
-                    "        return self.name.title()\n"
-                ),
-            }
-        )
+    Originally eight near-identical per-language test classes (clones
+    flagged at 83% similarity by ``roam clones``). Collapsed into a
+    single parametrised case table so adding a new language is one row,
+    not a fresh class.
+    """
+
+    _PYTHON_SOURCE = (
+        "class User:\n"
+        '    """A user model."""\n'
+        "    def __init__(self, name):\n"
+        "        self.name = name\n"
+        "    def greet(self):\n"
+        '        return f"Hello {self.name}"\n'
+        "    @property\n"
+        "    def display_name(self):\n"
+        "        return self.name.title()\n"
+    )
+    _JS_SOURCE = (
+        "class Server {\n"
+        "    constructor(port) {\n"
+        "        this.port = port;\n"
+        "    }\n"
+        "    start() {\n"
+        "        console.log('started');\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "const DEFAULT_PORT = 3000;\n"
+        "\n"
+        "function createServer(port) {\n"
+        "    return new Server(port || DEFAULT_PORT);\n"
+        "}\n"
+    )
+    _TS_SOURCE = (
+        "export interface Config {\n"
+        "    host: string;\n"
+        "    port: number;\n"
+        "}\n"
+        "\n"
+        "export type LogLevel = 'debug' | 'info' | 'error';\n"
+        "\n"
+        "export class AppConfig implements Config {\n"
+        "    host: string = 'localhost';\n"
+        "    port: number = 8080;\n"
+        "\n"
+        "    validate(): boolean {\n"
+        "        return this.port > 0;\n"
+        "    }\n"
+        "}\n"
+    )
+    _JAVA_SOURCE = (
+        "public class App {\n"
+        "    private String name;\n"
+        "\n"
+        "    public App(String name) {\n"
+        "        this.name = name;\n"
+        "    }\n"
+        "\n"
+        "    public String getName() {\n"
+        "        return name;\n"
+        "    }\n"
+        "\n"
+        "    public static void main(String[] args) {\n"
+        '        App app = new App("test");\n'
+        "    }\n"
+        "}\n"
+    )
+    _GO_SOURCE = (
+        "package main\n"
+        "\n"
+        "type Handler struct {\n"
+        "    Name string\n"
+        "}\n"
+        "\n"
+        "func (h *Handler) Handle(req string) string {\n"
+        '    return "handled: " + req\n'
+        "}\n"
+        "\n"
+        "func NewHandler(name string) *Handler {\n"
+        "    return &Handler{Name: name}\n"
+        "}\n"
+    )
+    _RUST_SOURCE = (
+        "pub struct Calculator {\n"
+        "    value: f64,\n"
+        "}\n"
+        "\n"
+        "impl Calculator {\n"
+        "    pub fn new() -> Self {\n"
+        "        Calculator { value: 0.0 }\n"
+        "    }\n"
+        "\n"
+        "    pub fn add(&mut self, x: f64) {\n"
+        "        self.value += x;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "pub trait Resettable {\n"
+        "    fn reset(&mut self);\n"
+        "}\n"
+    )
+    _C_SOURCE = (
+        "typedef struct {\n"
+        "    int length;\n"
+        "    int* data;\n"
+        "} Array;\n"
+        "\n"
+        "Array* array_create(int length) {\n"
+        "    return NULL;\n"
+        "}\n"
+        "\n"
+        "void array_free(Array* arr) {\n"
+        "    free(arr);\n"
+        "}\n"
+    )
+    _PHP_SOURCE = (
+        "<?php\n"
+        "interface Repository {\n"
+        "    public function find($id);\n"
+        "    public function save($entity);\n"
+        "}\n"
+        "\n"
+        "class UserRepository implements Repository {\n"
+        "    public function find($id) {\n"
+        "        return null;\n"
+        "    }\n"
+        "\n"
+        "    public function save($entity) {\n"
+        "        return true;\n"
+        "    }\n"
+        "}\n"
+        "\n"
+        "function create_repo() {\n"
+        "    return new UserRepository();\n"
+        "}\n"
+    )
+
+    @pytest.mark.parametrize(
+        "filename,source,expected_language,expected_names",
+        [
+            pytest.param(
+                "models.py",
+                _PYTHON_SOURCE,
+                "python",
+                ("User", "greet", "display_name"),
+                id="python",
+            ),
+            pytest.param(
+                "server.js",
+                _JS_SOURCE,
+                "javascript",
+                ("Server", "createServer"),
+                id="javascript",
+            ),
+            pytest.param(
+                "types.ts",
+                _TS_SOURCE,
+                "typescript",
+                ("Config", "LogLevel", "AppConfig"),
+                id="typescript",
+            ),
+            pytest.param(
+                "App.java",
+                _JAVA_SOURCE,
+                "java",
+                ("App", "getName", "main"),
+                id="java",
+            ),
+            pytest.param(
+                "handler.go",
+                _GO_SOURCE,
+                "go",
+                ("Handler", "Handle", "NewHandler"),
+                id="go",
+            ),
+            pytest.param(
+                "lib.rs",
+                _RUST_SOURCE,
+                "rust",
+                ("Calculator", "Resettable", "add"),
+                id="rust",
+            ),
+            pytest.param(
+                "utils.c",
+                _C_SOURCE,
+                "c",
+                ("array_create", "array_free"),
+                id="c",
+            ),
+            pytest.param(
+                "api.php",
+                _PHP_SOURCE,
+                "php",
+                ("Repository", "UserRepository", "create_repo"),
+                id="php",
+            ),
+        ],
+    )
+    def test_file_skeleton(
+        self,
+        filename,
+        source,
+        expected_language,
+        expected_names,
+        project_factory,
+        cli_runner,
+        monkeypatch,
+    ):
+        proj = project_factory({filename: source})
         monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "models.py"])
+        result = invoke_cli(cli_runner, ["--json", "file", filename])
         data = json.loads(result.output)
-        assert data["language"] == "python"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "User" in names
-        assert "greet" in names
-        assert "display_name" in names
-
-
-class TestJavaScriptCLI:
-    """CLI integration tests for JavaScript extraction."""
-
-    def test_js_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct JS skeleton."""
-        proj = project_factory(
-            {
-                "server.js": (
-                    "class Server {\n"
-                    "    constructor(port) {\n"
-                    "        this.port = port;\n"
-                    "    }\n"
-                    "    start() {\n"
-                    "        console.log('started');\n"
-                    "    }\n"
-                    "}\n"
-                    "\n"
-                    "const DEFAULT_PORT = 3000;\n"
-                    "\n"
-                    "function createServer(port) {\n"
-                    "    return new Server(port || DEFAULT_PORT);\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "server.js"])
-        data = json.loads(result.output)
-        assert data["language"] == "javascript"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "Server" in names
-        assert "createServer" in names
-
-
-class TestTypeScriptCLI:
-    """CLI integration tests for TypeScript extraction."""
-
-    def test_ts_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct TS skeleton."""
-        proj = project_factory(
-            {
-                "types.ts": (
-                    "export interface Config {\n"
-                    "    host: string;\n"
-                    "    port: number;\n"
-                    "}\n"
-                    "\n"
-                    "export type LogLevel = 'debug' | 'info' | 'error';\n"
-                    "\n"
-                    "export class AppConfig implements Config {\n"
-                    "    host: string = 'localhost';\n"
-                    "    port: number = 8080;\n"
-                    "\n"
-                    "    validate(): boolean {\n"
-                    "        return this.port > 0;\n"
-                    "    }\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "types.ts"])
-        data = json.loads(result.output)
-        assert data["language"] == "typescript"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "Config" in names
-        assert "LogLevel" in names
-        assert "AppConfig" in names
-
-
-class TestJavaCLI:
-    """CLI integration tests for Java extraction."""
-
-    def test_java_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct Java skeleton."""
-        proj = project_factory(
-            {
-                "App.java": (
-                    "public class App {\n"
-                    "    private String name;\n"
-                    "\n"
-                    "    public App(String name) {\n"
-                    "        this.name = name;\n"
-                    "    }\n"
-                    "\n"
-                    "    public String getName() {\n"
-                    "        return name;\n"
-                    "    }\n"
-                    "\n"
-                    "    public static void main(String[] args) {\n"
-                    '        App app = new App("test");\n'
-                    "    }\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "App.java"])
-        data = json.loads(result.output)
-        assert data["language"] == "java"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "App" in names
-        assert "getName" in names
-        assert "main" in names
-
-
-class TestGoCLI:
-    """CLI integration tests for Go extraction."""
-
-    def test_go_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct Go skeleton."""
-        proj = project_factory(
-            {
-                "handler.go": (
-                    "package main\n"
-                    "\n"
-                    "type Handler struct {\n"
-                    "    Name string\n"
-                    "}\n"
-                    "\n"
-                    "func (h *Handler) Handle(req string) string {\n"
-                    '    return "handled: " + req\n'
-                    "}\n"
-                    "\n"
-                    "func NewHandler(name string) *Handler {\n"
-                    "    return &Handler{Name: name}\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "handler.go"])
-        data = json.loads(result.output)
-        assert data["language"] == "go"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "Handler" in names
-        assert "Handle" in names
-        assert "NewHandler" in names
-
-
-class TestRustCLI:
-    """CLI integration tests for Rust extraction."""
-
-    def test_rust_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct Rust skeleton."""
-        proj = project_factory(
-            {
-                "lib.rs": (
-                    "pub struct Calculator {\n"
-                    "    value: f64,\n"
-                    "}\n"
-                    "\n"
-                    "impl Calculator {\n"
-                    "    pub fn new() -> Self {\n"
-                    "        Calculator { value: 0.0 }\n"
-                    "    }\n"
-                    "\n"
-                    "    pub fn add(&mut self, x: f64) {\n"
-                    "        self.value += x;\n"
-                    "    }\n"
-                    "}\n"
-                    "\n"
-                    "pub trait Resettable {\n"
-                    "    fn reset(&mut self);\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "lib.rs"])
-        data = json.loads(result.output)
-        assert data["language"] == "rust"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "Calculator" in names
-        assert "Resettable" in names
-        assert "add" in names
-
-
-class TestCCLI:
-    """CLI integration tests for C extraction."""
-
-    def test_c_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct C skeleton."""
-        proj = project_factory(
-            {
-                "utils.c": (
-                    "typedef struct {\n"
-                    "    int length;\n"
-                    "    int* data;\n"
-                    "} Array;\n"
-                    "\n"
-                    "Array* array_create(int length) {\n"
-                    "    return NULL;\n"
-                    "}\n"
-                    "\n"
-                    "void array_free(Array* arr) {\n"
-                    "    free(arr);\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "utils.c"])
-        data = json.loads(result.output)
-        assert data["language"] == "c"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "array_create" in names
-        assert "array_free" in names
-
-
-class TestPhpCLI:
-    """CLI integration tests for PHP extraction."""
-
-    def test_php_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct PHP skeleton."""
-        proj = project_factory(
-            {
-                "api.php": (
-                    "<?php\n"
-                    "interface Repository {\n"
-                    "    public function find($id);\n"
-                    "    public function save($entity);\n"
-                    "}\n"
-                    "\n"
-                    "class UserRepository implements Repository {\n"
-                    "    public function find($id) {\n"
-                    "        return null;\n"
-                    "    }\n"
-                    "\n"
-                    "    public function save($entity) {\n"
-                    "        return true;\n"
-                    "    }\n"
-                    "}\n"
-                    "\n"
-                    "function create_repo() {\n"
-                    "    return new UserRepository();\n"
-                    "}\n"
-                ),
-            }
-        )
-        monkeypatch.chdir(proj)
-        result = invoke_cli(cli_runner, ["--json", "file", "api.php"])
-        data = json.loads(result.output)
-        assert data["language"] == "php"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "Repository" in names
-        assert "UserRepository" in names
-        assert "create_repo" in names
+        assert data["language"] == expected_language
+        names = [s["name"] for s in data["symbols"]]
+        for name in expected_names:
+            assert name in names, f"{name!r} missing from {expected_language} skeleton: {names}"
 
 
 # ===========================================================================
@@ -2143,10 +2076,13 @@ class TestCSharpSignatures:
 
 
 class TestCSharpCLI:
-    """CLI integration tests for C# extraction."""
+    """C# CLI skeleton kept as a separate class because its expected
+    language is ``c_sharp`` (with underscore) and earlier tests in the
+    file reference the same project layout. Could fold into the
+    parametrised table above once that minor inconsistency is normalised.
+    """
 
     def test_csharp_file_skeleton(self, project_factory, cli_runner, monkeypatch):
-        """roam --json file should return correct C# skeleton."""
         proj = project_factory(
             {
                 "Models.cs": (
@@ -2180,11 +2116,9 @@ class TestCSharpCLI:
         result = invoke_cli(cli_runner, ["--json", "file", "Models.cs"])
         data = json.loads(result.output)
         assert data["language"] == "c_sharp"
-        symbols = data["symbols"]
-        names = [s["name"] for s in symbols]
-        assert "IEntity" in names
-        assert "User" in names
-        assert "GetDisplayName" in names
+        names = [s["name"] for s in data["symbols"]]
+        for expected in ("IEntity", "User", "GetDisplayName"):
+            assert expected in names, f"{expected!r} missing from C# skeleton: {names}"
 
 
 # ===========================================================================
