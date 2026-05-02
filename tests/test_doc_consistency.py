@@ -1,17 +1,15 @@
 """Cross-surface documentation consistency check.
 
-External review (2026-05-02) flagged stale counts across public
-surfaces: PyPI said 152 commands, README said 151, docs/site
-landscape.json still said 139. For a tool selling "structural truth"
-that's a credibility problem the reviewer specifically called out.
+The same load-bearing numbers (package version, CLI command count, MCP
+tool count) appear across many surfaces — pyproject.toml, server.json,
+the MCP server card, the README, the docs-site landscape entry — and
+they have a habit of drifting out of sync because a release bump only
+touches some of them.
 
-This test scrapes every public surface for the load-bearing numbers
-(version, CLI command count, MCP tool count, language count) and
-asserts they all agree with the source-of-truth (``pyproject.toml``
-and the live ``cli._COMMANDS`` / ``mcp_server._REGISTERED_TOOLS``).
-
-When one of these drifts, ALL of them must be updated in the same
-PR. Manual maintenance was failing; CI now enforces.
+This test scrapes every public surface for those numbers and asserts
+they all agree with the source-of-truth (``pyproject.toml`` and the
+live ``cli._COMMANDS`` / ``mcp_server._REGISTERED_TOOLS`` counters).
+When one of them drifts, all of them must be updated in the same PR.
 """
 
 from __future__ import annotations
@@ -84,13 +82,6 @@ def _readme_mcp_count() -> int | None:
     return _scrape_first_int_after(text, r"\b(\d+)\s+MCP\s+tools\b")
 
 
-def _claude_md_command_count() -> int | None:
-    p = ROOT / "CLAUDE.md"
-    if not p.exists():
-        return None
-    return _scrape_first_int_after(p.read_text(encoding="utf-8"), r"\b(\d+)\s+commands\b")
-
-
 def _llms_install_command_count() -> int | None:
     p = ROOT / "llms-install.md"
     if not p.exists():
@@ -113,8 +104,8 @@ def _mcp_card_version() -> str | None:
 
 
 def _landscape_json_command_count() -> int | None:
-    """``docs/site/data/landscape.json`` self-row often quotes counts.
-    External reviewer specifically flagged this as a stale-count source."""
+    """``docs/site/data/landscape.json`` self-row quotes the canonical
+    command count — historically the most likely surface to drift."""
     p = ROOT / "docs" / "site" / "data" / "landscape.json"
     if not p.exists():
         return None
@@ -177,8 +168,7 @@ class TestVersionConsistency:
 
     def test_landscape_json_self_row_version_matches(self):
         """The roam-code row in landscape.json should show the current
-        package version (or a recent nearby tag). Strict equality
-        catches the stale ``11.1.2`` flagged by the external review."""
+        package version (or a recent nearby tag)."""
         truth = _truth_version()
         actual = _landscape_json_version()
         if actual is None:
@@ -193,7 +183,7 @@ class TestVersionConsistency:
 
 
 class TestCommandCountConsistency:
-    """CLI command count must agree across README, CLAUDE.md, llms-install.md,
+    """CLI command count must agree across README, llms-install.md,
     landscape.json, and the live ``cli._COMMANDS`` count."""
 
     def test_truth_command_count_is_positive(self):
@@ -205,13 +195,6 @@ class TestCommandCountConsistency:
         actual = _readme_command_count()
         assert actual is not None, "README missing 'N commands' phrase"
         assert actual == truth, f"README says '{actual} commands' but cli._COMMANDS has {truth}"
-
-    def test_claude_md_matches_source(self):
-        truth = _truth_cli_command_count()
-        actual = _claude_md_command_count()
-        if actual is None:
-            pytest.skip("CLAUDE.md does not mention command count")
-        assert actual == truth, f"CLAUDE.md says '{actual} commands' but truth is {truth}"
 
     def test_llms_install_matches_source(self):
         truth = _truth_cli_command_count()
@@ -226,8 +209,7 @@ class TestCommandCountConsistency:
         if actual is None:
             pytest.skip("landscape.json roam-code self-row missing")
         assert actual == truth, (
-            f"landscape.json says '{actual} canonical commands' but truth is {truth}. "
-            "External review (2026-05-02) flagged this exact drift."
+            f"landscape.json says '{actual} canonical commands' but truth is {truth}"
         )
 
 

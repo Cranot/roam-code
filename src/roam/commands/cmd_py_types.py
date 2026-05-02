@@ -127,8 +127,6 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
 
     total = len(rows)
     if total == 0:
-        # Per external review (REV5 P1) — empty states must point at the
-        # next step, not just say "nothing here".
         click.echo("VERDICT: no public Python functions/methods indexed")
         click.echo()
         # Diagnose why

@@ -9,75 +9,73 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [12.8.0] - 2026-05-02
 
-A trust + positioning release responding to external review feedback.
-No new commands; no new detectors; substantial work on the documentation,
-test, and docs-consistency surface that the reviewer specifically
-called out.
+Documentation, positioning, and trust-scaffold release. No new commands,
+no new detectors. The headline work is a CI check that prevents
+documentation drift, three new public docs pages that ground the
+project's claims in evidence, and SARIF output for the Python idiom
+detectors.
 
-### Added — review-action items
+### Added — documentation consistency CI check
 
-- **`tests/test_doc_consistency.py`** — cross-surface consistency CI
+- **`tests/test_doc_consistency.py`** — cross-surface consistency
   check. Asserts version + CLI command count + MCP tool count agree
-  across pyproject.toml, server.json, mcp-server-card.json, README.md,
-  CLAUDE.md, llms-install.md, and `docs/site/data/landscape.json`.
-  Catches the exact drift class the reviewer flagged
-  (landscape.json said 11.1.2 + 150 commands while package was 12.7.1
-  + 152 commands). 11/12 tests pass; one skip for CLAUDE.md missing
-  count phrase.
-- **`docs/site/benchmarks.md`** — public Accuracy & Benchmarks page.
-  Catalogues self-bench results (recall@5/10/20 = 0.656/0.769/0.900),
-  cross-repo synthetic (1.0/1.0/1.0), detector E2E + scale findings,
-  and acknowledges what's still self-bench. Links the
-  CodeRAG-Bench-portable JSONL we already ship. Open work: 20-30
-  external repos with named baselines.
-- **`docs/site/comparisons.md`** — humble "Roam vs X" pages.
-  Concise, complement-not-replace positioning vs Cursor, Sourcegraph/
-  Cody, CKB/CodeMCP, Aider repo map, CodeQL, Semgrep, SonarQube,
-  CodeScene, Codebase-Memory, Claude Context. Each section names
-  what the other tool wins, what roam wins, when to use both.
-- **`docs/site/language-precision.md`** — per-language precision
-  matrix replacing "27 languages" boast. For each Tier 1 language:
-  what's solid, what's heuristic, what's not extracted, known
-  false-positive/false-negative classes. Per the reviewer:
-  "more valuable than saying '27 languages'".
-- **`internal/review_actions_external_2026-05-02.md`** — structured
-  action log capturing the full external review with status per
-  item. Gitignored (internal-only) — surfaced via this CHANGELOG.
+  across `pyproject.toml`, `server.json`,
+  `docs/site/.well-known/mcp-server-card.json`, `README.md`,
+  `llms-install.md`, and `docs/site/data/landscape.json`. Optional
+  surfaces (project-local files, missing fields) skip cleanly. Caught
+  a real drift on first run: the docs-site landscape entry was
+  reporting an older version and command count than the published
+  package.
 
-### Improved — README hero rewrite
+### Added — public docs pages
+
+- **`docs/site/benchmarks.md`** — Accuracy & Benchmarks page.
+  Self-bench: recall@5 / @10 / @20 = 0.656 / 0.769 / 0.900.
+  Cross-repo synthetic, detector E2E and scale findings, and an
+  explicit "what's not yet measured" section. Links the
+  CodeRAG-Bench-portable JSONL the harness already emits.
+- **`docs/site/comparisons.md`** — concise "roam vs X" pages
+  (Cursor, Sourcegraph/Cody, CKB/CodeMCP, Aider repo map, CodeQL,
+  Semgrep, SonarQube, CodeScene, Codebase-Memory, Claude Context).
+  Complement-not-replace positioning. Each section names what each
+  tool wins and when to use both.
+- **`docs/site/language-precision.md`** — per-language precision
+  matrix for the Tier 1 languages: what's solid, what's heuristic,
+  what's not extracted, and known false-positive / false-negative
+  classes per detector. Replaces the "27 languages" headline number
+  with information a reader can act on.
+
+### Added — SARIF output for Python detectors
+
+- **`roam py-types --sarif`** emits SARIF 2.1.0 with rule
+  `py-types/coverage` (one result per file with missing annotations).
+- **`roam py-modern --sarif`** emits SARIF with rules
+  `py-modern/legacy-typing` and `py-modern/dot-format`.
+- Both integrate with GitHub Code Scanning.
+
+### Improved — README hero
 
 - **New tagline**: "Architectural sight for AI coding agents — before
-  they edit." Adopted across README, server.json, mcp-server-card.json
-  per the reviewer's recommendation.
-- **5-verb framing** in the README: the hero now leads with the 5
-  high-leverage verbs (`understand`, `retrieve`, `context`, `preflight`,
-  `critique`), with explicit "the other 147 commands are advanced
-  surface for specialised workflows; you'll never need most of them."
-- **First-run onboarding**: new "Start here — 5 verbs" section runs
-  the canonical 4-line agent flow as the first thing a reader sees.
+  they edit." Adopted across README, `server.json`, and
+  `mcp-server-card.json`.
+- **5-verb framing**: README now leads with the 5 high-leverage
+  commands (`understand`, `retrieve`, `context`, `preflight`,
+  `critique`) followed by a one-line note that the other 147 are
+  advanced surface for specialised workflows.
+- **First-run section**: a 4-line agent workflow at the top of the
+  README so a reader can copy and run.
 
 ### Improved — agent ergonomics
 
-- **`roam py-types` empty state** now diagnoses *why* it's empty (no
-  Python files indexed vs. all symbols are tests) and points at the
-  next step (`roam understand` / `roam py-types --include-tests`).
-
-### Added — SARIF output
-
-- **`roam py-types --sarif`** emits SARIF 2.1.0 with one rule
-  (`py-types/coverage`) per file with missing annotations. CI-
-  integratable with GitHub Code Scanning.
-- **`roam py-modern --sarif`** emits SARIF with two rules
-  (`py-modern/legacy-typing`, `py-modern/dot-format`) flagging files
-  using legacy typing or `.format()` calls.
+- **`roam py-types` empty state** diagnoses why it's empty (no
+  Python files indexed vs. all symbols filtered as tests) and points
+  at the appropriate next step.
 
 ### Verification
 
-- 240+ focused tests pass.
+- 240+ focused tests pass on the affected paths.
 - Bench preserved: recall@5 0.656, recall@10 0.769, recall@20 0.900.
-- New `test_doc_consistency.py` actively prevents the drift class
-  the reviewer flagged.
-- All 7 CI jobs verified green.
+- All CI jobs green on the release commit.
 
 ## [12.7.1] - 2026-05-02
 
