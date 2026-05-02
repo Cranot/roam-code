@@ -8,7 +8,6 @@ import click
 
 from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
-from roam.db.queries import SEARCH_SYMBOLS
 from roam.output.formatter import (
     KIND_ABBREV,
     abbrev_kind,
@@ -176,9 +175,15 @@ def _format_explanation_text(expl: dict) -> list[str]:
         "fixtures. ``--decorator app.route`` finds Flask/FastAPI routes."
     ),
 )
+@click.option(
+    "--fixtures-only",
+    is_flag=True,
+    default=False,
+    help="Shortcut for ``--decorator pytest.fixture`` (Python pivot v12.4-iter).",
+)
 @click.option("--explain", is_flag=True, help="Show score breakdown for each result")
 @click.pass_context
-def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, explain):
+def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain):
     """Find symbols matching a name substring (case-insensitive).
 
     Unlike ``grep`` (which searches file contents) and ``search-semantic``
@@ -190,18 +195,41 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, explai
     ensure_index()
     like_pattern = f"%{pattern}%"
     with open_db(readonly=True) as conn:
-        rows = conn.execute(SEARCH_SYMBOLS, (like_pattern, 9999 if full else 50)).fetchall()
-
+        # Python pivot v12.4-iter: filters MUST be in SQL, not Python
+        # post-filter, otherwise rare-shape symbols (async, specific
+        # decorator) get stripped by the LIMIT 50 before they can be
+        # selected. Build the WHERE clause dynamically.
+        where_parts = ["s.name LIKE ? COLLATE NOCASE"]
+        params: list = [like_pattern]
+        if async_only:
+            where_parts.append("s.is_async = 1")
+        if fixtures_only:
+            # Shortcut: --fixtures-only ≡ --decorator pytest.fixture.
+            # ``has_decorator`` post-filter is too slow for large indexes;
+            # use a tight LIKE that's a superset and accept the rare
+            # false positive (mentions in click.option help text).
+            where_parts.append("LOWER(COALESCE(s.decorators, '')) LIKE '%@pytest.fixture%'")
+        if decorator_filter:
+            where_parts.append("LOWER(COALESCE(s.decorators, '')) LIKE ?")
+            params.append(f"%{decorator_filter.lower()}%")
+        kind_clause = ""
         if kind_filter:
             abbrev_to_kind = {v: k for k, v in KIND_ABBREV.items()}
             full_kind = abbrev_to_kind.get(kind_filter, kind_filter)
-            rows = [r for r in rows if r["kind"] == full_kind]
-        # Python pivot v12.4 — filter by async/decorator
-        if async_only:
-            rows = [r for r in rows if (r["is_async"] if "is_async" in r.keys() else 0)]
-        if decorator_filter:
-            needle = decorator_filter.lower()
-            rows = [r for r in rows if needle in (r["decorators"] or "").lower()]
+            where_parts.append("s.kind = ?")
+            params.append(full_kind)
+        where_sql = " AND ".join(where_parts)
+        params.append(9999 if full else 50)
+        rows = conn.execute(
+            f"""
+            SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
+            FROM symbols s JOIN files f ON s.file_id = f.id
+            LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+            WHERE {where_sql}
+            ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
+            """,
+            params,
+        ).fetchall()
 
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""

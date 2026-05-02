@@ -108,6 +108,13 @@ def structural_score(
     # cmd file so it surfaces alongside its engine module.
     cmd_companion_boost = _cmd_companion_boost(candidates)
 
+    # R.9 (Python pivot v12.4-iter): when the query mentions async /
+    # await / coroutine / asyncio, boost is_async=True candidates.
+    # The substrate (is_async column) shipped in v12.4; this is the
+    # reranker that uses it. Magnitude 0.10 — same scale as
+    # path_token_boost so it can lift but not dominate.
+    async_query_boost = _async_query_boost(candidates, task, conn=conn)
+
     pr_scores = _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized)
     clone_tags = _clone_tags(conn, candidates)
     cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
@@ -159,6 +166,7 @@ def structural_score(
             + clone_boost
             + path_token_boost.get(sid, 0.0)
             + cmd_companion_boost.get(sid, 0.0)
+            + async_query_boost.get(sid, 0.0)
             + rule_yaml_penalty.get(sid, 0.0)  # already negative
         )
 
@@ -277,6 +285,58 @@ def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
             continue
         if path.startswith("rules/") or "/rules/community/" in path or path.endswith(".yaml") or path.endswith(".yml"):
             out[sid] = -0.20
+    return out
+
+
+_ASYNC_QUERY_TOKENS = frozenset(
+    {
+        "async",
+        "await",
+        "awaitable",
+        "coroutine",
+        "asyncio",
+        "loop",
+        "concurrent",
+        "non-blocking",
+        "nonblocking",
+        "aiohttp",
+        "httpx",
+        "asyncpg",
+        "aiofiles",
+    }
+)
+
+
+def _async_query_boost(candidates: list[dict], task: str, *, conn=None) -> dict[int, float]:
+    """Boost ``is_async=True`` candidates when the query talks about
+    async / await / coroutines.
+
+    Reads ``symbols.is_async`` for the candidate set in one batch
+    query. Cheap because the candidate set is bounded (<300).
+    Magnitude 0.10 — matches ``cmd_companion_boost`` so async
+    candidates rise into top-K when the query is async-shaped without
+    overwhelming structurally-stronger non-async candidates.
+    """
+    if not task or not candidates or conn is None:
+        return {}
+    lowered = task.lower()
+    if not any(tok in lowered for tok in _ASYNC_QUERY_TOKENS):
+        return {}
+
+    sids = [int(c.get("symbol_id") or 0) for c in candidates if c.get("symbol_id") is not None]
+    if not sids:
+        return {}
+    out: dict[int, float] = {}
+    placeholders = ",".join("?" * len(sids))
+    try:
+        rows = conn.execute(
+            f"SELECT id FROM symbols WHERE id IN ({placeholders}) AND is_async = 1",
+            sids,
+        ).fetchall()
+    except Exception:
+        return {}
+    for r in rows:
+        out[int(r[0])] = 0.10
     return out
 
 

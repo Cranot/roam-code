@@ -210,7 +210,8 @@ class TestCLIFingerprint:
         result = invoke_cli(runner, ["fingerprint", "--export", export_file], cwd=fp_project)
         assert result.exit_code == 0
         assert os.path.exists(export_file)
-        data = json.loads(open(export_file, encoding="utf-8").read())
+        with open(export_file, encoding="utf-8") as _fh:
+            data = json.loads(_fh.read())
         assert "topology" in data
 
     def test_cli_fingerprint_compare(self, fp_project, monkeypatch, tmp_path):

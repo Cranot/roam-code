@@ -623,7 +623,8 @@ def _write_with_preserve(filepath, content):
     """
     if os.path.exists(filepath):
         try:
-            existing = open(filepath, "r", encoding="utf-8").read()
+            with open(filepath, "r", encoding="utf-8") as _fh:
+                existing = _fh.read()
         except Exception:
             existing = ""
 

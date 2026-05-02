@@ -7,6 +7,83 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.5.0] - 2026-05-02
+
+A Python-pivot iteration release. v12.4 added the substrate
+(``is_async`` + decorators on symbols, generated-dir exclusion, 4
+idiom detectors). v12.5 doubles the idiom catalog, adds a new
+``roam py-types`` command, and ships agent-facing badges for
+Pydantic / dataclass / pytest fixture / parametrize.
+
+### Added
+
+- **`roam py-types`** — type-annotation health command for Python
+  projects. Reports % of public functions fully typed, ``Any`` usage,
+  legacy ``typing.Optional/Dict/List`` (PEP 585/604 modernisation
+  candidates), per-file worst offenders. Default-excludes test files
+  (``--include-tests`` opts in).
+- **7 new Python idiom detectors** in `roam math`:
+  - `py-sync-in-async` — ``requests.get`` / ``time.sleep`` /
+    ``subprocess.run`` / ``urllib.request.urlopen`` / ``socket.recv``
+    inside ``async def``. Real production bug class.
+  - `py-open-without-with` — ``open(...)`` outside ``with`` block —
+    file resource leak. Surfaced 3 real leaks in roam-code itself
+    (fixed in this release).
+  - `py-star-import` — ``from X import *`` namespace pollution.
+  - `py-dict-keys-iter` — ``for k in d.keys():`` redundant.
+  - `py-async-not-awaited` — call to known async function without
+    ``await``. Returns a coroutine that never runs.
+  - `py-async-with-missing` — ``aiofiles.open(...)`` /
+    ``httpx.AsyncClient()`` not entered with ``async with``.
+  - `py-type-eq` — ``type(x) == X`` should be ``isinstance(x, X)``.
+- **Pydantic/dataclass/attrs/msgspec/Enum/TypedDict/NamedTuple model
+  badge** in ``roam context``. ``[pydantic model]`` / ``[dataclass
+  model]`` / ``[enum model]`` etc. surfaces above the signature so
+  agents reading context immediately know the class shape. Found
+  14 pydantic + 31 dataclass + 1 enum in deep-research.
+- **`@pytest.fixture` / `@pytest.mark.parametrize` /
+  `@pytest.mark.asyncio` badge** in ``roam context``. ``[pytest
+  fixture]`` / ``[parametrize]`` / ``[async test]``.
+- **`roam search --fixtures-only`** flag — shortcut for
+  ``--decorator pytest.fixture``.
+- **Async-aware retrieve boost** — when query mentions
+  async/await/coroutine/asyncio/aiohttp/httpx, boost
+  ``is_async=True`` candidates in rerank.
+- **`has_decorator()` / `fixture_kind()` / `is_model_class()`** —
+  new helpers in ``catalog/python_idioms`` for decorator-aware
+  symbol introspection.
+- **`_strip_strings_and_comments()`** — length-preserving stripper
+  used by all idiom detectors so they don't false-match in
+  docstrings/comments. Caught 5 false positives on roam-code itself.
+
+### Improved
+
+- **`roam search` filters now in SQL.** v12.4 ``--async`` /
+  ``--decorator`` flags Python-post-filtered after a LIMIT 50 query,
+  so rare-shape symbols got stripped before the filter ran. Now
+  pushed into the WHERE clause; rare-shape returns work correctly
+  on bare patterns.
+- **Decorator capture on classes** (was: only functions). Fixes
+  ``roam context`` showing ``@dataclass`` etc. badges on classes.
+- **Decorator display in ``roam context`` is paren-aware.** Multi-arg
+  decorators like ``@pytest.mark.parametrize("a,b,c", [...])`` no
+  longer break across the comma inside arguments.
+
+### Fixed (real bugs surfaced by the new detectors on roam-code itself)
+
+- **3 `open()` resource leaks** in
+  ``cmd_agent_export.py:626``, ``tests/test_agent_export.py:387``,
+  ``tests/test_fingerprint.py:213`` — converted to ``with`` blocks.
+
+### Verification
+
+- 71 Python pivot tests pass (was 29).
+- 646 focused tests pass (was 541).
+- Bench held: recall@5 0.656, recall@10 0.769, recall@20 0.900.
+- All 11 idiom detectors verified on synthetic + scaled to a 17k-file
+  codebase (supernode: 167 open-leaks, 4 sync-in-async, 146 bare-except).
+- roam-code itself: 0 findings across all 11 detectors (post-fix).
+
 ## [12.4.0] - 2026-05-02
 
 A Python-pivot release. Three super-passes of dogfooding on real

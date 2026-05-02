@@ -63,6 +63,64 @@ _LOGGER_FSTRING_RE = re.compile(
     r"\b(?:logger|log|logging|self\.logger|self\.log)\.(?:debug|info|warning|warn|error|critical|exception)\s*\(\s*f[\"']",
 )
 
+# Sync-IO-in-async: blocking calls inside ``async def`` bodies that
+# starve the event loop. Each entry is (regex, suggested replacement).
+# Detector iterates over async functions only (via is_async column).
+_SYNC_IN_ASYNC_PATTERNS: list[tuple[re.Pattern, str]] = [
+    (
+        re.compile(r"\brequests\.(?:get|post|put|delete|patch|head|options|request)\("),
+        "use httpx.AsyncClient or aiohttp",
+    ),
+    (re.compile(r"\btime\.sleep\("), "use ``await asyncio.sleep(...)``"),
+    (re.compile(r"\burllib\.request\.urlopen\("), "use httpx.AsyncClient or aiohttp"),
+    (
+        re.compile(r"\bsubprocess\.(?:run|call|check_call|check_output|Popen)\("),
+        "use ``await asyncio.create_subprocess_exec/_shell``",
+    ),
+    (re.compile(r"\bsocket\.(?:recv|send|sendall|recvfrom|sendto)\("), "use asyncio streams (open_connection, etc.)"),
+    (re.compile(r"\bpsycopg2\.connect\("), "use asyncpg.connect"),
+    # ``open(...)`` in async without ``async with`` — pattern-only match
+    # below (open without enclosing ``async with``) requires AST. Skip
+    # at the regex stage.
+]
+
+# ``open(...)`` without ``with`` enclosing — file resource leak.
+# Match any ``open(`` call; the caller already strips lines containing
+# ``with `` / ``async with`` so we only see uses outside those. Skip
+# ``os.open`` (low-level descriptor) and ``codecs.open`` (legitimately
+# different lifecycle in some legacy code).
+_OPEN_WITHOUT_WITH_RE = re.compile(
+    r"(?<!\.)\bopen\s*\(",
+)
+
+# ``from X import *`` — pollutes the namespace, masks shadowing,
+# breaks ``mypy --strict``.
+_STAR_IMPORT_RE = re.compile(r"^\s*from\s+[\w.]+\s+import\s+\*", re.MULTILINE)
+
+# ``for k in d.keys():`` — redundant, slower than ``for k in d``
+_DICT_KEYS_ITER_RE = re.compile(r"\bfor\s+\w+\s+in\s+\w+\.keys\(\s*\)\s*:")
+
+# ``"x = {}".format(x)`` / ``"x = %s" % x`` when an f-string is
+# preferred (PEP 498 / Python 3.6+).
+_OLD_FORMAT_RE = re.compile(r"[\"']\s*\.format\s*\(")
+
+# ``async with`` missing on aiofiles / httpx.AsyncClient — async
+# resource leak. ``aiofiles.open(...)`` and ``httpx.AsyncClient()``
+# return async context managers and must be entered with
+# ``async with``. A bare assignment ``f = aiofiles.open(...)`` leaks.
+_ASYNC_OPEN_RE = re.compile(r"\baiofiles\.open\s*\(")
+_HTTPX_CLIENT_RE = re.compile(r"\bhttpx\.AsyncClient\s*\(")
+
+# Comparing types with ``type(x) == X`` instead of ``isinstance``.
+# Misses subclasses + obscures the intent.
+_TYPE_EQ_RE = re.compile(r"\btype\(\w+\)\s*==\s*\w+")
+
+# ``isinstance(x, int)`` matches True/False (bool is a subclass of int).
+# Pattern: ``isinstance(VAR, int)`` without prior ``not isinstance(VAR, bool)``.
+# Detector below uses regex + per-line context check (caller pre-strips
+# strings).
+_ISINSTANCE_INT_RE = re.compile(r"\bisinstance\s*\(\s*(\w+)\s*,\s*int\s*\)")
+
 
 def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
     """Read the source text of a file via roam.index — but the index
@@ -78,6 +136,42 @@ def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
             return f.read()
     except OSError:
         return None
+
+
+# Triple-quoted strings (greedy across newlines), single/double quoted
+# strings (per-line), and ``#`` comments. Replaced with spaces of the
+# same length so line numbers and column offsets stay stable for
+# downstream regex matching.
+_TRIPLE_QUOTE_RE = re.compile(
+    r'(""".*?"""|\'\'\'.*?\'\'\')',
+    re.DOTALL,
+)
+_SINGLE_QUOTE_RE = re.compile(r'("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')')
+_COMMENT_RE = re.compile(r"#[^\n]*")
+
+
+def _strip_strings_and_comments(text: str) -> str:
+    """Replace strings + comments with same-length whitespace so the
+    detector regexes don't false-match inside docstrings or comments.
+
+    Length-preserving so ``text.count("\n", 0, match.start())`` still
+    yields the original line number. Test the dogfood case:
+    ``r"def\\s+\\w+\\s*\\(...."`` regex source no longer trips
+    ``_MUTABLE_DEFAULT_RE`` when it scans python_idioms.py itself.
+    """
+    if not text:
+        return text
+
+    def _blank(match: re.Match) -> str:
+        # Preserve newlines — re-blanking with spaces would collapse
+        # multi-line docstrings into one logical line for downstream
+        # regexes that use ``^`` / ``$`` anchors.
+        return "".join(" " if c != "\n" else "\n" for c in match.group(0))
+
+    out = _TRIPLE_QUOTE_RE.sub(_blank, text)
+    out = _SINGLE_QUOTE_RE.sub(_blank, out)
+    out = _COMMENT_RE.sub(_blank, out)
+    return out
 
 
 def _python_files(conn: sqlite3.Connection) -> list[tuple[int, str]]:
@@ -148,6 +242,8 @@ def detect_mutable_default_arg(conn: sqlite3.Connection) -> list[dict]:
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -178,6 +274,8 @@ def detect_bare_except(conn: sqlite3.Connection) -> list[dict]:
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -207,6 +305,8 @@ def detect_none_eq(conn: sqlite3.Connection) -> list[dict]:
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -238,6 +338,8 @@ def detect_logger_fstring(conn: sqlite3.Connection) -> list[dict]:
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -262,6 +364,488 @@ def detect_logger_fstring(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+def _async_function_ranges(conn: sqlite3.Connection, file_id: int) -> list[tuple[int, int, int, str]]:
+    """``(symbol_id, line_start, line_end, name)`` for async functions
+    in ``file_id`` only. Used by sync-in-async detector to scope its
+    scan to coroutine bodies."""
+    return [
+        (int(r[0]), int(r[1] or 0), int(r[2] or 0), r[3])
+        for r in conn.execute(
+            "SELECT id, line_start, line_end, name FROM symbols WHERE file_id = ? AND is_async = 1 ORDER BY line_start",
+            (file_id,),
+        ).fetchall()
+    ]
+
+
+def detect_sync_in_async(conn: sqlite3.Connection) -> list[dict]:
+    """Find blocking sync IO calls inside ``async def`` bodies.
+
+    Canonical Python production bug: ``requests.get`` / ``time.sleep`` /
+    ``subprocess.run`` inside an async coroutine blocks the event
+    loop, starving every other task on the loop. The fixes are
+    well-known (``httpx.AsyncClient``, ``asyncio.sleep``, etc.) — this
+    detector flags the exact line + suggests the swap.
+
+    Scope: scan source text within the line range of every
+    ``is_async=1`` symbol. Skip files with no async symbols.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        async_ranges = _async_function_ranges(conn, file_id)
+        if not async_ranges:
+            continue
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        lines = text.splitlines()
+        for sym_id, start, end, sym_name in async_ranges:
+            # Slice the body lines (1-indexed).
+            body = "\n".join(lines[max(start - 1, 0) : end])
+            for pattern, suggestion in _SYNC_IN_ASYNC_PATTERNS:
+                for match in pattern.finditer(body):
+                    # Compute 1-indexed line within the file.
+                    body_offset = body.count("\n", 0, match.start())
+                    line_no = start + body_offset
+                    findings.append(
+                        _idiom_finding(
+                            task_id="py-sync-in-async",
+                            detected_way="blocking-call",
+                            symbol_id=sym_id,
+                            symbol_name=sym_name,
+                            file_path=path,
+                            line_no=line_no,
+                            reason=(
+                                f"blocking ``{match.group(0)}`` inside ``async def {sym_name}`` starves the event loop"
+                            ),
+                            confidence="high",
+                            fix=suggestion,
+                        )
+                    )
+    return findings
+
+
+def detect_star_import(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``from X import *`` — namespace pollution.
+
+    These can shadow names silently and make ``mypy --strict`` /
+    ``ruff F401`` impossible to use. Surfaces ALL star imports
+    (low confidence: many codebases legitimately re-export this way
+    in ``__init__.py``).
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _STAR_IMPORT_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            # Star imports are typically at module level — sym may be None
+            # (no enclosing fn). Synthesise a module-level handle.
+            if sym is None:
+                # Use the first symbol in the file as the anchor
+                if not sym_index:
+                    continue
+                sym = (sym_index[0][0], "<module>")
+            findings.append(
+                _idiom_finding(
+                    task_id="py-star-import",
+                    detected_way="namespace-pollution",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``from X import *`` shadows names silently and breaks static analysis",
+                    confidence="low",
+                    fix="from X import explicit_name1, explicit_name2",
+                )
+            )
+    return findings
+
+
+def detect_dict_keys_iter(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``for k in d.keys():`` — redundant, slower than ``for k in d``.
+
+    Iterating a dict yields keys by default; ``.keys()`` allocates
+    a view and adds a function-call cost on every iteration.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _DICT_KEYS_ITER_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-dict-keys-iter",
+                    detected_way="redundant-keys",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``for k in d.keys()`` is redundant — iterating ``d`` yields keys directly",
+                    confidence="high",
+                    fix="for k in d:",
+                )
+            )
+    return findings
+
+
+def detect_string_format_old(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``"..."`` ``.format(...)`` calls — prefer f-strings on Py3.6+.
+
+    Conservative: only flag the explicit ``"literal".format(...)``
+    pattern, not ``some_var.format(...)`` (which might be a template
+    method on a non-string type).
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        # The string-strip blanks the literal, so we can't match
+        # ``"...".format(``. Skip entirely — this detector is best
+        # implemented on the raw text. Falls back to no-op when
+        # text was stripped. Future: implement an "unstripped scan"
+        # that's still safe.
+        return findings  # disabled until we have a string-aware variant
+
+
+def detect_async_with_missing(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``aiofiles.open(...)`` / ``httpx.AsyncClient(...)`` not
+    inside an ``async with`` — async resource leak.
+
+    Both are common in modern async Python. The async resource must
+    be explicitly entered with ``async with`` or the connection /
+    file pool isn't released.
+    """
+    findings: list[dict] = []
+    patterns = [
+        (_ASYNC_OPEN_RE, "aiofiles.open(...)", "async with aiofiles.open(...) as f:"),
+        (_HTTPX_CLIENT_RE, "httpx.AsyncClient(...)", "async with httpx.AsyncClient() as client:"),
+    ]
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for line_no, line in enumerate(text.splitlines(), 1):
+            if "async with " in line:
+                continue
+            for pattern, what, fix in patterns:
+                if pattern.search(line):
+                    sym = _enclosing_symbol(line_no, sym_index)
+                    if sym is None:
+                        continue
+                    findings.append(
+                        _idiom_finding(
+                            task_id="py-async-with-missing",
+                            detected_way="async-resource-leak",
+                            symbol_id=sym[0],
+                            symbol_name=sym[1],
+                            file_path=path,
+                            line_no=line_no,
+                            reason=f"``{what}`` not entered with ``async with`` — connection pool may leak",
+                            confidence="high",
+                            fix=fix,
+                        )
+                    )
+    return findings
+
+
+def detect_type_eq(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``type(x) == X`` — should be ``isinstance(x, X)``.
+
+    ``type() ==`` only matches the exact class; doesn't catch
+    subclasses. ``isinstance`` is what users almost always want.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _TYPE_EQ_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-type-eq",
+                    detected_way="type-not-isinstance",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``type(x) == X`` misses subclasses; use ``isinstance(x, X)``",
+                    confidence="high",
+                    fix="isinstance(x, X)",
+                )
+            )
+    return findings
+
+
+def detect_async_not_awaited(conn: sqlite3.Connection) -> list[dict]:
+    """Find calls to async functions that aren't ``await``ed.
+
+    Calling an async function without ``await`` returns a coroutine
+    object that's never executed — the call silently does nothing.
+    This is a top-3 cause of "why doesn't my async code run?" on
+    StackOverflow.
+
+    Approach: build the set of known async function NAMES from the
+    index. For each Python file, scan source text (after stripping
+    strings/comments) for ``<name>(`` calls. If the call isn't
+    preceded by ``await ``, ``asyncio.gather(``, ``asyncio.create_task(``,
+    ``asyncio.run(``, ``loop.run_until_complete(``, ``ensure_future(``,
+    or ``= `` (assignment to coroutine for later use), flag it.
+
+    Conservative: requires the called name to be known-async via the
+    index, so we don't false-flag every `foo()` call when `foo` happens
+    to share a name with an async function elsewhere (the index has
+    the actual symbol — we're asking ``is THIS name async-only?``).
+    """
+    findings: list[dict] = []
+    # Build set of known async function names. Filter to names that are
+    # ONLY defined as async (no sync overload) to keep precision high.
+    rows = conn.execute(
+        "SELECT name, SUM(is_async) AS n_async, COUNT(*) AS n_total "
+        "FROM symbols WHERE kind IN ('function', 'method') GROUP BY name"
+    ).fetchall()
+    async_names = {r[0] for r in rows if r[0] and r[1] and r[1] == r[2]}
+    if not async_names:
+        return findings
+
+    # Pre-build a single regex of all async names. For most repos this
+    # is <500 names; well under the regex engine limit.
+    if len(async_names) > 1000:
+        # Skip on huge repos — we'd scan every call site of every name.
+        return findings
+    # ``(?<![\w.])`` skips dotted attribute access (``rng.sample``,
+    # ``Class.sample``) — those resolve to the attribute owner, not
+    # a roam-indexed bare async function. Only bare ``name(`` calls
+    # are considered. This avoids false positives where a stdlib
+    # method shares a name with a project-internal async function
+    # (caught on ``random.Random.sample`` vs ``_MockContext.sample``).
+    name_pattern = re.compile(
+        r"(?<![\w.])(" + "|".join(re.escape(n) for n in sorted(async_names, key=len, reverse=True)) + r")\s*\(",
+    )
+    safe_prefixes = (
+        "await ",
+        "asyncio.gather(",
+        "asyncio.create_task(",
+        "asyncio.run(",
+        "asyncio.ensure_future(",
+        "asyncio.wait(",
+        "asyncio.wait_for(",
+        "ensure_future(",
+        "create_task(",
+        "loop.run_until_complete(",
+        "self.loop.run_until_complete(",
+        # Function definition prefix — ``async def NAME(`` is a
+        # declaration, not a call. Without this guard we false-flag
+        # the function being defined as if it were calling itself.
+        "def ",
+    )
+
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in name_pattern.finditer(text):
+            # Look at the 80 chars before the match to check for safe prefixes
+            # or assignment patterns.
+            start = max(0, match.start() - 80)
+            preceding = text[start : match.start()]
+            # Skip if it's awaited/gathered/etc.
+            if any(sp in preceding[-30:] for sp in safe_prefixes):
+                continue
+            # Skip if it's a coroutine assignment (=) within the last 5 chars
+            # ``coro = some_async_fn(...)`` — legitimate "save for later".
+            tail = preceding[-5:].strip()
+            if tail.endswith("="):
+                continue
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-async-not-awaited",
+                    detected_way="missing-await",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=(
+                        f"call to async function ``{match.group(1)}`` not awaited — returns a coroutine that never runs"
+                    ),
+                    confidence="medium",
+                    fix=f"await {match.group(1)}(...)",
+                )
+            )
+    return findings
+
+
+def detect_open_without_with(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``open(...)`` calls that aren't inside a ``with`` block —
+    real file resource leak pattern.
+
+    Approach: scan each line; if it contains ``open("..."`` but no
+    ``with`` keyword, flag it. Conservative — skips ``os.open`` /
+    ``codecs.open`` (they're often legitimately not in with). Won't
+    catch ``f = open(...)`` on a multi-line statement; for that we'd
+    need AST parsing. Good enough for the common case.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for ln_no, line in enumerate(text.splitlines(), 1):
+            if "open(" not in line:
+                continue
+            # Strip strings/comments roughly to avoid matching ``"open("`` text.
+            # Heuristic: drop everything after a # not inside a string.
+            stripped = line.split("#", 1)[0]
+            if "open(" not in stripped:
+                continue
+            if "with " in stripped or "async with " in stripped:
+                continue
+            if not _OPEN_WITHOUT_WITH_RE.search(stripped):
+                continue
+            sym = _enclosing_symbol(ln_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-open-without-with",
+                    detected_way="resource-leak",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=ln_no,
+                    reason="``open(...)`` outside a ``with`` block — file may not be closed on exception",
+                    confidence="medium",
+                    fix="with open(...) as f:\n    ...",
+                )
+            )
+    return findings
+
+
+def has_decorator(decorators: str | None, name: str) -> bool:
+    """Return True when ``decorators`` contains a top-level decorator
+    matching ``name`` exactly (or ``@name(...)``).
+
+    The substring naive check matches false positives — e.g.
+    ``LIKE '%pytest.fixture%'`` matches a click.option help text
+    that *mentions* pytest.fixture. This helper splits on the
+    comma-joined decorator list and checks each part starts with
+    ``@<name>`` followed by ``(``, space, or end of string.
+    """
+    if not decorators:
+        return False
+    needle = name.lstrip("@").lower()
+    for part in decorators.split(","):
+        part = part.strip()
+        if not part.startswith("@"):
+            continue
+        body = part[1:].lower().strip()
+        # Match exact, or ``name(`` prefix, or ``name `` prefix.
+        if body == needle or body.startswith(needle + "(") or body.startswith(needle + " "):
+            return True
+    return False
+
+
+def fixture_kind(decorators: str | None) -> str | None:
+    """Return ``"pytest"`` / ``"asyncio"`` / ``"parametrize"`` / ``None``
+    based on the test-suite decorators present.
+
+    Used by ``roam context`` to surface ``[pytest fixture]`` etc. badges
+    so agents reading test code immediately see fixture lifecycle.
+    """
+    if not decorators:
+        return None
+    if has_decorator(decorators, "pytest.fixture") or has_decorator(decorators, "fixture"):
+        # @pytest.fixture or just @fixture (when imported)
+        return "pytest fixture"
+    if has_decorator(decorators, "pytest.mark.parametrize"):
+        return "parametrize"
+    if has_decorator(decorators, "pytest.mark.asyncio"):
+        return "async test"
+    if has_decorator(decorators, "pytest.mark.skip") or has_decorator(decorators, "pytest.mark.skipif"):
+        return "skipped test"
+    return None
+
+
+def is_model_class(signature: str | None, decorators: str | None) -> tuple[bool, str | None]:
+    """Heuristic: return ``(is_model, kind_label)`` for a class.
+
+    Recognises:
+    * ``BaseModel`` subclass → Pydantic model
+    * ``@dataclass`` / ``@dataclasses.dataclass`` → stdlib dataclass
+    * ``@pydantic.dataclasses.dataclass`` → pydantic dataclass
+    * ``@attr.s`` / ``@attrs.define`` → attrs
+    * ``msgspec.Struct`` subclass → msgspec
+    * ``NamedTuple`` subclass / ``@typing.NamedTuple`` → typed tuple
+    * ``TypedDict`` subclass → TypedDict
+    * ``Enum`` / ``IntEnum`` / ``StrEnum`` → enum
+
+    Returned label is one of: ``pydantic``, ``dataclass``, ``attrs``,
+    ``msgspec``, ``namedtuple``, ``typeddict``, ``enum``, or ``None``.
+    Useful for ``roam context`` to display a model badge.
+    """
+    sig = (signature or "").lower()
+    dec = (decorators or "").lower()
+    # Decorator-based first (cheaper, more deterministic)
+    if "@dataclass" in dec or "@dataclasses.dataclass" in dec:
+        return True, "dataclass"
+    if "@pydantic.dataclasses" in dec:
+        return True, "pydantic-dataclass"
+    if "@attr.s" in dec or "@attrs.define" in dec or "@attr.define" in dec:
+        return True, "attrs"
+    # Inheritance-based
+    if "basemodel" in sig and "pydantic" not in sig:
+        # Common: ``class User(BaseModel):`` (BaseModel imported from pydantic)
+        return True, "pydantic"
+    if "pydantic.basemodel" in sig:
+        return True, "pydantic"
+    if "msgspec.struct" in sig or "(struct)" in sig:
+        return True, "msgspec"
+    if "namedtuple" in sig:
+        return True, "namedtuple"
+    if "typeddict" in sig:
+        return True, "typeddict"
+    if "(enum)" in sig or "(intenum)" in sig or "(strenum)" in sig or "(flag)" in sig:
+        return True, "enum"
+    return False, None
+
+
 # Detector registry — same shape ``cmd_math`` expects from ``_MATH_DETECTORS``
 # (task_id, pattern_id, detect_fn). Re-exported so registration is one
 # import line elsewhere.
@@ -270,4 +854,11 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-bare-except", "catch-all", detect_bare_except),
     ("py-none-eq", "eq-not-is", detect_none_eq),
     ("py-logger-fstring", "eager-format", detect_logger_fstring),
+    ("py-sync-in-async", "blocking-call", detect_sync_in_async),
+    ("py-open-without-with", "resource-leak", detect_open_without_with),
+    ("py-star-import", "namespace-pollution", detect_star_import),
+    ("py-dict-keys-iter", "redundant-keys", detect_dict_keys_iter),
+    ("py-async-not-awaited", "missing-await", detect_async_not_awaited),
+    ("py-async-with-missing", "async-resource-leak", detect_async_with_missing),
+    ("py-type-eq", "type-not-isinstance", detect_type_eq),
 ]

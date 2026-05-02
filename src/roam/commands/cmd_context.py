@@ -531,9 +531,52 @@ def _render_single_text(data):
     if "is_async" in _row_keys and sym["is_async"]:
         click.echo("  [async coroutine]")
     decorators_str = (sym["decorators"] if "decorators" in _row_keys else "") or ""
+    # Python pivot v12.4-iter: model-class + fixture badges — agents
+    # reading context immediately see whether this is "data with
+    # validation" (Pydantic/dataclass/attrs/etc.) or a pytest fixture
+    # / parametrized test, without scanning source.
+    sym_kind = sym["kind"] if "kind" in _row_keys else ""
+    try:
+        from roam.catalog.python_idioms import fixture_kind, is_model_class
+
+        if sym_kind == "class":
+            sig_text = sym["signature"] if "signature" in _row_keys else ""
+            is_model, kind_label = is_model_class(sig_text, decorators_str)
+            if is_model and kind_label:
+                click.echo(f"  [{kind_label} model]")
+        elif sym_kind in ("function", "method"):
+            fkind = fixture_kind(decorators_str)
+            if fkind:
+                click.echo(f"  [{fkind}]")
+    except Exception:
+        pass
     if decorators_str:
-        for d in decorators_str.split(",")[:5]:
-            click.echo(f"  {d.strip()}")
+        # Decorators are comma-joined but ``@parametrize("a,b,c", [...])``
+        # has commas inside its arguments — naive split breaks the
+        # display into nonsense fragments. Re-tokenise paren-aware.
+        decos: list[str] = []
+        depth = 0
+        current = []
+        for ch in decorators_str:
+            if ch == "," and depth == 0:
+                if current:
+                    decos.append("".join(current).strip())
+                    current = []
+            else:
+                current.append(ch)
+                if ch in "([{":
+                    depth += 1
+                elif ch in ")]}":
+                    depth = max(0, depth - 1)
+        if current:
+            decos.append("".join(current).strip())
+        for d in decos[:5]:
+            # Show the first line of the decorator only — keeps
+            # multi-line decorators (e.g. click.option blocks) compact.
+            first_line = d.splitlines()[0] if d else ""
+            if len(d.splitlines()) > 1:
+                first_line += "..."
+            click.echo(f"  {first_line}")
     click.echo(
         f"{abbrev_kind(sym['kind'])}  "
         f"{sym['qualified_name'] or sym['name']}"
