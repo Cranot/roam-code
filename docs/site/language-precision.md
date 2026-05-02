@@ -70,6 +70,26 @@ cross-language edges via bridges.
 | `cmd_FOO.py` retrieve boost | Commands matching multiple FOO substrings | Capped magnitude per match |
 | `roam health` god-component count | Utility hubs (`json_envelope`, `to_json`) flagged as god | Excluded by `_is_utility_path` discount |
 
+## Measured precision/recall (small labelled corpus)
+
+Based on the labelled fixtures under `tests/fixtures/detector_eval/` — a
+small but real corpus of true-positive and true-negative Python files
+per detector. Numbers are baselines; the CI test
+`tests/test_detector_precision.py` enforces them as floors so they
+cannot regress.
+
+| Detector | Cases | Recall | Precision | Notable false positives |
+|---|---|---|---|---|
+| `py-django-n1` | 6 TP, 4 TN | 1.00 | 0.67 | `.select_related(...).all()` followed by a `for` still fires (chained eager-loading not detected) |
+| `py-sqlalchemy-lazy` | 2 TP, 3 TN | 1.00 | 0.50 | `joinedload` / `selectinload` options on the query don't suppress the firing |
+| `py-fastapi-depends` | 3 TP, 2 TN | 1.00 | 1.00 | — |
+
+The corpus is intentionally small (you can read every fixture in a few
+minutes) so contributors can extend it. Add a new labelled directory
+under `tests/fixtures/detector_eval/<slug>/` with `*.py` cases plus an
+`expected.json` listing the lines that should fire, register the slug
+in `_DETECTORS`, and the harness picks it up.
+
 ## Known false-negative classes
 
 | Detector / signal | False-negative class | Status |
