@@ -1093,6 +1093,18 @@ class Indexer:
             except Exception as e:
                 self._log(f"  Django post-resolver skipped: {e}")
 
+            # pytest fixture dependency edges. Cheap (single SELECT + a
+            # batched INSERT) and best-effort — failure shouldn't fail
+            # the index.
+            try:
+                from roam.index.pytest_fixtures import resolve_pytest_fixtures
+
+                fixture_edges = resolve_pytest_fixtures(conn)
+                if fixture_edges:
+                    self._log(f"  pytest fixtures: {fixture_edges} dependency edge(s)")
+            except Exception as e:
+                self._log(f"  pytest fixture resolver skipped: {e}")
+
             # Git history
             analyze_git = _try_import_git_stats()
             if analyze_git is not None:
