@@ -268,6 +268,55 @@ def _bfs_path(
     return None
 
 
+def _intraprocedural_co_calls(
+    conn: sqlite3.Connection,
+    source_ids: set[int],
+    sink_ids: set[int],
+    sanitizer_ids: set[int],
+) -> list[tuple[int, int, int, bool]]:
+    """Find functions that call BOTH a taint source and a sink.
+
+    Catches the ``y = source(); sink(y)`` shape that pure forward BFS
+    misses: source and sink are both *targets* of the enclosing
+    function's call edges, never connected by a forward call. Mirrors
+    the intraprocedural assignment-propagation Semgrep ships in
+    February 2026.
+
+    Returns a list of ``(enclosing_fn_id, source_id, sink_id,
+    sanitizer_in_path)`` tuples.
+    """
+    if not source_ids or not sink_ids:
+        return []
+    # Pull every (enclosing, target) edge for which the target is a
+    # source, sink, or sanitizer of the rule. Group by enclosing.
+    interesting = source_ids | sink_ids | sanitizer_ids
+    chunks = []
+    interesting_list = list(interesting)
+    # batched_in pattern, but local — keep this module dependency-free
+    for i in range(0, len(interesting_list), 400):
+        chunks.append(interesting_list[i : i + 400])
+
+    enclosing_targets: dict[int, set[int]] = {}
+    for chunk in chunks:
+        rows = conn.execute(
+            "SELECT source_id, target_id FROM edges "
+            f"WHERE kind IN ('calls', 'references') AND target_id IN ({','.join('?' * len(chunk))})",
+            chunk,
+        ).fetchall()
+        for r in rows:
+            enclosing_targets.setdefault(int(r[0]), set()).add(int(r[1]))
+
+    out: list[tuple[int, int, int, bool]] = []
+    for enclosing, targets in enclosing_targets.items():
+        if not (targets & source_ids) or not (targets & sink_ids):
+            continue
+        src_id = next(iter(targets & source_ids))
+        sink_id = next(iter(targets & sink_ids))
+        has_sanitizer = bool(targets & sanitizer_ids)
+        out.append((enclosing, src_id, sink_id, has_sanitizer))
+    return out
+
+
 def run_taint(
     conn: sqlite3.Connection,
     rules: list[TaintRule],
@@ -277,6 +326,15 @@ def run_taint(
     """Execute every rule against the indexed graph. Returns one finding
     per (rule, source, sink, path) tuple. When a rule's sources never
     reach its sinks, no findings are emitted for that rule.
+
+    Two passes:
+    1. Forward BFS for cross-procedural call chains where source and
+       sink connect via intermediate hops.
+    2. Intraprocedural co-call check for the
+       ``y = source(); sink(y)`` shape — functions that *call both* a
+       source and a sink are flagged even though no forward edge
+       connects them. Mirrors Semgrep's Feb 2026 assignment-propagation
+       improvement.
     """
     findings: list[TaintFinding] = []
     for rule in rules:
@@ -295,6 +353,42 @@ def run_taint(
 
         # Path id → metadata for hop rendering.
         sym_meta: dict[int, dict] = {s["id"]: s for s in sources + sinks + sanitizers}
+
+        # Pass 2 first (cheap): per-function co-call records flow
+        # through assignments / locals without needing an edge.
+        co_calls = _intraprocedural_co_calls(conn, source_ids, sink_ids, sanitizer_ids)
+        for enclosing, src_id, sink_id, has_sanitizer in co_calls:
+            unknown = [pid for pid in (enclosing, src_id, sink_id) if pid not in sym_meta]
+            if unknown:
+                rows = conn.execute(
+                    "SELECT s.id, s.name, s.qualified_name, s.line_start, f.path "
+                    "FROM symbols s JOIN files f ON s.file_id = f.id "
+                    f"WHERE s.id IN ({','.join('?' * len(unknown))})",
+                    unknown,
+                ).fetchall()
+                for r in rows:
+                    sym_meta[int(r[0])] = {
+                        "id": int(r[0]),
+                        "name": r[1],
+                        "qualified_name": r[2],
+                        "line": r[3],
+                        "file": r[4],
+                    }
+            findings.append(
+                TaintFinding(
+                    rule_id=rule.rule_id,
+                    severity=rule.severity,
+                    cwe=rule.cwe,
+                    source_symbol=sym_meta.get(src_id, {"id": src_id}),
+                    sink_symbol=sym_meta.get(sink_id, {"id": sink_id}),
+                    path_symbols=[
+                        sym_meta.get(src_id, {"id": src_id}),
+                        sym_meta.get(enclosing, {"id": enclosing}),
+                        sym_meta.get(sink_id, {"id": sink_id}),
+                    ],
+                    sanitizer_in_path=has_sanitizer,
+                )
+            )
 
         result = _bfs_path(conn, source_ids, sink_ids, sanitizer_ids, max_hops=max_hops)
         if result is None:
