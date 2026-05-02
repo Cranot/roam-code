@@ -1,0 +1,30 @@
+id: python-urllib-open-redirect
+description: User-controlled URL into a redirect or fetch sink (open-redirect / SSRF). CodeQL 2.24 ships an equivalent urllib.parse model.
+severity: warning
+cwe: CWE-601
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.GET
+  - request.POST
+  - request.json
+  - request.url
+  - request.headers.get
+sinks:
+  - flask.redirect
+  - django.shortcuts.redirect
+  - HttpResponseRedirect
+  - urllib.request.urlopen
+  - urllib.request.Request
+  - requests.get
+  - requests.post
+  - httpx.get
+  - httpx.post
+sanitizers:
+  - urllib.parse.quote
+  - urllib.parse.quote_plus
+  - werkzeug.urls.url_fix
+  - is_safe_url
+  - validate_url
