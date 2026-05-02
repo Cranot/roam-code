@@ -166,6 +166,9 @@ class TestDeferLoading:
             "roam_oracle_is_reachable_from_entry",
             "roam_oracle_is_clone_of",
             "roam_taint_classify",
+            # v12.6 — Python-pivot tools
+            "roam_py_types",
+            "roam_py_modern",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"
