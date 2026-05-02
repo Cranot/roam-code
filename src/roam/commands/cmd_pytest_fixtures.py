@@ -67,6 +67,13 @@ def _fetch_chain(conn, symbol_id: int, max_depth: int = 6) -> list[dict]:
     return out
 
 
+# Match the same fixture-decorator predicate as the resolver: require
+# the ``@`` prefix so help-text mentions of ``pytest.fixture`` (e.g. in
+# Click ``--help`` strings) don't masquerade as fixtures.
+_FIXTURE_PREDICATE_SQL = "(s.decorators LIKE '%@pytest.fixture%' OR s.decorators LIKE '%@fixture%')"
+_TEST_FILE_PREDICATE_SQL = "(f.file_role = 'test' OR f.path LIKE '%/conftest.py' OR f.path = 'conftest.py')"
+
+
 def _project_summary(conn) -> dict:
     """Top-level counts when the user runs ``roam pytest-fixtures`` with
     no symbol argument."""
@@ -102,17 +109,6 @@ def _project_summary(conn) -> dict:
         "total_edges": total_edges,
         "top_fixtures": [dict(r) for r in top_rows],
     }
-
-
-# Match the same fixture-decorator predicate as the resolver: require
-# the ``@`` prefix so help-text mentions of ``pytest.fixture`` (e.g. in
-# Click ``--help`` strings) don't masquerade as fixtures.
-_FIXTURE_PREDICATE_SQL = (
-    "(s.decorators LIKE '%@pytest.fixture%' OR s.decorators LIKE '%@fixture%')"
-)
-_TEST_FILE_PREDICATE_SQL = (
-    "(f.file_role = 'test' OR f.path LIKE '%/conftest.py' OR f.path = 'conftest.py')"
-)
 
 
 def _fetch_unused(conn) -> list[dict]:

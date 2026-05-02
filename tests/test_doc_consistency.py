@@ -208,9 +208,7 @@ class TestCommandCountConsistency:
         actual = _landscape_json_command_count()
         if actual is None:
             pytest.skip("landscape.json roam-code self-row missing")
-        assert actual == truth, (
-            f"landscape.json says '{actual} canonical commands' but truth is {truth}"
-        )
+        assert actual == truth, f"landscape.json says '{actual} canonical commands' but truth is {truth}"
 
 
 class TestMcpToolCountConsistency:

@@ -17,7 +17,6 @@ from __future__ import annotations
 
 import json
 import subprocess
-import sys
 from pathlib import Path
 
 import pytest
@@ -53,9 +52,9 @@ def _index_fixture_dir(work_dir: Path) -> None:
     subprocess.run(["git", "init", "-q"], cwd=work_dir, check=True)
     subprocess.run(["git", "add", "."], cwd=work_dir, check=True)
     subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t",
-         "commit", "-q", "-m", "init"],
-        cwd=work_dir, check=True,
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
+        cwd=work_dir,
+        check=True,
     )
     Indexer().run(quiet=True)
 
