@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 import subprocess
 
 import click
@@ -68,7 +69,7 @@ def index_staleness_hint() -> str | None:
 _MAX_FTS_SUGGESTIONS = 5
 
 
-def ensure_index(quiet: bool = False):
+def ensure_index(quiet: bool = False) -> None:
     """Build the index if it doesn't exist yet.
 
     Args:
@@ -166,7 +167,7 @@ def _path_rank(path: str | None) -> int:
     return 0
 
 
-def pick_best(conn, rows):
+def pick_best(conn: sqlite3.Connection, rows: list) -> dict | None:
     """Pick the most-referenced symbol from ambiguous matches.
 
     Tie-breaking order:
@@ -226,7 +227,7 @@ def _filter_by_file(rows, file_hint):
     return filtered if filtered else rows
 
 
-def find_symbol(conn, name):
+def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     """Find a symbol by name with disambiguation.
 
     Lookup chain:
@@ -345,7 +346,7 @@ def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:
     ]
 
 
-def detect_entry_points(conn) -> list:
+def detect_entry_points(conn: sqlite3.Connection) -> list:
     """Detect project entry points from conventional filenames, main() functions, and route decorators.
 
     Returns a list of dicts: [{"path": str, "reason": str}]
@@ -430,7 +431,7 @@ def detect_entry_points(conn) -> list:
     return results
 
 
-def symbol_not_found(conn, name: str, *, json_mode: bool = False) -> str:
+def symbol_not_found(conn: sqlite3.Connection, name: str, *, json_mode: bool = False) -> str:
     """Build a 'symbol not found' error message with FTS5-powered suggestions.
 
     In text mode returns a multi-line string like::

@@ -17,7 +17,7 @@ from roam.output.formatter import format_table, json_envelope, to_json
 
 @click.group("ws")
 @click.pass_context
-def ws(ctx):
+def ws(ctx) -> None:
     """Manage multi-repo workspaces with cross-repo dependency tracking.
 
     Unlike single-repo commands (``understand``, ``health``, ``context``), the ws
@@ -36,7 +36,7 @@ def ws(ctx):
 @click.argument("repos", nargs=-1, required=True)
 @click.option("--name", default="", help="Workspace name (default: parent dir name)")
 @click.pass_context
-def ws_init(ctx, repos, name):
+def ws_init(ctx, repos: tuple, name: str) -> None:
     """Initialize a workspace from multiple repo directories.
 
     REPOS are paths to git repositories (relative or absolute).
@@ -211,7 +211,7 @@ def ws_init(ctx, repos, name):
 
 @ws.command("status")
 @click.pass_context
-def ws_status(ctx):
+def ws_status(ctx) -> None:
     """Show workspace status: repos, index ages, cross-repo edges."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -270,7 +270,7 @@ def ws_status(ctx):
 
 @ws.command("resolve")
 @click.pass_context
-def ws_resolve(ctx):
+def ws_resolve(ctx) -> None:
     """Detect cross-repo API connections between frontend and backend repos."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -318,9 +318,9 @@ def ws_resolve(ctx):
 
         # Issue #18 guard: when `connections: []` is empty (the default
         # after `ws init`, or after the user edits roles by hand without
-        # re-running init), auto-derive pairs from `role: frontend` ↔
+        # re-running init), auto-derive pairs from `role: frontend` β†”
         # `role: backend` tags so `ws resolve` does *something* useful.
-        # The on-disk config is left alone — populate in-memory only.
+        # The on-disk config is left alone β€” populate in-memory only.
         connections = list(config.get("connections", []))
         if not connections:
             fe_repos = [r for r in repo_infos if r.get("role") == "frontend"]
@@ -452,7 +452,7 @@ def ws_resolve(ctx):
 
 @ws.command("understand")
 @click.pass_context
-def ws_understand(ctx):
+def ws_understand(ctx) -> None:
     """Full workspace overview: repos, stats, cross-repo connections."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -521,7 +521,7 @@ def ws_understand(ctx):
 
 @ws.command("health")
 @click.pass_context
-def ws_health(ctx):
+def ws_health(ctx) -> None:
     """Workspace-wide health report."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
@@ -575,7 +575,7 @@ def ws_health(ctx):
 @ws.command("context")
 @click.argument("symbol")
 @click.pass_context
-def ws_context(ctx, symbol):
+def ws_context(ctx, symbol: str) -> None:
     """Cross-repo augmented context for a symbol.
 
     Searches all repos in the workspace and shows cross-repo callers/callees.
@@ -652,7 +652,7 @@ def ws_context(ctx, symbol):
 @click.argument("source")
 @click.argument("target")
 @click.pass_context
-def ws_trace(ctx, source, target):
+def ws_trace(ctx, source: str, target: str) -> None:
     """Trace a path between symbols across repos.
 
     Shows how SOURCE connects to TARGET, including cross-repo API edges.

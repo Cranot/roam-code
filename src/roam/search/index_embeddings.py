@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import math
 import re
+import sqlite3
 from typing import Any
 
 from roam.search.framework_packs import search_pack_symbols
@@ -18,9 +19,9 @@ from roam.search.tfidf import cosine_similarity, tokenize
 def _camel_split(text: str) -> str:
     """Insert spaces at camelCase/PascalCase boundaries for FTS5.
 
-    ``OpenDatabase`` → ``Open Database``
-    ``XMLParser``    → ``XML Parser``
-    ``file_path``    → ``file_path`` (underscores handled by unicode61)
+    ``OpenDatabase`` β†’ ``Open Database``
+    ``XMLParser``    β†’ ``XML Parser``
+    ``file_path``    β†’ ``file_path`` (underscores handled by unicode61)
     """
     if not text:
         return ""
@@ -34,7 +35,7 @@ def _camel_split(text: str) -> str:
 # ---------------------------------------------------------------------------
 
 
-def fts5_available(conn) -> bool:
+def fts5_available(conn: sqlite3.Connection) -> bool:
     """Check if the symbol_fts virtual table exists and is usable."""
     try:
         row = conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='symbol_fts'").fetchone()
@@ -43,7 +44,7 @@ def fts5_available(conn) -> bool:
         return False
 
 
-def fts5_populated(conn) -> bool:
+def fts5_populated(conn: sqlite3.Connection) -> bool:
     """Check if symbol_fts has data."""
     if not fts5_available(conn):
         return False
@@ -54,7 +55,7 @@ def fts5_populated(conn) -> bool:
         return False
 
 
-def tfidf_populated(conn) -> bool:
+def tfidf_populated(conn: sqlite3.Connection) -> bool:
     """Check if symbol_tfidf has data."""
     try:
         row = conn.execute("SELECT COUNT(*) FROM symbol_tfidf").fetchone()
@@ -63,7 +64,7 @@ def tfidf_populated(conn) -> bool:
         return False
 
 
-def onnx_populated(conn) -> bool:
+def onnx_populated(conn: sqlite3.Connection) -> bool:
     """Check if ONNX embedding table has data."""
     try:
         row = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()
@@ -98,7 +99,7 @@ def _get_onnx_embedder(project_root=None, settings=None):
 # ---------------------------------------------------------------------------
 
 
-def build_fts_index(conn, project_root=None):
+def build_fts_index(conn: sqlite3.Connection, project_root: str | None = None):
     """Populate the FTS5 symbol_fts table for BM25-ranked search.
 
     Pushes tokenization and indexing entirely to SQLite's C engine.
@@ -112,7 +113,7 @@ def build_fts_index(conn, project_root=None):
             pass
         return
 
-    # Clear and rebuild — FTS5 doesn't support UPDATE well, full rebuild is fast
+    # Clear and rebuild β€” FTS5 doesn't support UPDATE well, full rebuild is fast
     conn.execute("DELETE FROM symbol_fts")
 
     rows = conn.execute(
@@ -189,7 +190,7 @@ _FTS5_SEARCH_SQL = f"""
 """
 
 
-def search_fts(conn, query: str, top_k: int = 10) -> list[dict]:
+def search_fts(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[dict]:
     """Search using FTS5 BM25 ranking (fast, all in C).
 
     Returns top-k results: ``[{score, symbol_id, name, file_path, kind, line_start}]``.
@@ -205,7 +206,7 @@ def search_fts(conn, query: str, top_k: int = 10) -> list[dict]:
     try:
         rows = conn.execute(_FTS5_SEARCH_SQL, (fts_query, top_k)).fetchall()
     except Exception:
-        # FTS5 query syntax error — fall back to prefix match
+        # FTS5 query syntax error β€” fall back to prefix match
         try:
             fts_query = _build_fts_query(query, prefix_only=True)
             if fts_query:
@@ -421,7 +422,7 @@ def search_stored(
 # callers that operate on standalone connections (e.g. tests, external tools).
 
 
-def ensure_tfidf_table(conn):
+def ensure_tfidf_table(conn: sqlite3.Connection):
     """Ensure the symbol_tfidf table exists.
 
     Delegates to the canonical schema in roam.db.schema so there is a single
@@ -432,7 +433,7 @@ def ensure_tfidf_table(conn):
     conn.executescript(SCHEMA_SQL)
 
 
-def build_and_store_tfidf(conn):
+def build_and_store_tfidf(conn: sqlite3.Connection):
     """Compute TF-IDF vectors for all symbols and store in symbol_tfidf.
 
     Called during ``roam index`` as part of hybrid search index build.
@@ -477,7 +478,7 @@ def _build_symbol_embedding_text(row) -> str:
     return " \n ".join(p for p in parts if p)
 
 
-def build_and_store_onnx_embeddings(conn, project_root=None) -> dict[str, Any]:
+def build_and_store_onnx_embeddings(conn: sqlite3.Connection, project_root: str | None = None) -> dict[str, Any]:
     """Compute dense ONNX vectors for symbols and store in symbol_embeddings."""
     settings = _load_semantic_settings(project_root=project_root)
     ready, reason, settings = _onnx_ready(project_root=project_root, settings=settings)
@@ -532,7 +533,7 @@ def build_and_store_onnx_embeddings(conn, project_root=None) -> dict[str, Any]:
     }
 
 
-def load_onnx_vectors(conn) -> dict[int, list[float]]:
+def load_onnx_vectors(conn: sqlite3.Connection) -> dict[int, list[float]]:
     """Load stored ONNX vectors from DB."""
     rows = conn.execute("SELECT symbol_id, vector FROM symbol_embeddings WHERE provider='onnx'").fetchall()
     result: dict[int, list[float]] = {}
@@ -655,7 +656,7 @@ def _merge_semantic_results(*branches: list[dict], top_k: int) -> list[dict]:
     return values[:top_k]
 
 
-def load_tfidf_vectors(conn) -> dict[int, dict[str, float]]:
+def load_tfidf_vectors(conn: sqlite3.Connection) -> dict[int, dict[str, float]]:
     """Load stored TF-IDF vectors from DB."""
     ensure_tfidf_table(conn)
     rows = conn.execute("SELECT symbol_id, terms FROM symbol_tfidf").fetchall()
@@ -670,7 +671,7 @@ def load_tfidf_vectors(conn) -> dict[int, dict[str, float]]:
     return result
 
 
-def _search_tfidf_stored(conn, query: str, top_k: int = 10) -> list[dict]:
+def _search_tfidf_stored(conn: sqlite3.Connection, query: str, top_k: int = 10) -> list[dict]:
     """Search using pre-computed TF-IDF vectors (legacy fallback)."""
     query_tokens = tokenize(query)
     if not query_tokens:

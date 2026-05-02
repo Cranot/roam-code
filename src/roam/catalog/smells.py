@@ -16,6 +16,7 @@ no source reading -- pure DB queries for speed and reproducibility.
 from __future__ import annotations
 
 import re
+import sqlite3
 
 
 def _loc(path: str, line: int | None) -> str:
@@ -85,7 +86,7 @@ def _parse_param_count(signature: str | None) -> int:
 # ---------------------------------------------------------------------------
 
 
-def detect_brain_method(conn) -> list[dict]:
+def detect_brain_method(conn: sqlite3.Connection) -> list[dict]:
     """Functions with complexity > 60 AND > 100 LOC."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, s.line_end, f.path as file_path, "
@@ -116,7 +117,7 @@ def detect_brain_method(conn) -> list[dict]:
     return results
 
 
-def detect_deep_nesting(conn) -> list[dict]:
+def detect_deep_nesting(conn: sqlite3.Connection) -> list[dict]:
     """Symbols with nesting depth > 4."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, f.path as file_path, "
@@ -145,7 +146,7 @@ def detect_deep_nesting(conn) -> list[dict]:
     return results
 
 
-def detect_long_params(conn) -> list[dict]:
+def detect_long_params(conn: sqlite3.Connection) -> list[dict]:
     """Functions with > 5 parameters (excluding self/cls)."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path "
@@ -175,7 +176,7 @@ def detect_long_params(conn) -> list[dict]:
     return results
 
 
-def detect_large_class(conn) -> list[dict]:
+def detect_large_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 500 LOC AND > 20 methods."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, f.path as file_path "
@@ -211,7 +212,7 @@ def detect_large_class(conn) -> list[dict]:
     return results
 
 
-def detect_god_class(conn) -> list[dict]:
+def detect_god_class(conn: sqlite3.Connection) -> list[dict]:
     """Classes with > 30 methods OR > 1000 LOC."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, "
@@ -251,7 +252,7 @@ def detect_god_class(conn) -> list[dict]:
     return results
 
 
-def detect_feature_envy(conn) -> list[dict]:
+def detect_feature_envy(conn: sqlite3.Connection) -> list[dict]:
     """Functions where > 50% of edge targets are in other files (min 4 refs)."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.file_id, "
@@ -291,7 +292,7 @@ def detect_feature_envy(conn) -> list[dict]:
     return results
 
 
-def detect_shotgun_surgery(conn) -> list[dict]:
+def detect_shotgun_surgery(conn: sqlite3.Connection) -> list[dict]:
     """Symbols with in_degree > 7 in graph_metrics."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, f.path as file_path, "
@@ -319,7 +320,7 @@ def detect_shotgun_surgery(conn) -> list[dict]:
     return results
 
 
-def detect_data_clumps(conn) -> list[dict]:
+def detect_data_clumps(conn: sqlite3.Connection) -> list[dict]:
     """3+ params repeated across 3+ functions (group by sorted first-3 param names)."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path "
@@ -394,7 +395,7 @@ def detect_data_clumps(conn) -> list[dict]:
     return results
 
 
-def detect_dead_params(conn) -> list[dict]:
+def detect_dead_params(conn: sqlite3.Connection) -> list[dict]:
     """Functions with 4+ params but complexity <= 1 (likely unused params)."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, s.signature, f.path as file_path, "
@@ -427,12 +428,12 @@ def detect_dead_params(conn) -> list[dict]:
     return results
 
 
-def detect_empty_catch(conn) -> list[dict]:
+def detect_empty_catch(conn: sqlite3.Connection) -> list[dict]:
     """Placeholder: empty catch/except blocks. Returns []."""
     return []
 
 
-def detect_low_cohesion(conn) -> list[dict]:
+def detect_low_cohesion(conn: sqlite3.Connection) -> list[dict]:
     """Classes with 5+ methods but fewer than methods/2 internal edges."""
     rows = conn.execute(
         "SELECT s.id, s.name, s.kind, s.line_start, s.line_end, "
@@ -479,7 +480,7 @@ def detect_low_cohesion(conn) -> list[dict]:
     return results
 
 
-def detect_message_chain(conn) -> list[dict]:
+def detect_message_chain(conn: sqlite3.Connection) -> list[dict]:
     """Functions with out_degree > 10 in graph_metrics."""
     rows = conn.execute(
         "SELECT s.name, s.kind, s.line_start, f.path as file_path, "
@@ -508,17 +509,17 @@ def detect_message_chain(conn) -> list[dict]:
     return results
 
 
-def detect_refused_bequest(conn) -> list[dict]:
+def detect_refused_bequest(conn: sqlite3.Connection) -> list[dict]:
     """Placeholder: classes that override parent methods to do nothing. Returns []."""
     return []
 
 
-def detect_primitive_obsession(conn) -> list[dict]:
+def detect_primitive_obsession(conn: sqlite3.Connection) -> list[dict]:
     """Placeholder: excessive use of primitive types. Returns []."""
     return []
 
 
-def detect_duplicate_conditionals(conn) -> list[dict]:
+def detect_duplicate_conditionals(conn: sqlite3.Connection) -> list[dict]:
     """Placeholder: repeated conditional logic. Returns []."""
     return []
 
@@ -548,7 +549,7 @@ ALL_DETECTORS: list[tuple[str, callable]] = [
 _SEVERITY_ORDER = {"critical": 0, "warning": 1, "info": 2}
 
 
-def run_all_detectors(conn) -> list[dict]:
+def run_all_detectors(conn: sqlite3.Connection) -> list[dict]:
     """Run all 15 smell detectors and return combined findings.
 
     Returns list of finding dicts sorted by severity (critical first).
@@ -565,7 +566,7 @@ def run_all_detectors(conn) -> list[dict]:
     return findings
 
 
-def file_health_scores(conn) -> dict[str, float]:
+def file_health_scores(conn: sqlite3.Connection) -> dict[str, float]:
     """Compute per-file health scores from smell findings.
 
     Returns {file_path: score} where score is 1-10 (10 = healthy).
