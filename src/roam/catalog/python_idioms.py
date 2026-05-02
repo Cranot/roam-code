@@ -140,6 +140,50 @@ _MAGIC_NUMBER_RE = re.compile(
 # function name appears in its own body. Done in detector loop, not
 # regex.
 
+# Django ORM N+1: ``.filter(...)`` then ``for x in qs:`` then access
+# of related field (e.g. ``x.author.name``). The simplified detector
+# below catches the canonical pattern: ``.all()`` immediately
+# followed by ``for x in qs`` in the same function body.
+_DJANGO_ALL_THEN_FOR = re.compile(
+    r"\.\s*all\s*\(\s*\)[^\n]*\n[^\n]*for\s+\w+\s+in\s+\w+\s*:",
+)
+# Calling ``.objects.filter(...)`` inside a loop — N+1.
+_DJANGO_FILTER_IN_LOOP = re.compile(
+    r"^\s+.*\.objects\.\s*(?:filter|get)\s*\(",
+    re.MULTILINE,
+)
+
+# SQLAlchemy: ``.all()`` then iterate accessing a relationship attribute.
+# Simplified pattern: ``.all()`` in any function with ``relationship``
+# imported. Caller needs to verify it's worth flagging.
+_SQLALCHEMY_RELATIONSHIP = re.compile(r"=\s*relationship\s*\(")
+_SQLALCHEMY_ALL_THEN_DOT = re.compile(
+    r"\.\s*all\s*\(\s*\)[^\n]*\n[^\n]*\bfor\b[^\n]*\n[^\n]*\.\w+",
+)
+
+# FastAPI Depends() — dependency injection chain.
+_FASTAPI_DEPENDS_RE = re.compile(r"\bDepends\s*\(\s*(\w+)\s*\)")
+
+# Late-binding closure: ``lambda x: i*x`` inside a loop where ``i``
+# changes per iteration. Pattern: ``for i in ...:\n  ... lambda``
+# in same body. Caller verifies same-loop scope.
+_LAMBDA_IN_LOOP_RE = re.compile(
+    r"^\s+for\s+(\w+)\s+in\s[^\n]+:\s*\n[\s\S]{0,200}?lambda\b",
+    re.MULTILINE,
+)
+
+# ``except SomeError: pass`` — silently swallowing exceptions.
+_EXCEPT_PASS_RE = re.compile(r"^\s*except\b[^:]*:\s*\n\s*pass\s*\n", re.MULTILINE)
+
+# ``except Exception:`` (broad) — catches too much. Less severe than
+# bare ``except:`` but still flagged.
+_BROAD_EXCEPT_RE = re.compile(r"^\s*except\s+(?:Exception|BaseException)\s*(?:as\s+\w+\s*)?:", re.MULTILINE)
+
+# ``async for`` missing on async iterators (StreamReader, async generators)
+# — heuristic: ``for X in <name>`` where the iterator type hint suggests
+# async (AsyncIterator, AsyncGenerator, AsyncIterable).
+_ASYNC_ITER_HINT = re.compile(r"AsyncIterator|AsyncGenerator|AsyncIterable")
+
 
 def _project_root_for_conn(conn: sqlite3.Connection) -> str:
     """Resolve the project root for ``conn`` by inspecting its
@@ -772,6 +816,329 @@ def detect_async_not_awaited(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+def detect_lambda_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``lambda`` in a ``for``-loop body — classic late-binding bug.
+
+    The lambda captures the loop variable by reference, so all
+    lambdas end up bound to the LAST value of the variable. Fix:
+    add ``i=i`` default argument or use functools.partial.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _LAMBDA_IN_LOOP_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            var = match.group(1)
+            findings.append(
+                _idiom_finding(
+                    task_id="py-lambda-in-loop",
+                    detected_way="late-binding-closure",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=(
+                        f"``lambda`` inside ``for {var} in …`` loop — late binding: "
+                        f"all lambdas bind to the LAST value of {var}"
+                    ),
+                    confidence="medium",
+                    fix=f"lambda x, {var}={var}: ...  # capture by default arg",
+                )
+            )
+    return findings
+
+
+def detect_except_pass(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``except X: pass`` — silently swallowing exceptions."""
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _EXCEPT_PASS_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-except-pass",
+                    detected_way="silent-swallow",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``except X: pass`` silently swallows the exception — log it or re-raise",
+                    confidence="high",
+                    fix="except X as exc:\n    logger.warning('...', exc_info=exc)\n    raise",
+                )
+            )
+    return findings
+
+
+def detect_broad_except(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``except Exception:`` / ``except BaseException:``."""
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _BROAD_EXCEPT_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-broad-except",
+                    detected_way="catch-too-much",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``except Exception:`` catches more than intended — narrow to specific class(es)",
+                    confidence="low",
+                    fix="except (ValueError, KeyError):  # or whatever the actual cases are",
+                )
+            )
+    return findings
+
+
+def detect_django_n1(conn: sqlite3.Connection) -> list[dict]:
+    """Find Django ORM N+1 patterns:
+
+    * ``.objects.filter(...)`` / ``.get(...)`` *inside* a loop body.
+    * ``.all()`` immediately followed by ``for x in qs:`` (suggests
+      ``.select_related()`` / ``.prefetch_related()``).
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        # Quick reject: skip files with no Django ORM hints
+        if ".objects." not in text and ".all()" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _DJANGO_ALL_THEN_FOR.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-django-n1",
+                    detected_way="all-then-for",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason="``.all()`` then iterate — likely N+1; use ``.select_related()`` / ``.prefetch_related()``",
+                    confidence="medium",
+                    fix=".all().select_related('fk_field')",
+                )
+            )
+        # filter/get inside loop: detect by walking lines, tracking
+        # indent depth from preceding ``for``/``while``.
+        lines = text.splitlines()
+        for i, line in enumerate(lines, 1):
+            if not _DJANGO_FILTER_IN_LOOP.search("\n" + line):
+                continue
+            # Look back up to 20 lines for ``for X in`` at lesser indent
+            current_indent = len(line) - len(line.lstrip())
+            in_loop = False
+            for back in range(max(0, i - 20), i - 1):
+                prev = lines[back]
+                prev_indent = len(prev) - len(prev.lstrip())
+                if prev_indent < current_indent and (
+                    prev.lstrip().startswith("for ") or prev.lstrip().startswith("while ")
+                ):
+                    in_loop = True
+                    break
+            if not in_loop:
+                continue
+            sym = _enclosing_symbol(i, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-django-n1",
+                    detected_way="query-in-loop",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=i,
+                    reason="Django ORM query inside loop — N+1; lift the query out or use ``.in_bulk()``",
+                    confidence="high",
+                    fix="ids = [x.id for x in items]; lookup = Model.objects.in_bulk(ids)",
+                )
+            )
+    return findings
+
+
+def detect_sqlalchemy_lazy(conn: sqlite3.Connection) -> list[dict]:
+    """Find SQLAlchemy ``.all()`` then iterate-with-attribute patterns.
+
+    Heuristic: the file has ``relationship(`` (so it defines models)
+    AND the ``.all()`` call is immediately followed by a ``for``-loop
+    that accesses an attribute on each item. The accessed attribute
+    is likely a relationship that triggers a lazy SELECT per row.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        # Quick reject: must have at least one relationship() declaration
+        if not _SQLALCHEMY_RELATIONSHIP.search(text):
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _SQLALCHEMY_ALL_THEN_DOT.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            findings.append(
+                _idiom_finding(
+                    task_id="py-sqlalchemy-lazy",
+                    detected_way="lazy-load-in-loop",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=".all() then for-loop accessing attr — likely lazy-load N+1",
+                    confidence="medium",
+                    fix=".options(selectinload(Model.relationship)).all()",
+                )
+            )
+    return findings
+
+
+def detect_fastapi_depends(conn: sqlite3.Connection) -> list[dict]:
+    """Inventory FastAPI ``Depends(X)`` provider chain.
+
+    Not strictly an anti-pattern; surfaces as info-level findings so
+    agents can discover the dependency graph for FastAPI apps.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        if "Depends(" not in text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        seen: set[tuple[int, str]] = set()
+        for match in _FASTAPI_DEPENDS_RE.finditer(text):
+            provider = match.group(1)
+            line_no = text.count("\n", 0, match.start()) + 1
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            key = (sym[0], provider)
+            if key in seen:
+                continue
+            seen.add(key)
+            findings.append(
+                _idiom_finding(
+                    task_id="py-fastapi-depends",
+                    detected_way="dependency-provider",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=f"FastAPI dependency: depends on ``{provider}``",
+                    confidence="high",
+                    fix="",
+                )
+            )
+    return findings
+
+
+def detect_sync_calls_async_via_graph(conn: sqlite3.Connection) -> list[dict]:
+    """Use the call graph to find sync functions calling async ones.
+
+    Complement to ``detect_async_not_awaited`` (regex-based on names).
+    This walks ``edges.kind='call'`` and reports edges where source
+    is sync and target is async. Strong-evidence finding because it's
+    backed by the indexed graph not text matching.
+
+    Skips when the source itself is a known wrapper (test runner,
+    ``asyncio.run``-style entry point) by name.
+    """
+    findings: list[dict] = []
+    # Names that are legitimate sync→async entry points and should be
+    # excluded from the scan.
+    skip_source_names = {"main", "cli", "run", "entrypoint", "_main", "__main__"}
+    try:
+        rows = conn.execute(
+            """
+            SELECT e.source_id, src.name AS src_name, src.is_async AS src_async,
+                   e.target_id, tgt.name AS tgt_name,
+                   src_f.path AS src_file, src.line_start AS src_line
+            FROM edges e
+            JOIN symbols src ON src.id = e.source_id
+            JOIN symbols tgt ON tgt.id = e.target_id
+            JOIN files src_f ON src_f.id = src.file_id
+            WHERE e.kind = 'call'
+              AND src.kind IN ('function', 'method')
+              AND tgt.kind IN ('function', 'method')
+              AND tgt.is_async = 1
+              AND src.is_async = 0
+              AND COALESCE(src_f.file_role, '') != 'test'
+            """
+        ).fetchall()
+    except Exception:
+        return findings
+    seen: set[tuple[int, int]] = set()
+    for r in rows:
+        sid = int(r["source_id"])
+        tid = int(r["target_id"])
+        key = (sid, tid)
+        if key in seen:
+            continue
+        seen.add(key)
+        if r["src_name"] in skip_source_names:
+            continue
+        findings.append(
+            _idiom_finding(
+                task_id="py-sync-calls-async",
+                detected_way="missing-await-graph",
+                symbol_id=sid,
+                symbol_name=r["src_name"],
+                file_path=r["src_file"],
+                line_no=int(r["src_line"] or 0),
+                reason=(
+                    f"sync ``{r['src_name']}`` calls async ``{r['tgt_name']}`` — "
+                    f"either ``await`` it (mark caller async) or use ``asyncio.run``"
+                ),
+                confidence="medium",
+                fix=f"async def {r['src_name']}(...): await {r['tgt_name']}(...)",
+            )
+        )
+    return findings
+
+
 def detect_lock_without_with(conn: sqlite3.Connection) -> list[dict]:
     """Find ``lock.acquire()`` without ``with``-block — lock leak.
 
@@ -967,4 +1334,11 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-async-with-missing", "async-resource-leak", detect_async_with_missing),
     ("py-type-eq", "type-not-isinstance", detect_type_eq),
     ("py-lock-without-with", "lock-leak", detect_lock_without_with),
+    ("py-sync-calls-async", "missing-await-graph", detect_sync_calls_async_via_graph),
+    ("py-django-n1", "django-orm", detect_django_n1),
+    ("py-sqlalchemy-lazy", "sqla-lazy", detect_sqlalchemy_lazy),
+    ("py-fastapi-depends", "fastapi-di", detect_fastapi_depends),
+    ("py-lambda-in-loop", "late-binding-closure", detect_lambda_in_loop),
+    ("py-except-pass", "silent-swallow", detect_except_pass),
+    ("py-broad-except", "catch-too-much", detect_broad_except),
 ]
