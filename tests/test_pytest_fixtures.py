@@ -7,7 +7,12 @@ import sqlite3
 import pytest
 from click.testing import CliRunner
 
-from roam.index.pytest_fixtures import _parse_param_names, resolve_pytest_fixtures
+from roam.index.pytest_fixtures import (
+    _fixture_autouse,
+    _fixture_scope,
+    _parse_param_names,
+    resolve_pytest_fixtures,
+)
 
 # ---------------------------------------------------------------------------
 # Pure parser tests — no DB
@@ -56,6 +61,39 @@ class TestParseParamNames:
         assert _parse_param_names("def foo(a, b) -> int") == ["a", "b"]
 
 
+class TestFixtureScope:
+    def test_no_decorators_defaults_function(self):
+        assert _fixture_scope("") == "function"
+        assert _fixture_scope(None) == "function"
+
+    def test_bare_fixture_defaults_function(self):
+        assert _fixture_scope("@pytest.fixture") == "function"
+
+    def test_session_scope(self):
+        assert _fixture_scope('@pytest.fixture(scope="session")') == "session"
+
+    def test_module_scope(self):
+        assert _fixture_scope("@pytest.fixture(scope='module')") == "module"
+
+    def test_invalid_scope_falls_back(self):
+        assert _fixture_scope('@pytest.fixture(scope="bogus")') == "function"
+
+
+class TestFixtureAutouse:
+    def test_no_autouse(self):
+        assert _fixture_autouse("@pytest.fixture") is False
+        assert _fixture_autouse("") is False
+
+    def test_autouse_true(self):
+        assert _fixture_autouse("@pytest.fixture(autouse=True)") is True
+
+    def test_autouse_false(self):
+        assert _fixture_autouse("@pytest.fixture(autouse=False)") is False
+
+    def test_autouse_with_other_args(self):
+        assert _fixture_autouse('@pytest.fixture(scope="session", autouse=True)') is True
+
+
 # ---------------------------------------------------------------------------
 # DB-backed resolver tests with an in-memory schema
 # ---------------------------------------------------------------------------
@@ -69,7 +107,8 @@ def _make_conn() -> sqlite3.Connection:
         CREATE TABLE files (
             id INTEGER PRIMARY KEY,
             path TEXT NOT NULL,
-            language TEXT
+            language TEXT,
+            file_role TEXT DEFAULT 'test'
         );
         CREATE TABLE symbols (
             id INTEGER PRIMARY KEY,
@@ -305,3 +344,20 @@ class TestCommand:
         assert payload["command"] == "pytest-fixtures"
         assert "summary" in payload
         assert payload["summary"]["fixtures"] >= 2
+
+    def test_impact_picks_up_fixture_edges(self, fixture_project):
+        """Blast radius of a fixture must include the tests that depend
+        on it, transitively. The graph builder ingests every edge kind,
+        so this should work without any per-edge-kind logic in impact."""
+        from roam.cli import cli
+
+        runner = CliRunner()
+        res = runner.invoke(cli, ["impact", "db"])
+        assert res.exit_code == 0, res.output
+        # ``user`` fixture depends on ``db`` (direct), and
+        # ``test_user_has_id`` depends on ``user`` (transitive). Both
+        # should be in the blast radius — 2 symbols total, 1 affected
+        # file (test_login.py).
+        assert "user" in res.output
+        assert "2 symbols" in res.output
+        assert "test_login.py" in res.output

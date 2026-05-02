@@ -25,12 +25,21 @@ import os
 import re
 
 # Match a fixture decorator (with or without arguments, with or without
-# the ``pytest.`` prefix). Examples:
+# the ``pytest.`` prefix). The leading ``@`` is required so help-text
+# mentions of ``pytest.fixture`` (e.g. inside Click ``--help`` strings
+# captured by the extractor) don't masquerade as a real fixture.
+# Examples that match:
 #   @pytest.fixture
 #   @pytest.fixture(scope="session")
 #   @fixture
 #   @fixture(autouse=True)
 _FIXTURE_DECORATOR_RE = re.compile(r"@(?:pytest\.)?fixture\b")
+
+# Pull ``scope="..."``  (or single-quoted) from the decorator call.
+_SCOPE_RE = re.compile(r"""scope\s*=\s*['"]([a-z]+)['"]""")
+# Pull ``autouse=True`` (or False) — case-sensitive Python literal.
+_AUTOUSE_RE = re.compile(r"\bautouse\s*=\s*(True|False)\b")
+_VALID_SCOPES = frozenset({"function", "class", "module", "package", "session"})
 
 # Match the parameter list of a ``def name(...)`` line. Captures the
 # entire parens-block so we can split on commas.
@@ -73,6 +82,31 @@ def _is_fixture(decorators: str | None) -> bool:
     if not decorators:
         return False
     return bool(_FIXTURE_DECORATOR_RE.search(decorators))
+
+
+def _fixture_scope(decorators: str | None) -> str:
+    """Parse the fixture's scope from its decorator. Defaults to
+    ``function`` when no explicit scope is given (pytest's default).
+
+    Returns one of ``function``, ``class``, ``module``, ``package``,
+    ``session`` — or ``function`` when the decorator string is malformed
+    or doesn't match the recognised set.
+    """
+    if not decorators:
+        return "function"
+    m = _SCOPE_RE.search(decorators)
+    if not m:
+        return "function"
+    scope = m.group(1)
+    return scope if scope in _VALID_SCOPES else "function"
+
+
+def _fixture_autouse(decorators: str | None) -> bool:
+    """True when the fixture is decorated ``@pytest.fixture(autouse=True)``."""
+    if not decorators:
+        return False
+    m = _AUTOUSE_RE.search(decorators)
+    return bool(m and m.group(1) == "True")
 
 
 def _is_test_function(name: str) -> bool:
@@ -147,8 +181,10 @@ def resolve_pytest_fixtures(conn) -> int:
     Returns the number of edges inserted. Idempotent: existing
     ``pytest_fixture_dep`` edges are removed and re-derived each run.
     """
-    # Load every Python function/method symbol with its decorators +
-    # signature + file path. One pass is cheaper than per-fixture queries.
+    # Load Python function/method symbols from test/conftest files only.
+    # Fixtures and test functions exclusively live in those, so we don't
+    # need to scan production code. On a large project this avoids a
+    # full-table scan of symbols.
     rows = conn.execute(
         """
         SELECT s.id, s.name, s.signature, s.decorators, s.kind, f.path AS file_path
@@ -156,6 +192,11 @@ def resolve_pytest_fixtures(conn) -> int:
         JOIN files f ON s.file_id = f.id
         WHERE f.language = 'python'
           AND s.kind IN ('function', 'method')
+          AND (
+              f.file_role = 'test'
+              OR f.path LIKE '%/conftest.py'
+              OR f.path = 'conftest.py'
+          )
         """
     ).fetchall()
     if not rows:
