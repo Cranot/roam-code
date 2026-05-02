@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.7.1] - 2026-05-02
+
+### Performance
+
+- **Cache `_file_text` + `_strip_strings_and_comments`** in detector
+  pipeline. With 19 detectors each calling these per file, the
+  uncached path did N×19 disk reads + N×many strip passes. Now
+  per-process LRU caches (4096-entry cap). On a 17k-file repo,
+  ``roam math`` warm-cache improved from 0.43s → 0.37s.
+
 ## [12.7.0] - 2026-05-02
 
 A 10-round push past v12.6: 7 new idiom detectors (now 19 total),
