@@ -91,6 +91,9 @@ _CORE_TOOLS = {
     "roam_complexity_report",
     "roam_diagnose",
     "roam_trace",
+    # v12.6 — Python-pivot tools (2)
+    "roam_py_types",
+    "roam_py_modern",
     # v12 — retrieval / patch verification / agent fleet planning (3)
     "roam_retrieve",
     "roam_critique",
@@ -3108,6 +3111,58 @@ def complexity_report(threshold: int = 15, root: str = ".") -> dict:
     refactored. For checking a single symbol, prefer context or
     preflight which include complexity data."""
     return _run_roam(["complexity", "--threshold", str(threshold)], root)
+
+
+@_tool(
+    name="roam_py_types",
+    description="Python type-annotation health: % public fns fully typed, Any usage, legacy typing.",
+)
+def py_types_report(detail: bool = False, include_tests: bool = False, root: str = ".") -> dict:
+    """Type-annotation coverage for the indexed Python project.
+
+    Reports % of public functions/methods with full annotations,
+    ``Any`` usage, legacy ``typing.Optional/Dict/List`` (PEP 585/604
+    modernisation candidates), and per-file worst offenders. Use this
+    to direct typing-fix sprints. v12.5+.
+
+    Parameters
+    ----------
+    detail:
+        Include per-file breakdown of worst offenders.
+    include_tests:
+        Include test files in the coverage stats. Default False — test
+        functions rarely have annotations and would drown the production
+        signal.
+    """
+    args = ["py-types"]
+    if detail:
+        args.append("--detail")
+    if include_tests:
+        args.append("--include-tests")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_py_modern",
+    description="Python modernisation signal: walrus, match, PEP 604/585, f-strings vs legacy.",
+)
+def py_modern_report(detail: bool = False, root: str = ".") -> dict:
+    """Modern-Python adoption signal — walrus operator, match
+    statements, PEP 604 (``X | None``), PEP 585 (``dict[…]``), PEP
+    695 type aliases, f-strings vs ``.format()``.
+
+    Use this to gauge how modernised a codebase is and where to focus
+    migration sprints. Counterpart to ``roam_py_types``. v12.6+.
+
+    Parameters
+    ----------
+    detail:
+        Include per-file breakdown of feature usage.
+    """
+    args = ["py-modern"]
+    if detail:
+        args.append("--detail")
+    return _run_roam(args, root)
 
 
 @_tool(

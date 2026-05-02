@@ -4,7 +4,7 @@
 
 **The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
 
-*151 commands · 116 MCP tools · 27 languages · 100% local*
+*152 commands · 118 MCP tools · 27 languages · 100% local*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -81,7 +81,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **151 CLI commands, 116 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`) and `roam_taint_classify` as MCP tools). 33-tool `core` preset is the default for token-budget-conscious clients.
+- **152 CLI commands, 118 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`) and `roam_taint_classify` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -97,7 +97,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - `server.json` for official MCP Registry submission.
 
 ### v11.1.1 -- Command Quality Audit
-- **Full command audit**: all 151 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
+- **Full command audit**: all 152 commands reviewed for usefulness, duplicates, and test coverage. ~20 bugs fixed, 21 new test files (700+ tests), every command docstring updated with cross-references to related commands.
 - **Kotlin promoted to Tier 1** via new YAML-based declarative extractor architecture. Classes, interfaces, enums, objects, functions, methods, properties, and inheritance fully extracted.
 - **7 new commands**: `roam congestion`, `roam adrs`, `roam flag-dead`, `roam test-scaffold`, `roam sbom`, `roam triage`, `roam ci-setup`.
 - **CI templates**: `roam ci-setup` generates pipelines for GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, and Bitbucket.
@@ -252,7 +252,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 146 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **151 commands organised into 7 categories**, but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 147 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **152 commands organised into 7 categories**, but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -342,7 +342,8 @@ roam health
 | `roam ai-ratio [--since N]` | Statistical estimate of AI-generated code ratio using commit-behavior signals |
 | `roam trends [--record] [--days N] [--metric M]` | Historical metrics snapshots with sparklines and trend deltas |
 | `roam complexity [--bumpy-road] [--include-tooling]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
-| `roam py-types [--detail] [--include-tests]` | Python type-annotation health: % of public functions with full annotations, ``Any`` usage, legacy ``typing.Optional/Dict/List`` (PEP 585/604 modernisation candidates), per-file worst offenders. Default-excludes test files |
+| `roam py-types [--detail] [--include-tests] [--ci --min-coverage N]` | Python type-annotation health: % of public functions with full annotations, ``Any`` usage, legacy ``typing.Optional/Dict/List`` (PEP 585/604 modernisation candidates), per-file worst offenders. CI-gateable via ``--ci --min-coverage N`` (exit 5 below threshold). Default-excludes test files |
+| `roam py-modern [--detail]` | Modern-Python adoption signal: counts walrus operator (PEP 572), match statements (PEP 634), PEP 604 ``X \| None``, PEP 585 ``dict[…]``, PEP 695 type aliases, f-strings vs ``.format()``. Reports type-modernisation % and f-string adoption % to gauge migration progress |
 | `roam algo [--task T] [--confidence C] [--profile P]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count + runtime traces, evidence paths, impact scoring, framework-aware N+1 packs, and language-aware fix templates. Alias: `roam math` |
 | `roam n1 [--confidence C] [--verbose]` | Implicit N+1 I/O detection: finds ORM model computed properties (`$appends`/accessors) that trigger lazy-loaded DB queries in collection contexts. Cross-references with eager loading config. Supports Laravel, Django, Rails, SQLAlchemy, JPA |
 | `roam over-fetch [--threshold N] [--confidence C]` | Detect models serializing too many fields: large `$fillable` without `$hidden`/`$visible`, direct controller returns bypassing API Resources, poor exposed-to-hidden ratio |
@@ -891,7 +892,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 116)</strong></summary>
+<summary><strong>MCP tool list (all 118)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -923,6 +924,8 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_affected_tests` | Find tests affected by a change |
 | `roam_dead_code` | List unreferenced exports |
 | `roam_complexity_report` | Per-symbol cognitive complexity |
+| `roam_py_types` | Python type-annotation health (% public typed, Any, legacy typing) |
+| `roam_py_modern` | Modern-Python adoption (walrus, match, PEP 604/585/695, f-strings) |
 | `roam_tour` | Auto-generated onboarding guide |
 | `roam_diagnose` | Root cause analysis for debugging |
 | `roam_visualize` | Generate Mermaid or DOT architecture diagrams |
@@ -1525,8 +1528,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (151 commands)
-│   ├── mcp_server.py                  # MCP server (116 tools, 10 resources, 5 prompts)
+│   ├── cli.py                         # Click CLI (152 commands)
+│   ├── mcp_server.py                  # MCP server (118 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1620,7 +1623,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 151 CLI commands and 116 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 152 CLI commands and 118 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

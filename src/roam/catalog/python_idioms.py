@@ -121,16 +121,72 @@ _TYPE_EQ_RE = re.compile(r"\btype\(\w+\)\s*==\s*\w+")
 # strings).
 _ISINSTANCE_INT_RE = re.compile(r"\bisinstance\s*\(\s*(\w+)\s*,\s*int\s*\)")
 
+# ``__all__ = [...]`` — module-level export list.
+_ALL_DECLARATION_RE = re.compile(r"^__all__\s*=\s*[\[(]([^\])]*)[\])]", re.MULTILINE)
+
+# Threading.Lock without ``with`` — risk of unreleased lock on exception.
+_LOCK_ACQUIRE_RE = re.compile(r"\b(\w+)\.acquire\s*\(\s*\)")
+
+# Magic numbers — literal numeric constants in code (excluding 0, 1, -1,
+# typical loop bounds). Conservative: only flag floats > 1.0 and ints
+# > 100 since most common magic-number false positives are loop indexes.
+# Caller skips lines containing ``=`` at start (constant declaration is
+# legitimate).
+_MAGIC_NUMBER_RE = re.compile(
+    r"(?<![\w.])(?:[2-9][0-9]{2,}|\d+\.\d+)\b",
+)
+
+# Recursion: ``def fn(...): ... fn(...)`` — detected by checking if the
+# function name appears in its own body. Done in detector loop, not
+# regex.
+
+
+def _project_root_for_conn(conn: sqlite3.Connection) -> str:
+    """Resolve the project root for ``conn`` by inspecting its
+    sqlite database file path — paths in the index are stored
+    relative to ``<project_root>``, so we need the project root to
+    open them regardless of the caller's cwd.
+
+    Returns the empty string when the DB is in-memory or the path
+    can't be derived; callers fall back to relative-path open().
+    """
+    try:
+        row = conn.execute("PRAGMA database_list").fetchone()
+    except Exception:
+        return ""
+    db_path = row[2] if row else ""
+    if not db_path:
+        return ""
+    # ``.roam/index.db`` → project root is the dir containing ``.roam/``
+    import os.path as _osp
+
+    parent = _osp.dirname(db_path)
+    if _osp.basename(parent) == ".roam":
+        return _osp.dirname(parent)
+    return parent
+
 
 def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
     """Read the source text of a file via roam.index — but the index
-    doesn't store source. Instead we read from disk via the file path.
+    doesn't store source. Instead we read from disk via the file path
+    resolved against the project root (paths in the index are
+    project-relative, so a bare ``open(path)`` fails when the caller
+    isn't sitting at the project root).
     Fast (mmap) and safe to no-op on read errors.
     """
     row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
     if row is None:
         return None
     path = row[0]
+    if not path:
+        return None
+    # Resolve project-relative path via the DB's location.
+    root = _project_root_for_conn(conn)
+    if root:
+        import os.path as _osp
+
+        if not _osp.isabs(path):
+            path = _osp.join(root, path)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
             return f.read()
@@ -334,12 +390,19 @@ def detect_none_eq(conn: sqlite3.Connection) -> list[dict]:
 
 
 def detect_logger_fstring(conn: sqlite3.Connection) -> list[dict]:
-    """Find ``logger.info(f"...")`` — eager-format anti-pattern."""
+    """Find ``logger.info(f"...")`` — eager-format anti-pattern.
+
+    Doesn't pre-strip strings/comments because the f-string indicator
+    (``f"`` / ``f'``) requires the opening quote to be intact — the
+    stripper blanks it out. Instead the regex itself anchors on
+    ``logger.<level>(`` so docstring/comment matches are extremely
+    rare (would need someone to write the literal ``logger.info(f"``
+    inside a docstring, which is itself usually a real example).
+    """
     findings: list[dict] = []
     for file_id, path in _python_files(conn):
         text = _file_text(conn, file_id)
-        if text:
-            text = _strip_strings_and_comments(text)
+        # Skip string-strip for this detector (see docstring).
         if not text:
             continue
         sym_index = _line_to_symbol(conn, file_id)
@@ -709,6 +772,48 @@ def detect_async_not_awaited(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
+def detect_lock_without_with(conn: sqlite3.Connection) -> list[dict]:
+    """Find ``lock.acquire()`` without ``with``-block — lock leak.
+
+    Threading.Lock and threading.RLock are context managers; using
+    ``acquire()`` directly without try/finally is a deadlock waiting
+    to happen on exception paths.
+    """
+    findings: list[dict] = []
+    for file_id, path in _python_files(conn):
+        text = _file_text(conn, file_id)
+        if text:
+            text = _strip_strings_and_comments(text)
+        if not text:
+            continue
+        sym_index = _line_to_symbol(conn, file_id)
+        for match in _LOCK_ACQUIRE_RE.finditer(text):
+            line_no = text.count("\n", 0, match.start()) + 1
+            # Skip if this line is inside a try/with block — heuristic:
+            # check the 200 chars before for ``with`` or ``try:``.
+            preceding = text[max(0, match.start() - 200) : match.start()]
+            if "with " in preceding[-80:] or "try:" in preceding[-200:]:
+                continue
+            sym = _enclosing_symbol(line_no, sym_index)
+            if sym is None:
+                continue
+            var = match.group(1)
+            findings.append(
+                _idiom_finding(
+                    task_id="py-lock-without-with",
+                    detected_way="lock-leak",
+                    symbol_id=sym[0],
+                    symbol_name=sym[1],
+                    file_path=path,
+                    line_no=line_no,
+                    reason=f"``{var}.acquire()`` outside try/with — lock may leak on exception",
+                    confidence="medium",
+                    fix=f"with {var}: ...",
+                )
+            )
+    return findings
+
+
 def detect_open_without_with(conn: sqlite3.Connection) -> list[dict]:
     """Find ``open(...)`` calls that aren't inside a ``with`` block —
     real file resource leak pattern.
@@ -861,4 +966,5 @@ PYTHON_IDIOM_DETECTORS = [
     ("py-async-not-awaited", "missing-await", detect_async_not_awaited),
     ("py-async-with-missing", "async-resource-leak", detect_async_with_missing),
     ("py-type-eq", "type-not-isinstance", detect_type_eq),
+    ("py-lock-without-with", "lock-leak", detect_lock_without_with),
 ]

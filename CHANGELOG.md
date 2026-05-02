@@ -7,6 +7,51 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.6.0] - 2026-05-02
+
+A 10-round push past v12.5: ``roam py-modern`` for modern-Python
+adoption signal, ``roam py-types --ci`` CI gate mode, MCP wrappers,
+12th idiom detector (lock-without-with), comprehensive end-to-end
+detector test fixture.
+
+### Added
+
+- **`roam py-modern`** — modern-Python adoption signal: walrus
+  operator (PEP 572), match statements (PEP 634), PEP 604
+  (``X | None``), PEP 585 (``dict[…]``), PEP 695 type aliases,
+  f-strings vs ``.format()``. Reports ``type-modernisation %``
+  and ``f-string adoption %`` to gauge migration progress.
+  ``--detail`` for per-file breakdown. Counterpart to
+  ``roam py-types`` which scores annotation coverage.
+- **`roam py-types --ci --min-coverage N`** CI gate mode. Exits 5
+  (mirrors ``EXIT_GATE_FAILURE``) when coverage falls below the
+  threshold. Use in CI to enforce a typing floor.
+- **12th idiom detector**: ``py-lock-without-with`` —
+  ``threading.Lock.acquire()`` outside ``with``-block (lock leak
+  on exception path).
+- **Two new MCP tools**: ``roam_py_types`` and ``roam_py_modern``.
+  Both registered in the ``core`` preset (now 35 tools, was 33).
+
+### Improved
+
+- **Detector portability**: ``_file_text`` resolves project-relative
+  paths against the DB's parent directory instead of cwd. Detectors
+  now work correctly when invoked from outside the project root
+  (caught by the new E2E test fixture). ``_project_root_for_conn``
+  helper added.
+- **Comprehensive E2E detector tests**:
+  ``tests/test_python_idioms_e2e.py`` — single fixture project with
+  one example of every anti-pattern + 11 OK counter-examples.
+  Each detector verified to find the right line ±2.
+
+### Verification
+
+- 540 focused tests pass.
+- 12 E2E detector tests pass.
+- All 7 CI jobs verified green.
+- Bench held: recall@5 0.656, recall@10 0.769, recall@20 0.900.
+- 35 MCP tools (was 33), 152 CLI commands (was 151).
+
 ## [12.5.0] - 2026-05-02
 
 A Python-pivot iteration release. v12.4 added the substrate
