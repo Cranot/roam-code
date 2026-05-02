@@ -684,6 +684,90 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
     )
 
 
+# ── Taint analysis ────────────────────────────────────────────────────
+
+
+def taint_to_sarif(findings: list[dict]) -> dict:
+    """SARIF output for ``roam taint``.
+
+    Each finding becomes one result located at its sink, with a
+    code-flow describing the source-to-sink path. One SARIF rule per
+    distinct ``rule_id`` (e.g. ``python-sqli``, ``js-xss``). Sanitized
+    findings are kept and downgraded to ``note`` so a CI gate can still
+    surface them as remediated under OpenVEX.
+
+    Each finding dict is the per-finding shape that ``cmd_taint`` builds
+    via its ``findings_dump`` list.
+    """
+    seen_rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for f in findings:
+        rule_id = f.get("rule_id", "taint/unknown")
+        severity = f.get("severity", "warning")
+        cwe = f.get("cwe") or ""
+        sanitized = bool(f.get("sanitizer_in_path"))
+        # Sanitized findings are downgraded to note so they don't
+        # break a CI gate that fails on warnings/errors.
+        level = "note" if sanitized else _to_level(severity.upper())
+
+        if rule_id not in seen_rules:
+            short = f"Taint: {rule_id}"
+            if cwe:
+                short += f" ({cwe})"
+            seen_rules[rule_id] = {
+                "id": rule_id,
+                "shortDescription": short,
+                "helpUri": _HELP_BASE + "taint",
+                "defaultLevel": _to_level(severity.upper()),
+            }
+
+        sink = f.get("sink") or {}
+        sink_file = sink.get("file") or ""
+        sink_line = sink.get("line")
+        locations = [_location(sink_file, sink_line)] if sink_file else []
+
+        # Build a SARIF code-flow from the source → sink hops so the
+        # GitHub Code Scanning UI shows the actual path.
+        thread_locations = []
+        for step in f.get("path", []) or []:
+            sf = step.get("file") or ""
+            sl = step.get("line")
+            if not sf:
+                continue
+            thread_locations.append(
+                {
+                    "location": _location(sf, sl),
+                    "module": step.get("name") or "",
+                }
+            )
+
+        src = f.get("source") or {}
+        sink_name = sink.get("name") or "<sink>"
+        src_name = src.get("name") or "<source>"
+        msg_parts = [f"Tainted flow: {src_name} → {sink_name}"]
+        if sanitized:
+            vex = f.get("vex_justification")
+            msg_parts.append(f"(sanitized; OpenVEX: {vex})" if vex else "(sanitized)")
+
+        result: dict = {
+            "ruleId": rule_id,
+            "level": level,
+            "message": {"text": " ".join(msg_parts)},
+            "locations": locations,
+        }
+        if thread_locations:
+            result["codeFlows"] = [{"threadFlows": [{"locations": thread_locations}]}]
+        results.append(result)
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        list(seen_rules.values()),
+        results,
+    )
+
+
 # ── Secret scanning ──────────────────────────────────────────────────
 
 
