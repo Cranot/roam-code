@@ -75,8 +75,25 @@ def _signature_health(signature: str | None) -> dict:
         "signal (Python pivot v12.4-iter dogfood)."
     ),
 )
+@click.option(
+    "--min-coverage",
+    type=int,
+    default=None,
+    help=(
+        "CI gate: exit 5 (EXIT_GATE_FAILURE) when type coverage is below "
+        "this percentage. Pair with ``--ci`` for gate semantics. Skipped "
+        "when no coverage data."
+    ),
+)
+@click.option(
+    "--ci",
+    "ci_mode",
+    is_flag=True,
+    default=False,
+    help="CI mode: exit 5 if --min-coverage threshold not met (no-op without --min-coverage).",
+)
 @click.pass_context
-def py_types(ctx, detail, limit, include_tests):
+def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
     """Show Python type-annotation health for the indexed project.
 
     Counts public functions/methods that:
@@ -194,3 +211,10 @@ def py_types(ctx, detail, limit, include_tests):
                 ],
             )
         )
+
+    # CI gate — exit 5 (mirrors EXIT_GATE_FAILURE used by ``roam rules
+    # --ci``) when coverage falls below the requested threshold.
+    if ci_mode and min_coverage is not None and coverage < min_coverage:
+        click.echo()
+        click.echo(f"GATE FAILED: coverage {coverage}% < required {min_coverage}%")
+        ctx.exit(5)
