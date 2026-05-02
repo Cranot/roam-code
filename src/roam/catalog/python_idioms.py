@@ -210,19 +210,46 @@ def _project_root_for_conn(conn: sqlite3.Connection) -> str:
     return parent
 
 
+# Per-process cache of file-text reads. With 19 detectors each calling
+# ``_file_text`` per file, an uncached implementation does 19×N disk
+# reads. Cache keyed by ``(id(conn), file_id)`` so distinct DB
+# connections don't collide. Cleared at module unload (or via
+# ``_clear_file_text_cache()`` in tests). Bounded in size at 4096
+# entries to avoid unbounded growth on huge repos; LRU-evicted.
+from collections import OrderedDict as _OrderedDict
+
+_FILE_TEXT_CACHE: _OrderedDict = _OrderedDict()
+_FILE_TEXT_CACHE_MAX = 4096
+
+
+def _clear_file_text_cache() -> None:
+    """Clear the file-text cache. Call from tests that want clean state."""
+    _FILE_TEXT_CACHE.clear()
+
+
 def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
     """Read the source text of a file via roam.index — but the index
     doesn't store source. Instead we read from disk via the file path
     resolved against the project root (paths in the index are
     project-relative, so a bare ``open(path)`` fails when the caller
     isn't sitting at the project root).
-    Fast (mmap) and safe to no-op on read errors.
+
+    Caches results across calls within a process so all 19+ detectors
+    pay the disk read once per file rather than 19+ times.
     """
+    cache_key = (id(conn), file_id)
+    cached = _FILE_TEXT_CACHE.get(cache_key)
+    if cached is not None:
+        # LRU bump
+        _FILE_TEXT_CACHE.move_to_end(cache_key)
+        return cached if cached != "" else None  # sentinel for "tried, failed"
     row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
     if row is None:
+        _FILE_TEXT_CACHE[cache_key] = ""
         return None
     path = row[0]
     if not path:
+        _FILE_TEXT_CACHE[cache_key] = ""
         return None
     # Resolve project-relative path via the DB's location.
     root = _project_root_for_conn(conn)
@@ -233,9 +260,15 @@ def _file_text(conn: sqlite3.Connection, file_id: int) -> str | None:
             path = _osp.join(root, path)
     try:
         with open(path, encoding="utf-8", errors="replace") as f:
-            return f.read()
+            text = f.read()
     except OSError:
+        _FILE_TEXT_CACHE[cache_key] = ""
         return None
+    _FILE_TEXT_CACHE[cache_key] = text
+    # LRU eviction
+    if len(_FILE_TEXT_CACHE) > _FILE_TEXT_CACHE_MAX:
+        _FILE_TEXT_CACHE.popitem(last=False)
+    return text
 
 
 # Triple-quoted strings (greedy across newlines), single/double quoted
@@ -250,27 +283,39 @@ _SINGLE_QUOTE_RE = re.compile(r'("(?:\\.|[^"\\\n])*"|\'(?:\\.|[^\'\\\n])*\')')
 _COMMENT_RE = re.compile(r"#[^\n]*")
 
 
+_STRIP_CACHE: _OrderedDict = _OrderedDict()
+_STRIP_CACHE_MAX = 4096
+
+
 def _strip_strings_and_comments(text: str) -> str:
     """Replace strings + comments with same-length whitespace so the
     detector regexes don't false-match inside docstrings or comments.
 
     Length-preserving so ``text.count("\n", 0, match.start())`` still
-    yields the original line number. Test the dogfood case:
-    ``r"def\\s+\\w+\\s*\\(...."`` regex source no longer trips
-    ``_MUTABLE_DEFAULT_RE`` when it scans python_idioms.py itself.
+    yields the original line number. Cached because all detectors
+    that strip apply the same transform — without caching we re-strip
+    once per detector per file.
     """
     if not text:
         return text
+    # Cache key: id() of the original string (CPython gives unique
+    # ids while alive). Combined with len() to catch the rare case
+    # of id-reuse after string GC.
+    key = (id(text), len(text))
+    cached = _STRIP_CACHE.get(key)
+    if cached is not None:
+        _STRIP_CACHE.move_to_end(key)
+        return cached
 
     def _blank(match: re.Match) -> str:
-        # Preserve newlines — re-blanking with spaces would collapse
-        # multi-line docstrings into one logical line for downstream
-        # regexes that use ``^`` / ``$`` anchors.
         return "".join(" " if c != "\n" else "\n" for c in match.group(0))
 
     out = _TRIPLE_QUOTE_RE.sub(_blank, text)
     out = _SINGLE_QUOTE_RE.sub(_blank, out)
     out = _COMMENT_RE.sub(_blank, out)
+    _STRIP_CACHE[key] = out
+    if len(_STRIP_CACHE) > _STRIP_CACHE_MAX:
+        _STRIP_CACHE.popitem(last=False)
     return out
 
 
