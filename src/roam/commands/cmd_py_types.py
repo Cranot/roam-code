@@ -28,18 +28,37 @@ from roam.output.formatter import format_table, json_envelope, to_json
 _OLD_TYPING_RE = re.compile(r"\b(Optional|Dict|List|Set|Tuple|FrozenSet)\[")
 _ANY_RE = re.compile(r"\bAny\b")
 _PARAM_RE = re.compile(r"\(([^)]*)\)")
+# The signature column stores decorators + def line (e.g.
+# ``@_tool(name=..., output_schema=...)\ndef foo(x: int) -> dict``).
+# Anchor param extraction at ``def NAME(`` so decorator arguments
+# don't masquerade as untyped params. ``async def`` covered via
+# the optional ``async`` group.
+_DEF_PARAM_RE = re.compile(r"(?:async\s+)?def\s+\w+\s*\(([^)]*)\)")
+# ``->`` only counts when it's the def's return type, not in a
+# decorator's lambda or in a string default value. Anchor on the
+# closing paren of the def line.
+_DEF_RETURN_RE = re.compile(r"(?:async\s+)?def\s+\w+\s*\([^)]*\)\s*->")
 
 
 def _signature_health(signature: str | None) -> dict:
-    """Return a per-symbol annotation snapshot."""
+    """Return a per-symbol annotation snapshot.
+
+    The stored signature includes any decorator chain, so we anchor
+    the param + return scan on the ``def NAME(`` token rather than the
+    first ``(...)`` block — otherwise a ``@register(name="x")``
+    decorator's arguments are read as untyped function parameters.
+    """
     if not signature:
         return {"has_return": False, "params_typed": 0, "params_untyped": 0, "uses_any": False, "old_typing": False}
-    has_return = "->" in signature
+    has_return = bool(_DEF_RETURN_RE.search(signature))
     uses_any = bool(_ANY_RE.search(signature))
     old_typing = bool(_OLD_TYPING_RE.search(signature))
     params_typed = 0
     params_untyped = 0
-    paren_match = _PARAM_RE.search(signature)
+    # Anchor at ``def NAME(...)`` — falls back to the first ``(...)``
+    # if the signature has no def keyword (defensive for unusual
+    # symbols that ended up in the table but aren't actually fns).
+    paren_match = _DEF_PARAM_RE.search(signature) or _PARAM_RE.search(signature)
     if paren_match:
         param_text = paren_match.group(1)
         for raw in param_text.split(","):
