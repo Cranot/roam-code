@@ -15,6 +15,11 @@
       "file": "tn_eager_loading.py",
       "should_fire_lines": [],
       "rationale": "select_related / prefetch_related / outside-loop / in_bulk all defuse the pattern"
+    },
+    {
+      "file": "tn_not_django.py",
+      "should_fire_lines": [],
+      "rationale": "no Django context in file — custom collection class with .all() should not fire"
     }
   ]
 }
