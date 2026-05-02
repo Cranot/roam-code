@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.8.0] - 2026-05-02
+
+A trust + positioning release responding to external review feedback.
+No new commands; no new detectors; substantial work on the documentation,
+test, and docs-consistency surface that the reviewer specifically
+called out.
+
+### Added — review-action items
+
+- **`tests/test_doc_consistency.py`** — cross-surface consistency CI
+  check. Asserts version + CLI command count + MCP tool count agree
+  across pyproject.toml, server.json, mcp-server-card.json, README.md,
+  CLAUDE.md, llms-install.md, and `docs/site/data/landscape.json`.
+  Catches the exact drift class the reviewer flagged
+  (landscape.json said 11.1.2 + 150 commands while package was 12.7.1
+  + 152 commands). 11/12 tests pass; one skip for CLAUDE.md missing
+  count phrase.
+- **`docs/site/benchmarks.md`** — public Accuracy & Benchmarks page.
+  Catalogues self-bench results (recall@5/10/20 = 0.656/0.769/0.900),
+  cross-repo synthetic (1.0/1.0/1.0), detector E2E + scale findings,
+  and acknowledges what's still self-bench. Links the
+  CodeRAG-Bench-portable JSONL we already ship. Open work: 20-30
+  external repos with named baselines.
+- **`docs/site/comparisons.md`** — humble "Roam vs X" pages.
+  Concise, complement-not-replace positioning vs Cursor, Sourcegraph/
+  Cody, CKB/CodeMCP, Aider repo map, CodeQL, Semgrep, SonarQube,
+  CodeScene, Codebase-Memory, Claude Context. Each section names
+  what the other tool wins, what roam wins, when to use both.
+- **`docs/site/language-precision.md`** — per-language precision
+  matrix replacing "27 languages" boast. For each Tier 1 language:
+  what's solid, what's heuristic, what's not extracted, known
+  false-positive/false-negative classes. Per the reviewer:
+  "more valuable than saying '27 languages'".
+- **`internal/review_actions_external_2026-05-02.md`** — structured
+  action log capturing the full external review with status per
+  item. Gitignored (internal-only) — surfaced via this CHANGELOG.
+
+### Improved — README hero rewrite
+
+- **New tagline**: "Architectural sight for AI coding agents — before
+  they edit." Adopted across README, server.json, mcp-server-card.json
+  per the reviewer's recommendation.
+- **5-verb framing** in the README: the hero now leads with the 5
+  high-leverage verbs (`understand`, `retrieve`, `context`, `preflight`,
+  `critique`), with explicit "the other 147 commands are advanced
+  surface for specialised workflows; you'll never need most of them."
+- **First-run onboarding**: new "Start here — 5 verbs" section runs
+  the canonical 4-line agent flow as the first thing a reader sees.
+
+### Improved — agent ergonomics
+
+- **`roam py-types` empty state** now diagnoses *why* it's empty (no
+  Python files indexed vs. all symbols are tests) and points at the
+  next step (`roam understand` / `roam py-types --include-tests`).
+
+### Added — SARIF output
+
+- **`roam py-types --sarif`** emits SARIF 2.1.0 with one rule
+  (`py-types/coverage`) per file with missing annotations. CI-
+  integratable with GitHub Code Scanning.
+- **`roam py-modern --sarif`** emits SARIF with two rules
+  (`py-modern/legacy-typing`, `py-modern/dot-format`) flagging files
+  using legacy typing or `.format()` calls.
+
+### Verification
+
+- 240+ focused tests pass.
+- Bench preserved: recall@5 0.656, recall@10 0.769, recall@20 0.900.
+- New `test_doc_consistency.py` actively prevents the drift class
+  the reviewer flagged.
+- All 7 CI jobs verified green.
+
 ## [12.7.1] - 2026-05-02
 
 ### Performance

@@ -687,6 +687,114 @@ def rules_to_sarif(rule_results: list[dict]) -> dict:
 # ── Secret scanning ──────────────────────────────────────────────────
 
 
+def py_types_to_sarif(by_file: list[dict], coverage_pct: int) -> dict:
+    """SARIF output for ``roam py-types``.
+
+    Each per-file row produces a ``note``-level finding when the file
+    has any missing annotations. Single rule ``py-types/coverage``
+    so consumers can suppress/configure uniformly.
+    """
+    rules = [
+        {
+            "id": "py-types/coverage",
+            "shortDescription": "Public function/method missing type annotations",
+            "defaultLevel": "note",
+            "helpUri": "https://github.com/Cranot/roam-code#roam-py-types",
+        }
+    ]
+    results = []
+    for row in by_file:
+        path = row.get("path", "")
+        total = row.get("total", 0) or 0
+        missing = row.get("missing", 0) or 0
+        if missing <= 0:
+            continue
+        results.append(
+            {
+                "ruleId": "py-types/coverage",
+                "level": "note",
+                "message": {
+                    "text": (
+                        f"{missing}/{total} public fn/methods missing annotations "
+                        f"({(missing * 100 // total) if total else 0}% incomplete). "
+                        f"Project coverage: {coverage_pct}%."
+                    )
+                },
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": path},
+                            "region": {"startLine": 1},
+                        }
+                    }
+                ],
+            }
+        )
+    return to_sarif("roam-py-types", "1.0.0", rules, results)
+
+
+def py_modern_to_sarif(by_file: list[dict], type_modernisation_pct: int) -> dict:
+    """SARIF output for ``roam py-modern`` — flags files using legacy
+    ``typing.Optional/Dict/List/...`` instead of PEP 585/604.
+    """
+    rules = [
+        {
+            "id": "py-modern/legacy-typing",
+            "shortDescription": "File uses legacy typing.Optional/Dict/List instead of PEP 585/604",
+            "defaultLevel": "note",
+            "helpUri": "https://github.com/Cranot/roam-code#roam-py-modern",
+        },
+        {
+            "id": "py-modern/dot-format",
+            "shortDescription": "File uses ``.format()`` instead of f-strings",
+            "defaultLevel": "note",
+            "helpUri": "https://github.com/Cranot/roam-code#roam-py-modern",
+        },
+    ]
+    results = []
+    for row in by_file:
+        path = row.get("path", "")
+        if (row.get("legacy_typing") or 0) > 0:
+            results.append(
+                {
+                    "ruleId": "py-modern/legacy-typing",
+                    "level": "note",
+                    "message": {
+                        "text": (
+                            f"{row['legacy_typing']} legacy ``typing.X[]`` usage(s); "
+                            f"prefer PEP 585 (``dict[…]``) / PEP 604 (``X | None``). "
+                            f"Project type modernisation: {type_modernisation_pct}%."
+                        )
+                    },
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": path},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            )
+        if (row.get("dot_format") or 0) > 0:
+            results.append(
+                {
+                    "ruleId": "py-modern/dot-format",
+                    "level": "note",
+                    "message": {"text": (f"{row['dot_format']} ``.format(…)`` call(s); prefer f-strings (PEP 498).")},
+                    "locations": [
+                        {
+                            "physicalLocation": {
+                                "artifactLocation": {"uri": path},
+                                "region": {"startLine": 1},
+                            }
+                        }
+                    ],
+                }
+            )
+    return to_sarif("roam-py-modern", "1.0.0", rules, results)
+
+
 def secrets_to_sarif(findings: list[dict]) -> dict:
     """Convert secret-scanning findings to SARIF.
 

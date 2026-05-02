@@ -2,9 +2,11 @@
 
 # roam-code
 
-**The architectural intelligence layer for AI coding agents. Structural graph, architecture governance, multi-agent orchestration, vulnerability mapping, runtime analysis -- one CLI, zero API keys.**
+**Architectural sight for AI coding agents — before they edit.**
 
-*152 commands · 118 MCP tools · 27 languages · 100% local*
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 147 specialised commands are advanced surface for specialised workflows.
+
+*152 commands · 118 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -23,13 +25,28 @@ Roam is a structural intelligence engine for software. It pre-indexes your codeb
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 139 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 152 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            27 languages   + edges            govern
            git history    + metrics          refactor
            runtime traces + architecture     orchestrate
 ```
+
+### Start here — the 5 verbs that cover ~80% of agent workflows
+
+```bash
+pip install roam-code
+
+cd your-repo/
+roam understand                       # 1. landing pad — what is this codebase?
+roam retrieve "where is auth?"        # 2. graph-aware retrieval for free-form tasks
+roam context AuthService              # 3. exact files+lines to read before changing
+roam preflight AuthService            # 4. blast radius + tests + complexity check
+git diff | roam critique              # 5. patch verifier — clones-not-edited, hot-path
+```
+
+That's the full mental model. The other CLI surface — `taint`, `fleet`, `cga`, `simulate`, `mutate`, `partition`, `attest`, `eval-retrieve`, `oracle`, `py-types`, `py-modern`, `dark-matter`, `clones`, `propagation`, `fingerprint`, etc. — is advanced surface for specialised workflows; you'll never need most of them.
 
 ### The problem
 

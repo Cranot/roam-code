@@ -138,6 +138,14 @@ def py_modern(ctx, detail, limit):
             )
             return
 
+        sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+        if sarif_mode:
+            from roam.output.sarif import py_modern_to_sarif, write_sarif
+
+            by_file_list = [{"path": p, **c} for p, c in sorted(per_file.items(), key=lambda kv: -sum(kv[1].values()))]
+            click.echo(write_sarif(py_modern_to_sarif(by_file_list, type_ratio)))
+            return
+
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"  files scanned:        {totals['files']}")
         click.echo()
