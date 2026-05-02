@@ -72,16 +72,28 @@ def _default_rules_dir() -> Path:
     "--rules-pack",
     "rules_pack",
     type=click.Choice(
-        ["sqli", "xss", "ssrf", "path-traversal", "command-injection", "deserialization"],
+        [
+            "sqli",
+            "xss",
+            "ssrf",
+            "path-traversal",
+            "command-injection",
+            "deserialization",
+            "open-redirect",
+            "urllib",
+            "socketio",
+            "fileupload",
+        ],
         case_sensitive=False,
     ),
     default=None,
     help=(
         "Run a single starter pack: sqli, xss, ssrf, path-traversal, "
-        "command-injection, or deserialization. Sugar over --rule for "
-        "discoverability — listed in MEMORY.md and external docs but "
-        "absent from the CLI before the dogfood sprint. Combinable with "
-        "--rules-dir to filter inside a custom pack directory."
+        "command-injection, deserialization, open-redirect (urllib.parse), "
+        "socketio (python-socketio remote input), or fileupload "
+        "(Java FileItem / Part path traversal). Sugar over --rule for "
+        "discoverability. Combinable with --rules-dir to filter inside "
+        "a custom pack directory."
     ),
 )
 @click.pass_context
