@@ -99,7 +99,6 @@ async def run_with_phase_progress(
 
     await _ctx_report_progress(ctx, 2, total=100, message=initial_message)
 
-    loop = asyncio.get_running_loop()
     proc = await asyncio.create_subprocess_exec(
         *full_cmd,
         cwd=cwd,

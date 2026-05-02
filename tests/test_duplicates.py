@@ -593,8 +593,7 @@ class TestInternalFunctions:
         uf = _UnionFind()
         uf.union(1, 2)
         uf.union(2, 3)
-        clusters = uf.clusters()
-        # 1, 2, 3 should be in the same cluster
+        # 1, 2, 3 should resolve to the same root
         roots = {uf.find(1), uf.find(2), uf.find(3)}
         assert len(roots) == 1
 

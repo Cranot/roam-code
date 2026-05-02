@@ -307,9 +307,8 @@ class TestDoctorIndexExistsCheck:
         db_path.parent.mkdir(parents=True, exist_ok=True)
         db_path.touch()
 
-        with patch("roam.commands.cmd_doctor.Path") as mock_path_cls:
-            # Patch get_db_path instead
-            pass
+        # Original test patched cmd_doctor.Path but used get_db_path patch
+        # below, so the Path patch was a no-op left over from a refactor.
 
         with patch("roam.db.connection.get_db_path", return_value=db_path):
             check = _check_index_exists()

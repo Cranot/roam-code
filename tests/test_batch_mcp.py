@@ -248,7 +248,6 @@ class TestBatchSearchOne:
         conn.close()
         # LIKE fallback should still produce results
         assert err is None
-        names = [r["name"] for r in rows]
         assert len(rows) >= 1
 
     def test_no_results(self, tmp_db):

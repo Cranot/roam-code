@@ -130,7 +130,6 @@ ignore = [
     "E501",   # line-too-long — handled by ruff format; remaining are long strings/SQL
     "E731",   # lambda-assignment — used for concise dispatch tables
     "E741",   # ambiguous variable names (G, l, etc.) — common in graph code
-    "F841",   # unused-variable — often intentional destructuring
 ]
 
 [tool.ruff.lint.per-file-ignores]

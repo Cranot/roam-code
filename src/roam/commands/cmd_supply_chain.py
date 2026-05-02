@@ -213,6 +213,12 @@ def _parse_pyproject_toml(path: Path, source: str) -> list[Dependency]:
     except OSError:
         return deps
 
+    # Strip TOML comments line-by-line so apostrophes inside English
+    # comments (e.g. ``# when these aren't installed``) don't open
+    # fake quoted strings for the regex below to match. A line-by-line
+    # strip is safe because TOML comments end at end-of-line.
+    text = "\n".join(re.sub(r"\s#.*$|^\s*#.*$", "", line) for line in text.splitlines())
+
     # PEP 621 [project] format
     sec_m = re.search(r"^\[project\]", text, re.MULTILINE)
     if sec_m:
