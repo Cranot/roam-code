@@ -159,6 +159,14 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
         for f in findings
     ]
 
+    if sarif_mode:
+        from roam.output.sarif import taint_to_sarif, write_sarif
+
+        click.echo(write_sarif(taint_to_sarif(findings_dump)))
+        if ci_mode and high_count > 0:
+            ctx.exit(5)
+        return
+
     if json_mode:
         click.echo(
             to_json(
