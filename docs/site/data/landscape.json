@@ -7,15 +7,15 @@
       "name": "roam-code",
       "category": "mcp_server",
       "category_label": "CLI Tool",
-      "stars": "455",
-      "mcp": "119",
+      "stars": "286",
+      "mcp": "120",
       "local": true,
-      "cli_commands": "153 canonical (+3 alias)",
+      "cli_commands": "154 canonical (+3 alias)",
       "graph": "PageRank + Tarjan + Louvain + layers",
       "arch": 92,
       "agent": 97,
       "scores": {
-        "total": 91,
+        "total": 94,
         "max_total": 100,
         "map_x": 97,
         "map_y": 92,
@@ -324,7 +324,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "one_command",
                 "points": 3,
                 "max": 3,
@@ -391,7 +391,7 @@
           {
             "id": "unique_capabilities",
             "label": "Unique Capabilities",
-            "score": 7,
+            "score": 10,
             "max": 10,
             "criteria": [
               {
@@ -421,8 +421,8 @@
               {
                 "id": "multi_repo_federation",
                 "label": "Multi-repo federation",
-                "value": false,
-                "points": 0,
+                "value": true,
+                "points": 3,
                 "max": 3,
                 "type": "binary"
               },
@@ -443,10 +443,10 @@
       "status": "Graph-first code intelligence CLI + MCP server",
       "relationship": "self",
       "peer": true,
-      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 119 MCP tools, 153 CLI commands. 19 Python idiom detectors (v12.7+).",
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 120 MCP tools, 154 CLI commands. 19 Python idiom detectors (v12.7+).",
       "confidence": "Medium",
       "source_count": 1,
-      "last_verified": "2026-05-02",
+      "last_verified": "2026-02-27",
       "claim_type": "measured",
       "version_evaluated": "12.7.1",
       "repo_url": "https://github.com/Cranot/roam-code"
@@ -772,7 +772,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "heavy_config",
                 "points": 1,
                 "max": 3,
@@ -905,7 +905,7 @@
       "category": "mcp_server",
       "category_label": "MCP Server",
       "stars": "59",
-      "mcp": "76–92 (core 14)",
+      "mcp": "76\u201392 (core 14)",
       "local": true,
       "cli_commands": "N/A",
       "graph": "SCIP symbol graph",
@@ -1221,7 +1221,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "light_config",
                 "points": 2,
                 "max": 3,
@@ -1670,7 +1670,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "light_config",
                 "points": 2,
                 "max": 3,
@@ -2118,7 +2118,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "heavy_config",
                 "points": 1,
                 "max": 3,
@@ -2566,7 +2566,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "light_config",
                 "points": 2,
                 "max": 3,
@@ -3014,7 +3014,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "one_command",
                 "points": 3,
                 "max": 3,
@@ -3462,7 +3462,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "heavy_config",
                 "points": 1,
                 "max": 3,
@@ -3910,7 +3910,7 @@
               },
               {
                 "id": "zero_config_setup",
-                "label": "Zero-config setup (install → insights)",
+                "label": "Zero-config setup (install \u2192 insights)",
                 "value": "light_config",
                 "points": 2,
                 "max": 3,
@@ -4417,7 +4417,7 @@
         },
         {
           "id": "zero_config_setup",
-          "label": "Zero-config setup (install → insights)",
+          "label": "Zero-config setup (install \u2192 insights)",
           "type": "tiered",
           "max": 3,
           "tiers": {

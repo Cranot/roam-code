@@ -357,7 +357,10 @@ CRITERIA_DATA: dict[str, dict[str, object]] = {
         "multi_agent_partitioning": True,
         "structural_pattern_matching": True,
         "semantic_search": True,
-        "multi_repo_federation": False,
+        # roam ws: init / status / understand / context / resolve / trace
+        # / health subcommands provide cross-repo workspaces with API
+        # connection detection and cross-repo symbol paths.
+        "multi_repo_federation": True,
         "daemon_live_watch": True,
     },
     "CKB/CodeMCP": {
@@ -1360,8 +1363,8 @@ MAP_METADATA: dict[str, dict[str, object]] = {
         "relationship": "self",
         "peer": True,
         "graph": "PageRank + Tarjan + Louvain + layers",
-        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 116 MCP tools, 150 CLI commands.",
-        "version_evaluated": "11.1.2",
+        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 120 MCP tools, 154 CLI commands. 19 Python idiom detectors (v12.7+).",
+        "version_evaluated": "12.7.1",
         "repo_url": "https://github.com/Cranot/roam-code",
     },
     "CKB/CodeMCP": {

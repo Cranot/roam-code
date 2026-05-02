@@ -9,12 +9,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [12.8.0] - 2026-05-02
 
-A documentation, positioning, and trust-scaffold release plus one new
-command for pytest-heavy projects. The headline work is a CI check
-that prevents documentation drift, three new public docs pages that
-ground the project's claims in evidence, SARIF output for the Python
-idiom detectors, and a ``pytest-fixtures`` command that materialises
-the implicit fixture dependency graph.
+A documentation, positioning, and trust-scaffold release plus two new
+commands (``pytest-fixtures`` and ``hover``), tighter ORM detector
+precision, full SARIF coverage, and a documentation-drift CI check.
+
+### Added — ``roam hover``
+
+- **``roam hover SYMBOL``** — single-line architectural summary
+  bounded at ~200 tokens: kind, qualified name, file:line,
+  blast-radius bucket, top caller, top callee. Designed for IDE
+  hover plugins and chat-inline references where ``roam context`` is
+  too verbose.
+- **``roam_hover``** MCP tool wraps it for agents.
+- **``ask`` recipe** ``fixture-impact`` — natural-language queries
+  like "what depends on cli_runner" route to
+  ``roam pytest-fixtures --reverse``.
+
+### Added — SARIF for taint analysis
+
+- **``roam --sarif taint``** emits SARIF 2.1.0 with one rule per
+  taint rule_id (e.g. ``python-sqli``, ``js-xss``) and a SARIF
+  code-flow describing each source-to-sink path. Sanitized findings
+  are downgraded to ``note`` level so they don't fail a CI gate but
+  still surface for OpenVEX-style remediation tracking.
 
 ### Added — pytest fixture dependency edges
 
@@ -26,9 +43,17 @@ the implicit fixture dependency graph.
   Resolves through ``conftest.py`` chains the way pytest itself does.
 - **``--unused`` flag** — list fixtures with no dependents (orphaned
   test infrastructure left behind by refactors).
+- **``--reverse`` flag** — walks the inverse edges: "if I rename
+  fixture X, what tests break?". Output is capped at 30 lines for
+  hot fixtures used by hundreds of tests; ``--json`` returns the
+  full list.
 - **Scope and autouse parsing** — fixture chain output annotates each
   node with ``[scope=session, autouse]`` badges so agents can reason
-  about test isolation.
+  about test isolation. The root fixture's own scope/autouse appears
+  in the verdict line.
+- **Resolved file:line displayed** — when a fixture name is ambiguous
+  across files (e.g. multiple ``cli_runner`` definitions), the output
+  prints which one the resolver picked.
 - **``edges.kind = 'pytest_fixture_dep'``** — new edge type. A pytest
   fixture's parameters are themselves fixtures, but that relationship
   is invisible to call-graph or import analysis. Indexing now derives
@@ -61,6 +86,37 @@ the implicit fixture dependency graph.
 - **``py-sqlalchemy-lazy``** no longer fires on queries that already
   eager-load via ``joinedload``, ``selectinload``, ``contains_eager``,
   or ``subqueryload`` in their ``.options(...)`` chain.
+- **``py-django-n1`` Django context check** — the detector now
+  requires a Django ORM hint somewhere in the file (``.objects.``,
+  ``from django``, ``import django``) before firing. Previously a
+  custom collection class with ``.all()`` could trip the all-then-for
+  branch.
+
+### Fixed — minor
+
+- **``roam tour`` starting-file language** — the verdict line now
+  reports the language of the actual starting file rather than the
+  project's dominant language (so a YAML-heavy repo that starts at a
+  Python file no longer gets labelled ``(yaml)``).
+- **Symbol resolution canonical-path bias** — when the same name is
+  defined in both ``src/`` (canonical library) and ``dev/`` /
+  ``scripts/`` / ``tests/`` (helper scripts), call resolution now
+  prefers the ``src/`` definition. Previously a dev/ helper script
+  with its own ``open_db`` could shadow the canonical
+  ``src/roam/db/connection.py:open_db`` and pull every call edge in
+  the codebase. Same path bias added to ``find_symbol`` for
+  command-time disambiguation.
+- **SBOM pyproject parser** — strip TOML comments line-by-line before
+  the quote-extraction regex. An apostrophe in an English comment
+  (``# when these aren't installed``) was opening a fake quoted
+  string and emitting a phantom ``t installed.`` dependency.
+
+### Cleaned — dead variables
+
+- Swept five unused locals out of ``cmd_search``, ``cmd_ws``,
+  ``progress``, and several test helpers. Mostly leftovers from prior
+  refactors. ``cmd_taint`` reads ``--sarif`` but never emits SARIF —
+  tracked as a separate follow-up.
 
 ### Improved — preflight ergonomics
 
@@ -108,11 +164,13 @@ the implicit fixture dependency graph.
 
 ### Added — SARIF output for Python detectors
 
-- **`roam py-types --sarif`** emits SARIF 2.1.0 with rule
+- **`roam --sarif py-types`** emits SARIF 2.1.0 with rule
   `py-types/coverage` (one result per file with missing annotations).
-- **`roam py-modern --sarif`** emits SARIF with rules
+- **`roam --sarif py-modern`** emits SARIF with rules
   `py-modern/legacy-typing` and `py-modern/dot-format`.
-- Both integrate with GitHub Code Scanning.
+- Both integrate with GitHub Code Scanning. Note that ``--sarif`` is
+  a global Roam flag (placed before the subcommand), matching the
+  existing convention used by ``--sarif health`` and ``--sarif debt``.
 
 ### Improved — README hero
 
