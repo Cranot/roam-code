@@ -9,11 +9,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [12.8.0] - 2026-05-02
 
-Documentation, positioning, and trust-scaffold release. No new commands,
-no new detectors. The headline work is a CI check that prevents
-documentation drift, three new public docs pages that ground the
-project's claims in evidence, and SARIF output for the Python idiom
-detectors.
+A documentation, positioning, and trust-scaffold release plus one new
+command for pytest-heavy projects. The headline work is a CI check
+that prevents documentation drift, three new public docs pages that
+ground the project's claims in evidence, SARIF output for the Python
+idiom detectors, and a ``pytest-fixtures`` command that materialises
+the implicit fixture dependency graph.
+
+### Added — pytest fixture dependency edges
+
+- **``roam pytest-fixtures [SYMBOL]``** — inventory pytest fixture
+  chains. With no SYMBOL, prints the project-wide fixture count and
+  the top fixtures by dependent count (a blast-radius proxy). With a
+  fixture or ``test_*`` function, walks the implicit fixture-parameter
+  dependency graph to show what each test transitively requires.
+  Resolves through ``conftest.py`` chains the way pytest itself does.
+- **``edges.kind = 'pytest_fixture_dep'``** — new edge type. A pytest
+  fixture's parameters are themselves fixtures, but that relationship
+  is invisible to call-graph or import analysis. Indexing now derives
+  it as a post-processing step. Available to other commands and to
+  the ``preflight`` / ``impact`` blast-radius queries.
+- **``roam_pytest_fixtures``** MCP tool, surfaced under the
+  ``refactor`` and ``debug`` presets.
 
 ### Added — documentation consistency CI check
 

@@ -3,7 +3,7 @@
   "name": "roam-code",
   "display_name": "roam — instant codebase intelligence",
   "version": "12.8.0",
-  "description": "Architectural sight for AI agents before they edit. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 118 MCP tools, 10 resources, 5 prompts, 27 languages. 100% local, zero API keys.",
+  "description": "Architectural sight for AI agents before they edit. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 119 MCP tools, 10 resources, 5 prompts, 27 languages. 100% local, zero API keys.",
   "vendor": {
     "name": "Cranot",
     "url": "https://github.com/Cranot"
@@ -51,7 +51,7 @@
   },
   "capabilities": {
     "tools": {
-      "total": 116,
+      "total": 119,
       "presets": {
         "core": 33,
         "review": 50,
@@ -59,7 +59,7 @@
         "debug": 55,
         "architecture": 70,
         "compliance": 14,
-        "full": 116
+        "full": 119
       },
       "tasks_api": {
         "supported": true,

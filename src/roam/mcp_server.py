@@ -140,6 +140,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_relate",
         "roam_symbol",
         "roam_visualize",
+        "roam_pytest_fixtures",
     },
     "debug": _CORE_TOOLS
     | {
@@ -154,6 +155,7 @@ _PRESETS: dict[str, set[str]] = {
         "roam_relate",
         "roam_symbol",
         "roam_algo",
+        "roam_pytest_fixtures",
     },
     "architecture": _CORE_TOOLS
     | {
@@ -3162,6 +3164,36 @@ def py_modern_report(detail: bool = False, root: str = ".") -> dict:
     args = ["py-modern"]
     if detail:
         args.append("--detail")
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_pytest_fixtures",
+    description="pytest fixture chain: top fixtures by dependent count, or per-symbol dependency walk.",
+)
+def pytest_fixtures_report(symbol: str = "", max_depth: int = 6, root: str = ".") -> dict:
+    """Show the implicit pytest fixture dependency graph.
+
+    pytest fixtures depend on each other through their parameter names.
+    The relationship is invisible to call-graph analysis, so changing
+    one fixture can break tests several files away with no edge to
+    follow. Indexing materialises this as ``pytest_fixture_dep`` edges;
+    this tool exposes them. v12.9+.
+
+    Parameters
+    ----------
+    symbol:
+        Fixture name, qualified name, or ``test_*`` function. When
+        empty, returns a project-wide summary with the top fixtures by
+        dependent count (a blast-radius proxy).
+    max_depth:
+        Cap the dependency walk at this depth. Default 6 — enough for
+        any sensible fixture chain.
+    """
+    args = ["pytest-fixtures"]
+    if symbol:
+        args.append(symbol)
+    args += ["--max-depth", str(max_depth)]
     return _run_roam(args, root)
 
 

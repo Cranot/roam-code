@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 147 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 148 specialised commands are advanced surface for specialised workflows.
 
-*152 commands · 118 MCP tools · 27 languages · 100% local · zero API keys*
+*153 commands · 119 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -269,7 +269,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 147 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **152 commands organised into 7 categories**, but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 148 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **153 commands organised into 7 categories**, but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -361,6 +361,7 @@ roam health
 | `roam complexity [--bumpy-road] [--include-tooling]` | Per-function cognitive complexity (SonarSource-compatible, triangular nesting penalty) + Halstead metrics (volume, difficulty, effort, bugs) + cyclomatic density |
 | `roam py-types [--detail] [--include-tests] [--ci --min-coverage N]` | Python type-annotation health: % of public functions with full annotations, ``Any`` usage, legacy ``typing.Optional/Dict/List`` (PEP 585/604 modernisation candidates), per-file worst offenders. CI-gateable via ``--ci --min-coverage N`` (exit 5 below threshold). Default-excludes test files |
 | `roam py-modern [--detail]` | Modern-Python adoption signal: counts walrus operator (PEP 572), match statements (PEP 634), PEP 604 ``X \| None``, PEP 585 ``dict[…]``, PEP 695 type aliases, f-strings vs ``.format()``. Reports type-modernisation % and f-string adoption % to gauge migration progress |
+| `roam pytest-fixtures [SYMBOL] [--max-depth N]` | Inventory pytest fixture chains. With no SYMBOL, prints the project-wide fixture count and the top fixtures by dependent count. With a fixture or test name, walks the implicit fixture-parameter dependency graph to show what each test transitively requires. Resolves through ``conftest.py`` chains |
 | `roam algo [--task T] [--confidence C] [--profile P]` | Algorithm anti-pattern detection: 23-pattern catalog detects suboptimal algorithms (O(n^2) loops, N+1 queries, quadratic string building, branching recursion, loop-invariant calls) and suggests better approaches with Big-O improvements. Confidence calibration via caller-count + runtime traces, evidence paths, impact scoring, framework-aware N+1 packs, and language-aware fix templates. Alias: `roam math` |
 | `roam n1 [--confidence C] [--verbose]` | Implicit N+1 I/O detection: finds ORM model computed properties (`$appends`/accessors) that trigger lazy-loaded DB queries in collection contexts. Cross-references with eager loading config. Supports Laravel, Django, Rails, SQLAlchemy, JPA |
 | `roam over-fetch [--threshold N] [--confidence C]` | Detect models serializing too many fields: large `$fillable` without `$hidden`/`$visible`, direct controller returns bypassing API Resources, poor exposed-to-hidden ratio |
@@ -909,7 +910,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 118)</strong></summary>
+<summary><strong>MCP tool list (all 119)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -943,6 +944,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_complexity_report` | Per-symbol cognitive complexity |
 | `roam_py_types` | Python type-annotation health (% public typed, Any, legacy typing) |
 | `roam_py_modern` | Modern-Python adoption (walrus, match, PEP 604/585/695, f-strings) |
+| `roam_pytest_fixtures` | pytest fixture chain — top fixtures by dependent count, or per-symbol dependency walk |
 | `roam_tour` | Auto-generated onboarding guide |
 | `roam_diagnose` | Root cause analysis for debugging |
 | `roam_visualize` | Generate Mermaid or DOT architecture diagrams |
