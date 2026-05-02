@@ -241,6 +241,28 @@ RECIPES: list[Recipe] = [
         ),
     ),
     Recipe(
+        name="fixture-impact",
+        intent=(
+            "Show what tests / fixtures break if a pytest fixture is renamed, removed, or has its return shape changed"
+        ),
+        examples=(
+            "if I rename cli_runner what tests break",
+            "what depends on the cli_runner fixture",
+            "who uses indexed_project",
+            "blast radius of indexed_project",
+            "find tests that consume mock_db_session",
+        ),
+        keywords=("fixture", "fixtures", "pytest", "conftest"),
+        commands=(("pytest-fixtures", ("{symbol}", "--reverse")),),
+        summary=(
+            "Walks the implicit pytest fixture-parameter dependency graph "
+            "in reverse — fixtures and tests that consume the named fixture "
+            "transitively. Pass the fixture name as an identifier (snake_case "
+            "or PascalCase). ``--json`` for the full list when output is "
+            "capped."
+        ),
+    ),
+    Recipe(
         name="dead-code-sweep",
         intent="Find unused or unreachable symbols ready for deletion",
         examples=(

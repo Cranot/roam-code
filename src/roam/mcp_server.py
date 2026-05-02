@@ -3198,6 +3198,23 @@ def pytest_fixtures_report(symbol: str = "", max_depth: int = 6, root: str = "."
 
 
 @_tool(
+    name="roam_hover",
+    description="One-line architectural summary for a symbol — kind, location, blast-radius bucket, top caller, top callee.",
+)
+def hover_summary(symbol: str, root: str = ".") -> dict:
+    """Compact architectural gloss for a symbol, bounded at ~200
+    tokens. Pairs with IDE hover-on-symbol plugins where ``roam
+    context`` is too verbose. v12.8+.
+
+    Parameters
+    ----------
+    symbol:
+        Symbol name, qualified name, or ``file:symbol`` hint. Required.
+    """
+    return _run_roam(["hover", symbol], root)
+
+
+@_tool(
     name="roam_repo_map",
     description="Compact project skeleton with key symbols per file, by PageRank.",
 )
