@@ -1035,7 +1035,6 @@ class TestMathSignalsTier2:
 
         from roam.index.complexity import _extract_math_signals, _find_function_node
 
-        lang = tslp.get_language("python")
         parser = tslp.get_parser("python")
         code = (
             "def tree_sum(node):\n"

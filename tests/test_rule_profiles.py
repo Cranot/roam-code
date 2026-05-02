@@ -158,7 +158,6 @@ class TestResolveProfile:
         from roam.rules.builtin import resolve_profile
 
         overrides = resolve_profile("minimal")
-        ov_map = {ov["id"]: ov for ov in overrides}
         # Minimal only enables no-circular-imports and layer-violation
         enabled_ids = {ov["id"] for ov in overrides if ov.get("enabled", True) is True}
         assert "no-circular-imports" in enabled_ids

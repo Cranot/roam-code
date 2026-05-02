@@ -281,10 +281,19 @@ def tour(ctx, write_file, mermaid_mode):
         order = _reading_order(conn, G)
         entries = _entry_points(conn)
 
-        # Build verdict
+        # Build verdict — look up the language of the actual starting
+        # file rather than the project's dominant language (otherwise a
+        # codebase that's mostly YAML rules but starts at a Python file
+        # gets labelled "(yaml)").
         n_layers = len({item["layer"] for item in order}) if order else 0
-        start_file = order[0]["file"].replace("\\", "/").rsplit("/", 1)[-1] if order else "?"
-        lang_label = langs[0]["language"] if langs else "unknown"
+        if order:
+            start_path = order[0]["file"].replace("\\", "/")
+            start_file = start_path.rsplit("/", 1)[-1]
+            row = conn.execute("SELECT language FROM files WHERE path = ?", (order[0]["file"],)).fetchone()
+            lang_label = row["language"] if row and row["language"] else "unknown"
+        else:
+            start_file = "?"
+            lang_label = langs[0]["language"] if langs else "unknown"
         verdict = (
             f"tour: {stats['files']} files, {stats['symbols']} symbols, "
             f"{n_layers} layers, start at {start_file} ({lang_label})"
