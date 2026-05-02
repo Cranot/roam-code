@@ -7,6 +7,112 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.9.0] - 2026-05-02
+
+A precision and graph-completeness release. Headline work: a
+registry-dispatch resolver that closes a long-standing gap in
+``roam impact``, three new Flask detectors, four new taint rule
+packs, intraprocedural taint propagation, an ``ask`` recipe for
+pytest fixtures, and a +11pp jump in roam's own type coverage.
+
+### Added — graph completeness
+
+- **Registry-dispatch edges** — new post-indexing pass synthesises
+  ``dispatch`` edges from string-keyed dispatch dicts
+  (``_COMMANDS = {"name": ("module.path", "fn_name")}``) and from
+  list-of-tuples-with-function-references registries
+  (``_DETECTORS = [("slug", "way", detect_fn), ...]``). ``roam impact
+  preflight`` now reports a small blast radius instead of
+  "no dependents — safe to change". Same for every Python idiom
+  detector that lives in the registry.
+
+### Added — Flask framework detectors
+
+- **``py-flask-routes``** — info-level inventory of
+  ``@app.route`` / ``@blueprint.route`` decorators. Surfaces the URL
+  surface so agents can discover routes without grep.
+- **``py-flask-debug-true``** — high-severity catch for
+  ``app.run(debug=True)``. The Werkzeug debugger leaks a Python REPL
+  to anyone who can reach the host.
+- **``py-flask-secret-key-literal``** — high-severity catch for a
+  literal SECRET_KEY in source. ``os.environ`` reads are skipped by
+  construction.
+
+Total Python idiom detector count: 22.
+
+### Added — CodeQL-style taint rule packs
+
+- **``python-urllib-open-redirect``** — request.* sources flowing into
+  flask.redirect / HttpResponseRedirect / httpx.get / urllib.urlopen.
+- **``python-socketio-remote-input``** — sio.on / @socketio.event
+  payloads as remote sources, sinks are SQL/shell/file family.
+- **``java-fileupload-path-traversal``** — FileItem.getName /
+  Part.getSubmittedFileName flowing into Files.write / Paths.get.
+
+Mirror the dataflow models CodeQL 2.24 (Jan 2026) added.
+
+### Added — taint engine
+
+- **Intraprocedural co-call detection** — second BFS pass flags
+  functions that *call both* a source and a sink, even when no
+  forward edge connects them. Catches the
+  ``y = source(); sink(y)`` shape that pure forward BFS misses.
+  Mirrors Semgrep's Feb 2026 assignment-propagation improvement.
+
+### Added — agent ergonomics
+
+- **``ask`` recipe ``fixture-impact``** — natural-language queries
+  like "what depends on cli_runner" or "blast radius of
+  indexed_project" route to ``roam pytest-fixtures --reverse``.
+  Recipe count up to 13.
+- **``roam drift --by-team``** — per-owner ownership-realisation
+  table (% of each team's declared files where the declared owner is
+  also the de-facto top contributor). Closes the CodeScene
+  team-autonomy parity gap.
+
+### Fixed — detector precision
+
+- **``py-except-pass`` narrows on legitimate cases** — no longer
+  fires on ``except OSError: pass``, ``except ImportError: pass``,
+  or tuples of OS / parse / optional-import errors. The remaining
+  list focuses on ``except:`` / ``except Exception:`` / custom error
+  classes where silent ``pass`` genuinely deserves attention.
+- **Three N+1 query fixes in roam itself**: compute_partition_manifest
+  pre-loads file_stats once, _analyze_dataflow_dead batches caller
+  scans, build_aibom_block batches ``git show`` calls.
+
+### Fixed — type-coverage detector bug
+
+- **py-types decorator-anchor** — the detector was reading the FIRST
+  ``(...)`` in the stored signature, which on ``@_tool(name="...")``
+  decorated functions captured the decorator args, not the def's
+  params. 121 mcp_server.py functions reported as 0% typed despite
+  full annotations. Anchored on ``def NAME(`` for both param and
+  return scan.
+
+### Refactored
+
+- Eight ``test_*_file_skeleton`` per-language test classes collapsed
+  into one parametrised case table — adding a new language is now
+  one row, not a fresh class.
+
+### Improved
+
+- **Type coverage**: 48% → 59% on roam's own 1118 public functions.
+  Bug fix above contributed ~6pp; targeted annotations on
+  db/connection.py, commands/resolve.py, catalog/smells.py,
+  catalog/detectors.py, commands/context_helpers.py,
+  search/index_embeddings.py, and commands/cmd_ws.py contributed
+  the rest.
+- **``roam --sarif taint``** wires through cleanly; was silently
+  swallowed in v12.8.
+- **``F841`` (unused-variable) re-enabled in ruff** — future dead
+  vars fail CI rather than rotting silently.
+
+### Surface
+
+- 154 CLI commands · 120 MCP tools · 27 languages · 100% local · zero API keys.
+
 ## [12.8.0] - 2026-05-02
 
 A documentation, positioning, and trust-scaffold release plus two new
