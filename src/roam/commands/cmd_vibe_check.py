@@ -12,6 +12,12 @@ The vibe-check command scans for 8 categories of AI-generated code smells:
 8. Copy-paste functions — duplicate normalized function bodies
 
 Produces a composite 0-100 "AI rot score" and per-file issue counts.
+
+Counts are at occurrence level (not function level) and span all
+indexed languages. For a Python-only, function-level, actionable list
+of any specific anti-pattern, use ``roam math --task py-except-pass``
+(or the equivalent task slug). The two numbers will not match by
+design — vibe-check is a coarse health signal.
 """
 
 from __future__ import annotations
@@ -128,6 +134,14 @@ def _detect_short_churn(conn) -> tuple[int, int, list[dict]]:
 
 # ---------------------------------------------------------------------------
 # Pattern 3: Empty error handlers
+#
+# vibe-check counts empty-handler OCCURRENCES across all languages
+# (Python, JS, TS, Java, C#, Go, Ruby). Multiple empties in one function
+# all count. This is intentional — vibe-check is a coarse health signal,
+# not an actionable refactor list.
+#
+# For a per-function actionable list, use ``roam math --task py-except-pass``
+# (Python-only, function-level). The two numbers won't match by design.
 # ---------------------------------------------------------------------------
 
 _EMPTY_HANDLER_PATTERNS = {
