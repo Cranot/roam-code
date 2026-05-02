@@ -85,8 +85,10 @@ def _readme_mcp_count() -> int | None:
 
 
 def _claude_md_command_count() -> int | None:
-    text = (ROOT / "CLAUDE.md").read_text(encoding="utf-8")
-    return _scrape_first_int_after(text, r"\b(\d+)\s+commands\b")
+    p = ROOT / "CLAUDE.md"
+    if not p.exists():
+        return None
+    return _scrape_first_int_after(p.read_text(encoding="utf-8"), r"\b(\d+)\s+commands\b")
 
 
 def _llms_install_command_count() -> int | None:
