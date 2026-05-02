@@ -332,6 +332,18 @@ class TestCommand:
         assert "user" in res.output
         assert "db" in res.output
 
+    def test_reverse_walks_consumers(self, fixture_project):
+        """--reverse: db is depended on by user (direct) and test_user_has_id
+        (transitive through user)."""
+        from roam.cli import cli
+
+        runner = CliRunner()
+        res = runner.invoke(cli, ["pytest-fixtures", "db", "--reverse"])
+        assert res.exit_code == 0, res.output
+        assert "Dependents of" in res.output
+        assert "user" in res.output
+        assert "test_user_has_id" in res.output
+
     def test_json_envelope(self, fixture_project):
         import json
 
