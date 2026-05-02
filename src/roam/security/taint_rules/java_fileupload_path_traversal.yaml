@@ -1,0 +1,28 @@
+id: java-fileupload-path-traversal
+description: Multipart upload filename (FileItem / Part / FileUpload) into Files / FileOutputStream / Paths.get without basename or allowlist check. CodeQL 2.24 ships equivalent FileItem and javax/jakarta servlet Part models.
+severity: error
+cwe: CWE-22
+languages:
+  - java
+sources:
+  - getName
+  - getOriginalFilename
+  - getSubmittedFileName
+  - FileItem.getName
+  - Part.getSubmittedFileName
+sinks:
+  - Files.write
+  - Files.createFile
+  - Files.copy
+  - Files.move
+  - Files.newOutputStream
+  - Paths.get
+  - File
+  - FileOutputStream
+  - FileWriter
+sanitizers:
+  - Paths.normalize
+  - Path.normalize
+  - isUnderRoot
+  - sanitizeFilename
+  - FilenameUtils.getName

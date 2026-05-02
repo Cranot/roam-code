@@ -1,0 +1,33 @@
+id: python-socketio-remote-input
+description: python-socketio event payload (network-attacker-controlled) into a SQL / shell / file sink. CodeQL 2.24 added equivalent remote source models.
+severity: error
+cwe: CWE-20
+languages:
+  - python
+sources:
+  # Decorated event handlers: ``@sio.on("event")`` / ``@socketio.on(...)``
+  # The function's ``data`` / ``payload`` parameter is fully attacker-
+  # controlled. We name a few common parameter conventions; in practice
+  # the taint engine should resolve the decorated function's params.
+  - sio.on
+  - socketio.on
+  - sio_server.on
+  - sio.event
+  - data
+  - payload
+sinks:
+  - cursor.execute
+  - connection.execute
+  - subprocess.run
+  - subprocess.call
+  - subprocess.Popen
+  - os.system
+  - os.popen
+  - eval
+  - exec
+  - open
+sanitizers:
+  - shlex.quote
+  - sqlalchemy.bindparam
+  - re.escape
+  - html.escape
