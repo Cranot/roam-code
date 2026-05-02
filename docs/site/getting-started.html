@@ -116,12 +116,21 @@ roam symbol src/auth/service.py</code></pre>
 roam preflight auth_login
 roam test-gaps --changed</code></pre>
 
-      <h3>3. Enforce quality and governance</h3>
+      <h3>3. Working in tests (pytest projects)</h3>
+      <p>
+        pytest fixtures depend on each other through their parameter names. The relationship is invisible to call-graph analysis, so renaming a low-level fixture can break tests several files away with no edge to follow. <code>roam pytest-fixtures</code> materialises the chain.
+      </p>
+      <pre><code>roam pytest-fixtures                # project summary + top fixtures by dependent count
+roam pytest-fixtures user           # what does fixture `user` depend on, and what depends on it?
+roam pytest-fixtures --unused       # orphaned fixtures (dead test infrastructure)
+roam impact db                      # blast radius traverses fixture edges automatically</code></pre>
+
+      <h3>4. Enforce quality and governance</h3>
       <pre><code>roam check-rules
 roam rules --rules-dir rules/community
 roam health --gate</code></pre>
 
-      <h3>4. Integrate with your agent</h3>
+      <h3>5. Integrate with your agent</h3>
       <pre><code>roam mcp-setup claude-code
 roam mcp --list-tools
 ROAM_MCP_PRESET=core roam mcp</code></pre>
