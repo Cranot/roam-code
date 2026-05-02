@@ -983,6 +983,15 @@ def detect_django_n1(conn: sqlite3.Connection) -> list[dict]:
         sym_index = _line_to_symbol(conn, file_id)
         for match in _DJANGO_ALL_THEN_FOR.finditer(text):
             line_no = text.count("\n", 0, match.start()) + 1
+            # Suppress when the queryset chain already eager-loads via
+            # select_related or prefetch_related. Look back from the
+            # ``.all()`` call to the assignment (or 200 chars max) for
+            # those calls. They defuse the N+1 — firing here would be a
+            # false positive.
+            chain_start = max(0, match.start() - 200)
+            chain = text[chain_start : match.start()]
+            if "select_related(" in chain or "prefetch_related(" in chain:
+                continue
             sym = _enclosing_symbol(line_no, sym_index)
             if sym is None:
                 continue
@@ -1058,6 +1067,19 @@ def detect_sqlalchemy_lazy(conn: sqlite3.Connection) -> list[dict]:
         sym_index = _line_to_symbol(conn, file_id)
         for match in _SQLALCHEMY_ALL_THEN_DOT.finditer(text):
             line_no = text.count("\n", 0, match.start()) + 1
+            # Suppress when the query expression already eager-loads via
+            # joinedload / selectinload / contains_eager. Look back from
+            # the ``.all()`` call to the start of the statement (or 200
+            # chars, whichever is shorter).
+            chain_start = max(0, match.start() - 200)
+            chain = text[chain_start : match.start()]
+            if (
+                "joinedload(" in chain
+                or "selectinload(" in chain
+                or "contains_eager(" in chain
+                or "subqueryload(" in chain
+            ):
+                continue
             sym = _enclosing_symbol(line_no, sym_index)
             if sym is None:
                 continue
