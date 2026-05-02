@@ -805,18 +805,27 @@ def _analyze_dataflow_dead(conn):
 
         file_cache: dict[str, list[str]] = {}
 
-        for func in funcs_with_return:
-            # Get all callers (edges pointing to this function)
-            callers = conn.execute(
-                "SELECT e.source_id, e.line, s.name AS caller_name, "
+        # Pre-load callers for every candidate in one batched scan to
+        # avoid an N+1 against the edges table (one SELECT per function).
+        callers_by_target: dict[int, list] = {}
+        if funcs_with_return:
+            from roam.db.connection import batched_in
+
+            target_ids = [f["id"] for f in funcs_with_return]
+            for row in batched_in(
+                conn,
+                "SELECT e.target_id, e.source_id, e.line, s.name AS caller_name, "
                 "f.path AS caller_file, s.line_start AS caller_start "
                 "FROM edges e "
                 "JOIN symbols s ON e.source_id = s.id "
                 "JOIN files f ON s.file_id = f.id "
-                "WHERE e.target_id = ? AND e.kind = 'calls'",
-                (func["id"],),
-            ).fetchall()
+                "WHERE e.target_id IN ({ph}) AND e.kind = 'calls'",
+                target_ids,
+            ):
+                callers_by_target.setdefault(row["target_id"], []).append(row)
 
+        for func in funcs_with_return:
+            callers = callers_by_target.get(func["id"], [])
             if not callers:
                 continue
 

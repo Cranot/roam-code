@@ -296,6 +296,14 @@ def compute_partition_manifest(
         cochange_map[(cr["file_id_a"], cr["file_id_b"])] = cr["cochange_count"]
         cochange_map[(cr["file_id_b"], cr["file_id_a"])] = cr["cochange_count"]
 
+    # Pre-load total_churn for every file in one pass — the per-partition
+    # loop below would otherwise do one ``SELECT total_churn FROM file_stats``
+    # per file in each partition (an N+1 against file_stats).
+    churn_by_file_id: dict[int, int] = {}
+    for row in conn.execute("SELECT file_id, total_churn FROM file_stats").fetchall():
+        if row["total_churn"]:
+            churn_by_file_id[row["file_id"]] = row["total_churn"]
+
     # -- 5. Build per-partition descriptors ----------------------------------
     result_partitions = []
     all_partition_files: list[set[str]] = []
@@ -383,19 +391,9 @@ def compute_partition_manifest(
 
         conflict_risk = _classify_conflict_risk(cross_edges, cochange_score)
 
-        # Per-partition churn: sum of churn across files in this partition
-        partition_churn = 0
-        if partition_file_ids:
-            for pfid in partition_file_ids:
-                try:
-                    churn_row = conn.execute(
-                        "SELECT total_churn FROM file_stats WHERE file_id = ?",
-                        (pfid,),
-                    ).fetchone()
-                    if churn_row and churn_row["total_churn"]:
-                        partition_churn += churn_row["total_churn"]
-                except Exception:
-                    pass
+        # Per-partition churn: sum of churn across files in this partition.
+        # Uses the pre-loaded ``churn_by_file_id`` to avoid an N+1.
+        partition_churn = sum(churn_by_file_id.get(pfid, 0) for pfid in partition_file_ids)
 
         # Suggest role
         role = _suggest_role(sorted(files_set), language_counter)
