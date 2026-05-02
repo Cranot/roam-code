@@ -127,7 +127,25 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
 
     total = len(rows)
     if total == 0:
+        # Per external review (REV5 P1) — empty states must point at the
+        # next step, not just say "nothing here".
         click.echo("VERDICT: no public Python functions/methods indexed")
+        click.echo()
+        # Diagnose why
+        with open_db(readonly=True) as conn2:
+            n_py_files = conn2.execute("SELECT COUNT(*) FROM files WHERE language = 'python'").fetchone()[0]
+            n_total_files = conn2.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        if n_py_files == 0:
+            click.echo(
+                f"  No Python files in the {n_total_files} indexed files. "
+                "Is this a non-Python project, or is Python detection failing?"
+            )
+            click.echo("  Try: roam understand   (to see indexed languages)")
+        else:
+            click.echo(
+                f"  {n_py_files} Python files indexed but no public fn/methods. Coverage stats default-exclude tests."
+            )
+            click.echo("  Try: roam py-types --include-tests")
         return
 
     no_return = 0
@@ -181,6 +199,17 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
                 )
             )
         )
+        return
+
+    sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
+    if sarif_mode:
+        from roam.output.sarif import py_types_to_sarif, write_sarif
+
+        by_file_list = [
+            {"path": p, "total": d["total"], "missing": d["missing"]}
+            for p, d in sorted(by_file.items(), key=lambda kv: -kv[1]["missing"])
+        ]
+        click.echo(write_sarif(py_types_to_sarif(by_file_list, coverage)))
         return
 
     click.echo(f"VERDICT: {verdict}\n")
