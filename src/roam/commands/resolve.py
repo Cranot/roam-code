@@ -140,11 +140,42 @@ def file_not_found_hint(path: str) -> str:
     )
 
 
+# Path-priority bias when multiple symbols share a name. A bench script
+# in dev/ that defines its own ``open_db`` shouldn't shadow the canonical
+# library's ``open_db`` — the canonical one lives under src/ or lib/.
+# Higher rank wins. Negative ranks are penalised paths (test/dev/example).
+_PATH_PRIORITY = (
+    ("/src/", 3),
+    ("/lib/", 3),
+    ("src/roam/", 3),  # roam-internal canonical path
+    ("/dev/", -2),
+    ("/scripts/", -2),
+    ("/examples/", -2),
+    ("/tests/", -1),
+    ("/test/", -1),
+)
+
+
+def _path_rank(path: str | None) -> int:
+    if not path:
+        return 0
+    p = path.replace("\\", "/")
+    for needle, rank in _PATH_PRIORITY:
+        if needle in p:
+            return rank
+    return 0
+
+
 def pick_best(conn, rows):
     """Pick the most-referenced symbol from ambiguous matches.
 
-    Returns the row with the highest incoming edge count, or None if
-    no candidate has any incoming edges.
+    Tie-breaking order:
+    1. Highest incoming edge count (most-called).
+    2. Highest path priority (canonical src/ paths beat dev/ scripts).
+    3. Lowest symbol id (deterministic).
+
+    Returns the chosen row, or None when no candidate has any incoming
+    edges.
     """
     if not rows:
         return None
@@ -158,7 +189,15 @@ def pick_best(conn, rows):
         ids,
     ).fetchall()
     ref_map = {c["target_id"]: c["cnt"] for c in counts}
-    best = max(rows, key=lambda r: ref_map.get(r["id"], 0))
+
+    def _key(r):
+        # max() takes the highest tuple; we want path rank as a tiebreak
+        # so a dev/ script can never beat a src/ canonical when their
+        # edge counts are equal. Negative id puts the lowest id last in
+        # the (lower-is-later) tiebreak.
+        return (ref_map.get(r["id"], 0), _path_rank(r["file_path"]), -r["id"])
+
+    best = max(rows, key=_key)
     if ref_map.get(best["id"], 0) > 0:
         return best
     return None
