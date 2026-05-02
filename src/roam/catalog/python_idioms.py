@@ -977,8 +977,12 @@ def detect_django_n1(conn: sqlite3.Connection) -> list[dict]:
             text = _strip_strings_and_comments(text)
         if not text:
             continue
-        # Quick reject: skip files with no Django ORM hints
-        if ".objects." not in text and ".all()" not in text:
+        # Require a Django ORM hint anywhere in the file. Without
+        # ``.objects.`` (the manager indicator) or an explicit Django
+        # import, a ``.all()`` shape might be a custom collection or a
+        # different ORM — firing would be a false positive.
+        has_django_hint = ".objects." in text or "from django" in text or "import django" in text
+        if not has_django_hint:
             continue
         sym_index = _line_to_symbol(conn, file_id)
         for match in _DJANGO_ALL_THEN_FOR.finditer(text):
