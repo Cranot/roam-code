@@ -232,3 +232,44 @@ class TestMcpToolCountConsistency:
         if actual is None:
             pytest.skip("landscape.json missing MCP tool count")
         assert actual == truth, f"landscape.json says '{actual} MCP tools' but live count is {truth}"
+
+
+# ---------------------------------------------------------------------------
+# Internal-docs link audit
+# ---------------------------------------------------------------------------
+
+# README and CHANGELOG link out to ``docs/site/*.html`` and a few sibling
+# files. When we rename or delete a docs page, the link silently rots.
+# Catch broken intra-repo doc links in CI.
+
+_DOC_LINK_RE = re.compile(r"\(docs/site/([^)#?]+\.(?:html|md))\)")
+_REPO_RELATIVE_RE = re.compile(r"\]\((?!https?://|mailto:|#)([^)#?]+\.(?:md|html))\)")
+
+
+def _scrape_doc_links(text: str) -> set[str]:
+    """All ``docs/site/*.{html,md}`` paths referenced by ``text``."""
+    return {f"docs/site/{m}" for m in _DOC_LINK_RE.findall(text)}
+
+
+class TestInternalDocLinks:
+    """Every ``docs/site/*.html`` or ``docs/site/*.md`` link in README and
+    CHANGELOG must resolve to a real file."""
+
+    def test_readme_doc_links_resolve(self):
+        text = (ROOT / "README.md").read_text(encoding="utf-8")
+        links = _scrape_doc_links(text)
+        if not links:
+            pytest.skip("README has no docs/site/* links")
+        missing = sorted(p for p in links if not (ROOT / p).exists())
+        assert not missing, f"README links to missing docs pages: {missing}"
+
+    def test_changelog_doc_links_resolve(self):
+        cl = ROOT / "CHANGELOG.md"
+        if not cl.exists():
+            pytest.skip("CHANGELOG.md missing")
+        text = cl.read_text(encoding="utf-8")
+        links = _scrape_doc_links(text)
+        if not links:
+            pytest.skip("CHANGELOG has no docs/site/* links")
+        missing = sorted(p for p in links if not (ROOT / p).exists())
+        assert not missing, f"CHANGELOG links to missing docs pages: {missing}"

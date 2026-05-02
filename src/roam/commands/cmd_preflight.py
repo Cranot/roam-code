@@ -196,6 +196,12 @@ def _check_blast_radius(conn, sym_ids, file_paths):
 # ---------------------------------------------------------------------------
 
 
+# Once the blast radius dumps every test file in the repo, the
+# "Suggested tests:" line stops being a suggestion and becomes a wall
+# of text. This cap is the boundary between actionable and unactionable.
+_MAX_SUGGESTED_TEST_FILES = 15
+
+
 def _check_affected_tests(conn, sym_ids, file_paths):
     """Find tests that need to run."""
     results = _gather_affected_tests(conn, sym_ids, file_paths)
@@ -212,7 +218,13 @@ def _check_affected_tests(conn, sym_ids, file_paths):
             seen.add(r["file"])
             test_files.append(r["file"])
 
-    pytest_cmd = "pytest " + " ".join(test_files) if test_files else ""
+    truncated_files = len(test_files) > _MAX_SUGGESTED_TEST_FILES
+    if truncated_files:
+        suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
+        suffix = f"  # (+{len(test_files) - _MAX_SUGGESTED_TEST_FILES} more)"
+        pytest_cmd = "pytest " + " ".join(suggested) + suffix
+    else:
+        pytest_cmd = "pytest " + " ".join(test_files) if test_files else ""
     severity = _test_severity(direct, transitive, colocated)
 
     return {
@@ -222,6 +234,7 @@ def _check_affected_tests(conn, sym_ids, file_paths):
         "total": len(results),
         "test_files": test_files,
         "pytest_command": pytest_cmd,
+        "pytest_command_truncated": truncated_files,
         "severity": severity,
     }
 
