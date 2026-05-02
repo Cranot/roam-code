@@ -7,6 +7,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.7.0] - 2026-05-02
+
+A 10-round push past v12.6: 7 new idiom detectors (now 19 total),
+Pydantic/dataclass field display in ``roam context``, framework-aware
+N+1 detection, async-call-graph propagation.
+
+### Added
+
+- **Model-class field display** in ``roam context``. When the symbol
+  is a Pydantic / dataclass / attrs / TypedDict / NamedTuple class,
+  shows the ``Fields (N):`` block with each field's name and default.
+  Agents working with data models see the schema without scanning
+  source.
+- **7 new idiom detectors** (catalog now 19):
+  - ``py-sync-calls-async`` — graph-based: sync function calls async
+    function via ``edges.kind='call'`` table. Stronger evidence than
+    regex-based ``py-async-not-awaited``.
+  - ``py-django-n1`` — Django ORM N+1: ``.objects.filter()`` /
+    ``.get()`` inside loop, ``.all()`` then iterate.
+  - ``py-sqlalchemy-lazy`` — SQLAlchemy ``.all()`` then attribute
+    access (lazy-load N+1).
+  - ``py-fastapi-depends`` — inventories FastAPI ``Depends(X)``
+    chains. Info-level (not anti-pattern) so agents discover the
+    dependency graph.
+  - ``py-lambda-in-loop`` — late-binding closure (lambda captures
+    loop variable by reference).
+  - ``py-except-pass`` — ``except X: pass`` silently swallows.
+  - ``py-broad-except`` — ``except Exception:`` catches too much.
+
+### Verification
+
+- Bench held: recall@5 0.656, recall@10 0.769, recall@20 0.900.
+- Lint + format clean.
+- 19 detectors registered, no regressions on prior detectors.
+
 ## [12.6.0] - 2026-05-02
 
 A 10-round push past v12.5: ``roam py-modern`` for modern-Python

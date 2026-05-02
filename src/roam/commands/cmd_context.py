@@ -653,6 +653,41 @@ def _render_single_text(data):
             click.echo(f"  (+{len(siblings) - 10} more)")
         click.echo()
 
+    # Python pivot v12.7: model-class fields. When the symbol is a
+    # Pydantic / dataclass / attrs / TypedDict / NamedTuple class,
+    # surface its fields directly (not just as siblings) so an agent
+    # working with the class immediately sees its shape.
+    if sym_kind == "class":
+        try:
+            from roam.catalog.python_idioms import is_model_class
+
+            sig_for_model = sym["signature"] if "signature" in _row_keys else ""
+            is_model, _label = is_model_class(sig_for_model, decorators_str)
+        except Exception:
+            is_model = False
+        if is_model:
+            from roam.db.connection import open_db as _open_db
+
+            try:
+                with _open_db(readonly=True) as _conn:
+                    field_rows = _conn.execute(
+                        "SELECT name, default_value FROM symbols "
+                        "WHERE parent_id = ? AND kind = 'property' ORDER BY line_start",
+                        (sym["id"],),
+                    ).fetchall()
+            except Exception:
+                field_rows = []
+            if field_rows:
+                click.echo(f"Fields ({len(field_rows)}):")
+                for fr in field_rows[:20]:
+                    fname = fr["name"] if "name" in fr.keys() else fr[0]
+                    fdef = (fr["default_value"] if "default_value" in fr.keys() else fr[1]) or ""
+                    badge = f" = {fdef}" if fdef and fdef not in ("None",) else ""
+                    click.echo(f"  {fname}{badge}")
+                if len(field_rows) > 20:
+                    click.echo(f"  (+{len(field_rows) - 20} more)")
+                click.echo()
+
     # Always render all extras
     _render_complexity_text(data.get("complexity"))
     _render_graph_centrality_text(data.get("graph_centrality"))
