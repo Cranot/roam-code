@@ -6,7 +6,7 @@
 
 A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 148 specialised commands are advanced surface for specialised workflows.
 
-*153 commands · 119 MCP tools · 27 languages · 100% local · zero API keys*
+*154 commands · 120 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -98,7 +98,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **152 CLI commands, 118 MCP tools** (`fleet`, `ask`, `taint`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`) and `roam_taint_classify` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **154 CLI commands, 120 MCP tools** (`fleet`, `ask`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -269,7 +269,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 148 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **153 commands organised into 7 categories**, but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 149 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **154 commands organised into 7 categories**, but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -308,6 +308,7 @@ roam health
 | `roam file <path> [--full] [--changed] [--deps-of PATH]` | File skeleton: all definitions with signatures, cognitive load index, health score |
 | `roam symbol <name> [--full]` | Symbol definition + callers + callees + metrics. Supports `file:symbol` disambiguation |
 | `roam context <symbol> [--task MODE] [--for-file PATH]` | AI-optimized context: definition + callers + callees + files-to-read with line ranges |
+| `roam hover <symbol>` | One-line architectural summary: kind, location, blast-radius bucket, top caller, top callee. Bounded at ~200 tokens for IDE hover panels |
 | `roam retrieve <task> [--budget N] [--k N] [--seed-files PATH]` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget |
 | `roam critique [--input DIFF] [--intent TEXT] [--high-callers N]` | Verify a patch against the graph: clones-not-edited + blast radius + intent-vs-semantic-diff. Pipe `git diff` in. Exit 5 on high severity. |
 | `roam fleet plan <goal> [--n-agents N] [--adapter raw\|composio\|copilot]` | Graph-aware planner: Louvain partition + co-change + PageRank anchors → `.roam-fleet.json` for Composio/Copilot CLI/raw. |
@@ -614,7 +615,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 |--------|-------------|
 | `roam --json <command>` | Structured JSON output with consistent envelope |
 | `roam --compact <command>` | Token-efficient output: TSV tables, minimal JSON envelope |
-| `roam --sarif <command>` | SARIF 2.1.0 output for dead, health, complexity, rules, secrets, and algo (GitHub/CI integration) |
+| `roam --sarif <command>` | SARIF 2.1.0 output for dead, health, complexity, rules, secrets, algo, py-types, py-modern (GitHub/CI integration) |
 | `roam health --gate` | CI quality gate. Reads `.roam-gates.yml` thresholds. Exit code 5 on failure |
 
 </details>
@@ -910,7 +911,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 119)</strong></summary>
+<summary><strong>MCP tool list (all 120)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -921,6 +922,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_search_symbol` | Find symbols by name |
 | `roam_complete` | Prefix completion for symbols/paths/commands (FTS5-backed) |
 | `roam_context` | Files-to-read for modifying a symbol |
+| `roam_hover` | Single-line architectural summary — kind, blast-radius bucket, top caller, top callee |
 | `roam_retrieve` | Graph-aware context for free-form tasks (FTS5 + structural rerank + token budget) |
 | `roam_critique` | Verify a patch against the graph (clones-not-edited + blast radius) |
 | `roam_fleet_plan` | Plan a multi-agent fleet — graph-aware partition emits .roam-fleet.json |
