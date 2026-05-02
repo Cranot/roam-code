@@ -1105,6 +1105,21 @@ class Indexer:
             except Exception as e:
                 self._log(f"  pytest fixture resolver skipped: {e}")
 
+            # Registry-dispatch edges — synthesise edges from
+            # ``_COMMANDS = {"name": ("module.path", "fn_name")}`` style
+            # tables to the functions they reference. Without these,
+            # ``roam impact`` reports CLI commands as having no
+            # dependents because the dispatch is via runtime
+            # ``importlib`` lookups.
+            try:
+                from roam.index.registry_dispatch import resolve_registry_dispatch
+
+                dispatch_edges = resolve_registry_dispatch(conn)
+                if dispatch_edges:
+                    self._log(f"  registry dispatch: {dispatch_edges} edge(s)")
+            except Exception as e:
+                self._log(f"  registry-dispatch resolver skipped: {e}")
+
             # Git history
             analyze_git = _try_import_git_stats()
             if analyze_git is not None:
