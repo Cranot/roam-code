@@ -117,6 +117,37 @@ class TestRegistryDispatch:
         n = resolve_registry_dispatch(conn, package_prefix="myproj.")
         assert n == 1
 
+    def test_list_of_function_references_creates_edges(self, tmp_path, monkeypatch):
+        """``_DETECTORS = [("name", "way", detect_fn), ...]`` shape —
+        same-file function references inside list literals."""
+        cli = tmp_path / "cli.py"
+        cli.write_text(
+            "def detect_django_n1():\n"
+            "    pass\n"
+            "\n"
+            "def detect_sqlalchemy_lazy():\n"
+            "    pass\n"
+            "\n"
+            "_DETECTORS = [\n"
+            '    ("py-django-n1", "django-orm", detect_django_n1),\n'
+            '    ("py-sqla-lazy", "sqla-lazy", detect_sqlalchemy_lazy),\n'
+            "]\n"
+        )
+        conn = _make_conn()
+        _add_file(conn, 1, "cli.py")
+        # Symbol 5 is the file's first / module-level synthetic source.
+        # 10 and 11 are the two detector functions.
+        _add_symbol(conn, 5, 1, "<module>", qualified_name="<module>")
+        _add_symbol(conn, 10, 1, "detect_django_n1", qualified_name="detect_django_n1")
+        _add_symbol(conn, 11, 1, "detect_sqlalchemy_lazy", qualified_name="detect_sqlalchemy_lazy")
+        monkeypatch.chdir(tmp_path)
+        n = resolve_registry_dispatch(conn, package_prefix="myproj.")
+        assert n == 2
+        targets = {
+            r["target_id"] for r in conn.execute("SELECT target_id FROM edges WHERE kind = 'dispatch'").fetchall()
+        }
+        assert targets == {10, 11}
+
     def test_idempotent_reindex(self, tmp_path, monkeypatch):
         cli = tmp_path / "cli.py"
         cli.write_text('_C = {\n    "a": ("myproj.x", "a"),\n}\n')
