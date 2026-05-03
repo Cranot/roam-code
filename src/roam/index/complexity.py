@@ -13,6 +13,7 @@ Computes multi-factor complexity metrics for functions/methods:
 from __future__ import annotations
 
 import sqlite3
+from dataclasses import dataclass, field
 
 # ── Node-type mappings per language family ────────────────────────────
 
@@ -527,191 +528,178 @@ _LOOP_LOOKUP_CALLS = {
 }
 
 
+@dataclass
+class _MathSignalState:
+    symbol_lower: str = ""
+    max_loop_depth: int = 0
+    has_nested: bool = False
+    calls_in_loops: list[str] = field(default_factory=list)
+    calls_in_loops_qualified: list[str] = field(default_factory=list)
+    subscript_in_loops: bool = False
+    has_self_call: bool = False
+    self_call_count: int = 0
+    loop_with_compare: bool = False
+    loop_with_accumulator: bool = False
+    loop_with_multiplication: bool = False
+    loop_with_modulo: bool = False
+    str_concat_in_loop: bool = False
+    loop_invariant_calls: list[str] = field(default_factory=list)
+    loop_lookup_calls: list[str] = field(default_factory=list)
+    front_ops_in_loop: bool = False
+    loop_bound_small: bool = False
+
+
+def _dedupe_preserve_order(items: list[str]) -> list[str]:
+    seen: set[str] = set()
+    out: list[str] = []
+    for item in items:
+        if item not in seen:
+            seen.add(item)
+            out.append(item)
+    return out
+
+
+def _operator_tokens(node, source: bytes) -> list[str]:
+    return [
+        source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
+        for child in node.children
+        if not child.is_named
+    ]
+
+
+def _enter_loop(node, source: bytes, loop_depth: int, loop_vars: set[str], state: _MathSignalState):
+    new_depth = loop_depth + 1
+    state.max_loop_depth = max(state.max_loop_depth, new_depth)
+    if new_depth >= 2:
+        state.has_nested = True
+    if _is_bounded_loop(node, source):
+        state.loop_bound_small = True
+    return new_depth, loop_vars | _extract_loop_vars(node, source)
+
+
+def _record_self_call(node, source: bytes, state: _MathSignalState) -> None:
+    name = _call_target_name(node, source)
+    if name and state.symbol_lower and name.lower() == state.symbol_lower:
+        state.has_self_call = True
+        state.self_call_count += 1
+
+
+def _record_loop_call(node, source: bytes, loop_vars: set[str], state: _MathSignalState) -> None:
+    name = _call_target_name(node, source)
+    qualified = _call_target_qualified(node, source)
+    if name:
+        state.calls_in_loops.append(name)
+        if state.symbol_lower and name.lower() == state.symbol_lower:
+            state.has_self_call = True
+            state.self_call_count += 1
+    if qualified:
+        state.calls_in_loops_qualified.append(qualified)
+    if not name:
+        return
+
+    receiver_uses_loop = _call_receiver_uses_loop_vars(node, source, loop_vars)
+    args_use_loop = _call_args_use_loop_vars(node, source, loop_vars)
+    if loop_vars and not (receiver_uses_loop or args_use_loop):
+        state.loop_invariant_calls.append(qualified or name)
+    if name in _LOOP_LOOKUP_CALLS and loop_vars and not receiver_uses_loop and args_use_loop:
+        state.loop_lookup_calls.append(qualified or name)
+    if _is_front_operation_call(node, source, name):
+        state.front_ops_in_loop = True
+
+
+def _record_compare_ops(node, source: bytes, state: _MathSignalState) -> None:
+    for op in _operator_tokens(node, source):
+        if op in _COMPARE_OPS:
+            state.loop_with_compare = True
+        if op in _MULTIPLY_OPS:
+            state.loop_with_multiplication = True
+        if op in _MODULO_OPS:
+            state.loop_with_modulo = True
+
+
+def _record_augmented_assignment(node, source: bytes, string_vars: set[str], state: _MathSignalState) -> None:
+    state.loop_with_accumulator = True
+    for op in _operator_tokens(node, source):
+        if op in _MULTIPLY_OPS:
+            state.loop_with_multiplication = True
+        if op in _MODULO_OPS:
+            state.loop_with_modulo = True
+    target = _augmented_assign_target(node, source)
+    if target and target in string_vars:
+        state.str_concat_in_loop = True
+
+
+def _record_expression_ops(node, source: bytes, state: _MathSignalState) -> None:
+    for op in _operator_tokens(node, source):
+        if op in _AUGMENTED_ASSIGN_OPS:
+            state.loop_with_accumulator = True
+        if op in _MULTIPLY_OPS:
+            state.loop_with_multiplication = True
+        if op in _MODULO_OPS:
+            state.loop_with_modulo = True
+
+
+def _record_loop_node(node, source: bytes, loop_vars: set[str], string_vars: set[str], state: _MathSignalState) -> None:
+    ntype = node.type
+    if ntype in ("call_expression", "call"):
+        _record_loop_call(node, source, loop_vars, state)
+    if ntype in _SUBSCRIPT_NODES:
+        state.subscript_in_loops = True
+    if ntype in ("binary_expression", "comparison_operator"):
+        _record_compare_ops(node, source, state)
+    if ntype in _AUGMENTED_ASSIGN_NODES:
+        _record_augmented_assignment(node, source, string_vars, state)
+    elif ntype in ("binary_expression", "assignment_expression", "expression_statement"):
+        _record_expression_ops(node, source, state)
+
+
 def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
     """Walk a function AST node once and extract algorithmic signals.
 
     Returns a dict suitable for storing in the ``math_signals`` table.
     """
-    max_loop_depth = 0
-    has_nested = False
-    calls_in_loops: list[str] = []
-    calls_in_loops_qualified: list[str] = []
-    subscript_in_loops = False
-    has_self_call = False
-    self_call_count = 0
-    loop_with_compare = False
-    loop_with_accumulator = False
-    loop_with_multiplication = False
-    loop_with_modulo = False
-    str_concat_in_loop = False
-    loop_invariant_calls: list[str] = []
-    loop_lookup_calls: list[str] = []
-    front_ops_in_loop = False
-    loop_bound_small = False
-
-    symbol_lower = symbol_name.lower() if symbol_name else ""
-
     # --- Pre-scan: find variables initialized to string literals ---
     # This enables detection of quadratic string building (str += in loop)
     string_vars: set[str] = set()
     _scan_string_inits(func_node, source, string_vars)
+    state = _MathSignalState(symbol_lower=symbol_name.lower() if symbol_name else "")
 
     def _walk(node, loop_depth: int, loop_vars: set[str]):
-        nonlocal max_loop_depth, has_nested, subscript_in_loops
-        nonlocal has_self_call, self_call_count
-        nonlocal loop_with_compare, loop_with_accumulator
-        nonlocal loop_with_multiplication, loop_with_modulo
-        nonlocal str_concat_in_loop, front_ops_in_loop
-        nonlocal loop_bound_small
-
         ntype = node.type
 
-        # --- Loop entry ---
         if ntype in _LOOP_NODES:
-            new_depth = loop_depth + 1
-            if new_depth > max_loop_depth:
-                max_loop_depth = new_depth
-            if new_depth >= 2:
-                has_nested = True
-            # Extract loop variable names and check for bounded iteration
-            lv = _extract_loop_vars(node, source)
-            new_loop_vars = loop_vars | lv
-            if _is_bounded_loop(node, source):
-                loop_bound_small = True
+            new_depth, new_loop_vars = _enter_loop(node, source, loop_depth, loop_vars, state)
             for child in node.children:
                 _walk(child, new_depth, new_loop_vars)
             return
 
-        # --- Inside a loop: check for signals ---
         if loop_depth > 0:
-            # Call expressions inside loops
-            if ntype in ("call_expression", "call"):
-                name = _call_target_name(node, source)
-                qualified = _call_target_qualified(node, source)
-                if name:
-                    calls_in_loops.append(name)
-                    if symbol_lower and name.lower() == symbol_lower:
-                        has_self_call = True
-                        self_call_count += 1
-                if qualified:
-                    calls_in_loops_qualified.append(qualified)
-                if name:
-                    receiver_uses_loop = _call_receiver_uses_loop_vars(node, source, loop_vars)
-                    args_use_loop = _call_args_use_loop_vars(node, source, loop_vars)
-                    # Check if call is loop-invariant (args and receiver do not
-                    # depend on loop variables).
-                    if loop_vars and not (receiver_uses_loop or args_use_loop):
-                        loop_invariant_calls.append(qualified or name)
-                    # Lookup anti-pattern: linear scan on an invariant receiver
-                    # with loop-varying arguments.
-                    if name in _LOOP_LOOKUP_CALLS and loop_vars and not receiver_uses_loop and args_use_loop:
-                        loop_lookup_calls.append(qualified or name)
-                    # Front insertion/removal anti-pattern.
-                    if _is_front_operation_call(node, source, name):
-                        front_ops_in_loop = True
-
-            # Subscript access inside loops
-            if ntype in _SUBSCRIPT_NODES:
-                subscript_in_loops = True
-
-            # Comparison inside loops
-            if ntype in ("binary_expression", "comparison_operator"):
-                for child in node.children:
-                    if not child.is_named:
-                        op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
-                        if op in _COMPARE_OPS:
-                            loop_with_compare = True
-                        if op in _MULTIPLY_OPS:
-                            loop_with_multiplication = True
-                        if op in _MODULO_OPS:
-                            loop_with_modulo = True
-
-            # Augmented assignment inside loops
-            if ntype in _AUGMENTED_ASSIGN_NODES:
-                loop_with_accumulator = True
-                for child in node.children:
-                    if child.is_named:
-                        continue
-                    op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
-                    if op in _MULTIPLY_OPS:
-                        loop_with_multiplication = True
-                    if op in _MODULO_OPS:
-                        loop_with_modulo = True
-                # Check for string concatenation: str_var += ...
-                target = _augmented_assign_target(node, source)
-                if target and target in string_vars:
-                    str_concat_in_loop = True
-            elif ntype in ("binary_expression", "assignment_expression", "expression_statement"):
-                for child in node.children:
-                    if not child.is_named:
-                        op = source[child.start_byte : child.end_byte].decode("utf-8", errors="replace")
-                        if op in _AUGMENTED_ASSIGN_OPS:
-                            loop_with_accumulator = True
-                        if op in _MULTIPLY_OPS:
-                            loop_with_multiplication = True
-                        if op in _MODULO_OPS:
-                            loop_with_modulo = True
-
-        # --- Self-call detection outside loops too ---
+            _record_loop_node(node, source, loop_vars, string_vars, state)
         if loop_depth == 0 and ntype in ("call_expression", "call"):
-            name = _call_target_name(node, source)
-            if name and symbol_lower and name.lower() == symbol_lower:
-                has_self_call = True
-                self_call_count += 1
+            _record_self_call(node, source, state)
 
-        # Recurse children
         for child in node.children:
             _walk(child, loop_depth, loop_vars)
 
     _walk(func_node, 0, set())
 
-    # Deduplicate calls list while preserving order
-    seen: set[str] = set()
-    unique_calls: list[str] = []
-    for c in calls_in_loops:
-        if c not in seen:
-            seen.add(c)
-            unique_calls.append(c)
-
-    seen_q: set[str] = set()
-    unique_calls_qualified: list[str] = []
-    for c in calls_in_loops_qualified:
-        if c not in seen_q:
-            seen_q.add(c)
-            unique_calls_qualified.append(c)
-
-    # Deduplicate loop-invariant calls
-    seen_inv: set[str] = set()
-    unique_inv: list[str] = []
-    for c in loop_invariant_calls:
-        if c not in seen_inv:
-            seen_inv.add(c)
-            unique_inv.append(c)
-
-    seen_lookup: set[str] = set()
-    unique_lookup: list[str] = []
-    for c in loop_lookup_calls:
-        if c not in seen_lookup:
-            seen_lookup.add(c)
-            unique_lookup.append(c)
-
     return {
-        "loop_depth": max_loop_depth,
-        "has_nested_loops": int(has_nested),
-        "calls_in_loops": unique_calls,
-        "calls_in_loops_qualified": unique_calls_qualified,
-        "subscript_in_loops": int(subscript_in_loops),
-        "has_self_call": int(has_self_call),
-        "self_call_count": self_call_count,
-        "loop_with_compare": int(loop_with_compare),
-        "loop_with_accumulator": int(loop_with_accumulator),
-        "loop_with_multiplication": int(loop_with_multiplication),
-        "loop_with_modulo": int(loop_with_modulo),
-        "str_concat_in_loop": int(str_concat_in_loop),
-        "loop_invariant_calls": unique_inv,
-        "loop_lookup_calls": unique_lookup,
-        "front_ops_in_loop": int(front_ops_in_loop),
-        "loop_bound_small": int(loop_bound_small),
+        "loop_depth": state.max_loop_depth,
+        "has_nested_loops": int(state.has_nested),
+        "calls_in_loops": _dedupe_preserve_order(state.calls_in_loops),
+        "calls_in_loops_qualified": _dedupe_preserve_order(state.calls_in_loops_qualified),
+        "subscript_in_loops": int(state.subscript_in_loops),
+        "has_self_call": int(state.has_self_call),
+        "self_call_count": state.self_call_count,
+        "loop_with_compare": int(state.loop_with_compare),
+        "loop_with_accumulator": int(state.loop_with_accumulator),
+        "loop_with_multiplication": int(state.loop_with_multiplication),
+        "loop_with_modulo": int(state.loop_with_modulo),
+        "str_concat_in_loop": int(state.str_concat_in_loop),
+        "loop_invariant_calls": _dedupe_preserve_order(state.loop_invariant_calls),
+        "loop_lookup_calls": _dedupe_preserve_order(state.loop_lookup_calls),
+        "front_ops_in_loop": int(state.front_ops_in_loop),
+        "loop_bound_small": int(state.loop_bound_small),
     }
 
 
@@ -962,34 +950,43 @@ def _is_front_operation_call(call_node, source: bytes, call_name: str) -> bool:
     return False
 
 
+def _integer_node_value(node, source: bytes) -> int | None:
+    if node.type not in ("integer", "number"):
+        return None
+    text = source[node.start_byte : node.end_byte].decode("utf-8", errors="replace")
+    try:
+        return int(text)
+    except (ValueError, OverflowError):
+        return None
+
+
+def _call_argument_nodes(call_node) -> list:
+    for child in call_node.children:
+        if child.type in ("argument_list", "arguments"):
+            return [arg for arg in child.children if arg.is_named]
+    return []
+
+
+def _is_small_range_call(node, source: bytes) -> bool:
+    if node.type not in ("call_expression", "call"):
+        return False
+    if _call_target_name(node, source) != "range":
+        return False
+    return any((value := _integer_node_value(arg, source)) is not None and value < 100 for arg in _call_argument_nodes(node))
+
+
+def _is_small_literal_collection(node) -> bool:
+    if node.type not in ("list", "tuple", "set"):
+        return False
+    return sum(1 for child in node.children if child.is_named) < 20
+
+
 def _is_bounded_loop(loop_node, source: bytes) -> bool:
     """Check if a loop iterates over a known-small bounded range.
 
     Detects: range(N) where N < 100, iteration over tuple/list literals.
     """
-    for child in loop_node.children:
-        # range(N) with small literal
-        if child.type in ("call_expression", "call"):
-            fn_name = _call_target_name(child, source)
-            if fn_name == "range":
-                # Check for a single integer argument < 100
-                for sub in child.children:
-                    if sub.type in ("argument_list", "arguments"):
-                        for arg in sub.children:
-                            if arg.type in ("integer", "number"):
-                                try:
-                                    val = int(source[arg.start_byte : arg.end_byte].decode("utf-8", errors="replace"))
-                                    if val < 100:
-                                        return True
-                                except (ValueError, OverflowError):
-                                    pass
-        # Iteration over a small literal collection
-        if child.type in ("list", "tuple", "set"):
-            # Count elements
-            elem_count = sum(1 for c in child.children if c.is_named)
-            if elem_count < 20:
-                return True
-    return False
+    return any(_is_small_range_call(child, source) or _is_small_literal_collection(child) for child in loop_node.children)
 
 
 # ── Batch computation + storage ──────────────────────────────────────

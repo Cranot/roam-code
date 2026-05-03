@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 148 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 150 specialised commands are advanced surface for specialised workflows.
 
-*154 commands · 120 MCP tools · 27 languages · 100% local · zero API keys*
+*155 commands · 120 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -25,7 +25,7 @@ Roam is a structural intelligence engine for software. It pre-indexes your codeb
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 152 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 155 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            27 languages   + edges            govern
@@ -83,7 +83,7 @@ $ roam diff                    # blast radius of uncommitted changes
 
 ## What's New in v12
 
-### v12.1 (in progress) -- Boolean oracles, IDOR classifier, index portability + Django bridge
+### v12.1+ -- Boolean oracles, IDOR classifier, index portability + Django bridge
 - **`roam oracle <name>`**: 5 boolean oracles for agents — 1-token yes/no answers (`symbol-exists`, `route-exists`, `is-test-only`, `is-reachable-from-entry`, `is-clone-of`). Direct counter to CKB v9.2's `symbolExists` pattern. MCP tools: `roam_oracle_*`.
 - **`roam_taint_classify` (MCP only)**: LLM-augmented taint classification — runs `roam taint` then asks the agent's own model (via MCP sampling) to label each reachable finding as IDOR/AUTHZ/SQLI/XSS/etc. with confidence + reasoning. Counter to Semgrep Multimodal — same LLM-reasoning narrative without a hosted API key. Sequential for v12.1; concurrency-bounded gather lands in v12.2.
 - **`roam index-export` / `roam index-import`**: portable, integrity-checked tarball format with manifest sha256 round-trip + optional cosign signing. Counter to Cursor's "92% similar codebase = reuse teammate's index" without a vendor cloud. Tamper-evident (manifest verifies index.db sha256 on import).
@@ -98,7 +98,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **154 CLI commands, 120 MCP tools** (`fleet`, `ask`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **155 CLI commands, 120 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -269,7 +269,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 149 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **154 commands organised into 7 categories**, but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 150 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **155 commands organised into 7 categories**, but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -293,7 +293,7 @@ roam health
 | `roam describe [--write] [--force] [-o PATH] [--agent-prompt]` | Auto-generate project description for AI agents. `--write` auto-detects your agent's config file. `--agent-prompt` returns a compact (<500 token) system prompt |
 | `roam agent-export [--format F] [--write]` | Generate agent-context bundle from project analysis (`AGENTS.md` + provider-specific overlays) |
 | `roam minimap [--update] [-o FILE] [--init-notes]` | Compact annotated codebase snapshot for agent config injection: stack, annotated directory tree, key symbols by PageRank, high fan-in symbols to avoid touching, hotspots, conventions. Sentinel-based in-place updates |
-| `roam config [--set-db-dir PATH] [--semantic-backend MODE]` | Manage `.roam/config.json` (DB path, excludes, optional ONNX semantic settings) |
+| `roam config [--set-db-dir PATH] [--use-local-cache] [--semantic-status] [--semantic-backend MODE]` | Manage `.roam/config.json` (DB path, local cache storage, excludes, optional ONNX semantic settings, and activation diagnostics) |
 | `roam map [-n N] [--full] [--budget N]` | Project skeleton: files, languages, entry points, top symbols by PageRank. `--budget` caps output to N tokens |
 | `roam schema [--diff] [--version V]` | JSON envelope schema versioning: view, diff, and validate output schemas |
 | `roam mcp [--list-tools] [--transport T]` | Start MCP server (stdio/SSE/streamable-http), inspect available tools, and expose roam to coding agents |
@@ -312,7 +312,8 @@ roam health
 | `roam retrieve <task> [--budget N] [--k N] [--seed-files PATH]` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget |
 | `roam critique [--input DIFF] [--intent TEXT] [--high-callers N]` | Verify a patch against the graph: clones-not-edited + blast radius + intent-vs-semantic-diff. Pipe `git diff` in. Exit 5 on high severity. |
 | `roam fleet plan <goal> [--n-agents N] [--adapter raw\|composio\|copilot]` | Graph-aware planner: Louvain partition + co-change + PageRank anchors → `.roam-fleet.json` for Composio/Copilot CLI/raw. |
-| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 12-recipe registry — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
+| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 13-recipe registry with phase, review-lens, gate, and follow-up metadata — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
+| `roam workflow [RECIPE] [--list] [--query TEXT]` | Inspect a recipe DAG, review lenses, gates, rendered command arguments, and follow-up commands without running the workflow. |
 | `roam taint [--rules-dir PATH] [--rule NAME] [--ci]` | Graph-reach taint analysis with OpenVEX-correct VEX justifications. YAML rule packs (5 starter rules: Python command-injection / SQLi / path-traversal, JS XSS / SSRF). |
 | `roam cga emit [--include-taint] [--sign --key]` | Code Graph Attestation — in-toto v1 statement with `roam-code.dev/CodeGraph/v1` predicate, Merkle root + edge bundle digest. `--include-taint` embeds OpenVEX-shaped reachability claims from `roam taint`. `--sign` signs with cosign (graceful skip if absent); `roam cga verify` round-trips both predicate digest and cosign signature. |
 | `roam eval-retrieve [--tasks FILE] [--sweep] [--min-recall-at-20 N] [--emit-format coderag\|beir]` | Recall@K eval harness for `roam retrieve` — measures against a JSONL ground-truth file. CI-gateable. `--emit-format coderag` writes CodeRAG-Bench-compatible run files for public leaderboard submission. |
@@ -369,7 +370,7 @@ roam health
 | `roam missing-index [--table T] [--confidence C]` | Find queries on non-indexed columns: cross-references `WHERE`/`ORDER BY` clauses, foreign keys, and paginated queries against migration-defined indexes |
 | `roam weather [-n N]` | Hotspots ranked by geometric mean of churn x complexity (percentile-normalized) |
 | `roam debt [--roi]` | Hotspot-weighted tech debt prioritization with SQALE remediation costs and optional refactoring ROI estimates |
-| `roam fitness [--explain]` | Architectural fitness functions from `.roam/fitness.yaml` |
+| `roam fitness [--explain] [--baseline PATH] [--write-baseline]` | Architectural fitness functions from `.roam/fitness.yaml`, with baseline/delta mode for existing debt |
 | `roam alerts` | Health degradation trend detection (Mann-Kendall + Sen's slope) |
 | `roam forecast [--symbol S] [--horizon N] [--alert-only]` | Predict when metrics will exceed thresholds: Theil-Sen regression on snapshot history + churn-weighted per-symbol risk |
 | `roam budget [--init] [--staged] [--range R]` | Architectural budget enforcement: per-PR delta limits on health, cycles, complexity. CI gate (exit 5 on violation) |
@@ -1637,7 +1638,7 @@ roam-code/
 
 Optional: [fastmcp](https://github.com/jlowin/fastmcp) >= 2.0 (MCP server — install with `pip install "roam-code[mcp]"`)
 
-Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `pip install "roam-code[semantic]"`
+Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `pip install "roam-code[semantic]"`; verify activation with `roam config --semantic-status`.
 
 ## Roadmap
 

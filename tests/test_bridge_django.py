@@ -61,10 +61,11 @@ class TestDetection:
     def test_detects_file_set_with_django_markers(self):
         from roam.bridges.bridge_django import DjangoBridge
 
-        # detect() takes a list of file paths and returns True if any
-        # are Django-marker filenames (models.py, admin.py, urls.py, etc.)
+        # detect() takes a list of file paths and returns True for a
+        # Django-shaped set of marker filenames.
         b = DjangoBridge()
         assert b.detect(["src/myapp/models.py", "src/myapp/views.py"]) is True
+        assert b.detect(["src/myapp/models.py"]) is False
         assert b.detect(["src/auth.py", "src/billing.py"]) is False
 
     def test_does_not_detect_non_django_paths(self):

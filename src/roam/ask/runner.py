@@ -60,6 +60,16 @@ def fill_args(
     return out
 
 
+def fill_followups(
+    followups: tuple[str, ...],
+    query: str,
+    symbol: str | None,
+) -> list[str]:
+    """Substitute ``{symbol}`` / ``{task}`` placeholders in follow-up commands."""
+    subject = symbol or query
+    return [item.replace("{symbol}", subject).replace("{task}", query) for item in followups]
+
+
 def run_recipe(
     recipe: Recipe,
     query: str,

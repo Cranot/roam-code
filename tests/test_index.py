@@ -115,6 +115,59 @@ class TestFullIndexing:
         out, rc = index_in_process(index_project)
         assert rc == 0, f"roam index exited {rc}:\n{out}"
 
+    def test_stale_lock_can_be_reused_when_delete_denied(self, tmp_path, monkeypatch):
+        """Windows/cloud-sync folders may allow overwrites but deny deletes."""
+        from roam.index import indexer as indexer_mod
+
+        lock_path = tmp_path / ".roam" / "index.lock"
+        lock_path.parent.mkdir()
+        lock_path.write_text("999999")
+
+        original_unlink = Path.unlink
+
+        def deny_lock_unlink(path, *args, **kwargs):
+            if Path(path) == lock_path:
+                raise PermissionError("delete denied")
+            return original_unlink(path, *args, **kwargs)
+
+        monkeypatch.setattr(indexer_mod, "_pid_is_running", lambda _pid: False)
+        monkeypatch.setattr(Path, "unlink", deny_lock_unlink)
+
+        assert indexer_mod._claim_index_lock(lock_path) is True
+        assert lock_path.read_text() == str(os.getpid())
+
+    def test_pid_probe_handles_windows_stale_pid_systemerror(self, monkeypatch):
+        from roam.index import indexer as indexer_mod
+
+        def raise_systemerror(_pid, _signal):
+            raise SystemError("<class 'OSError'> returned a result with an exception set")
+
+        monkeypatch.setattr(indexer_mod.os, "kill", raise_systemerror)
+
+        assert indexer_mod._pid_is_running(999999) is False
+
+    def test_semantic_activation_advice_when_vectors_empty(self, tmp_path):
+        import sqlite3
+
+        from roam.index.indexer import _semantic_activation_advice
+
+        conn = sqlite3.connect(":memory:")
+        conn.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE symbol_embeddings ("
+            "symbol_id INTEGER PRIMARY KEY, "
+            "vector TEXT NOT NULL, "
+            "dims INTEGER NOT NULL, "
+            "provider TEXT NOT NULL DEFAULT 'onnx')"
+        )
+        conn.executemany("INSERT INTO symbols(id) VALUES (?)", [(1,), (2,)])
+
+        advice = _semantic_activation_advice(conn, tmp_path)
+
+        assert advice is not None
+        assert "0/2 dense vectors" in advice
+        assert "zeta=0.2" in advice
+
 
 # ===========================================================================
 # Incremental indexing (4 tests)

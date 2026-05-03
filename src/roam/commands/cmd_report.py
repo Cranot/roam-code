@@ -9,6 +9,7 @@ import time
 
 import click
 
+from roam.ask.workflow import workflow_metadata_for_recipe
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root
 from roam.output.formatter import json_envelope, to_json
@@ -72,6 +73,14 @@ PRESETS = {
             },
         ],
     },
+}
+
+_PRESET_WORKFLOW_RECIPES = {
+    "first-contact": "onboard",
+    "security": "security-audit",
+    "pre-pr": "verify-patch",
+    "refactor": "hot-spots",
+    "guardian": "what-broke",
 }
 
 
@@ -150,6 +159,10 @@ def _run_section(section, root):
 def _format_markdown(preset_name, results):
     """Format results as GitHub-compatible markdown."""
     lines = [f"## Roam Report: {preset_name}\n"]
+    workflow = _workflow_for_preset(preset_name)
+    if workflow:
+        lines.append(f"Workflow: `{workflow['recipe']}` / `{workflow['phase']}`")
+        lines.append("")
 
     for title, success, data, stderr in results:
         status = "pass" if success else "FAIL"
@@ -174,6 +187,13 @@ def _format_markdown(preset_name, results):
             lines.append("_(no data)_\n")
 
     return "\n".join(lines)
+
+
+def _workflow_for_preset(preset: str) -> dict | None:
+    recipe = _PRESET_WORKFLOW_RECIPES.get(preset)
+    if not recipe:
+        return None
+    return workflow_metadata_for_recipe(recipe)
 
 
 @click.command()
@@ -216,6 +236,11 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                             "presets": len(all_presets),
                         },
                         presets={name: p["description"] for name, p in all_presets.items()},
+                        workflows={
+                            name: workflow
+                            for name in all_presets
+                            if (workflow := _workflow_for_preset(name)) is not None
+                        },
                     )
                 )
             )
@@ -227,6 +252,12 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                 sections = ", ".join(s["title"] for s in p["sections"])
                 click.echo(f"  {name:<16s}  {p['description']}")
                 click.echo(f"    sections: {sections}")
+                workflow = _workflow_for_preset(name)
+                if workflow:
+                    click.echo(
+                        f"    workflow: {workflow['recipe']} "
+                        f"({workflow['phase']}; {', '.join(workflow['perspectives'])})"
+                    )
         return
 
     if not preset:
@@ -243,6 +274,7 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
     ensure_index()
     root = find_project_root()
     preset_data = all_presets[preset]
+    workflow = _workflow_for_preset(preset)
     t0 = time.monotonic()
 
     results = []
@@ -279,6 +311,7 @@ def report(ctx, preset, list_presets, strict, markdown, config_path):
                         "elapsed_s": round(elapsed, 1),
                     },
                     preset=preset,
+                    workflow=workflow,
                     sections=[
                         {
                             "title": title,

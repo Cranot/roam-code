@@ -22,6 +22,8 @@ from pathlib import Path
 import click
 from click.testing import CliRunner as _CliRunner
 
+from roam.ask.workflow import workflow_metadata_for_recipe
+
 try:
     from fastmcp import Context as _Context
     from fastmcp import FastMCP
@@ -473,14 +475,21 @@ def _make_schema(summary_fields: dict | None = None, **payload_fields) -> dict:
 
 # -- Compound operation schemas ------------------------------------------------
 
+_WORKFLOW_SCHEMA = {
+    "type": "object",
+    "description": "Workflow recipe metadata: phase, review lenses, gates, and follow-up commands.",
+}
+
 _SCHEMA_EXPLORE = _make_schema(
     {"sections": {"type": "array", "items": {"type": "string"}}},
+    workflow=_WORKFLOW_SCHEMA,
     understand={"type": "object", "description": "Full codebase briefing"},
     context={"type": "object", "description": "Symbol context (when symbol provided)"},
 )
 
 _SCHEMA_PREPARE_CHANGE = _make_schema(
     {"sections": {"type": "array"}, "target": {"type": "string"}},
+    workflow=_WORKFLOW_SCHEMA,
     preflight={"type": "object", "description": "Safety check: blast radius, tests, fitness"},
     context={"type": "object", "description": "Files and line ranges to read"},
     effects={"type": "object", "description": "Side effects of the target symbol"},
@@ -488,6 +497,7 @@ _SCHEMA_PREPARE_CHANGE = _make_schema(
 
 _SCHEMA_REVIEW_CHANGE = _make_schema(
     {"sections": {"type": "array"}},
+    workflow=_WORKFLOW_SCHEMA,
     pr_risk={"type": "object", "description": "Risk score and per-file breakdown"},
     breaking_changes={"type": "object", "description": "Removed/changed API signatures"},
     pr_diff={"type": "object", "description": "Structural graph delta"},
@@ -495,6 +505,7 @@ _SCHEMA_REVIEW_CHANGE = _make_schema(
 
 _SCHEMA_DIAGNOSE_ISSUE = _make_schema(
     {"sections": {"type": "array"}, "target": {"type": "string"}},
+    workflow=_WORKFLOW_SCHEMA,
     diagnose={"type": "object", "description": "Root cause suspects ranked by risk"},
     effects={"type": "object", "description": "Side effects of the symbol"},
 )
@@ -1143,6 +1154,13 @@ async def _confirm_force_reindex(ctx: _Context | None) -> bool | None:
 # Compound operations -- each replaces 2-4 individual tool calls
 # ===================================================================
 
+_COMPOUND_WORKFLOW_RECIPES = {
+    "explore": "onboard",
+    "prepare-change": "safe-delete-check",
+    "review-change": "verify-patch",
+    "diagnose-issue": "find-bug",
+}
+
 
 def _compound_envelope(
     command: str,
@@ -1152,6 +1170,7 @@ def _compound_envelope(
     """Build a compound operation response from multiple sub-command results."""
     errors: list[dict] = []
     sections: dict = {}
+    workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)
 
     for name, data in sub_results:
         if not data or "error" in data:
@@ -1177,6 +1196,11 @@ def _compound_envelope(
             **meta,
         },
     }
+    workflow = workflow_metadata_for_recipe(str(workflow_recipe)) if workflow_recipe else None
+    if workflow:
+        result["workflow"] = workflow
+        result["summary"]["workflow_phase"] = workflow["phase"]
+        result["summary"]["workflow_recipe"] = workflow["recipe"]
     result.update(sections)
 
     if errors:

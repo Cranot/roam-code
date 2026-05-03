@@ -2,10 +2,12 @@
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 
 import click
 import pytest
+from click.testing import CliRunner
 
 from roam.config import (
     DEFAULT_RETRIEVE_WEIGHTS,
@@ -31,6 +33,8 @@ def _project(tmp_path: Path, contents: str | None = None) -> Path:
 @pytest.fixture(autouse=True)
 def _clear_env(monkeypatch):
     monkeypatch.delenv("ROAM_CONFIG", raising=False)
+    monkeypatch.delenv("ROAM_DB_DIR", raising=False)
+    monkeypatch.delenv("ROAM_CACHE_DIR", raising=False)
 
 
 # ---------------------------------------------------------------------------
@@ -78,6 +82,98 @@ class TestLoadConfig:
         # untouched keys keep defaults
         assert cfg["retrieve"]["beta"] == DEFAULT_RETRIEVE_WEIGHTS["beta"]
         assert cfg["retrieve"]["default_rerank"] == "fast"
+
+
+# ---------------------------------------------------------------------------
+# config command
+# ---------------------------------------------------------------------------
+
+
+class TestConfigCommand:
+    def test_set_db_dir_validates_and_persists(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+
+        proj = _project(tmp_path)
+        db_dir = tmp_path / "roam-db"
+        monkeypatch.chdir(proj)
+
+        result = CliRunner().invoke(cli, ["config", "--set-db-dir", str(db_dir)], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        cfg = json.loads((proj / ".roam" / "config.json").read_text(encoding="utf-8"))
+        assert cfg["db_dir"] == str(db_dir)
+        assert not (db_dir / ".roam-db-dir-probe").exists()
+
+    def test_set_db_dir_persists_absolute_path_for_relative_input(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+
+        proj = _project(tmp_path)
+        monkeypatch.chdir(proj)
+
+        result = CliRunner().invoke(cli, ["config", "--set-db-dir", "relative-db"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        cfg = json.loads((proj / ".roam" / "config.json").read_text(encoding="utf-8"))
+        assert cfg["db_dir"] == str(proj / "relative-db")
+
+    def test_use_local_cache_persists_project_cache_path(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+
+        proj = _project(tmp_path)
+        cache_root = tmp_path / "local-cache"
+        monkeypatch.chdir(proj)
+        monkeypatch.setenv("ROAM_CACHE_DIR", str(cache_root))
+
+        result = CliRunner().invoke(cli, ["--json", "config", "--use-local-cache"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        cfg = json.loads((proj / ".roam" / "config.json").read_text(encoding="utf-8"))
+        assert data["summary"]["verdict"] == "saved-local-cache"
+        assert Path(cfg["db_dir"]).is_dir()
+        assert str(cfg["db_dir"]).startswith(str(cache_root / "roam-code" / "db"))
+
+    def test_db_dir_and_local_cache_are_mutually_exclusive(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+
+        proj = _project(tmp_path)
+        monkeypatch.chdir(proj)
+
+        result = CliRunner().invoke(cli, ["config", "--set-db-dir", str(tmp_path / "db"), "--use-local-cache"])
+
+        assert result.exit_code != 0
+        assert "choose either" in result.output
+
+    def test_semantic_status_json_reports_next_actions(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+
+        proj = _project(tmp_path)
+        monkeypatch.chdir(proj)
+
+        result = CliRunner().invoke(cli, ["--json", "config", "--semantic-status"], catch_exceptions=False)
+
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["dense_active"] is False
+        assert data["semantic"]["coverage"]["status"] == "no-index"
+        assert "roam index" in data["semantic"]["next_actions"]
+
+    def test_set_db_dir_does_not_persist_unusable_path(self, tmp_path, monkeypatch):
+        from roam.cli import cli
+        from roam.commands import cmd_config
+
+        proj = _project(tmp_path)
+        monkeypatch.chdir(proj)
+
+        def reject(_db_dir):
+            raise click.BadParameter("bad path", param_hint="--set-db-dir")
+
+        monkeypatch.setattr(cmd_config, "_validate_db_dir", reject)
+
+        result = CliRunner().invoke(cli, ["config", "--set-db-dir", str(tmp_path / "bad")])
+
+        assert result.exit_code != 0
+        assert not (proj / ".roam" / "config.json").exists()
 
     def test_full_override_replaces_each_field(self, tmp_path):
         proj = _project(

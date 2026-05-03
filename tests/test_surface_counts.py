@@ -75,6 +75,14 @@ def test_docs_command_count_matches_source():
         assert n == canonical, f"{doc} says '{n} commands' but `_COMMANDS` has {canonical} canonical commands"
 
 
+def test_readme_specialised_command_count_matches_five_verb_model():
+    canonical = cli_surface_counts()["canonical_commands"]
+    text = _read("README.md")
+    match = re.search(r"\bother\s+(\d+)\s+specialised\s+commands\b", text)
+    assert match, "README missing 'other N specialised commands' phrase"
+    assert int(match.group(1)) == canonical - 5
+
+
 def test_collect_surface_counts_shape():
     payload = collect_surface_counts()
     assert set(payload.keys()) == {"cli", "mcp"}

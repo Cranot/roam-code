@@ -1,9 +1,8 @@
 """The recipe registry for ``roam ask``.
 
-Each recipe is a tiny DAG of existing roam commands plus an intent
-description used by the classifier. Twelve v12.0 recipes (full 22-recipe
-surface lands in v12.1). Order is irrelevant — the classifier ranks
-by TF-IDF similarity against the user's query.
+Each recipe is a tiny DAG of existing roam commands plus intent and workflow
+metadata used by the classifier and CLI. Order is irrelevant; the classifier
+ranks by TF-IDF similarity against the user's query.
 """
 
 from __future__ import annotations
@@ -33,6 +32,15 @@ class Recipe:
         runtime from the parsed query.
     summary:
         How to summarise the combined output to the user.
+    phase:
+        Workflow phase this recipe best supports.
+    perspectives:
+        Review lenses an agent should apply when interpreting results.
+    followups:
+        High-value next commands after the recipe completes.
+    gates:
+        Stop conditions or quality bars that should be satisfied before
+        continuing the workflow.
     """
 
     name: str
@@ -41,10 +49,14 @@ class Recipe:
     keywords: tuple[str, ...] = ()
     commands: tuple[tuple[str, tuple[str, ...]], ...] = ()
     summary: str = ""
+    phase: str = ""
+    perspectives: tuple[str, ...] = ()
+    followups: tuple[str, ...] = ()
+    gates: tuple[str, ...] = ()
 
 
-# v12.0 recipes — chosen for coverage of the most common workflows
-# and to showcase the new v12 primitives (retrieve, critique, fleet, taint).
+# Recipes are chosen for coverage of the most common workflows and to showcase
+# the v12 primitives (retrieve, critique, fleet, taint, fixture impact).
 RECIPES: list[Recipe] = [
     Recipe(
         name="safe-delete-check",
@@ -63,6 +75,10 @@ RECIPES: list[Recipe] = [
             "Combined blast radius + caller analysis. Treat HIGH preflight "
             "verdict or any caller in production code as a stop-sign."
         ),
+        phase="scope",
+        perspectives=("blast-radius", "caller-safety", "deletion-readiness"),
+        followups=("roam safe-delete {symbol}", "roam dead --summary"),
+        gates=("Stop on HIGH/CRITICAL preflight risk", "Do not delete while production callers remain"),
     ),
     Recipe(
         name="onboard",
@@ -79,6 +95,10 @@ RECIPES: list[Recipe] = [
             "Full briefing: stack, architecture, health, hotspots. Pair "
             "with `roam tour --top 5` for the high-PageRank entry points."
         ),
+        phase="discover",
+        perspectives=("architecture-map", "hotspots", "reading-order"),
+        followups=("roam tour --top 5", "roam dashboard"),
+        gates=("Run or refresh the index before trusting the map", "Confirm hotspots before choosing a first edit"),
     ),
     Recipe(
         name="trace-task",
@@ -95,6 +115,10 @@ RECIPES: list[Recipe] = [
             "Ranked spans with justification tags (PageRank + co-change + "
             "clones + lexical). Each span includes file:line and a why row."
         ),
+        phase="retrieve",
+        perspectives=("retrieval-relevance", "structural-ranking", "token-budget"),
+        followups=("roam context {symbol}", "roam hover {symbol}"),
+        gates=("Treat low-confidence retrieve as a search miss", "Add seed files when top spans do not cover task terms"),
     ),
     Recipe(
         name="verify-patch",
@@ -115,6 +139,10 @@ RECIPES: list[Recipe] = [
             "clones-not-edited check. Exit 5 = high-severity finding "
             "(CI-gateable)."
         ),
+        phase="review",
+        perspectives=("blast-radius", "clone-consistency", "intent-alignment"),
+        followups=("roam rules --changed", "roam test-impact"),
+        gates=("Stop on high-severity critique findings", "Add or run impacted tests before merge"),
     ),
     Recipe(
         name="plan-fleet",
@@ -131,6 +159,10 @@ RECIPES: list[Recipe] = [
             "Graph-aware partition (Louvain + co-change + PageRank "
             "anchors) emits .roam-fleet.json for Composio / Copilot / raw."
         ),
+        phase="parallelize",
+        perspectives=("parallelism", "write-conflicts", "ownership-boundaries"),
+        followups=("roam fleet verify .roam-fleet.json", "roam partition"),
+        gates=("Do not dispatch overlapping write scopes", "Keep dependent partitions in later phases"),
     ),
     # ------------------------------------------------------------------
     # New in v12.0 second batch (recipes 6-12)
@@ -153,6 +185,10 @@ RECIPES: list[Recipe] = [
             "Root-cause ranking from `diagnose` plus retrieved spans for "
             "additional context. Look for HIGH confidence findings first."
         ),
+        phase="debug",
+        perspectives=("root-cause", "side-effects", "retrieval-context"),
+        followups=("roam trace {symbol}", "roam effects {symbol}"),
+        gates=("Prioritize HIGH-confidence suspects first", "Verify side effects before changing shared code"),
     ),
     Recipe(
         name="trace-flow",
@@ -172,6 +208,10 @@ RECIPES: list[Recipe] = [
             "k-shortest paths plus inbound caller list. Useful for "
             "understanding ripple effects before changing a hub function."
         ),
+        phase="trace",
+        perspectives=("call-chain", "consumer-map", "execution-path"),
+        followups=("roam graph {symbol}", "roam effects {symbol}"),
+        gates=("Stop when trace reaches unindexed or dynamic dispatch", "Validate external edges manually"),
     ),
     Recipe(
         name="what-broke",
@@ -191,6 +231,10 @@ RECIPES: list[Recipe] = [
             "Snapshot delta + structural PR diff. Watch for new cycles, "
             "rising complexity, falling test ratio, or growing god-components."
         ),
+        phase="monitor",
+        perspectives=("trend-regression", "structural-delta", "release-risk"),
+        followups=("roam trends --compare --json", "roam report quality"),
+        gates=("Investigate new cycles before release", "Treat falling health score as a release risk"),
     ),
     Recipe(
         name="hot-spots",
@@ -210,6 +254,10 @@ RECIPES: list[Recipe] = [
             "Top-10 churn × complexity intersection plus the technical-debt "
             "ranking. These are the highest-leverage refactor targets."
         ),
+        phase="prioritize",
+        perspectives=("churn", "complexity", "refactor-roi"),
+        followups=("roam debt", "roam preflight {symbol}"),
+        gates=("Prefer hotspots with tests or clear boundaries", "Preflight the selected target before refactoring"),
     ),
     Recipe(
         name="security-audit",
@@ -239,6 +287,10 @@ RECIPES: list[Recipe] = [
             "Taint reach (graph-BFS, OpenVEX-correct) plus the adversarial "
             "attack-surface review. Failures gate-able in CI via exit 5."
         ),
+        phase="secure",
+        perspectives=("taint-reachability", "attack-surface", "adversarial-review"),
+        followups=("roam taint --json", "roam adversarial --json"),
+        gates=("Stop on reachable taint to sink", "Require mitigation or documented suppression for exploitable paths"),
     ),
     Recipe(
         name="fixture-impact",
@@ -261,6 +313,10 @@ RECIPES: list[Recipe] = [
             "or PascalCase). ``--json`` for the full list when output is "
             "capped."
         ),
+        phase="test-impact",
+        perspectives=("test-dependency", "implicit-edges", "rename-risk"),
+        followups=("roam pytest-fixtures {symbol} --reverse --json", "roam test-impact"),
+        gates=("Do not rename fixtures until reverse dependencies are updated", "Run impacted tests after fixture changes"),
     ),
     Recipe(
         name="dead-code-sweep",
@@ -277,6 +333,10 @@ RECIPES: list[Recipe] = [
             "Dead-symbol ranking by aging + decay score. Pipe a candidate "
             "through `roam safe-delete <name>` before removing."
         ),
+        phase="cleanup",
+        perspectives=("reachability", "deletion-cascade", "noise-reduction"),
+        followups=("roam safe-delete {symbol}", "roam preflight {symbol}"),
+        gates=("Confirm dead-code candidates with safe-delete", "Avoid deleting public API without ownership review"),
     ),
     Recipe(
         name="architecture-debt",
@@ -305,6 +365,10 @@ RECIPES: list[Recipe] = [
             "Debt aggregate plus top-10 highly-coupled modules. Pair with "
             "`roam fingerprint` for spectral-gap and Fiedler analysis."
         ),
+        phase="architecture",
+        perspectives=("coupling", "god-components", "boundary-quality"),
+        followups=("roam fingerprint", "roam health --json"),
+        gates=("Stop on new cycles", "Extract boundaries before moving highly coupled modules"),
     ),
 ]
 

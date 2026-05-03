@@ -55,6 +55,7 @@ Example .roam/fitness.yaml:
 
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 
@@ -175,124 +176,106 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
     return violations
 
 
+def _threshold_metric_violations(rule, metric: str, value, max_val, min_val) -> list[dict]:
+    violations = []
+    if max_val is not None and value > max_val:
+        violations.append(_metric_violation(rule, metric, value, "max", max_val))
+    if min_val is not None and value < min_val:
+        violations.append(_metric_violation(rule, metric, value, "min", min_val))
+    return violations
+
+
+def _metric_violation(rule, metric: str, value, bound: str, threshold) -> dict:
+    return {
+        "rule": rule["name"],
+        "type": "metric",
+        "message": f"{metric}={value} ({bound}={threshold})",
+        "metric": metric,
+        "value": value,
+        "threshold": threshold,
+    }
+
+
+def _symbol_graph_cycles(conn):
+    from roam.graph.builder import build_symbol_graph
+    from roam.graph.cycles import find_cycles
+
+    graph = build_symbol_graph(conn)
+    return graph, find_cycles(graph)
+
+
+def _check_cycles_metric(rule, conn) -> list[dict]:
+    try:
+        _, cycles = _symbol_graph_cycles(conn)
+    except Exception:
+        return []
+    return _threshold_metric_violations(rule, "cycles", len(cycles), rule.get("max"), rule.get("min"))
+
+
+def _check_health_score_metric(rule, conn) -> list[dict]:
+    try:
+        graph, cycles = _symbol_graph_cycles(conn)
+    except Exception:
+        return []
+    total_syms = len(graph)
+    if total_syms == 0:
+        return []
+    cycle_syms = sum(len(cycle) for cycle in cycles)
+    cycle_pct = cycle_syms / total_syms * 100
+    score = max(0, 100 - int(cycle_pct * 2))
+    return _threshold_metric_violations(rule, "health_score", score, rule.get("max"), rule.get("min"))
+
+
+def _check_cognitive_complexity_metric(rule, conn) -> list[dict]:
+    threshold = rule.get("max") if rule.get("max") is not None else 999
+    limit_clause = "" if rule.get("_all_violations") else "LIMIT 50"
+    try:
+        rows = conn.execute(
+            f"""SELECT sm.cognitive_complexity, s.name, s.kind,
+                      s.line_start, f.path
+               FROM symbol_metrics sm
+               JOIN symbols s ON sm.symbol_id = s.id
+               JOIN files f ON s.file_id = f.id
+               WHERE sm.cognitive_complexity > ?
+               ORDER BY sm.cognitive_complexity DESC
+               {limit_clause}""",
+            (threshold,),
+        ).fetchall()
+    except Exception:
+        return []
+
+    return [
+        {
+            "rule": rule["name"],
+            "type": "metric",
+            "message": f"{row['name']} complexity={row['cognitive_complexity']:.0f} (max={threshold})",
+            "source": loc(row["path"], row["line_start"]),
+            "metric": "cognitive_complexity",
+            "value": row["cognitive_complexity"],
+            "threshold": threshold,
+        }
+        for row in rows
+    ]
+
+
+def _check_count_metric_rule(rule, conn) -> list[dict]:
+    violations: list[dict] = []
+    _check_count_metric(rule.get("metric", ""), rule, conn, violations)
+    return violations
+
+
 def _check_metric_rule(rule, conn) -> list[dict]:
     """Check a metric threshold rule."""
     metric = rule.get("metric", "")
-    max_val = rule.get("max")
-    min_val = rule.get("min")
-    violations = []
-
-    # Global metrics (from health-style computation)
     if metric == "cycles":
-        try:
-            from roam.graph.builder import build_symbol_graph
-            from roam.graph.cycles import find_cycles
-
-            G = build_symbol_graph(conn)
-            cycles = find_cycles(G)
-            count = len(cycles)
-            if max_val is not None and count > max_val:
-                violations.append(
-                    {
-                        "rule": rule["name"],
-                        "type": "metric",
-                        "message": f"cycles={count} (max={max_val})",
-                        "metric": "cycles",
-                        "value": count,
-                        "threshold": max_val,
-                    }
-                )
-            if min_val is not None and count < min_val:
-                violations.append(
-                    {
-                        "rule": rule["name"],
-                        "type": "metric",
-                        "message": f"cycles={count} (min={min_val})",
-                        "metric": "cycles",
-                        "value": count,
-                        "threshold": min_val,
-                    }
-                )
-        except Exception:
-            pass
-
-    elif metric == "health_score":
-        # Compute health score inline
-        try:
-            from roam.graph.builder import build_symbol_graph
-            from roam.graph.cycles import find_cycles
-
-            G = build_symbol_graph(conn)
-            total_syms = len(G)
-            if total_syms == 0:
-                return []
-
-            cycles = find_cycles(G)
-            cycle_syms = sum(len(c) for c in cycles)
-            cycle_pct = (cycle_syms / total_syms * 100) if total_syms else 0
-
-            score = max(0, 100 - int(cycle_pct * 2))
-
-            if max_val is not None and score > max_val:
-                violations.append(
-                    {
-                        "rule": rule["name"],
-                        "type": "metric",
-                        "message": f"health_score={score} (max={max_val})",
-                        "metric": "health_score",
-                        "value": score,
-                        "threshold": max_val,
-                    }
-                )
-            if min_val is not None and score < min_val:
-                violations.append(
-                    {
-                        "rule": rule["name"],
-                        "type": "metric",
-                        "message": f"health_score={score} (min={min_val})",
-                        "metric": "health_score",
-                        "value": score,
-                        "threshold": min_val,
-                    }
-                )
-        except Exception:
-            pass
-
-    elif metric == "cognitive_complexity":
-        # Per-symbol metric check
-        try:
-            threshold = max_val if max_val is not None else 999
-            rows = conn.execute(
-                """SELECT sm.cognitive_complexity, s.name, s.kind,
-                          s.line_start, f.path
-                   FROM symbol_metrics sm
-                   JOIN symbols s ON sm.symbol_id = s.id
-                   JOIN files f ON s.file_id = f.id
-                   WHERE sm.cognitive_complexity > ?
-                   ORDER BY sm.cognitive_complexity DESC
-                   LIMIT 50""",
-                (threshold,),
-            ).fetchall()
-            for r in rows:
-                violations.append(
-                    {
-                        "rule": rule["name"],
-                        "type": "metric",
-                        "message": (f"{r['name']} complexity={r['cognitive_complexity']:.0f} (max={threshold})"),
-                        "source": loc(r["path"], r["line_start"]),
-                        "metric": "cognitive_complexity",
-                        "value": r["cognitive_complexity"],
-                        "threshold": threshold,
-                    }
-                )
-        except Exception:
-            pass
-
-    elif metric in ("god_components", "bottlenecks", "dead_exports", "layer_violations"):
-        # These require more complex computation — delegate to simplified checks
-        _check_count_metric(metric, rule, conn, violations)
-
-    return violations
+        return _check_cycles_metric(rule, conn)
+    if metric == "health_score":
+        return _check_health_score_metric(rule, conn)
+    if metric == "cognitive_complexity":
+        return _check_cognitive_complexity_metric(rule, conn)
+    if metric in ("god_components", "bottlenecks", "dead_exports", "layer_violations"):
+        return _check_count_metric_rule(rule, conn)
+    return []
 
 
 def _check_count_metric(metric, rule, conn, violations):
@@ -488,6 +471,285 @@ _CHECKERS = {
 }
 
 
+def _default_baseline_path(root: Path) -> Path:
+    return root / ".roam" / "fitness-baseline.json"
+
+
+def _violation_key(violation: dict) -> str:
+    metric = str(violation.get("metric", ""))
+    if metric == "cycles":
+        return "|".join(
+            str(part)
+            for part in (
+                violation.get("rule", ""),
+                violation.get("type", ""),
+                metric,
+            )
+        )
+    if metric == "cognitive_complexity":
+        message = str(violation.get("message", ""))
+        symbol_name = message.split(" complexity=", 1)[0]
+        source_path = str(violation.get("source", "")).split(":", 1)[0]
+        return "|".join(
+            str(part)
+            for part in (
+                violation.get("rule", ""),
+                violation.get("type", ""),
+                metric,
+                source_path,
+                symbol_name,
+            )
+        )
+    parts = [
+        violation.get("rule", ""),
+        violation.get("type", ""),
+        violation.get("metric", ""),
+        violation.get("source", ""),
+        violation.get("message", ""),
+    ]
+    return "|".join(str(part) for part in parts)
+
+
+def _baseline_payload(rule_results: list[dict], violations: list[dict]) -> dict:
+    keys = sorted({_violation_key(violation) for violation in violations})
+    return {
+        "schema": "roam-fitness-baseline-v1",
+        "summary": {
+            "rules": len(rule_results),
+            "violations": len(violations),
+        },
+        "violation_keys": keys,
+        "violations": violations,
+    }
+
+
+def _load_baseline(path: Path) -> dict:
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except OSError as exc:
+        raise click.ClickException(f"Cannot read fitness baseline: {path}") from exc
+    except json.JSONDecodeError as exc:
+        raise click.ClickException(f"Invalid fitness baseline JSON: {path}") from exc
+    if not isinstance(data, dict):
+        raise click.ClickException(f"Invalid fitness baseline shape: {path}")
+    return data
+
+
+def _baseline_keys(data: dict) -> set[str]:
+    keys = data.get("violation_keys")
+    if isinstance(keys, list):
+        return {str(key) for key in keys}
+    violations = data.get("violations", [])
+    if isinstance(violations, list):
+        return {_violation_key(violation) for violation in violations if isinstance(violation, dict)}
+    return set()
+
+
+def _baseline_delta(violations: list[dict], baseline: dict) -> dict:
+    old_keys = _baseline_keys(baseline)
+    current_keys = {_violation_key(violation) for violation in violations}
+    new_violations = [violation for violation in violations if _violation_key(violation) not in old_keys]
+    return {
+        "baseline_violations": len(old_keys),
+        "current_violations": len(current_keys),
+        "new_violations": len(new_violations),
+        "resolved_violations": len(old_keys - current_keys),
+        "new_violation_items": new_violations,
+    }
+
+
+def _write_baseline(path: Path, rule_results: list[dict], violations: list[dict]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(_baseline_payload(rule_results, violations), indent=2), encoding="utf-8")
+
+
+def _rules_for_baseline_mode(rules: list[dict]) -> list[dict]:
+    out = []
+    for rule in rules:
+        copy = dict(rule)
+        if copy.get("type") == "metric" and copy.get("metric") == "cognitive_complexity":
+            copy["_all_violations"] = True
+        out.append(copy)
+    return out
+
+
+def _emit_no_rules(json_mode: bool) -> None:
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "fitness",
+                    summary={
+                        "rules_checked": 0,
+                        "passed": 0,
+                        "failed": 0,
+                        "total_violations": 0,
+                        "verdict": "no rules configured",
+                    },
+                    rules=[],
+                    violations=[],
+                )
+            )
+        )
+        return
+    click.echo("No fitness rules found. Create .roam/fitness.yaml or run:\n  roam fitness --init")
+
+
+def _filter_rules(rules: list[dict], rule_filter: str | None) -> list[dict]:
+    if not rule_filter:
+        return rules
+    return [rule for rule in rules if rule_filter.lower() in rule.get("name", "").lower()]
+
+
+def _run_fitness_rules(conn, rules: list[dict]) -> tuple[list[dict], list[dict]]:
+    all_violations = []
+    rule_results = []
+    for rule in rules:
+        checker = _CHECKERS.get(rule.get("type", ""))
+        if checker is None:
+            continue
+        violations = checker(rule, conn)
+        result_entry = _rule_result_entry(rule, violations)
+        rule_results.append(result_entry)
+        all_violations.extend(violations)
+    return rule_results, all_violations
+
+
+def _rule_result_entry(rule: dict, violations: list[dict]) -> dict:
+    result = {
+        "name": rule.get("name", "unnamed"),
+        "type": rule.get("type", ""),
+        "status": "PASS" if not violations else "FAIL",
+        "violations": len(violations),
+    }
+    if reason := rule.get("reason", ""):
+        result["reason"] = reason
+    if link := rule.get("link", ""):
+        result["link"] = link
+    return result
+
+
+def _rule_counts(rule_results: list[dict]) -> tuple[int, int]:
+    passed = sum(1 for result in rule_results if result["status"] == "PASS")
+    failed = sum(1 for result in rule_results if result["status"] == "FAIL")
+    return passed, failed
+
+
+def _baseline_compare(all_violations: list[dict], baseline_path: Path | None) -> tuple[dict | None, list[dict]]:
+    if baseline_path is None:
+        return None, []
+    baseline_data = _load_baseline(baseline_path)
+    baseline_info = _baseline_delta(all_violations, baseline_data)
+    baseline_info["path"] = str(baseline_path)
+    return baseline_info, baseline_info["new_violation_items"]
+
+
+def _maybe_write_baseline(root: Path, write_baseline: bool, rule_results: list[dict], all_violations: list[dict]) -> str | None:
+    if not write_baseline:
+        return None
+    written_path = _default_baseline_path(root)
+    _write_baseline(written_path, rule_results, all_violations)
+    return str(written_path)
+
+
+def _fitness_summary(rule_results, passed: int, failed: int, all_violations, baseline_info, written_baseline_path) -> dict:
+    summary = {
+        "rules_checked": len(rule_results),
+        "passed": passed,
+        "failed": failed,
+        "total_violations": len(all_violations),
+    }
+    if baseline_info:
+        summary["baseline"] = {k: v for k, v in baseline_info.items() if k != "new_violation_items"}
+    if written_baseline_path:
+        summary["baseline_written"] = written_baseline_path
+    return summary
+
+
+def _json_violations(violations: list[dict]) -> list[dict]:
+    return [{key: value for key, value in violation.items()} for violation in violations[:100]]
+
+
+def _emit_fitness_json(summary, rule_results, all_violations, new_violations) -> None:
+    click.echo(
+        to_json(
+            json_envelope(
+                "fitness",
+                summary=summary,
+                rules=rule_results,
+                violations=_json_violations(all_violations),
+                new_violations=_json_violations(new_violations),
+            )
+        )
+    )
+
+
+def _emit_rule_line(rule_result: dict, explain: bool) -> None:
+    icon = "PASS" if rule_result["status"] == "PASS" else "FAIL"
+    detail = f" ({rule_result['violations']} violations)" if rule_result["violations"] else ""
+    reason = rule_result.get("reason", "")
+    link = rule_result.get("link", "")
+    line = f"  [{icon}] {rule_result['name']}{detail}"
+    if rule_result["status"] == "FAIL" and reason:
+        line += f" -- Reason: {reason}"
+    if rule_result["status"] == "FAIL" and link:
+        line += f" (see: {link})"
+    click.echo(line)
+    if explain and (reason or link):
+        if reason:
+            click.echo(f"    Reason: {reason}")
+        if link:
+            click.echo(f"    Link:   {link}")
+
+
+def _emit_violations_text(violations: list[dict], heading: str = "Violations") -> None:
+    if not violations:
+        return
+    click.echo(f"\n{heading} ({len(violations)}):\n")
+    for violation in violations[:30]:
+        src = violation.get("source", "")
+        click.echo(f"  {violation['rule']}: {violation['message']}")
+        if src:
+            click.echo(f"    at {src}")
+    if len(violations) > 30:
+        click.echo(f"\n  ... and {len(violations) - 30} more")
+
+
+def _emit_baseline_delta_text(baseline_info: dict | None, new_violations: list[dict]) -> None:
+    if not baseline_info:
+        return
+    click.echo(
+        "\nBaseline delta: "
+        f"{baseline_info['new_violations']} new, "
+        f"{baseline_info['resolved_violations']} resolved "
+        f"(baseline {baseline_info['baseline_violations']}, "
+        f"current {baseline_info['current_violations']})"
+    )
+    _emit_violations_text(new_violations, heading="New violations")
+
+
+def _emit_fitness_text(rule_results, all_violations, baseline_info, new_violations, written_baseline_path, passed, failed, explain) -> None:
+    click.echo(f"Fitness check: {len(rule_results)} rules\n")
+    for rule_result in rule_results:
+        _emit_rule_line(rule_result, explain)
+    _emit_violations_text(all_violations)
+    _emit_baseline_delta_text(baseline_info, new_violations)
+    if written_baseline_path:
+        click.echo(f"\nBaseline written: {written_baseline_path}")
+    click.echo(f"\n{passed} passed, {failed} failed")
+
+
+def _finish_fitness(write_baseline: bool, baseline_info: dict | None, failed: int) -> None:
+    if write_baseline:
+        return
+    if baseline_info is not None:
+        if baseline_info["new_violations"] > 0:
+            raise SystemExit(1)
+        return
+    if failed > 0:
+        raise SystemExit(1)
+
+
 # ── CLI command ──────────────────────────────────────────────────────
 
 
@@ -495,8 +757,20 @@ _CHECKERS = {
 @click.option("--init", "do_init", is_flag=True, help="Create a starter fitness.yaml")
 @click.option("--rule", "rule_filter", default=None, help="Run only rules matching this name")
 @click.option("--explain", is_flag=True, help="Show full reason for each rule")
+@click.option(
+    "--baseline",
+    "baseline_path",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="Compare against a saved baseline; exit non-zero only for new violations.",
+)
+@click.option(
+    "--write-baseline",
+    is_flag=True,
+    help="Write current violations to .roam/fitness-baseline.json and exit zero.",
+)
 @click.pass_context
-def fitness(ctx, do_init, rule_filter, explain):
+def fitness(ctx, do_init, rule_filter, explain, baseline_path, write_baseline):
     """Run architectural fitness functions from .roam/fitness.yaml.
 
     Checks dependency constraints, metric thresholds, and naming rules.
@@ -506,7 +780,7 @@ def fitness(ctx, do_init, rule_filter, explain):
     Unlike ``preflight`` (which includes fitness rules as one of 6 signal
     dimensions in a compound check), this command provides the full fitness
     interface: per-rule output, ``--init`` scaffold, ``--rule`` filter,
-    ``--explain`` annotations, and trend regression guards.
+    ``--explain`` annotations, baseline/delta mode, and trend regression guards.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     root = find_project_root()
@@ -519,119 +793,39 @@ def fitness(ctx, do_init, rule_filter, explain):
     rules = _load_rules(root)
 
     if not rules:
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "fitness",
-                        summary={
-                            "rules_checked": 0,
-                            "passed": 0,
-                            "failed": 0,
-                            "total_violations": 0,
-                            "verdict": "no rules configured",
-                        },
-                        rules=[],
-                        violations=[],
-                    )
-                )
-            )
-        else:
-            click.echo("No fitness rules found. Create .roam/fitness.yaml or run:\n  roam fitness --init")
+        _emit_no_rules(json_mode)
         return
 
-    if rule_filter:
-        rules = [r for r in rules if rule_filter.lower() in r.get("name", "").lower()]
-        if not rules:
-            click.echo(f"No rules matching '{rule_filter}'.")
-            return
+    rules = _filter_rules(rules, rule_filter)
+    if not rules:
+        click.echo(f"No rules matching '{rule_filter}'.")
+        return
+    if baseline_path is not None or write_baseline:
+        rules = _rules_for_baseline_mode(rules)
 
     with open_db(readonly=True) as conn:
-        all_violations = []
-        rule_results = []
+        rule_results, all_violations = _run_fitness_rules(conn, rules)
 
-        for rule in rules:
-            rtype = rule.get("type", "")
-            checker = _CHECKERS.get(rtype)
-            if checker is None:
-                continue
+    passed, failed = _rule_counts(rule_results)
+    baseline_info, new_violations = _baseline_compare(all_violations, baseline_path)
+    written_baseline_path = _maybe_write_baseline(root, write_baseline, rule_results, all_violations)
+    summary = _fitness_summary(rule_results, passed, failed, all_violations, baseline_info, written_baseline_path)
 
-            violations = checker(rule, conn)
-            status = "PASS" if not violations else "FAIL"
-            reason = rule.get("reason", "")
-            link = rule.get("link", "")
-            result_entry = {
-                "name": rule.get("name", "unnamed"),
-                "type": rtype,
-                "status": status,
-                "violations": len(violations),
-            }
-            if reason:
-                result_entry["reason"] = reason
-            if link:
-                result_entry["link"] = link
-            rule_results.append(result_entry)
-            all_violations.extend(violations)
+    if json_mode:
+        _emit_fitness_json(summary, rule_results, all_violations, new_violations)
+    else:
+        _emit_fitness_text(
+            rule_results,
+            all_violations,
+            baseline_info,
+            new_violations,
+            written_baseline_path,
+            passed,
+            failed,
+            explain,
+        )
 
-        passed = sum(1 for r in rule_results if r["status"] == "PASS")
-        failed = sum(1 for r in rule_results if r["status"] == "FAIL")
-
-        if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "fitness",
-                        summary={
-                            "rules_checked": len(rule_results),
-                            "passed": passed,
-                            "failed": failed,
-                            "total_violations": len(all_violations),
-                        },
-                        rules=rule_results,
-                        violations=[
-                            {k: v for k, v in viol.items()}
-                            for viol in all_violations[:100]  # Cap at 100
-                        ],
-                    )
-                )
-            )
-        else:
-            click.echo(f"Fitness check: {len(rule_results)} rules\n")
-
-            for rr in rule_results:
-                icon = "PASS" if rr["status"] == "PASS" else "FAIL"
-                detail = f" ({rr['violations']} violations)" if rr["violations"] else ""
-                line = f"  [{icon}] {rr['name']}{detail}"
-                # Append reason/link on FAIL lines
-                reason = rr.get("reason", "")
-                link = rr.get("link", "")
-                if rr["status"] == "FAIL" and reason:
-                    line += f" -- Reason: {reason}"
-                if rr["status"] == "FAIL" and link:
-                    line += f" (see: {link})"
-                click.echo(line)
-                # --explain: show reason/link below every rule
-                if explain and (reason or link):
-                    if reason:
-                        click.echo(f"    Reason: {reason}")
-                    if link:
-                        click.echo(f"    Link:   {link}")
-
-            if all_violations:
-                click.echo(f"\nViolations ({len(all_violations)}):\n")
-                for v in all_violations[:30]:
-                    src = v.get("source", "")
-                    click.echo(f"  {v['rule']}: {v['message']}")
-                    if src:
-                        click.echo(f"    at {src}")
-
-                if len(all_violations) > 30:
-                    click.echo(f"\n  ... and {len(all_violations) - 30} more")
-
-            click.echo(f"\n{passed} passed, {failed} failed")
-
-        if failed > 0:
-            raise SystemExit(1)
+    _finish_fitness(write_baseline, baseline_info, failed)
 
 
 def _init_config(root: Path):
