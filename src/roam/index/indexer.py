@@ -124,6 +124,90 @@ def _log(msg: str):
         sys.stderr.flush()
 
 
+def _pid_is_running(pid: int) -> bool:
+    """Return True when *pid* appears to refer to a live process.
+
+    On Windows, probing a process owned by another integrity level can raise
+    ``PermissionError``. Treat that as "running or inaccessible" so we do not
+    delete another process's lock by mistake.
+    """
+    if pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    except (OSError, SystemError):
+        return False
+    return True
+
+
+def _claim_index_lock(lock_path: Path) -> bool:
+    """Claim the index lock, tolerating stale locks that cannot be deleted."""
+    lock_path.parent.mkdir(exist_ok=True)
+    if lock_path.exists():
+        try:
+            raw_pid = lock_path.read_text().strip()
+            pid = int(raw_pid)
+        except (ValueError, OSError):
+            pid = 0
+
+        if pid and _pid_is_running(pid):
+            _log(f"Another indexing process (PID {pid}) is running. Exiting.")
+            return False
+
+        if pid:
+            _log(f"Removing stale lock file (PID {pid} is not running).")
+        try:
+            lock_path.unlink()
+        except OSError as exc:
+            _log(f"  Could not delete stale lock ({exc}); reusing lock file.")
+
+    try:
+        lock_path.write_text(str(os.getpid()))
+    except OSError as exc:
+        _log(f"Could not claim index lock: {exc}")
+        return False
+    return True
+
+
+def _release_index_lock(lock_path: Path) -> None:
+    """Release the index lock best-effort.
+
+    Some Windows/cloud-sync folders allow overwrites but deny deletes. Marking
+    the lock as released lets the next run overwrite it without failing.
+    """
+    try:
+        lock_path.unlink()
+        return
+    except OSError:
+        pass
+    try:
+        lock_path.write_text("released")
+    except OSError:
+        pass
+
+
+def _semantic_activation_advice(conn, project_root: Path) -> str | None:
+    """Return an index-time hint when semantic retrieve weighting is inert."""
+    try:
+        from roam.config import get_retrieve_config
+        from roam.retrieve.semantic import semantic_coverage
+
+        zeta = float(get_retrieve_config(project_root).get("zeta", 0.0) or 0.0)
+        coverage = semantic_coverage(conn)
+    except Exception:
+        return None
+    if zeta <= 0 or coverage["ready"] or int(coverage["symbols"]) <= 0:
+        return None
+    return (
+        f"Semantic retrieve: {coverage['embeddings']}/{coverage['symbols']} dense vectors; "
+        f"zeta={zeta:g} is inert until semantic backend vectors are populated."
+    )
+
+
 def _compute_file_health_scores(conn, G=None):
     """Compute a 1-10 health score for every file, fusing all signals.
 
@@ -528,31 +612,13 @@ class Indexer:
 
         # Lock file to prevent concurrent indexing
         lock_path = self.root / ".roam" / "index.lock"
-        lock_path.parent.mkdir(exist_ok=True)
-        if lock_path.exists():
-            try:
-                pid = int(lock_path.read_text().strip())
-                try:
-                    os.kill(pid, 0)
-                    self._log(f"Another indexing process (PID {pid}) is running. Exiting.")
-                    return
-                except (OSError, SystemError):
-                    # OSError: process not found (Unix/Windows)
-                    # SystemError: Windows os.kill edge case
-                    self._log(f"Removing stale lock file (PID {pid} is not running).")
-                    lock_path.unlink()
-            except (ValueError, OSError):
-                lock_path.unlink()
-
-        lock_path.write_text(str(os.getpid()))
+        if not _claim_index_lock(lock_path):
+            return
         try:
             self._do_run(force, verbose=verbose, include_excluded=include_excluded)
         finally:
             _quiet_mode = False
-            try:
-                lock_path.unlink()
-            except OSError:
-                pass
+            _release_index_lock(lock_path)
 
     def _extract_file_refs(
         self,
@@ -600,121 +666,164 @@ class Indexer:
                 if verbose:
                     self._log(f"  Warning: generic extractor failed for {rel_path}: {e}")
 
+    def _start_processing_progress(self, total):
+        if not self._progress_bar or self._quiet or total <= 0:
+            return None, None
+        try:
+            import click
+
+            bar_ctx = click.progressbar(
+                length=total,
+                label="Processing",
+                file=sys.stderr,
+                width=36,
+            )
+            return bar_ctx, bar_ctx.__enter__()
+        except Exception:
+            return None, None
+
+    def _advance_processing_progress(self, conn, bar_obj, index: int, total: int) -> None:
+        if bar_obj is not None:
+            bar_obj.update(1)
+        elif (index % 100 == 0) or (index == total):
+            self._log(f"  Processing {index}/{total} files...")
+
+        if (index % 100 == 0) or (index == total):
+            conn.commit()
+
+    @staticmethod
+    def _close_processing_progress(bar_ctx) -> None:
+        if bar_ctx is None:
+            return
+        try:
+            bar_ctx.__exit__(None, None, None)
+        except Exception:
+            pass
+
+    def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
+        try:
+            with open(full_path, "rb") as f:
+                return f.read()
+        except OSError as e:
+            if verbose:
+                self._log(f"  Warning: Could not read {rel_path}: {e}")
+            return None
+
+    def _insert_file_record(self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes) -> int | None:
+        line_count = _count_lines(source)
+        complexity = _compute_complexity(source)
+        try:
+            mtime = full_path.stat().st_mtime
+        except OSError:
+            mtime = None
+        fhash = file_hash(full_path)
+        content_head = source[:2048].decode("utf-8", errors="replace") if source else None
+        file_role = classify_file(rel_path, content_head)
+
+        conn.execute(
+            "INSERT INTO files (path, language, file_role, hash, mtime, line_count) VALUES (?, ?, ?, ?, ?, ?)",
+            (rel_path, language, file_role, fhash, mtime, line_count),
+        )
+        row = conn.execute("SELECT last_insert_rowid()").fetchone()
+        if not row:
+            self._log(f"  Warning: Failed to insert file record for {rel_path}")
+            return None
+
+        file_id = row[0]
+        conn.execute(
+            "INSERT OR REPLACE INTO file_stats (file_id, complexity) VALUES (?, ?)",
+            (file_id, complexity),
+        )
+        return file_id
+
+    def _extractor_for_file(self, get_extractor, lang, rel_path: str, verbose: bool):
+        if get_extractor is None or lang is None:
+            return None
+        try:
+            return get_extractor(lang)
+        except Exception as e:
+            if verbose:
+                self._log(f"  Warning: No extractor for {lang}: {e}")
+            return None
+
+    def _compute_symbol_metrics(self, conn, file_id, tree, parsed_source, rel_path: str, compute_complexity_fn, verbose: bool) -> None:
+        if compute_complexity_fn is None or tree is None:
+            return
+        try:
+            compute_complexity_fn(conn, file_id, tree, parsed_source)
+        except Exception as e:
+            if verbose:
+                self._log(f"  Warning: complexity analysis failed for {rel_path}: {e}")
+
+    def _process_single_file(
+        self,
+        conn,
+        rel_path,
+        get_extractor,
+        compute_complexity_fn,
+        all_symbol_rows,
+        all_references,
+        verbose,
+    ) -> int | None:
+        full_path = self.root / rel_path
+        language = detect_language(rel_path)
+        source = self._read_index_source(full_path, rel_path, verbose)
+        if source is None:
+            return None
+
+        file_id = self._insert_file_record(conn, full_path, rel_path, language, source)
+        if file_id is None:
+            return None
+
+        tree, parsed_source, lang = parse_file(full_path, language)
+        if tree is None and parsed_source is None:
+            return file_id
+
+        extractor = self._extractor_for_file(get_extractor, lang, rel_path, verbose)
+        if extractor is None:
+            return file_id
+
+        symbols = extract_symbols(tree, parsed_source, rel_path, extractor)
+        _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows)
+        self._compute_symbol_metrics(conn, file_id, tree, parsed_source, rel_path, compute_complexity_fn, verbose)
+        self._extract_file_refs(
+            rel_path,
+            full_path,
+            language,
+            source,
+            symbols,
+            tree,
+            parsed_source,
+            extractor,
+            all_references,
+            verbose,
+        )
+        return file_id
+
     def _process_files(self, conn, files_to_process, get_extractor, compute_complexity_fn, verbose):
         """Parse, extract symbols, and store per-file data. Returns (all_symbol_rows, all_references, file_id_by_path)."""
         all_symbol_rows = {}
         all_references = []
         file_id_by_path = {}
         total = len(files_to_process)
-
-        # Use progress bar when available and not quiet
-        use_bar = self._progress_bar and not self._quiet and total > 0
-        bar_ctx = None
-        bar_obj = None
-        if use_bar:
-            try:
-                import click
-
-                bar_ctx = click.progressbar(
-                    length=total,
-                    label="Processing",
-                    file=sys.stderr,
-                    width=36,
-                )
-                bar_obj = bar_ctx.__enter__()
-            except Exception:
-                use_bar = False
+        bar_ctx, bar_obj = self._start_processing_progress(total)
 
         try:
             for i, rel_path in enumerate(files_to_process, 1):
-                full_path = self.root / rel_path
-                language = detect_language(rel_path)
-
-                if use_bar and bar_obj is not None:
-                    bar_obj.update(1)
-                elif (i % 100 == 0) or (i == total):
-                    self._log(f"  Processing {i}/{total} files...")
-
-                if (i % 100 == 0) or (i == total):
-                    conn.commit()
-
-                try:
-                    with open(full_path, "rb") as f:
-                        source = f.read()
-                except OSError as e:
-                    if verbose:
-                        self._log(f"  Warning: Could not read {rel_path}: {e}")
-                    continue
-
-                line_count = _count_lines(source)
-                complexity = _compute_complexity(source)
-                try:
-                    mtime = full_path.stat().st_mtime
-                except OSError:
-                    mtime = None
-                fhash = file_hash(full_path)
-
-                content_head = source[:2048].decode("utf-8", errors="replace") if source else None
-                file_role = classify_file(rel_path, content_head)
-
-                conn.execute(
-                    "INSERT INTO files (path, language, file_role, hash, mtime, line_count) VALUES (?, ?, ?, ?, ?, ?)",
-                    (rel_path, language, file_role, fhash, mtime, line_count),
-                )
-                row = conn.execute("SELECT last_insert_rowid()").fetchone()
-                if not row:
-                    self._log(f"  Warning: Failed to insert file record for {rel_path}")
-                    continue
-                file_id = row[0]
-                file_id_by_path[rel_path] = file_id
-
-                conn.execute(
-                    "INSERT OR REPLACE INTO file_stats (file_id, complexity) VALUES (?, ?)",
-                    (file_id, complexity),
-                )
-
-                tree, parsed_source, lang = parse_file(full_path, language)
-                if tree is None and parsed_source is None:
-                    continue
-
-                extractor = None
-                if get_extractor is not None and lang is not None:
-                    try:
-                        extractor = get_extractor(lang)
-                    except Exception as e:
-                        if verbose:
-                            self._log(f"  Warning: No extractor for {lang}: {e}")
-                if extractor is None:
-                    continue
-
-                symbols = extract_symbols(tree, parsed_source, rel_path, extractor)
-                _store_symbols(conn, file_id, rel_path, symbols, all_symbol_rows)
-
-                if compute_complexity_fn is not None and tree is not None:
-                    try:
-                        compute_complexity_fn(conn, file_id, tree, parsed_source)
-                    except Exception as e:
-                        if verbose:
-                            self._log(f"  Warning: complexity analysis failed for {rel_path}: {e}")
-
-                self._extract_file_refs(
+                self._advance_processing_progress(conn, bar_obj, i, total)
+                file_id = self._process_single_file(
+                    conn,
                     rel_path,
-                    full_path,
-                    language,
-                    source,
-                    symbols,
-                    tree,
-                    parsed_source,
-                    extractor,
+                    get_extractor,
+                    compute_complexity_fn,
+                    all_symbol_rows,
                     all_references,
                     verbose,
                 )
+                if file_id is not None:
+                    file_id_by_path[rel_path] = file_id
         finally:
-            if bar_ctx is not None:
-                try:
-                    bar_ctx.__exit__(None, None, None)
-                except Exception:
-                    pass
+            self._close_processing_progress(bar_ctx)
 
         return all_symbol_rows, all_references, file_id_by_path
 
@@ -903,22 +1012,301 @@ class Indexer:
         _relink_annotations(conn)
         _log(f"  Restored {len(saved)} annotations")
 
+    def _reset_index_for_force(self, force: bool) -> list[dict]:
+        if not force:
+            return []
+        db_path = get_db_path(self.root)
+        if not db_path.exists():
+            return []
+
+        saved_annotations = self._backup_annotations(db_path)
+        db_path.unlink()
+        for suffix in ("-wal", "-shm"):
+            wal = db_path.parent / (db_path.name + suffix)
+            if wal.exists():
+                wal.unlink()
+        return saved_annotations
+
+    @staticmethod
+    def _file_ids_for_paths(conn, paths: list[str]) -> list[int]:
+        changed_file_ids = []
+        for path in paths:
+            row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+            if row:
+                changed_file_ids.append(row["id"])
+        return changed_file_ids
+
+    @staticmethod
+    def _clear_nullable_symbol_refs(conn, file_id: int) -> None:
+        sym_ids = [r[0] for r in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (file_id,)).fetchall()]
+        if not sym_ids:
+            return
+        ph = ",".join("?" for _ in sym_ids)
+        for cleanup_sql in [
+            f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
+            f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
+        ]:
+            try:
+                conn.execute(cleanup_sql, sym_ids)
+            except Exception:
+                pass  # Table may not exist in older DBs
+
+    def _delete_changed_files(self, conn, paths: list[str]) -> None:
+        for path in paths:
+            row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
+            if not row:
+                continue
+            fid = row["id"]
+            self._clear_nullable_symbol_refs(conn, fid)
+            conn.execute("DELETE FROM files WHERE id = ?", (fid,))
+
+    @staticmethod
+    def _merge_existing_symbols(conn, all_symbol_rows: dict) -> None:
+        existing_rows = conn.execute(
+            "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
+            "s.is_exported, s.line_start, f.path as file_path "
+            "FROM symbols s JOIN files f ON s.file_id = f.id"
+        ).fetchall()
+        for row in existing_rows:
+            sid = row["id"]
+            if sid in all_symbol_rows:
+                continue
+            all_symbol_rows[sid] = {
+                "id": sid,
+                "file_id": row["file_id"],
+                "file_path": row["file_path"],
+                "name": row["name"],
+                "qualified_name": row["qualified_name"],
+                "kind": row["kind"],
+                "is_exported": bool(row["is_exported"]),
+                "line_start": row["line_start"],
+            }
+
+    @staticmethod
+    def _refresh_file_id_map(conn, file_id_by_path: dict) -> None:
+        for row in conn.execute("SELECT id, path FROM files").fetchall():
+            file_id_by_path[row["path"]] = row["id"]
+
+    def _resolve_and_store_edges(self, conn, all_references, all_symbol_rows, file_id_by_path) -> None:
+        self._log("Resolving references...")
+        symbols_by_name: dict[str, list[dict]] = {}
+        for sym in all_symbol_rows.values():
+            symbols_by_name.setdefault(sym["name"], []).append(sym)
+
+        symbol_edges = resolve_references(all_references, symbols_by_name, file_id_by_path)
+        conn.executemany(
+            "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
+            [(e["source_id"], e["target_id"], e["kind"], e["line"], e.get("source_file_id")) for e in symbol_edges],
+        )
+        self._log(f"  {_format_count(len(symbol_edges))} symbol edges")
+
+        self._log("Building file-level edges...")
+        file_edges = build_file_edges(symbol_edges, all_symbol_rows)
+        conn.executemany(
+            "INSERT INTO file_edges (source_file_id, target_file_id, kind, symbol_count) VALUES (?, ?, ?, ?)",
+            [(fe["source_file_id"], fe["target_file_id"], fe["kind"], fe["symbol_count"]) for fe in file_edges],
+        )
+        self._log(f"  {_format_count(len(file_edges))} file edges")
+
+    def _compute_graph_metrics(self, conn):
+        (
+            build_symbol_graph,
+            _store_metrics,
+            _detect_clusters,
+            _label_clusters,
+            _store_clusters,
+        ) = _try_import_graph()
+        G = None
+        if build_symbol_graph is None:
+            self._log("Skipping graph metrics (module not available)")
+            return G, _detect_clusters, _label_clusters, _store_clusters
+
+        self._log("Computing graph metrics...")
+        try:
+            G = build_symbol_graph(conn)
+            _store_metrics(conn, G)
+            metric_count = conn.execute("SELECT COUNT(*) FROM graph_metrics").fetchone()[0]
+            self._log(f"  Metrics for {_format_count(metric_count)} symbols")
+        except Exception as e:
+            self._log(f"  Graph metrics failed: {e}")
+        return G, _detect_clusters, _label_clusters, _store_clusters
+
+    def _run_django_post_resolver(self, conn) -> None:
+        try:
+            from roam.index.django_post import resolve_all_django
+
+            django_counts = resolve_all_django(conn, quiet=True)
+            if any(django_counts.values()):
+                parts = []
+                if django_counts.get("models_updated"):
+                    parts.append(f"{django_counts['models_updated']} model(s)")
+                if django_counts.get("fields_updated"):
+                    parts.append(f"{django_counts['fields_updated']} field(s)")
+                if django_counts.get("relationships_created"):
+                    parts.append(f"{django_counts['relationships_created']} relationship edge(s)")
+                if parts:
+                    self._log(f"  Django: {', '.join(parts)}")
+        except Exception as e:
+            self._log(f"  Django post-resolver skipped: {e}")
+
+    def _run_pytest_fixture_resolver(self, conn) -> None:
+        try:
+            from roam.index.pytest_fixtures import resolve_pytest_fixtures
+
+            fixture_edges = resolve_pytest_fixtures(conn)
+            if fixture_edges:
+                self._log(f"  pytest fixtures: {fixture_edges} dependency edge(s)")
+        except Exception as e:
+            self._log(f"  pytest fixture resolver skipped: {e}")
+
+    def _run_registry_dispatch_resolver(self, conn) -> None:
+        try:
+            from roam.index.registry_dispatch import resolve_registry_dispatch
+
+            dispatch_edges = resolve_registry_dispatch(conn)
+            if dispatch_edges:
+                self._log(f"  registry dispatch: {dispatch_edges} edge(s)")
+        except Exception as e:
+            self._log(f"  registry-dispatch resolver skipped: {e}")
+
+    def _run_git_analysis(self, conn) -> None:
+        analyze_git = _try_import_git_stats()
+        if analyze_git is None:
+            self._log("Skipping git analysis (module not available)")
+            return
+
+        self._log("Analyzing git history...")
+        try:
+            analyze_git(conn, self.root)
+        except Exception as e:
+            self._log(f"  Git analysis failed: {e}")
+
+    def _run_clustering(self, conn, G, detect_clusters, label_clusters, store_clusters) -> None:
+        if detect_clusters is None or G is None:
+            self._log("Skipping clustering (module not available)")
+            return
+
+        self._log("Computing clusters...")
+        try:
+            cluster_map = detect_clusters(G)
+            labels = label_clusters(cluster_map, conn)
+            store_clusters(conn, cluster_map, labels)
+            self._log(f"  {len(set(cluster_map.values()))} clusters")
+        except Exception as e:
+            self._log(f"  Clustering failed: {e}")
+
+    def _run_effect_analysis(self, conn, G) -> None:
+        effects_fn = _try_import_effects()
+        if effects_fn is None:
+            return
+
+        self._log("Classifying symbol effects...")
+        try:
+            effects_fn(conn, self.root, G)
+            effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
+            if effect_count:
+                self._log(f"  {_format_count(effect_count)} effects classified")
+        except Exception as e:
+            self._log(f"  Effect analysis failed: {e}")
+
+    def _run_taint_analysis(self, conn, G) -> None:
+        taint_fn = _try_import_taint()
+        if taint_fn is None:
+            return
+
+        self._log("Computing taint summaries...")
+        try:
+            taint_fn(conn, self.root, G)
+            taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
+            if taint_count:
+                self._log(f"  {_format_count(taint_count)} taint findings")
+        except Exception as e:
+            self._log(f"  Taint analysis failed: {e}")
+
+    def _compute_health_and_load(self, conn, G) -> None:
+        self._log("Computing health scores...")
+        try:
+            _compute_file_health_scores(conn, G)
+        except Exception as e:
+            self._log(f"  Health score computation failed: {e}")
+
+        self._log("Computing cognitive load...")
+        try:
+            _compute_cognitive_load(conn)
+        except Exception as e:
+            self._log(f"  Cognitive load computation failed: {e}")
+
+    def _restore_or_relink_annotations(self, conn, force: bool, saved_annotations: list[dict]) -> None:
+        if force and saved_annotations:
+            self._log("Restoring annotations...")
+            try:
+                self._restore_annotations(conn, saved_annotations)
+            except Exception as e:
+                self._log(f"  Annotation restore failed: {e}")
+            return
+
+        if not force:
+            try:
+                _relink_annotations(conn)
+            except Exception:
+                pass
+
+    def _build_search_indexes(self, conn) -> None:
+        self._log("Building search index...")
+        try:
+            from roam.search.index_embeddings import build_fts_index, fts5_available
+
+            build_fts_index(conn, project_root=self.root)
+            if fts5_available(conn):
+                fts_count = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
+                self._log(f"  FTS5 index for {_format_count(fts_count)} symbols")
+            else:
+                tfidf_count = conn.execute("SELECT COUNT(*) FROM symbol_tfidf").fetchone()[0]
+                self._log(f"  TF-IDF vectors for {_format_count(tfidf_count)} symbols (FTS5 unavailable)")
+            try:
+                onnx_count = conn.execute("SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'").fetchone()[0]
+                if onnx_count:
+                    self._log(f"  ONNX vectors for {_format_count(onnx_count)} symbols")
+            except Exception:
+                pass
+            advice = _semantic_activation_advice(conn, self.root)
+            if advice:
+                self._log(f"  {advice}")
+        except Exception as e:
+            self._log(f"  Search index build failed (non-fatal): {e}")
+
+    def _log_parse_issues(self) -> None:
+        from roam.index.parser import get_parse_error_summary
+
+        error_summary = get_parse_error_summary()
+        if error_summary:
+            self._log(f"  Parse issues: {error_summary}")
+
+    def _set_completion_summary(self, conn, elapsed: float) -> None:
+        file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
+        sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
+        self._log(
+            f"Index complete: {_format_count(file_count)} files, "
+            f"{_format_count(sym_count)} symbols, "
+            f"{_format_count(edge_count)} edges ({elapsed:.1f}s)"
+        )
+        self._log("Index complete.")
+        self.summary = {
+            "files": file_count,
+            "symbols": sym_count,
+            "edges": edge_count,
+            "elapsed": round(elapsed, 1),
+            "up_to_date": False,
+        }
+
     def _do_run(self, force: bool, verbose: bool = False, include_excluded: bool = False):
         t0 = time.monotonic()
         self._log("Discovering files...")
         all_files = discover_files(self.root, include_excluded=include_excluded)
         self._log(f"  {_format_count(len(all_files))} files found")
 
-        saved_annotations = []
-        if force:
-            db_path = get_db_path(self.root)
-            if db_path.exists():
-                saved_annotations = self._backup_annotations(db_path)
-                db_path.unlink()
-                for suffix in ("-wal", "-shm"):
-                    wal = db_path.parent / (db_path.name + suffix)
-                    if wal.exists():
-                        wal.unlink()
+        saved_annotations = self._reset_index_for_force(force)
 
         with open_db(project_root=self.root) as conn:
             if force:
@@ -942,44 +1330,13 @@ class Indexer:
 
             self._log(f"  {len(added)} added, {len(modified)} modified, {len(removed)} removed")
 
-            # Collect file IDs of changed/removed files BEFORE deleting them
-            changed_file_ids = []
-            for path in removed + modified:
-                row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-                if row:
-                    changed_file_ids.append(row["id"])
-
-            # Find affected neighbor files BEFORE CASCADE deletes the edges
-            # we need for the query.  These are files whose edges INTO the
-            # changed files will be lost and need rebuilding.
+            changed_paths = removed + modified
+            changed_file_ids = self._file_ids_for_paths(conn, changed_paths)
             affected_file_ids = set()
             if not force and modified and changed_file_ids:
-                affected_file_ids = self._find_affected_neighbor_files(
-                    conn,
-                    changed_file_ids,
-                )
+                affected_file_ids = self._find_affected_neighbor_files(conn, changed_file_ids)
 
-            # Now delete the changed/removed file records (CASCADE cleans up
-            # their symbols, edges, file_edges, graph_metrics, clusters, etc.)
-            for path in removed + modified:
-                row = conn.execute("SELECT id FROM files WHERE path = ?", (path,)).fetchone()
-                if row:
-                    fid = row["id"]
-                    # Clean up tables with SET NULL FKs (not CASCADE)
-                    sym_ids = [
-                        r[0] for r in conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
-                    ]
-                    if sym_ids:
-                        ph = ",".join("?" for _ in sym_ids)
-                        for cleanup_sql in [
-                            f"UPDATE runtime_stats SET symbol_id = NULL WHERE symbol_id IN ({ph})",
-                            f"UPDATE vulnerabilities SET matched_symbol_id = NULL WHERE matched_symbol_id IN ({ph})",
-                        ]:
-                            try:
-                                conn.execute(cleanup_sql, sym_ids)
-                            except Exception:
-                                pass  # Table may not exist in older DBs
-                    conn.execute("DELETE FROM files WHERE id = ?", (fid,))
+            self._delete_changed_files(conn, changed_paths)
 
             get_extractor = _try_import_get_extractor()
             compute_complexity_fn = _try_import_complexity()
@@ -996,27 +1353,9 @@ class Indexer:
 
             # Load existing symbols for incremental
             if not force:
-                existing_rows = conn.execute(
-                    "SELECT s.id, s.file_id, s.name, s.qualified_name, s.kind, "
-                    "s.is_exported, s.line_start, f.path as file_path "
-                    "FROM symbols s JOIN files f ON s.file_id = f.id"
-                ).fetchall()
-                for row in existing_rows:
-                    sid = row["id"]
-                    if sid not in all_symbol_rows:
-                        all_symbol_rows[sid] = {
-                            "id": sid,
-                            "file_id": row["file_id"],
-                            "file_path": row["file_path"],
-                            "name": row["name"],
-                            "qualified_name": row["qualified_name"],
-                            "kind": row["kind"],
-                            "is_exported": bool(row["is_exported"]),
-                            "line_start": row["line_start"],
-                        }
+                self._merge_existing_symbols(conn, all_symbol_rows)
 
-            for row in conn.execute("SELECT id, path FROM files").fetchall():
-                file_id_by_path[row["path"]] = row["id"]
+            self._refresh_file_id_map(conn, file_id_by_path)
 
             # Fix incremental edge loss: re-extract only affected neighbors
             # instead of all unchanged files (O(affected) vs O(N))
@@ -1029,215 +1368,17 @@ class Indexer:
                     verbose,
                 )
 
-            # Resolve references into edges
-            self._log("Resolving references...")
-            symbols_by_name: dict[str, list[dict]] = {}
-            for sym in all_symbol_rows.values():
-                symbols_by_name.setdefault(sym["name"], []).append(sym)
-
-            symbol_edges = resolve_references(all_references, symbols_by_name, file_id_by_path)
-
-            conn.executemany(
-                "INSERT INTO edges (source_id, target_id, kind, line, source_file_id) VALUES (?, ?, ?, ?, ?)",
-                [(e["source_id"], e["target_id"], e["kind"], e["line"], e.get("source_file_id")) for e in symbol_edges],
-            )
-            self._log(f"  {_format_count(len(symbol_edges))} symbol edges")
-
-            # Build file edges
-            self._log("Building file-level edges...")
-            file_edges = build_file_edges(symbol_edges, all_symbol_rows)
-            conn.executemany(
-                "INSERT INTO file_edges (source_file_id, target_file_id, kind, symbol_count) VALUES (?, ?, ?, ?)",
-                [(fe["source_file_id"], fe["target_file_id"], fe["kind"], fe["symbol_count"]) for fe in file_edges],
-            )
-            self._log(f"  {_format_count(len(file_edges))} file edges")
-
-            # Graph metrics
-            (
-                build_symbol_graph,
-                _store_metrics,
-                _detect_clusters,
-                _label_clusters,
-                _store_clusters,
-            ) = _try_import_graph()
-            G = None
-            if build_symbol_graph is not None:
-                self._log("Computing graph metrics...")
-                try:
-                    G = build_symbol_graph(conn)
-                    _store_metrics(conn, G)
-                    metric_count = conn.execute("SELECT COUNT(*) FROM graph_metrics").fetchone()[0]
-                    self._log(f"  Metrics for {_format_count(metric_count)} symbols")
-                except Exception as e:
-                    self._log(f"  Graph metrics failed: {e}")
-            else:
-                self._log("Skipping graph metrics (module not available)")
-
-            # v12.1: Django transitive inheritance + custom field resolution.
-            # Runs after graph metrics so the inheritance edges are settled.
-            # Best-effort — failure here doesn't fail the index.
-            try:
-                from roam.index.django_post import resolve_all_django
-
-                django_counts = resolve_all_django(conn, quiet=True)
-                if any(django_counts.values()):
-                    parts = []
-                    if django_counts.get("models_updated"):
-                        parts.append(f"{django_counts['models_updated']} model(s)")
-                    if django_counts.get("fields_updated"):
-                        parts.append(f"{django_counts['fields_updated']} field(s)")
-                    if django_counts.get("relationships_created"):
-                        parts.append(f"{django_counts['relationships_created']} relationship edge(s)")
-                    if parts:
-                        self._log(f"  Django: {', '.join(parts)}")
-            except Exception as e:
-                self._log(f"  Django post-resolver skipped: {e}")
-
-            # pytest fixture dependency edges. Cheap (single SELECT + a
-            # batched INSERT) and best-effort — failure shouldn't fail
-            # the index.
-            try:
-                from roam.index.pytest_fixtures import resolve_pytest_fixtures
-
-                fixture_edges = resolve_pytest_fixtures(conn)
-                if fixture_edges:
-                    self._log(f"  pytest fixtures: {fixture_edges} dependency edge(s)")
-            except Exception as e:
-                self._log(f"  pytest fixture resolver skipped: {e}")
-
-            # Registry-dispatch edges — synthesise edges from
-            # ``_COMMANDS = {"name": ("module.path", "fn_name")}`` style
-            # tables to the functions they reference. Without these,
-            # ``roam impact`` reports CLI commands as having no
-            # dependents because the dispatch is via runtime
-            # ``importlib`` lookups.
-            try:
-                from roam.index.registry_dispatch import resolve_registry_dispatch
-
-                dispatch_edges = resolve_registry_dispatch(conn)
-                if dispatch_edges:
-                    self._log(f"  registry dispatch: {dispatch_edges} edge(s)")
-            except Exception as e:
-                self._log(f"  registry-dispatch resolver skipped: {e}")
-
-            # Git history
-            analyze_git = _try_import_git_stats()
-            if analyze_git is not None:
-                self._log("Analyzing git history...")
-                try:
-                    analyze_git(conn, self.root)
-                except Exception as e:
-                    self._log(f"  Git analysis failed: {e}")
-            else:
-                self._log("Skipping git analysis (module not available)")
-
-            # Clusters
-            if _detect_clusters is not None and G is not None:
-                self._log("Computing clusters...")
-                try:
-                    cluster_map = _detect_clusters(G)
-                    labels = _label_clusters(cluster_map, conn)
-                    _store_clusters(conn, cluster_map, labels)
-                    self._log(f"  {len(set(cluster_map.values()))} clusters")
-                except Exception as e:
-                    self._log(f"  Clustering failed: {e}")
-            else:
-                self._log("Skipping clustering (module not available)")
-
-            # Effect classification + propagation
-            _effects_fn = _try_import_effects()
-            if _effects_fn is not None:
-                self._log("Classifying symbol effects...")
-                try:
-                    _effects_fn(conn, self.root, G)
-                    effect_count = conn.execute("SELECT COUNT(*) FROM symbol_effects").fetchone()[0]
-                    if effect_count:
-                        self._log(f"  {_format_count(effect_count)} effects classified")
-                except Exception as e:
-                    self._log(f"  Effect analysis failed: {e}")
-
-            # Taint analysis (inter-procedural)
-            _taint_fn = _try_import_taint()
-            if _taint_fn is not None:
-                self._log("Computing taint summaries...")
-                try:
-                    _taint_fn(conn, self.root, G)
-                    taint_count = conn.execute("SELECT COUNT(*) FROM taint_findings").fetchone()[0]
-                    if taint_count:
-                        self._log(f"  {_format_count(taint_count)} taint findings")
-                except Exception as e:
-                    self._log(f"  Taint analysis failed: {e}")
-
-            # Per-file health scores — pass G so cycle detection uses SCC, not SQL self-join
-            self._log("Computing health scores...")
-            try:
-                _compute_file_health_scores(conn, G)
-            except Exception as e:
-                self._log(f"  Health score computation failed: {e}")
-
-            # Cognitive load index
-            self._log("Computing cognitive load...")
-            try:
-                _compute_cognitive_load(conn)
-            except Exception as e:
-                self._log(f"  Cognitive load computation failed: {e}")
-
-            # Annotation survival
-            if force and saved_annotations:
-                self._log("Restoring annotations...")
-                try:
-                    self._restore_annotations(conn, saved_annotations)
-                except Exception as e:
-                    self._log(f"  Annotation restore failed: {e}")
-            elif not force:
-                # Re-link annotations after incremental reindex
-                try:
-                    _relink_annotations(conn)
-                except Exception:
-                    pass
-
-            # Full-text search index (FTS5/BM25 primary, TF-IDF fallback)
-            self._log("Building search index...")
-            try:
-                from roam.search.index_embeddings import build_fts_index, fts5_available
-
-                build_fts_index(conn, project_root=self.root)
-                if fts5_available(conn):
-                    fts_count = conn.execute("SELECT COUNT(*) FROM symbol_fts").fetchone()[0]
-                    self._log(f"  FTS5 index for {_format_count(fts_count)} symbols")
-                else:
-                    tfidf_count = conn.execute("SELECT COUNT(*) FROM symbol_tfidf").fetchone()[0]
-                    self._log(f"  TF-IDF vectors for {_format_count(tfidf_count)} symbols (FTS5 unavailable)")
-                try:
-                    onnx_count = conn.execute(
-                        "SELECT COUNT(*) FROM symbol_embeddings WHERE provider='onnx'"
-                    ).fetchone()[0]
-                    if onnx_count:
-                        self._log(f"  ONNX vectors for {_format_count(onnx_count)} symbols")
-                except Exception:
-                    pass
-            except Exception as e:
-                self._log(f"  Search index build failed (non-fatal): {e}")
-
-            from roam.index.parser import get_parse_error_summary
-
-            error_summary = get_parse_error_summary()
-            if error_summary:
-                self._log(f"  Parse issues: {error_summary}")
-
-            elapsed = time.monotonic() - t0
-            file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0]
-            sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
-            edge_count = conn.execute("SELECT COUNT(*) FROM edges").fetchone()[0]
-            self._log(
-                f"Index complete: {_format_count(file_count)} files, "
-                f"{_format_count(sym_count)} symbols, "
-                f"{_format_count(edge_count)} edges ({elapsed:.1f}s)"
-            )
-            self.summary = {
-                "files": file_count,
-                "symbols": sym_count,
-                "edges": edge_count,
-                "elapsed": round(elapsed, 1),
-                "up_to_date": False,
-            }
+            self._resolve_and_store_edges(conn, all_references, all_symbol_rows, file_id_by_path)
+            G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
+            self._run_django_post_resolver(conn)
+            self._run_pytest_fixture_resolver(conn)
+            self._run_registry_dispatch_resolver(conn)
+            self._run_git_analysis(conn)
+            self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters)
+            self._run_effect_analysis(conn, G)
+            self._run_taint_analysis(conn, G)
+            self._compute_health_and_load(conn, G)
+            self._restore_or_relink_annotations(conn, force, saved_annotations)
+            self._build_search_indexes(conn)
+            self._log_parse_issues()
+            self._set_completion_summary(conn, time.monotonic() - t0)

@@ -92,10 +92,12 @@ def onnx_ready(
     if backend not in {"auto", "onnx", "hybrid"}:
         return False, "backend-disabled", settings
 
-    model_path = Path(settings.get("onnx_model_path") or "")
-    tokenizer_path = Path(settings.get("onnx_tokenizer_path") or "")
-    if not model_path or not tokenizer_path:
+    model_value = str(settings.get("onnx_model_path") or "").strip()
+    tokenizer_value = str(settings.get("onnx_tokenizer_path") or "").strip()
+    if not model_value or not tokenizer_value:
         return False, "missing-model-or-tokenizer", settings
+    model_path = Path(model_value)
+    tokenizer_path = Path(tokenizer_value)
     if not model_path.exists():
         return False, f"model-not-found:{model_path}", settings
     if not tokenizer_path.exists():

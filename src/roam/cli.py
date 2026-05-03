@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 153 invokable command names (150 canonical commands + 3 alias pairs).
+# Total: 158 invokable command names (155 canonical commands + 3 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
@@ -168,6 +168,7 @@ _COMMANDS = {
     "critique": ("roam.commands.cmd_critique", "critique"),
     "fleet": ("roam.commands.cmd_fleet", "fleet"),
     "ask": ("roam.commands.cmd_ask", "ask"),
+    "workflow": ("roam.commands.cmd_workflow", "workflow"),
     "taint": ("roam.commands.cmd_taint", "taint"),
     "cga": ("roam.commands.cmd_cga", "cga"),
     "eval-retrieve": ("roam.commands.cmd_eval_retrieve", "eval_retrieve"),
@@ -180,6 +181,7 @@ _COMMANDS = {
 _CATEGORIES = {
     "Getting Started": [
         "ask",
+        "workflow",
         "index",
         "index-export",
         "index-import",

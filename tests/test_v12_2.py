@@ -15,6 +15,7 @@ contracts into a single suite. Each test class targets one v12.2 module:
 
 from __future__ import annotations
 
+import json
 import os
 import threading
 import time
@@ -53,6 +54,64 @@ class TestZetaWiring:
         conn = sqlite3.connect(":memory:")
         assert semantic_score(conn, [1, 2], "") == {}
         assert semantic_score(conn, [1, 2], "   ") == {}
+
+    def test_semantic_score_reads_canonical_embedding_schema(self, monkeypatch, tmp_path):
+        import sqlite3
+
+        from roam.retrieve import semantic
+
+        conn = sqlite3.connect(str(tmp_path / "semantic.db"))
+        conn.execute(
+            "CREATE TABLE symbol_embeddings ("
+            "symbol_id INTEGER PRIMARY KEY, "
+            "vector TEXT NOT NULL, "
+            "dims INTEGER NOT NULL, "
+            "provider TEXT NOT NULL DEFAULT 'onnx')"
+        )
+        conn.execute(
+            "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider) VALUES (?, ?, ?, ?)",
+            (1, json.dumps([1.0, 0.0]), 2, "onnx"),
+        )
+        conn.execute(
+            "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider) VALUES (?, ?, ?, ?)",
+            (2, json.dumps([0.0, 1.0]), 2, "onnx"),
+        )
+        conn.commit()
+
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: (lambda _text: [1.0, 0.0]))
+
+        scores = semantic.semantic_score(conn, [1, 2], "database connection")
+        assert scores[1] > scores[2]
+        assert scores[1] == 1.0
+
+    def test_semantic_coverage_reports_empty_and_partial_states(self, tmp_path):
+        import sqlite3
+
+        from roam.retrieve.semantic import semantic_coverage
+
+        conn = sqlite3.connect(str(tmp_path / "coverage.db"))
+        conn.execute("CREATE TABLE symbols (id INTEGER PRIMARY KEY)")
+        conn.execute(
+            "CREATE TABLE symbol_embeddings ("
+            "symbol_id INTEGER PRIMARY KEY, "
+            "vector TEXT NOT NULL, "
+            "dims INTEGER NOT NULL, "
+            "provider TEXT NOT NULL DEFAULT 'onnx')"
+        )
+        conn.executemany("INSERT INTO symbols(id) VALUES (?)", [(1,), (2,)])
+
+        empty = semantic_coverage(conn)
+        assert empty["status"] == "empty"
+        assert empty["coverage_pct"] == 0.0
+
+        conn.execute(
+            "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider) VALUES (?, ?, ?, ?)",
+            (1, json.dumps([1.0, 0.0]), 2, "onnx"),
+        )
+        partial = semantic_coverage(conn)
+        assert partial["status"] == "partial"
+        assert partial["embeddings"] == 1
+        assert partial["coverage_pct"] == 50.0
 
 
 # ---------------------------------------------------------------------------

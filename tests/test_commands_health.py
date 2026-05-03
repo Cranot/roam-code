@@ -528,6 +528,26 @@ class TestFitness:
             except json.JSONDecodeError:
                 pass
 
+    def test_fitness_baseline_write_and_compare(self, cli_runner, indexed_project, monkeypatch):
+        """Baseline mode should make existing violations non-blocking."""
+        monkeypatch.chdir(indexed_project)
+        invoke_cli(cli_runner, ["fitness", "--init"], cwd=indexed_project)
+
+        write_result = cli_runner.invoke(cli, ["--json", "fitness", "--write-baseline"], catch_exceptions=True)
+        assert write_result.exit_code == 0, write_result.output
+        baseline_path = indexed_project / ".roam" / "fitness-baseline.json"
+        assert baseline_path.exists()
+
+        compare_result = cli_runner.invoke(
+            cli,
+            ["--json", "fitness", "--baseline", str(baseline_path)],
+            catch_exceptions=True,
+        )
+        assert compare_result.exit_code == 0, compare_result.output
+        data = json.loads(compare_result.output)
+        assert data["summary"]["baseline"]["new_violations"] == 0
+        assert data["new_violations"] == []
+
     def test_fitness_no_config(self, cli_runner, indexed_project, monkeypatch):
         """roam fitness without fitness.yaml should show instructions."""
         monkeypatch.chdir(indexed_project)

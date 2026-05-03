@@ -34,7 +34,7 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
             undirected = undirected.subgraph(largest_cc).copy()
         if len(undirected) < 3:
             return 0.0
-        return round(nx.algebraic_connectivity(undirected), 6)
+        return round(nx.algebraic_connectivity(undirected, method="tracemin_lu", tol=1e-3), 6)
     except Exception:
         return 0.0
 

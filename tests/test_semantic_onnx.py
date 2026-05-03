@@ -143,6 +143,22 @@ def test_search_stored_auto_falls_back_to_tfidf(monkeypatch, onnx_project):
     assert any(r["name"] in {"open_database", "close_database"} for r in results[:3])
 
 
+def test_onnx_ready_treats_empty_paths_as_missing():
+    from roam.search.onnx_embeddings import onnx_ready
+
+    ready, reason, _settings = onnx_ready(
+        settings={
+            "semantic_backend": "auto",
+            "onnx_model_path": "",
+            "onnx_tokenizer_path": "",
+            "onnx_max_length": 256,
+        }
+    )
+
+    assert ready is False
+    assert reason == "missing-model-or-tokenizer"
+
+
 def test_config_semantic_options(cli_runner, tmp_path):
     """`roam config` should persist ONNX semantic settings."""
     from roam.cli import cli

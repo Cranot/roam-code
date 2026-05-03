@@ -1,16 +1,18 @@
-"""Tests for `roam ask` (B.1 v12.0 — five starter recipes)."""
+"""Tests for `roam ask` workflow recipes."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
+from pathlib import Path
 
 import pytest
 from click.testing import CliRunner
 
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, by_name
-from roam.ask.runner import extract_symbol, fill_args
+from roam.ask.runner import extract_symbol, fill_args, fill_followups
 from roam.cli import cli
 from tests.conftest import make_src_project as _make_project
 
@@ -47,6 +49,12 @@ class TestRecipes:
         # in CLAUDE.md / README when changing.
         assert len(RECIPES) == 13
 
+    def test_readme_recipe_count_matches_registry(self):
+        readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")
+        match = re.search(r"\b(\d+)-recipe registry\b", readme)
+        assert match, "README missing '<N>-recipe registry' phrase"
+        assert int(match.group(1)) == len(RECIPES)
+
     def test_recipe_names_unique(self):
         names = [r.name for r in RECIPES]
         assert len(names) == len(set(names))
@@ -58,11 +66,15 @@ class TestRecipes:
         for r in RECIPES:
             assert kebab.match(r.name), f"recipe name '{r.name}' is not kebab-case"
 
-    def test_every_recipe_has_intent_and_examples(self):
+    def test_every_recipe_has_workflow_metadata(self):
         for r in RECIPES:
             assert r.intent, f"recipe {r.name} missing intent"
             assert r.examples, f"recipe {r.name} missing examples"
             assert r.commands, f"recipe {r.name} missing commands"
+            assert r.phase, f"recipe {r.name} missing phase"
+            assert r.perspectives, f"recipe {r.name} missing perspectives"
+            assert r.followups, f"recipe {r.name} missing followups"
+            assert r.gates, f"recipe {r.name} missing gates"
 
     def test_recipes_compose_existing_commands(self):
         from roam.surface_counts import cli_commands
@@ -200,6 +212,14 @@ class TestFillArgs:
         out = fill_args(("plan", "{task}"), "split work", None)
         assert out == ["plan", "split work"]
 
+    def test_followups_render_symbol_and_task(self):
+        out = fill_followups(
+            ("roam safe-delete {symbol}", "roam retrieve {task}"),
+            "delete UserSession safely",
+            "UserSession",
+        )
+        assert out == ["roam safe-delete UserSession", "roam retrieve delete UserSession safely"]
+
 
 # ---------------------------------------------------------------------------
 # CLI surface
@@ -247,6 +267,45 @@ class TestAskCLI:
         assert data["summary"]["recipe_count"] == len(RECIPES)
         names = {r["name"] for r in data["recipes"]}
         assert names == {r.name for r in RECIPES}
+        for recipe in data["recipes"]:
+            assert recipe["phase"]
+            assert recipe["perspectives"]
+            assert recipe["followups"]
+            assert recipe["gates"]
+
+    def test_recipe_json_result_includes_workflow_metadata(self, ask_project):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "ask", "--recipe", "onboard", "x"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["summary"]["recipe"] == "onboard"
+        assert data["phase"] == by_name("onboard").phase
+        assert data["perspectives"] == list(by_name("onboard").perspectives)
+        assert data["followups"] == list(by_name("onboard").followups)
+        assert data["gates"] == list(by_name("onboard").gates)
+
+    def test_report_list_json_includes_recipe_workflows(self, ask_project):
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "report", "--list"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["workflows"]["first-contact"]["recipe"] == "onboard"
+        assert data["workflows"]["security"]["recipe"] == "security-audit"
+
+    def test_workflow_json_inspects_recipe_without_running(self, ask_project):
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "workflow", "safe-delete-check", "--query", "delete UserSession safely"],
+        )
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        assert data["command"] == "workflow"
+        assert data["recipe"] == "safe-delete-check"
+        assert data["phase"] == "scope"
+        assert data["commands"][0] == {"cmd": "preflight", "args": ["UserSession"]}
+        assert data["followups"][0] == "roam safe-delete UserSession"
+        assert "HIGH/CRITICAL" in data["gates"][0]
 
     def test_no_args_shows_examples(self, ask_project):
         runner = CliRunner()

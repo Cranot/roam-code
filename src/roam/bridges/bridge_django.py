@@ -151,14 +151,20 @@ class DjangoBridge(LanguageBridge):
         return frozenset({".py"})
 
     def detect(self, file_paths: list[str]) -> bool:
-        """Return True if any file path ends with a Django marker filename."""
+        """Return True for a Django-shaped file set.
+
+        A lone ``models.py`` is common in plain Python packages, so require at
+        least two Django marker filenames to avoid activating on generic model
+        modules.
+        """
+        markers = set()
         for fp in file_paths:
             # Check if basename matches a Django marker
             basename = fp.rsplit("/", 1)[-1] if "/" in fp else fp
             basename = basename.rsplit("\\", 1)[-1] if "\\" in basename else basename
             if basename in _DJANGO_MARKERS:
-                return True
-        return False
+                markers.add(basename)
+        return len(markers) >= 2
 
     def resolve(
         self,

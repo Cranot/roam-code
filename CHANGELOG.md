@@ -7,6 +7,66 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.10.0] - 2026-05-03
+
+A workflow-synergy and maintainability release. Headline work:
+semantic retrieval is now truthfully diagnosable, recipe workflows
+advertise gates and follow-up commands, existing fitness debt can be
+baselined without hiding new regressions, and several high-complexity
+indexing/analysis hotspots were split into focused helpers.
+
+### Added — workflow intelligence
+
+- **`roam workflow`** — no-run recipe inspector for the `ask` recipe
+  DAG, review lenses, gates, rendered command arguments, and follow-up
+  commands.
+- **Recipe gates** — every `ask` recipe now carries phase,
+  perspectives, gates, and follow-ups; the metadata is exposed through
+  `ask`, `workflow`, MCP compound envelopes, report presets, and JSON
+  tests.
+
+### Added — semantic activation diagnostics
+
+- **`roam config --semantic-status`** — reports dense embedding
+  coverage, ONNX dependency readiness, configured model/tokenizer
+  readiness, and concrete next actions.
+- **`semantic_coverage`** — retrieve JSON summaries now report how
+  many indexed symbols have dense vectors, making `zeta` weighting
+  observable instead of silent.
+
+### Added — local operability and fitness baselines
+
+- **`roam config --use-local-cache`** — persists a deterministic
+  per-project user-cache DB path for developer machines and
+  cloud-synced workspaces.
+- **`roam fitness --write-baseline` / `--baseline PATH`** — captures
+  existing fitness violations and exits non-zero only for new
+  violations when comparing against a baseline.
+
+### Fixed
+
+- Empty ONNX model/tokenizer settings no longer appear ready because
+  `Path("")` resolves to the current directory.
+- Windows/cloud-sync index locks are reused safely when stale lock
+  files can be overwritten but not deleted.
+- The `architecture-debt` recipe follow-up now points at the existing
+  `roam health --json` command instead of a nonexistent cycles
+  command.
+
+### Refactored
+
+- Index orchestration and file processing were split into focused
+  pipeline phases.
+- Taint tracking and math-signal extraction now use explicit state
+  objects and small recording helpers.
+- Fitness metric checks, baseline comparison, and output rendering are
+  separated so the new baseline feature does not add command-level
+  complexity.
+
+### Surface
+
+- 155 CLI commands · 120 MCP tools · 27 languages · 100% local · zero API keys.
+
 ## [12.9.0] - 2026-05-02
 
 A precision and graph-completeness release. Headline work: a

@@ -20,6 +20,7 @@ from roam.config import get_retrieve_config
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import run_retrieve
+from roam.retrieve.semantic import semantic_coverage
 
 
 def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
@@ -176,6 +177,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
         except Exception:
             fts_count = -1
         sym_count = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        semantic_diag = semantic_coverage(conn)
         if sym_count > 0 and fts_count == 0:
             msg = f"VERDICT: search index is empty (0 / {sym_count} symbols indexed for FTS5)."
             if json_mode:
@@ -190,6 +192,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
                                 "fts_rows": 0,
                                 "symbol_count": sym_count,
                             },
+                            semantic_coverage=semantic_diag,
                             budget=effective_budget,
                             task=task_str,
                         )
@@ -241,10 +244,13 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
                         "k": result["k"],
                         "rerank": result["rerank"],
                         "seed_count": len(result["seeds"]),
+                        "semantic_embeddings": semantic_diag["embeddings"],
+                        "semantic_coverage_pct": semantic_diag["coverage_pct"],
                     },
                     budget=effective_budget,
                     task=result["task"],
                     weights=result["weights"],
+                    semantic_coverage=semantic_diag,
                     seeds=result["seeds"],
                     candidates=candidates,
                 )
@@ -287,3 +293,8 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
         f"SUMMARY: {len(candidates)} of {result['total_candidates']} candidates, "
         f"{result['budget_used']} tokens used (budget {result['budget']})"
     )
+    if float(result["weights"].get("zeta", 0.0) or 0.0) > 0 and not semantic_diag["ready"]:
+        click.echo(
+            "SEMANTIC: 0 dense vectors available; zeta is currently inert. "
+            "Configure semantic backend and rerun `roam index` to activate it."
+        )
