@@ -75,9 +75,15 @@ def _tokenise(text: str) -> list[str]:
 
 
 def _recipe_corpus(r: Recipe) -> list[str]:
-    """The token bag for a recipe — intent + examples (heavily weighted)."""
+    """The token bag for a recipe — intent, examples, and workflow metadata."""
     bag: list[str] = []
     bag.extend(_tokenise(r.intent))
+    bag.extend(_tokenise(r.summary))
+    bag.extend(_tokenise(r.phase))
+    bag.extend(_tokenise(" ".join(r.keywords)))
+    bag.extend(_tokenise(" ".join(r.perspectives)))
+    bag.extend(_tokenise(" ".join(r.followups)))
+    bag.extend(_tokenise(" ".join(r.gates)))
     for ex in r.examples:
         bag.extend(_tokenise(ex))
     # Examples are user phrasings — each gets a 2× boost in the bag.

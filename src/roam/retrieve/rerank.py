@@ -183,6 +183,8 @@ def structural_score(
             justifications["co_change"] = round(cochange_norm, 4)
         if runtime_norm > 0:
             justifications["runtime_hot"] = round(runtime_norm, 4)
+        if semantic_norm > 0:
+            justifications["semantic"] = round(semantic_norm, 4)
         if clone_info:
             justifications["clone_cluster"] = clone_info["cluster_id"]
             justifications["clone_siblings"] = clone_info["sibling_count"]

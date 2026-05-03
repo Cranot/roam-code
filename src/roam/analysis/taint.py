@@ -219,6 +219,116 @@ def _read_body_lines(conn, symbol_id: int, project_root: Path) -> tuple[list[str
 # ---------------------------------------------------------------------------
 
 
+TaintOrigin = tuple[str, int | str]
+
+
+@dataclass
+class _TaintTrackState:
+    param_taints_return: dict[int, bool] = field(default_factory=dict)
+    param_to_sink: dict[int, list[str]] = field(default_factory=dict)
+    return_from_source: bool = False
+    found_sources: list[str] = field(default_factory=list)
+    found_sinks: list[str] = field(default_factory=list)
+
+
+def _initial_tainted_vars(param_names: list[str]) -> dict[str, set[TaintOrigin]]:
+    return {pname: {("param", idx)} for idx, pname in enumerate(param_names)}
+
+
+def _line_has_sanitizer(line_lower: str, sanitizer_names: frozenset[str]) -> bool:
+    return any(sname in line_lower for sname in sanitizer_names)
+
+
+def _assigned_var(line: str) -> str | None:
+    for pat in _ASSIGN_PATTERNS:
+        match = pat.search(line)
+        if match:
+            return match.group(1).strip()
+    return None
+
+
+def _assignment_rhs(line: str, assigned_var: str | None) -> str:
+    if assigned_var and "=" in line:
+        return line[line.index("=") + 1 :]
+    return line
+
+
+def _rhs_taint(
+    rhs: str,
+    tainted_vars: dict[str, set[TaintOrigin]],
+    sources: tuple[str, ...],
+    state: _TaintTrackState,
+) -> set[TaintOrigin]:
+    out: set[TaintOrigin] = set()
+    rhs_lower = rhs.lower()
+    for src in sources:
+        if src.lower() in rhs_lower:
+            out.add(("source", src))
+            if src not in state.found_sources:
+                state.found_sources.append(src)
+            break
+
+    for ident in set(_IDENT_RE.findall(rhs)):
+        if ident in tainted_vars:
+            out.update(tainted_vars[ident])
+    return out
+
+
+def _apply_assignment_taint(
+    tainted_vars: dict[str, set[TaintOrigin]],
+    assigned_var: str | None,
+    rhs_taint: set[TaintOrigin],
+    is_sanitize_line: bool,
+) -> None:
+    if not assigned_var:
+        return
+    if is_sanitize_line:
+        tainted_vars.pop(assigned_var, None)
+    elif rhs_taint:
+        tainted_vars[assigned_var] = rhs_taint
+    else:
+        tainted_vars.pop(assigned_var, None)
+
+
+def _record_return_taint(line: str, tainted_vars: dict[str, set[TaintOrigin]], state: _TaintTrackState) -> None:
+    if not (line.startswith("return ") or line == "return"):
+        return
+    for ident in set(_IDENT_RE.findall(line[6:])):
+        if ident not in tainted_vars:
+            continue
+        for origin in tainted_vars[ident]:
+            if origin[0] == "param":
+                state.param_taints_return[int(origin[1])] = True
+            elif origin[0] == "source":
+                state.return_from_source = True
+
+
+def _record_sink_taint(
+    line: str,
+    line_lower: str,
+    tainted_vars: dict[str, set[TaintOrigin]],
+    sinks: tuple[str, ...],
+    state: _TaintTrackState,
+) -> None:
+    for sink in sinks:
+        if sink.lower() not in line_lower:
+            continue
+        if sink not in state.found_sinks:
+            state.found_sinks.append(sink)
+        sink_idents = set(_IDENT_RE.findall(line))
+        for ident in sink_idents:
+            if ident not in tainted_vars:
+                continue
+            for origin in tainted_vars[ident]:
+                if origin[0] != "param":
+                    continue
+                pidx = int(origin[1])
+                state.param_to_sink.setdefault(pidx, [])
+                if sink not in state.param_to_sink[pidx]:
+                    state.param_to_sink[pidx].append(sink)
+        break
+
+
 def _track_variable_taint(
     body_lines: list[str],
     param_names: list[str],
@@ -237,103 +347,25 @@ def _track_variable_taint(
     """
     # tainted_vars maps variable name -> set of taint origins
     # An origin is either ("param", idx) or ("source", pattern_str)
-    tainted_vars: dict[str, set[tuple[str, int | str]]] = {}
-
-    # Initialise params as tainted
-    for idx, pname in enumerate(param_names):
-        tainted_vars[pname] = {("param", idx)}
-
-    param_taints_return: dict[int, bool] = {}
-    param_to_sink: dict[int, list[str]] = {}
-    return_from_source = False
-    found_sources: list[str] = []
-    found_sinks: list[str] = []
+    tainted_vars = _initial_tainted_vars(param_names)
+    state = _TaintTrackState()
 
     for raw_line in body_lines:
         line = raw_line.strip()
         line_lower = line.lower()
 
-        # ---- Check for sanitizer calls clearing taint ----
-        is_sanitize_line = False
-        for sname in sanitizer_names:
-            if sname in line_lower:
-                is_sanitize_line = True
-                break
-
-        # ---- Check for assignment ----
-        assigned_var: str | None = None
-        for pat in _ASSIGN_PATTERNS:
-            m = pat.search(line)
-            if m:
-                assigned_var = m.group(1).strip()
-                break
-
-        # ---- Determine taint of the right-hand side ----
-        rhs = line
-        if assigned_var and "=" in rhs:
-            eq_idx = rhs.index("=")
-            rhs = rhs[eq_idx + 1 :]
-
-        rhs_taint: set[tuple[str, int | str]] = set()
-
-        # Check if RHS references a source
-        for src in sources:
-            if src.lower() in rhs.lower():
-                rhs_taint.add(("source", src))
-                if src not in found_sources:
-                    found_sources.append(src)
-                break
-
-        # Check if RHS references tainted variables
-        rhs_idents = set(_IDENT_RE.findall(rhs))
-        for ident in rhs_idents:
-            if ident in tainted_vars:
-                rhs_taint.update(tainted_vars[ident])
-
-        # If this is a sanitizer call, kill the taint
-        if is_sanitize_line and assigned_var:
-            tainted_vars.pop(assigned_var, None)
-        elif assigned_var and rhs_taint:
-            tainted_vars[assigned_var] = rhs_taint
-        elif assigned_var:
-            # Clean assignment — clear any previous taint
-            tainted_vars.pop(assigned_var, None)
-
-        # ---- Check return statements ----
-        if line.startswith("return ") or line == "return":
-            return_idents = set(_IDENT_RE.findall(line[6:]))
-            for ident in return_idents:
-                if ident in tainted_vars:
-                    for origin in tainted_vars[ident]:
-                        if origin[0] == "param":
-                            param_taints_return[origin[1]] = True
-                        elif origin[0] == "source":
-                            return_from_source = True
-
-        # ---- Check sink calls ----
-        for sink in sinks:
-            if sink.lower() in line_lower:
-                if sink not in found_sinks:
-                    found_sinks.append(sink)
-                # Find tainted args flowing into this sink
-                sink_idents = set(_IDENT_RE.findall(line))
-                for ident in sink_idents:
-                    if ident in tainted_vars:
-                        for origin in tainted_vars[ident]:
-                            if origin[0] == "param":
-                                pidx = origin[1]
-                                if pidx not in param_to_sink:
-                                    param_to_sink[pidx] = []
-                                if sink not in param_to_sink[pidx]:
-                                    param_to_sink[pidx].append(sink)
-                break
+        assigned_var = _assigned_var(line)
+        rhs_taint = _rhs_taint(_assignment_rhs(line, assigned_var), tainted_vars, sources, state)
+        _apply_assignment_taint(tainted_vars, assigned_var, rhs_taint, _line_has_sanitizer(line_lower, sanitizer_names))
+        _record_return_taint(line, tainted_vars, state)
+        _record_sink_taint(line, line_lower, tainted_vars, sinks, state)
 
     return {
-        "param_taints_return": param_taints_return,
-        "param_to_sink": param_to_sink,
-        "return_from_source": return_from_source,
-        "direct_sources": found_sources,
-        "direct_sinks": found_sinks,
+        "param_taints_return": state.param_taints_return,
+        "param_to_sink": state.param_to_sink,
+        "return_from_source": state.return_from_source,
+        "direct_sources": state.found_sources,
+        "direct_sinks": state.found_sinks,
     }
 
 

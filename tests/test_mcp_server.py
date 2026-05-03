@@ -1017,6 +1017,19 @@ class TestCompoundEnvelope:
         )
         assert result["summary"]["target"] == "my_func"
 
+    def test_compound_workflow_metadata(self):
+        from roam.mcp_server import _compound_envelope
+
+        result = _compound_envelope(
+            "explore",
+            [
+                ("understand", {"summary": {"verdict": "ok"}}),
+            ],
+        )
+        assert result["workflow"]["recipe"] == "onboard"
+        assert result["summary"]["workflow_phase"] == "discover"
+        assert result["summary"]["workflow_recipe"] == "onboard"
+
     def test_verdict_without_sub_verdicts(self):
         from roam.mcp_server import _compound_envelope
 
@@ -1287,6 +1300,7 @@ class TestSchemas:
         ]:
             assert schema["type"] == "object"
             assert "summary" in schema["properties"]
+            assert "workflow" in schema["properties"]
 
     def test_explore_schema_has_sections(self):
         from roam.mcp_server import _SCHEMA_EXPLORE

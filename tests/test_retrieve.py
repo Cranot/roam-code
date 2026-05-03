@@ -228,6 +228,58 @@ class TestRerank:
             result = structural_score(conn, candidates, seeds, {"alpha": 0.6, "epsilon": 0.05})
         assert result[0]["name"] == "UserSession"
 
+    def test_semantic_signal_can_outrank_lexical_tie(self, monkeypatch, indexed_project):
+        """The ζ signal should read stored ONNX vectors and explain the lift."""
+        from roam.db.connection import open_db
+        from roam.retrieve import semantic
+        from roam.retrieve.rerank import structural_score
+
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: (lambda _text: [1.0, 0.0]))
+
+        with open_db(readonly=False, project_root=indexed_project) as conn:
+            user_session = conn.execute(
+                "SELECT s.id AS symbol_id, s.name, s.kind, s.line_start, s.line_end, "
+                "       f.path AS file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE s.name = 'UserSession'"
+            ).fetchone()
+            calculate_tax = conn.execute(
+                "SELECT s.id AS symbol_id, s.name, s.kind, s.line_start, s.line_end, "
+                "       f.path AS file_path "
+                "FROM symbols s JOIN files f ON s.file_id = f.id "
+                "WHERE s.name = 'calculate_tax'"
+            ).fetchone()
+            assert user_session is not None
+            assert calculate_tax is not None
+
+            conn.execute("DELETE FROM symbol_embeddings")
+            conn.execute(
+                "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider, model_id) VALUES (?, ?, ?, ?, ?)",
+                (int(user_session["symbol_id"]), json.dumps([1.0, 0.0]), 2, "onnx", "test"),
+            )
+            conn.execute(
+                "INSERT INTO symbol_embeddings(symbol_id, vector, dims, provider, model_id) VALUES (?, ?, ?, ?, ?)",
+                (int(calculate_tax["symbol_id"]), json.dumps([0.0, 1.0]), 2, "onnx", "test"),
+            )
+            conn.commit()
+
+            candidates = [
+                {**dict(calculate_tax), "fts_score": 1.0},
+                {**dict(user_session), "fts_score": 1.0},
+            ]
+            result = structural_score(
+                conn,
+                candidates,
+                {},
+                {"alpha": 0.0, "beta": 0.0, "delta": 0.0, "epsilon": 0.0, "zeta": 1.0},
+                use_personalized=False,
+                lexical_baseline=0.0,
+                task="database connection",
+            )
+
+        assert result[0]["name"] == "UserSession"
+        assert result[0]["justifications"]["semantic"] == 1.0
+
 
 # ---------------------------------------------------------------------------
 # CLI surface
@@ -253,6 +305,8 @@ class TestRetrieveCLI:
         assert "candidates" in data
         assert isinstance(data["candidates"], list)
         assert data["summary"]["candidates"] == len(data["candidates"])
+        assert data["semantic_coverage"]["symbols"] >= len(data["candidates"])
+        assert "semantic_coverage_pct" in data["summary"]
 
     def test_k_flag_caps_output(self, indexed_project):
         runner = CliRunner()
