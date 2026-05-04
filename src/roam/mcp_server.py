@@ -2685,8 +2685,9 @@ def oracle_batch(items: list, root: str = ".") -> dict:
     description=(
         "Graph-reach taint analysis. Returns OpenVEX-shaped findings "
         "(spec-legal status + justification — never `code_not_reachable`). "
-        "5 starter rule packs: sqli, xss, path-traversal, cmd-injection, "
-        "deserialization. Pair with --ci to gate on findings (exit 5)."
+        "10 starter rule packs: sqli, xss, ssrf, path-traversal, "
+        "command-injection, deserialization, open-redirect, urllib, "
+        "socketio, fileupload. Pair with --ci to gate on findings (exit 5)."
     ),
 )
 def taint(
