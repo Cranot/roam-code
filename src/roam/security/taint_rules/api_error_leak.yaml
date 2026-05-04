@@ -1,0 +1,28 @@
+id: js-api-error-leak
+description: Raw backend error.message returned to the client leaks stack traces, ORM details, and SQL fragments (CWE-209 Information Exposure Through an Error Message). Use a sanitised error wrapper.
+severity: warning
+cwe: CWE-209
+languages:
+  - javascript
+  - typescript
+sources:
+  - error.message
+  - err.message
+  - exception.message
+  - error.stack
+  - err.stack
+  - error.detail
+sinks:
+  - res.send
+  - res.json
+  - res.write
+  - response.json
+  - response.send
+  - throw
+  - reply.send
+  - context.json
+sanitizers:
+  - sanitizeError
+  - publicError
+  - userFacingError
+  - toJSON

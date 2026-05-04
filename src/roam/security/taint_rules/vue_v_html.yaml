@@ -1,0 +1,26 @@
+id: vue-template-injection
+description: User-controlled data bound to v-html in a Vue template renders raw HTML and enables XSS (CWE-79). Prefer text interpolation `{{ value }}` or sanitize before binding.
+severity: error
+cwe: CWE-79
+languages:
+  - javascript
+  - typescript
+  - vue
+sources:
+  - req.query
+  - req.body
+  - req.params
+  - useRoute
+  - useFetch
+  - axios.get
+  - this.$route.query
+  - this.$route.params
+sinks:
+  - v-html
+  - innerHTML
+  - DOMParser.parseFromString
+  - createContextualFragment
+sanitizers:
+  - DOMPurify.sanitize
+  - sanitizeHtml
+  - escape

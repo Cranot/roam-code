@@ -2,11 +2,13 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import click
 
 from roam.commands.metrics_history import collect_metrics, get_snapshots
 from roam.commands.resolve import ensure_index
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import json_envelope, to_json
 
 # ---------------------------------------------------------------------------
@@ -24,12 +26,110 @@ _LEVEL_ORDER = {CRITICAL: 0, WARNING: 1, INFO: 2}
 # Default thresholds
 # ---------------------------------------------------------------------------
 
-_THRESHOLDS = {
+_DEFAULT_THRESHOLDS = {
     "health_score": {"op": "<", "value": 60, "level": CRITICAL},
     "cycles": {"op": ">", "value": 10, "level": WARNING},
     "god_components": {"op": ">", "value": 5, "level": WARNING},
     "layer_violations": {"op": ">", "value": 0, "level": INFO},
 }
+
+# Backwards-compat alias for any plug-ins that imported the old name.
+_THRESHOLDS = _DEFAULT_THRESHOLDS
+
+
+def _parse_alerts_yaml(text: str) -> dict:
+    """Tiny YAML reader for ``.roam/alerts.yaml`` — avoids the PyYAML dep.
+
+    Schema accepted:
+
+        thresholds:
+          health_score: { op: '<', value: 50, level: CRITICAL }
+          cycles: { op: '>', value: 50, level: WARNING }
+        delta_alerts: true
+    """
+    result: dict[str, dict] = {}
+    current_section: str | None = None
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        if not line or line.lstrip().startswith("#"):
+            continue
+        if not line.startswith(" "):
+            key = line.rstrip(":").strip()
+            current_section = key
+            result[current_section] = {}
+            continue
+        if current_section is None:
+            continue
+        stripped = line.strip()
+        if ":" not in stripped:
+            continue
+        key, _, value = stripped.partition(":")
+        key = key.strip()
+        value = value.strip()
+        if value.startswith("{") and value.endswith("}"):
+            inner = value[1:-1]
+            d: dict = {}
+            for part in inner.split(","):
+                if ":" not in part:
+                    continue
+                k, _, v = part.partition(":")
+                v = v.strip().strip("'\"")
+                k = k.strip()
+                if v.lstrip("-").isdigit():
+                    d[k] = int(v)
+                else:
+                    try:
+                        d[k] = float(v)
+                    except ValueError:
+                        d[k] = v
+            result[current_section][key] = d
+        else:
+            v = value.strip("'\"")
+            if v.lstrip("-").isdigit():
+                result[current_section][key] = int(v)
+            elif v.lower() in ("true", "false"):
+                result[current_section][key] = v.lower() == "true"
+            else:
+                result[current_section][key] = v
+    return result
+
+
+def _load_alerts_config(project_root: Path | None = None) -> dict:
+    """Load ``.roam/alerts.yaml`` overrides if present.
+
+    Round 4 #3, G: hardcoded thresholds force every project to live with
+    the same noise floor. A small YAML lets users (and roam itself, via
+    ``--init`` later) tune what 'critical' means for their codebase.
+    """
+    root = project_root or find_project_root()
+    cfg_path = root / ".roam" / "alerts.yaml"
+    if not cfg_path.exists():
+        return {}
+    try:
+        text = cfg_path.read_text(encoding="utf-8")
+    except OSError:
+        return {}
+    try:
+        import yaml  # type: ignore[import-not-found]
+
+        data = yaml.safe_load(text) or {}
+    except ImportError:
+        data = _parse_alerts_yaml(text)
+    return data if isinstance(data, dict) else {}
+
+
+def _resolved_thresholds(project_root: Path | None = None) -> dict:
+    """Merge ``.roam/alerts.yaml`` overrides on top of the defaults."""
+    cfg = _load_alerts_config(project_root)
+    overrides = cfg.get("thresholds", {}) or {}
+    merged = {k: dict(v) for k, v in _DEFAULT_THRESHOLDS.items()}
+    for metric, rule in overrides.items():
+        if not isinstance(rule, dict):
+            continue
+        slot = merged.setdefault(metric, {"op": ">", "value": 0, "level": WARNING})
+        slot.update(rule)
+    return merged
+
 
 _RATE_OF_CHANGE_PCT = 20  # alert if metric changes more than 20%
 
@@ -155,10 +255,11 @@ def _is_monotonic_worsening(values, metric):
 # ---------------------------------------------------------------------------
 
 
-def _check_thresholds(current):
-    """Check current metrics against absolute thresholds."""
+def _check_thresholds(current, thresholds: dict | None = None):
+    """Check current metrics against thresholds (defaults + ``.roam/alerts.yaml``)."""
     alerts = []
-    for metric, rule in _THRESHOLDS.items():
+    rules = thresholds if thresholds is not None else _resolved_thresholds()
+    for metric, rule in rules.items():
         val = current.get(metric)
         if val is None:
             continue
@@ -344,8 +445,11 @@ def alerts(ctx):
             # No snapshots at all -- compute live metrics
             current = collect_metrics(conn)
 
-        # 1) Threshold checks (always run)
-        all_alerts.extend(_check_thresholds(current))
+        # 1) Threshold checks (always run) — round 4 #3 / G: respect
+        # .roam/alerts.yaml overrides so projects can tune what 'critical'
+        # means for their codebase shape.
+        thresholds = _resolved_thresholds()
+        all_alerts.extend(_check_thresholds(current, thresholds))
 
         # 2) Trend detection (need >= 3 snapshots)
         if len(snap_dicts) >= 3:

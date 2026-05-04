@@ -1,0 +1,23 @@
+id: js-insecure-jwt-decode
+description: JWT decoded without signature verification (CWE-347). atob(token.split('.')[1]) reads the payload but does NOT validate the signature; use a verifying library (jsonwebtoken.verify, jose.jwtVerify) instead.
+severity: error
+cwe: CWE-347
+languages:
+  - javascript
+  - typescript
+sources:
+  - req.headers.authorization
+  - req.cookies
+  - localStorage.getItem
+  - sessionStorage.getItem
+  - document.cookie
+sinks:
+  - atob
+  - jwt_decode
+  - jwtDecode
+  - jwt-decode
+  - JSON.parse
+sanitizers:
+  - jsonwebtoken.verify
+  - jose.jwtVerify
+  - jwks-rsa

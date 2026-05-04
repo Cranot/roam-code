@@ -122,6 +122,56 @@ def oracle_symbol_exists(conn: sqlite3.Connection, name: str) -> OracleResult:
     return OracleResult(True, f"{count} symbol(s) match '{name}'", "definitive_yes", "high")
 
 
+def _detect_sibling_backend_repos() -> list[str]:
+    """Look for sibling repositories that could be auto-linked as a backend.
+
+    Round 4 feature O: when ``route-exists`` reports
+    ``indeterminate_workspace`` we offer the parent-dir scan so the
+    user knows what to point ``roam ws resolve`` at.
+    """
+    from pathlib import Path
+
+    try:
+        from roam.db.connection import find_project_root
+
+        root = find_project_root()
+    except Exception:
+        return []
+
+    parent = root.parent
+    if not parent.exists():
+        return []
+
+    candidates: list[str] = []
+    backend_signals = ("routes/api.php", "config/routes.rb", "main.go", "manage.py", "app.py", "fastapi", "main.ts")
+    for sibling in parent.iterdir():
+        if not sibling.is_dir() or sibling == root:
+            continue
+        # Cheap signal: a recognisable backend manifest in the sibling.
+        try:
+            if (sibling / "package.json").exists():
+                pkg_text = (sibling / "package.json").read_text(encoding="utf-8")
+                if "express" in pkg_text or "fastify" in pkg_text or "koa" in pkg_text or "@nestjs" in pkg_text:
+                    candidates.append(str(sibling))
+                    continue
+            if (sibling / "go.mod").exists():
+                candidates.append(str(sibling))
+                continue
+            if (sibling / "Cargo.toml").exists():
+                candidates.append(str(sibling))
+                continue
+            if any((sibling / sig).exists() for sig in backend_signals):
+                candidates.append(str(sibling))
+                continue
+            for marker in (sibling / "src", sibling / "app", sibling / "api"):
+                if marker.exists() and marker.is_dir():
+                    candidates.append(str(sibling))
+                    break
+        except OSError:
+            continue
+    return candidates[:5]
+
+
 def oracle_route_exists(conn: sqlite3.Connection, path: str) -> OracleResult:
     """Does any HTTP route definition match the given URL path?
 
@@ -131,6 +181,10 @@ def oracle_route_exists(conn: sqlite3.Connection, path: str) -> OracleResult:
     handlers are present but URL matching needs the workspace bridge.
     Round 4 #7 noted that returning ``False`` here was misleading —
     the route may exist; we just can't verify from this index alone.
+
+    Round 4 feature O: also probes the parent directory for sibling
+    backend repos and surfaces them in the reason text so the user
+    knows where to point ``roam ws resolve``.
     """
     if not path:
         return OracleResult(False, "empty path", "definitive_no", "high")
@@ -166,9 +220,11 @@ def oracle_route_exists(conn: sqlite3.Connection, path: str) -> OracleResult:
             "indeterminate_no_data",
             "low",
         )
+    siblings = _detect_sibling_backend_repos()
+    sibling_hint = f"; candidate backends: {', '.join(siblings)}" if siblings else ""
     return OracleResult(
         None,
-        f"{count} route handler(s) found, but URL match needs `roam ws resolve`",
+        f"{count} route handler(s) found, but URL match needs `roam ws resolve`{sibling_hint}",
         "indeterminate_workspace",
         "indeterminate",
     )
