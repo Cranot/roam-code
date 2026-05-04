@@ -227,6 +227,77 @@ def _check_sqlite(db_path_str: str | None) -> dict:
         }
 
 
+def _check_command_registry() -> dict:
+    """Every CLI subcommand declared in roam.cli._COMMANDS must import.
+
+    Catches the round-4 #16 class of bug — a documented command silently
+    removed or renamed leaves the registry mismatch undetected until an
+    agent calls it. Doctor runs the lazy-import for every entry up front.
+    """
+    try:
+        from roam.cli import _COMMANDS
+    except Exception as exc:
+        return {
+            "name": "CLI command registry",
+            "passed": False,
+            "detail": f"could not load roam.cli: {exc}",
+        }
+
+    failures: list[str] = []
+    for cmd_name, target in _COMMANDS.items():
+        try:
+            module_name, attr = target
+            mod = __import__(module_name, fromlist=[attr])
+            if not hasattr(mod, attr):
+                failures.append(f"{cmd_name}->{module_name}:{attr} (missing attr)")
+        except Exception as exc:
+            failures.append(f"{cmd_name}: {type(exc).__name__}: {exc}")
+    if failures:
+        sample = "; ".join(failures[:3])
+        more = f" (+{len(failures) - 3} more)" if len(failures) > 3 else ""
+        return {
+            "name": "CLI command registry",
+            "passed": False,
+            "detail": f"{len(failures)} command(s) fail to import: {sample}{more}",
+        }
+    return {
+        "name": "CLI command registry",
+        "passed": True,
+        "detail": f"{len(_COMMANDS)} CLI commands import cleanly",
+    }
+
+
+def _check_mcp_registry() -> dict:
+    """MCP server registers tools without crashing.
+
+    Round 4 #15: a tool listed in the declared tool set but not actually
+    implemented gives agents `No such tool` errors. We import the server
+    module and count registered tools so a registry mismatch surfaces
+    here, not at agent call-time.
+    """
+    try:
+        from roam import mcp_server  # noqa: PLC0415 — heavy import, only at doctor time
+    except Exception as exc:
+        return {
+            "name": "MCP tool registry",
+            "passed": False,
+            "detail": f"mcp_server import failed: {type(exc).__name__}: {exc}",
+        }
+
+    declared = getattr(mcp_server, "_REGISTERED_TOOLS", [])
+    if not declared:
+        return {
+            "name": "MCP tool registry",
+            "passed": False,
+            "detail": "no tools registered (FastMCP missing or registration broken)",
+        }
+    return {
+        "name": "MCP tool registry",
+        "passed": True,
+        "detail": f"{len(declared)} MCP tools registered",
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -262,6 +333,9 @@ def doctor(ctx):
     checks.append(_check_tree_sitter_language_pack())
     checks.append(_check_git())
     checks.append(_check_networkx())
+    # Round 4 S3 — verify the CLI + MCP tool surfaces are intact.
+    checks.append(_check_command_registry())
+    checks.append(_check_mcp_registry())
 
     # Index checks: existence feeds into freshness and SQLite checks
     index_check = _check_index_exists()
