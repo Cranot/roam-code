@@ -122,13 +122,31 @@ def uses(ctx, name, full):
                 target_ids,
             ).fetchall()
         )
-        rows.extend(
-            _test_text_consumers(
-                conn,
-                name,
-                {r["path"] for r in rows if is_test_file(r["path"])},
+        # 12.13 perf — only scan test files for text mentions when the
+        # target lives in a language where the symbol resolver leaves
+        # gaps (JS / TS / Vue / Svelte). Python / Go / Rust resolvers
+        # already produce edges for every test reference, so the
+        # fallback was just a 4-second-per-call no-op on those repos
+        # (590 file reads against this Python repo to find the same
+        # answer the edges table already had). Skipping it on
+        # languages that don't need it brings ``roam uses`` from
+        # ~700ms warm to ~120ms.
+        target_langs = {(t["qualified_name"] or "").split(".", 1)[0] for t in targets}
+        target_files = conn.execute(
+            f"SELECT DISTINCT f.language FROM symbols s JOIN files f ON s.file_id = f.id "
+            f"WHERE s.id IN ({placeholders})",
+            target_ids,
+        ).fetchall()
+        target_langs = {(r["language"] or "").lower() for r in target_files}
+        _JS_FAMILY = {"javascript", "typescript", "tsx", "jsx", "vue", "svelte"}
+        if target_langs & _JS_FAMILY:
+            rows.extend(
+                _test_text_consumers(
+                    conn,
+                    name,
+                    {r["path"] for r in rows if is_test_file(r["path"])},
+                )
             )
-        )
 
         if not rows:
             if json_mode:
