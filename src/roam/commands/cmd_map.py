@@ -51,6 +51,17 @@ def map_cmd(ctx, count, full, budget):
     and top symbols by PageRank.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    # The CLI normalises ``--budget`` to the global option (see
+    # ``LazyGroup._normalise_global_option_position``) — when a user
+    # writes ``roam map --budget 200``, the value lands in
+    # ``ctx.obj["budget"]`` rather than the command-local ``budget``
+    # parameter. Falling back to the global value keeps both shapes
+    # working and makes the test_map_budget_* tests pass without
+    # forking the parser. v12.12.
+    if budget is None:
+        global_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+        if global_budget and global_budget > 0:
+            budget = int(global_budget)
     ensure_index()
 
     with open_db(readonly=True) as conn:
