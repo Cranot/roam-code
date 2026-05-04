@@ -290,12 +290,17 @@ class TestTaintCLI:
         assert result.exit_code == 0, result.output
         data = json.loads(result.output)
         assert data["command"] == "taint"
-        # The JSON envelope echoes the spec-legal strings so consumers
-        # can validate without re-importing roam internals.
-        assert "openvex_justification_strings" in data
-        legal = set(data["openvex_justification_strings"])
-        assert "code_not_reachable" not in legal
-        assert "inline_mitigations_already_exist" in legal
+        # Round 3 #23: the OpenVEX vocab lists ship in the envelope only
+        # when there are findings to attach them to. Empty taint runs
+        # used to wastefully echo ~2KB of static strings every call.
+        if data.get("findings"):
+            assert "openvex_justification_strings" in data
+            legal = set(data["openvex_justification_strings"])
+            assert "code_not_reachable" not in legal
+            assert "inline_mitigations_already_exist" in legal
+        else:
+            assert "openvex_justification_strings" not in data
+            assert "openvex_statuses" not in data
 
     def test_rule_filter(self, taint_project):
         runner = CliRunner()
