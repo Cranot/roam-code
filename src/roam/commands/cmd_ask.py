@@ -16,9 +16,13 @@ import click
 from roam.ask.classifier import classify
 from roam.ask.recipes import RECIPES, Recipe, by_name
 from roam.ask.runner import extract_symbol, fill_followups, run_recipe
+from roam.output.confidence import DEFAULT_CONFIDENCE_THRESHOLD, is_low_confidence
 from roam.output.formatter import json_envelope, to_json
 
-_CONFIDENCE_THRESHOLD = 0.15
+# Single source of truth for the low-confidence threshold across
+# ranked-output commands. Imported from output.confidence so cmd_ask
+# and any future ranker stay in lockstep.
+_CONFIDENCE_THRESHOLD = DEFAULT_CONFIDENCE_THRESHOLD
 
 
 def _recipe_listing_payload(recipe: Recipe) -> dict:
@@ -236,7 +240,8 @@ def ask(ctx, query, list_recipes, explain, recipe_override):
 
     ranked = _rank_recipes(query_text, recipe_override)
 
-    if not ranked or ranked[0][1] < _CONFIDENCE_THRESHOLD:
+    top_score = ranked[0][1] if ranked else 0.0
+    if not ranked or is_low_confidence(top_score, _CONFIDENCE_THRESHOLD):
         # Low confidence — show top-3 and bail out.
         _emit_low_confidence(query_text, ranked, json_mode)
         return
