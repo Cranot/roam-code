@@ -7,6 +7,44 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.2] - 2026-05-04
+
+Polish on top of v12.12.1's packaging hotfix. Two more files were
+broken post-install plus a quietly-skipping consistency test.
+
+### Bundled in the wheel
+
+- `src/roam/mcp-server-card.json` — the MCP discovery card. Previously
+  `roam mcp --card` walked up to `docs/site/.well-known/` which only
+  exists in the source checkout, so PyPI users got "server card file
+  not found". v12.12.2 ships the card alongside the package; the
+  docs-site copy stays canonical for the hosted `/.well-known/` URL
+  and a guard test asserts byte-for-byte equality so they can't drift.
+- `src/roam/templates/ci/Jenkinsfile` — `roam ci-setup --platform jenkins`
+  was raising "Template file not found" because the package-data glob
+  only covered `*.yaml` / `*.yml`. The glob is now `*` for that dir.
+
+### Consistency
+
+- `test_landscape_json_self_row_version_matches` was silently skipping
+  because `_landscape_json_version()` searched a 500-character window
+  around `"cli_commands"` for `"version_evaluated"` — when the row
+  grew past that window, the test returned None and pytest skipped.
+  Switched to JSON-parse-and-find-by-name. The test runs again.
+- `landscape.json` self-row had been at `12.10.1` since the v12.11
+  release commit forgot to bump it (the test was skipping, so CI
+  didn't catch it). Synced to `12.12.2`.
+
+### cmd_ask uses the shared confidence helper
+
+`cmd_ask` invented the low-confidence verdict pattern that v12.12
+extracted into `roam.output.confidence`, but the original code
+declared its own `_CONFIDENCE_THRESHOLD = 0.15` and inlined the score
+comparison. Refactored to import `DEFAULT_CONFIDENCE_THRESHOLD` and
+`is_low_confidence` from the shared module so threshold tweaks land
+in one place across `cmd_ask`, `cmd_retrieve`, and any future
+ranked-output command.
+
 ## [12.12.1] - 2026-05-04
 
 Hotfix: bundle YAML data files in the wheel.
