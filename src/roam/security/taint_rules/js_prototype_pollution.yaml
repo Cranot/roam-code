@@ -1,0 +1,30 @@
+id: js-prototype-pollution
+description: Untrusted input merged into existing objects (CWE-1321 Improperly Controlled Modification of Object Prototype Attributes).
+severity: error
+cwe: CWE-1321
+languages:
+  - javascript
+  - typescript
+sources:
+  - req.query
+  - req.body
+  - req.params
+  - location.search
+  - URLSearchParams
+  - JSON.parse
+sinks:
+  - Object.assign
+  - lodash.merge
+  - lodash.mergeWith
+  - lodash.set
+  - lodash.setWith
+  - _.merge
+  - _.mergeWith
+  - _.set
+  - _.setWith
+  - $.extend
+  - jQuery.extend
+sanitizers:
+  - sanitizeObject
+  - reject_proto_keys
+  - hasOwnProperty
