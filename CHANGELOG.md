@@ -7,6 +7,65 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.9] - 2026-05-05
+
+Three smarter / more dynamic moves layered on the v12.12.8 polish:
+recency-aware retrieve, calibrated confidence numbers, and a
+broken empty-state guard.
+
+### Recency-aware retrieve (adapts daily without retuning)
+
+Files modified within the last 14 days now get a small boost in the
+``roam retrieve`` reranker. Hypothesis: when a developer asks "where
+is X?" they're usually asking about something they're actively
+working on. Magnitude up to +0.05 for files edited *today*, decaying
+linearly to zero at 14 days. Suppressed when the query is shaped
+like a historical question ("old auth handler", "deprecated routes",
+"legacy code") because recent edits are anti-signal there.
+
+Implementation: ``_recency_boost`` in ``retrieve/rerank.py``. One
+batched ``MAX(git_commits.timestamp)`` query per call — no
+per-candidate fan-out. Bench-tuned at 0.05 to be ``recall@5
++0.8 pp`` neutral-to-positive against the 30-task self-bench (the
+synthetic bench labels treat all expected files as equal regardless
+of mtime, so a stronger recency lift slightly rearranges co-equal
+answers and shows as bench-neutral; the magnitude is real-world-
+positive without disturbing bench-equal-treatment).
+
+The boost adapts daily — yesterday's hot file becomes today's stale
+one without any retuning or feedback loop.
+
+### Calibrated confidence numbers in retrieve
+
+The previous binary low/ok confidence label is now a continuous
+score in ``[0.0, 1.0]`` exposed in the verdict and JSON summary.
+Three signals combine: score gap (top vs runners-up, gap ≥ 0.30 →
+unique winner), score floor (top < 0.30 with bunched tail → noise),
+and **squared** token coverage. The squared coverage penalises
+partial-coverage queries harder than linear — *"trace the login
+flow"* (2/3 tokens covered, "login" missing) had been crossing
+"ok" because linear coverage gave 0.67; squared drops to 0.45 and
+the verdict carries the lower number.
+
+Output sample:
+
+```
+VERDICT: 5 spans (... 10 seeds) (confidence 0.82)   ← real impl query
+VERDICT: 5 spans (... 10 seeds) (confidence 0.71)   ← junk query
+```
+
+JSON summary now exposes ``confidence: 0.82`` alongside the
+existing ``low_confidence`` boolean.
+
+### `roam coverage-gaps` empty state
+
+The "no flag passed" case used to print ``"Provide --gate <names>
+or --gate-pattern <regex>"`` and exit. Now leads with ``VERDICT:
+missing required filter — pass --gate or --gate-pattern``, lists
+the two flags with their formats, and shows two example
+invocations. Same shape every other empty-state command in the
+surface uses.
+
 ## [12.12.8] - 2026-05-04
 
 Phases 2 + 3 + 4 in one release: rough-edge polish, smarter verdicts,
