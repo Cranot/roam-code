@@ -493,10 +493,25 @@ def _augment_test_text_consumers(conn, rows, consumer_meta):
                     entry["test_files"].add(path)
 
 
+_BARREL_BASENAMES = frozenset({"index.ts", "index.tsx", "index.js", "index.jsx", "index.mjs", "__init__.py"})
+
+
+def _is_barrel_path(path: str | None) -> bool:
+    """A file is a barrel when its basename is one of the canonical re-export
+    points. Round 4 #37: dead's "file is imported by N places" reason
+    used to lump barrel re-exporters with real consumers — those rarely
+    indicate the symbol is actually exercised."""
+    if not path:
+        return False
+    base = os.path.basename(path).lower()
+    return base in _BARREL_BASENAMES
+
+
 def _dead_file_import_meta(conn):
-    """Return module import counts split by production and tests."""
+    """Return module import counts split by production / tests / barrels."""
     imported_any = set()
     imported_production = set()
+    imported_consumer = set()  # production importers excluding barrels
     file_meta: dict[int, dict] = {}
     for row in conn.execute(
         "SELECT fe.target_file_id, f.path AS source_file FROM file_edges fe JOIN files f ON fe.source_file_id = f.id"
@@ -509,14 +524,24 @@ def _dead_file_import_meta(conn):
                 "module_path_importers": 0,
                 "production_module_path_importers": 0,
                 "test_module_path_importers": 0,
+                "barrel_module_path_importers": 0,
+                "consumer_module_path_importers": 0,
             },
         )
         entry["module_path_importers"] += 1
-        if _is_test_path(row["source_file"]):
+        is_test = _is_test_path(row["source_file"])
+        is_barrel = _is_barrel_path(row["source_file"])
+        if is_test:
             entry["test_module_path_importers"] += 1
         else:
             entry["production_module_path_importers"] += 1
             imported_production.add(target_id)
+        if is_barrel:
+            entry["barrel_module_path_importers"] += 1
+        else:
+            entry["consumer_module_path_importers"] += 1
+            if not is_test:
+                imported_consumer.add(target_id)
     return imported_any, imported_production, file_meta
 
 
@@ -576,17 +601,25 @@ def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
 
     module_importers = fmeta.get("module_path_importers", 0)
     prod_module_importers = fmeta.get("production_module_path_importers", 0)
+    barrel_importers = fmeta.get("barrel_module_path_importers", 0)
+    consumer_importers = fmeta.get("consumer_module_path_importers", 0)
     siblings = smeta.get("production_referenced_siblings", 0)
+
+    barrel_clause = (
+        f", of which {barrel_importers} are barrel re-exports (index.ts/__init__.py)" if barrel_importers else ""
+    )
     if module_importers and siblings:
         return (
             f"file is imported by {module_importers} place(s) "
-            f"({prod_module_importers} production); this export has no production consumers "
+            f"({prod_module_importers} production, {consumer_importers} real consumers"
+            f"{barrel_clause}); this export has no production consumers "
             f"while {siblings} sibling export(s) are used"
         )
     if module_importers:
         return (
             f"file is imported by {module_importers} place(s) "
-            f"({prod_module_importers} production); this export has no production consumers"
+            f"({prod_module_importers} production, {consumer_importers} real consumers"
+            f"{barrel_clause}); this export has no production consumers"
         )
     return "file has no module importers; may be an entry point or consumed by unparsed code"
 
@@ -1639,6 +1672,8 @@ def dead(
                     "module_path_importers": fmeta.get("module_path_importers", 0),
                     "production_module_path_importers": fmeta.get("production_module_path_importers", 0),
                     "test_module_path_importers": fmeta.get("test_module_path_importers", 0),
+                    "barrel_module_path_importers": fmeta.get("barrel_module_path_importers", 0),
+                    "consumer_module_path_importers": fmeta.get("consumer_module_path_importers", 0),
                     "referenced_sibling_exports": smeta.get("referenced_siblings", 0),
                     "production_files": cmeta.get("production_files", []),
                     "test_files": cmeta.get("test_files", []),

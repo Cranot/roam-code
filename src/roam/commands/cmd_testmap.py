@@ -20,11 +20,36 @@ def _test_map_symbol(conn, sym):
         (sym["id"],),
     ).fetchall()
     direct_pre = [c for c in callers_pre if _is_test_file(c["file_path"])]
-    sym_verdict = (
-        f"{len(direct_pre)} direct test{'s' if len(direct_pre) != 1 else ''} for {sym['name']}"
-        if direct_pre
-        else f"no tests found for {sym['name']}"
-    )
+
+    # Round 4 #19: a test file importing the SAME module but not
+    # exercising this specific symbol used to leave the verdict
+    # ambiguous ("no tests found" + "1 test file importing 2 symbols").
+    # We pre-count the file-level importers up front so the verdict
+    # can include indirect-coverage context.
+    indirect_pre: list[dict] = []
+    sym_file_row = conn.execute("SELECT id FROM files WHERE path = ?", (sym["file_path"],)).fetchone()
+    if sym_file_row is not None:
+        indirect_pre = [
+            r
+            for r in conn.execute(
+                "SELECT f.path, fe.symbol_count "
+                "FROM file_edges fe "
+                "JOIN files f ON fe.source_file_id = f.id "
+                "WHERE fe.target_file_id = ?",
+                (sym_file_row["id"],),
+            ).fetchall()
+            if _is_test_file(r["path"])
+        ]
+
+    if direct_pre:
+        sym_verdict = f"{len(direct_pre)} direct test{'s' if len(direct_pre) != 1 else ''} for {sym['name']}"
+    elif indirect_pre:
+        sym_verdict = (
+            f"no direct tests for {sym['name']}; {len(indirect_pre)} test file(s) "
+            "import the same module — coverage is indirect at best, this symbol is not exercised"
+        )
+    else:
+        sym_verdict = f"no tests found for {sym['name']}"
     click.echo(f"VERDICT: {sym_verdict}\n")
     click.echo(
         f"Test coverage for: {sym['name']} ({abbrev_kind(sym['kind'])}, {loc(sym['file_path'], sym['line_start'])})"
