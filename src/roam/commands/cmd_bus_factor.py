@@ -260,8 +260,20 @@ def _query_brain_methods(conn):
 @click.option("--limit", default=20, help="Number of directories to show")
 @click.option("--stale-months", default=6, help="Months of inactivity before flagging stale knowledge")
 @click.option("--brain-methods", is_flag=True, help="Show disproportionately complex functions")
+@click.option(
+    "--force-team-mode",
+    "force_team_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Override single-author auto-detection. Round 4 #13: when one author "
+        "owns >80% of commits, the default switches to STALE-only output "
+        "since 'bus factor 1' is the baseline, not a finding. Use this flag "
+        "to opt back into the full distributed-team rubric."
+    ),
+)
 @click.pass_context
-def bus_factor(ctx, limit, stale_months, brain_methods):
+def bus_factor(ctx, limit, stale_months, brain_methods, force_team_mode):
     """Detect knowledge loss risk per module (bus factor analysis).
 
     Unlike ``simulate-departure`` (which models the impact of a specific developer
@@ -275,6 +287,25 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
     with open_db(readonly=True) as conn:
         results = _analyse_bus_factor(conn, stale_months)
         brain_list = _query_brain_methods(conn) if brain_methods else []
+
+        # Round 4 #13, Q: detect single-author projects so we don't flood
+        # the output with "bus factor 1" warnings. Switch to a focused
+        # mode that only surfaces STALE modules (the actually-actionable
+        # signal on a solo project).
+        from roam.db.connection import find_project_root
+        from roam.output.project_shape import detect_project_shape
+
+        try:
+            shape = detect_project_shape(conn, find_project_root())
+        except Exception:
+            shape = None
+        single_author_mode = not force_team_mode and shape is not None and shape.team_size == "single-author"
+        if single_author_mode and results:
+            # Keep STALE modules — those represent forgotten code regardless of
+            # team size. Drop the rest from the headline ranking.
+            stale_only = [r for r in results if r.get("stale_primary")]
+            if stale_only:
+                results = stale_only
 
         if not results:
             no_data_verdict = "no git history data available"
@@ -321,6 +352,8 @@ def bus_factor(ctx, limit, stale_months, brain_methods):
                 "concentrated": concentrated_count,
                 "stale_primary": stale_count,
                 "critical_entropy": critical_entropy_count,
+                "project_team_size": getattr(shape, "team_size", "unknown") if shape else "unknown",
+                "single_author_mode": single_author_mode,
             }
             if brain_methods:
                 summary["brain_method_count"] = len(brain_list)

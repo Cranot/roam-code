@@ -145,8 +145,19 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     type=str,
     help="Seed the rerank with one or more files (can be repeated). Falls back to inference when absent.",
 )
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help=(
+        "Return the search plan (candidate ids, scores, locations) without "
+        "fetching span content. Round 4 feature D: lets agents see what "
+        "would be retrieved before paying the token cost."
+    ),
+)
 @click.pass_context
-def retrieve(ctx, task, budget, k, rerank, seed_files):
+def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
     """Return ranked code spans for a free-form task.
 
     Composes hybrid first-stage (FTS5) + structural reranker (PageRank +
@@ -213,6 +224,28 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
         )
 
     candidates = result["candidates"]
+    if dry_run:
+        # Strip span content so the agent sees what *would* be retrieved
+        # without paying the token cost. Keeps location / score / why.
+        stripped = []
+        for item in candidates:
+            keep = {
+                k: item[k]
+                for k in (
+                    "name",
+                    "qualified_name",
+                    "kind",
+                    "file_path",
+                    "line_start",
+                    "line_end",
+                    "score",
+                    "justifications",
+                    "symbol_id",
+                )
+                if k in item
+            }
+            stripped.append(keep)
+        candidates = stripped
     confidence = _retrieve_confidence(candidates, task_str)
     base_verdict = (
         f"{len(candidates)} span{'s' if len(candidates) != 1 else ''} "
@@ -240,12 +273,13 @@ def retrieve(ctx, task, budget, k, rerank, seed_files):
                         "candidates": len(candidates),
                         "total_candidates": result["total_candidates"],
                         "budget": result["budget"],
-                        "budget_used": result["budget_used"],
+                        "budget_used": result["budget_used"] if not dry_run else 0,
                         "k": result["k"],
                         "rerank": result["rerank"],
                         "seed_count": len(result["seeds"]),
                         "semantic_embeddings": semantic_diag["embeddings"],
                         "semantic_coverage_pct": semantic_diag["coverage_pct"],
+                        "dry_run": dry_run,
                     },
                     budget=effective_budget,
                     task=result["task"],
