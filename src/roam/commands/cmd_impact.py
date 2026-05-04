@@ -231,3 +231,17 @@ def impact(ctx, name):
             click.echo(f"\nSalesforce convention tests ({len(sf_test_files)}):")
             for tf in sorted(sf_test_files):
                 click.echo(f"  {tf}")
+
+        # Phase-4 synergy — point at the natural next command.
+        from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
+
+        _ns = suggest_next_steps(
+            "impact",
+            {
+                "symbol": name or "",
+                "affected_symbols": len(dependents),
+            },
+        )
+        _ns_text = format_next_steps_text(_ns)
+        if _ns_text:
+            click.echo(_ns_text)

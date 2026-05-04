@@ -82,6 +82,67 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
             steps.append("Run `roam dead --by-directory` to group dead code by directory for batch cleanup")
         steps.append("Run `roam dead --extinction <symbol>` to predict the cascade before deleting a symbol")
 
+    # Phase-4 synergize — these commands previously had no follow-up
+    # suggestions. Adding them turns each result into a launchpad
+    # for the natural next action.
+
+    elif command == "preflight":
+        symbol = context.get("symbol", "")
+        risk = (context.get("risk_level") or "").upper()
+        sym_arg = f" {symbol}" if symbol else ""
+        if risk in ("HIGH", "CRITICAL"):
+            steps.append(f"Run `roam impact{sym_arg}` to see the full transitive blast radius before changing")
+            steps.append(f"Run `roam diagnose{sym_arg}` to identify the highest-risk caller")
+        if risk in ("HIGH", "CRITICAL", "MEDIUM"):
+            steps.append(f"Run `roam affected-tests{sym_arg}` to know which test suite covers your change")
+        if not steps:
+            # LOW / OK — point the user at the natural follow-up: stage edits and re-verify.
+            steps.append("Run `roam diff` after editing to re-check blast radius on the staged change")
+
+    elif command == "impact":
+        symbol = context.get("symbol", "")
+        affected = context.get("affected_symbols", 0) or context.get("symbols", 0)
+        sym_arg = f" {symbol}" if symbol else ""
+        if affected > 50:
+            steps.append(f"Run `roam closure{sym_arg}` to see what the minimum coordinated change set looks like")
+        if affected > 0:
+            steps.append(f"Run `roam affected-tests{sym_arg}` to find tests that exercise the impacted surface")
+        steps.append(f"Run `roam preflight{sym_arg}` for a one-shot risk verdict combining all signals")
+
+    elif command == "pr-risk":
+        risk_level = (context.get("risk_level") or "").upper()
+        driver = context.get("driver", "")
+        if risk_level in ("HIGH", "CRITICAL"):
+            steps.append("Run `roam diff --staged` to see the structural delta of staged-only changes")
+            if driver in ("test_coverage_low", "test_coverage"):
+                steps.append("Run `roam test-gaps --changed` to find the specific files that lack tests")
+            elif driver in ("hotspot_score", "hotspot"):
+                steps.append("Run `roam hotspots` to see the runtime hotspots driving the risk score")
+            else:
+                steps.append("Run `roam suggest-reviewers` to find the right people to loop in")
+        elif risk_level == "MODERATE":
+            steps.append("Run `roam critique` (pipe `git diff` in) to verify the patch against the indexed graph")
+
+    elif command == "critique":
+        high = context.get("high_severity", 0)
+        bench_hint = context.get("bench_hint")
+        if high > 0:
+            steps.append("Run `roam preflight <symbol>` on each high-severity finding before merging")
+        if bench_hint:
+            # The bench hint already names the right command in plain text;
+            # surface it as a structured next step too so JSON consumers see it.
+            steps.append(f"Run the bench/test command for this hot path: `{bench_hint}`")
+        steps.append("Run `roam diff` to confirm the structural delta of what you actually changed")
+
+    elif command == "retrieve":
+        low_confidence = context.get("low_confidence", False)
+        if low_confidence:
+            steps.append("Refine the task with a known symbol or `--seed-files <path>` to anchor the search")
+            steps.append("Run `roam search <token>` if you know a name fragment — it's exact-match instead of semantic")
+        else:
+            steps.append("Run `roam context <symbol>` on the top result to get caller/callee detail")
+            steps.append("Run `roam preflight <symbol>` if you intend to modify the top result")
+
     return steps[:3]
 
 

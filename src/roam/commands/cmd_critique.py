@@ -317,5 +317,19 @@ def critique(ctx, input_path, high_callers, intent_text):
             click.echo()
             click.echo(f"BENCH HINT: {bench_hint}")
 
+        # Phase-4 synergy — point at the natural next command.
+        from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
+
+        _ns = suggest_next_steps(
+            "critique",
+            {
+                "high_severity": result["severity_breakdown"].get("high", 0),
+                "bench_hint": bench_hint,
+            },
+        )
+        _ns_text = format_next_steps_text(_ns)
+        if _ns_text:
+            click.echo(_ns_text)
+
     if result["severity_breakdown"].get("high", 0) > 0:
         ctx.exit(5)
