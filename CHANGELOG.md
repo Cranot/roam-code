@@ -7,6 +7,179 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.11] - 2026-05-04
+
+A precision and agent-UX release built on six rounds of dogfood
+feedback. Headline work: round-trip false-positive suppression across
+the entire analyzer surface, a cross-tool framework-alias filter that
+single-handedly fixes five inflated-PageRank reports, MCP capacity
+backpressure that replaces silent connection drops with structured
+`RATE_LIMITED` responses, and a tri-state oracle envelope so agents
+can distinguish "we proved no" from "we can't tell."
+
+### New modules
+
+- `roam.output.framework_filter` — shared registry of Vue / React /
+  Angular type aliases and lifecycle hooks. Consumed by `fan`,
+  `health`, `tour`, `understand`, and `visualize` so `computed<T>`
+  and friends stop dominating PageRank rankings.
+- `roam.output.project_shape` — one detector returning team_size,
+  test_runner, build_tool, polyglot, frontend / backend flags.
+  Powers bus-factor's single-author mode, describe's runner-aware
+  test command, and preflight's vitest detection.
+- `roam.output.errors` — canonical error code taxonomy
+  (`EMPTY_INPUT` / `INVALID_DIFF` / `UNKNOWN_RECIPE` /
+  `RATE_LIMITED` / …) with `structured_usage_error()` helper and
+  `parse_code()` round-trip validator. Applied to every high-traffic
+  CLI `UsageError` site so agents can branch programmatically.
+- `roam.mcp_extras.concurrency` — bounded-semaphore backpressure on
+  every MCP tool. Default 8 in flight (env
+  `ROAM_MCP_MAX_CONCURRENT`) plus per-tool overrides
+  (`ROAM_MCP_LIMITS=JSON`). Over-capacity returns a structured
+  `RATE_LIMITED` envelope with retry hint instead of dropping the
+  connection.
+
+### Precision (false-positive suppression)
+
+- `dead` / `uses` split production vs test consumers; tested-but-
+  unused surface lands as `REVIEW` with explicit reason. Decay
+  distribution (fresh / stale / decayed / fossilized) ships in the
+  default summary.
+- `dead` recognises a scaffolding heuristic (CB-NNN behaviour IDs,
+  legacy file references, "see legacy/spec" citations) and tags
+  `INTENTIONAL_SCAFFOLDING`. `--reachable-only` intersects with the
+  is-reachable oracle for the really-really-dead set.
+- `dead --by-directory` adds file count, dead-export density, and
+  scaffolding column. Barrel-export importers
+  (`index.ts` / `__init__.py`) are split from real consumers in the
+  reason text.
+- `health` filters local-only and test-involved cycles from scoring,
+  tangle, and gates. Severity breakdown by category in default
+  output.
+- `vibe-check` — `Promise.catch(() => fallback)` no longer counts as
+  an empty handler. `pr-risk` deletion-only changes get a reductive
+  rubric. `complexity` gains `--no-framework` / `--no-imports`.
+- `fan` splits intra-file vs inter-file fan-out; reserves
+  `hub` / `spreader` for symbols whose consumers span ≥3 files.
+- `coupling` detects locale-pair (`src/locales/<lang>.ts`) and
+  doc-hub patterns and labels them `EXPECTED` instead of `HIDDEN`.
+  Default `-n` auto-scales by file count (20 / 50 / 100).
+- `conventions` applies per-language rules (SQL = snake_case for
+  tables / views, JS = camelCase, etc.) instead of imposing the
+  codebase-wide dominant style.
+- `fn-coupling` caps symbols-per-file via PageRank and excludes
+  tests by default — drops 2.2M pairs to thousands. New `--since
+  <ref>` baseline mode.
+- `risk` excludes tests by default (`--include-tests` opt-in),
+  surfaces a `--show-suppressed` inspector, and surfaces a
+  `suppressions` envelope field for honest filter accounting.
+- `fitness` cycle metrics consume the actionable-cycle filter
+  (filtering local + test SCCs); preflight scopes rule failures
+  to the target's surface (`rules_failing_on_target` vs
+  `rules_failing_on_siblings`) and uses "currently fail" rather
+  than misleading "would fail" wording.
+- `patterns` factory detection splits `true_factory` vs
+  `builder_helper` into separate sections in default text output;
+  `--strict-factory` drops helpers entirely.
+- `hotspots` tags each entry with `kind` (code | doc | config |
+  sql | other) and prefers code in the headline rankings.
+- `doc-staleness` switched to semantic mismatch (phantom params,
+  return clause without return annotation). Pure-prose drift is
+  gated behind `--include-prose-drift`.
+- `safe-delete` no longer flips `SAFE` → `REVIEW` purely on
+  `use*` / `get*` naming when every signal is zero.
+
+### Agent UX
+
+- Tri-state oracle envelope: `value: bool | null` plus
+  `reason_class` (`definitive_yes` / `definitive_no` /
+  `indeterminate_workspace` / `indeterminate_no_data` /
+  `unreachable_dead` / `unreachable_scaffolding` / …) and
+  `confidence`. `route-exists` returns `indeterminate_workspace`
+  with sibling-backend candidates when `roam ws resolve` would
+  help; `is-reachable` distinguishes `unreachable_dead` from
+  `unreachable_scaffolding`.
+- New `roam_oracle_batch` MCP tool: multiple oracle queries in
+  one round-trip with full tri-state envelopes per result.
+  `roam_oracle_test_only` alias added so the shorter name agents
+  sometimes guess no longer 404s.
+- Bundle aggregator surfaces `partial_success` +
+  `failed_subcommands` at the top of every compound envelope;
+  `prepare-change` recipe scorer picks `refactor-orchestrator`
+  vs `safe-delete-check` by signal vector instead of always
+  defaulting to delete.
+- `find_symbol_with_alternatives` returns ranked `did_you_mean`
+  for ambiguous queries; `pick_best` uses PageRank + cognitive
+  complexity + churn fallbacks when incoming-edge counts tie at
+  zero.
+- Vue / Svelte SFC component name indexing — `roam why
+  MyDataManagementModal` resolves the component by filename.
+- Dynamic JS / TS imports (`import('@/foo').then(m => m.bar)` and
+  `await import('./mod')` member access) now produce consumer
+  references; relative `../src/...` imports match by suffix.
+- `roam describe` / `preflight` read `package.json` `scripts.test`
+  for the test command instead of hardcoding `pytest`.
+- Stale-index warning is a top-level `index_status` envelope
+  field and prints **before** the verdict in text mode for
+  `diagnose` and `health`.
+- MCP startup hint promotes `roam_expand_toolset` and
+  `roam_batch_get` so agents discover tool-scoping and batched
+  paths up front. `roam_impact` description recasts it as the
+  FIRST safety check.
+- `roam test-map` reconciles "no direct tests" with "test files
+  importing the same module" so the verdict can't contradict
+  its own data.
+
+### Configuration
+
+- `.roam/alerts.yaml` — configurable health / cycles / god-component
+  thresholds plus delta-vs-baseline mode that emits regression
+  warnings when a snapshot exists.
+- `ROAM_MCP_MAX_CONCURRENT` / `ROAM_MCP_LIMITS` env vars tune the
+  backpressure caps.
+
+### New flags / commands
+
+- `dead --reachable-only` / `--include-noisy-dataflow` (alias of
+  the experimental `--dataflow`).
+- `clusters --weak` / `--strong` — split / merge candidates ranked
+  by intra-cluster density.
+- `fn-coupling --since <ref>` / `--include-tests` /
+  `--max-files-per-commit` / `--max-symbols-per-file`.
+- `retrieve --dry-run` — return the search plan without paying
+  the token cost.
+- `risk --include-tests` / `--show-suppressed`.
+- `complexity --no-framework` / `--no-imports`.
+- `bus-factor --force-team-mode`.
+- `patterns --strict-factory`.
+- `health --compact` accepted *after* the subcommand.
+- `roam trend` / `roam digest` / `roam snapshot` — aliases of
+  the consolidated `roam trends`.
+
+### Doctor
+
+- New checks: every CLI command in the registry imports cleanly,
+  the MCP tool registry registers without errors, and the MCP
+  backpressure module loaded with a positive limit. Catches the
+  "documented but missing" / "renamed without alias" class of
+  bug at doctor time rather than at agent call-time.
+
+### Security rules
+
+- Five new YAML taint rules for Vue / TS codebases:
+  `js-prototype-pollution`, `js-localstorage-secrets`,
+  `vue-template-injection` (v-html), `js-insecure-jwt-decode`,
+  `js-api-error-leak`.
+- `roam taint --json` only ships the OpenVEX vocabulary lists
+  when there are findings to attach them to (cuts ~2 KB of
+  metadata noise per empty run).
+- `roam_taint_classify` short-circuits when the static engine
+  returns zero findings — no wasted LLM sampling tokens.
+
+### Surface
+
+- 155 CLI commands · 122 MCP tools · 27 languages · 100% local · zero API keys.
+
 ## [12.10.1] - 2026-05-04
 
 A patch release for the `12.10.0` workflow-synergy release.
