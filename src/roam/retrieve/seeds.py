@@ -52,6 +52,75 @@ _CAMEL_RE = re.compile(r"\b([a-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+)\b")
 # extended stopword filter below before it becomes a seed.
 _LOWERCASE_NOUN_RE = re.compile(r"\b([a-z][a-z0-9]{4,})\b")
 
+# Phase-1 dogfood 2026-05-04: 4-letter programming-domain nouns the
+# fallback regex misses. "where is dead code detection" had only
+# ["detection"] as tokens because "dead" / "code" are 4 chars and
+# below the noun-fallback floor. Adding a curated allow-list keeps
+# precision high (no broad lowering of the floor) while restoring
+# recall on these high-signal short words.
+_FOUR_CHAR_DOMAIN_NOUNS = frozenset(
+    {
+        "dead",
+        "code",
+        "file",
+        "role",
+        "path",
+        "node",
+        "edge",
+        "view",
+        "task",
+        "flow",
+        "tree",
+        "loop",
+        "hash",
+        "port",
+        "page",
+        "head",
+        "tail",
+        "item",
+        "list",
+        "type",
+        "kind",
+        "rank",
+        "rule",
+        "lint",
+        "fail",
+        "pass",
+        "skip",
+        "size",
+        "cost",
+        "cycle",  # 5-char but for completeness
+        "auth",
+        "user",
+        "name",
+        "json",
+        "html",
+        "yaml",
+        "test",
+        "spec",
+        "diff",
+        "lock",
+        "pull",
+        "push",
+        "load",
+        "save",
+        "stat",
+        "perf",
+        "race",
+        "leak",
+        "null",
+        "void",
+        "main",
+        "init",
+        "exit",
+        "kill",
+        "stop",
+        "wait",
+        "sync",
+    }
+)
+_FOUR_CHAR_NOUN_RE = re.compile(r"\b([a-z]{4})\b")
+
 # Short and very common words we never want as seeds. Keeps the seed list
 # focused on identifiers; the reranker adds non-seed structural signal.
 _STOPWORDS = frozenset(
@@ -225,6 +294,30 @@ def extract_tokens(query: str) -> list[str]:
         _add(match)
     for match in _SNAKE_RE.findall(query):
         _add(match)
+
+    # Phase-1 dogfood 2026-05-04: programming-domain shorthand that
+    # falls outside the identifier-shape regexes. ``n+1``, ``n-tier``,
+    # ``2fa``, ``i18n``, ``l10n`` etc. are real concepts a user types
+    # in a query but the standard tokenizer drops them because they
+    # contain ``+``, ``-``, or are too short. Without this, "find n+1
+    # query detection" returned only ["query", "detection"] and missed
+    # the actual ``cmd_n1.py`` file (the implementation). Each match
+    # adds the both raw and a path-shaped form so FTS5 can hit
+    # ``cmd_n1.py``-style filenames.
+    _DOMAIN_SHORTHANDS = {
+        "n+1": "n1",
+        "n-1": "n1",
+        "2fa": "2fa",
+        "i18n": "i18n",
+        "l10n": "l10n",
+        "a11y": "a11y",
+    }
+    lowered = query.lower()
+    for src_tok, indexed_tok in _DOMAIN_SHORTHANDS.items():
+        if src_tok in lowered:
+            # The dict-based ``_add`` filters tokens shorter than 3
+            # chars; bypass that for these intentional shorthands.
+            found[indexed_tok] = None
     # UPPER_SNAKE constants — lowercase before adding so they resolve
     # to the same FTS terms as their snake_case usage.
     for match in _UPPER_SNAKE_RE.findall(query):
@@ -262,6 +355,12 @@ def extract_tokens(query: str) -> list[str]:
         if lower in _STOPWORDS or lower in _NL_EXTRA_STOPWORDS:
             continue
         found[tok] = None
+
+    # 4-letter domain-noun pass — only allow-listed words that
+    # carry programming meaning. Skipped if already present.
+    for match in _FOUR_CHAR_NOUN_RE.findall(query.lower()):
+        if match in _FOUR_CHAR_DOMAIN_NOUNS and match not in found:
+            found[match] = None
 
     return list(found)
 
