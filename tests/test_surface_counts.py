@@ -30,11 +30,12 @@ def test_cli_surface_counts_self_consistent():
     """
     counts = cli_surface_counts()
     assert counts["command_names"] == counts["canonical_commands"] + counts["alias_names"]
-    # We currently ship exactly three alias pairs. If the lineup changes,
-    # the test deserves a deliberate update.
+    # Alias lineup. Round 4 #16 added trend/digest/snapshot as aliases
+    # of the consolidated `roam trends` so docs keep resolving.
     assert counts["alias_groups"] == [
         ["algo", "math"],
         ["churn", "weather"],
+        ["digest", "snapshot", "trend", "trends"],
         ["onboard", "understand"],
     ]
     # Sanity floor — never silently regress to v11-era counts.
