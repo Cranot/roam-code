@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.4] - 2026-05-04
+
+Fix the MCP server card's tool count and add a guard test so it
+can't drift again.
+
+The card reports the server's capabilities to MCP-discovery surfaces
+(PulseMCP, mcp.so, Smithery, …). Its ``capabilities.tools.total``
+field had been at ``120`` (with ``presets.core: 33``) for several
+releases while the live MCP server registered ``122`` tools and the
+core preset had grown to ``35``. The card description correctly
+quoted ``"122 MCP tools"`` in plain text but the structured number
+clients actually parse was stale.
+
+Updated both copies (``src/roam/mcp-server-card.json`` and the
+canonical ``docs/site/.well-known/mcp-server-card.json``). Added
+``test_card_tool_count_matches_live_count`` which compares the
+card's tool count against ``surface_counts.collect_surface_counts``
+so a future MCP-tool addition that forgets the card update fails
+CI rather than ships silently.
+
 ## [12.12.3] - 2026-05-04
 
 Documentation and MCP-surface polish caught while auditing the
