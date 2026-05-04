@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.12"
+version = "12.12.1"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -102,6 +102,15 @@ dev = [
 
 [tool.setuptools.packages.find]
 where = ["src"]
+
+[tool.setuptools.package-data]
+# v12.12.1 — without these, the YAML rule packs and template files
+# don't ship in the wheel. Pre-12.12.1 PyPI installs of roam-code
+# silently loaded zero taint rules (``roam taint`` → "No rules in
+# /.../security/taint_rules") because the directory wasn't bundled.
+"roam.security.taint_rules" = ["*.yaml", "*.yml"]
+"roam.languages.extractors" = ["*.yaml", "*.yml"]
+"roam.templates.ci" = ["*.yaml", "*.yml"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
