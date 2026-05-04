@@ -117,8 +117,16 @@ def safe_delete(ctx, name):
                 f"across {len(affected_files)} files."
             )
 
-        # Bump SAFE → REVIEW for likely public-API symbols
-        if verdict == "SAFE" and sym["is_exported"]:
+        # Bump SAFE → REVIEW for likely public-API symbols, but only when at
+        # least one usage signal is non-zero. When ALL hard signals are zero
+        # (no callers, no transitives, no tests, no sibling refs, file not
+        # imported anywhere) the naming pattern alone is too weak to flip
+        # the verdict — the symbol and likely its file are orphaned.
+        all_signals_zero = (
+            not file_imported and sibling_refs == 0 and len(test_callers) == 0
+            # non_test_callers and dependent_count are 0 by virtue of SAFE verdict above
+        )
+        if verdict == "SAFE" and sym["is_exported"] and not all_signals_zero:
             _api_prefixes = (
                 "get",
                 "use",

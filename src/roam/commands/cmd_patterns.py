@@ -99,9 +99,20 @@ def _detect_singleton(conn):
     return results
 
 
-def _detect_factory(conn):
-    """Detect Factory pattern: functions/classes named create_*, make_*,
-    build_*, *Factory, *Builder that have outgoing edges to constructors.
+def _detect_factory(conn, *, strict=False):
+    """Detect Factory pattern with subtype split.
+
+    Two outputs in one pass:
+    - ``true_factory`` — emits when the symbol has outgoing edges to a
+      class/constructor target. The dogfood signal: ``createLogger``,
+      ``ColumnBuilder``, ``createResourceQuery``.
+    - ``builder_helper`` — name matches but no class instantiation
+      detected. ``buildTsv`` / ``buildHeaderSearchParams`` /
+      ``buildKinisiDocumentDisplay`` land here. Useful to know about,
+      but not architectural factories — separated so they don't
+      drown the real factories in pattern output.
+
+    ``strict=True`` drops builder helpers entirely (see ``--strict-factory``).
     """
     # Name-pattern based detection
     rows = conn.execute(
@@ -131,19 +142,25 @@ def _detect_factory(conn):
             (r["id"],),
         ).fetchall()
 
-        creates = [t["name"] for t in targets if t["kind"] in ("class", "constructor")]
+        creates_classes = [t["name"] for t in targets if t["kind"] in ("class", "constructor")]
+        is_true_factory = bool(creates_classes)
+        if strict and not is_true_factory:
+            continue
 
         results.append(
             {
                 "pattern": "factory",
+                "subtype": "true_factory" if is_true_factory else "builder_helper",
                 "name": r["qualified_name"] or r["name"],
                 "kind": r["kind"],
                 "location": loc(r["file_path"], r["line_start"]),
-                "creates": creates[:5],
-                "confidence": "high" if creates else "medium",
+                "creates": creates_classes[:5],
+                "confidence": "high" if is_true_factory else "low",
             }
         )
 
+    # Surface true factories first so they don't get buried.
+    results.sort(key=lambda x: 0 if x["subtype"] == "true_factory" else 1)
     return results
 
 
@@ -574,6 +591,17 @@ _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
 
 @click.command()
 @click.option(
+    "--strict-factory",
+    "strict_factory",
+    is_flag=True,
+    default=False,
+    help=(
+        "Drop builder-helper functions (build_X / make_X returning POJOs). "
+        "Default keeps them but tags them with subtype='builder_helper' so "
+        "true factories aren't buried."
+    ),
+)
+@click.option(
     "--pattern",
     "pattern_filter",
     default=None,
@@ -581,7 +609,7 @@ _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
     help="Filter to a specific pattern type",
 )
 @click.pass_context
-def patterns(ctx, pattern_filter):
+def patterns(ctx, pattern_filter, strict_factory):
     """Detect common architectural patterns in the codebase.
 
     Unlike ``smells`` (which flags negative anti-patterns), this command
@@ -603,7 +631,10 @@ def patterns(ctx, pattern_filter):
             detectors = {pattern_filter: _PATTERN_DETECTORS[pattern_filter]}
 
         for key, (label, detect_fn) in detectors.items():
-            hits = detect_fn(conn)
+            if key == "factory":
+                hits = detect_fn(conn, strict=strict_factory)
+            else:
+                hits = detect_fn(conn)
             if hits:
                 all_results[key] = {"label": label, "instances": hits}
                 total += len(hits)
@@ -669,7 +700,10 @@ def patterns(ctx, pattern_filter):
                 if key == "singleton":
                     detail = f"  accessor: {inst['accessor']}"
                 elif key == "factory":
-                    if inst["creates"]:
+                    subtype = inst.get("subtype", "")
+                    if subtype == "builder_helper":
+                        detail = "  [builder helper — returns POJO/primitive]"
+                    elif inst["creates"]:
                         detail = f"  creates: {', '.join(inst['creates'][:3])}"
                 elif key == "observer":
                     parts = []

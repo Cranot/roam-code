@@ -81,6 +81,103 @@ def _parse_blame(blame_output):
 
 
 # ---------------------------------------------------------------------------
+# Semantic drift detection
+# ---------------------------------------------------------------------------
+
+# Common docstring patterns that name parameters explicitly. We treat any
+# identifier in these positions as a "documented param", then compare
+# against the signature to detect renames or removals.
+_DOC_PARAM_PATTERNS = (
+    re.compile(r":param\s+(\w+)\s*:"),
+    re.compile(r"@param\s+(?:\w+\s+)?(\w+)\b"),
+    re.compile(r"^\s{0,8}(\w+)\s*\([^)]*\)\s*:", re.MULTILINE),  # Sphinx-style "name (type): desc"
+    re.compile(r"^\s{0,8}(\w+)\s*:\s*[A-Z]", re.MULTILINE),  # Google-style "name: Description starting with capital"
+)
+_DOC_RETURNS_RE = re.compile(r"\b(?:Returns?|@returns?|:returns?:|:rtype:)\b", re.IGNORECASE)
+_DOC_BEHAVIOUR_CITATION_RE = re.compile(r"\b(?:returns?|raises?|throws?)\s+`[^`]+`", re.IGNORECASE)
+_SIGNATURE_PARAM_RE = re.compile(r"def\s+\w+\s*\(([^)]*)\)|\(([^)]*)\)\s*=>|\bfunction\s+\w*\s*\(([^)]*)\)")
+_SIGNATURE_HAS_RETURN_RE = re.compile(r"->\s*\S|:\s*\S+\s*=>")
+
+
+def _signature_param_names(signature: str | None) -> set[str]:
+    """Extract parameter identifiers from a stored function signature."""
+    if not signature:
+        return set()
+    match = _SIGNATURE_PARAM_RE.search(signature)
+    if not match:
+        return set()
+    raw = next((g for g in match.groups() if g), "")
+    names = set()
+    for part in raw.split(","):
+        part = part.strip().split("=", 1)[0].strip()
+        if not part or part in ("self", "cls"):
+            continue
+        # Strip type annotation: "name: int" → "name"
+        ident = part.split(":", 1)[0].strip().lstrip("*")
+        if ident.isidentifier():
+            names.add(ident)
+    return names
+
+
+def _docstring_facts(docstring: str | None, signature: str | None) -> dict:
+    """Extract testable claims from a docstring.
+
+    Returns a dict describing what the docstring documents:
+      - ``params``: identifier names referenced as parameters
+      - ``has_returns_clause``: True when the docstring discusses a
+        return value (Returns:, @return, :returns:, :rtype:)
+      - ``has_specific_facts``: True if any of the above is non-empty —
+        used to distinguish "documents implementation details" from
+        "pure prose summary"
+    """
+    if not docstring:
+        return {"params": set(), "has_returns_clause": False, "has_specific_facts": False, "behaviour_citations": []}
+
+    sig_params = _signature_param_names(signature)
+    documented_params: set[str] = set()
+    for pat in _DOC_PARAM_PATTERNS:
+        for match in pat.finditer(docstring):
+            ident = match.group(1)
+            # Google-style "name: Description" must look like a real param
+            # to qualify — restrict to identifiers that look param-shaped
+            # OR that already appear in the signature so we don't pick up
+            # field names from the prose ("Note: ...").
+            if ident.isidentifier() and (ident in sig_params or pat.pattern.startswith((":param", "@param"))):
+                documented_params.add(ident)
+
+    has_returns_clause = bool(_DOC_RETURNS_RE.search(docstring))
+    behaviour_citations = [m.group(0) for m in _DOC_BEHAVIOUR_CITATION_RE.finditer(docstring)]
+    has_facts = bool(documented_params or has_returns_clause or behaviour_citations)
+    return {
+        "params": documented_params,
+        "has_returns_clause": has_returns_clause,
+        "has_specific_facts": has_facts,
+        "behaviour_citations": behaviour_citations,
+    }
+
+
+def _semantic_drift(facts: dict, signature: str | None) -> dict:
+    """Return per-symbol semantic drift: doc claims that the signature contradicts.
+
+    - ``phantom_params``: docstring names a param that no longer exists
+    - ``return_signature_mismatch``: docstring promises a return value
+      while the signature has no return annotation (only flagged for
+      function/method symbols where a return arrow is structurally
+      possible — silent for non-callable kinds)
+    """
+    sig_params = _signature_param_names(signature)
+    phantom_params = sorted(facts["params"] - sig_params)
+    sig_has_return = bool(_SIGNATURE_HAS_RETURN_RE.search(signature or ""))
+    return_mismatch = facts["has_returns_clause"] and signature is not None and not sig_has_return
+    has_drift = bool(phantom_params) or return_mismatch
+    return {
+        "phantom_params": phantom_params,
+        "return_signature_mismatch": return_mismatch,
+        "has_drift": has_drift,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Docstring line-range heuristic
 # ---------------------------------------------------------------------------
 
@@ -128,23 +225,19 @@ def _estimate_docstring_lines(line_start, line_end, docstring_text):
 # ---------------------------------------------------------------------------
 
 
-def _analyze_staleness(symbols_by_file, project_root, threshold_days):
+def _analyze_staleness(symbols_by_file, project_root, threshold_days, *, include_prose_drift=False):
     """Analyze docstring staleness for all symbols grouped by file.
 
-    Parameters
-    ----------
-    symbols_by_file : dict[str, list[dict]]
-        Mapping of file_path -> list of symbol dicts, each with keys:
-        name, kind, file_path, line_start, line_end, docstring.
-    project_root : Path
-        Absolute path to the project root (for running git commands).
-    threshold_days : int
-        Minimum drift in days to consider a docstring stale.
+    Two paths into the stale list:
 
-    Returns
-    -------
-    list[dict]
-        Stale symbol records sorted by drift descending.
+    * **semantic_mismatch** — docstring claims contradict the signature
+      (phantom params, return clause without return annotation). Always
+      flagged.
+    * **commit_drift** — body changed long after the docstring last
+      changed AND the docstring contains specific testable claims
+      (param names, return clause, behaviour citations). Pure-prose
+      summaries on commit drift are skipped by default; pass
+      ``include_prose_drift=True`` to keep the historic behaviour.
     """
     threshold_seconds = threshold_days * 86400
     stale = []
@@ -166,6 +259,9 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days):
             )
             if ranges is None:
                 continue
+
+            facts = _docstring_facts(sym["docstring"], sym.get("signature"))
+            drift_info = _semantic_drift(facts, sym.get("signature"))
 
             doc_start, doc_end, body_start, body_end = ranges
 
@@ -195,28 +291,52 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days):
             body_latest = max(body_timestamps)
 
             drift_seconds = body_latest - doc_latest
-            if drift_seconds >= threshold_seconds:
-                drift_days = drift_seconds // 86400
+            commit_drift = drift_seconds >= threshold_seconds
 
-                doc_date = datetime.fromtimestamp(doc_latest, tz=timezone.utc)
-                body_date = datetime.fromtimestamp(body_latest, tz=timezone.utc)
+            reasons = []
+            if drift_info["has_drift"]:
+                reasons.append("semantic_mismatch")
+            if commit_drift:
+                if facts["has_specific_facts"]:
+                    reasons.append("commit_drift")
+                elif include_prose_drift:
+                    reasons.append("commit_drift_prose")
 
-                stale.append(
-                    {
-                        "name": sym["name"],
-                        "kind": sym["kind"],
-                        "file": sym["file_path"],
-                        "line": sym["line_start"],
-                        "doc_date": doc_date.strftime("%Y-%m-%d"),
-                        "doc_author": doc_authors.get(doc_latest, "?"),
-                        "body_date": body_date.strftime("%Y-%m-%d"),
-                        "body_author": body_authors.get(body_latest, "?"),
-                        "drift_days": drift_days,
-                    }
-                )
+            if not reasons:
+                # Pure prose docstring with commit drift only is no longer
+                # treated as stale. This was the dominant false positive
+                # ("Start coordinated polling" flagged because the body
+                # had a small refactor 100 days later — docstring still
+                # accurate as a high-level summary).
+                continue
 
-    # Sort by drift descending (most stale first)
-    stale.sort(key=lambda s: -s["drift_days"])
+            drift_days = drift_seconds // 86400
+            doc_date = datetime.fromtimestamp(doc_latest, tz=timezone.utc)
+            body_date = datetime.fromtimestamp(body_latest, tz=timezone.utc)
+            stale.append(
+                {
+                    "name": sym["name"],
+                    "kind": sym["kind"],
+                    "file": sym["file_path"],
+                    "line": sym["line_start"],
+                    "doc_date": doc_date.strftime("%Y-%m-%d"),
+                    "doc_author": doc_authors.get(doc_latest, "?"),
+                    "body_date": body_date.strftime("%Y-%m-%d"),
+                    "body_author": body_authors.get(body_latest, "?"),
+                    "drift_days": drift_days,
+                    "reasons": reasons,
+                    "phantom_params": drift_info["phantom_params"],
+                    "return_mismatch": drift_info["return_signature_mismatch"],
+                    "has_specific_facts": facts["has_specific_facts"],
+                }
+            )
+
+    # Sort by semantic drift first (most actionable), then commit drift days.
+    def _key(item):
+        sem_priority = 0 if "semantic_mismatch" in item["reasons"] else 1
+        return (sem_priority, -item["drift_days"])
+
+    stale.sort(key=_key)
     return stale
 
 
@@ -226,7 +346,7 @@ def _analyze_staleness(symbols_by_file, project_root, threshold_days):
 
 _DOCUMENTED_SYMBOLS_SQL = """
 SELECT s.name, s.kind, f.path AS file_path,
-       s.line_start, s.line_end, s.docstring
+       s.line_start, s.line_end, s.docstring, s.signature
 FROM symbols s
 JOIN files f ON s.file_id = f.id
 WHERE s.docstring IS NOT NULL
@@ -251,8 +371,19 @@ ORDER BY f.path, s.line_start
     show_default=True,
     help="Staleness threshold in days (body changed N+ days after docstring).",
 )
+@click.option(
+    "--include-prose-drift",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also flag pure-prose docstrings on commit-drift alone. Off by "
+        "default — high-level summary docstrings stay accurate even when "
+        "the body is refactored, and the resulting noise drowned the "
+        "actionable semantic-mismatch findings."
+    ),
+)
 @click.pass_context
-def doc_staleness(ctx, limit, days):
+def doc_staleness(ctx, limit, days, include_prose_drift):
     """Detect stale docstrings where the code body changed long after the docs.
 
     Scans ALL symbols with docstrings (including private/internal) and uses
@@ -301,10 +432,11 @@ def doc_staleness(ctx, limit, days):
                 "line_start": r["line_start"],
                 "line_end": r["line_end"],
                 "docstring": r["docstring"],
+                "signature": r["signature"],
             }
         )
 
-    stale = _analyze_staleness(symbols_by_file, project_root, days)
+    stale = _analyze_staleness(symbols_by_file, project_root, days, include_prose_drift=include_prose_drift)
 
     # Apply limit
     displayed = stale[:limit]
@@ -345,6 +477,11 @@ def doc_staleness(ctx, limit, days):
 
     for item in displayed:
         click.echo(f"  {item['name']:<25s} {abbrev_kind(item['kind']):<5s} {loc(item['file'], item['line'])}")
+        click.echo(f"    Reason: {', '.join(item['reasons'])}")
+        if item.get("phantom_params"):
+            click.echo(f"    Phantom params: {', '.join(item['phantom_params'])}")
+        if item.get("return_mismatch"):
+            click.echo("    Documents return value but signature has no return annotation")
         click.echo(f"    Docstring: last updated {item['doc_date']} (by {item['doc_author']})")
         click.echo(f"    Body:      last updated {item['body_date']} (by {item['body_author']})")
         click.echo(f"    Drift: {item['drift_days']} days")

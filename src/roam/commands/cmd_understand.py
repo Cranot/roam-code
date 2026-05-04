@@ -230,8 +230,83 @@ def _find_entry_points(conn, limit=10):
 # ---------------------------------------------------------------------------
 
 
+_DOC_EXTS_HOTSPOTS = frozenset({".md", ".rst", ".mdx", ".adoc", ".txt"})
+_CONFIG_EXTS = frozenset({".json", ".yaml", ".yml", ".toml", ".ini", ".cfg", ".env", ".properties", ".conf"})
+_SQL_EXTS = frozenset({".sql", ".ddl"})
+_CODE_EXTS = frozenset(
+    {
+        ".py",
+        ".js",
+        ".ts",
+        ".tsx",
+        ".jsx",
+        ".vue",
+        ".go",
+        ".rs",
+        ".java",
+        ".kt",
+        ".swift",
+        ".scala",
+        ".cpp",
+        ".c",
+        ".h",
+        ".hpp",
+        ".cs",
+        ".rb",
+        ".php",
+        ".lua",
+        ".dart",
+        ".ex",
+        ".exs",
+        ".erl",
+        ".elm",
+        ".clj",
+        ".cljs",
+        ".m",
+        ".mm",
+        ".f",
+        ".f90",
+        ".f95",
+        ".prg",
+        ".cls",
+        ".trg",
+        ".page",
+        ".cob",
+        ".cobol",
+        ".pas",
+        ".scx",
+    }
+)
+
+
+def _hotspot_kind(path: str) -> str:
+    """Classify a churn-hotspot file so doc/config/sql aren't treated as
+    code debt. Used by ``roam understand`` to keep README and changelog
+    files from dominating the hotspot list."""
+    import os as _os
+
+    base = _os.path.basename(path or "").lower()
+    ext = _os.path.splitext(base)[1]
+    # Dotfile config (.env, .dockerignore, .npmrc, …) — splitext gives
+    # ext=".env" and base=".env"; treat the whole basename as the ext.
+    if not ext and base.startswith("."):
+        ext = base
+    if ext in _DOC_EXTS_HOTSPOTS:
+        return "doc"
+    if ext in _CONFIG_EXTS:
+        return "config"
+    if ext in _SQL_EXTS:
+        return "sql"
+    if ext in _CODE_EXTS:
+        return "code"
+    return "other"
+
+
 def _find_hotspots(conn, limit=10):
-    """Find files with highest churn, annotated with coupling info."""
+    """Find files with highest churn, annotated with coupling info and kind."""
+    # Pull a wider set than the requested limit so we have headroom to
+    # rebalance after kind-classification — code hotspots are more
+    # actionable than doc hotspots and should dominate the headline.
     rows = conn.execute(
         "SELECT fs.file_id, f.path, fs.total_churn, fs.commit_count, "
         "fs.distinct_authors "
@@ -240,10 +315,11 @@ def _find_hotspots(conn, limit=10):
         "WHERE fs.total_churn > 0 "
         "ORDER BY fs.total_churn DESC "
         "LIMIT ?",
-        (limit,),
+        (limit * 4,),
     ).fetchall()
 
-    results = []
+    code_hits: list[dict] = []
+    other_hits: list[dict] = []
     for r in rows:
         if is_test_file(r["path"]):
             continue
@@ -253,17 +329,25 @@ def _find_hotspots(conn, limit=10):
             (r["file_id"], r["file_id"]),
         ).fetchone()[0]
 
-        results.append(
-            {
-                "path": r["path"],
-                "churn": r["total_churn"],
-                "commits": r["commit_count"],
-                "authors": r["distinct_authors"],
-                "coupling_partners": partners,
-            }
-        )
+        kind = _hotspot_kind(r["path"])
+        entry = {
+            "path": r["path"],
+            "churn": r["total_churn"],
+            "commits": r["commit_count"],
+            "authors": r["distinct_authors"],
+            "coupling_partners": partners,
+            "kind": kind,
+        }
+        if kind == "code":
+            code_hits.append(entry)
+        else:
+            other_hits.append(entry)
 
-    return results[:limit]
+    # Code hotspots first (truncated to the requested limit), then any
+    # remaining slots filled from doc/config/sql so callers still see them.
+    take_code = min(len(code_hits), limit)
+    remaining = limit - take_code
+    return code_hits[:take_code] + other_hits[:remaining]
 
 
 # ---------------------------------------------------------------------------

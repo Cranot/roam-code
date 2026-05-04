@@ -11,7 +11,7 @@ from __future__ import annotations
 import click
 
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
-from roam.commands.resolve import ensure_index, find_symbol, symbol_not_found
+from roam.commands.resolve import ensure_index, find_symbol_with_alternatives, symbol_not_found
 from roam.db.connection import open_db
 from roam.graph.builder import build_symbol_graph
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
@@ -184,12 +184,20 @@ def diagnose(ctx, name, depth):
     ensure_index()
 
     with open_db(readonly=True) as conn:
-        sym = find_symbol(conn, name)
+        sym, alternatives = find_symbol_with_alternatives(conn, name)
         if sym is None:
             click.echo(symbol_not_found(conn, name, json_mode=json_mode))
             raise SystemExit(1)
 
         sym_id = sym["id"]
+        did_you_mean = [
+            {
+                "name": (alt["qualified_name"] or alt["name"]),
+                "kind": alt["kind"],
+                "location": loc(alt["file_path"], alt["line_start"]),
+            }
+            for alt in alternatives[:5]
+        ]
         G = build_symbol_graph(conn)
 
         if sym_id not in G:
@@ -301,12 +309,14 @@ def diagnose(ctx, name, depth):
                             "verdict": verdict,
                             "upstream_count": len(upstream_ranked),
                             "downstream_count": len(downstream_ranked),
+                            "ambiguous": bool(did_you_mean),
                         },
                         target_metrics=target_metrics,
                         upstream=upstream_ranked[:15],
                         downstream=downstream_ranked[:15],
                         cochange_partners=cochanges,
                         recent_commits=recent,
+                        did_you_mean=did_you_mean,
                         next_steps=_next_steps,
                     )
                 )
@@ -332,6 +342,11 @@ def diagnose(ctx, name, depth):
             f"commits={target_metrics['commits']}, "
             f"health={target_metrics['health']}/10\n"
         )
+        if did_you_mean:
+            click.echo("Did you mean (other matches, ranked by importance):")
+            for alt in did_you_mean:
+                click.echo(f"  {abbrev_kind(alt['kind'])}  {alt['name']}  {alt['location']}")
+            click.echo("  Tip: use file:symbol (e.g. KiniseisEntryModal.vue:handleSave) to disambiguate.\n")
 
         if upstream_ranked:
             click.echo("Upstream suspects (callers, ranked by risk):\n")

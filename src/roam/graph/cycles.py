@@ -94,6 +94,36 @@ def format_cycles(cycles: list[list[int]], conn: sqlite3.Connection) -> list[dic
     return result
 
 
+def mark_actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
+    """Annotate cycles with ``local_only``, ``has_test_file``, ``actionable``.
+
+    A cycle is *actionable* when it spans at least two distinct files and
+    none of those files are tests. Vue ``<script setup>`` intra-file refs
+    and same-name test helpers produce non-architectural SCCs that should
+    be excluded from health scoring, fitness gates, and cycle counts.
+    """
+    from roam.commands.changed_files import is_test_file  # noqa: PLC0415 — lazy to avoid layering inversion
+
+    for cyc in formatted_cycles:
+        files = cyc.get("files", [])
+        unique_files = set(files)
+        cyc["file_count"] = len(unique_files)
+        cyc["local_only"] = len(unique_files) <= 1
+        cyc["has_test_file"] = any(is_test_file(f) for f in files)
+        cyc["actionable"] = not cyc["local_only"] and not cyc["has_test_file"]
+    return formatted_cycles
+
+
+def actionable_cycles(formatted_cycles: list[dict]) -> list[dict]:
+    """Return only cycles classified as actionable.
+
+    Annotates the inputs in-place if not already marked.
+    """
+    if formatted_cycles and "actionable" not in formatted_cycles[0]:
+        mark_actionable_cycles(formatted_cycles)
+    return [c for c in formatted_cycles if c.get("actionable")]
+
+
 _PROPAGATION_COST_NODE_LIMIT = 500
 
 

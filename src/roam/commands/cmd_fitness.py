@@ -204,11 +204,27 @@ def _symbol_graph_cycles(conn):
     return graph, find_cycles(graph)
 
 
+def _actionable_cycles(conn, cycles):
+    """Return only architectural cycles, mirroring health's filter.
+
+    Local-only and test-involved SCCs are excluded so fitness gates do not
+    fail on intra-file refs (e.g. Vue ``<script setup>``) or duplicate-named
+    test helpers — neither is a real cycle.
+    """
+    from roam.graph.cycles import format_cycles, mark_actionable_cycles
+
+    formatted = format_cycles(cycles, conn) if cycles else []
+    mark_actionable_cycles(formatted)
+    actionable_ids = {tuple(scc) for scc, fc in zip(cycles, formatted) if fc.get("actionable")}
+    return [scc for scc in cycles if tuple(scc) in actionable_ids]
+
+
 def _check_cycles_metric(rule, conn) -> list[dict]:
     try:
         _, cycles = _symbol_graph_cycles(conn)
     except Exception:
         return []
+    cycles = _actionable_cycles(conn, cycles)
     return _threshold_metric_violations(rule, "cycles", len(cycles), rule.get("max"), rule.get("min"))
 
 
@@ -220,6 +236,7 @@ def _check_health_score_metric(rule, conn) -> list[dict]:
     total_syms = len(graph)
     if total_syms == 0:
         return []
+    cycles = _actionable_cycles(conn, cycles)
     cycle_syms = sum(len(cycle) for cycle in cycles)
     cycle_pct = cycle_syms / total_syms * 100
     score = max(0, 100 - int(cycle_pct * 2))
