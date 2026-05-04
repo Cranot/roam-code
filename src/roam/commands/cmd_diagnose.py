@@ -31,13 +31,38 @@ def _get_symbol_metrics(conn, sym_id):
 
     file_row = conn.execute(
         "SELECT fs.commit_count, fs.total_churn, fs.cochange_entropy, "
-        "       fs.health_score, f.path "
+        "       fs.health_score, f.path, f.id AS file_id "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "LEFT JOIN file_stats fs ON f.id = fs.file_id "
         "WHERE s.id = ?",
         (sym_id,),
     ).fetchone()
+
+    commits = (file_row["commit_count"] or 0) if file_row else 0
+    churn = (file_row["total_churn"] or 0) if file_row else 0
+
+    # v12.12 — git_file_changes fallback (dogfood #11). file_stats is
+    # populated by ``compute_file_stats`` during a full re-index but can
+    # lag behind incremental runs, leaving recently-modified files with
+    # commit_count=0 even when their git history is rich. When that
+    # happens, fall back to a direct COUNT over git_file_changes so the
+    # Commits column carries signal again (and the risk score doesn't
+    # silently lose its churn dimension).
+    if file_row and commits == 0:
+        try:
+            fb = conn.execute(
+                "SELECT COUNT(DISTINCT commit_id) AS cc, "
+                "       COALESCE(SUM(lines_added + lines_removed), 0) AS chu "
+                "FROM git_file_changes WHERE file_id = ?",
+                (file_row["file_id"],),
+            ).fetchone()
+        except Exception:
+            fb = None
+        if fb:
+            commits = fb["cc"] or 0
+            if churn == 0:
+                churn = fb["chu"] or 0
 
     return {
         "complexity": (sm["cognitive_complexity"] or 0) if sm else 0,
@@ -47,8 +72,8 @@ def _get_symbol_metrics(conn, sym_id):
         "in_degree": (gm["in_degree"] or 0) if gm else 0,
         "out_degree": (gm["out_degree"] or 0) if gm else 0,
         "betweenness": round((gm["betweenness"] or 0), 3) if gm else 0,
-        "commits": (file_row["commit_count"] or 0) if file_row else 0,
-        "churn": (file_row["total_churn"] or 0) if file_row else 0,
+        "commits": commits,
+        "churn": churn,
         "entropy": round((file_row["cochange_entropy"] or 0), 2) if file_row else 0,
         "health": (file_row["health_score"] or 0) if file_row else 0,
         "file_path": file_row["path"] if file_row else "",

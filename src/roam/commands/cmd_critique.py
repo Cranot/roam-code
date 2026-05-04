@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import subprocess
 import sys
+from pathlib import Path
 
 import click
 
@@ -60,11 +61,80 @@ _BENCH_RELEVANCE_RULES = [
 ]
 
 
-def _bench_relevance_hint(regions) -> str:
+def _load_critique_overrides() -> list[tuple[tuple[str, ...], str]]:
+    """Load project-local bench-hint overrides from ``.roam-critique.yml``.
+
+    Format (deliberately minimal — no nested PyYAML required)::
+
+        bench_hints:
+          - paths: ["src/foo/", "src/bar/"]
+            hint: "pytest tests/test_foo.py"
+
+    Overrides are PREPENDED to the built-in rules so project-specific
+    hints always match first. Silently returns ``[]`` when the file
+    is absent or unparseable — this is a hint, not a gate.
+    """
+    config_path = Path(".roam-critique.yml")
+    if not config_path.exists():
+        return []
+    try:
+        text = config_path.read_text(encoding="utf-8")
+    except OSError:
+        return []
+
+    rules: list[tuple[tuple[str, ...], str]] = []
+    in_bench = False
+    cur_paths: list[str] = []
+    cur_hint = ""
+    pending = False
+
+    def _flush() -> None:
+        nonlocal cur_paths, cur_hint, pending
+        if cur_paths and cur_hint:
+            rules.append((tuple(cur_paths), cur_hint))
+        cur_paths = []
+        cur_hint = ""
+        pending = False
+
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if not line.startswith(" ") and stripped.endswith(":"):
+            _flush()
+            in_bench = stripped[:-1] == "bench_hints"
+            continue
+        if not in_bench:
+            continue
+        # Item start: "- paths: [...]" or "- hint: ..."
+        if stripped.startswith("- "):
+            _flush()
+            pending = True
+            stripped = stripped[2:].strip()
+        if not pending:
+            continue
+        if stripped.startswith("paths:"):
+            val = stripped.split(":", 1)[1].strip()
+            if val.startswith("[") and val.endswith("]"):
+                inner = val[1:-1]
+                cur_paths = [p.strip().strip('"').strip("'") for p in inner.split(",") if p.strip()]
+        elif stripped.startswith("hint:"):
+            cur_hint = stripped.split(":", 1)[1].strip().strip('"').strip("'")
+    _flush()
+    return rules
+
+
+def _bench_relevance_hint(regions, overrides=None) -> str:
     """Return a one-line bench/test suggestion when the diff touches a
     structurally-significant path. ``regions`` is the
     ``critique.checks.ChangedRegion`` list from the diff parser; we
     look at each region's file path and pick the first matching rule.
+
+    Project-local rules from ``.roam-critique.yml`` (loaded via
+    :func:`_load_critique_overrides`) are searched before the built-in
+    list so they can shadow defaults — this is the v12.12 hook the
+    dogfood notes asked for.
     """
     paths = []
     for r in regions:
@@ -73,13 +143,10 @@ def _bench_relevance_hint(regions) -> str:
             paths.append(path.replace("\\", "/"))
     if not paths:
         return ""
-    seen: set[str] = set()
+    rules = list(overrides or []) + _BENCH_RELEVANCE_RULES
     for path in paths:
-        for prefixes, hint in _BENCH_RELEVANCE_RULES:
+        for prefixes, hint in rules:
             if any(path.startswith(p) or p in path for p in prefixes):
-                if hint in seen:
-                    return hint
-                seen.add(hint)
                 return hint
     return ""
 
@@ -185,6 +252,18 @@ def critique(ctx, input_path, high_callers, intent_text):
             findings.extend(check_intent_alignment(effective_intent, changed_symbols, regions))
 
     result = aggregate(findings)
+
+    # Bench-relevance hint (redacted, completed v12.12):
+    # when the diff touches files in the retrieve / graph / catalog hot
+    # path, the default rule set ("clones not edited", "blast radius")
+    # can legitimately say "no concerns" while the change quietly
+    # alters the structural-rerank scoring formula. Surfacing the bench
+    # command makes the verifier conversation include the one
+    # validation that actually exercises the modified code. Loaded
+    # before output so it lands in BOTH text and JSON.
+    overrides = _load_critique_overrides()
+    bench_hint = _bench_relevance_hint(regions, overrides=overrides)
+
     summary = {
         "verdict": result["verdict"],
         "changed_files": len(regions),
@@ -192,6 +271,7 @@ def critique(ctx, input_path, high_callers, intent_text):
         "findings": len(result["findings"]),
         "high_severity": result["severity_breakdown"].get("high", 0),
         "intent": effective_intent,
+        "bench_hint": bench_hint or None,
     }
 
     if json_mode:
@@ -204,6 +284,7 @@ def critique(ctx, input_path, high_callers, intent_text):
                     severity_breakdown=result["severity_breakdown"],
                     findings=result["findings"],
                     top_finding=result["top_finding"],
+                    bench_hint=bench_hint,
                     changed_symbols=[
                         {
                             "symbol_id": s.symbol_id,
@@ -232,14 +313,6 @@ def critique(ctx, input_path, high_callers, intent_text):
                     click.echo(f"    {line}")
                 click.echo()
 
-        # Bench-relevance hint (redacted): when the diff
-        # touches files in the retrieve / graph / catalog hot path, the
-        # default rule set ("clones not edited", "blast radius") can
-        # legitimately say "no concerns" while the change quietly
-        # alters the structural-rerank scoring formula. Surfacing the
-        # bench command makes the verifier conversation include the
-        # one validation that actually exercises the modified code.
-        bench_hint = _bench_relevance_hint(regions)
         if bench_hint:
             click.echo()
             click.echo(f"BENCH HINT: {bench_hint}")

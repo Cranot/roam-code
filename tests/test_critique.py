@@ -630,3 +630,85 @@ class TestCriticueCLI:
             assert data["summary"]["high_severity"] >= 1
         else:
             assert data["summary"]["high_severity"] == 0
+
+
+class TestBenchHint:
+    """v12.12 — close dogfood #15. The bench-relevance hint surfaces a
+    test/bench command when the diff touches structurally hot paths
+    (retrieve, graph, languages, taint, critique). Previously only
+    text mode emitted it; v12.12 adds it to the JSON envelope and
+    supports project-local overrides via ``.roam-critique.yml``.
+    """
+
+    def test_retrieve_path_returns_hint(self):
+        from roam.commands.cmd_critique import _bench_relevance_hint
+        from roam.critique.checks import ChangedRegion
+
+        regions = [ChangedRegion(file_path="src/roam/retrieve/rerank.py", hunks=((1, 1),), additions=1, deletions=0)]
+        hint = _bench_relevance_hint(regions)
+        assert "eval-retrieve" in hint or "test_retrieve" in hint
+
+    def test_unrelated_path_returns_empty(self):
+        from roam.commands.cmd_critique import _bench_relevance_hint
+        from roam.critique.checks import ChangedRegion
+
+        regions = [ChangedRegion(file_path="docs/site/index.html", hunks=((1, 1),), additions=1, deletions=0)]
+        assert _bench_relevance_hint(regions) == ""
+
+    def test_overrides_take_precedence(self):
+        from roam.commands.cmd_critique import _bench_relevance_hint
+        from roam.critique.checks import ChangedRegion
+
+        regions = [ChangedRegion(file_path="src/roam/retrieve/rerank.py", hunks=((1, 1),), additions=1, deletions=0)]
+        custom = [(("src/roam/retrieve/",), "custom-bench-cmd")]
+        assert _bench_relevance_hint(regions, overrides=custom) == "custom-bench-cmd"
+
+    def test_yaml_override_loaded(self, tmp_path, monkeypatch):
+        from roam.commands.cmd_critique import _load_critique_overrides
+
+        cwd = tmp_path
+        (cwd / ".roam-critique.yml").write_text(
+            'bench_hints:\n  - paths: ["src/roam/retrieve/", "src/foo/"]\n    hint: "pytest tests/test_my_thing.py"\n',
+            encoding="utf-8",
+        )
+        monkeypatch.chdir(cwd)
+        rules = _load_critique_overrides()
+        assert len(rules) == 1
+        prefixes, hint = rules[0]
+        assert "src/roam/retrieve/" in prefixes
+        assert "src/foo/" in prefixes
+        assert hint == "pytest tests/test_my_thing.py"
+
+    def test_yaml_missing_returns_empty(self, tmp_path, monkeypatch):
+        from roam.commands.cmd_critique import _load_critique_overrides
+
+        monkeypatch.chdir(tmp_path)
+        assert _load_critique_overrides() == []
+
+    def test_json_envelope_includes_bench_hint(self, critique_project, tmp_path, monkeypatch):
+        """When the diff touches a hot path, JSON envelope must carry
+        the hint at top level AND in summary so MCP clients can
+        consume it without parsing text."""
+        # Synthesise a diff against a path that maps to a default rule.
+        diff = textwrap.dedent(
+            """\
+            diff --git a/src/roam/retrieve/rerank.py b/src/roam/retrieve/rerank.py
+            --- a/src/roam/retrieve/rerank.py
+            +++ b/src/roam/retrieve/rerank.py
+            @@ -1,1 +1,2 @@
+             # placeholder
+            +# new line
+            """
+        )
+        diff_path = tmp_path / "patch.diff"
+        diff_path.write_text(diff, encoding="utf-8")
+        runner = CliRunner()
+        # Stay in critique_project so the index is loaded.
+        result = runner.invoke(cli, ["--json", "critique", "--input", str(diff_path)])
+        assert result.exit_code in (0, 5), result.output
+        data = json.loads(result.output)
+        assert "bench_hint" in data
+        assert "bench_hint" in data["summary"]
+        # The retrieve rule should produce a hint string.
+        assert data["bench_hint"]
+        assert data["summary"]["bench_hint"]

@@ -18,6 +18,7 @@ import click
 from roam.commands.resolve import ensure_index
 from roam.config import get_retrieve_config
 from roam.db.connection import open_db
+from roam.output.confidence import verdict_prefix
 from roam.output.formatter import json_envelope, loc, to_json
 from roam.retrieve.pipeline import run_retrieve
 from roam.retrieve.semantic import semantic_coverage
@@ -262,8 +263,10 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
     # confidence tag to the verdict when (a) the top score is below
     # an absolute floor or (b) scores are bunched within a narrow
     # band — both indicators that lexical hits are spread thin
-    # rather than concentrated on a real match.
-    verdict = f"low confidence — {base_verdict}" if confidence == "low" else base_verdict
+    # rather than concentrated on a real match. The string formatting
+    # is centralised in :mod:`roam.output.confidence` (v12.12) so future
+    # commands surface the same shape.
+    verdict = verdict_prefix(base_verdict, confidence == "low")
 
     if json_mode:
         click.echo(
@@ -272,6 +275,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
                     "retrieve",
                     summary={
                         "verdict": verdict,
+                        "low_confidence": confidence == "low",
                         "candidates": len(candidates),
                         "total_candidates": result["total_candidates"],
                         "budget": result["budget"],

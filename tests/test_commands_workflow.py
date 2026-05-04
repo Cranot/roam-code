@@ -609,6 +609,48 @@ class TestDiagnose:
         assert_json_envelope(data, "diagnose")
         assert "verdict" in data["summary"]
 
+    def test_commits_falls_back_to_git_file_changes(self, indexed_project, monkeypatch):
+        """v12.12 — close dogfood #11. When file_stats.commit_count is
+        0 (fresh file, stale incremental, etc.) but git_file_changes
+        has rows for the file, the fallback path counts commits
+        directly. Without this, the Commits column was always 0 and
+        the risk score silently lost its churn dimension."""
+        from roam.commands.cmd_diagnose import _get_symbol_metrics
+        from roam.db.connection import open_db
+
+        monkeypatch.chdir(indexed_project)
+        with open_db(readonly=False) as conn:
+            sym_row = conn.execute(
+                "SELECT s.id, s.file_id FROM symbols s WHERE s.name = 'User' OR s.name = 'create_user' LIMIT 1"
+            ).fetchone()
+            if not sym_row:
+                pytest.skip("indexed_project missing canonical fixture symbols")
+            sym_id, file_id = sym_row[0], sym_row[1]
+
+            # Force file_stats.commit_count = 0 to simulate stale stats.
+            conn.execute(
+                "INSERT OR REPLACE INTO file_stats (file_id, commit_count, total_churn) VALUES (?, 0, 0)",
+                (file_id,),
+            )
+            # Inject one synthetic commit + change row so the fallback finds it.
+            conn.execute(
+                "INSERT INTO git_commits (hash, author, timestamp, message) VALUES (?, ?, ?, ?)",
+                ("0123abcd", "test", 1234567890, "synthetic"),
+            )
+            commit_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
+            file_path_row = conn.execute("SELECT path FROM files WHERE id = ?", (file_id,)).fetchone()
+            file_path = file_path_row[0] if file_path_row else "unknown"
+            conn.execute(
+                "INSERT INTO git_file_changes (commit_id, file_id, path, lines_added, lines_removed) VALUES (?, ?, ?, ?, ?)",
+                (commit_id, file_id, file_path, 5, 2),
+            )
+            conn.commit()
+
+            metrics = _get_symbol_metrics(conn, sym_id)
+            assert metrics["commits"] >= 1, (
+                f"fallback should produce commits >= 1 from git_file_changes, got {metrics['commits']}"
+            )
+
 
 # ============================================================================
 # Digest command

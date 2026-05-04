@@ -321,7 +321,7 @@ def _expand_via_file_neighbors(
     letting expansion dominate the lexical hits. We cap the expansion
     so a single hub file can't drag in hundreds of unrelated symbols.
 
-    R.8 (redacted): two precision filters layered on top
+    R.8 (redacted): three precision filters layered on top
     of the original implementation —
 
     * ``seed_top_n`` — only the top-N first-stage hits by fts_score
@@ -332,6 +332,13 @@ def _expand_via_file_neighbors(
       formatter, db.connection) are imported by 100+ other files; their
       "neighbours" are the entire codebase, which is the leak the
       dogfood notes flagged for ``seeds.py``.
+    * **hub neighbour rejection** (v12.12) — even if a seed file is
+      itself non-hub, its neighbour list often includes utility hubs
+      (e.g. ``cmd_critique.py`` imports ``output/formatter.py``). Those
+      utility imports are not the answer to "where is X" queries, so
+      reject neighbour files that exceed ``hub_threshold`` themselves.
+      Symmetric to the seed-side filter; closes the residual hub-seed
+      leak flagged in v12.3 dogfood notes (#8).
 
     Returns the original ``first_stage`` plus expansion symbols.
     """
@@ -415,6 +422,35 @@ def _expand_via_file_neighbors(
             continue  # already a seed file — no need to expand to itself
         neighbor_to_seed.setdefault(nid, sid)
 
+    if not neighbor_to_seed:
+        return first_stage
+
+    # v12.12 — reject hub *neighbours*. A non-hub seed (cmd_critique.py)
+    # legitimately imports utility hubs (output/formatter.py); the util
+    # is not the answer the user asked for, but the original implementation
+    # happily expanded to it. Symmetric to the seed-side filter so it
+    # closes dogfood #8 ("still leaks on hub seed files") without
+    # disturbing legitimate cross-module expansion.
+    neighbor_ids = list(neighbor_to_seed)
+    placeholders = ",".join("?" for _ in neighbor_ids)
+    try:
+        nb_degree_rows = conn.execute(
+            f"""
+            SELECT fid, SUM(d) AS total FROM (
+                SELECT source_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE source_file_id IN ({placeholders}) GROUP BY source_file_id
+                UNION ALL
+                SELECT target_file_id AS fid, COUNT(*) AS d FROM file_edges
+                WHERE target_file_id IN ({placeholders}) GROUP BY target_file_id
+            ) GROUP BY fid
+            """,
+            neighbor_ids + neighbor_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        nb_degree_rows = []
+    nb_hub_ids = {int(r["fid"]) for r in nb_degree_rows if int(r["total"] or 0) > hub_threshold}
+    if nb_hub_ids:
+        neighbor_to_seed = {nid: sid for nid, sid in neighbor_to_seed.items() if nid not in nb_hub_ids}
     if not neighbor_to_seed:
         return first_stage
 

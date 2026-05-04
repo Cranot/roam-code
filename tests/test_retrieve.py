@@ -797,3 +797,147 @@ class TestRerankConsistency:
             # Real graph_metrics rows for any actual indexed symbols should
             # come through; the synthetic ids contribute nothing.
             assert all(int(k) > 0 for k in scores)
+
+
+class TestHubNeighbourFilter:
+    """v12.12 — close dogfood #8 'still leaks on hub seed files'.
+
+    The seed-side hub filter shipped in v12.3 (skip seeds whose total
+    file_edges degree exceeds ``hub_threshold``). The remaining leak
+    came from non-hub seeds importing utility hubs. The neighbour-side
+    filter rejects those hubs symmetrically.
+    """
+
+    def test_neighbor_hub_files_are_dropped(self, indexed_project):
+        """Inject a synthetic hub neighbour and verify it does not
+        bleed into the expanded candidate set."""
+        from roam.db.connection import open_db
+        from roam.retrieve.pipeline import _expand_via_file_neighbors
+
+        with open_db(readonly=False) as conn:
+            files = conn.execute("SELECT id, path FROM files ORDER BY id").fetchall()
+            assert len(files) >= 2
+            seed_file = files[0]
+            hub_file = files[1]
+
+            # Wire seed → hub via file_edges, then load up the hub with
+            # synthetic incoming edges so its degree exceeds the default
+            # hub_threshold (20).
+            conn.execute("DELETE FROM file_edges")
+            conn.execute(
+                "INSERT INTO file_edges (source_file_id, target_file_id, kind) VALUES (?, ?, 'imports')",
+                (seed_file["id"], hub_file["id"]),
+            )
+            # Add many extra distinct files we can point AT the hub to
+            # inflate its degree above hub_threshold. The schema FKs to
+            # files(id) so we can't fabricate ids — insert real file rows.
+            extra_ids = []
+            for i in range(30):
+                p = f"_synthetic_hub_filler_{i}.py"
+                conn.execute("INSERT INTO files (path) VALUES (?)", (p,))
+                extra_ids.append(conn.execute("SELECT last_insert_rowid()").fetchone()[0])
+            for fid in extra_ids:
+                conn.execute(
+                    "INSERT INTO file_edges (source_file_id, target_file_id, kind) VALUES (?, ?, 'imports')",
+                    (fid, hub_file["id"]),
+                )
+            conn.commit()
+
+            sym = conn.execute(
+                "SELECT s.id, s.name, s.line_start, s.line_end FROM symbols s WHERE s.file_id = ? LIMIT 1",
+                (seed_file["id"],),
+            ).fetchone()
+            assert sym is not None, "fixture must contain at least one symbol in seed file"
+
+            first_stage = [
+                {
+                    "symbol_id": sym["id"],
+                    "name": sym["name"],
+                    "kind": "function",
+                    "line_start": sym["line_start"],
+                    "line_end": sym["line_end"],
+                    "file_path": seed_file["path"],
+                    "fts_score": 5.0,
+                }
+            ]
+            expanded = _expand_via_file_neighbors(conn, first_stage, hub_threshold=20)
+
+            expanded_paths = {c.get("file_path") for c in expanded if c.get("expansion")}
+            assert hub_file["path"] not in expanded_paths, (
+                "hub neighbour leaked into expansion despite degree > hub_threshold"
+            )
+
+    def test_low_degree_neighbor_still_expands(self, indexed_project):
+        """Sanity check — the hub filter must NOT block legitimate
+        cross-module expansion. A neighbour with degree ≤ threshold
+        should still surface expanded symbols."""
+        from roam.db.connection import open_db
+        from roam.retrieve.pipeline import _expand_via_file_neighbors
+
+        with open_db(readonly=False) as conn:
+            files = conn.execute("SELECT id, path FROM files ORDER BY id").fetchall()
+            if len(files) < 2:
+                pytest.skip("fixture too small")
+            seed_file, neighbor_file = files[0], files[1]
+            conn.execute("DELETE FROM file_edges")
+            conn.execute(
+                "INSERT INTO file_edges (source_file_id, target_file_id, kind) VALUES (?, ?, 'imports')",
+                (seed_file["id"], neighbor_file["id"]),
+            )
+            conn.commit()
+
+            sym = conn.execute(
+                "SELECT s.id, s.name, s.line_start, s.line_end FROM symbols s WHERE s.file_id = ? LIMIT 1",
+                (seed_file["id"],),
+            ).fetchone()
+            first_stage = [
+                {
+                    "symbol_id": sym["id"],
+                    "name": sym["name"],
+                    "kind": "function",
+                    "line_start": sym["line_start"],
+                    "line_end": sym["line_end"],
+                    "file_path": seed_file["path"],
+                    "fts_score": 5.0,
+                }
+            ]
+            expanded = _expand_via_file_neighbors(conn, first_stage, hub_threshold=20)
+            expanded_paths = {c.get("file_path") for c in expanded if c.get("expansion")}
+            assert neighbor_file["path"] in expanded_paths, "low-degree neighbour must still expand"
+
+
+class TestSharedConfidenceHelper:
+    """v12.12 — confirm cmd_retrieve uses :mod:`roam.output.confidence`."""
+
+    def test_low_confidence_field_in_json(self, indexed_project):
+        """Foreign-concept query → JSON should expose ``low_confidence``
+        as a structured boolean so MCP clients don't have to parse the
+        verdict string."""
+        runner = CliRunner()
+        result = runner.invoke(
+            cli,
+            ["--json", "retrieve", "alpha bravo charlie delta echo foxtrot"],
+        )
+        assert result.exit_code == 0, result.output
+        payload = json.loads(result.output)
+        # The flag exists regardless — its value depends on candidates.
+        assert "low_confidence" in payload["summary"]
+        assert isinstance(payload["summary"]["low_confidence"], bool)
+
+    def test_verdict_prefix_helper_pure(self):
+        from roam.output.confidence import verdict_prefix
+
+        assert verdict_prefix("20 spans", True) == "low confidence — 20 spans"
+        assert verdict_prefix("20 spans", False) == "20 spans"
+        assert verdict_prefix("x", True, label="uncertain") == "uncertain — x"
+
+    def test_no_match_helper_formatting(self):
+        from roam.output.confidence import format_no_match
+
+        out = format_no_match(
+            "recipe",
+            [("verify-patch", 0.07, "Audit a patch")],
+            flag="recipe",
+        )
+        assert "VERDICT: no confident recipe match" in out
+        assert "[0.07] verify-patch — Audit a patch" in out
