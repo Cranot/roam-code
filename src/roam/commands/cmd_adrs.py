@@ -410,7 +410,7 @@ def adrs(ctx, filter_status, limit):
                 )
             )
         else:
-            click.echo("No Architecture Decision Records found.")
+            click.echo("VERDICT: No Architecture Decision Records found")
             click.echo()
             click.echo("  Searched directories: " + ", ".join(_ADR_DIRS[:5]))
             click.echo("  Searched patterns: NNNN-*.md, adr-*.md, ADR-*.md")

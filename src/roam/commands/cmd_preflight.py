@@ -25,6 +25,7 @@ from roam.commands.cmd_conventions import (
     classify_case,
 )
 from roam.commands.cmd_fitness import _CHECKERS, _load_rules
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index, find_symbol
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import (
@@ -668,13 +669,18 @@ def preflight(ctx, target, staged):
         )
 
         if not sym_ids:
+            # Strip the "(not found)" suffix added by the symbol resolver
+            # so the verdict / next-step hint show the bare query text.
+            display_label = label.removesuffix(" (not found)")
+            verdict = f"target not found — `{display_label}` is not in the index"
             if json_mode:
                 click.echo(
                     to_json(
                         json_envelope(
                             "preflight",
                             summary={
-                                "target": label,
+                                "verdict": verdict,
+                                "target": display_label,
                                 "risk_level": "UNKNOWN",
                                 "error": "No symbols found",
                             },
@@ -682,7 +688,10 @@ def preflight(ctx, target, staged):
                     )
                 )
             else:
-                click.echo(f"No symbols found for: {label}")
+                click.echo(f"VERDICT: {verdict}")
+                click.echo()
+                click.echo(f"  Try `roam search {display_label}` to find similar names,")
+                click.echo("  or `roam index --force` if the symbol was just added.")
             return
 
         # Run all checks
@@ -841,3 +850,22 @@ def preflight(ctx, target, staged):
         # Suggested tests
         if tests["pytest_command"]:
             click.echo(f"  Suggested tests: {tests['pytest_command']}")
+
+        # Phase-4 — synergy with the rest of the surface. After a
+        # preflight verdict the natural follow-ups depend on the risk
+        # level: HIGH/CRITICAL → impact + diagnose; MEDIUM → affected-
+        # tests; LOW → roam diff after editing. Centralised in
+        # ``next_steps.suggest_next_steps`` so the wording stays
+        # consistent across CLI and the JSON envelope. Strip the
+        # ``(file:line)`` suffix the resolver appends to ``label`` so
+        # the next-step commands carry only the bare symbol name.
+        _ns_symbol = label or ""
+        if isinstance(_ns_symbol, str):
+            _ns_symbol = _ns_symbol.removesuffix(" (not found)").split(" (", 1)[0]
+        _ns = suggest_next_steps(
+            "preflight",
+            {"symbol": _ns_symbol, "risk_level": risk},
+        )
+        _ns_text = format_next_steps_text(_ns)
+        if _ns_text:
+            click.echo(_ns_text)

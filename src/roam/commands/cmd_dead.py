@@ -1738,6 +1738,25 @@ def dead(
 
         # --- Text: summary-only mode (also used by --detail-less default) ---
         if summary_only or not detail:
+            # Phase-2 polish — verdict-first so the bottom line is on
+            # the first line. Severity proxy: any "safe" finding is a
+            # delete-now candidate; "review" requires triage; pure
+            # "intentional" is a clean signal.
+            if len(all_items) == 0:
+                verdict = "no dead exports — the surface is tight"
+            elif n_safe > 0:
+                verdict = (
+                    f"{len(all_items)} dead export(s) — "
+                    f"{n_safe} safe to delete, {n_review} review, {n_intent} intentional"
+                )
+            elif n_review > 0:
+                verdict = (
+                    f"{len(all_items)} dead export(s) — all need review ({n_review} review, {n_intent} intentional)"
+                )
+            else:
+                verdict = f"{len(all_items)} dead export(s) — all intentional scaffolding"
+            click.echo(f"VERDICT: {verdict}")
+            click.echo()
             click.echo(f"Dead exports: {len(all_items)} ({n_safe} safe, {n_review} review, {n_intent} intentional)")
             if unused_assignments:
                 click.echo(f"Intra-procedural unused assignments: {len(unused_assignments)}")

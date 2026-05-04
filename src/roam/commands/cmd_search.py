@@ -192,6 +192,17 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+    # Phase-2 polish: empty pattern matches every symbol, which is
+    # expensive (LIMIT 50 across the entire FTS table) and never
+    # what a user meant. Reject early with a structured error
+    # rather than returning the first 50 random symbols.
+    if not pattern or not pattern.strip():
+        from roam.output.errors import EMPTY_INPUT, structured_usage_error
+
+        raise structured_usage_error(
+            EMPTY_INPUT,
+            "search pattern cannot be empty — pass a name substring or regex (e.g. `roam search Auth`)",
+        )
     ensure_index()
     like_pattern = f"%{pattern}%"
     with open_db(readonly=True) as conn:
