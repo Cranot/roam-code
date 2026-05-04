@@ -77,11 +77,30 @@ def _filter_by_focus(G: nx.DiGraph, conn, focus_name: str, depth: int) -> nx.DiG
 
 
 def _filter_by_pagerank(G: nx.DiGraph, limit: int) -> nx.DiGraph:
-    """Keep the top-N nodes by PageRank and all edges between them."""
+    """Keep the top-N nodes by PageRank and all edges between them.
+
+    Filters framework type aliases (``computed<T>``, ``useState<T>``)
+    before truncation so the visualisation centres on real architectural
+    anchors rather than type-system noise.
+    """
+    from roam.output.framework_filter import is_framework_alias
+
     if len(G) <= limit:
         return G
     pr = compute_pagerank(G)
-    top_ids = sorted(pr, key=pr.get, reverse=True)[:limit]
+    ordered = sorted(pr, key=pr.get, reverse=True)
+    top_ids: list[int] = []
+    for nid in ordered:
+        node = G.nodes[nid]
+        if is_framework_alias(
+            node.get("qualified_name") or node.get("name"),
+            node.get("kind"),
+            node.get("file_path"),
+        ):
+            continue
+        top_ids.append(nid)
+        if len(top_ids) >= limit:
+            break
     return G.subgraph(top_ids).copy()
 
 
