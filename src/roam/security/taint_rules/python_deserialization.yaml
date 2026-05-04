@@ -1,0 +1,34 @@
+id: python-deserialization
+description: Untrusted input deserialized through pickle/yaml/marshal, enabling RCE
+severity: error
+cwe: CWE-502
+languages:
+  - python
+sources:
+  - request.args
+  - request.form
+  - request.GET
+  - request.POST
+  - request.json
+  - request.body
+  - request.data
+  - request.cookies
+  - request.files
+  - input
+  - sys.stdin
+sinks:
+  - pickle.loads
+  - pickle.load
+  - cPickle.loads
+  - cPickle.load
+  - marshal.loads
+  - marshal.load
+  - yaml.load
+  - yaml.full_load
+  - yaml.unsafe_load
+  - shelve.open
+  - dill.loads
+  - dill.load
+sanitizers:
+  - yaml.safe_load
+  - json.loads
