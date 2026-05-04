@@ -1197,6 +1197,53 @@ class TestDetectorsTier2:
             hits = detect_branching_recursion(conn)
             assert len(hits) == 0
 
+    def test_branching_recursion_skips_explicit_depth_guard(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "src/case.ts": (
+                    "export function findSnakeCaseKeysDeep(value: any, path = ''): string[] {\n"
+                    "  if (!value || typeof value !== 'object') return []\n"
+                    "  let keys: string[] = []\n"
+                    "  for (const key of Object.keys(value)) {\n"
+                    "    const nextPath = path ? `${path}.${key}` : key\n"
+                    "    if (path.split('.').length < 5) {\n"
+                    "      keys = keys.concat(findSnakeCaseKeysDeep(value[key], nextPath))\n"
+                    "      keys = keys.concat(findSnakeCaseKeysDeep({ nested: value[key] }, nextPath))\n"
+                    "    }\n"
+                    "  }\n"
+                    "  return keys\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_branching_recursion
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_branching_recursion(conn)
+            assert len(hits) == 0
+
+    def test_io_in_loop_skips_tanstack_query_cache_updates(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "src/query.ts": (
+                    "export function updateCache(items: any[], qc: any) {\n"
+                    "  for (const item of items) {\n"
+                    "    qc.setQueryData(['resource', item.id], item)\n"
+                    "  }\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_io_in_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_io_in_loop(conn)
+            assert len(hits) == 0
+
     def test_detect_quadratic_string(self, project_factory, monkeypatch):
         proj = project_factory(
             {

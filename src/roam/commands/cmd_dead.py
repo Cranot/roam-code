@@ -12,10 +12,10 @@ from statistics import median
 
 import click
 
+from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_count, batched_in, find_project_root, open_db
-from roam.db.queries import UNREFERENCED_EXPORTS
 from roam.output.formatter import (
     abbrev_kind,
     format_table,
@@ -131,11 +131,10 @@ _ABC_METHOD_NAMES = frozenset(
 
 def _is_test_path(file_path):
     """Check if a file is a test file (discovered by pytest, not imported)."""
-    base = os.path.basename(file_path).lower()
-    return base.startswith("test_") or base.endswith("_test.py")
+    return is_test_file(file_path)
 
 
-def _dead_action(r, file_imported):
+def _dead_action(r, file_imported, tested=False):
     """Compute actionable verdict and confidence % for a dead symbol.
 
     Uses tiered confidence scoring (inspired by Vulture and Meta's dead
@@ -160,6 +159,11 @@ def _dead_action(r, file_imported):
     # Test file symbols — discovered by pytest, never imported directly
     if _is_test_path(r["file_path"]):
         return "INTENTIONAL", 10
+
+    # Test-only public surface is not production-consumed, but deleting it
+    # breaks the suite and may remove intentionally preserved API behavior.
+    if tested:
+        return "REVIEW", 70
 
     # CLI command functions — loaded dynamically via LazyGroup/importlib
     if base.startswith("cmd_") and kind == "function":
@@ -353,6 +357,193 @@ def _group_dead(dead_items, by):
     return sorted(groups.items(), key=lambda x: -len(x[1]))
 
 
+def _dead_consumer_meta(conn, candidate_ids):
+    """Return incoming-consumer metadata split by production vs test files."""
+    meta = {
+        sid: {
+            "production_consumers": 0,
+            "test_consumers": 0,
+            "production_files": set(),
+            "test_files": set(),
+        }
+        for sid in candidate_ids
+    }
+    if not candidate_ids:
+        return meta
+
+    incoming = batched_in(
+        conn,
+        "SELECT e.target_id, e.kind, src.name AS source_name, src.kind AS source_kind, "
+        "src.line_start AS source_line, f.path AS source_file "
+        "FROM edges e "
+        "JOIN symbols src ON e.source_id = src.id "
+        "JOIN files f ON src.file_id = f.id "
+        "WHERE e.target_id IN ({ph})",
+        list(candidate_ids),
+    )
+    seen = set()
+    for row in incoming:
+        key = (row["target_id"], row["source_name"], row["source_kind"], row["source_file"], row["kind"])
+        if key in seen:
+            continue
+        seen.add(key)
+        entry = meta.setdefault(
+            row["target_id"],
+            {
+                "production_consumers": 0,
+                "test_consumers": 0,
+                "production_files": set(),
+                "test_files": set(),
+            },
+        )
+        if _is_test_path(row["source_file"]):
+            entry["test_consumers"] += 1
+            entry["test_files"].add(row["source_file"])
+        else:
+            entry["production_consumers"] += 1
+            entry["production_files"].add(row["source_file"])
+    return meta
+
+
+def _augment_test_text_consumers(conn, rows, consumer_meta):
+    """Augment consumer metadata with exact-name mentions in test files.
+
+    This covers JS/TS test modules whose imports/calls live at top level and
+    therefore cannot produce symbol edges because the file has no extracted
+    source symbol.
+    """
+    if not rows:
+        return
+
+    by_name: dict[str, list] = defaultdict(list)
+    for row in rows:
+        by_name[row["name"]].append(row)
+    if not by_name:
+        return
+
+    project_root = find_project_root()
+    test_files = [f["path"] for f in conn.execute("SELECT path FROM files").fetchall() if _is_test_path(f["path"])]
+    for path in test_files:
+        try:
+            source = (project_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for name, name_rows in by_name.items():
+            if not re.search(rf"\b{re.escape(name)}\b", source):
+                continue
+            for row in name_rows:
+                entry = consumer_meta.setdefault(
+                    row["id"],
+                    {
+                        "production_consumers": 0,
+                        "test_consumers": 0,
+                        "production_files": set(),
+                        "test_files": set(),
+                    },
+                )
+                if path not in entry["test_files"]:
+                    entry["test_consumers"] += 1
+                    entry["test_files"].add(path)
+
+
+def _dead_file_import_meta(conn):
+    """Return module import counts split by production and tests."""
+    imported_any = set()
+    imported_production = set()
+    file_meta: dict[int, dict] = {}
+    for row in conn.execute(
+        "SELECT fe.target_file_id, f.path AS source_file FROM file_edges fe JOIN files f ON fe.source_file_id = f.id"
+    ).fetchall():
+        target_id = row["target_file_id"]
+        imported_any.add(target_id)
+        entry = file_meta.setdefault(
+            target_id,
+            {
+                "module_path_importers": 0,
+                "production_module_path_importers": 0,
+                "test_module_path_importers": 0,
+            },
+        )
+        entry["module_path_importers"] += 1
+        if _is_test_path(row["source_file"]):
+            entry["test_module_path_importers"] += 1
+        else:
+            entry["production_module_path_importers"] += 1
+            imported_production.add(target_id)
+    return imported_any, imported_production, file_meta
+
+
+def _referenced_sibling_counts(conn, file_ids):
+    """Count referenced exported siblings per file, split by production/test."""
+    if not file_ids:
+        return {}
+    exported_rows = batched_in(
+        conn,
+        "SELECT id, file_id FROM symbols WHERE file_id IN ({ph}) AND is_exported = 1",
+        list(file_ids),
+    )
+    by_file = {}
+    all_symbol_ids = []
+    for row in exported_rows:
+        by_file[row["id"]] = row["file_id"]
+        all_symbol_ids.append(row["id"])
+    if not all_symbol_ids:
+        return {}
+
+    meta = _dead_consumer_meta(conn, all_symbol_ids)
+    counts = {
+        fid: {
+            "referenced_siblings": 0,
+            "production_referenced_siblings": 0,
+            "test_referenced_siblings": 0,
+        }
+        for fid in file_ids
+    }
+    for sid, fid in by_file.items():
+        m = meta.get(sid, {})
+        if (m.get("production_consumers") or 0) + (m.get("test_consumers") or 0) <= 0:
+            continue
+        counts[fid]["referenced_siblings"] += 1
+        if m.get("production_consumers", 0) > 0:
+            counts[fid]["production_referenced_siblings"] += 1
+        if m.get("test_consumers", 0) > 0:
+            counts[fid]["test_referenced_siblings"] += 1
+    return counts
+
+
+def _jsonable_dead_meta(meta):
+    out = dict(meta)
+    out["production_files"] = sorted(out.get("production_files", set()))
+    out["test_files"] = sorted(out.get("test_files", set()))
+    return out
+
+
+def _dead_reason(r, consumer_meta, file_import_meta, sibling_meta):
+    """Human-readable reason that separates module imports from symbol use."""
+    cmeta = consumer_meta.get(r["id"], {})
+    fmeta = file_import_meta.get(r["file_id"], {})
+    smeta = sibling_meta.get(r["file_id"], {})
+    test_consumers = cmeta.get("test_consumers", 0)
+    if test_consumers:
+        return f"no production consumers; used by {test_consumers} test consumer(s)"
+
+    module_importers = fmeta.get("module_path_importers", 0)
+    prod_module_importers = fmeta.get("production_module_path_importers", 0)
+    siblings = smeta.get("production_referenced_siblings", 0)
+    if module_importers and siblings:
+        return (
+            f"file is imported by {module_importers} place(s) "
+            f"({prod_module_importers} production); this export has no production consumers "
+            f"while {siblings} sibling export(s) are used"
+        )
+    if module_importers:
+        return (
+            f"file is imported by {module_importers} place(s) "
+            f"({prod_module_importers} production); this export has no production consumers"
+        )
+    return "file has no module importers; may be an entry point or consumed by unparsed code"
+
+
 # ---------------------------------------------------------------------------
 # Core dead code analysis (shared between modes)
 # ---------------------------------------------------------------------------
@@ -364,30 +555,50 @@ from roam.output.file_role_hints import is_excluded_path as _is_tooling_path
 def _analyze_dead(conn):
     """Run the full dead code analysis.
 
-    Returns (high, low, imported_files) where high/low are lists of Row objects.
+    Returns (high, low, imported_files, consumer_meta, file_import_meta, sibling_meta).
+
+    ``dead`` means "no production consumers" rather than "no consumers
+    anywhere". Test-only consumers are preserved as metadata so output can
+    distinguish deletion candidates from tested-but-unused public surface.
     """
-    rows = conn.execute(UNREFERENCED_EXPORTS).fetchall()
+    rows = conn.execute(
+        "SELECT s.*, f.path as file_path "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE s.is_exported = 1 "
+        "AND s.kind IN ('function', 'class', 'method') "
+        "ORDER BY f.path, s.line_start"
+    ).fetchall()
     # Exclude test files — their symbols are discovered by pytest, not imported
     rows = [r for r in rows if not _is_test_path(r["file_path"])]
     # Exclude tooling/CI/benchmarks/dev — same default-exclusion that
     # ``cmd_smells`` and ``cmd_fan`` apply.
     rows = [r for r in rows if not _is_tooling_path(r["file_path"])]
     if not rows:
-        return [], [], set()
+        return [], [], set(), {}, {}, {}
 
-    imported_files = set()
-    for r in conn.execute("SELECT DISTINCT target_file_id FROM file_edges").fetchall():
-        imported_files.add(r["target_file_id"])
+    consumer_meta = _dead_consumer_meta(conn, [r["id"] for r in rows])
+    rows = [r for r in rows if consumer_meta.get(r["id"], {}).get("production_consumers", 0) == 0]
+    if not rows:
+        return [], [], set(), consumer_meta, {}, {}
+    _augment_test_text_consumers(conn, rows, consumer_meta)
+
+    imported_files, imported_production_files, file_import_meta = _dead_file_import_meta(conn)
 
     # Filter transitively alive (barrel re-exports)
     importers_of = {}
-    for fe in conn.execute("SELECT source_file_id, target_file_id FROM file_edges").fetchall():
+    for fe in conn.execute(
+        "SELECT fe.source_file_id, fe.target_file_id, f.path AS source_file "
+        "FROM file_edges fe JOIN files f ON fe.source_file_id = f.id"
+    ).fetchall():
+        if _is_test_path(fe["source_file"]):
+            continue
         importers_of.setdefault(fe["target_file_id"], set()).add(fe["source_file_id"])
 
     transitively_alive = set()
     for r in rows:
         fid = r["file_id"]
-        if fid not in imported_files:
+        if fid not in imported_production_files:
             continue
         downstream = set()
         frontier = {fid}
@@ -414,10 +625,11 @@ def _analyze_dead(conn):
             transitively_alive.add(r["id"])
 
     rows = [r for r in rows if r["id"] not in transitively_alive]
+    sibling_meta = _referenced_sibling_counts(conn, {r["file_id"] for r in rows})
 
     high = [r for r in rows if r["file_id"] in imported_files]
     low = [r for r in rows if r["file_id"] not in imported_files]
-    return high, low, imported_files
+    return high, low, imported_files, consumer_meta, file_import_meta, sibling_meta
 
 
 # ---------------------------------------------------------------------------
@@ -1091,7 +1303,7 @@ def dead(
             return
 
         # --- Standard dead code analysis ---
-        high, low, imported_files = _analyze_dead(conn)
+        high, low, imported_files, consumer_meta, file_import_meta, sibling_meta = _analyze_dead(conn)
         all_items = high + low
         unused_assignments = collect_dataflow_findings(
             conn,
@@ -1150,10 +1362,21 @@ def dead(
             return
 
         # Compute action verdicts
-        all_dead = [(r, *_dead_action(r, r["file_id"] in imported_files)) for r in all_items]
+        all_dead = [
+            (
+                r,
+                *_dead_action(
+                    r,
+                    r["file_id"] in imported_files,
+                    consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0,
+                ),
+            )
+            for r in all_items
+        ]
         n_safe = sum(1 for _, a, _c in all_dead if a == "SAFE")
         n_review = sum(1 for _, a, _c in all_dead if a == "REVIEW")
         n_intent = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL")
+        n_test_only = sum(1 for r in all_items if consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0)
 
         # --- SARIF output ---
         if sarif_mode:
@@ -1252,11 +1475,22 @@ def dead(
         if group_by:
             grouped = _group_dead(all_items, group_by)
             for key, items in grouped:
-                verdicts = [_dead_action(r, r["file_id"] in imported_files)[0] for r in items]
+                verdicts = [
+                    _dead_action(
+                        r,
+                        r["file_id"] in imported_files,
+                        consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0,
+                    )[0]
+                    for r in items
+                ]
+                affected_files = {r["file_path"] for r in items}
+                dead_per_file = round(len(items) / max(len(affected_files), 1), 2)
                 groups_data.append(
                     {
                         "key": key,
                         "count": len(items),
+                        "files": len(affected_files),
+                        "dead_per_file": dead_per_file,
                         "safe": sum(1 for v in verdicts if v == "SAFE"),
                         "review": sum(1 for v in verdicts if v == "REVIEW"),
                         "intentional": sum(1 for v in verdicts if v == "INTENTIONAL"),
@@ -1267,12 +1501,27 @@ def dead(
         if json_mode:
 
             def _build_sym_dict(r, file_imported):
+                cmeta = _jsonable_dead_meta(consumer_meta.get(r["id"], {}))
+                fmeta = file_import_meta.get(r["file_id"], {})
+                smeta = sibling_meta.get(r["file_id"], {})
+                tested = cmeta.get("test_consumers", 0) > 0
                 d = {
                     "name": r["name"],
                     "kind": r["kind"],
                     "location": loc(r["file_path"], r["line_start"]),
-                    "action": _dead_action(r, file_imported)[0],
-                    "confidence": _dead_action(r, file_imported)[1],
+                    "action": _dead_action(r, file_imported, tested)[0],
+                    "confidence": _dead_action(r, file_imported, tested)[1],
+                    "reason": _dead_reason(r, consumer_meta, file_import_meta, sibling_meta),
+                    "tested": tested,
+                    "production_consumers": cmeta.get("production_consumers", 0),
+                    "test_consumers": cmeta.get("test_consumers", 0),
+                    "named_symbol_consumers": cmeta.get("production_consumers", 0) + cmeta.get("test_consumers", 0),
+                    "module_path_importers": fmeta.get("module_path_importers", 0),
+                    "production_module_path_importers": fmeta.get("production_module_path_importers", 0),
+                    "test_module_path_importers": fmeta.get("test_module_path_importers", 0),
+                    "referenced_sibling_exports": smeta.get("referenced_siblings", 0),
+                    "production_files": cmeta.get("production_files", []),
+                    "test_files": cmeta.get("test_files", []),
                 }
                 if need_extended and r["id"] in extended_data:
                     ext = extended_data[r["id"]]
@@ -1292,6 +1541,7 @@ def dead(
                 "safe": n_safe,
                 "review": n_review,
                 "intentional": n_intent,
+                "test_only": n_test_only,
                 "unused_assignments": len(unused_assignments),
                 "dataflow_dead": len(dataflow_dead),
             }
@@ -1334,7 +1584,8 @@ def dead(
             if not summary_only and high:
                 click.echo("Top dead symbols (high confidence):")
                 for r in high[:5]:
-                    action, confidence = _dead_action(r, True)
+                    tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
+                    action, confidence = _dead_action(r, True, tested)
                     click.echo(
                         f"  {action} {confidence}%  {r['name']}  {abbrev_kind(r['kind'])}  {loc(r['file_path'], r['line_start'])}"
                     )
@@ -1352,7 +1603,11 @@ def dead(
             if group_by and groups_data:
                 click.echo(f"\nBy {group_by}:")
                 for g in groups_data[:20]:
-                    click.echo(f"  {g['key']:<50s}  {g['count']:>3d}  (safe={g['safe']}, review={g['review']})")
+                    click.echo(
+                        f"  {g['key']:<50s}  {g['count']:>3d}  "
+                        f"({g['files']} files, {g['dead_per_file']} dead/file; "
+                        f"safe={g['safe']}, review={g['review']})"
+                    )
             if show_clusters and clusters_data:
                 click.echo(f"\nDead clusters: {len(clusters_data)}")
                 for i, cl in enumerate(clusters_data[:10], 1):
@@ -1381,6 +1636,8 @@ def dead(
                     [
                         g["key"],
                         str(g["count"]),
+                        str(g["files"]),
+                        str(g["dead_per_file"]),
                         str(g["safe"]),
                         str(g["review"]),
                         str(g["intentional"]),
@@ -1388,7 +1645,7 @@ def dead(
                 )
             click.echo(
                 format_table(
-                    [group_by.title(), "Total", "Safe", "Review", "Intentional"],
+                    [group_by.title(), "Total", "Files", "Dead/File", "Safe", "Review", "Intentional"],
                     table_rows,
                     budget=30,
                 )
@@ -1434,31 +1691,8 @@ def dead(
 
         # Build imported-by lookup for high-confidence results
         if high:
-            high_file_ids = {r["file_id"] for r in high}
-            importer_rows = batched_in(
-                conn,
-                "SELECT fe.target_file_id, f.path "
-                "FROM file_edges fe JOIN files f ON fe.source_file_id = f.id "
-                "WHERE fe.target_file_id IN ({ph})",
-                list(high_file_ids),
-            )
-            importers_by_file = {}
-            for ir in importer_rows:
-                importers_by_file.setdefault(ir["target_file_id"], []).append(ir["path"])
-
-            # Count how many other exported symbols in the same file ARE referenced
-            referenced_counts = {}
-            for fid in high_file_ids:
-                cnt = conn.execute(
-                    "SELECT COUNT(*) FROM symbols s "
-                    "WHERE s.file_id = ? AND s.is_exported = 1 "
-                    "AND s.id IN (SELECT target_id FROM edges)",
-                    (fid,),
-                ).fetchone()[0]
-                referenced_counts[fid] = cnt
-
             click.echo(f"-- High confidence ({len(high)}) --")
-            click.echo("(file is imported but symbol has no references)")
+            click.echo("(file is imported; this export has no production consumers)")
 
             # Build table headers and rows based on active flags
             headers = ["Action", "Name", "Kind", "Location", "Reason"]
@@ -1471,20 +1705,14 @@ def dead(
 
             table_rows = []
             for r in high:
-                imp_list = importers_by_file.get(r["file_id"], [])
-                n_importers = len(imp_list)
-                n_siblings = referenced_counts.get(r["file_id"], 0)
-                if n_siblings > 0:
-                    reason = f"{n_importers} importers use {n_siblings} siblings, skip this"
-                else:
-                    reason = f"{n_importers} importers, none use any export"
-                action, confidence = _dead_action(r, True)
+                tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
+                action, confidence = _dead_action(r, True, tested)
                 row = [
                     f"{action} {confidence}%",
                     r["name"],
                     abbrev_kind(r["kind"]),
                     loc(r["file_path"], r["line_start"]),
-                    reason,
+                    _dead_reason(r, consumer_meta, file_import_meta, sibling_meta),
                 ]
                 if need_extended:
                     ext = extended_data.get(r["id"], {})
@@ -1530,7 +1758,8 @@ def dead(
 
             table_rows = []
             for r in low:
-                action, confidence = _dead_action(r, False)
+                tested = consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0
+                action, confidence = _dead_action(r, False, tested)
                 row = [
                     f"{action} {confidence}%",
                     r["name"],

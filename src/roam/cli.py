@@ -378,6 +378,76 @@ def _ensure_plugin_commands_loaded() -> None:
 class LazyGroup(click.Group):
     """A Click group that lazy-loads command modules on first access."""
 
+    _GLOBAL_FLAGS = {
+        "--json",
+        "--compact",
+        "--agent",
+        "--sarif",
+        "--include-excluded",
+        "--detail",
+    }
+    _GLOBAL_VALUE_OPTIONS = {"--budget"}
+
+    def parse_args(self, ctx, args):
+        """Accept known global options before or after the subcommand.
+
+        Click normally requires group options before the command
+        (``roam --compact health``). Older docs and agent memories often use
+        ``roam health --compact``; normalising that shape avoids a hard "No
+        such option" while keeping command-specific parsing unchanged.
+        """
+        if args:
+            args = self._normalise_global_option_position(list(args))
+        return super().parse_args(ctx, args)
+
+    def _normalise_global_option_position(self, args: list[str]) -> list[str]:
+        if not args:
+            return args
+
+        cmd_index = None
+        idx = 0
+        while idx < len(args):
+            token = args[idx]
+            if token == "--":
+                return args
+            if token.startswith("-"):
+                if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(args):
+                    idx += 2
+                    continue
+                idx += 1
+                continue
+            cmd_index = idx
+            break
+        if cmd_index is None or cmd_index >= len(args) - 1:
+            return args
+
+        before = args[:cmd_index]
+        command = args[cmd_index]
+        after = args[cmd_index + 1 :]
+        moved: list[str] = []
+        kept: list[str] = []
+        idx = 0
+        while idx < len(after):
+            token = after[idx]
+            if token in self._GLOBAL_FLAGS:
+                moved.append(token)
+                idx += 1
+                continue
+            if token in self._GLOBAL_VALUE_OPTIONS and idx + 1 < len(after):
+                moved.extend([token, after[idx + 1]])
+                idx += 2
+                continue
+            if any(token.startswith(f"{opt}=") for opt in self._GLOBAL_VALUE_OPTIONS):
+                moved.append(token)
+                idx += 1
+                continue
+            kept.append(token)
+            idx += 1
+
+        if not moved:
+            return args
+        return before + moved + [command] + kept
+
     def list_commands(self, ctx):
         _ensure_plugin_commands_loaded()
         return sorted(_COMMANDS.keys())

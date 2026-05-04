@@ -78,8 +78,18 @@ def _severity_icon(sev: str) -> str:
         "dogfood 2026-05-02 found agent-generated workspaces dominating)."
     ),
 )
+@click.option(
+    "--no-framework",
+    is_flag=True,
+    help="Filter framework/lifecycle/i18n shorthand symbols from rankings",
+)
+@click.option(
+    "--no-imports",
+    is_flag=True,
+    help="Filter import/interop wrapper symbols from rankings",
+)
 @click.pass_context
-def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling):
+def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooling, no_framework, no_imports):
     """Show cognitive complexity metrics for functions and methods.
 
     Unlike ``health`` (which scores the whole codebase) and ``debt`` (which
@@ -147,7 +157,20 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
             from roam.output.file_role_hints import is_excluded_path
 
             rows = [r for r in rows if not is_excluded_path(r["file_path"] or "")]
-            rows = rows[:limit]
+
+        if no_framework:
+            from roam.commands.cmd_health import _FRAMEWORK_NAMES
+
+            rows = [r for r in rows if (r["name"] or "") not in _FRAMEWORK_NAMES]
+
+        if no_imports:
+            rows = [
+                r
+                for r in rows
+                if r["kind"] not in {"import", "module_import"} and "import" not in (r["name"] or "").lower()
+            ]
+
+        rows = rows[:limit]
 
         if not rows:
             if sarif_mode:
