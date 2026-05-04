@@ -5014,14 +5014,25 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
     name="roam_uses",
     description=(
         "All consumers of a symbol: callers, importers, inheritors by edge type. "
+        'Use this *instead of* a multi-shape grep ("->X|\\.X\\b|\'X\'|\\"X\\"") '
+        "to find references — graph-precise, no string-literal / comment "
+        "false positives, and the result is already structured by edge type. "
         "For 3+ symbols call `roam_batch_get` (one round-trip) instead."
     ),
 )
 def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
     """All consumers of a symbol: callers, importers, inheritors.
 
-    Grouped by edge type (calls, imports, inheritance, trait usage).
-    Broader than impact. Use for planning API changes.
+    WHEN TO USE: this is the right tool for "find every reference to X"
+    queries. Multi-shape regex grep — ``->X|\\.X\\b|'X'|"X"`` — is the
+    standard way to do this with raw text tools, but it produces false
+    positives in comments / docstrings / unrelated string literals,
+    and the agent then has to filter those out. ``roam_uses`` resolves
+    references through the indexed call/import/inherit graph: every
+    result is a real symbol that depends on the target, grouped by
+    edge type (calls, imports, inheritance, trait usage). Broader
+    than ``roam_impact`` (which counts symbols only); use ``uses``
+    for planning API changes or "what would break if I delete X".
 
     For verifying multiple symbols (a typical "is X really dead?"
     sweep), call ``roam_batch_get`` instead — one round-trip resolves
