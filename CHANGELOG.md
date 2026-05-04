@@ -7,6 +7,78 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.8] - 2026-05-04
+
+Phases 2 + 3 + 4 in one release: rough-edge polish, smarter verdicts,
+and cross-command synergy.
+
+### Phase 2 — verdict-first compliance
+
+Several commands skipped the surface-wide ``VERDICT: ...`` opening line
+that every other command leads with, leaving agents to count
+``[FAIL]`` markers or scroll past raw section headers to find the
+bottom line. Now consistent across:
+
+- ``roam layers`` — opens with the architecture-shape verdict
+  (``Flat (80% in Layer 0) — 14 layers, 0 violation(s)``) and exposes
+  ``shape`` + ``verdict`` in JSON ``summary``.
+- ``roam dead`` — opens with the safe-vs-review breakdown
+  (``424 dead export(s) — 78 safe to delete, 302 review, 44 intentional``).
+- ``roam adrs`` empty-state — was ``"No Architecture Decision Records
+  found."``, now leads with ``VERDICT: No Architecture Decision Records
+  found``.
+- ``roam api-drift`` and ``roam orphan-routes`` empty-state messages
+  similarly prefix ``VERDICT:``.
+- ``roam preflight`` not-found case — was just ``"No symbols found
+  for: X"``; now ``VERDICT: target not found — `X` is not in the
+  index`` plus a ``Try `roam search X` …`` follow-up hint.
+- ``roam why`` JSON envelope ``summary`` gained ``verdict``.
+- ``roam search ""`` (empty pattern) now errors with ``EMPTY_INPUT``
+  instead of returning the first 50 random symbols. Tests pinned the
+  empty pattern to "matches everything", which was never the
+  intent.
+
+### Phase 3 — smarter verdicts that name the driver
+
+Plain count summaries don't tell a user *what to fix first*. Three
+high-traffic verdicts now name the dominant signal so the next
+action is one read away:
+
+- ``roam pr-risk`` — verdict appends ``(driver: hotspot_score)`` /
+  ``(driver: test_coverage_low)`` / ``(driver: bus_factor)`` etc. The
+  largest single risk factor maps directly to a fix.
+- ``roam health`` — verdict appends ``focus: bottlenecks`` /
+  ``focus: god_components`` / ``focus: cycles`` / ``focus:
+  layer_violations`` based on which CRITICAL category dominates.
+
+### Phase 4 — every command points at its natural follow-up
+
+The ``next_steps.suggest_next_steps`` registry covered ``health``,
+``context``, ``hotspots``, ``diagnose``, and ``dead``. Five more
+commands now generate follow-up commands at the bottom of every
+text run, so an agent finishing one ``roam`` call sees the next
+``roam`` call to make:
+
+- ``roam preflight`` — HIGH/CRITICAL → ``roam impact`` + ``roam diagnose`` + ``roam affected-tests``;
+  LOW → ``roam diff`` after editing.
+- ``roam impact`` — large blast → ``roam closure`` for the minimum
+  coordinated change set; ``roam affected-tests`` for tests; ``roam
+  preflight`` for the one-shot risk verdict.
+- ``roam pr-risk`` — HIGH → ``roam diff --staged``; driver
+  ``test_coverage_low`` → ``roam test-gaps --changed``; driver
+  ``hotspot_score`` → ``roam hotspots``; otherwise → ``roam
+  suggest-reviewers``.
+- ``roam critique`` — HIGH severity → ``roam preflight`` on each
+  finding; bench_hint set → run the named bench; otherwise → ``roam
+  diff`` to confirm the structural delta.
+- ``roam retrieve`` — low_confidence → "refine with ``--seed-files``"
+  / ``roam search``; high-confidence → ``roam context`` on top
+  result, ``roam preflight`` if planning to modify.
+
+Each suggestion is scoped to the bare symbol name (the ``(file:line)``
+suffix the resolver appends to ``label`` is now stripped before the
+template fills) so the follow-up command is copy-pasteable.
+
 ## [12.12.7] - 2026-05-04
 
 Phase-1.5: speed up agent search vs grep.
