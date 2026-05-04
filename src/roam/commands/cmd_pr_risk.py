@@ -577,6 +577,25 @@ def pr_risk(ctx, commit_range, staged, author):
 
         label = commit_range or ("staged" if staged else "unstaged")
 
+        # Phase-3 — name the risk driver. The bare verdict said
+        # "High risk (60/100) — careful review needed" without
+        # telling the user *why*. The largest single factor
+        # is the most useful pointer: maps directly to a fix
+        # ("test_coverage low" → write tests; "hotspot" → focus
+        # review there; "bus_factor" → loop in maintainer).
+        _named_factors = [
+            ("blast_pct", min(blast_pct / 100, 0.40)),
+            ("hotspot_score", hotspot_score * 0.30),
+            ("test_coverage_low", (1 - test_coverage) * 0.30),
+            ("bus_factor", bus_factor_risk * 0.20),
+            ("coupling", coupling_score * 0.20),
+            ("novelty", novelty * 0.15),
+            ("familiarity", familiarity_risk),
+            ("minor_contributor", minor_risk),
+        ]
+        top_driver = max(_named_factors, key=lambda x: x[1])
+        driver_label = top_driver[0] if top_driver[1] > 0.05 else None
+
         # Verdict
         if level == "LOW":
             verdict = f"Low risk ({risk}/100) — safe to merge"
@@ -586,6 +605,8 @@ def pr_risk(ctx, commit_range, staged, author):
             verdict = f"High risk ({risk}/100) — careful review needed"
         else:
             verdict = f"Critical risk ({risk}/100) — significant blast radius, thorough review required"
+        if driver_label:
+            verdict += f" (driver: {driver_label})"
 
         if json_mode:
             click.echo(
@@ -717,3 +738,17 @@ def pr_risk(ctx, commit_range, staged, author):
             click.echo("\nSuggested reviewers:")
             for rev_author, lines in top_authors:
                 click.echo(f"  {rev_author:<30s} ({lines} lines contributed)")
+
+        # Phase-4 synergy — point at the natural next command.
+        from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
+
+        _ns = suggest_next_steps(
+            "pr-risk",
+            {
+                "risk_level": level,
+                "driver": driver_label or "",
+            },
+        )
+        _ns_text = format_next_steps_text(_ns)
+        if _ns_text:
+            click.echo(_ns_text)

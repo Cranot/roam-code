@@ -460,15 +460,39 @@ def health(ctx, no_framework, gate):
         log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
         health_score = max(0, min(100, int(100 * math.exp(log_score))))
 
+        # Phase-3 — name the dominant issue category. The four
+        # category counts (cycles, god_components, bottlenecks,
+        # layer_violations) lead the user at a fix; the largest is
+        # the highest-leverage next action. Without this hint a user
+        # sees "25 critical" and has to dig into the breakdown to
+        # know whether to fix cycles first or god components first.
+        _cat_counts = {
+            "cycles": sum(1 for c in actionable_cycles if c.get("severity") == "CRITICAL"),
+            "god_components": sum(1 for g in god_items if g.get("severity") == "CRITICAL"),
+            "bottlenecks": sum(1 for b in bn_items if b.get("severity") == "CRITICAL"),
+            "layer_violations": sum(1 for v in violations if v.get("severity") == "CRITICAL"),
+        }
+        _top_category, _top_count = max(_cat_counts.items(), key=lambda x: x[1])
+        _focus_hint = f", focus: {_top_category}" if _top_count > 0 else ""
+
         # --- Verdict ---
         if health_score >= 80:
-            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical issues"
+            verdict = f"Healthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical issues{_focus_hint}"
         elif health_score >= 60:
-            verdict = f"Fair codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+            verdict = (
+                f"Fair codebase ({health_score}/100) — "
+                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+            )
         elif health_score >= 40:
-            verdict = f"Needs attention ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+            verdict = (
+                f"Needs attention ({health_score}/100) — "
+                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+            )
         else:
-            verdict = f"Unhealthy codebase ({health_score}/100) — {sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings"
+            verdict = (
+                f"Unhealthy codebase ({health_score}/100) — "
+                f"{sev_counts['CRITICAL']} critical, {sev_counts['WARNING']} warnings{_focus_hint}"
+            )
 
         # --- Quality Gate ---
         if gate:
