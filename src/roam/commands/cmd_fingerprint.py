@@ -59,6 +59,12 @@ def fingerprint(ctx, compact, export_path, compare_path):
     Use --export to save and --compare to diff against another repo.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    # ``--compact`` is also a top-level global flag (``LazyGroup._GLOBAL_FLAGS``).
+    # When invoked as ``roam fingerprint --compact`` the parser moves the
+    # flag to the group context, leaving this command's local ``compact``
+    # parameter False. Honour the global value too. v12.12.
+    if not compact and ctx.obj:
+        compact = bool(ctx.obj.get("compact"))
     ensure_index()
 
     with open_db(readonly=True) as conn:
