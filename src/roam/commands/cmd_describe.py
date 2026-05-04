@@ -741,37 +741,63 @@ def _agent_prompt_data(conn):
         pass
     data["hotspots"] = hotspots
 
-    # ── Health score + cycles ────────────────────────────────────────
-    data["health_score"] = "N/A"
+    # ── Cycle-only health estimate + actionable cycle count ─────────
+    # This is intentionally a *cheap* estimate and NOT the same number
+    # `roam health` reports (which weights god components, bottlenecks,
+    # and layer violations on top of cycles). Round 4 #17 noted the
+    # name collision was misleading agents — both reads are valid, but
+    # they measure different things.
+    data["cycle_health_estimate"] = "N/A"
     data["cycles"] = "N/A"
     try:
         from roam.graph.builder import build_symbol_graph
-        from roam.graph.cycles import find_cycles
+        from roam.graph.cycles import find_cycles, format_cycles, mark_actionable_cycles
 
         G = build_symbol_graph(conn)
         total_syms = len(G)
         if total_syms > 0:
             cycles = find_cycles(G)
-            cycle_syms = sum(len(c) for c in cycles)
-            cycle_pct = (cycle_syms / total_syms * 100) if total_syms else 0
+            formatted = format_cycles(cycles, conn) if cycles else []
+            mark_actionable_cycles(formatted)
+            actionable = [c for c in formatted if c.get("actionable")]
+            actionable_syms = sum(len(scc) for scc, fc in zip(cycles, formatted) if fc.get("actionable"))
+            cycle_pct = (actionable_syms / total_syms * 100) if total_syms else 0
             score = max(0, 100 - int(cycle_pct * 2))
+            data["cycle_health_estimate"] = score
+            data["cycles"] = len(actionable)
+            # Keep the legacy alias around so existing tooling doesn't break.
             data["health_score"] = score
-            data["cycles"] = len(cycles)
     except Exception:
         pass
 
-    # ── Test command guess ───────────────────────────────────────────
-    test_files = conn.execute("SELECT path FROM files WHERE path LIKE '%test%' LIMIT 1").fetchall()
-    if test_files:
-        p = test_files[0]["path"].replace("\\", "/")
-        if "tests/" in p:
-            data["test_cmd"] = "pytest tests/"
-        elif "test/" in p:
-            data["test_cmd"] = "pytest test/"
-        elif ".spec." in p or ".test." in p:
-            data["test_cmd"] = "npm test"
-        else:
-            data["test_cmd"] = "pytest"
+    # ── Test command guess redacted — read package.json/etc. first) ──
+    from roam.output.project_shape import detect_project_shape
+
+    try:
+        shape = detect_project_shape(conn, find_project_root())
+        if shape.test_command:
+            data["test_cmd"] = shape.test_command
+            data["test_runner"] = shape.test_runner
+        elif shape.test_runner:
+            data["test_cmd"] = shape.test_runner
+            data["test_runner"] = shape.test_runner
+    except Exception:
+        # Detector should never fail, but guarantee describe still emits.
+        pass
+
+    if "test_cmd" not in data:
+        # Fallback to the historic heuristic if shape detection turned up nothing.
+        test_files = conn.execute("SELECT path FROM files WHERE path LIKE '%test%' LIMIT 1").fetchall()
+        if test_files:
+            p = test_files[0]["path"].replace("\\", "/")
+            if "tests/" in p:
+                data["test_cmd"] = "pytest tests/"
+            elif "test/" in p:
+                data["test_cmd"] = "pytest test/"
+            elif ".spec." in p or ".test." in p:
+                data["test_cmd"] = "npm test"
+            else:
+                data["test_cmd"] = "pytest"
     else:
         data["test_cmd"] = ""
 
@@ -797,9 +823,13 @@ def _format_agent_prompt(data: dict) -> str:
         for h in data["hotspots"]:
             lines.append(f"  - {h}")
 
-    health = data.get("health_score", "N/A")
+    health = data.get("cycle_health_estimate", data.get("health_score", "N/A"))
     cycles = data.get("cycles", "N/A")
-    lines.append(f"Health: {health}/100, {cycles} cycles")
+    # Disambiguate from `roam health` — the score here is a cheap
+    # cycle-only estimate; the full composite lives behind `roam health`.
+    lines.append(
+        f"Cycle-health estimate: {health}/100, {cycles} actionable cycles (run `roam health` for composite score)"
+    )
 
     if data.get("test_cmd"):
         lines.append(f"Test cmd: {data['test_cmd']}")

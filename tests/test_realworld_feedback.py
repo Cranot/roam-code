@@ -116,6 +116,80 @@ def test_global_compact_option_is_accepted_after_command(cli_runner, indexed_pro
     assert result.exit_code == 0, result.output
 
 
+def test_framework_filter_excludes_vue_type_aliases():
+    from roam.output.framework_filter import is_framework_alias
+
+    # Leaf-name match — `computed` is the canonical Vue framework primitive
+    assert is_framework_alias("ResourceStoreConfig.computed", "prop", "src/types/resource-store.ts")
+    assert is_framework_alias("useState", "function", "src/hooks/use-data.ts")
+    # File-suffix match — generated/type-only files inflate centrality
+    assert is_framework_alias("Foo", "interface", "src/api/types.d.ts")
+    # Type-like kind in a types/ directory
+    assert is_framework_alias("Bar", "prop", "src/types/internal.ts")
+    # Regular code is not filtered
+    assert not is_framework_alias("calculate_total", "function", "src/checkout.py")
+    assert not is_framework_alias("Logger", "class", "src/log.ts")
+
+
+def test_project_shape_detects_vitest(tmp_path, monkeypatch):
+    from roam.commands.resolve import ensure_index
+    from roam.db.connection import open_db
+    from roam.output.project_shape import detect_project_shape
+
+    (tmp_path / "package.json").write_text(
+        '{"name":"test","scripts":{"test":"vitest run"}}',
+        encoding="utf-8",
+    )
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "main.ts").write_text("export function f() { return 1 }\n")
+    monkeypatch.chdir(tmp_path)
+    import subprocess
+
+    subprocess.run(["git", "init", "-q"], cwd=str(tmp_path), check=False)
+    subprocess.run(["git", "config", "user.email", "t@t"], cwd=str(tmp_path), check=False)
+    subprocess.run(["git", "config", "user.name", "t"], cwd=str(tmp_path), check=False)
+    subprocess.run(["git", "add", "-A"], cwd=str(tmp_path), check=False)
+    subprocess.run(
+        ["git", "-c", "commit.gpgsign=false", "commit", "-q", "-m", "init"],
+        cwd=str(tmp_path),
+        check=False,
+    )
+    ensure_index()
+    with open_db(readonly=True, project_root=tmp_path) as conn:
+        shape = detect_project_shape(conn, tmp_path)
+    assert shape.test_runner == "vitest"
+    assert shape.test_command == "vitest run"
+    assert shape.has_frontend
+
+
+def test_oracle_route_exists_returns_indeterminate_without_workspace():
+    from roam.commands.cmd_oracle import oracle_route_exists
+    import sqlite3
+
+    conn = sqlite3.connect(":memory:")
+    conn.row_factory = sqlite3.Row
+    conn.executescript(
+        """
+        CREATE TABLE symbols (id INTEGER PRIMARY KEY, name TEXT, kind TEXT);
+        INSERT INTO symbols VALUES (1, 'get', 'method');
+        INSERT INTO symbols VALUES (2, 'post', 'method');
+        """
+    )
+    result = oracle_route_exists(conn, "/api/users")
+    assert result.value is None
+    assert result.reason_class == "indeterminate_workspace"
+    assert "ws resolve" in result.reason
+
+
+def test_oracle_iterable_for_backwards_compat():
+    from roam.commands.cmd_oracle import OracleResult
+
+    r = OracleResult(True, "ok", "definitive_yes", "high")
+    value, reason = r
+    assert value is True
+    assert reason == "ok"
+
+
 def test_dead_dataflow_emits_experimental_warning(cli_runner, indexed_project, monkeypatch):
     from roam.cli import cli
 

@@ -30,7 +30,14 @@ from roam.output.mermaid import node as mnode
 
 
 def _top_symbols(conn, G, limit=10):
-    """Return the top-N symbols by PageRank with role context."""
+    """Return the top-N symbols by PageRank with role context.
+
+    Pulls 4x the requested limit so the framework-alias filter can strip
+    Vue/React/Angular type aliases (``computed<T>``, ``useState<T>``)
+    that inflate centrality without being meaningful abstractions.
+    """
+    from roam.output.framework_filter import is_framework_alias
+
     rows = conn.execute(
         """SELECT gm.symbol_id, gm.pagerank, gm.in_degree, gm.out_degree,
                   s.name, s.qualified_name, s.kind, f.path, s.line_start
@@ -39,8 +46,9 @@ def _top_symbols(conn, G, limit=10):
            JOIN files f ON s.file_id = f.id
            ORDER BY gm.pagerank DESC
            LIMIT ?""",
-        (limit,),
+        (limit * 4,),
     ).fetchall()
+    rows = [r for r in rows if not is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["path"])][:limit]
     results = []
     for r in rows:
         in_d = r["in_degree"] or 0

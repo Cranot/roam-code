@@ -2389,16 +2389,31 @@ def oracle_route_exists(path: str, root: str = ".") -> dict:
     description="Boolean oracle: are ALL callers of this symbol in test files?",
 )
 def oracle_is_test_only(name: str, root: str = ".") -> dict:
-    """Yes/no: do all callers of this symbol live in test files?
+    """Yes/no/indeterminate: do all callers of this symbol live in test files?
 
-    WHEN TO USE: before deleting a symbol or marking it as dead. A ``True``
-    answer means the symbol exists only to support tests and likely
-    targets *production* code that's been gone for a while; combine with
-    ``roam_safe_delete`` for full evidence.
+    WHEN TO USE: before deleting a symbol or marking it as dead. A
+    ``True`` answer means the symbol exists only to support tests and
+    likely targets *production* code that's been gone for a while; combine
+    with ``roam_safe_delete`` for full evidence.
 
-    Returns ``False`` for orphan symbols (no callers at all) — orphans get
-    a separate signal via ``roam_dead_code`` aging. ``True`` requires
-    every caller's enclosing file to have ``file_role = 'test'``.
+    Tri-state: orphan symbols (no callers at all) return ``value=null``
+    with ``reason_class="indeterminate_no_data"`` rather than collapsing
+    to ``False`` — there's no evidence either way.
+    """
+    return _run_roam(["oracle", "is-test-only", name], root)
+
+
+@_tool(
+    name="roam_oracle_test_only",
+    description="Alias of roam_oracle_is_test_only — preserves the shorter name agents sometimes guess.",
+)
+def oracle_test_only_alias(name: str, root: str = ".") -> dict:
+    """Alias of :func:`oracle_is_test_only`.
+
+    Round 4 #15 reported agents calling ``roam_oracle_test_only``
+    (without the ``is_`` prefix) and getting ``No such tool``. The alias
+    keeps the canonical name discoverable while accepting the shorter
+    form so a typo doesn't cost an MCP round-trip.
     """
     return _run_roam(["oracle", "is-test-only", name], root)
 

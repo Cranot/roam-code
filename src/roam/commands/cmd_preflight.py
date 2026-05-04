@@ -120,7 +120,7 @@ def _risk_driver(blast, tests, compl, coupl, convs, fitns) -> str:
     """
     rows = [
         ("complexity", compl, f"cc={compl['max_cognitive_complexity']:.0f}"),
-        ("fitness", fitns, f"{fitns.get('rules_failed', 0)} rules would fail"),
+        ("fitness", fitns, f"{fitns.get('rules_failed', 0)} rules currently fail"),
         ("tests", tests, f"{tests.get('direct', 0)} direct, {tests.get('transitive', 0)} transitive"),
         ("coupling", coupl, f"{coupl.get('coupled_files', 0)} coupled files"),
         (
@@ -218,13 +218,39 @@ def _check_affected_tests(conn, sym_ids, file_paths):
             seen.add(r["file"])
             test_files.append(r["file"])
 
+    # Pick the actual test runner from package.json / pyproject when
+    # possible — round 4 #18 noted preflight suggesting `pytest tests/`
+    # for Vitest projects.
+    try:
+        from roam.db.connection import find_project_root
+        from roam.output.project_shape import _detect_test_runner
+
+        runner_name, _runner_cmd = _detect_test_runner(find_project_root())
+    except Exception:
+        runner_name = None
+    runner_token = "pytest"
+    if runner_name == "vitest":
+        runner_token = "npx vitest run"
+    elif runner_name == "jest":
+        runner_token = "npx jest"
+    elif runner_name == "mocha":
+        runner_token = "npx mocha"
+    elif runner_name == "playwright":
+        runner_token = "npx playwright test"
+    elif runner_name == "go test":
+        runner_token = "go test"
+    elif runner_name == "cargo test":
+        runner_token = "cargo test"
+    elif runner_name == "rspec":
+        runner_token = "bundle exec rspec"
+
     truncated_files = len(test_files) > _MAX_SUGGESTED_TEST_FILES
     if truncated_files:
         suggested = test_files[:_MAX_SUGGESTED_TEST_FILES]
         suffix = f"  # (+{len(test_files) - _MAX_SUGGESTED_TEST_FILES} more)"
-        pytest_cmd = "pytest " + " ".join(suggested) + suffix
+        pytest_cmd = f"{runner_token} " + " ".join(suggested) + suffix
     else:
-        pytest_cmd = "pytest " + " ".join(test_files) if test_files else ""
+        pytest_cmd = f"{runner_token} " + " ".join(test_files) if test_files else ""
     severity = _test_severity(direct, transitive, colocated)
 
     return {
@@ -499,6 +525,7 @@ def _check_fitness(conn, root):
     return {
         "rules_checked": len(rule_results),
         "rules_failed": failed,
+        "rules_currently_failing": failed,  # alias — semantic clarity for round 4 #11
         "total_violations": len(all_violations),
         "failed_rules": failed_names,
         "rule_details": rule_results,
@@ -744,12 +771,15 @@ def preflight(ctx, target, staged):
             conv_desc = "no violations"
         click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
 
-        # Fitness
+        # Fitness — distinguish prospective from current failures redacted).
+        # We can only verify "currently fails on this symbol surface"; we
+        # don't simulate the proposed change here, so saying "would fail"
+        # was misleading for rules that are already broken.
         if fitns["rules_checked"] == 0:
             fit_desc = "no rules configured"
         elif fitns["rules_failed"] > 0:
             rule_names = ", ".join(fitns["failed_rules"][:3])
-            fit_desc = f"{fitns['rules_failed']} rules would fail ({rule_names})"
+            fit_desc = f"{fitns['rules_failed']} rules currently fail ({rule_names})"
         else:
             fit_desc = f"all {fitns['rules_checked']} rules pass"
         click.echo(f"  Fitness:          {fit_desc:<40s} {_severity_tag(fitns['severity'])}")

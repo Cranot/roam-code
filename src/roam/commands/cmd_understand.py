@@ -11,6 +11,7 @@ from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
+from roam.output.framework_filter import is_framework_alias
 
 # ---------------------------------------------------------------------------
 # Framework / build-tool detection
@@ -160,7 +161,12 @@ def _detect_build(conn):
 
 
 def _key_abstractions(conn, limit=15):
-    """Find the most important symbols by PageRank with fan analysis."""
+    """Find the most important symbols by PageRank with fan analysis.
+
+    Pulls a wider set than ``limit`` so the framework-alias filter can
+    drop noise (Vue ``computed<T>``, React ``useState<T>``, etc.) while
+    still returning ``limit`` real abstractions to the caller.
+    """
     rows = conn.execute(
         "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
         "s.line_start, gm.pagerank, gm.in_degree, gm.out_degree "
@@ -170,8 +176,11 @@ def _key_abstractions(conn, limit=15):
         "WHERE s.kind IN ('function', 'class', 'method', 'interface') "
         "AND s.is_exported = 1 "
         "ORDER BY gm.pagerank DESC LIMIT ?",
-        (limit,),
+        (limit * 4,),
     ).fetchall()
+    rows = [r for r in rows if not is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["file_path"])][
+        :limit
+    ]
 
     results = []
     for r in rows:

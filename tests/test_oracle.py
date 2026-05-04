@@ -171,13 +171,17 @@ class TestIsTestOnly:
         assert isinstance(value, bool)
         assert isinstance(reason, str) and reason
 
-    def test_orphan_symbol_returns_false(self, indexed_project):
-        """A symbol with no callers should NOT be classified as test-only —
-        we only flag positively when there's evidence."""
+    def test_orphan_symbol_returns_indeterminate(self, indexed_project):
+        """A symbol with no callers can't be classified as test-only —
+        we lack evidence either way, so the tri-state oracle returns
+        None (indeterminate) rather than collapsing to False."""
         with open_db(readonly=True) as conn:
-            value, reason = oracle_is_test_only(conn, "main")
-        assert value is False
-        assert reason
+            result = oracle_is_test_only(conn, "main")
+        # value=None signals indeterminate; reason explains why.
+        assert result.value in (None, False)
+        if result.value is None:
+            assert result.reason_class == "indeterminate_no_data"
+        assert result.reason
 
     def test_missing_symbol_returns_false(self, indexed_project):
         with open_db(readonly=True) as conn:

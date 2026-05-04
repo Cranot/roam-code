@@ -144,6 +144,13 @@ _COMMANDS = {
     "affected": ("roam.commands.cmd_affected", "affected"),
     "semantic-diff": ("roam.commands.cmd_semantic_diff", "semantic_diff"),
     "trends": ("roam.commands.cmd_trends", "trends"),
+    # Aliases for the consolidated trends command redacted). Older
+    # docs and agent recipes still mention `roam trend` / `roam digest`;
+    # we keep them as discoverable aliases instead of breaking the
+    # documented surface.
+    "trend": ("roam.commands.cmd_trends", "trends"),
+    "digest": ("roam.commands.cmd_trends", "trends"),
+    "snapshot": ("roam.commands.cmd_trends", "trends"),
     "endpoints": ("roam.commands.cmd_endpoints", "endpoints"),
     "watch": ("roam.commands.cmd_watch", "watch"),
     "mcp": ("roam.mcp_server", "mcp_cmd"),
