@@ -15,6 +15,7 @@ import json
 import re
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Union
 
 # ---------------------------------------------------------------------------
 # Data structures
@@ -219,7 +220,7 @@ def _read_body_lines(conn, symbol_id: int, project_root: Path) -> tuple[list[str
 # ---------------------------------------------------------------------------
 
 
-TaintOrigin = tuple[str, int | str]
+TaintOrigin = tuple[str, Union[int, str]]
 
 
 @dataclass

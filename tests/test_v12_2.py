@@ -78,7 +78,7 @@ class TestZetaWiring:
         )
         conn.commit()
 
-        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: (lambda _text: [1.0, 0.0]))
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: lambda _text: [1.0, 0.0])
 
         scores = semantic.semantic_score(conn, [1, 2], "database connection")
         assert scores[1] > scores[2]

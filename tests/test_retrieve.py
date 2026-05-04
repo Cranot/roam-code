@@ -234,7 +234,7 @@ class TestRerank:
         from roam.retrieve import semantic
         from roam.retrieve.rerank import structural_score
 
-        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: (lambda _text: [1.0, 0.0]))
+        monkeypatch.setattr(semantic, "_load_text_encoder", lambda: lambda _text: [1.0, 0.0])
 
         with open_db(readonly=False, project_root=indexed_project) as conn:
             user_session = conn.execute(
