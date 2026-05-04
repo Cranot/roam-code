@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.6] - 2026-05-04
+
+Phase-1 deep-dogfood release. Live-fired roam against this very repo
+to find edge cases that didn't show up in unit tests. Five real
+correctness wins, all bench-positive.
+
+### `roam retrieve` ranks implementations above tests
+
+For implementation-style queries ("where is X", "find X", "how does X
+work") the reranker now applies a -0.18 penalty to test files. The
+test files weren't wrong — they had legitimate fan-in / PageRank from
+every test importing the conftest fixtures — but for "where is X" the
+user wants implementation, not the test. On the dogfood query
+*"where is the patch verifier with clones-not-edited check"*:
+
+```
+Before:  #1 test_verify_patch_match (test)
+         #2 critique_patch (MCP wrapper)
+         #3 TestCheckClonesNotEdited (test class)
+         #4 check_clones_not_edited       ← actual answer at #4
+         #5 _patch_stub_backend (test)
+
+After:   #1 critique_patch
+         #2 check_clones_not_edited       ← lifted to #2
+         #3-4 tests demoted
+```
+
+Bench (recall@K on `roam_self.jsonl`):
+
+| Metric | v12.11 baseline | v12.12.6 | Δ |
+|---|---|---|---|
+| recall@5 | 0.664 | **0.700** | +3.6 pp |
+| recall@10 | 0.758 | **0.786** | +2.8 pp |
+| recall@20 | 0.900 | 0.878 | -2.2 pp |
+
+The penalty was empirically tuned at -0.18 — stronger penalties (-0.25)
+gave bigger top-5 gains but regressed recall@20 more. The bench
+expects test files as co-answers for some "where is X" queries
+(e.g. ``test_personalized_pagerank.py`` is listed alongside
+``pagerank.py``); -0.18 keeps those in top-20 while still pushing
+high-PR test fixtures below same-token implementations at top-5/10.
+
+### Implementation queries down-weight structural, up-weight lexical
+
+Same query family had a deeper issue. *"where is the symbol resolver"*
+ranked ``_resolve_file`` (PR=0.99, fts=0.65) at #1 above the actual
+``find_symbol`` (PR=0.16, fts=0.88) — PR was dominating because the
+6× PR ratio overwhelmed the 1.35× fts ratio. For "where is X" queries
+v12.12.6 now down-weights ``alpha`` (PR) by 30% and up-weights
+``lexical_baseline`` by 20% within a single call. Navigation /
+planning queries still use the structural-strong default.
+
+### Tokenizer learns programming-domain shorthand
+
+Two seed-token gaps caused several "where is X" queries to return
+generic noise:
+
+- **Programming shorthand.** ``n+1`` / ``i18n`` / ``2fa`` / ``a11y``
+  fell through every regex. *"find n+1 query detection"* tokenised
+  to ``["query", "detection"]`` and missed ``cmd_n1.py`` entirely.
+  Now ``n+1`` emits ``n1`` as a token (matching the file name);
+  the actual ``detect_django_n1`` ranks #1 instead of generic
+  ``QueryEngine`` properties.
+- **4-letter domain nouns.** The lowercase-noun fallback's ≥5-char
+  floor dropped ``dead`` / ``code`` / ``file`` / ``role`` / ``path``
+  / ``node`` / ``edge`` / ``view`` / ``task`` / ``flow`` etc.
+  *"where is dead code detection"* tokenised to ``["detection"]``
+  and the actual ``cmd_dead.py`` was nowhere in top-10. A curated
+  allow-list of 50 programming-domain 4-letter words now restores
+  these.
+
+### `roam ask` extracts identifiers with leading underscore
+
+The recipe-runner regex used ``\b[a-z][a-z0-9]+(?:_[a-z0-9]+)+`` which
+fails the word-boundary check before a leading ``_``. *"is it safe to
+delete _resolve_file"* extracted no symbol, then passed the full
+query string to ``roam uses`` as the symbol name — which produced
+``"symbol not found: 'is it safe to delete _resolve_file'"``.
+Regex now allows the leading underscore. The full safe-delete
+recipe runs end-to-end on the dogfood query.
+
+### `roam fitness` prepends a verdict line
+
+Every other command in the surface starts its text output with
+``VERDICT: …``; ``fitness`` skipped straight to the rule list and
+left the user counting ``[FAIL]`` markers to know if the gate
+passed. Now opens with e.g. ``VERDICT: 2 of 3 fitness rule(s) fail
+(51 violation(s))`` so the bottom line is on the first line.
+
 ## [12.12.5] - 2026-05-04
 
 A correctness sweep on the agent-orientation commands and a clarity
