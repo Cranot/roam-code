@@ -30,25 +30,74 @@ from roam.output.mermaid import node as mnode
 
 
 def _top_symbols(conn, G, limit=10):
-    """Return the top-N symbols by PageRank with role context.
+    """Return the top-N source-symbol entries by PageRank with role context.
 
-    Pulls 4x the requested limit so the framework-alias filter can strip
-    Vue/React/Angular type aliases (``computed<T>``, ``useState<T>``)
-    that inflate centrality without being meaningful abstractions.
+    Pulls 6x the requested limit so the framework-alias filter and the
+    test-fixture filter can strip ranks that inflate centrality without
+    being meaningful for a newcomer reading the codebase.
+
+    v12.12.5: skip symbols whose file is classified as ``test``.
+    pytest fixtures (``cli_runner``, ``indexed_project``,
+    ``project_factory``, …) have huge fan-in because every test imports
+    them, so they outrank actual source symbols on PageRank. They are
+    not what a newcomer should "learn first" — they're test scaffolding,
+    not project domain. The framework_alias filter handles Vue/React
+    aliases; this layer handles test fixtures.
     """
     from roam.output.framework_filter import is_framework_alias
 
     rows = conn.execute(
         """SELECT gm.symbol_id, gm.pagerank, gm.in_degree, gm.out_degree,
-                  s.name, s.qualified_name, s.kind, f.path, s.line_start
+                  s.name, s.qualified_name, s.kind, f.path, s.line_start,
+                  COALESCE(f.file_role, 'source') AS file_role
            FROM graph_metrics gm
            JOIN symbols s ON gm.symbol_id = s.id
            JOIN files f ON s.file_id = f.id
            ORDER BY gm.pagerank DESC
            LIMIT ?""",
-        (limit * 4,),
+        (limit * 6,),
     ).fetchall()
-    rows = [r for r in rows if not is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["path"])][:limit]
+    filtered = []
+    # Generic property names that suffer name-collision in the symbol
+    # resolver (every ``obj.path`` reference resolves to the first
+    # class with a ``path`` attribute, inflating that one symbol's
+    # in-degree to dozens or hundreds). Skipping these prevents one
+    # WebhookBridge.path-style false positive from dominating the
+    # "Key Symbols" list.
+    _GENERIC_PROP_NAMES = {
+        "path",
+        "name",
+        "value",
+        "key",
+        "id",
+        "data",
+        "type",
+        "kind",
+        "role",
+        "file",
+        "time",
+        "count",
+        "size",
+        "length",
+        "args",
+        "kwargs",
+        "self",
+        "cls",
+    }
+    for r in rows:
+        if r["file_role"] == "test":
+            continue
+        if is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["path"]):
+            continue
+        # Demote/skip generic-named properties / fields — almost
+        # always name collisions inflated by every ``.path`` /
+        # ``.name`` reference in unrelated code. The kind in the DB
+        # is the unabbreviated form (``property``, ``field``,
+        # ``attribute``); the table column displays the abbreviation.
+        if r["kind"] in {"property", "field", "attribute"} and r["name"].lower() in _GENERIC_PROP_NAMES:
+            continue
+        filtered.append(r)
+    rows = filtered[:limit]
     results = []
     for r in rows:
         in_d = r["in_degree"] or 0
@@ -78,7 +127,15 @@ def _top_symbols(conn, G, limit=10):
 
 
 def _reading_order(conn, G):
-    """Suggest a reading order based on topological layers (bottom-up)."""
+    """Suggest a reading order based on topological layers (bottom-up).
+
+    v12.12.5: skip files whose ``file_role`` is ``test``. The previous
+    output started a newcomer at ``tests/conftest.py`` because pytest
+    fixtures sit at the bottom of the topological layer (everything
+    depends on them) and rank highly within that layer. A newcomer
+    landing on a test fixture file as their *first* read is exactly
+    the wrong shape — the tour should orient them in source code.
+    """
     layer_map = detect_layers(G)
     if not layer_map:
         return []
@@ -106,18 +163,39 @@ def _reading_order(conn, G):
 
         pr_lookup = {r["symbol_id"]: r["pagerank"] or 0 for r in pr_rows}
 
-        # Get file paths for this layer's symbols
+        # Get file paths for this layer's symbols, with their file_role
+        # so we can skip test fixtures.
         if not sym_ids:
             continue
         file_rows = batched_in(
             conn,
-            "SELECT DISTINCT f.path, s.id FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+            "SELECT DISTINCT f.path, s.id, COALESCE(f.file_role, 'source') AS file_role "
+            "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
             list(sym_ids),
         )
 
-        # Rank files by max PageRank of their symbols in this layer
+        # Rank files by max PageRank of their symbols in this layer.
+        # Exclude non-source roles — tests, dev scripts, generated code,
+        # config metadata, and benchmark/example tooling are noise for
+        # "where do I start reading this codebase". The reading order
+        # should orient a newcomer in domain code; if they need config
+        # they'll find pyproject.toml on their own.
+        _SKIP_ROLES = {
+            "test",
+            "scripts",
+            "generated",
+            "vendored",
+            "data",
+            "examples",
+            "build",
+            "ci",
+            "docs",
+            "config",
+        }
         file_pr = {}
         for r in file_rows:
+            if r["file_role"] in _SKIP_ROLES:
+                continue
             fp = r["path"]
             if fp not in seen_files:
                 pr_val = pr_lookup.get(r["id"], 0)
