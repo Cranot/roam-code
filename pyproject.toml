@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.12.1"
+version = "12.12.2"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -104,13 +104,16 @@ dev = [
 where = ["src"]
 
 [tool.setuptools.package-data]
-# v12.12.1 — without these, the YAML rule packs and template files
-# don't ship in the wheel. Pre-12.12.1 PyPI installs of roam-code
-# silently loaded zero taint rules (``roam taint`` → "No rules in
-# /.../security/taint_rules") because the directory wasn't bundled.
+# v12.12.1 / 12.12.2 — without these, data files don't ship in the
+# wheel. Pre-12.12.1 PyPI installs silently loaded zero taint rules;
+# v12.12.1 fixed taint + extractors but still missed Jenkinsfile (no
+# extension) and the MCP server card. v12.12.2 bundles every file
+# under templates/ci/ (Jenkinsfile + the YAMLs) and ships the server
+# card alongside the package so ``roam mcp --card`` works post-install.
 "roam.security.taint_rules" = ["*.yaml", "*.yml"]
 "roam.languages.extractors" = ["*.yaml", "*.yml"]
-"roam.templates.ci" = ["*.yaml", "*.yml"]
+"roam.templates.ci" = ["*"]
+"roam" = ["mcp-server-card.json"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
