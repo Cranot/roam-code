@@ -105,6 +105,11 @@ def workflow(ctx, recipe_name, list_recipes, query):
 
     recipe = by_name(recipe_name)
     if recipe is None:
-        raise click.UsageError(f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.")
+        from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
+
+        raise structured_usage_error(
+            UNKNOWN_RECIPE,
+            f"unknown workflow recipe: {recipe_name!r}. Run `roam workflow --list`.",
+        )
 
     _emit_recipe_detail(recipe, query, json_mode)

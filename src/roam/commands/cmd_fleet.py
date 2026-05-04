@@ -159,7 +159,9 @@ def fleet_verify(ctx, manifest_path):
     try:
         manifest = _json.loads(raw)
     except _json.JSONDecodeError as exc:
-        raise click.UsageError(f"manifest is not valid JSON: {exc}") from exc
+        from roam.output.errors import INVALID_FORMAT, structured_usage_error
+
+        raise structured_usage_error(INVALID_FORMAT, f"manifest is not valid JSON: {exc}") from exc
 
     tasks = manifest.get("tasks") or manifest.get("agents") or manifest.get("worktrees") or []
     if not tasks:

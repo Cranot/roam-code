@@ -236,6 +236,11 @@ if FastMCP is not None:
             "the default surface is intentionally narrow to keep the prompt tight. "
             "For multi-symbol verification use `roam_batch_get` instead of N "
             "sequential `roam_uses` / `roam_search` calls. "
+            "Concurrency: tool calls are bounded (default 8 in flight, "
+            "tighter for retrieve/taint_classify). When the server is at "
+            "capacity, a structured envelope with error_code='RATE_LIMITED' "
+            "is returned — back off and retry. Tune via "
+            "ROAM_MCP_MAX_CONCURRENT / ROAM_MCP_LIMITS env vars. "
             "Pre-indexes symbols, call graphs, dependencies, architecture, and "
             "git history into a local SQLite DB. One tool call replaces 5-10 "
             "Glob/Grep/Read calls. Most tools are read-only; side-effect tools "
@@ -748,6 +753,14 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
         if name != _META_TOOL:
             if _ACTIVE_TOOLS and name not in _ACTIVE_TOOLS:
                 return fn
+        # Round 4 #14 / P: bound parallel tool invocations so the
+        # FastMCP executor doesn't drop connections under burst load.
+        # Over-capacity calls return a structured BUSY envelope with
+        # a retry hint. Below capacity, overhead is one non-blocking
+        # semaphore acquire (sub-microsecond).
+        from roam.mcp_extras.concurrency import wrap_with_guard
+
+        fn = wrap_with_guard(name, fn)
         _REGISTERED_TOOLS.append(name)
         kwargs: dict = {"name": name, "title": _tool_title(name)}
         if description:

@@ -215,7 +215,12 @@ def index_export(ctx, output, sign, key, keyless):
 
     index_path = _index_db_path()
     if not index_path.is_file():
-        raise click.UsageError(f"no roam index found at {index_path} — run `roam index` first.")
+        from roam.output.errors import INDEX_MISSING, structured_usage_error
+
+        raise structured_usage_error(
+            INDEX_MISSING,
+            f"no roam index found at {index_path} — run `roam index` first.",
+        )
     ensure_index()
 
     manifest = _build_manifest(index_path, Path.cwd())
