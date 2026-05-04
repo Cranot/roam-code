@@ -298,6 +298,37 @@ def _check_mcp_registry() -> dict:
     }
 
 
+def _check_mcp_backpressure() -> dict:
+    """MCP backpressure module loads with sensible limits.
+
+    Round 4 / P: the bounded-semaphore guard wraps every MCP tool. If
+    the limits are pathological (zero or negative) every call would
+    return BUSY — surface that configuration error here.
+    """
+    try:
+        from roam.mcp_extras import concurrency
+    except Exception as exc:
+        return {
+            "name": "MCP backpressure",
+            "passed": False,
+            "detail": f"concurrency module import failed: {type(exc).__name__}: {exc}",
+        }
+    snapshot = concurrency.metrics()
+    limit = snapshot.get("max_concurrent", 0)
+    if limit < 1:
+        return {
+            "name": "MCP backpressure",
+            "passed": False,
+            "detail": f"max_concurrent={limit} (set ROAM_MCP_MAX_CONCURRENT to a positive integer)",
+        }
+    per_tool_count = len(snapshot.get("per_tool_limits", {}))
+    return {
+        "name": "MCP backpressure",
+        "passed": True,
+        "detail": f"max_concurrent={limit}, {per_tool_count} per-tool override(s) active",
+    }
+
+
 # ---------------------------------------------------------------------------
 # CLI command
 # ---------------------------------------------------------------------------
@@ -336,6 +367,7 @@ def doctor(ctx):
     # Round 4 S3 — verify the CLI + MCP tool surfaces are intact.
     checks.append(_check_command_registry())
     checks.append(_check_mcp_registry())
+    checks.append(_check_mcp_backpressure())
 
     # Index checks: existence feeds into freshness and SQLite checks
     index_check = _check_index_exists()

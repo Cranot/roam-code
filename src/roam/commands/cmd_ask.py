@@ -79,7 +79,12 @@ def _rank_recipes(query_text: str, recipe_override: str | None) -> list[tuple[Re
         return classify(query_text)
     recipe = by_name(recipe_override)
     if recipe is None:
-        raise click.UsageError(f"unknown recipe: {recipe_override!r}. See `roam ask --list` for available recipes.")
+        from roam.output.errors import UNKNOWN_RECIPE, structured_usage_error
+
+        raise structured_usage_error(
+            UNKNOWN_RECIPE,
+            f"unknown recipe: {recipe_override!r}. See `roam ask --list` for available recipes.",
+        )
     return [(recipe, 1.0)]
 
 

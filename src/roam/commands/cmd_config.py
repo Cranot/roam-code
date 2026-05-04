@@ -494,7 +494,12 @@ def config(
     current = _load_project_config(root)
 
     if db_dir is not None and use_local_cache:
-        raise click.UsageError("choose either --set-db-dir or --use-local-cache, not both")
+        from roam.output.errors import INVALID_OPTIONS, structured_usage_error
+
+        raise structured_usage_error(
+            INVALID_OPTIONS,
+            "choose either --set-db-dir or --use-local-cache, not both",
+        )
 
     mutating_semantic = any(
         value is not None for value in (semantic_backend, onnx_model, onnx_tokenizer, onnx_max_length)
@@ -506,7 +511,12 @@ def config(
         or remove_pattern is not None
         or mutating_semantic
     ):
-        raise click.UsageError("--semantic-status cannot be combined with config mutation options")
+        from roam.output.errors import INVALID_OPTIONS, structured_usage_error
+
+        raise structured_usage_error(
+            INVALID_OPTIONS,
+            "--semantic-status cannot be combined with config mutation options",
+        )
 
     if db_dir is not None:
         _save_db_dir(root, db_dir, json_mode)

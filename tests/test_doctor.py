@@ -109,9 +109,9 @@ class TestDoctorCheckCoverage:
 
     def test_check_count(self):
         result, data = invoke_doctor_json()
-        # Round 4 S3 added two checks (CLI command registry + MCP tool
-        # registry) so the total grew from 8 to 10.
-        assert data["summary"]["total"] == 10
+        # Round 4 added three checks (CLI registry + MCP registry +
+        # MCP backpressure), bringing the total from 8 to 11.
+        assert data["summary"]["total"] == 11
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()

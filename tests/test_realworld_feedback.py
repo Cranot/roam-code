@@ -116,6 +116,70 @@ def test_global_compact_option_is_accepted_after_command(cli_runner, indexed_pro
     assert result.exit_code == 0, result.output
 
 
+def test_structured_error_codes_round_trip():
+    """Round 4 / H: structured codes parse out of message strings."""
+    from roam.output.errors import (
+        ALL_CODES,
+        EMPTY_INPUT,
+        INVALID_DIFF,
+        UNKNOWN_RECIPE,
+        parse_code,
+        structured_usage_error,
+    )
+
+    err = structured_usage_error(EMPTY_INPUT, "diff is empty")
+    assert "EMPTY_INPUT:" in str(err)
+    assert parse_code(str(err)) == EMPTY_INPUT
+
+    # parse_code rejects unknown prefixes so a typo can't masquerade.
+    assert parse_code("INVALD_DIF: typo prefix") is None
+    assert parse_code("not even a code") is None
+
+    # Every defined code is canonical (uppercase + underscores only).
+    for code in ALL_CODES:
+        assert code.isupper() or "_" in code
+        assert " " not in code
+
+    # The two most common codes are present.
+    assert INVALID_DIFF in ALL_CODES
+    assert UNKNOWN_RECIPE in ALL_CODES
+
+
+def test_mcp_concurrency_guard_returns_busy_envelope_when_at_capacity(monkeypatch):
+    """Round 4 / P: at capacity, the wrapper returns BUSY without invoking fn."""
+    monkeypatch.setenv("ROAM_MCP_MAX_CONCURRENT", "1")
+    # Re-import with the env override active.
+    import importlib
+
+    import roam.mcp_extras.concurrency as concurrency_mod
+
+    importlib.reload(concurrency_mod)
+
+    invocations = {"count": 0}
+
+    def heavy_tool(arg: str = "x") -> dict:
+        invocations["count"] += 1
+        return {"summary": {"verdict": "ok", "arg": arg}}
+
+    wrapped = concurrency_mod.wrap_with_guard("roam_test_tool", heavy_tool)
+
+    # Acquire the only slot manually so the next call sees capacity == 0.
+    held, _per_tool = concurrency_mod._try_acquire("roam_test_tool")
+    assert held is True
+    try:
+        out = wrapped(arg="while_busy")
+        assert out["summary"]["error_code"] == "RATE_LIMITED"
+        assert out["summary"]["retryable"] is True
+        assert invocations["count"] == 0  # tool was NOT invoked
+    finally:
+        concurrency_mod._release(None)
+
+    # After releasing, calls go through normally again.
+    out = wrapped(arg="after_release")
+    assert out["summary"]["verdict"] == "ok"
+    assert invocations["count"] == 1
+
+
 def test_framework_filter_excludes_vue_type_aliases():
     from roam.output.framework_filter import is_framework_alias
 
@@ -163,8 +227,9 @@ def test_project_shape_detects_vitest(tmp_path, monkeypatch):
 
 
 def test_oracle_route_exists_returns_indeterminate_without_workspace():
-    from roam.commands.cmd_oracle import oracle_route_exists
     import sqlite3
+
+    from roam.commands.cmd_oracle import oracle_route_exists
 
     conn = sqlite3.connect(":memory:")
     conn.row_factory = sqlite3.Row

@@ -285,7 +285,9 @@ def cga_verify(ctx, statement_path, cosign_bundle, cosign_key, no_cosign):
     try:
         statement = _json.loads(raw)
     except _json.JSONDecodeError as exc:
-        raise click.UsageError(f"attestation is not valid JSON: {exc}") from exc
+        from roam.output.errors import INVALID_FORMAT, structured_usage_error
+
+        raise structured_usage_error(INVALID_FORMAT, f"attestation is not valid JSON: {exc}") from exc
 
     ensure_index()
     project_root = find_project_root()
