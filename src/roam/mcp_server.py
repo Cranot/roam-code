@@ -5873,31 +5873,35 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
 
     if card:
         # MCP Server Card per blog.modelcontextprotocol.io/posts/2026-mcp-roadmap.
-        # Loaded from the canonical static file so the CLI and the hosted
-        # docs site agree byte-for-byte. First-mover discovery for the
-        # MCP ecosystem registries (PulseMCP, mcp.so, Smithery, etc.).
+        # First-mover discovery for the MCP ecosystem registries
+        # (PulseMCP, mcp.so, Smithery, etc.). v12.12.2: the card is
+        # now bundled inside the installed package (src/roam/mcp-server-card.json)
+        # so post-PyPI ``roam mcp --card`` works without a source
+        # checkout. The docs/site/.well-known/ copy stays canonical for
+        # the hosted /well-known URL — they are kept in sync via the
+        # release process.
         from pathlib import Path as _Path
 
-        card_path = (
+        bundled = _Path(__file__).resolve().parent / "mcp-server-card.json"
+        if bundled.is_file():
+            click.echo(bundled.read_text(encoding="utf-8").rstrip())
+            return
+
+        # Source-checkout fallback so dev runs against an unbuilt tree
+        # still find the docs-site copy.
+        for candidate in (
             _Path(__file__).resolve().parents[1].parent.parent
             / "docs"
             / "site"
             / ".well-known"
-            / "mcp-server-card.json"
-        )
-        if not card_path.is_file():
-            # Fallback: walk up from the current module file two more levels.
-            card_path = (
-                _Path(__file__).resolve().parent.parent.parent
-                / "docs"
-                / "site"
-                / ".well-known"
-                / "mcp-server-card.json"
-            )
-        if not card_path.is_file():
-            click.echo("error: server card file not found", err=True)
-            raise SystemExit(1)
-        click.echo(card_path.read_text(encoding="utf-8").rstrip())
+            / "mcp-server-card.json",
+            _Path(__file__).resolve().parent.parent.parent / "docs" / "site" / ".well-known" / "mcp-server-card.json",
+        ):
+            if candidate.is_file():
+                click.echo(candidate.read_text(encoding="utf-8").rstrip())
+                return
+        click.echo("error: server card file not found", err=True)
+        raise SystemExit(1)
         return
 
     if mcp is None:
