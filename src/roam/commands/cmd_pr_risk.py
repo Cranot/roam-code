@@ -20,9 +20,13 @@ from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
 
 
-def _get_file_stat(root, path):
+def _get_file_stat(root, path, *, staged=False, commit_range=None):
     """Get +/- line counts for a file."""
     cmd = ["git", "diff", "--numstat", "--", path]
+    if commit_range:
+        cmd = ["git", "diff", "--numstat", commit_range, "--", path]
+    elif staged:
+        cmd = ["git", "diff", "--cached", "--numstat", "--", path]
     try:
         result = subprocess.run(
             cmd,
@@ -311,6 +315,7 @@ def pr_risk(ctx, commit_range, staged, author):
             return
 
         total_syms_repo = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0]
+        diff_stats = {path: _get_file_stat(root, path, staged=staged, commit_range=commit_range) for path in file_map}
 
         # --- Resolve author for familiarity/minor-contributor factors ---
         resolved_author = author or _detect_author()
@@ -386,6 +391,11 @@ def pr_risk(ctx, commit_range, staged, author):
         # --- 4. Test coverage ---
         test_coverage = 0.0
         source_files = [p for p in file_map if not is_test_file(p) and not is_low_risk_file(p)]
+        source_added = sum(diff_stats.get(p, (0, 0))[0] for p in source_files)
+        source_removed = sum(diff_stats.get(p, (0, 0))[1] for p in source_files)
+        total_added = sum(v[0] for v in diff_stats.values())
+        total_removed = sum(v[1] for v in diff_stats.values())
+        reductive_change = bool(source_files and source_added == 0 and source_removed > 0)
         covered_files = 0
         for path in source_files:
             fid = file_map[path]
@@ -496,6 +506,23 @@ def pr_risk(ctx, commit_range, staged, author):
             familiarity_risk,  # author familiarity (up to 25%)
             minor_risk,  # minor contributor (up to 15%)
         ]
+        reductive_discount = 0.0
+        if reductive_change:
+            # Deletion-only source changes can still be risky when they remove
+            # public API, but they do not add new execution paths. Dampening
+            # social/churn novelty pressure keeps verified dead-code cleanup
+            # from looking like a feature change in hot files.
+            _factors = [
+                _factors[0] * 0.65,  # blast still matters for public removals
+                _factors[1] * 0.35,
+                _factors[2] * 0.75,
+                _factors[3] * 0.50,
+                _factors[4] * 0.65,
+                _factors[5] * 0.35,
+                _factors[6] * 0.50,
+                _factors[7] * 0.50,
+            ]
+            reductive_discount = 1.0
         # Product of (1 - factor): probability of "no risk" from each
         no_risk = 1.0
         for f in _factors:
@@ -526,6 +553,8 @@ def pr_risk(ctx, commit_range, staged, author):
                     "symbols": len(syms),
                     "blast": len(file_affected),
                     "churn": churn.get("churn", 0),
+                    "lines_added": diff_stats.get(path, (0, 0))[0],
+                    "lines_removed": diff_stats.get(path, (0, 0))[1],
                     "is_test": is_test_file(path),
                 }
             )
@@ -568,11 +597,19 @@ def pr_risk(ctx, commit_range, staged, author):
                             "risk_score": risk,
                             "risk_level": level,
                             "changed_files": len(file_map),
+                            "change_shape": "reductive" if reductive_change else "mixed",
+                            "lines_added": total_added,
+                            "lines_removed": total_removed,
                         },
                         label=label,
                         risk_score=risk,
                         risk_level=level,
                         changed_files=len(file_map),
+                        change_shape="reductive" if reductive_change else "mixed",
+                        reductive_change=reductive_change,
+                        reductive_discount_applied=bool(reductive_discount),
+                        lines_added=total_added,
+                        lines_removed=total_removed,
                         blast_radius_pct=round(blast_pct, 1),
                         hotspot_score=round(hotspot_score, 2),
                         test_coverage_pct=round(test_coverage * 100, 1),
@@ -603,6 +640,10 @@ def pr_risk(ctx, commit_range, staged, author):
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"=== PR Risk ({label}) ===\n")
         click.echo(f"Risk Score: {risk}/100 ({level})")
+        if reductive_change:
+            click.echo(
+                f"Change shape: deletion-only source change (+{source_added}/-{source_removed}); reductive rubric applied"
+            )
         click.echo()
 
         click.echo("Breakdown:")
@@ -651,13 +692,14 @@ def pr_risk(ctx, commit_range, staged, author):
                     str(pf["symbols"]),
                     str(pf["blast"]),
                     str(pf["churn"]) if pf["churn"] else "",
+                    f"+{pf['lines_added']}/-{pf['lines_removed']}",
                     flag,
                 ]
             )
         click.echo("Changed files:")
         click.echo(
             format_table(
-                ["file", "syms", "blast", "churn", ""],
+                ["file", "syms", "blast", "churn", "+/-", ""],
                 rows,
             )
         )

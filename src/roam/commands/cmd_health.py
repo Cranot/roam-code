@@ -6,6 +6,7 @@ import math
 
 import click
 
+from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
@@ -124,6 +125,10 @@ _FRAMEWORK_NAMES = frozenset(
         "from",
         "into",
         "drop",
+        # i18n shorthand/common wrappers
+        "_t",
+        "$t",
+        "t",
     }
 )
 
@@ -209,6 +214,23 @@ def _unique_dirs(file_paths):
     return dirs
 
 
+def _severity_counts(items):
+    counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
+    for item in items:
+        sev = item.get("severity", "INFO")
+        if sev in counts:
+            counts[sev] += 1
+    return counts
+
+
+def _format_severity_counts(counts):
+    parts = []
+    for sev in ("CRITICAL", "WARNING", "INFO"):
+        if counts.get(sev, 0):
+            parts.append(f"{counts[sev]} {sev}")
+    return ", ".join(parts) if parts else "0 issues"
+
+
 def _parse_simple_yaml(text: str) -> dict:
     """Parse a flat YAML file with one top-level section (no PyYAML needed)."""
     result: dict[str, dict] = {}
@@ -280,9 +302,16 @@ def health(ctx, no_framework, gate):
         cycles = find_cycles(G)
         formatted_cycles = format_cycles(cycles, conn) if cycles else []
 
+        raw_by_formatted_cycle = list(zip(cycles, formatted_cycles))
+
         # --- Cycle break suggestions ---
         break_suggestions: list[dict] = []
-        for scc in cycles:
+        for scc, cyc_info in raw_by_formatted_cycle:
+            files = cyc_info.get("files", [])
+            is_local = len(set(files)) <= 1
+            has_test = any(is_test_file(f) for f in files)
+            if is_local or has_test:
+                continue
             if len(scc) < 3:
                 continue
             result = find_weakest_edge(G, scc)
@@ -366,18 +395,29 @@ def health(ctx, no_framework, gate):
         # ---- Classify issue severity (location-aware) ----
         sev_counts = {"CRITICAL": 0, "WARNING": 0, "INFO": 0}
 
-        # Cycle severity: directory-aware
+        # Cycle severity: directory-aware, but local/test-involved SCCs are
+        # informational and excluded from health scoring. They commonly come
+        # from Vue <script setup> local symbol references or test helpers with
+        # duplicate names; neither is an architectural cycle.
         for cyc in formatted_cycles:
             dirs = _unique_dirs(cyc["files"])
+            file_count = len(set(cyc["files"]))
+            has_test_file = any(is_test_file(f) for f in cyc["files"])
             cyc["directories"] = len(dirs)
-            if len(dirs) <= 1:
-                # All symbols in same directory — cohesive internal pattern
+            cyc["file_count"] = file_count
+            cyc["has_test_file"] = has_test_file
+            cyc["local_only"] = file_count <= 1
+            cyc["actionable"] = not cyc["local_only"] and not has_test_file
+            if not cyc["actionable"]:
                 cyc["severity"] = "INFO"
             elif len(cyc["files"]) > 3:
                 cyc["severity"] = "CRITICAL"
             else:
                 cyc["severity"] = "WARNING"
             sev_counts[cyc["severity"]] += 1
+
+        actionable_cycles = [c for c in formatted_cycles if c.get("actionable")]
+        ignored_cycles = [c for c in formatted_cycles if not c.get("actionable")]
 
         # God component severity: location-aware thresholds
         actionable_count = 0
@@ -449,8 +489,9 @@ def health(ctx, no_framework, gate):
         # --- Tangle ratio ---
         total_symbols = conn.execute("SELECT COUNT(*) FROM symbols").fetchone()[0] or 1
         cycle_symbol_ids = set()
-        for scc in cycles:
-            cycle_symbol_ids.update(scc)
+        for scc, cyc_info in raw_by_formatted_cycle:
+            if cyc_info.get("actionable"):
+                cycle_symbol_ids.update(scc)
         tangle_ratio = round(len(cycle_symbol_ids) / total_symbols * 100, 1)
 
         # --- Propagation Cost (MacCormack et al. 2006) ---
@@ -576,12 +617,12 @@ def health(ctx, no_framework, gate):
 
             cyc_max = gate_config.get("cycle_max")
             if cyc_max is not None:
-                passed = len(cycles) <= cyc_max
+                passed = len(actionable_cycles) <= cyc_max
                 gate_results.append(
                     {
                         "gate": "cycle_max",
                         "threshold": cyc_max,
-                        "actual": len(cycles),
+                        "actual": len(actionable_cycles),
                         "passed": passed,
                     }
                 )
@@ -690,13 +731,17 @@ def health(ctx, no_framework, gate):
             return
 
         if json_mode:
-            j_issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
+            cycle_severity = _severity_counts(actionable_cycles)
+            god_severity = _severity_counts(god_items)
+            bottleneck_severity = _severity_counts(bn_items)
+            layer_severity = _severity_counts(violations)
+            j_issue_count = len(actionable_cycles) + len(god_items) + len(bn_items) + len(violations)
             next_steps = suggest_next_steps(
                 "health",
                 {
                     "score": health_score,
                     "critical_issues": sev_counts["CRITICAL"],
-                    "cycles": len(cycles),
+                    "cycles": len(actionable_cycles),
                 },
             )
             envelope = json_envelope(
@@ -710,6 +755,14 @@ def health(ctx, no_framework, gate):
                     "algebraic_connectivity": fiedler,
                     "issue_count": j_issue_count,
                     "severity": sev_counts,
+                    "category_severity": {
+                        "cycles": cycle_severity,
+                        "god_components": god_severity,
+                        "bottlenecks": bottleneck_severity,
+                        "layer_violations": layer_severity,
+                    },
+                    "actionable_cycles": len(actionable_cycles),
+                    "ignored_cycles": len(ignored_cycles),
                     "imported_coverage_pct": coverage_import.get("coverage_pct"),
                     "imported_coverage_files": coverage_import.get("files_with_coverage", 0),
                 },
@@ -720,6 +773,15 @@ def health(ctx, no_framework, gate):
                 algebraic_connectivity=fiedler,
                 issue_count=j_issue_count,
                 severity=sev_counts,
+                category_severity={
+                    "cycles": cycle_severity,
+                    "god_components": god_severity,
+                    "bottlenecks": bottleneck_severity,
+                    "layer_violations": layer_severity,
+                },
+                actionable_cycles=len(actionable_cycles),
+                ignored_cycles=len(ignored_cycles),
+                total_cycles=len(formatted_cycles),
                 imported_coverage_pct=coverage_import.get("coverage_pct"),
                 imported_coverage_files=coverage_import.get("files_with_coverage", 0),
                 imported_covered_lines=coverage_import.get("covered_lines", 0),
@@ -780,10 +842,15 @@ def health(ctx, no_framework, gate):
         _stale = _stale_hint()
         if _stale:
             click.echo(f"NOTE: {_stale}\n")
-        issue_count = len(cycles) + len(god_items) + len(bn_items) + len(violations)
+        issue_count = len(actionable_cycles) + len(god_items) + len(bn_items) + len(violations)
         parts = []
-        if cycles:
-            parts.append(f"{len(cycles)} cycle{'s' if len(cycles) != 1 else ''}")
+        if formatted_cycles:
+            cycle_detail = f"{len(actionable_cycles)} actionable cycle{'s' if len(actionable_cycles) != 1 else ''}"
+            if ignored_cycles:
+                cycle_detail += (
+                    f", {len(ignored_cycles)} local/test cycle{'s' if len(ignored_cycles) != 1 else ''} ignored"
+                )
+            parts.append(cycle_detail)
         if god_items:
             god_detail = f"{len(god_items)} god component{'s' if len(god_items) != 1 else ''}"
             god_detail += f" ({actionable_count} actionable, {utility_count} expected utilities)"
@@ -808,6 +875,8 @@ def health(ctx, no_framework, gate):
         click.echo()
         if issue_count == 0:
             click.echo("Issues: None detected")
+            if ignored_cycles:
+                click.echo(f"  ({len(ignored_cycles)} informational local/test cycle(s) ignored for scoring)")
         else:
             sev_parts = []
             if sev_counts["CRITICAL"]:
@@ -821,6 +890,13 @@ def health(ctx, no_framework, gate):
             if filtered_count:
                 detail_str += f"; {filtered_count} framework symbols filtered"
             click.echo(f"  ({detail_str})")
+            click.echo(
+                "  Breakdown: "
+                f"cycles [{_format_severity_counts(_severity_counts(actionable_cycles))}], "
+                f"god [{_format_severity_counts(_severity_counts(god_items))}], "
+                f"bottlenecks [{_format_severity_counts(_severity_counts(bn_items))}], "
+                f"layers [{_format_severity_counts(_severity_counts(violations))}]"
+            )
         click.echo()
 
         # --- Summary mode (no --detail): only show top 3 issues ---
@@ -865,7 +941,7 @@ def health(ctx, no_framework, gate):
                 if len(names) > 10:
                     click.echo(f"    (+{len(names) - 10} more)")
                 click.echo(f"    files: {', '.join(cyc['files'][:5])}")
-            click.echo(f"  total: {len(cycles)} cycle(s)")
+            click.echo(f"  total: {len(actionable_cycles)} actionable cycle(s), {len(ignored_cycles)} informational")
             if break_suggestions:
                 click.echo()
                 click.echo("  Cycle break suggestions:")
@@ -939,7 +1015,7 @@ def health(ctx, no_framework, gate):
             {
                 "score": health_score,
                 "critical_issues": sev_counts["CRITICAL"],
-                "cycles": len(cycles),
+                "cycles": len(actionable_cycles),
             },
         )
         ns_text = format_next_steps_text(next_steps)

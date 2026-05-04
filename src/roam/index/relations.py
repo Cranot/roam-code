@@ -271,8 +271,12 @@ def _match_import_path(import_path: str, candidates: list[dict]) -> list[dict]:
     elif normalized.startswith("./"):
         normalized = normalized[2:]
     elif normalized.startswith("../"):
-        # Keep relative — will use endswith matching
-        pass
+        # Preserve suffix semantics for relative imports without requiring
+        # source-file context. "../src/utils/case" should match
+        # "src/utils/case.ts", and "../utils/case" should match any
+        # ".../utils/case.ts" candidate.
+        while normalized.startswith("../"):
+            normalized = normalized[3:]
 
     # Strip trailing extension from normalized path if present
     for ext in (".ts", ".js", ".vue", ".tsx", ".jsx", ".py", ".prg", ".scx"):

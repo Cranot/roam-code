@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 
 from .base import LanguageExtractor
 
@@ -26,6 +27,7 @@ class JavaScriptExtractor(LanguageExtractor):
     def extract_references(self, tree, source: bytes, file_path: str) -> list[dict]:
         refs = []
         self._walk_refs(tree.root_node, source, refs, scope_name=None)
+        refs.extend(self._extract_dynamic_import_refs(source))
         # Collect inheritance refs accumulated during extract_symbols
         refs.extend(getattr(self, "_pending_inherits", []))
         self._pending_inherits = []
@@ -668,6 +670,97 @@ class JavaScriptExtractor(LanguageExtractor):
                             if ns_child.type == "identifier":
                                 names.append(self.node_text(ns_child, source))
         return names
+
+    _IDENT_RE = r"[A-Za-z_$][A-Za-z0-9_$]*"
+    _DYN_IMPORT_THEN_MEMBER_RE = re.compile(
+        r"import\s*\(\s*(['\"])(?P<path>[^'\"]+)\1\s*\)"
+        r"\s*\.\s*then\s*\(\s*(?P<param>[A-Za-z_$][A-Za-z0-9_$]*)\s*=>"
+        r"\s*(?P=param)\.(?P<name>[A-Za-z_$][A-Za-z0-9_$]*)",
+        re.DOTALL,
+    )
+    _DYN_IMPORT_THEN_DESTRUCTURED_RE = re.compile(
+        r"import\s*\(\s*(['\"])(?P<path>[^'\"]+)\1\s*\)"
+        r"\s*\.\s*then\s*\(\s*\(\s*\{(?P<names>[^}]*)\}\s*\)\s*=>",
+        re.DOTALL,
+    )
+    _DYN_IMPORT_AWAIT_ASSIGN_RE = re.compile(
+        r"(?:const|let|var)\s+(?P<var>[A-Za-z_$][A-Za-z0-9_$]*)\s*="
+        r"\s*await\s+import\s*\(\s*(['\"])(?P<path>[^'\"]+)\2\s*\)"
+        r"(?P<body>[\s\S]{0,1200})",
+        re.DOTALL,
+    )
+    _DYN_IMPORT_AWAIT_DESTRUCTURED_RE = re.compile(
+        r"(?:const|let|var)\s*\{(?P<names>[^}]*)\}\s*="
+        r"\s*await\s+import\s*\(\s*(['\"])(?P<path>[^'\"]+)\2\s*\)",
+        re.DOTALL,
+    )
+
+    def _dynamic_import_line(self, text: str, pos: int) -> int:
+        return text.count("\n", 0, pos) + 1
+
+    def _destructured_export_names(self, text: str) -> list[str]:
+        names: list[str] = []
+        for raw in text.split(","):
+            part = raw.strip()
+            if not part or part.startswith("..."):
+                continue
+            part = part.split("=", 1)[0].strip()
+            if ":" in part:
+                part = part.split(":", 1)[0].strip()
+            if re.match(rf"^{self._IDENT_RE}$", part):
+                names.append(part)
+        return names
+
+    def _make_dynamic_import_ref(self, name: str, path: str, line: int) -> dict:
+        return self._make_reference(
+            target_name=name,
+            kind="import",
+            line=line,
+            source_name=None,
+            import_path=path,
+        )
+
+    def _extract_dynamic_import_refs(self, source: bytes) -> list[dict]:
+        """Extract named consumers from dynamic ``import(...)`` forms.
+
+        Static ESM imports already carry an import_path that disambiguates
+        same-named exports. Dynamic imports need the same treatment or dead
+        code analysis can miss production-only button/action consumers.
+        """
+        text = source.decode("utf-8", errors="replace")
+        refs: list[dict] = []
+        seen: set[tuple[str, str, int]] = set()
+
+        def add(name: str, path: str, line: int) -> None:
+            key = (name, path, line)
+            if key in seen:
+                return
+            seen.add(key)
+            refs.append(self._make_dynamic_import_ref(name, path, line))
+
+        for match in self._DYN_IMPORT_THEN_MEMBER_RE.finditer(text):
+            add(match.group("name"), match.group("path"), self._dynamic_import_line(text, match.start()))
+
+        for match in self._DYN_IMPORT_THEN_DESTRUCTURED_RE.finditer(text):
+            line = self._dynamic_import_line(text, match.start())
+            for name in self._destructured_export_names(match.group("names")):
+                add(name, match.group("path"), line)
+
+        member_access_re = re.compile(rf"\b(?P<var>{self._IDENT_RE})\.(?P<name>{self._IDENT_RE})")
+        for match in self._DYN_IMPORT_AWAIT_ASSIGN_RE.finditer(text):
+            var_name = match.group("var")
+            path = match.group("path")
+            line = self._dynamic_import_line(text, match.start())
+            for access in member_access_re.finditer(match.group("body")):
+                if access.group("var") == var_name:
+                    add(access.group("name"), path, line)
+
+        for match in self._DYN_IMPORT_AWAIT_DESTRUCTURED_RE.finditer(text):
+            line = self._dynamic_import_line(text, match.start())
+            for name in self._destructured_export_names(match.group("names")):
+                add(name, match.group("path"), line)
+
+        return refs
 
     def _extract_esm_import(self, node, source, refs, scope_name):
         """Extract ESM import statements."""

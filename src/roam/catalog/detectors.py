@@ -1155,6 +1155,35 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         "requests",
         "urllib",
     }
+    _IN_MEMORY_EXACT = {
+        "queryclient.setquerydata",
+        "queryclient.getquerydata",
+        "queryclient.getqueriesdata",
+        "queryclient.setqueriesdata",
+        "qc.setquerydata",
+        "qc.getquerydata",
+        "qc.getqueriesdata",
+        "qc.setqueriesdata",
+        "redux.dispatch",
+        "store.dispatch",
+    }
+    _IN_MEMORY_LEAVES = {
+        "setquerydata",
+        "getquerydata",
+        "setqueriesdata",
+        "getqueriesdata",
+        "dispatch",
+        "setstate",
+    }
+    _IN_MEMORY_RECEIVER_HINTS = {
+        "queryclient",
+        "qc",
+        "store",
+        "redux",
+        "cache",
+        "state",
+        "router",
+    }
 
     # Suppress functions that are intentionally batch/migration wrappers.
     _IO_WRAPPER_NAMES = {
@@ -1178,6 +1207,16 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         if not recv:
             return False
         return any(h in recv for h in _IO_RECEIVER_HINTS)
+
+    def _is_known_in_memory_call(call: str) -> bool:
+        lower_c = call.lower()
+        leaf = _call_leaf(lower_c)
+        recv = _receiver_hint(lower_c)
+        if lower_c in _IN_MEMORY_EXACT:
+            return True
+        if leaf in _IN_MEMORY_LEAVES and any(h in recv for h in _IN_MEMORY_RECEIVER_HINTS):
+            return True
+        return False
 
     def _match_framework_pack(call: str, language: str | None) -> dict | None:
         leaf = _call_leaf(call).lower()
@@ -1217,6 +1256,8 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         frameworks: set[str] = set()
         fixes: set[str] = set()
         for c in calls:
+            if _is_known_in_memory_call(c):
+                continue
             pack = _match_framework_pack(c, language)
             if pack:
                 frameworks.add(pack["framework"])
@@ -1560,7 +1601,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     try:
         rows = conn.execute(
             "SELECT s.id, s.name, s.qualified_name, s.kind, f.path as file_path, "
-            "s.line_start, ms.self_call_count "
+            "f.language as language, s.line_start, s.line_end, ms.self_call_count "
             "FROM symbols s "
             "JOIN files f ON s.file_id = f.id "
             "JOIN math_signals ms ON ms.symbol_id = s.id "
@@ -1571,6 +1612,34 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
         return []
 
     results = []
+
+    def _has_explicit_depth_guard(language: str | None, snippet: str) -> bool:
+        """Return True for bounded-recursion guards that cap traversal depth."""
+        if not snippet:
+            return False
+        # JS/TS: path.split('.').length < 5
+        if re.search(r"\.split\s*\([^)]*\)\s*\.\s*length\s*(?:<|<=)\s*\d+", snippet):
+            return True
+        # Python: len(path.split(".")) < 5
+        if re.search(r"len\s*\(\s*[^)]*\.split\s*\([^)]*\)\s*\)\s*(?:<|<=)\s*\d+", snippet):
+            return True
+        # Common explicit counters: depth < maxDepth, level <= 4, etc.
+        if re.search(
+            r"\b(?:depth|level|currentDepth|current_depth)\b\s*(?:<|<=)\s*(?:\d+|maxDepth|max_depth)",
+            snippet,
+        ):
+            return True
+        if (
+            language
+            and language.lower() in {"javascript", "typescript"}
+            and re.search(
+                r"\b(?:maxDepth|max_depth)\b\s*(?:>|>=)\s*\b(?:depth|level|currentDepth|current_depth)\b",
+                snippet,
+            )
+        ):
+            return True
+        return False
+
     for r in rows:
         if _is_test_path(r["file_path"]):
             continue
@@ -1605,6 +1674,13 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
             (r["id"],),
         ).fetchone()
         if memo_edge:
+            continue
+        snippet = _read_symbol_source(
+            r["file_path"],
+            _row_value(r, "line_start", None),
+            _row_value(r, "line_end", None),
+        )
+        if _has_explicit_depth_guard(_row_value(r, "language", ""), snippet):
             continue
         results.append(
             _finding(
