@@ -7,6 +7,100 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12] - 2026-05-04
+
+A focused close-out of the v12.3 dogfood report's five remaining open
+items. No new commands; this release tightens precision in the
+`retrieve` expansion path, restores signal in `diagnose`'s churn
+column, makes `critique`'s bench-hint discoverable from JSON / MCP
+clients, ships the missing taint pack, and centralises the
+low-confidence verdict pattern so it grows uniformly across commands.
+
+### Bug fixes — close v12.3 dogfood backlog
+
+- **`roam retrieve` hub-neighbour leak (#8)** — the v12.3 fix gated
+  hub *seeds* but expansion still leaked when a non-hub seed
+  legitimately imported a utility hub (e.g. `cmd_critique.py` →
+  `output/formatter.py`). v12.12 applies the hub-degree filter
+  symmetrically to neighbours, so utility imports are dropped from
+  the expanded candidate set without disturbing legitimate
+  cross-module expansion.
+- **`roam diagnose` Commits column always 0 (#11)** — the column
+  reads `file_stats.commit_count`, which is populated by
+  `compute_file_stats` during a full re-index but lags behind
+  incremental runs. v12.12 falls back to a direct count over
+  `git_file_changes` whenever the cached stat is 0, so freshly-
+  modified files report real churn again and the risk-score's
+  churn dimension stops silently zeroing out.
+- **`roam taint --rules-pack deserialization` filtered to zero rules
+  (#18)** — the pack was advertised in the `Choice` list but no
+  rule_id contained "deserialization". v12.12 ships
+  `python_deserialization.yaml` covering pickle / yaml.load / marshal
+  / shelve / dill sources → safe-loaders sanitisers. A new test
+  asserts every advertised pack matches at least one rule.
+- **`roam critique` bench hint missing from JSON envelope (#15)** —
+  `_bench_relevance_hint` shipped in v12.10 but text-only. MCP
+  clients couldn't see it. v12.12 emits `bench_hint` in both the
+  top-level envelope and `summary` so agents can branch on it.
+
+### New surfaces
+
+- **`.roam-critique.yml`** — project-local override for the
+  `_bench_relevance_hint` rule list. Format::
+
+      bench_hints:
+        - paths: ["src/foo/", "src/bar/"]
+          hint: "pytest tests/test_foo.py"
+
+  Overrides are searched before the built-in rules so projects can
+  shadow defaults. Closes the second half of dogfood #15
+  ("generalises to other projects via a `.roam-critique.yml`").
+- **`roam.output.confidence`** — shared low-confidence verdict
+  helper (`verdict_prefix`, `format_no_match`, `is_low_confidence`).
+  Lifts the pattern from `cmd_ask` so `roam retrieve` and future
+  ranked-output commands surface one consistent shape. `cmd_retrieve`
+  now uses it; the JSON summary additionally exposes
+  `low_confidence: bool` so MCP clients don't have to parse the
+  verdict string. Closes dogfood #7's follow-up
+  ("lift this pattern into a shared helper").
+
+### Tests
+
+- `test_retrieve.py::TestHubNeighbourFilter` — two tests
+  (hub-neighbour rejection, low-degree neighbour preserved).
+- `test_retrieve.py::TestSharedConfidenceHelper` — pure helpers +
+  JSON `low_confidence` field exposure.
+- `test_critique.py::TestBenchHint` — six tests covering default
+  rules, override loading, override-takes-precedence, missing
+  YAML, and JSON-envelope inclusion.
+- `test_taint.py::TestTaintCLI::test_every_advertised_pack_has_at_least_one_rule`
+  + `test_deserialization_pack_loads` + `test_rules_pack_choice_advertised_in_help`.
+- `test_commands_workflow.py::TestDiagnose::test_commits_falls_back_to_git_file_changes`.
+
+### Pre-existing failures cleared during the close-out
+
+The dogfood-cleanup test sweep surfaced four unrelated failures
+that had been silently red on `main`. Each turned out to be a
+small, localized issue rather than a deep regression, so they're
+fixed alongside the v12.12 close-out:
+
+- **`roam map --budget N`** ignored the value because the global
+  parser moved `--budget` to the group context, leaving the
+  command-local parameter `None`. `cmd_map` now consults the
+  global value as a fallback. (`test_v6_features.py::TestV6MapBudget`.)
+- **`roam fingerprint --compact`** had the same parser-collision
+  shape; `cmd_fingerprint` now reads `ctx.obj["compact"]` when its
+  own option is `False`. (`test_fingerprint.py::TestCLIFingerprint::test_cli_fingerprint_compact`.)
+- **Kotlin inheritance fixture** declared `LoggingPrinter.log` as
+  `function` with `scope: LoggingPrinter` — internally inconsistent.
+  Methods inside class bodies are `kind: method`. Fixed the fixture.
+  (`test_language_corpus.py::TestKotlinCorpus::test_inheritance`.)
+- **Version-format consistency** — the cross-file regex required
+  three segments and was failing on `12.11` (the prior release
+  switched to two-segment versions). Relaxed the check to accept
+  both shapes; consistency across `pyproject.toml` / `server.json` /
+  `mcp-server-card.json` is now restored.
+
 ## [12.11] - 2026-05-04
 
 A precision and agent-UX release built on six rounds of dogfood
