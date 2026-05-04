@@ -221,8 +221,29 @@ def impact(ctx, name):
                 click.echo(f"(+{len(dependents) - len(direct_callers)} transitive dependents)")
 
         if affected_files:
-            click.echo(f"\nAffected files ({len(affected_files)}):")
-            for fp in sorted(affected_files)[:20]:
+            # 12.13 — rank files by max-dependent PageRank instead of
+            # alphabetically. The user reading "Affected files" wants
+            # to know which files matter most — alphabetical order
+            # surfaced ``benchmarks/`` and ``bench-repos/`` ahead of
+            # the actually-important ``src/roam/cli.py`` for queries
+            # against this repo. PageRank-ranked top-20 puts the
+            # impactful files first; the rest are cut by the +N more
+            # tail.
+            try:
+                from roam.graph.pagerank import global_pagerank
+
+                _global_pr = global_pagerank(G)
+            except Exception:
+                _global_pr = {}
+            _file_pr: dict[str, float] = {}
+            for dep_id in dependents:
+                fp = G.nodes.get(dep_id, {}).get("file_path", "?")
+                pr_val = _global_pr.get(dep_id, 0.0)
+                if pr_val > _file_pr.get(fp, 0.0):
+                    _file_pr[fp] = pr_val
+            ranked_files = sorted(affected_files, key=lambda fp: -_file_pr.get(fp, 0.0))
+            click.echo(f"\nAffected files ({len(affected_files)} — ranked by impact):")
+            for fp in ranked_files[:20]:
                 click.echo(f"  {fp}")
             if len(affected_files) > 20:
                 click.echo(f"  (+{len(affected_files) - 20} more)")

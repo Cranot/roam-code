@@ -49,6 +49,7 @@ def _top_symbols(conn, G, limit=10):
     rows = conn.execute(
         """SELECT gm.symbol_id, gm.pagerank, gm.in_degree, gm.out_degree,
                   s.name, s.qualified_name, s.kind, f.path, s.line_start,
+                  s.docstring,
                   COALESCE(f.file_role, 'source') AS file_role
            FROM graph_metrics gm
            JOIN symbols s ON gm.symbol_id = s.id
@@ -112,6 +113,15 @@ def _top_symbols(conn, G, limit=10):
             role = "Leaf"
         else:
             role = "Internal"
+        # 12.13 — surface a docstring excerpt for newcomers. Pure
+        # PageRank ranks plumbing functions (open_db, json_envelope)
+        # at the top because every command imports them. The
+        # docstring excerpt keeps that ranking but tells the reader
+        # *what* each top symbol does, so utility-heavy lists still
+        # carry orientation signal.
+        doc = r["docstring"] or ""
+        first_sentence = doc.split("\n\n", 1)[0].strip()
+        first_line = " ".join(first_sentence.split())[:60]
         results.append(
             {
                 "name": r["qualified_name"] or r["name"],
@@ -121,6 +131,7 @@ def _top_symbols(conn, G, limit=10):
                 "fan_out": out_d,
                 "pagerank": round(r["pagerank"] or 0, 4),
                 "location": loc(r["path"], r["line_start"]),
+                "summary": first_line,
             }
         )
     return results
@@ -448,12 +459,20 @@ def tour(ctx, write_file, mermaid_mode):
             lines.append(f"**Avg file health:** {stats['avg_file_health']}/10")
         lines.append("")
 
-        # Top symbols
+        # Top symbols. 12.13 — append a one-line docstring summary
+        # for each. Pure-PageRank ranking surfaces plumbing functions
+        # (open_db, json_envelope) at the top; the summary tells the
+        # newcomer what each does so the list still carries
+        # orientation signal even when it's utility-heavy.
         lines.append("## Key Symbols (learn these first)\n")
-        lines.append(f"{'Symbol':<40} {'Kind':<6} {'Role':<14} {'Fan-in':<8} {'Location'}")
-        lines.append(f"{'-' * 40} {'-' * 6} {'-' * 14} {'-' * 8} {'-' * 30}")
         for s in top:
-            lines.append(f"{s['name']:<40} {s['kind']:<6} {s['role']:<14} {s['fan_in']:<8} {s['location']}")
+            head = f"  {s['kind']}  {s['name']:<32}  {s['location']}"
+            summary = s.get("summary") or ""
+            if summary:
+                lines.append(head)
+                lines.append(f"      {summary}")
+            else:
+                lines.append(head)
         lines.append("")
 
         # Reading order
