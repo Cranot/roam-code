@@ -6,6 +6,7 @@ from collections import defaultdict
 
 import click
 
+from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import json_envelope, loc, to_json
@@ -15,68 +16,116 @@ from roam.output.formatter import json_envelope, loc, to_json
 # ---------------------------------------------------------------------------
 
 
-def _build_symbol_cochange(conn):
+# Defaults tuned for the round-3 dogfood report which produced 2.26M pairs
+# on the redacted project — every commit that touched two large Vue SFCs
+# created `len(syms_i) * len(syms_j)` pairs, dominated by the long tail of
+# auto-generated props/types. The new caps keep the signal intact while
+# trimming the noise floor by ~3 orders of magnitude.
+_DEFAULT_MAX_FILES_PER_COMMIT = 5  # was 30 — coordinated edits >5 files are usually merges/reformats
+_DEFAULT_MAX_SYMBOLS_PER_FILE = 25  # PageRank-ranked top-N within a file
+
+
+def _build_symbol_cochange(
+    conn,
+    *,
+    exclude_tests: bool = True,
+    max_files_per_commit: int = _DEFAULT_MAX_FILES_PER_COMMIT,
+    max_symbols_per_file: int = _DEFAULT_MAX_SYMBOLS_PER_FILE,
+    since_commit_id: int | None = None,
+) -> tuple[dict, dict]:
     """Build a cross-file symbol co-change matrix from git history.
 
-    For each commit, find which files changed.  Every symbol in a changed
-    file is considered "changed" for that commit.  For every pair of symbols
-    that belong to *different* files and co-changed in the same commit,
-    increment the pair counter.
+    Returns ``(pair_counts, suppressions)`` where ``suppressions`` records
+    how many entries we filtered (so consumers can surface honest numbers
+    via the ``suppressions`` envelope field).
 
-    Returns dict[(sym_id_lo, sym_id_hi)] -> count
+    The algorithm caps symbols per file per commit by PageRank (which
+    approximates "the actually-architectural symbols") rather than
+    counting every prop/method ever defined in the file. This drops the
+    dominant noise source — a single coordinated edit between two
+    6000-line SFCs no longer produces ~14k spurious pairs.
     """
-    # Step 1: gather commit -> list of changed file_ids
-    rows = conn.execute("""
-        SELECT commit_id, file_id
-        FROM git_file_changes
-        WHERE file_id IS NOT NULL
-        ORDER BY commit_id
-    """).fetchall()
+    suppressions = {
+        "test_files": 0,
+        "mega_commits": 0,
+        "capped_symbols": 0,
+        "since_filtered": 0,
+    }
 
-    commit_files = defaultdict(set)
+    # Step 1: gather commit -> list of changed file_ids, optionally filtered
+    # to a recency window (round 4 / feature C).
+    if since_commit_id is not None:
+        rows = conn.execute(
+            "SELECT commit_id, file_id FROM git_file_changes "
+            "WHERE file_id IS NOT NULL AND commit_id >= ? ORDER BY commit_id",
+            (since_commit_id,),
+        ).fetchall()
+    else:
+        rows = conn.execute(
+            "SELECT commit_id, file_id FROM git_file_changes WHERE file_id IS NOT NULL ORDER BY commit_id"
+        ).fetchall()
+
+    commit_files: dict[int, set[int]] = defaultdict(set)
     for r in rows:
         commit_files[r["commit_id"]].add(r["file_id"])
 
-    # Step 2: pre-load symbol -> file mapping (only symbols with line info)
-    sym_rows = conn.execute("""
-        SELECT id, file_id FROM symbols
-        WHERE line_start IS NOT NULL
-    """).fetchall()
+    # Step 2: pre-load symbol -> file mapping with PageRank for ranking,
+    # plus the file path so we can drop tests up front.
+    sym_rows = conn.execute(
+        "SELECT s.id, s.file_id, COALESCE(gm.pagerank, 0) AS pr, f.path "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "LEFT JOIN graph_metrics gm ON gm.symbol_id = s.id "
+        "WHERE s.line_start IS NOT NULL"
+    ).fetchall()
 
-    file_to_syms = defaultdict(list)
-    sym_file = {}
+    file_to_syms: dict[int, list[tuple[int, float]]] = defaultdict(list)
+    test_file_ids: set[int] = set()
     for s in sym_rows:
-        file_to_syms[s["file_id"]].append(s["id"])
-        sym_file[s["id"]] = s["file_id"]
+        if exclude_tests and is_test_file(s["path"] or ""):
+            test_file_ids.add(s["file_id"])
+            continue
+        file_to_syms[s["file_id"]].append((s["id"], s["pr"] or 0))
 
-    # Step 3: for each commit, compute cross-file symbol pairs
-    pair_count = defaultdict(int)
+    if exclude_tests:
+        suppressions["test_files"] = len(test_file_ids)
+
+    # Step 3: rank symbols per file by PageRank descending and trim. This
+    # gives every commit the "architecturally important" symbols only.
+    file_top_syms: dict[int, list[int]] = {}
+    for fid, syms in file_to_syms.items():
+        if len(syms) > max_symbols_per_file:
+            suppressions["capped_symbols"] += len(syms) - max_symbols_per_file
+            ranked = sorted(syms, key=lambda x: -x[1])[:max_symbols_per_file]
+            file_top_syms[fid] = [s[0] for s in ranked]
+        else:
+            file_top_syms[fid] = [s[0] for s in syms]
+
+    # Step 4: for each commit, compute cross-file symbol pairs
+    pair_count: dict[tuple[int, int], int] = defaultdict(int)
 
     for _cid, fids in commit_files.items():
-        # Skip mega-commits (likely merges / reformats)
-        if len(fids) > 30:
+        if len(fids) > max_files_per_commit:
+            suppressions["mega_commits"] += 1
             continue
 
-        # Collect all symbols that changed, grouped by file
-        per_file_syms = []
+        per_file_syms: list[tuple[int, list[int]]] = []
         for fid in fids:
-            syms = file_to_syms.get(fid)
+            syms = file_top_syms.get(fid)
             if syms:
                 per_file_syms.append((fid, syms))
 
-        # Cross-file pairs only
         n = len(per_file_syms)
         for i in range(n):
-            fid_i, syms_i = per_file_syms[i]
+            _fid_i, syms_i = per_file_syms[i]
             for j in range(i + 1, n):
-                fid_j, syms_j = per_file_syms[j]
-                # fid_i != fid_j guaranteed since they come from different entries
+                _fid_j, syms_j = per_file_syms[j]
                 for si in syms_i:
                     for sj in syms_j:
                         key = (min(si, sj), max(si, sj))
                         pair_count[key] += 1
 
-    return pair_count
+    return pair_count, suppressions
 
 
 def _get_direct_edge_set(conn):
@@ -134,8 +183,57 @@ def _load_symbol_info(conn, sym_ids):
     default=False,
     help="Also show pairs that have a direct edge",
 )
+@click.option(
+    "--include-tests",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include test files in the co-change matrix. Off by default — "
+        "test fixtures co-change with src files by design redacted, M); "
+        "including them inflates pair counts by orders of magnitude."
+    ),
+)
+@click.option(
+    "--max-files-per-commit",
+    type=int,
+    default=_DEFAULT_MAX_FILES_PER_COMMIT,
+    show_default=True,
+    help=(
+        "Skip commits that touch more than N files (treated as merges/reformats). "
+        "Lower = fewer false-coupled pairs from mega commits."
+    ),
+)
+@click.option(
+    "--max-symbols-per-file",
+    type=int,
+    default=_DEFAULT_MAX_SYMBOLS_PER_FILE,
+    show_default=True,
+    help=(
+        "Per commit, only the top-N PageRank symbols of each changed file "
+        "contribute pairs. Caps the N×M explosion when two large SFCs co-change."
+    ),
+)
+@click.option(
+    "--since",
+    "since_ref",
+    default=None,
+    help=(
+        "Only consider commits since this ref (sha or tag). Round 4 / "
+        "feature C: 'what new hidden coupling did the last 10 commits "
+        "introduce?' is more actionable than the full-history default."
+    ),
+)
 @click.pass_context
-def fn_coupling(ctx, min_count, limit, include_connected):
+def fn_coupling(
+    ctx,
+    min_count,
+    limit,
+    include_connected,
+    include_tests,
+    max_files_per_commit,
+    max_symbols_per_file,
+    since_ref,
+):
     """Show function-level temporal coupling (hidden dependencies).
 
     Finds pairs of symbols in different files that frequently change
@@ -151,8 +249,26 @@ def fn_coupling(ctx, min_count, limit, include_connected):
     ensure_index()
 
     with open_db(readonly=True) as conn:
+        # Resolve --since into a commit_id boundary if provided. Anything
+        # we can't resolve is silently ignored — co-change is descriptive,
+        # not gating, so a bad ref shouldn't fail the command.
+        since_commit_id: int | None = None
+        if since_ref:
+            row = conn.execute(
+                "SELECT id FROM git_commits WHERE hash = ? OR hash LIKE ? ORDER BY id DESC LIMIT 1",
+                (since_ref, f"{since_ref}%"),
+            ).fetchone()
+            if row:
+                since_commit_id = int(row["id"])
+
         # Build the co-change matrix
-        pair_counts = _build_symbol_cochange(conn)
+        pair_counts, suppressions = _build_symbol_cochange(
+            conn,
+            exclude_tests=not include_tests,
+            max_files_per_commit=max_files_per_commit,
+            max_symbols_per_file=max_symbols_per_file,
+            since_commit_id=since_commit_id,
+        )
 
         if not pair_counts:
             if json_mode:
@@ -236,9 +352,44 @@ def fn_coupling(ctx, min_count, limit, include_connected):
             all_ids.add(sb)
         sym_info = _load_symbol_info(conn, all_ids)
 
+        # Round 3 #1: collapse pairs that share both leaf names+kinds within
+        # the same file pair. The graph indexer stores `id` properties at
+        # multiple line offsets (AppItem.id, NavItem.id, ...) which gave the
+        # same pair four duplicate rows. Aggregating by name+kind+file gives
+        # one canonical row with a summed count and a list of contributing
+        # symbol ids — agents see "themeStore <-> id" once, not four times.
+        def _pair_key(sa, sb):
+            ia = sym_info.get(sa, {})
+            ib = sym_info.get(sb, {})
+            return (
+                (ia.get("name", ""), ia.get("kind", ""), ia.get("file_path", "")),
+                (ib.get("name", ""), ib.get("kind", ""), ib.get("file_path", "")),
+            )
+
+        merged: dict[tuple, dict] = {}
+        for sa, sb, count, has_edge in results:
+            key = _pair_key(sa, sb)
+            entry = merged.get(key)
+            if entry is None:
+                merged[key] = {
+                    "sa": sa,
+                    "sb": sb,
+                    "count": count,
+                    "has_edge": has_edge,
+                    "duplicates": 1,
+                }
+            else:
+                entry["count"] += count
+                entry["duplicates"] += 1
+                if has_edge:
+                    entry["has_edge"] = True
+        results = [(e["sa"], e["sb"], e["count"], e["has_edge"], e["duplicates"]) for e in merged.values()]
+        results.sort(key=lambda x: -x[2])
+        results = results[:limit]
+
         # --- Build verdict ---
         if results:
-            sa0, sb0, cnt0, _e0 = results[0]
+            sa0, sb0, cnt0, _e0, _dup0 = results[0]
             ia0 = sym_info.get(sa0, {})
             ib0 = sym_info.get(sb0, {})
             name_a0 = ia0.get("name", f"sym_{sa0}")
@@ -250,7 +401,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
         # --- JSON output ---
         if json_mode:
             pairs = []
-            for sa, sb, count, has_edge in results:
+            for sa, sb, count, has_edge, duplicates in results:
                 ia = sym_info.get(sa, {})
                 ib = sym_info.get(sb, {})
                 pairs.append(
@@ -264,6 +415,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
                         "kind_a": ia.get("kind", ""),
                         "kind_b": ib.get("kind", ""),
                         "cochange_count": count,
+                        "duplicates_collapsed": duplicates,
                         "has_direct_edge": has_edge,
                     }
                 )
@@ -281,6 +433,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
                             "min_count": min_count,
                         },
                         pairs=pairs,
+                        suppressions=suppressions,
                     )
                 )
             )
@@ -290,7 +443,7 @@ def fn_coupling(ctx, min_count, limit, include_connected):
         click.echo(f"VERDICT: {verdict}\n")
         click.echo("Function-level temporal coupling (hidden dependencies):\n")
 
-        for sa, sb, count, has_edge in results:
+        for sa, sb, count, has_edge, _duplicates in results:
             ia = sym_info.get(sa, {})
             ib = sym_info.get(sb, {})
             name_a = ia.get("name", f"sym_{sa}")
@@ -310,3 +463,6 @@ def fn_coupling(ctx, min_count, limit, include_connected):
         click.echo(
             f"Showing {shown} pairs | {total_hidden} hidden, {total_connected} connected (min co-changes: {min_count})"
         )
+        suppressed_parts = [f"{v} {k}" for k, v in suppressions.items() if v]
+        if suppressed_parts:
+            click.echo(f"Suppressed: {', '.join(suppressed_parts)} (use --include-tests / raise caps to inspect)")

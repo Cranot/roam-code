@@ -8,6 +8,7 @@ import re
 
 import click
 
+from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index
 from roam.db.connection import batched_in, open_db
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
@@ -275,8 +276,18 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
     help='Comma-separated high-weight domain keywords (e.g. "payment,tax,ledger")',
 )
 @click.option("--explain", is_flag=True, help="Show full callee-chain reasoning per symbol")
+@click.option(
+    "--include-tests",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include test files in the ranking. Off by default — test fixtures "
+        "co-change with their src files by design and dominate the headline "
+        "redacted, M). The 'risk' framing is for production code."
+    ),
+)
 @click.pass_context
-def risk(ctx, count, domain_keywords, explain):
+def risk(ctx, count, domain_keywords, explain, include_tests):
     """Show domain-weighted risk ranking of symbols.
 
     Combines static risk (fan-in + fan-out + betweenness) with domain
@@ -323,6 +334,16 @@ def risk(ctx, count, domain_keywords, explain):
             WHERE s.kind IN ('function', 'class', 'method', 'interface', 'struct')
             AND (gm.in_degree + gm.out_degree) > 0
         """).fetchall()
+
+        suppressions = {"test_files": 0}
+        if not include_tests:
+            kept = []
+            for r in rows:
+                if is_test_file(r["file_path"] or ""):
+                    suppressions["test_files"] += 1
+                    continue
+                kept.append(r)
+            rows = kept
 
         if not rows:
             if json_mode:
@@ -477,6 +498,7 @@ def risk(ctx, count, domain_keywords, explain):
                         "risk",
                         summary={"verdict": _risk_verdict, "count": len(items), "explain": explain},
                         items=items,
+                        suppressions=suppressions,
                     )
                 )
             )
@@ -551,3 +573,8 @@ def risk(ctx, count, domain_keywords, explain):
                     table_rows,
                 )
             )
+            if suppressions["test_files"]:
+                click.echo()
+                click.echo(
+                    f"Suppressed {suppressions['test_files']} test-file symbols (use --include-tests to inspect)"
+                )

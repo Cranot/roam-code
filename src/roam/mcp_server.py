@@ -231,10 +231,15 @@ if FastMCP is not None:
         "roam-code",
         instructions=(
             "Codebase intelligence for AI coding agents. "
-            "Pre-indexes symbols, call graphs, dependencies, architecture, "
-            "and git history into a local SQLite DB. "
-            "One tool call replaces 5-10 Glob/Grep/Read calls. "
-            "Most tools are read-only; side-effect tools are explicitly marked."
+            "TIP: call `roam_expand_toolset` first to scope tools to your task "
+            "(core / review / refactor / debug / architecture / compliance / full) — "
+            "the default surface is intentionally narrow to keep the prompt tight. "
+            "For multi-symbol verification use `roam_batch_get` instead of N "
+            "sequential `roam_uses` / `roam_search` calls. "
+            "Pre-indexes symbols, call graphs, dependencies, architecture, and "
+            "git history into a local SQLite DB. One tool call replaces 5-10 "
+            "Glob/Grep/Read calls. Most tools are read-only; side-effect tools "
+            "are explicitly marked."
         ),
     )
 else:
@@ -4753,17 +4758,34 @@ def roam_deps(path: str, full: bool = False, root: str = ".") -> dict:
 
 @_tool(
     name="roam_uses",
-    description="All consumers of a symbol: callers, importers, inheritors by edge type.",
+    description=(
+        "All consumers of a symbol: callers, importers, inheritors by edge type. "
+        "For 3+ symbols call `roam_batch_get` (one round-trip) instead."
+    ),
 )
 def roam_uses(name: str, full: bool = False, root: str = ".") -> dict:
     """All consumers of a symbol: callers, importers, inheritors.
 
     Grouped by edge type (calls, imports, inheritance, trait usage).
-    Broader than impact. Use for planning API changes."""
+    Broader than impact. Use for planning API changes.
+
+    For verifying multiple symbols (a typical "is X really dead?"
+    sweep), call ``roam_batch_get`` instead — one round-trip resolves
+    up to 50 symbols with full caller/callee metadata."""
     args = ["uses", name]
     if full:
         args.append("--full")
-    return _run_roam(args, root)
+    result = _run_roam(args, root)
+    # Enrich the envelope with a discoverability hint so agents that
+    # repeatedly call roam_uses learn about the cheaper batch path.
+    if isinstance(result, dict):
+        summary = result.setdefault("summary", {}) if "summary" in result or True else {}
+        if isinstance(summary, dict):
+            summary.setdefault(
+                "hint",
+                "verifying multiple symbols? call roam_batch_get(names=[...]) for one round-trip",
+            )
+    return result
 
 
 # ===================================================================

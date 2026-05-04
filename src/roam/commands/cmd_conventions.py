@@ -104,6 +104,83 @@ def classify_case(name: str) -> str | None:
     return None
 
 
+# Per-language convention bias — each language has community defaults that
+# the detector should respect rather than imposing the codebase-wide
+# dominant style. Round 3 #2 noted SQL identifiers (snake_case) being
+# flagged as outliers because the surrounding TypeScript codebase had
+# camelCase as its dominant style.
+_LANGUAGE_FAMILIES = {
+    "python": "python",
+    "ruby": "ruby",
+    "rust": "rust",
+    "go": "go",
+    "javascript": "js",
+    "typescript": "js",
+    "tsx": "js",
+    "jsx": "js",
+    "vue": "js",
+    "svelte": "js",
+    "java": "jvm",
+    "kotlin": "jvm",
+    "scala": "jvm",
+    "csharp": "dotnet",
+    "fsharp": "dotnet",
+    "vbnet": "dotnet",
+    "sql": "sql",
+    "ddl": "sql",
+    "postgresql": "sql",
+    "mysql": "sql",
+    "plsql": "sql",
+}
+
+# Expected dominant style per (language_family, kind_group). The detector
+# uses this to flag outliers against the LANGUAGE convention — not the
+# codebase-wide one — so SQL tables in a TS-dominant project don't trip
+# the camelCase expectation.
+_LANGUAGE_KIND_DEFAULTS: dict[tuple[str, str], str] = {
+    ("python", "functions"): "snake_case",
+    ("python", "classes"): "PascalCase",
+    ("python", "constants"): "UPPER_SNAKE",
+    ("python", "variables"): "snake_case",
+    ("python", "properties"): "snake_case",
+    ("ruby", "functions"): "snake_case",
+    ("ruby", "classes"): "PascalCase",
+    ("ruby", "constants"): "UPPER_SNAKE",
+    ("rust", "functions"): "snake_case",
+    ("rust", "classes"): "PascalCase",
+    ("rust", "constants"): "UPPER_SNAKE",
+    ("go", "functions"): "camelCase",  # exported PascalCase, but most are camel
+    ("go", "classes"): "PascalCase",
+    ("js", "functions"): "camelCase",
+    ("js", "classes"): "PascalCase",
+    ("js", "constants"): "UPPER_SNAKE",
+    ("js", "variables"): "camelCase",
+    ("js", "properties"): "camelCase",
+    ("jvm", "functions"): "camelCase",
+    ("jvm", "classes"): "PascalCase",
+    ("jvm", "constants"): "UPPER_SNAKE",
+    ("dotnet", "functions"): "PascalCase",
+    ("dotnet", "classes"): "PascalCase",
+    ("dotnet", "constants"): "PascalCase",
+    ("sql", "functions"): "snake_case",
+    ("sql", "classes"): "snake_case",  # tables/views — SQL has no real PascalCase tradition
+    ("sql", "constants"): "UPPER_SNAKE",
+    ("sql", "variables"): "snake_case",
+    ("sql", "properties"): "snake_case",
+}
+
+
+def _language_family(language: str | None) -> str:
+    """Map a file's language to a convention family.
+
+    Returns ``"unknown"`` for languages we don't track — those fall back
+    to the codebase-wide dominant style (the historic behaviour).
+    """
+    if not language:
+        return "unknown"
+    return _LANGUAGE_FAMILIES.get(language.lower(), "unknown")
+
+
 # Kind groupings for naming analysis
 _KIND_GROUPS = {
     "function": "functions",
@@ -477,7 +554,8 @@ def conventions(ctx, max_outliers):
 
         # ---- 1. Naming conventions ----
         all_symbols = conn.execute("""
-            SELECT s.name, s.kind, s.line_start, f.path as file_path
+            SELECT s.name, s.kind, s.line_start, f.path as file_path,
+                   COALESCE(f.language, '') as language
             FROM symbols s
             JOIN files f ON s.file_id = f.id
             WHERE s.kind IN ('function', 'method', 'class', 'interface',
@@ -485,53 +563,76 @@ def conventions(ctx, max_outliers):
                              'constant', 'property', 'field', 'type_alias')
         """).fetchall()
 
-        # Group by kind-group, tally case styles
-        group_cases: dict[str, Counter] = defaultdict(Counter)
-        group_names: dict[str, list[str]] = defaultdict(list)
-        symbol_details: list[dict] = []  # for outlier detection
+        # Group by (language_family, kind_group) — round 3 #2 noted that
+        # imposing the codebase-wide dominant style on SQL files (which
+        # legitimately use snake_case for tables/views) produced 5384
+        # false-positive outliers. Each family has its own community
+        # default that we respect when computing "expected style".
+        group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
+        group_names: dict[tuple[str, str], list[str]] = defaultdict(list)
+        symbol_details: list[dict] = []
 
         for sym in all_symbols:
             group = _group_for_kind(sym["kind"])
             style = classify_case(sym["name"])
+            family = _language_family(sym["language"])
+            key = (family, group)
             if style:
-                group_cases[group][style] += 1
-                group_names[group].append(sym["name"])
+                group_cases[key][style] += 1
+                group_names[key].append(sym["name"])
                 symbol_details.append(
                     {
                         "name": sym["name"],
                         "kind": sym["kind"],
                         "group": group,
+                        "language_family": family,
                         "style": style,
                         "file": sym["file_path"],
                         "line": sym["line_start"],
                     }
                 )
 
-        # Determine dominant style per group
+        # Determine dominant style per (family, group). When a family has
+        # a documented community default (_LANGUAGE_KIND_DEFAULTS) we use
+        # THAT as the expected style, not the empirical mode — a project
+        # with bad SQL conventions shouldn't have its bad habit treated
+        # as "the convention".
         naming_summary: dict[str, dict] = {}
-        for group, counter in sorted(group_cases.items()):
+        for (family, group), counter in sorted(group_cases.items()):
             total = sum(counter.values())
-            dominant_style, dominant_count = counter.most_common(1)[0]
+            empirical_style, empirical_count = counter.most_common(1)[0]
+            documented = _LANGUAGE_KIND_DEFAULTS.get((family, group))
+            dominant_style = documented or empirical_style
+            dominant_count = counter.get(dominant_style, empirical_count)
             pct = round(100 * dominant_count / total, 1) if total else 0
-            naming_summary[group] = {
+            naming_summary[f"{family}/{group}" if family != "unknown" else group] = {
                 "dominant_style": dominant_style,
+                "expected_source": "community_default" if documented else "empirical",
                 "dominant_count": dominant_count,
                 "total": total,
                 "percent": pct,
-                "breakdown": {s: c for s, c in counter.most_common()},
+                "language_family": family,
+                "kind_group": group,
+                "breakdown": dict(counter.most_common()),
             }
 
-        # Detect outliers (symbols that don't match dominant style)
+        # Detect outliers (symbols that don't match dominant style for
+        # their language family + kind group).
         outliers: list[dict] = []
         for det in symbol_details:
-            grp_info = naming_summary.get(det["group"])
+            family = det["language_family"]
+            group = det["group"]
+            key = f"{family}/{group}" if family != "unknown" else group
+            grp_info = naming_summary.get(key)
             if grp_info and det["style"] != grp_info["dominant_style"]:
                 outliers.append(
                     {
                         "name": det["name"],
                         "kind": det["kind"],
+                        "language_family": family,
                         "actual_style": det["style"],
                         "expected_style": grp_info["dominant_style"],
+                        "expected_source": grp_info["expected_source"],
                         "file": det["file"],
                         "line": det["line"],
                     }
