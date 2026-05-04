@@ -204,6 +204,33 @@ class TestVersionConsistency:
             "re-copy after editing either file."
         )
 
+    def test_card_tool_count_matches_live_count(self):
+        """v12.12.4 — the card's ``capabilities.tools.total`` must
+        match the live MCP tool count from ``surface_counts``. The
+        card had been at 120 with 33-tool ``core`` preset for several
+        releases while the live numbers had grown to 122 / 35.
+        """
+        try:
+            from roam.surface_counts import collect_surface_counts
+        except ImportError:
+            pytest.skip("surface_counts unavailable")
+        live = collect_surface_counts()
+        card = json.loads((ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json").read_text(encoding="utf-8"))
+        live_total = live["mcp"]["registered_tools"]
+        live_core = live["mcp"]["core_tools"]
+        card_total = card["capabilities"]["tools"]["total"]
+        card_core = card["capabilities"]["tools"]["presets"]["core"]
+        card_full = card["capabilities"]["tools"]["presets"]["full"]
+        assert card_total == live_total, (
+            f"card capabilities.tools.total = {card_total} but live MCP tool count = {live_total}"
+        )
+        assert card_core == live_core, (
+            f"card capabilities.tools.presets.core = {card_core} but live core preset count = {live_core}"
+        )
+        assert card_full == live_total, (
+            f"card capabilities.tools.presets.full = {card_full} but live total = {live_total}"
+        )
+
     def test_landscape_json_self_row_version_matches(self):
         """The roam-code row in landscape.json should show the current
         package version (or a recent nearby tag)."""
