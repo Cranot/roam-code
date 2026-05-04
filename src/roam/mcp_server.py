@@ -2250,6 +2250,7 @@ def retrieve_context(
     k: int = 0,
     rerank: str = "fast",
     seed_files: str = "",
+    dry_run: bool = False,
     root: str = ".",
     ctx: _Context | None = None,
 ) -> dict:
@@ -2281,6 +2282,15 @@ def retrieve_context(
     seed_files: comma-separated file paths to seed personalised PageRank
         (e.g. ``"src/auth.py,src/session.py"``). Falls back to
         symbol-token inference from *task* when empty.
+    dry_run: return the search plan (candidate ids, scores, locations)
+        without fetching span content. Useful when an agent wants to
+        preview what *would* be retrieved before paying the token cost.
+
+    The response's ``summary.low_confidence`` boolean is True when
+    the top result probably doesn't match the task — branch on this
+    to ask the user for clarification rather than chasing a likely
+    red herring. (v12.12: this was previously only available by
+    parsing the verdict string.)
     """
     if _mcp_session is not None:
         _mcp_session.remember_task_hint(ctx, task)
@@ -2303,6 +2313,8 @@ def retrieve_context(
         path = raw.strip()
         if path:
             args.extend(["--seed-files", path])
+    if dry_run:
+        args.append("--dry-run")
     return _run_roam(args, root)
 
 
@@ -2356,6 +2368,7 @@ def fleet_plan(
 def critique_patch(
     diff_text: str,
     high_callers: int = 10,
+    intent: str = "",
     root: str = ".",
 ) -> dict:
     """Verify a unified diff against the indexed roam graph.
@@ -2371,6 +2384,12 @@ def critique_patch(
     (which produces a vibe score). Critique grounds every finding in a
     DB query.
 
+    The response carries ``bench_hint`` at top level and inside
+    ``summary`` when the diff touches a structurally hot path
+    (retrieve/, graph/, languages/, taint, critique). Branch on this
+    field to suggest the right validation step alongside the standard
+    findings.
+
     Parameters
     ----------
     diff_text:
@@ -2378,6 +2397,11 @@ def critique_patch(
         ``gh pr diff <id>``.
     high_callers:
         Threshold for the blast-radius warning. Default 10.
+    intent:
+        Optional PR title or commit subject. When supplied, the
+        intent-vs-semantic-diff check fires (a rename intent that
+        produces non-rename changes flags as misalignment). Falls
+        back to the latest git commit subject when empty.
     """
     import json as _json
     import subprocess
@@ -2415,6 +2439,8 @@ def critique_patch(
     args = [sys.executable, "-m", "roam", "--json", "critique"]
     if high_callers != 10:
         args += ["--high-callers", str(high_callers)]
+    if intent:
+        args += ["--intent", intent]
     proc = subprocess.run(
         args,
         cwd=root,
@@ -2693,6 +2719,7 @@ def oracle_batch(items: list, root: str = ".") -> dict:
 def taint(
     rules_dir: str = "",
     rule: str = "",
+    rules_pack: str = "",
     ci: bool = False,
     root: str = ".",
 ) -> dict:
@@ -2702,12 +2729,22 @@ def taint(
     the LLM-augmented ``roam_taint_classify``. Returns reach-only
     findings with OpenVEX-shaped status/justification fields ready for
     SBOM/CGA embedding.
+
+    Parameters
+    ----------
+    rules_pack: shorthand for filtering to a single starter pack.
+        Accepts ``sqli``, ``xss``, ``ssrf``, ``path-traversal``,
+        ``command-injection``, ``deserialization``, ``open-redirect``,
+        ``urllib``, ``socketio``, ``fileupload``. Equivalent to
+        passing ``--rules-pack`` on the CLI.
     """
     args = ["taint"]
     if rules_dir:
         args.extend(["--rules-dir", rules_dir])
     if rule:
         args.extend(["--rule", rule])
+    if rules_pack:
+        args.extend(["--rules-pack", rules_pack])
     if ci:
         args.append("--ci")
     return _run_roam(args, root)
