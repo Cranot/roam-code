@@ -7,6 +7,53 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.7] - 2026-05-04
+
+Phase-1.5: speed up agent search vs grep.
+
+### Findings (measured on this 15K-symbol repo)
+
+| Tool | Latency | Result quality |
+|---|---|---|
+| `grep` (POSIX) multi-shape | 200–2000 ms | raw text, false positives in comments / strings |
+| `roam search` subprocess | 350 ms | symbols by name + PageRank rank |
+| `roam uses` subprocess (warm) | 700 ms | direct dependents grouped by edge type, no false positives |
+| `roam_uses` MCP tool (warm) | <100 ms | same as CLI but in-process |
+
+ripgrep (Claude Code's `Grep` tool) is ~50–200 ms — 2–5× faster than
+roam's CLI in raw wall-time. The win for `roam refs` / `roam_uses`
+isn't speed — it's that the result is **already correct**. Multi-shape
+grep needs follow-up filtering to drop comment / string-literal false
+positives; the agent then has to read each match to learn the
+structure. Going through the indexed call/import/inherit graph
+returns one structured envelope with kind / file / line per consumer.
+
+### Changes
+
+- **CLI alias `roam refs`** for `roam uses`. Agents reaching for "find
+  references to X" hit a grep-familiar name first; the same indexed
+  lookup answers.
+- **`roam_uses` MCP tool description rewritten** to explicitly steer
+  agents away from multi-shape grep:
+  > Use this *instead of* a multi-shape grep
+  > (``"->X|\\.X\\b|'X'|\\"X\\""``) to find references — graph-precise,
+  > no string-literal / comment false positives, and the result is
+  > already structured by edge type.
+- **Skill markdown adds a "Find every reference to X" section** that
+  shows the multi-shape grep pattern an agent reaches for, why it
+  produces noise, and the `roam refs` answer with measured latency.
+- **README** points at `roam refs` from the `uses` row in the command
+  reference table.
+
+The recommendation is documentation-led, not a speed optimisation —
+roam's CLI startup overhead (~250 ms python-process spawn) is the
+floor, and shrinking it past the MCP-warm path isn't justified
+relative to the 5–10 grep cycles a single `roam refs` call replaces.
+For agents in MCP-enabled clients (Claude Code, Cursor, Codex CLI)
+the latency gap closes entirely; the recommendation tells agents
+in any client to prefer `roam refs` for reference-finding because
+the *fewer iterations* dominate the latency comparison.
+
 ## [12.12.6] - 2026-05-04
 
 Phase-1 deep-dogfood release. Live-fired roam against this very repo
