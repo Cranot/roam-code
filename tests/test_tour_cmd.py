@@ -207,3 +207,71 @@ class TestTourText:
         assert out_file.exists()
         content = out_file.read_text(encoding="utf-8")
         assert len(content) > 0
+
+
+class TestTourFiltering:
+    """v12.12.5 — tour must orient newcomers in source code, not test
+    fixtures or dev scripts. The previous heuristic ranked pytest
+    conftest fixtures as top "key symbols" because every test imports
+    them, making the very first thing a newcomer reads be test
+    scaffolding.
+    """
+
+    @pytest.fixture
+    def project_with_tests(self, tmp_path):
+        """Project with both source and test files; tests dominate fan-in."""
+        proj = tmp_path / "tour_filter_proj"
+        proj.mkdir()
+        (proj / ".gitignore").write_text(".roam/\n", encoding="utf-8")
+        (proj / "src").mkdir()
+        (proj / "tests").mkdir()
+        (proj / "src" / "core.py").write_text(
+            "def add(a, b):\n    return a + b\n\n\ndef multiply(a, b):\n    return a * b\n",
+            encoding="utf-8",
+        )
+        (proj / "src" / "main.py").write_text(
+            "from src.core import add, multiply\n\n\ndef run():\n    return add(2, 3) + multiply(4, 5)\n",
+            encoding="utf-8",
+        )
+        # The conftest fixture used by every test — a classic high-fan-in
+        # pytest helper that the bug surfaced as a top "key symbol".
+        (proj / "tests" / "conftest.py").write_text(
+            "import pytest\n\n\n@pytest.fixture\ndef shared_fixture():\n    return 42\n",
+            encoding="utf-8",
+        )
+        for i in range(8):
+            (proj / "tests" / f"test_{i}.py").write_text(
+                f"def test_{i}(shared_fixture):\n    assert shared_fixture == 42\n",
+                encoding="utf-8",
+            )
+        git_init(proj)
+        index_in_process(proj)
+        return proj
+
+    def test_key_symbols_dont_include_test_fixtures(self, cli_runner, project_with_tests, monkeypatch):
+        """Symbols defined in tests/ files should not appear in "Key
+        Symbols" — they're scaffolding, not abstractions."""
+        monkeypatch.chdir(project_with_tests)
+        result = invoke_cli(cli_runner, ["tour"], json_mode=True)
+        assert result.exit_code == 0
+        data = parse_json_output(result, "tour")
+        top_symbols = data.get("top_symbols", [])
+        for sym in top_symbols:
+            location = sym.get("location") or ""
+            assert "tests" not in location.lower() and "conftest" not in location.lower(), (
+                f"Test-fixture symbol slipped into Key Symbols: {sym}"
+            )
+
+    def test_reading_order_starts_in_source(self, cli_runner, project_with_tests, monkeypatch):
+        """The first file in the suggested reading order must not be a test."""
+        monkeypatch.chdir(project_with_tests)
+        result = invoke_cli(cli_runner, ["tour"], json_mode=True)
+        assert result.exit_code == 0
+        data = parse_json_output(result, "tour")
+        order = data.get("reading_order", [])
+        if not order:
+            pytest.skip("project too small to produce a reading order")
+        first = order[0].get("file") or ""
+        assert "tests" not in first.lower() and "conftest" not in first.lower(), (
+            f"Reading order starts in tests/: {first}"
+        )
