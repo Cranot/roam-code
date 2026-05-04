@@ -126,8 +126,11 @@ def eval_retrieve(
 
     path = Path(tasks_path) if tasks_path else _default_task_path()
     if not path.exists():
-        raise click.UsageError(
-            f"task file not found: {path}. Pass --tasks <path> or run from a repo with bench/retrieve/."
+        from roam.output.errors import FILE_NOT_FOUND, structured_usage_error
+
+        raise structured_usage_error(
+            FILE_NOT_FOUND,
+            f"task file not found: {path}. Pass --tasks <path> or run from a repo with bench/retrieve/.",
         )
 
     tasks = load_tasks(path)
@@ -135,7 +138,12 @@ def eval_retrieve(
     # Validate emit-format / emit-out combination up front.
     fmt = (emit_format or "roam").lower()
     if fmt in ("coderag", "beir") and not emit_out_path:
-        raise click.UsageError(f"--emit-format {fmt} requires --emit-out <path> (the JSONL run file).")
+        from roam.output.errors import MISSING_REQUIRED_ARG, structured_usage_error
+
+        raise structured_usage_error(
+            MISSING_REQUIRED_ARG,
+            f"--emit-format {fmt} requires --emit-out <path> (the JSONL run file).",
+        )
 
     ensure_index()
     with open_db(readonly=True) as conn:
@@ -314,5 +322,7 @@ def _emit_bench_run(conn, tasks, fmt: str, out_path: Path, *, top_k: int) -> int
             else:
                 # Unknown format — should be unreachable thanks to Click's
                 # choice validation, but guard anyway.
-                raise click.UsageError(f"unknown emit format: {fmt}")
+                from roam.output.errors import UNKNOWN_FORMAT, structured_usage_error
+
+                raise structured_usage_error(UNKNOWN_FORMAT, f"unknown emit format: {fmt}")
     return written

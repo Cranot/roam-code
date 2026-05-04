@@ -723,9 +723,19 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     formats = _resolve_target_formats(fmt, profile, bundle)
     if output and len(formats) > 1:
-        raise click.UsageError("--output supports a single format. Remove --bundle or set --format explicitly.")
+        from roam.output.errors import INVALID_OPTIONS, structured_usage_error
+
+        raise structured_usage_error(
+            INVALID_OPTIONS,
+            "--output supports a single format. Remove --bundle or set --format explicitly.",
+        )
     if bundle and not write_flag and not json_mode:
-        raise click.UsageError("--bundle requires --write (or --json for planning output).")
+        from roam.output.errors import MISSING_REQUIRED_ARG, structured_usage_error
+
+        raise structured_usage_error(
+            MISSING_REQUIRED_ARG,
+            "--bundle requires --write (or --json for planning output).",
+        )
 
     ensure_index()
     root = find_project_root()

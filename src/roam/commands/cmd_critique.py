@@ -132,7 +132,12 @@ def critique(ctx, input_path, high_callers, intent_text):
             diff_text = fh.read()
     else:
         if sys.stdin.isatty():
-            raise click.UsageError("no diff on stdin and no --input — pipe `git diff` in or pass --input PATH")
+            from roam.output.errors import MISSING_REQUIRED_ARG, structured_usage_error
+
+            raise structured_usage_error(
+                MISSING_REQUIRED_ARG,
+                "no diff on stdin and no --input — pipe `git diff` in or pass --input PATH",
+            )
         diff_text = sys.stdin.read()
 
     from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
