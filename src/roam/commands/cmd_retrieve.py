@@ -188,9 +188,28 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
     ensure_index()
 
     cfg = get_retrieve_config()
-    effective_budget = budget if budget is not None else (cli_budget or cfg.get("default_budget", 4000))
     effective_k = k if k is not None else cfg.get("default_k", 20)
     effective_rerank = (rerank or cfg.get("default_rerank", "fast")).lower()
+
+    # 12.13 — adaptive budget. The fixed 4000-token default was a
+    # one-size-fits-all guess; a query with ``--k 5`` only needs
+    # ~1500 tokens to surface 5 spans, while ``--k 50`` would
+    # truncate against 4000. Scale proportionally to k, with a floor
+    # of 1500 (smallest useful answer) and ceiling at the configured
+    # default for the standard k=20 path so legacy behaviour is
+    # preserved exactly. Explicit ``--budget`` always wins.
+    if budget is not None:
+        effective_budget = budget
+    elif cli_budget:
+        effective_budget = cli_budget
+    else:
+        config_budget = cfg.get("default_budget", 4000)
+        # 200 tokens per result is the empirical mean span size on
+        # the 30-task self-bench. max() floors small-k queries; we
+        # cap at 2× config_budget so a runaway --k 200 doesn't burn
+        # 40k tokens.
+        adaptive = max(1500, effective_k * 200)
+        effective_budget = min(adaptive, config_budget * 2)
 
     with open_db(readonly=True) as conn:
         # Defensive guard: if symbol_fts has been wiped (rare, but seen
