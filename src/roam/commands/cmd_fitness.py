@@ -752,6 +752,19 @@ def _emit_baseline_delta_text(baseline_info: dict | None, new_violations: list[d
 def _emit_fitness_text(
     rule_results, all_violations, baseline_info, new_violations, written_baseline_path, passed, failed, explain
 ) -> None:
+    # v12.12.6 — verdict-first output. Without this line a user
+    # scanning the top of the output saw "Fitness check: 3 rules"
+    # and had to count the [FAIL] / [PASS] markers themselves to
+    # know the bottom line. Mirrors the convention every other
+    # command in the surface follows.
+    if failed == 0:
+        verdict = f"all {passed} fitness rule(s) pass"
+    elif passed == 0:
+        verdict = f"all {failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
+    else:
+        verdict = f"{failed} of {passed + failed} fitness rule(s) fail ({len(all_violations)} violation(s))"
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
     click.echo(f"Fitness check: {len(rule_results)} rules\n")
     for rule_result in rule_results:
         _emit_rule_line(rule_result, explain)

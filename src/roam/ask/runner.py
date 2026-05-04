@@ -21,7 +21,17 @@ from typing import Any
 
 from roam.ask.recipes import Recipe
 
-_IDENTIFIER_RE = re.compile(r"\b([A-Z][A-Za-z0-9]{2,}|[a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b")
+_IDENTIFIER_RE = re.compile(
+    # PascalCase / camelCase ≥3 chars
+    r"(?:^|[^A-Za-z0-9_])([A-Z][A-Za-z0-9]{2,}"
+    # snake_case with optional leading underscore. Without ``_?`` the
+    # leading underscore breaks the word-boundary anchor and queries
+    # like "is it safe to delete _resolve_file" extracted zero
+    # identifiers — the recipe runner then passed the full query
+    # text as the symbol name. v12.12.6.
+    r"|_?[a-z][a-z0-9]+(?:_[a-z0-9]+)+)"
+    r"(?=$|[^A-Za-z0-9_])"
+)
 
 
 def extract_symbol(query: str) -> str | None:
