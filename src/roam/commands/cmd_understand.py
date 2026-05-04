@@ -163,24 +163,37 @@ def _detect_build(conn):
 def _key_abstractions(conn, limit=15):
     """Find the most important symbols by PageRank with fan analysis.
 
-    Pulls a wider set than ``limit`` so the framework-alias filter can
-    drop noise (Vue ``computed<T>``, React ``useState<T>``, etc.) while
-    still returning ``limit`` real abstractions to the caller.
+    Pulls a wider set than ``limit`` so the framework-alias filter
+    drops noise (Vue ``computed<T>``, React ``useState<T>``, etc.) and
+    test-fixture filter drops pytest-conftest pollution while still
+    returning ``limit`` real abstractions to the caller.
+
+    v12.12.5: skip symbols whose file is classified as ``test``.
+    pytest fixtures (``cli_runner``, ``indexed_project``, …) inflate
+    PageRank because every test imports them, so they outrank real
+    abstractions like ``cli`` / ``open_db`` / ``json_envelope``. They
+    aren't useful as "key abstractions" for understanding the project.
     """
     rows = conn.execute(
         "SELECT s.name, s.qualified_name, s.kind, f.path as file_path, "
-        "s.line_start, gm.pagerank, gm.in_degree, gm.out_degree "
+        "s.line_start, gm.pagerank, gm.in_degree, gm.out_degree, "
+        "COALESCE(f.file_role, 'source') AS file_role "
         "FROM symbols s "
         "JOIN files f ON s.file_id = f.id "
         "JOIN graph_metrics gm ON s.id = gm.symbol_id "
         "WHERE s.kind IN ('function', 'class', 'method', 'interface') "
         "AND s.is_exported = 1 "
         "ORDER BY gm.pagerank DESC LIMIT ?",
-        (limit * 4,),
+        (limit * 6,),
     ).fetchall()
-    rows = [r for r in rows if not is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["file_path"])][
-        :limit
-    ]
+    filtered = []
+    for r in rows:
+        if r["file_role"] == "test":
+            continue
+        if is_framework_alias(r["qualified_name"] or r["name"], r["kind"], r["file_path"]):
+            continue
+        filtered.append(r)
+    rows = filtered[:limit]
 
     results = []
     for r in rows:
@@ -218,12 +231,25 @@ def _key_abstractions(conn, limit=15):
 
 
 def _find_entry_points(conn, limit=10):
-    """Find likely entry point files (no importers + have symbols)."""
+    """Find likely entry point files (no importers + have symbols).
+
+    v12.12.5: exclude tests, dev scripts, generated code, and other
+    non-source roles. Test files have no importers in the source
+    graph (nothing depends on a test file) so they kept polluting
+    the "Entry points" list — every newcomer running ``roam understand``
+    saw "tests/test_comprehensive.py" listed as an entry point, which
+    is exactly wrong for orientation.
+    """
     rows = conn.execute(
-        "SELECT f.id, f.path, f.language, COUNT(s.id) as sym_count "
+        "SELECT f.id, f.path, f.language, COUNT(s.id) as sym_count, "
+        "       COALESCE(f.file_role, 'source') AS file_role "
         "FROM files f "
         "JOIN symbols s ON s.file_id = f.id "
         "WHERE f.id NOT IN (SELECT DISTINCT target_file_id FROM file_edges) "
+        "AND COALESCE(f.file_role, 'source') NOT IN ("
+        "  'test', 'scripts', 'generated', 'vendored', 'data', "
+        "  'examples', 'build', 'ci', 'docs', 'config'"
+        ") "
         "GROUP BY f.id "
         "HAVING sym_count > 0 "
         "ORDER BY sym_count DESC "

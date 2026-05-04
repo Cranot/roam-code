@@ -69,6 +69,21 @@ class TestTier1PathBased:
     def test_samples_dir(self):
         assert classify_file("samples/demo.js") == "examples"
 
+    # Benchmark directories — v12.12.5: convention dirs that should not
+    # pollute "key abstractions" / "entry points" output. Rolling them
+    # under ``examples`` keeps the classification scheme small.
+    def test_benchmarks_dir(self):
+        assert classify_file("benchmarks/agent-eval/runner.py") == "examples"
+
+    def test_benchmark_dir_singular(self):
+        assert classify_file("benchmark/throughput.py") == "examples"
+
+    def test_bench_dir(self):
+        assert classify_file("bench/retrieve/eval.jsonl") == "examples"
+
+    def test_bench_repos_dir(self):
+        assert classify_file("bench-repos/cli/main.go") == "examples"
+
     # Scripts directories
     def test_scripts_dir(self):
         assert classify_file("scripts/deploy.sh") == "scripts"

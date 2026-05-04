@@ -75,11 +75,17 @@ _PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
     (re.compile(r"(^|/)docs/"), ROLE_DOCS),
     (re.compile(r"(^|/)doc/"), ROLE_DOCS),
     (re.compile(r"(^|/)documentation/"), ROLE_DOCS),
-    # Examples / samples
+    # Examples / samples / benchmarks
     (re.compile(r"(^|/)examples/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)example/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)samples/"), ROLE_EXAMPLES),
     (re.compile(r"(^|/)sample/"), ROLE_EXAMPLES),
+    (re.compile(r"(^|/)benchmarks/"), ROLE_EXAMPLES),
+    (re.compile(r"(^|/)benchmark/"), ROLE_EXAMPLES),
+    (re.compile(r"(^|/)bench/"), ROLE_EXAMPLES),
+    # Tier 1: bench-repos/ is a conventional dir for sample repos used
+    # by benchmark suites (roam-code itself ships these).
+    (re.compile(r"(^|/)bench-repos/"), ROLE_EXAMPLES),
     # Scripts / bin / dev tools
     (re.compile(r"(^|/)scripts/"), ROLE_SCRIPTS),
     (re.compile(r"(^|/)bin/"), ROLE_SCRIPTS),
