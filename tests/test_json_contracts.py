@@ -120,11 +120,14 @@ COMMAND_ARGS = {
 FRAGILE_COMMANDS = {
     "affected-tests",  # needs staged changes or a target with test coverage
     "coverage-gaps",  # needs test file mapping
-    "dead",  # summary envelope misses 'verdict' on the minimal fixture
     "deps",  # symbol resolution against minimal `models`/`service`/`utils`
     "diff",  # needs uncommitted changes
     "pr-risk",  # needs uncommitted changes or PR context
     "report",  # may need specific report config or flags
+    # ``dead`` was xfailed in v11.x because its summary envelope was
+    # missing ``verdict``. v12.x added the verdict field; --runxfail
+    # confirms all four parametrized tests pass on the minimal
+    # fixture. Removed from the fragile set in v12.12.2.
 }
 
 
