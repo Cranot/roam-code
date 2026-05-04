@@ -121,6 +121,56 @@ _FOUR_CHAR_DOMAIN_NOUNS = frozenset(
 )
 _FOUR_CHAR_NOUN_RE = re.compile(r"\b([a-z]{4})\b")
 
+# 12.13 — programming-context abbreviation expansion. When a query
+# mentions a common code abbreviation, *also* emit the full word so
+# FTS5 can hit symbols spelled either way ("db connect" should
+# match both ``db_connect`` and ``database_connect`` — which way
+# the codebase spells it shouldn't matter to the agent). Each entry
+# is bidirectional: the abbr→full direction is the common case; the
+# full→abbr direction handles repos that prefer the short form.
+# Curated to programming-relevant abbreviations only (no generic
+# English shortenings like "vs" → "versus").
+_ABBREVIATION_EXPANSIONS: dict[str, str] = {
+    "db": "database",
+    "ctx": "context",
+    "conf": "config",
+    "args": "arguments",
+    "kwargs": "keyword",
+    "err": "error",
+    "ret": "return",
+    "num": "number",
+    "val": "value",
+    "prop": "property",
+    "attr": "attribute",
+    "impl": "implementation",
+    "intf": "interface",
+    "mod": "module",
+    "fn": "function",
+    "meth": "method",
+    "cls": "class",
+    "src": "source",
+    "repo": "repository",
+    "env": "environment",
+    "msg": "message",
+    "req": "request",
+    "res": "response",
+    "resp": "response",
+    "auth": "authentication",
+    "perm": "permission",
+    "perms": "permissions",
+    "stmt": "statement",
+    "expr": "expression",
+    "elem": "element",
+    "obj": "object",
+    "cfg": "config",
+    "init": "initialize",
+    "exec": "execute",
+    "calc": "calculate",
+    "diff": "difference",
+}
+# Reverse map for the full→abbr direction.
+_ABBREVIATION_CONTRACTIONS: dict[str, str] = {v: k for k, v in _ABBREVIATION_EXPANSIONS.items() if k not in {"init"}}
+
 # Short and very common words we never want as seeds. Keeps the seed list
 # focused on identifiers; the reranker adds non-seed structural signal.
 _STOPWORDS = frozenset(
@@ -361,6 +411,35 @@ def extract_tokens(query: str) -> list[str]:
     for match in _FOUR_CHAR_NOUN_RE.findall(query.lower()):
         if match in _FOUR_CHAR_DOMAIN_NOUNS and match not in found:
             found[match] = None
+
+    # 12.13 — abbreviation expansion (narrow). Two passes only when
+    # the query is short enough (≤4 raw words) that adding abbrevs
+    # is a net signal gain rather than noise. Long queries already
+    # carry enough seed tokens; adding abbrevs to them introduced
+    # noise tokens that hurt recall@10 in the bench. Short queries
+    # are exactly where the user typed shorthand (``db connect``,
+    # ``ctx propagation``) and benefit from expansion.
+    word_count = len(re.findall(r"\b\w+\b", query))
+    if word_count <= 4:
+        extra_abbrev: list[str] = []
+        for tok in list(found):
+            lower = tok.lower()
+            if lower in _ABBREVIATION_EXPANSIONS and _ABBREVIATION_EXPANSIONS[lower] not in found:
+                extra_abbrev.append(_ABBREVIATION_EXPANSIONS[lower])
+            if lower in _ABBREVIATION_CONTRACTIONS and _ABBREVIATION_CONTRACTIONS[lower] not in found:
+                extra_abbrev.append(_ABBREVIATION_CONTRACTIONS[lower])
+        # Direct scan of raw query for abbreviations that were below the
+        # length floor of the regex passes (``db``, ``ctx``, ``fn``, …).
+        raw_words = re.findall(r"\b([a-z]+)\b", query.lower())
+        for word in raw_words:
+            if word in _ABBREVIATION_EXPANSIONS:
+                if word not in found:
+                    extra_abbrev.append(word)
+                full = _ABBREVIATION_EXPANSIONS[word]
+                if full not in found and full not in extra_abbrev:
+                    extra_abbrev.append(full)
+        for tok in extra_abbrev:
+            found[tok] = None
 
     return list(found)
 
