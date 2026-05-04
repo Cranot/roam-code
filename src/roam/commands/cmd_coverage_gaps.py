@@ -436,8 +436,15 @@ def coverage_gaps(
         return
 
     if not gate_names and not gate_pattern:
-        click.echo("Provide --gate <names> or --gate-pattern <regex>")
-        raise SystemExit(1)
+        click.echo("VERDICT: missing required filter — pass --gate or --gate-pattern")
+        click.echo()
+        click.echo("  --gate NAME         single gate symbol (e.g. handle_login)")
+        click.echo("  --gate-pattern RE   regex over symbol names (e.g. '^auth_.*')")
+        click.echo()
+        click.echo("Examples:")
+        click.echo("  roam coverage-gaps --gate handle_payment")
+        click.echo("  roam coverage-gaps --gate-pattern '^validate_.*'")
+        raise SystemExit(2)
 
     with open_db(readonly=True) as conn:
         gates, gate_info = _find_gates(conn, gate_names, gate_pattern)
