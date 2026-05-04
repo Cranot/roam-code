@@ -480,21 +480,44 @@ def _check_conventions(conn, sym_ids):
 # ---------------------------------------------------------------------------
 
 
-def _check_fitness(conn, root):
-    """Run fitness rules from .roam/fitness.yaml and report failures."""
+def _check_fitness(conn, root, target_paths: set[str] | None = None):
+    """Run fitness rules and split target failures from sibling failures.
+
+    Round 4 #11: when ``target_paths`` is provided, every rule's
+    violations are bucketed by whether they touch a target file. The
+    return now distinguishes ``rules_failing_on_target`` (the question
+    the user actually asked) from ``rules_failing_on_siblings`` (other
+    code in the same files — context, not blame).
+    """
     rules = _load_rules(root)
     if not rules:
         return {
             "rules_checked": 0,
             "rules_failed": 0,
+            "rules_currently_failing": 0,
+            "rules_failing_on_target": 0,
+            "rules_failing_on_siblings": 0,
             "total_violations": 0,
             "failed_rules": [],
             "rule_details": [],
             "severity": "OK",
         }
 
+    target_set = {p.replace("\\", "/").lower() for p in (target_paths or set())}
+
+    def _violation_touches_target(violation: dict) -> bool:
+        if not target_set:
+            return True
+        src = (violation.get("source") or "").replace("\\", "/").lower()
+        if not src:
+            return False
+        path = src.split(":", 1)[0]
+        return path in target_set
+
     all_violations = []
     rule_results = []
+    target_fail_count = 0
+    sibling_fail_count = 0
 
     for rule in rules:
         rtype = rule.get("type", "")
@@ -507,6 +530,8 @@ def _check_fitness(conn, root):
         except Exception:
             violations = []
 
+        on_target = [v for v in violations if _violation_touches_target(v)]
+        on_siblings = [v for v in violations if v not in on_target]
         status = "PASS" if not violations else "FAIL"
         rule_results.append(
             {
@@ -514,18 +539,26 @@ def _check_fitness(conn, root):
                 "type": rtype,
                 "status": status,
                 "violations": len(violations),
+                "violations_on_target": len(on_target),
+                "violations_on_siblings": len(on_siblings),
             }
         )
+        if on_target:
+            target_fail_count += 1
+        elif on_siblings:
+            sibling_fail_count += 1
         all_violations.extend(violations)
 
     failed = sum(1 for r in rule_results if r["status"] == "FAIL")
     failed_names = [r["name"] for r in rule_results if r["status"] == "FAIL"]
-    severity = _fitness_severity(failed)
+    severity = _fitness_severity(target_fail_count or failed)
 
     return {
         "rules_checked": len(rule_results),
         "rules_failed": failed,
-        "rules_currently_failing": failed,  # alias — semantic clarity for round 4 #11
+        "rules_currently_failing": failed,
+        "rules_failing_on_target": target_fail_count,
+        "rules_failing_on_siblings": sibling_fail_count,
         "total_violations": len(all_violations),
         "failed_rules": failed_names,
         "rule_details": rule_results,
@@ -658,7 +691,7 @@ def preflight(ctx, target, staged):
         compl = _check_complexity(conn, sym_ids)
         coupl = _check_coupling(conn, file_ids, file_paths)
         convs = _check_conventions(conn, sym_ids)
-        fitns = _check_fitness(conn, root)
+        fitns = _check_fitness(conn, root, target_paths=set(file_paths))
 
         # Overall risk
         risk = _overall_risk(
@@ -771,12 +804,21 @@ def preflight(ctx, target, staged):
             conv_desc = "no violations"
         click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
 
-        # Fitness — distinguish prospective from current failures redacted).
-        # We can only verify "currently fails on this symbol surface"; we
-        # don't simulate the proposed change here, so saying "would fail"
-        # was misleading for rules that are already broken.
+        # Fitness — distinguish target-attributed vs sibling failures
+        # redacted). The same rule can fail because of OTHER code in
+        # the same file ("Max function complexity 50" tripped by a
+        # 700-cc neighbour); blaming the changing symbol for that is
+        # misleading. We surface both buckets explicitly.
         if fitns["rules_checked"] == 0:
             fit_desc = "no rules configured"
+        elif fitns.get("rules_failing_on_target", 0) > 0:
+            rule_names = ", ".join(fitns["failed_rules"][:3])
+            fit_desc = f"{fitns['rules_failing_on_target']} rules currently fail on target ({rule_names})"
+        elif fitns.get("rules_failing_on_siblings", 0) > 0:
+            rule_names = ", ".join(fitns["failed_rules"][:3])
+            fit_desc = (
+                f"target passes; {fitns['rules_failing_on_siblings']} rule(s) fail on sibling symbols ({rule_names})"
+            )
         elif fitns["rules_failed"] > 0:
             rule_names = ", ".join(fitns["failed_rules"][:3])
             fit_desc = f"{fitns['rules_failed']} rules currently fail ({rule_names})"

@@ -243,7 +243,18 @@ def _against_mode(conn, change_fids, file_map, min_strength, min_cochanges):
 
 
 @click.command()
-@click.option("-n", "count", default=20, help="Number of pairs to show")
+@click.option(
+    "-n",
+    "count",
+    default=None,
+    type=int,
+    help=(
+        "Number of pairs to show. Default auto-scales by project size: "
+        "20 for small projects (<200 files), 50 for mid-size (200-1000), "
+        "100 for large (1000+). Round 4 / T: the old fixed default-20 hid "
+        "active areas in larger projects."
+    ),
+)
 @click.option("--staged", is_flag=True, help="Check coupling for staged changes")
 @click.option(
     "--against",
@@ -281,6 +292,21 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
     ensure_index()
 
     with open_db(readonly=True) as conn:
+        # Round 4 / T: auto-scale the default limit by project size so
+        # active areas in 1000+ file repos surface in the default
+        # output. Explicit -n always wins.
+        if count is None:
+            try:
+                file_count = conn.execute("SELECT COUNT(*) FROM files").fetchone()[0] or 0
+            except Exception:
+                file_count = 0
+            if file_count >= 1000:
+                count = 100
+            elif file_count >= 200:
+                count = 50
+            else:
+                count = 20
+
         # --- Against/staged mode ---
         if staged or commit_range:
             root = find_project_root()

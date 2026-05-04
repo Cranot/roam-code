@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import os
+
 from .javascript_lang import JavaScriptExtractor
 
 
@@ -13,6 +15,31 @@ class TypeScriptExtractor(JavaScriptExtractor):
     @property
     def file_extensions(self) -> list[str]:
         return [".ts", ".tsx", ".mts", ".cts"]
+
+    def extract_symbols(self, tree, source: bytes, file_path: str) -> list[dict]:
+        symbols = super().extract_symbols(tree, source, file_path)
+        # Round 4 #10 / R-extended: Vue/Svelte SFCs don't define their
+        # component as a top-level symbol — the component name lives in
+        # the filename. Synthesise a "component" symbol so agents can
+        # query `roam why MyDataManagementModal` and have it resolve.
+        normalised = file_path.replace("\\", "/").lower()
+        if normalised.endswith(".vue") or normalised.endswith(".svelte"):
+            base = os.path.basename(file_path)
+            stem, _ = os.path.splitext(base)
+            if stem:
+                synthetic = self._make_symbol(
+                    name=stem,
+                    kind="component",
+                    qualified_name=stem,
+                    line_start=1,
+                    line_end=1,
+                    signature=f"<{stem}/> ({normalised.rsplit('.', 1)[-1]} SFC)",
+                    is_exported=True,
+                    parent_name=None,
+                )
+                if synthetic and not any(s.get("name") == stem and s.get("kind") == "component" for s in symbols):
+                    symbols.insert(0, synthetic)
+        return symbols
 
     def _walk_symbols(self, node, source, file_path, symbols, parent_name, is_exported):
         for child in node.children:

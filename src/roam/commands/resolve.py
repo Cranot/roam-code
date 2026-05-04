@@ -44,6 +44,29 @@ def index_staleness_hint() -> str | None:
     hint is suppressed when ``ROAM_NO_STALENESS_HINT=1`` is set so CI
     pipelines that index then mutate the tree don't see noise.
     """
+    status = index_status()
+    if status is None or status.get("fresh") is True:
+        return None
+    return status.get("hint")
+
+
+def index_status() -> dict | None:
+    """Return a structured ``index_status`` dict for envelope use.
+
+    Returns ``None`` when staleness cannot be determined (no git, no
+    commits indexed, env opt-out). Otherwise:
+
+        {
+          "fresh": bool,
+          "indexed_commit": "...",
+          "head_commit": "...",
+          "hint": "...",
+        }
+
+    Round 4 #20 / U: callers should attach this at the TOP of their
+    JSON envelope (and print before the VERDICT in text mode) so an
+    agent reading top-down can't miss a stale-index warning.
+    """
     if os.environ.get("ROAM_NO_STALENESS_HINT"):
         return None
     head = _git_head_short()
@@ -57,12 +80,24 @@ def index_staleness_hint() -> str | None:
             indexed_short = (row[0] or "")[:12]
     except Exception:
         return None
-    if not indexed_short or indexed_short == head:
+    if not indexed_short:
         return None
-    return (
-        f"index latest commit {indexed_short} != HEAD {head} — git-derived metrics "
-        f"(commits, churn, co-change, weather) may be stale. Run `roam index --force`."
-    )
+    if indexed_short == head:
+        return {
+            "fresh": True,
+            "indexed_commit": indexed_short,
+            "head_commit": head,
+            "hint": None,
+        }
+    return {
+        "fresh": False,
+        "indexed_commit": indexed_short,
+        "head_commit": head,
+        "hint": (
+            f"index latest commit {indexed_short} != HEAD {head} — git-derived metrics "
+            f"(commits, churn, co-change, weather) may be stale. Run `roam index --force`."
+        ),
+    }
 
 
 # Maximum suggestions returned by fts_suggestions()

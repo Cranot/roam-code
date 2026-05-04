@@ -717,21 +717,30 @@ def health(ctx, no_framework, gate):
                     for v in violations
                 ],
             )
+            # Round 4 #20 / U: top-level index_status field so JSON
+            # consumers see the staleness warning without scanning
+            # nested sections.
+            from roam.commands.resolve import index_status as _index_status_json
+
+            _idx_status_json = _index_status_json()
+            if _idx_status_json is not None:
+                envelope["index_status"] = _idx_status_json
             if not detail:
                 envelope = summary_envelope(envelope)
             click.echo(to_json(envelope))
             return
 
         # --- Text output ---
-        click.echo(f"VERDICT: {verdict}\n")
-        # Index-staleness hint — only when relevant. Surfaces here
-        # because git_file_changes feed health's tangle/coupling/churn
-        # signals; an out-of-date index quietly degrades all of them.
-        from roam.commands.resolve import index_staleness_hint as _stale_hint
+        # Round 4 #20 / U: surface the staleness warning BEFORE the
+        # verdict so an agent reading top-down can't miss it. The
+        # health composite leans on git-derived metrics (churn,
+        # co-change), so an out-of-date index quietly skews all of them.
+        from roam.commands.resolve import index_status as _index_status
 
-        _stale = _stale_hint()
-        if _stale:
-            click.echo(f"NOTE: {_stale}\n")
+        _idx_status = _index_status()
+        if _idx_status and not _idx_status.get("fresh"):
+            click.echo(f"NOTE: {_idx_status['hint']}\n")
+        click.echo(f"VERDICT: {verdict}\n")
         issue_count = len(actionable_cycles) + len(god_items) + len(bn_items) + len(violations)
         parts = []
         if formatted_cycles:

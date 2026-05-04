@@ -584,6 +584,59 @@ _PATTERN_DETECTORS = {
 _VALID_PATTERNS = list(_PATTERN_DETECTORS.keys())
 
 
+def _format_pattern_detail(key: str, inst: dict) -> str:
+    """Render the per-pattern detail string for an instance."""
+    if key == "singleton":
+        return f"  accessor: {inst['accessor']}"
+    if key == "factory":
+        subtype = inst.get("subtype", "")
+        if subtype == "builder_helper":
+            return "  [builder helper — returns POJO/primitive]"
+        if inst.get("creates"):
+            return f"  creates: {', '.join(inst['creates'][:3])}"
+        return ""
+    if key == "observer":
+        parts = []
+        if inst.get("emitters"):
+            parts.append(f"emits: {', '.join(inst['emitters'][:3])}")
+        if inst.get("subscriber_count"):
+            parts.append(f"{inst['subscriber_count']} subscriber(s)")
+        return f"  {', '.join(parts)}" if parts else ""
+    if key == "repository":
+        if inst.get("data_methods"):
+            return f"  methods: {', '.join(inst['data_methods'][:4])}"
+        return ""
+    if key == "middleware":
+        if inst.get("chain_next"):
+            return f"  chains to: {', '.join(inst['chain_next'][:3])}"
+        return ""
+    if key == "strategy":
+        n = inst.get("implementation_count", 0)
+        detail = f"  {n} impl(s)"
+        if inst.get("shared_methods"):
+            detail += f", shared: {', '.join(inst['shared_methods'][:3])}"
+        if inst.get("implementations"):
+            detail += f"\n    impls: {', '.join(inst['implementations'][:5])}"
+            if n > 5:
+                detail += f" +{n - 5} more"
+        return detail
+    if key == "decorator":
+        if inst.get("usage_count"):
+            return f"  used {inst['usage_count']}x"
+    return ""
+
+
+def _print_pattern_instances(key: str, instances: list[dict]) -> None:
+    for inst in instances:
+        name = inst["name"]
+        location = inst["location"]
+        confidence = inst.get("confidence", "")
+        conf_tag = f"  [{confidence}]" if confidence else ""
+        detail = _format_pattern_detail(key, inst)
+        click.echo(f"  {abbrev_kind(inst['kind'])}  {name:<40s}  {location}{conf_tag}{detail}")
+    click.echo()
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -687,52 +740,21 @@ def patterns(ctx, pattern_filter, strict_factory):
         for key, data in all_results.items():
             label = data["label"]
             instances = data["instances"]
+            # Round 4 #38: split factory output into "true factories"
+            # and "builder helpers" sub-sections so real factories stop
+            # being buried by buildXxx/makeXxx helpers.
+            if key == "factory":
+                true_factories = [i for i in instances if i.get("subtype") == "true_factory"]
+                builder_helpers = [i for i in instances if i.get("subtype") == "builder_helper"]
+                if true_factories:
+                    click.echo(f"{label} (true factories — {len(true_factories)}):")
+                    _print_pattern_instances(key, true_factories)
+                if builder_helpers:
+                    click.echo(f"{label} (builder helpers — {len(builder_helpers)}, returns POJO/primitive):")
+                    _print_pattern_instances(key, builder_helpers)
+                if not true_factories and not builder_helpers:
+                    click.echo(f"{label} ({len(instances)} instance{'s' if len(instances) != 1 else ''}):")
+                    _print_pattern_instances(key, instances)
+                continue
             click.echo(f"{label} ({len(instances)} instance{'s' if len(instances) != 1 else ''}):")
-
-            for inst in instances:
-                name = inst["name"]
-                location = inst["location"]
-                confidence = inst.get("confidence", "")
-                conf_tag = f"  [{confidence}]" if confidence else ""
-
-                # Pattern-specific details
-                detail = ""
-                if key == "singleton":
-                    detail = f"  accessor: {inst['accessor']}"
-                elif key == "factory":
-                    subtype = inst.get("subtype", "")
-                    if subtype == "builder_helper":
-                        detail = "  [builder helper — returns POJO/primitive]"
-                    elif inst["creates"]:
-                        detail = f"  creates: {', '.join(inst['creates'][:3])}"
-                elif key == "observer":
-                    parts = []
-                    if inst["emitters"]:
-                        parts.append(f"emits: {', '.join(inst['emitters'][:3])}")
-                    if inst["subscriber_count"]:
-                        parts.append(f"{inst['subscriber_count']} subscriber(s)")
-                    detail = f"  {', '.join(parts)}" if parts else ""
-                elif key == "repository":
-                    if inst["data_methods"]:
-                        detail = f"  methods: {', '.join(inst['data_methods'][:4])}"
-                elif key == "middleware":
-                    parts = []
-                    if inst["chain_next"]:
-                        parts.append(f"chains to: {', '.join(inst['chain_next'][:3])}")
-                    detail = f"  {', '.join(parts)}" if parts else ""
-                elif key == "strategy":
-                    n = inst["implementation_count"]
-                    detail = f"  {n} impl(s)"
-                    if inst["shared_methods"]:
-                        detail += f", shared: {', '.join(inst['shared_methods'][:3])}"
-                    if inst["implementations"]:
-                        detail += f"\n    impls: {', '.join(inst['implementations'][:5])}"
-                        if n > 5:
-                            detail += f" +{n - 5} more"
-                elif key == "decorator":
-                    if inst["usage_count"]:
-                        detail = f"  used {inst['usage_count']}x"
-
-                click.echo(f"  {abbrev_kind(inst['kind'])}  {name:<40s}  {location}{conf_tag}{detail}")
-
-            click.echo()
+            _print_pattern_instances(key, instances)

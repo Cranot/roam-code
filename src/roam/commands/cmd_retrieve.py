@@ -169,7 +169,9 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
 
     task_str = " ".join(task).strip()
     if not task_str:
-        raise click.UsageError("task text cannot be empty")
+        from roam.output.errors import EMPTY_INPUT, structured_usage_error
+
+        raise structured_usage_error(EMPTY_INPUT, "task text cannot be empty")
 
     ensure_index()
 

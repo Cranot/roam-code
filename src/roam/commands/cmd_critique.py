@@ -135,16 +135,19 @@ def critique(ctx, input_path, high_callers, intent_text):
             raise click.UsageError("no diff on stdin and no --input — pipe `git diff` in or pass --input PATH")
         diff_text = sys.stdin.read()
 
+    from roam.output.errors import EMPTY_INPUT, INVALID_DIFF, structured_usage_error
+
     if not diff_text.strip():
-        raise click.UsageError("diff is empty")
+        raise structured_usage_error(EMPTY_INPUT, "diff is empty")
 
     if not looks_like_unified_diff(diff_text):
         # Earlier silent failures: shell substitutions that lost the diff,
         # paste-buffer truncation, or wrong-format input. Erroring loudly
         # here keeps "no concerns" from masking a no-op invocation.
-        raise click.UsageError(
-            "INVALID_DIFF: input is not a recognisable unified diff "
-            "(no diff/--- /+++/@@ headers found). Pass `git diff` output verbatim."
+        raise structured_usage_error(
+            INVALID_DIFF,
+            "input is not a recognisable unified diff "
+            "(no diff/--- /+++/@@ headers found). Pass `git diff` output verbatim.",
         )
 
     ensure_index()

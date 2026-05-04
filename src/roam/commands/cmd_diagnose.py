@@ -299,41 +299,42 @@ def diagnose(ctx, name, depth):
             },
         )
 
+        # Round 4 #20 / U: index status is now a top-level envelope
+        # field AND prints before the VERDICT in text mode so an agent
+        # reading top-down can't miss a stale-index warning.
+        from roam.commands.resolve import index_status as _index_status
+
+        index_status_payload = _index_status()
+
         if json_mode:
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "diagnose",
-                        summary={
-                            "target": _target_name,
-                            "verdict": verdict,
-                            "upstream_count": len(upstream_ranked),
-                            "downstream_count": len(downstream_ranked),
-                            "ambiguous": bool(did_you_mean),
-                        },
-                        target_metrics=target_metrics,
-                        upstream=upstream_ranked[:15],
-                        downstream=downstream_ranked[:15],
-                        cochange_partners=cochanges,
-                        recent_commits=recent,
-                        did_you_mean=did_you_mean,
-                        next_steps=_next_steps,
-                    )
-                )
+            envelope = json_envelope(
+                "diagnose",
+                summary={
+                    "target": _target_name,
+                    "verdict": verdict,
+                    "upstream_count": len(upstream_ranked),
+                    "downstream_count": len(downstream_ranked),
+                    "ambiguous": bool(did_you_mean),
+                },
+                target_metrics=target_metrics,
+                upstream=upstream_ranked[:15],
+                downstream=downstream_ranked[:15],
+                cochange_partners=cochanges,
+                recent_commits=recent,
+                did_you_mean=did_you_mean,
+                next_steps=_next_steps,
             )
+            if index_status_payload is not None:
+                envelope["index_status"] = index_status_payload
+            click.echo(to_json(envelope))
             return
 
-        # Text output
+        # Text output — index-staleness warning lands FIRST so it can't
+        # be missed when scanning top-down.
+        if index_status_payload and not index_status_payload.get("fresh"):
+            click.echo(f"NOTE: {index_status_payload['hint']}")
+            click.echo()
         click.echo(f"VERDICT: {verdict}")
-        # Index-staleness hint (redacted): when index
-        # is older than HEAD, commit_count / churn columns are
-        # unreliable — surface this so the user knows whether to trust
-        # the numbers or re-index.
-        from roam.commands.resolve import index_staleness_hint as _stale_hint
-
-        _stale = _stale_hint()
-        if _stale:
-            click.echo(f"NOTE: {_stale}")
         sym_name = sym["qualified_name"] or sym["name"]
         click.echo(f"Diagnose: {sym_name}")
         click.echo(f"  {loc(target_metrics['file_path'], sym['line_start'])}")
