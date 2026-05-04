@@ -126,19 +126,33 @@ def _landscape_json_mcp_count() -> int | None:
 
 def _landscape_json_version() -> str | None:
     """The roam-code self-row's ``version_evaluated`` field — should
-    track the package version reasonably closely."""
+    track the package version reasonably closely.
+
+    v12.12.2: parse the JSON properly instead of regex-near-string.
+    The previous heuristic (500-char window around ``"cli_commands"``)
+    silently returned None whenever the row's structure grew past that
+    window, so the consistency test was passing only by skipping. The
+    parse-and-find-by-name approach is location-independent.
+    """
     p = ROOT / "docs" / "site" / "data" / "landscape.json"
     if not p.exists():
         return None
-    text = p.read_text(encoding="utf-8")
-    # First version_evaluated near the cli_commands hit (assumes
-    # roam-code is the first entry; landscape file lists peers below).
-    if "cli_commands" not in text:
+    try:
+        data = json.loads(p.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
         return None
-    cli_idx = text.find('"cli_commands"')
-    near = text[max(0, cli_idx - 500) : cli_idx + 500]
-    m = re.search(r'"version_evaluated"\s*:\s*"([^"]+)"', near)
-    return m.group(1) if m else None
+    rows = data.get("competitors") if isinstance(data, dict) else None
+    if not isinstance(rows, list):
+        return None
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        name = (row.get("name") or "").lower()
+        if "roam-code" in name or "roam_code" in name:
+            v = row.get("version_evaluated")
+            if isinstance(v, str) and v:
+                return v
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -170,6 +184,25 @@ class TestVersionConsistency:
         actual = _mcp_card_version()
         assert actual is not None, "mcp-server-card.json missing"
         assert actual == truth, f"mcp-server-card.json {actual!r} != pyproject {truth!r}"
+
+    def test_bundled_card_matches_docs_site_card(self):
+        """The wheel ships ``src/roam/mcp-server-card.json`` so
+        ``roam mcp --card`` works post-install without a source
+        checkout. The docs/site/.well-known copy stays canonical for
+        the hosted /well-known URL. v12.12.2 — both must match
+        byte-for-byte so they don't drift across releases.
+        """
+        bundled = ROOT / "src" / "roam" / "mcp-server-card.json"
+        canonical = ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json"
+        if not bundled.exists() or not canonical.exists():
+            pytest.skip("card files not both present")
+        a = bundled.read_text(encoding="utf-8")
+        b = canonical.read_text(encoding="utf-8")
+        assert a == b, (
+            "src/roam/mcp-server-card.json drifted from "
+            "docs/site/.well-known/mcp-server-card.json — "
+            "re-copy after editing either file."
+        )
 
     def test_landscape_json_self_row_version_matches(self):
         """The roam-code row in landscape.json should show the current
