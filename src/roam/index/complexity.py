@@ -972,7 +972,9 @@ def _is_small_range_call(node, source: bytes) -> bool:
         return False
     if _call_target_name(node, source) != "range":
         return False
-    return any((value := _integer_node_value(arg, source)) is not None and value < 100 for arg in _call_argument_nodes(node))
+    return any(
+        (value := _integer_node_value(arg, source)) is not None and value < 100 for arg in _call_argument_nodes(node)
+    )
 
 
 def _is_small_literal_collection(node) -> bool:
@@ -986,7 +988,9 @@ def _is_bounded_loop(loop_node, source: bytes) -> bool:
 
     Detects: range(N) where N < 100, iteration over tuple/list literals.
     """
-    return any(_is_small_range_call(child, source) or _is_small_literal_collection(child) for child in loop_node.children)
+    return any(
+        _is_small_range_call(child, source) or _is_small_literal_collection(child) for child in loop_node.children
+    )
 
 
 # ── Batch computation + storage ──────────────────────────────────────

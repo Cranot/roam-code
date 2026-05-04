@@ -118,7 +118,10 @@ RECIPES: list[Recipe] = [
         phase="retrieve",
         perspectives=("retrieval-relevance", "structural-ranking", "token-budget"),
         followups=("roam context {symbol}", "roam hover {symbol}"),
-        gates=("Treat low-confidence retrieve as a search miss", "Add seed files when top spans do not cover task terms"),
+        gates=(
+            "Treat low-confidence retrieve as a search miss",
+            "Add seed files when top spans do not cover task terms",
+        ),
     ),
     Recipe(
         name="verify-patch",
@@ -316,7 +319,10 @@ RECIPES: list[Recipe] = [
         phase="test-impact",
         perspectives=("test-dependency", "implicit-edges", "rename-risk"),
         followups=("roam pytest-fixtures {symbol} --reverse --json", "roam test-impact"),
-        gates=("Do not rename fixtures until reverse dependencies are updated", "Run impacted tests after fixture changes"),
+        gates=(
+            "Do not rename fixtures until reverse dependencies are updated",
+            "Run impacted tests after fixture changes",
+        ),
     ),
     Recipe(
         name="dead-code-sweep",

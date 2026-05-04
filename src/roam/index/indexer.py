@@ -709,7 +709,9 @@ class Indexer:
                 self._log(f"  Warning: Could not read {rel_path}: {e}")
             return None
 
-    def _insert_file_record(self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes) -> int | None:
+    def _insert_file_record(
+        self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
+    ) -> int | None:
         line_count = _count_lines(source)
         complexity = _compute_complexity(source)
         try:
@@ -746,7 +748,9 @@ class Indexer:
                 self._log(f"  Warning: No extractor for {lang}: {e}")
             return None
 
-    def _compute_symbol_metrics(self, conn, file_id, tree, parsed_source, rel_path: str, compute_complexity_fn, verbose: bool) -> None:
+    def _compute_symbol_metrics(
+        self, conn, file_id, tree, parsed_source, rel_path: str, compute_complexity_fn, verbose: bool
+    ) -> None:
         if compute_complexity_fn is None or tree is None:
             return
         try:
