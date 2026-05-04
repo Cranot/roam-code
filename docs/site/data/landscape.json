@@ -443,7 +443,7 @@
       "status": "Graph-first code intelligence CLI + MCP server",
       "relationship": "self",
       "peer": true,
-      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 120 MCP tools, 155 CLI commands. 19 Python idiom detectors (v12.7+).",
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 122 MCP tools, 155 CLI commands. 19 Python idiom detectors (v12.7+).",
       "confidence": "Medium",
       "source_count": 1,
       "last_verified": "2026-02-27",

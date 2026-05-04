@@ -129,7 +129,6 @@ def _detect_sibling_backend_repos() -> list[str]:
     ``indeterminate_workspace`` we offer the parent-dir scan so the
     user knows what to point ``roam ws resolve`` at.
     """
-    from pathlib import Path
 
     try:
         from roam.db.connection import find_project_root
