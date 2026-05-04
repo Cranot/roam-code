@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.3] - 2026-05-04
+
+Documentation and MCP-surface polish caught while auditing the
+v12.12.2 release.
+
+### MCP wrappers in step with the CLI
+
+- ``roam_taint`` now exposes ``rules_pack`` (the v12.3 CLI flag had
+  never been added to the MCP wrapper). The accepted values mirror
+  the CLI Choice list — sqli, xss, ssrf, path-traversal,
+  command-injection, deserialization, open-redirect, urllib,
+  socketio, fileupload.
+- ``roam_critique`` accepts an ``intent`` string. When supplied, the
+  intent-vs-semantic-diff check fires (a "rename" intent that
+  produces non-rename changes flags as misalignment). Previously
+  only available via the CLI's ``--intent``.
+- ``roam_retrieve`` accepts ``dry_run`` so an agent can preview the
+  search plan (candidate ids, scores, locations) without paying the
+  span-content token cost. The docstring also points at the
+  ``summary.low_confidence`` boolean exposed in v12.12.
+
+### Doc-count drift
+
+Stale CLI / MCP counts swept across user-facing surfaces:
+
+- ``README.md`` — the architecture diagram, "what's where" table,
+  and the historical bullet about command-and-MCP parity now all
+  show 155 canonical CLI commands and 122 MCP tools.
+- ``docs/site/index.html`` — landing-page surface line was 150 / 116.
+- ``docs/site/landscape.html`` — competitor stat tiles were 153 / 112.
+- ``docs/site/architecture.html`` — interface-block label was 139.
+- ``docs/site/command-reference.html`` — the taint row was still
+  describing the v12.0 5-pack starter list; updated to the 10-pack
+  v12.3+ surface and switched the example to ``--rules-pack``.
+
+### One stale xfail removed
+
+``test_json_contracts.py`` had ``dead`` in the FRAGILE_COMMANDS set
+(envelope was missing ``verdict`` on the minimal fixture). v12.x
+added the verdict field; ``--runxfail`` confirms all four
+parametrized tests pass on the minimal fixture. Removed from the
+fragile set; the suite now reports 24 xfailed (was 28).
+
 ## [12.12.2] - 2026-05-04
 
 Polish on top of v12.12.1's packaging hotfix. Two more files were
