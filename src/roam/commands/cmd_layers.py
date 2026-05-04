@@ -75,9 +75,26 @@ def _layers_json(conn, formatted, layer_map, max_layer, violations, mermaid=None
     if mermaid is not None:
         extra["mermaid"] = mermaid
 
+    # Compute the same architecture-shape verdict the text mode uses,
+    # so JSON callers don't have to re-derive it from total_layers /
+    # violations. v12.12.8.
+    total_symbols = sum(len(l["symbols"]) for l in formatted) if formatted else 0
+    layer0_count = next((len(l["symbols"]) for l in formatted if l["layer"] == 0), 0)
+    layer0_pct = layer0_count * 100 / total_symbols if total_symbols else 0
+    if max_layer <= 1:
+        shape = "Flat (no layering)"
+    elif layer0_pct > 80:
+        shape = f"Flat ({layer0_pct:.0f}% in Layer 0)"
+    elif layer0_pct > 50:
+        shape = f"Moderate ({layer0_pct:.0f}% in Layer 0, {max_layer + 1} levels)"
+    else:
+        shape = f"Well-layered ({max_layer + 1} levels, even distribution)"
+
     envelope = json_envelope(
         "layers",
         summary={
+            "verdict": f"{shape} — {max_layer + 1} layers, {len(violations)} violation(s)",
+            "shape": shape,
             "total_layers": max_layer + 1,
             "violations": len(violations),
         },
@@ -365,8 +382,8 @@ def layers(ctx, mermaid_mode):
         layer0_count = next((len(l["symbols"]) for l in formatted if l["layer"] == 0), 0)
         layer0_pct = layer0_count * 100 / total_symbols if total_symbols else 0
 
-        click.echo(f"=== Layers ({max_layer + 1} levels) ===")
-
+        # Compute architecture shape first so the verdict line carries
+        # signal — every other command in the surface leads with VERDICT.
         if max_layer <= 1:
             shape = "Flat (no layering)"
         elif layer0_pct > 80:
@@ -375,6 +392,9 @@ def layers(ctx, mermaid_mode):
             shape = f"Moderate ({layer0_pct:.0f}% in Layer 0, {max_layer + 1} levels)"
         else:
             shape = f"Well-layered ({max_layer + 1} levels, even distribution)"
+        click.echo(f"VERDICT: {shape} — {max_layer + 1} layers, {len(violations)} violation(s)")
+        click.echo()
+        click.echo(f"=== Layers ({max_layer + 1} levels) ===")
         click.echo(f"  Architecture: {shape}")
         click.echo(f"  Violations: {len(violations)}")
 

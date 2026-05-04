@@ -590,7 +590,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     )
                 )
             else:
-                click.echo(f"api-drift: {msg}")
+                click.echo(f"VERDICT: api-drift skipped — {msg}")
             return
 
         if not has_backend:
@@ -610,7 +610,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     )
                 )
             else:
-                click.echo(f"api-drift: {msg}")
+                click.echo(f"VERDICT: api-drift skipped — {msg}")
             return
 
         if not has_frontend:
@@ -630,7 +630,7 @@ def api_drift_cmd(ctx, limit, confidence, model):
                     )
                 )
             else:
-                click.echo(f"api-drift: {msg}")
+                click.echo(f"VERDICT: api-drift skipped — {msg}")
             return
 
         # ----------------------------------------------------------------
