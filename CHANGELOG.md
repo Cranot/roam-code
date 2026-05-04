@@ -7,6 +7,97 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.13] - 2026-05-05
+
+Ten dedicated research passes plus three check phases. Drops the
+third version segment going forward — there's no reason for a patch
+suffix on these incremental releases. Future versions: 12.14, 12.15,
+not 12.13.x.
+
+### Speed wins
+
+| Operation | v12.12.9 | v12.13 | Speedup |
+|---|---|---|---|
+| ``roam --help`` | 3845 ms | **790 ms** | **4.9×** |
+| ``roam uses`` | 700 ms | **347 ms** | **2.0×** |
+
+**``--help`` cold path.** The previous ``format_help()`` called
+``self.get_command()`` on every command in the priority categories,
+which triggered ``importlib.import_module()`` for each cmd_*.py.
+Around 20 module imports added 3.5 seconds to render the help
+banner. v12.13 extracts the short-help via Python ``ast`` from the
+source file's first docstring without importing — same output, no
+cmd module loads.
+
+**``roam uses`` warm path.** ``_test_text_consumers`` was reading
+~590 test files (4.0 seconds of ``io.open`` calls) on every
+``uses`` invocation against a Python repo. The fallback exists for
+JS/Vitest where the symbol resolver leaves gaps; on Python / Go /
+Rust the edges table already has every reference, so the scan was
+a 4-second-per-call no-op. Now gated on whether the target's
+language is in the JS family (``javascript``, ``typescript``,
+``tsx``, ``jsx``, ``vue``, ``svelte``).
+
+### Smarter retrieval
+
+- **Programming-abbreviation expansion** in the seed tokenizer.
+  ``db connect`` / ``ctx propagation`` / ``fn signature`` /
+  ``auth flow`` / ``find error`` now seed both the abbr and its
+  expansion (``db``↔``database``, ``ctx``↔``context``,
+  ``auth``↔``authentication``, …) so the FTS layer hits whichever
+  spelling the codebase uses. Only fires for short queries (≤4
+  words) where shorthand is most likely; long queries already
+  carry enough seed tokens. Curated 36-pair table.
+- **Adaptive budget defaults** — ``--budget`` now scales with
+  ``--k`` (200 tokens per result, floor 1500, ceiling 2× the
+  configured default). ``--k 5`` budgets at 1500 tokens (saves
+  tokens), ``--k 50`` at 8000 (more room). The standard ``--k 20``
+  path stays at the configured 4000 default for backwards compat.
+- **PageRank-ranked affected-files** in ``roam impact``. Was
+  alphabetical (``benchmarks/`` and ``bench-repos/`` ahead of
+  ``src/roam/cli.py``); now sorted by max-dependent PageRank so
+  the high-impact files surface first.
+
+### Newcomer-friendly tour
+
+``roam tour`` "Key Symbols" list now appends a one-line docstring
+summary for each top symbol. Pure-PageRank ranking surfaces
+plumbing functions (``open_db``, ``json_envelope``,
+``find_project_root``) at the top because every command imports
+them — without context, a newcomer doesn't know what these are.
+The docstring excerpt orients them:
+
+```
+fn  open_db                        src/roam/db/connection.py:354
+    Context manager for database access. Creates schema if needed
+fn  json_envelope                  src/roam/output/formatter.py:346
+    Wrap command output in a self-describing envelope.
+```
+
+### Bench-neutral, performance-positive
+
+The 10-pass round preserves the bench position from v12.12.9:
+recall@5=0.708, recall@10=0.778, recall@20=0.878 across the
+30-task self-bench. Speed gains are pure addition.
+
+### Research findings (not landed)
+
+Some passes researched-and-decided rather than shipped:
+
+- **Pass 5 (N+1 detection)** — existing detector catalog already
+  covers the SOTA static-analysis space. Runtime profilers like
+  ``nplusone`` are complementary, not replacement.
+- **Pass 6 (clone detection)** — current AST-hash-bag + Jaccard
+  approach is SOTA-comparable. Neural alternatives (CCDetect,
+  ASTNN) need training data and don't pay back the integration cost.
+- **Pass 8 (anomaly detection)** — Modified Z-Score (MAD-based) +
+  Theil-Sen + Mann-Kendall + Western Electric + CUSUM cover the
+  statistical anomaly-detection space without sklearn as a hard dep.
+- **Pass 10 (semantic retrieve)** — graceful zeta redistribution
+  regressed bench (-1.9 pp recall@5). Reverted; semantic stays
+  inert until the ``[semantic]`` extras are installed and
+  embeddings are populated. Keeping the wheel under 5 MB matters.
+
 ## [12.12.9] - 2026-05-05
 
 Three smarter / more dynamic moves layered on the v12.12.8 polish:
