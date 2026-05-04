@@ -87,6 +87,7 @@ def py_modern(ctx, detail, limit):
             "dot_format": 0,
             "files": 0,
         }
+        legacy_occurrences: list[dict] = []
         for _file_id, path, text in _python_files_with_text(conn):
             totals["files"] += 1
             counts = {
@@ -104,6 +105,17 @@ def py_modern(ctx, detail, limit):
             if any(counts.values()):
                 per_file[path] = counts
 
+            for match in _LEGACY_TYPING_RE.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                legacy_occurrences.append(
+                    {"path": path, "line": line, "kind": "legacy-typing", "match": match.group(0).strip()}
+                )
+            for match in _DOTFORMAT_RE.finditer(text):
+                line = text.count("\n", 0, match.start()) + 1
+                legacy_occurrences.append(
+                    {"path": path, "line": line, "kind": "dot-format", "match": match.group(0).strip()}
+                )
+
         # Modernisation ratio: PEP 604/585 vs legacy typing; f-string vs .format().
         type_total = totals["pep604"] + totals["pep585"] + totals["legacy_typing"]
         type_ratio = (totals["pep604"] + totals["pep585"]) * 100 // type_total if type_total else 0
@@ -118,6 +130,7 @@ def py_modern(ctx, detail, limit):
             verdict = f"legacy Python (type-modern {type_ratio}%, f-string {format_ratio}%)"
 
         if json_mode:
+            sample = sorted(legacy_occurrences, key=lambda f: (f["path"], f["line"]))
             click.echo(
                 to_json(
                     json_envelope(
@@ -133,6 +146,7 @@ def py_modern(ctx, detail, limit):
                             {"path": p, **c}
                             for p, c in sorted(per_file.items(), key=lambda kv: -sum(kv[1].values()))[:limit]
                         ],
+                        legacy_occurrences=sample[: limit * 5] if detail else [],
                     )
                 )
             )
@@ -186,3 +200,13 @@ def py_modern(ctx, detail, limit):
                     ],
                 )
             )
+            if legacy_occurrences:
+                click.echo()
+                sample = sorted(legacy_occurrences, key=lambda f: (f["path"], f["line"]))[: limit * 5]
+                click.echo("Legacy occurrences (file:line, kind, match):")
+                click.echo(
+                    format_table(
+                        ["Location", "Kind", "Match"],
+                        [[f"{f['path']}:{f['line']}", f["kind"], f["match"]] for f in sample],
+                    )
+                )

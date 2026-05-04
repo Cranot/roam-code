@@ -134,6 +134,42 @@ def _is_test_path(file_path):
     return is_test_file(file_path)
 
 
+# Scaffolding signal patterns — when a dead-export's docstring carries one of
+# these, it's almost certainly intentional reference code (FoxPro port,
+# spec implementation, planned-feature placeholder) and should not be
+# proposed for deletion.
+_SCAFFOLDING_BEHAVIOUR_ID_RE = re.compile(r"\b[A-Z]{2,5}-\d{1,5}\b")
+_SCAFFOLDING_LEGACY_FILE_RE = re.compile(
+    r"\b[A-Za-z0-9_]+\.(?:prg|scx|cbl|f|f90|f95|cob|copy|cls|trg|page|sql|asm)\b",
+    re.IGNORECASE,
+)
+_SCAFFOLDING_LINE_REFERENCE_RE = re.compile(r"\b(?:lines?|L)\s*[:#]?\s*\d{1,5}(?:\s*[-–]\s*\d{1,5})?\b", re.IGNORECASE)
+_SCAFFOLDING_SEE_LEGACY_RE = re.compile(r"\bsee\s+(?:legacy|original|spec|reference)[\s/:_-]", re.IGNORECASE)
+
+
+def _scaffolding_signals(docstring: str | None) -> dict | None:
+    """Return scaffolding evidence when the docstring cites legacy/spec.
+
+    A heuristic for "intentionally preserved reference code". Returns the
+    matched evidence dict (so callers can surface it as a reason), or
+    ``None`` when no signals are present.
+    """
+    if not docstring:
+        return None
+    text = docstring
+    behaviour_ids = _SCAFFOLDING_BEHAVIOUR_ID_RE.findall(text)
+    legacy_files = _SCAFFOLDING_LEGACY_FILE_RE.findall(text)
+    legacy_with_lines = legacy_files and bool(_SCAFFOLDING_LINE_REFERENCE_RE.search(text))
+    see_legacy = bool(_SCAFFOLDING_SEE_LEGACY_RE.search(text))
+    if not (behaviour_ids or legacy_with_lines or see_legacy):
+        return None
+    return {
+        "behaviour_ids": sorted(set(behaviour_ids)),
+        "legacy_files": sorted({f.lower() for f in legacy_files}) if legacy_with_lines else [],
+        "see_legacy": see_legacy,
+    }
+
+
 def _dead_action(r, file_imported, tested=False):
     """Compute actionable verdict and confidence % for a dead symbol.
 
@@ -159,6 +195,17 @@ def _dead_action(r, file_imported, tested=False):
     # Test file symbols — discovered by pytest, never imported directly
     if _is_test_path(r["file_path"]):
         return "INTENTIONAL", 10
+
+    # Scaffolding pattern — docstring cites a behaviour ID, legacy file
+    # with line numbers, or "see legacy/spec" reference. These are
+    # intentionally preserved reference symbols (planned features,
+    # FoxPro/COBOL port placeholders) regardless of consumer count.
+    try:
+        docstring = r["docstring"]
+    except (KeyError, IndexError):
+        docstring = None
+    if _scaffolding_signals(docstring):
+        return "INTENTIONAL_SCAFFOLDING", 80
 
     # Test-only public surface is not production-consumed, but deleting it
     # breaks the suite and may remove intentionally preserved API behavior.
@@ -1215,7 +1262,18 @@ def _analyze_dataflow_dead(conn):
     is_flag=True,
     help="Sort by decay score (most fossilized first)",
 )
-@click.option("--dataflow", "show_dataflow", is_flag=True, help="Include dataflow-based dead code findings")
+@click.option(
+    "--dataflow",
+    "--include-noisy-dataflow",
+    "show_dataflow",
+    is_flag=True,
+    help=(
+        "Include EXPERIMENTAL dataflow dead-code findings. High false-positive "
+        "rate (sinks list is narrow — execSync, spawn, subprocess, and SQL "
+        "flow are not yet recognised). Off by default; hidden behind this "
+        "flag so the precise dead-export signal isn't drowned."
+    ),
+)
 @click.pass_context
 def dead(
     ctx,
@@ -1247,6 +1305,11 @@ def dead(
 
     # Any extended flag implies we need extended data
     need_extended = show_aging or show_effort or show_decay or sort_by_age or sort_by_effort or sort_by_decay
+    # Decay distribution is now part of the default summary — the
+    # fossilized/decayed/stale/fresh framing is a much better pitch than
+    # a flat dead-export count, so we compute extended data unless the
+    # caller explicitly asked for the summary-only fast path.
+    compute_decay = not summary_only
 
     with open_db(readonly=True) as conn:
         # --- Extinction mode (separate flow) ---
@@ -1313,7 +1376,17 @@ def dead(
 
         # Dataflow-based dead code findings
         dataflow_dead = []
-        if show_dataflow:
+        if show_dataflow and not json_mode and not sarif_mode:
+            # Surface the limitation up front in text mode only; JSON/SARIF
+            # consumers learn this from the dedicated `dataflow_warning`
+            # field in the envelope below.
+            click.echo(
+                "NOTE: --dataflow is experimental. Sinks recognised: "
+                "function calls + return assignments. Not recognised: "
+                "execSync/spawn/subprocess, SQL flow, parameter mutation, "
+                "many DOM/event APIs. Expect false positives.",
+                err=True,
+            )
             dataflow_dead = _analyze_dataflow_dead(conn)
 
         if not all_items:
@@ -1375,7 +1448,12 @@ def dead(
         ]
         n_safe = sum(1 for _, a, _c in all_dead if a == "SAFE")
         n_review = sum(1 for _, a, _c in all_dead if a == "REVIEW")
-        n_intent = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL")
+        n_intent_strict = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL")
+        n_scaffolding = sum(1 for _, a, _c in all_dead if a == "INTENTIONAL_SCAFFOLDING")
+        # Treat scaffolding as intentional in the rollup so existing
+        # tooling (CI gates, dashboards) keeps working; surface the
+        # split via the dedicated `scaffolding` field below.
+        n_intent = n_intent_strict + n_scaffolding
         n_test_only = sum(1 for r in all_items if consumer_meta.get(r["id"], {}).get("test_consumers", 0) > 0)
 
         # --- SARIF output ---
@@ -1434,7 +1512,7 @@ def dead(
         # --- Extended data (aging / effort / decay) ---
         extended_data = {}
         ext_summary = {}
-        if need_extended:
+        if need_extended or compute_decay:
             extended_data = _compute_extended_data(conn, all_items, raw_clusters)
             ext_summary = _extended_summary(extended_data)
 
@@ -1493,7 +1571,8 @@ def dead(
                         "dead_per_file": dead_per_file,
                         "safe": sum(1 for v in verdicts if v == "SAFE"),
                         "review": sum(1 for v in verdicts if v == "REVIEW"),
-                        "intentional": sum(1 for v in verdicts if v == "INTENTIONAL"),
+                        "intentional": sum(1 for v in verdicts if v in ("INTENTIONAL", "INTENTIONAL_SCAFFOLDING")),
+                        "scaffolding": sum(1 for v in verdicts if v == "INTENTIONAL_SCAFFOLDING"),
                     }
                 )
 
@@ -1505,14 +1584,18 @@ def dead(
                 fmeta = file_import_meta.get(r["file_id"], {})
                 smeta = sibling_meta.get(r["file_id"], {})
                 tested = cmeta.get("test_consumers", 0) > 0
+                action, confidence = _dead_action(r, file_imported, tested)
+                scaffolding_evidence = _scaffolding_signals(r["docstring"] if "docstring" in r.keys() else None)
                 d = {
                     "name": r["name"],
                     "kind": r["kind"],
                     "location": loc(r["file_path"], r["line_start"]),
-                    "action": _dead_action(r, file_imported, tested)[0],
-                    "confidence": _dead_action(r, file_imported, tested)[1],
+                    "action": action,
+                    "confidence": confidence,
                     "reason": _dead_reason(r, consumer_meta, file_import_meta, sibling_meta),
                     "tested": tested,
+                    "scaffolding": scaffolding_evidence is not None,
+                    "scaffolding_evidence": scaffolding_evidence or {},
                     "production_consumers": cmeta.get("production_consumers", 0),
                     "test_consumers": cmeta.get("test_consumers", 0),
                     "named_symbol_consumers": cmeta.get("production_consumers", 0) + cmeta.get("test_consumers", 0),
@@ -1541,11 +1624,17 @@ def dead(
                 "safe": n_safe,
                 "review": n_review,
                 "intentional": n_intent,
+                "scaffolding": n_scaffolding,
                 "test_only": n_test_only,
                 "unused_assignments": len(unused_assignments),
                 "dataflow_dead": len(dataflow_dead),
             }
-            if need_extended:
+            if show_dataflow:
+                summary["dataflow_warning"] = (
+                    "experimental — narrow sink coverage (no execSync/spawn/"
+                    "subprocess/SQL flow/parameter mutation); expect false positives"
+                )
+            if ext_summary:
                 summary.update(ext_summary)
 
             _next_steps = suggest_next_steps(
@@ -1591,10 +1680,11 @@ def dead(
                     )
                 if len(high) > 5:
                     click.echo(f"  (+{len(high) - 5} more — run `roam --detail dead` for the full list)")
-            if need_extended and ext_summary:
+            if ext_summary:
                 click.echo(f"  Total dead LOC: {ext_summary['total_dead_loc']}")
                 click.echo(f"  Median age: {ext_summary['median_age_days']} days")
-                click.echo(f"  Total removal effort: {ext_summary['total_effort_hours']} hours")
+                if need_extended:
+                    click.echo(f"  Total removal effort: {ext_summary['total_effort_hours']} hours")
                 dist = ext_summary["decay_distribution"]
                 click.echo(
                     f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
@@ -1629,23 +1719,31 @@ def dead(
         # --- Text: grouped mode ---
         if group_by and groups_data:
             click.echo(f"=== Unreferenced Exports by {group_by} ({len(all_items)} total) ===")
-            click.echo(f"  Actions: {n_safe} safe to delete, {n_review} need review, {n_intent} likely intentional\n")
+            scaffolding_note = f", {n_scaffolding} scaffolding" if n_scaffolding else ""
+            click.echo(
+                f"  Actions: {n_safe} safe to delete, {n_review} need review, "
+                f"{n_intent} likely intentional{scaffolding_note}\n"
+            )
             table_rows = []
             for g in groups_data:
-                table_rows.append(
-                    [
-                        g["key"],
-                        str(g["count"]),
-                        str(g["files"]),
-                        str(g["dead_per_file"]),
-                        str(g["safe"]),
-                        str(g["review"]),
-                        str(g["intentional"]),
-                    ]
-                )
+                row = [
+                    g["key"],
+                    str(g["count"]),
+                    str(g["files"]),
+                    str(g["dead_per_file"]),
+                    str(g["safe"]),
+                    str(g["review"]),
+                    str(g["intentional"]),
+                ]
+                if n_scaffolding:
+                    row.append(str(g.get("scaffolding", 0)))
+                table_rows.append(row)
+            headers = [group_by.title(), "Total", "Files", "Dead/File", "Safe", "Review", "Intentional"]
+            if n_scaffolding:
+                headers.append("Scaffolding")
             click.echo(
                 format_table(
-                    [group_by.title(), "Total", "Files", "Dead/File", "Safe", "Review", "Intentional"],
+                    headers,
                     table_rows,
                     budget=30,
                 )
@@ -1674,19 +1772,18 @@ def dead(
         if unused_assignments:
             click.echo(f"  Intra-procedural unused assignments: {len(unused_assignments)}")
 
-        # Show extended summary if any extended flag is set
-        if need_extended and ext_summary:
+        # Always surface the decay framing (default summary), with effort
+        # added when --aging / --effort / --decay are explicitly requested.
+        if ext_summary:
+            line = f"  Total dead LOC: {ext_summary['total_dead_loc']}  Median age: {ext_summary['median_age_days']}d"
+            if need_extended:
+                line += f"  Removal effort: {ext_summary['total_effort_hours']}h"
+            click.echo(line)
+            dist = ext_summary["decay_distribution"]
             click.echo(
-                f"  Total dead LOC: {ext_summary['total_dead_loc']}  "
-                f"Median age: {ext_summary['median_age_days']}d  "
-                f"Removal effort: {ext_summary['total_effort_hours']}h"
+                f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
+                f"{dist['decayed']} decayed, {dist['fossilized']} fossilized"
             )
-            if show_decay:
-                dist = ext_summary["decay_distribution"]
-                click.echo(
-                    f"  Decay: {dist['fresh']} fresh, {dist['stale']} stale, "
-                    f"{dist['decayed']} decayed, {dist['fossilized']} fossilized"
-                )
         click.echo()
 
         # Build imported-by lookup for high-confidence results

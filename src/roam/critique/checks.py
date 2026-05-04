@@ -62,6 +62,19 @@ class Finding:
 
 _DIFF_FILE_RE = re.compile(r"^\+\+\+ (?:b/)?(.+?)(?:\s|$)")
 _DIFF_HUNK_RE = re.compile(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,(\d+))? @@")
+_DIFF_SHAPE_HINT_RE = re.compile(r"^(?:diff --git |index [0-9a-f]+\.\.|---(?: |/)|\+\+\+(?: |/)|@@ )", re.MULTILINE)
+
+
+def looks_like_unified_diff(text: str) -> bool:
+    """Return True when ``text`` carries at least one diff-shape signal.
+
+    Used by ``roam critique`` to surface ``INVALID_DIFF`` instead of the
+    silent ``no concerns`` verdict that ambiguous shell substitutions or
+    truncated paste-buffers used to produce.
+    """
+    if not text or not text.strip():
+        return False
+    return bool(_DIFF_SHAPE_HINT_RE.search(text))
 
 
 def parse_diff(text: str) -> list[ChangedRegion]:
