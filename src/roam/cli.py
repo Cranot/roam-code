@@ -33,6 +33,11 @@ _COMMANDS = {
     "search": ("roam.commands.cmd_search", "search"),
     "grep": ("roam.commands.cmd_grep", "grep_cmd"),
     "uses": ("roam.commands.cmd_uses", "uses"),
+    # Phase-1.5 — ``refs`` is a grep-familiar alias for ``uses``. Agents
+    # reaching for "find references to X" hit this name first; the real
+    # work happens in cmd_uses through the indexed call/import graph
+    # (no string-literal / comment false positives).
+    "refs": ("roam.commands.cmd_uses", "uses"),
     "impact": ("roam.commands.cmd_impact", "impact"),
     "owner": ("roam.commands.cmd_owner", "owner"),
     "coupling": ("roam.commands.cmd_coupling", "coupling"),

@@ -32,11 +32,14 @@ def test_cli_surface_counts_self_consistent():
     assert counts["command_names"] == counts["canonical_commands"] + counts["alias_names"]
     # Alias lineup. Round 4 #16 added trend/digest/snapshot as aliases
     # of the consolidated `roam trends` so docs keep resolving.
+    # Phase-1.5 (v12.12.7) added ``refs`` as an alias for ``uses`` to
+    # give agents a grep-familiar entry point for "find references".
     assert counts["alias_groups"] == [
         ["algo", "math"],
         ["churn", "weather"],
         ["digest", "snapshot", "trend", "trends"],
         ["onboard", "understand"],
+        ["refs", "uses"],
     ]
     # Sanity floor — never silently regress to v11-era counts.
     assert counts["canonical_commands"] >= 141

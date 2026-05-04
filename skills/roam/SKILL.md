@@ -53,7 +53,8 @@ Use this table to pick the right command for the situation:
 | Detect dead/unused code | `roam dead` |
 | PR risk assessment | `roam pr-risk` |
 | Find dependency paths | `roam trace <source> <target>` |
-| Who calls/imports this? | `roam uses <symbol>` |
+| Who calls/imports this? | `roam uses <symbol>` (alias: `roam refs`) |
+| Find every reference to X (replaces multi-shape grep) | `roam refs <symbol>` |
 | Algorithm anti-patterns | `roam algo` |
 | Side effects of a function | `roam effects <symbol>` |
 | Safe to delete? | `roam safe-delete <symbol>` |
@@ -214,3 +215,57 @@ For full documentation, examples, and the latest features, see the
 - `roam context` gives exact line ranges — more precise than reading whole files.
 - After `git pull`, run `roam index` to keep the graph fresh.
 - For disambiguation, use `file:symbol` syntax: `roam symbol myfile:MyClass`.
+
+## "Find every reference to X" — prefer `roam refs` over multi-shape grep
+
+A common agent pattern is:
+
+```
+Grep(pattern: "->ekfpa|\.ekfpa\b|'ekfpa'|\"ekfpa\"")
+```
+
+The intent is "find all references to symbol `ekfpa`". The multi-shape regex
+tries to catch function calls (`->ekfpa`), attribute access (`.ekfpa`), and
+string literal mentions (`'ekfpa'`, `"ekfpa"`). It works, but:
+
+- **False positives.** Matches comments, docstrings, and unrelated string
+  literals — the agent must filter those out manually.
+- **Unstructured.** Returns raw line text; the agent has to parse to learn
+  which symbol owns each match.
+- **Misses one-off shapes.** Ruby `obj.ekfpa!`, Python f-string `f"{ekfpa}"`,
+  decorator `@ekfpa`, etc. each need another regex shape.
+
+`roam refs <symbol>` (alias for `roam uses`) walks the indexed call/import/
+inherit graph and returns only **real** references — every result is a
+named symbol with kind/file/line, grouped by edge type:
+
+```
+$ roam refs find_symbol
+VERDICT: 'find_symbol': 50 production consumers, 7 test consumers in 27 files
+
+-- Called by (30) --
+fn  affected_tests   src/roam/commands/cmd_affected_tests.py:230  production
+fn  annotate         src/roam/commands/cmd_annotate.py:21         production
+…
+-- Imported by (20) --
+…
+```
+
+Latency on this repo: ~700ms via subprocess, sub-100ms via the MCP server
+(``roam_uses`` tool, which agents in MCP-enabled clients should prefer
+because the import-cost is paid once at server start). 2-5× slower than
+ripgrep in raw wall-time, but the result is already usable — there's no
+follow-up "now read the matching files and figure out the structure" step.
+
+Use `roam refs` when:
+
+- Finding every caller / importer / inheritor of a symbol.
+- Planning an API change ("what would break if I rename X").
+- Sweeping for usages before a deletion.
+
+Stay with grep / Grep when:
+
+- The target is a literal string, not a symbol (e.g. an error message,
+  a translation key, a SQL fragment).
+- The codebase isn't indexed yet (`roam init` first if you'll be doing
+  many of these queries).

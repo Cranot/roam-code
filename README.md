@@ -550,7 +550,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 |---------|-------------|
 | `roam module <path>` | Directory contents: exports, signatures, dependencies, cohesion |
 | `roam sketch <dir> [--full]` | Compact structural skeleton of a directory |
-| `roam uses <name>` | All consumers: callers, importers, inheritors |
+| `roam uses <name>` (alias `roam refs`) | All consumers: callers, importers, inheritors. Use this *instead of* `grep "->X\|\.X\\b\|'X'\|\"X\""` to find references — graph-precise, no string-literal / comment false positives, structured by edge type. |
 | `roam owner <path>` | Code ownership: who owns a file or directory |
 | `roam coupling [-n N] [--set]` | Temporal coupling: file pairs that change together (NPMI + lift) |
 | `roam fn-coupling` | Function-level temporal coupling across files |
