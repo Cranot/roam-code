@@ -4,9 +4,49 @@ from __future__ import annotations
 
 import click
 
+from roam.commands.changed_files import is_test_file
 from roam.commands.resolve import ensure_index, symbol_not_found_hint
-from roam.db.connection import open_db
+from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import abbrev_kind, format_table, json_envelope, loc, to_json
+
+
+def _test_text_consumers(conn, name: str, existing_files: set[str]) -> list[dict]:
+    """Find test-file mentions when no symbol edge could be created.
+
+    JS/Vitest tests often contain only top-level imports and test callbacks,
+    leaving the resolver without a concrete source symbol for an edge. This
+    fallback is deliberately scoped to test files and exact identifier matches.
+    """
+    import re
+
+    project_root = find_project_root()
+    pattern = re.compile(rf"\b{re.escape(name)}\b")
+    consumers: list[dict] = []
+    for f in conn.execute("SELECT path FROM files").fetchall():
+        path = f["path"]
+        if path in existing_files or not is_test_file(path):
+            continue
+        try:
+            source = (project_root / path).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        match = pattern.search(source)
+        if not match:
+            continue
+        line = source.count("\n", 0, match.start()) + 1
+        consumers.append(
+            {
+                "name": path.rsplit("/", 1)[-1],
+                "qualified_name": path,
+                "kind": "test",
+                "line_start": line,
+                "path": path,
+                "edge_kind": "test",
+                "edge_line": line,
+                "target_name": name,
+            }
+        )
+    return consumers
 
 
 @click.command()
@@ -68,8 +108,9 @@ def uses(ctx, name, full):
         placeholders = ",".join("?" for _ in target_ids)
 
         # Find ALL edges pointing TO these targets
-        rows = conn.execute(
-            f"""SELECT s.name, s.qualified_name, s.kind, s.line_start,
+        rows = list(
+            conn.execute(
+                f"""SELECT s.name, s.qualified_name, s.kind, s.line_start,
                        f.path, e.kind as edge_kind, e.line as edge_line,
                        t.name as target_name
                 FROM edges e
@@ -78,8 +119,16 @@ def uses(ctx, name, full):
                 JOIN files f ON s.file_id = f.id
                 WHERE e.target_id IN ({placeholders})
                 ORDER BY e.kind, f.path, s.line_start""",
-            target_ids,
-        ).fetchall()
+                target_ids,
+            ).fetchall()
+        )
+        rows.extend(
+            _test_text_consumers(
+                conn,
+                name,
+                {r["path"] for r in rows if is_test_file(r["path"])},
+            )
+        )
 
         if not rows:
             if json_mode:
@@ -90,6 +139,9 @@ def uses(ctx, name, full):
                             summary={
                                 "verdict": f"no consumers of '{name}' found",
                                 "total_consumers": 0,
+                                "production_consumers": 0,
+                                "test_consumers": 0,
+                                "tested": False,
                                 "total_files": 0,
                             },
                             symbol=name,
@@ -107,6 +159,23 @@ def uses(ctx, name, full):
         for r in rows:
             by_kind.setdefault(r["edge_kind"], []).append(r)
 
+        def _scope(row) -> str:
+            return "test" if is_test_file(row["path"]) else "production"
+
+        def _dedupe(items):
+            seen = set()
+            deduped = []
+            for item in items:
+                key = (item["qualified_name"], item["path"], item["edge_kind"])
+                if key not in seen:
+                    seen.add(key)
+                    deduped.append(item)
+            return deduped
+
+        deduped_rows = _dedupe(rows)
+        production_rows = [r for r in deduped_rows if _scope(r) == "production"]
+        test_rows = [r for r in deduped_rows if _scope(r) == "test"]
+
         # Dedup within each group by (name, path)
         kind_labels = {
             "call": "Called by",
@@ -115,29 +184,28 @@ def uses(ctx, name, full):
             "implements": "Implemented by",
             "uses_trait": "Used by (trait)",
             "template": "Used in template",
+            "test": "Mentioned in tests",
         }
 
         if json_mode:
             json_groups = {}
             for kind, items in by_kind.items():
-                seen = set()
-                deduped = []
-                for r in items:
-                    key = (r["qualified_name"], r["path"])
-                    if key not in seen:
-                        seen.add(key)
-                        deduped.append(r)
+                deduped = _dedupe(items)
                 json_groups[kind] = [
                     {
                         "name": r["name"],
                         "kind": r["kind"],
                         "location": loc(r["path"], r["line_start"]),
+                        "scope": _scope(r),
                     }
                     for r in deduped
                 ]
             files = set(r["path"] for r in rows)
             total_consumers = sum(len(v) for v in json_groups.values())
-            _verdict = f"'{name}': {total_consumers} consumers in {len(files)} files"
+            _verdict = (
+                f"'{name}': {len(production_rows)} production consumers, "
+                f"{len(test_rows)} test consumers in {len(files)} files"
+            )
             click.echo(
                 to_json(
                     json_envelope(
@@ -145,6 +213,9 @@ def uses(ctx, name, full):
                         summary={
                             "verdict": _verdict,
                             "total_consumers": total_consumers,
+                            "production_consumers": len(production_rows),
+                            "test_consumers": len(test_rows),
+                            "tested": bool(test_rows),
                             "total_files": len(files),
                         },
                         budget=token_budget,
@@ -159,7 +230,10 @@ def uses(ctx, name, full):
         total = 0
         # Compute totals for verdict
         _files_set = set(r["path"] for r in rows)
-        click.echo(f"VERDICT: '{name}': {len(rows)} consumers in {len(_files_set)} files\n")
+        click.echo(
+            f"VERDICT: '{name}': {len(production_rows)} production consumers, "
+            f"{len(test_rows)} test consumers in {len(_files_set)} files\n"
+        )
         click.echo(f"=== Consumers of '{name}' ===\n")
 
         # Show in a consistent order, then any remaining kinds
@@ -170,14 +244,7 @@ def uses(ctx, name, full):
             if not items:
                 continue
 
-            # Dedup by (qualified_name, path)
-            seen = set()
-            deduped = []
-            for r in items:
-                key = (r["qualified_name"], r["path"])
-                if key not in seen:
-                    seen.add(key)
-                    deduped.append(r)
+            deduped = _dedupe(items)
 
             label = kind_labels.get(kind, kind)
             total += len(deduped)
@@ -189,13 +256,14 @@ def uses(ctx, name, full):
                         abbrev_kind(r["kind"]),
                         r["name"],
                         loc(r["path"], r["line_start"]),
+                        _scope(r),
                     ]
                 )
 
             click.echo(f"-- {label} ({len(deduped)}) --")
             click.echo(
                 format_table(
-                    ["Kind", "Name", "Location"],
+                    ["Kind", "Name", "Location", "Scope"],
                     table_rows,
                     budget=0 if full else 20,
                 )

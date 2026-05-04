@@ -157,13 +157,13 @@ _EMPTY_HANDLER_PATTERNS = {
     ],
     "javascript": [
         # catch (e) {} or catch (e) { }
-        re.compile(r"\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
+        re.compile(r"(?<!\.)\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
     ],
     "typescript": [
-        re.compile(r"\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
+        re.compile(r"(?<!\.)\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
     ],
     "java": [
-        re.compile(r"\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
+        re.compile(r"(?<!\.)\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
     ],
     "c_sharp": [
         re.compile(r"\bcatch\s*\([^)]*\)\s*\{\s*\}", re.MULTILINE),
@@ -206,7 +206,9 @@ def _detect_empty_handlers(conn, project_root: Path) -> tuple[int, int, list[dic
         if lang == "python":
             total_try_blocks += len(re.findall(r"^\s*except\b", source, re.MULTILINE))
         elif lang in ("javascript", "typescript", "java", "c_sharp"):
-            total_try_blocks += len(re.findall(r"\bcatch\s*\(", source, re.MULTILINE))
+            # Count catch statements, not Promise `.catch(...)` fallbacks such
+            # as `response.json().catch(() => ({}))`.
+            total_try_blocks += len(re.findall(r"(?<!\.)\bcatch\s*\(", source, re.MULTILINE))
         elif lang == "go":
             total_try_blocks += len(re.findall(r"\bif\s+err\s*!=\s*nil", source, re.MULTILINE))
         elif lang == "ruby":
