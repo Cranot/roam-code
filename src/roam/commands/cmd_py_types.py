@@ -170,6 +170,7 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
     uses_any = 0
     old_typing = 0
     by_file: dict[str, dict] = {}
+    findings: list[dict] = []
 
     for r in rows:
         h = _signature_health(r["signature"])
@@ -183,6 +184,24 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
             old_typing += 1
         slot = by_file.setdefault(r["path"], {"total": 0, "missing": 0})
         slot["total"] += 1
+        if not h["has_return"] or h["params_untyped"] > 0 or h["uses_any"] or h["old_typing"]:
+            issues = []
+            if not h["has_return"]:
+                issues.append("no-return")
+            if h["params_untyped"] > 0:
+                issues.append(f"{h['params_untyped']}-untyped")
+            if h["uses_any"]:
+                issues.append("uses-Any")
+            if h["old_typing"]:
+                issues.append("legacy-typing")
+            findings.append(
+                {
+                    "name": r["qualified_name"] or r["name"],
+                    "path": r["path"],
+                    "line": r["line_start"],
+                    "issues": issues,
+                }
+            )
         if not h["has_return"] or h["params_untyped"] > 0:
             slot["missing"] += 1
 
@@ -196,6 +215,10 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
         verdict = f"weak type coverage ({coverage}% public symbols fully typed across {total} fn/methods)"
 
     if json_mode:
+        # Limit findings to the same top-N as the by_file rollup for the
+        # JSON envelope so consumers don't get a full per-symbol dump on
+        # large projects. Detail mode (when stable) adds file:line.
+        ranked_findings = sorted(findings, key=lambda f: (f["path"], f["line"]))
         click.echo(
             to_json(
                 json_envelope(
@@ -213,6 +236,7 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
                         {"path": p, "total": d["total"], "missing": d["missing"]}
                         for p, d in sorted(by_file.items(), key=lambda kv: -kv[1]["missing"])[:limit]
                     ],
+                    findings=ranked_findings[: limit * 5] if detail else [],
                 )
             )
         )
@@ -257,6 +281,16 @@ def py_types(ctx, detail, limit, include_tests, min_coverage, ci_mode):
                 ],
             )
         )
+        if findings:
+            click.echo()
+            sample = sorted(findings, key=lambda f: (f["path"], f["line"]))[: limit * 5]
+            click.echo("Sample findings (file:line, name, issues):")
+            click.echo(
+                format_table(
+                    ["Location", "Symbol", "Issues"],
+                    [[f"{f['path']}:{f['line']}", f["name"], ", ".join(f["issues"])] for f in sample],
+                )
+            )
 
     # CI gate — exit 5 (mirrors EXIT_GATE_FAILURE used by ``roam rules
     # --ci``) when coverage falls below the requested threshold.

@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import math
+import os
+import re
 
 import click
 
@@ -10,6 +12,66 @@ from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
 from roam.db.connection import find_project_root, open_db
 from roam.output.formatter import format_table, json_envelope, to_json
+
+# Directories that conventionally hold parallel-translation files; co-change
+# between sibling files there is expected, not hidden coupling.
+_LOCALE_DIR_TOKENS = frozenset({"locales", "locale", "i18n", "lang", "langs", "translations", "intl", "messages"})
+_LOCALE_CODE_RE = re.compile(r"^[a-z]{2,3}(?:[-_][A-Z]{2})?$")
+_DOC_DIR_TOKENS = frozenset({"docs", "doc", "documentation", "guide", "guides", "manual"})
+_DOC_EXTS = frozenset({".md", ".rst", ".mdx", ".adoc", ".txt"})
+
+
+def _classify_pair(path_a: str, path_b: str) -> str:
+    """Tag known co-change patterns that aren't architectural coupling.
+
+    Returns one of:
+
+    - ``""`` — no special pattern
+    - ``"expected_locale"`` — sibling translation files (same dir,
+      filenames differ by locale code)
+    - ``"expected_doc_hub"`` — sibling docs in a docs/<topic>/ folder
+      that always co-change with their cousins
+    """
+    a = path_a.replace("\\", "/")
+    b = path_b.replace("\\", "/")
+    dir_a, base_a = os.path.dirname(a), os.path.basename(a)
+    dir_b, base_b = os.path.dirname(b), os.path.basename(b)
+    if dir_a != dir_b:
+        return ""
+    parent = os.path.basename(dir_a).lower()
+
+    name_a, ext_a = os.path.splitext(base_a)
+    name_b, ext_b = os.path.splitext(base_b)
+    if ext_a != ext_b:
+        return ""
+
+    # Locale pattern: parent dir is a known i18n root, OR both basenames
+    # are short locale codes ("el.ts" + "en.ts"), OR both share a stem
+    # with a locale suffix ("strings.el.json" + "strings.en.json").
+    looks_locale_dir = parent in _LOCALE_DIR_TOKENS
+    if looks_locale_dir or (_LOCALE_CODE_RE.match(name_a) and _LOCALE_CODE_RE.match(name_b)):
+        if _LOCALE_CODE_RE.match(name_a) and _LOCALE_CODE_RE.match(name_b):
+            return "expected_locale"
+        # strings.<lang>.json shape
+        a_parts = name_a.rsplit(".", 1)
+        b_parts = name_b.rsplit(".", 1)
+        if (
+            len(a_parts) == 2
+            and len(b_parts) == 2
+            and a_parts[0] == b_parts[0]
+            and _LOCALE_CODE_RE.match(a_parts[1])
+            and _LOCALE_CODE_RE.match(b_parts[1])
+        ):
+            return "expected_locale"
+
+    # Doc-hub: any sibling Markdown/rst pair under a docs/ subtree.
+    if ext_a.lower() in _DOC_EXTS:
+        path_parts = dir_a.lower().split("/")
+        if any(part in _DOC_DIR_TOKENS for part in path_parts):
+            return "expected_doc_hub"
+
+    return ""
+
 
 # ---------------------------------------------------------------------------
 # Surprise score: Jaccard similarity against hypergraph patterns
@@ -389,6 +451,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         total_commits = max((total_commits_row[0] if total_commits_row else 1), 1)
 
         table_rows = []
+        pair_patterns: list[str] = []
         for r in rows:
             path_a = r["path_a"]
             path_b = r["path_b"]
@@ -396,10 +459,14 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
             fid_a = path_to_id.get(path_a)
             fid_b = path_to_id.get(path_b)
 
+            pattern = _classify_pair(path_a, path_b)
+            pair_patterns.append(pattern)
             has_edge = ""
             if fid_a and fid_b:
                 if (fid_a, fid_b) in file_edge_set:
                     has_edge = "yes"
+                elif pattern:
+                    has_edge = "EXPECTED"
                 else:
                     has_edge = "HIDDEN"
 
@@ -414,7 +481,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
 
         if json_mode:
             pairs = []
-            for r in rows:
+            for idx, r in enumerate(rows):
                 pa, pb = r["path_a"], r["path_b"]
                 fid_a, fid_b = path_to_id.get(pa), path_to_id.get(pb)
                 has_struct = bool(fid_a and fid_b and (fid_a, fid_b) in file_edge_set)
@@ -437,6 +504,7 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     npmi_val = round(_npmi(p_ab, p_a, p_b), 3)
                 else:
                     npmi_val = None
+                pattern = pair_patterns[idx] if idx < len(pair_patterns) else _classify_pair(pa, pb)
                 pairs.append(
                     {
                         "file_a": pa,
@@ -446,9 +514,11 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                         "lift": lift_val,
                         "npmi": npmi_val,
                         "has_structural_edge": has_struct,
+                        "expected_pattern": pattern or None,
                     }
                 )
-            hidden_pairs = sum(1 for p in pairs if not p["has_structural_edge"])
+            hidden_pairs = sum(1 for p in pairs if not p["has_structural_edge"] and not p["expected_pattern"])
+            expected_pairs = sum(1 for p in pairs if p["expected_pattern"])
             if pairs:
                 top = pairs[0]
                 a_base = top["file_a"].replace("\\", "/").rsplit("/", 1)[-1]
@@ -462,7 +532,12 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
                     json_envelope(
                         "coupling",
                         budget=token_budget,
-                        summary={"verdict": verdict, "pairs": len(pairs), "hidden_coupling": hidden_pairs},
+                        summary={
+                            "verdict": verdict,
+                            "pairs": len(pairs),
+                            "hidden_coupling": hidden_pairs,
+                            "expected_coupling": expected_pairs,
+                        },
                         pairs=pairs,
                     )
                 )
@@ -489,9 +564,14 @@ def coupling(ctx, count, staged, commit_range, min_strength, min_cochanges):
         )
 
         hidden_count = sum(1 for r in table_rows if r[2] == "HIDDEN")
+        expected_count = sum(1 for r in table_rows if r[2] == "EXPECTED")
         total_pairs = len(table_rows)
         if hidden_count:
             pct = hidden_count * 100 / total_pairs if total_pairs else 0
             click.echo(
                 f"\n{hidden_count}/{total_pairs} pairs ({pct:.0f}%) have NO import edge but co-change frequently (hidden coupling)."
+            )
+        if expected_count:
+            click.echo(
+                f"{expected_count}/{total_pairs} pairs labelled EXPECTED (locale siblings or doc-hub cousins) — not architectural coupling."
             )

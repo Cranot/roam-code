@@ -247,7 +247,7 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
     results: list[dict] = []
     for item in dead_exports:
         action = item.get("action", "REVIEW")
-        if action == "INTENTIONAL":
+        if action in ("INTENTIONAL", "INTENTIONAL_SCAFFOLDING"):
             continue
 
         level = "warning" if action == "SAFE" else "note"

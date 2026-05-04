@@ -6,7 +6,6 @@ import math
 
 import click
 
-from roam.commands.changed_files import is_test_file
 from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.resolve import ensure_index
 from roam.coverage_reports import imported_coverage_overview
@@ -18,6 +17,7 @@ from roam.graph.cycles import (
     find_cycles,
     find_weakest_edge,
     format_cycles,
+    mark_actionable_cycles,
     propagation_cost,
 )
 from roam.graph.layers import detect_layers, find_violations
@@ -301,16 +301,14 @@ def health(ctx, no_framework, gate):
         # --- Cycles ---
         cycles = find_cycles(G)
         formatted_cycles = format_cycles(cycles, conn) if cycles else []
+        mark_actionable_cycles(formatted_cycles)
 
         raw_by_formatted_cycle = list(zip(cycles, formatted_cycles))
 
         # --- Cycle break suggestions ---
         break_suggestions: list[dict] = []
         for scc, cyc_info in raw_by_formatted_cycle:
-            files = cyc_info.get("files", [])
-            is_local = len(set(files)) <= 1
-            has_test = any(is_test_file(f) for f in files)
-            if is_local or has_test:
+            if not cyc_info.get("actionable"):
                 continue
             if len(scc) < 3:
                 continue
@@ -401,13 +399,7 @@ def health(ctx, no_framework, gate):
         # duplicate names; neither is an architectural cycle.
         for cyc in formatted_cycles:
             dirs = _unique_dirs(cyc["files"])
-            file_count = len(set(cyc["files"]))
-            has_test_file = any(is_test_file(f) for f in cyc["files"])
             cyc["directories"] = len(dirs)
-            cyc["file_count"] = file_count
-            cyc["has_test_file"] = has_test_file
-            cyc["local_only"] = file_count <= 1
-            cyc["actionable"] = not cyc["local_only"] and not has_test_file
             if not cyc["actionable"]:
                 cyc["severity"] = "INFO"
             elif len(cyc["files"]) > 3:

@@ -2285,6 +2285,24 @@ def critique_patch(
             }
         )
 
+    # Catch the common "shell substitution silently produced non-diff text"
+    # case (truncated buffers, wrong format) before invoking the subprocess
+    # — gives a faster, clearer failure than RUN_FAILED on stderr.
+    from roam.critique.checks import looks_like_unified_diff as _looks_diff
+
+    if not _looks_diff(diff_text):
+        return _structured_error(
+            {
+                "error": "diff_text is not a recognisable unified diff",
+                "error_code": "INVALID_DIFF",
+                "hint": (
+                    "expected unified diff with diff/---/+++/@@ headers — pass "
+                    "the literal output of `git diff` or `gh pr diff <id>`"
+                ),
+                "command": "roam_critique",
+            }
+        )
+
     # Use a JSON-mode subprocess so we get the structured envelope.
     args = [sys.executable, "-m", "roam", "--json", "critique"]
     if high_callers != 10:

@@ -168,15 +168,22 @@ def _path_rank(path: str | None) -> int:
 
 
 def pick_best(conn: sqlite3.Connection, rows: list) -> dict | None:
-    """Pick the most-referenced symbol from ambiguous matches.
+    """Pick the most important symbol from ambiguous matches.
 
-    Tie-breaking order:
+    Tie-breaking order (high to low):
     1. Highest incoming edge count (most-called).
-    2. Highest path priority (canonical src/ paths beat dev/ scripts).
-    3. Lowest symbol id (deterministic).
+    2. Highest PageRank (transitive importance, useful when callers are
+       template-only or dynamic and not captured as edges).
+    3. Highest cognitive complexity (proxy for "real implementation"
+       beating placeholder/empty handlers with the same name).
+    4. Highest file churn (hot file > cold file).
+    5. Highest path priority (canonical src/ paths beat dev/ scripts).
+    6. Lowest symbol id (deterministic final tiebreak).
 
-    Returns the chosen row, or None when no candidate has any incoming
-    edges.
+    Returns the chosen row when at least one signal is present. When all
+    candidates score zero across every signal, returns ``None`` so the
+    caller can fall back to the first SQL-ordered row (the historic
+    behaviour) — this preserves stability for unindexed projects.
     """
     if not rows:
         return None
@@ -185,21 +192,53 @@ def pick_best(conn: sqlite3.Connection, rows: list) -> dict | None:
 
     ids = [r["id"] for r in rows]
     ph = ",".join("?" for _ in ids)
+
     counts = conn.execute(
         f"SELECT target_id, COUNT(*) as cnt FROM edges WHERE target_id IN ({ph}) GROUP BY target_id",
         ids,
     ).fetchall()
     ref_map = {c["target_id"]: c["cnt"] for c in counts}
 
+    pr_rows = conn.execute(
+        f"SELECT symbol_id, pagerank FROM graph_metrics WHERE symbol_id IN ({ph})",
+        ids,
+    ).fetchall()
+    pr_map = {r["symbol_id"]: r["pagerank"] or 0 for r in pr_rows}
+
+    cc_rows = conn.execute(
+        f"SELECT symbol_id, cognitive_complexity FROM symbol_metrics WHERE symbol_id IN ({ph})",
+        ids,
+    ).fetchall()
+    cc_map = {r["symbol_id"]: r["cognitive_complexity"] or 0 for r in cc_rows}
+
+    file_ids = list({r["file_id"] for r in rows if "file_id" in r.keys() and r["file_id"] is not None})
+    churn_map: dict[int, int] = {}
+    if file_ids:
+        ph_f = ",".join("?" for _ in file_ids)
+        churn_rows = conn.execute(
+            f"SELECT file_id, total_churn FROM file_stats WHERE file_id IN ({ph_f})",
+            file_ids,
+        ).fetchall()
+        churn_map = {r["file_id"]: r["total_churn"] or 0 for r in churn_rows}
+
     def _key(r):
-        # max() takes the highest tuple; we want path rank as a tiebreak
-        # so a dev/ script can never beat a src/ canonical when their
-        # edge counts are equal. Negative id puts the lowest id last in
-        # the (lower-is-later) tiebreak.
-        return (ref_map.get(r["id"], 0), _path_rank(r["file_path"]), -r["id"])
+        return (
+            ref_map.get(r["id"], 0),
+            pr_map.get(r["id"], 0),
+            cc_map.get(r["id"], 0),
+            churn_map.get(r["file_id"], 0) if "file_id" in r.keys() else 0,
+            _path_rank(r["file_path"]),
+            -r["id"],
+        )
 
     best = max(rows, key=_key)
-    if ref_map.get(best["id"], 0) > 0:
+    has_signal = (
+        ref_map.get(best["id"], 0) > 0
+        or pr_map.get(best["id"], 0) > 0
+        or cc_map.get(best["id"], 0) > 0
+        or (churn_map.get(best["file_id"], 0) if "file_id" in best.keys() else 0) > 0
+    )
+    if has_signal:
         return best
     return None
 
@@ -227,6 +266,99 @@ def _filter_by_file(rows, file_hint):
     return filtered if filtered else rows
 
 
+def _ambiguity_signals(conn: sqlite3.Connection, rows: list) -> dict:
+    """Fetch ranking signals for an ambiguous match set in one batch."""
+    if not rows:
+        return {"ref": {}, "pr": {}, "cc": {}, "churn": {}}
+    ids = [r["id"] for r in rows]
+    ph = ",".join("?" for _ in ids)
+    ref_map = {
+        c["target_id"]: c["cnt"]
+        for c in conn.execute(
+            f"SELECT target_id, COUNT(*) as cnt FROM edges WHERE target_id IN ({ph}) GROUP BY target_id",
+            ids,
+        ).fetchall()
+    }
+    pr_map = {
+        r["symbol_id"]: r["pagerank"] or 0
+        for r in conn.execute(
+            f"SELECT symbol_id, pagerank FROM graph_metrics WHERE symbol_id IN ({ph})",
+            ids,
+        ).fetchall()
+    }
+    cc_map = {
+        r["symbol_id"]: r["cognitive_complexity"] or 0
+        for r in conn.execute(
+            f"SELECT symbol_id, cognitive_complexity FROM symbol_metrics WHERE symbol_id IN ({ph})",
+            ids,
+        ).fetchall()
+    }
+    file_ids = list({r["file_id"] for r in rows if "file_id" in r.keys() and r["file_id"] is not None})
+    churn_map: dict[int, int] = {}
+    if file_ids:
+        ph_f = ",".join("?" for _ in file_ids)
+        churn_map = {
+            r["file_id"]: r["total_churn"] or 0
+            for r in conn.execute(
+                f"SELECT file_id, total_churn FROM file_stats WHERE file_id IN ({ph_f})",
+                file_ids,
+            ).fetchall()
+        }
+    return {"ref": ref_map, "pr": pr_map, "cc": cc_map, "churn": churn_map}
+
+
+def _row_signals(row, signals) -> dict:
+    """Lift a row's importance signals out of the batch lookup."""
+    return {
+        "incoming_edges": signals["ref"].get(row["id"], 0),
+        "pagerank": round(signals["pr"].get(row["id"], 0) or 0, 4),
+        "cognitive_complexity": signals["cc"].get(row["id"], 0) or 0,
+        "file_churn": (signals["churn"].get(row["file_id"], 0) if "file_id" in row.keys() else 0),
+    }
+
+
+def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[dict | None, list[dict]]:
+    """Find a symbol with disambiguation, returning the best plus alternatives.
+
+    Same lookup chain as :func:`find_symbol`, but also returns the other
+    matches at the same lookup tier so callers can surface
+    ``did_you_mean`` hints. Alternatives are sorted by the same importance
+    score :func:`pick_best` uses to choose the winner.
+    """
+    file_hint, symbol_name = _parse_file_hint(name)
+
+    for query, params in (
+        (SYMBOL_BY_QUALIFIED, (symbol_name,)),
+        (SYMBOL_BY_NAME, (symbol_name,)),
+        (SEARCH_SYMBOLS, (f"%{symbol_name}%", 10)),
+    ):
+        rows = conn.execute(query, params).fetchall()
+        if file_hint:
+            rows = _filter_by_file(rows, file_hint)
+        if not rows:
+            continue
+        if len(rows) == 1:
+            return rows[0], []
+
+        signals = _ambiguity_signals(conn, rows)
+
+        def _score(r):
+            return (
+                signals["ref"].get(r["id"], 0),
+                signals["pr"].get(r["id"], 0),
+                signals["cc"].get(r["id"], 0),
+                signals["churn"].get(r["file_id"], 0) if "file_id" in r.keys() else 0,
+                _path_rank(r["file_path"]),
+                -r["id"],
+            )
+
+        ordered = sorted(rows, key=_score, reverse=True)
+        best = ordered[0]
+        return best, ordered[1:]
+
+    return None, []
+
+
 def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     """Find a symbol by name with disambiguation.
 
@@ -235,50 +367,13 @@ def find_symbol(conn: sqlite3.Connection, name: str) -> dict | None:
     2. Try qualified_name match (fetchall)
     3. Try simple name match (fetchall)
     4. Try fuzzy LIKE match (limit 10)
-    5. At each step: if multiple matches -> pick_best (most incoming edges)
+    5. At each step: if multiple matches -> pick_best (importance-weighted)
     6. If file hint provided -> filter candidates first
 
     Always returns a single row or None. Never returns a list.
     """
-    file_hint, symbol_name = _parse_file_hint(name)
-
-    # 1. Qualified name match
-    rows = conn.execute(SYMBOL_BY_QUALIFIED, (symbol_name,)).fetchall()
-    if file_hint:
-        rows = _filter_by_file(rows, file_hint)
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        best = pick_best(conn, rows)
-        if best:
-            return best
-        return rows[0]
-
-    # 2. Simple name match
-    rows = conn.execute(SYMBOL_BY_NAME, (symbol_name,)).fetchall()
-    if file_hint:
-        rows = _filter_by_file(rows, file_hint)
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        best = pick_best(conn, rows)
-        if best:
-            return best
-        return rows[0]
-
-    # 3. Fuzzy match
-    rows = conn.execute(SEARCH_SYMBOLS, (f"%{symbol_name}%", 10)).fetchall()
-    if file_hint:
-        rows = _filter_by_file(rows, file_hint)
-    if len(rows) == 1:
-        return rows[0]
-    if len(rows) > 1:
-        best = pick_best(conn, rows)
-        if best:
-            return best
-        return rows[0]
-
-    return None
+    best, _ = find_symbol_with_alternatives(conn, name)
+    return best
 
 
 def fts_suggestions(conn, name: str, limit: int = _MAX_FTS_SUGGESTIONS) -> list:

@@ -26,6 +26,7 @@ from roam.critique.checks import (
     check_impact,
     check_intent_alignment,
     find_changed_symbols,
+    looks_like_unified_diff,
     parse_diff,
 )
 from roam.db.connection import open_db
@@ -136,6 +137,15 @@ def critique(ctx, input_path, high_callers, intent_text):
 
     if not diff_text.strip():
         raise click.UsageError("diff is empty")
+
+    if not looks_like_unified_diff(diff_text):
+        # Earlier silent failures: shell substitutions that lost the diff,
+        # paste-buffer truncation, or wrong-format input. Erroring loudly
+        # here keeps "no concerns" from masking a no-op invocation.
+        raise click.UsageError(
+            "INVALID_DIFF: input is not a recognisable unified diff "
+            "(no diff/--- /+++/@@ headers found). Pass `git diff` output verbatim."
+        )
 
     ensure_index()
 

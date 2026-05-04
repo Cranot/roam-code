@@ -241,7 +241,9 @@ def _get_touch_carefully(conn, min_in_degree: int = 15) -> list[str]:
 
 
 def _get_hotspots(conn, limit: int = 5) -> list[str]:
-    """Files with highest churn * complexity score."""
+    """Files with highest churn * complexity score (code-only by default)."""
+    from roam.commands.cmd_understand import _hotspot_kind
+
     rows = conn.execute(
         """
         SELECT f.path,
@@ -252,14 +254,21 @@ def _get_hotspots(conn, limit: int = 5) -> list[str]:
         ORDER BY score DESC
         LIMIT ?
     """,
-        (limit,),
+        (limit * 4,),
     ).fetchall()
-    result = []
+    code_hits: list[str] = []
+    other_hits: list[str] = []
     for r in rows:
-        if r["score"] > 0:
-            name = r["path"].replace("\\", "/").split("/")[-1]
-            result.append(f"`{name}`")
-    return result
+        if r["score"] <= 0:
+            continue
+        name = r["path"].replace("\\", "/").split("/")[-1]
+        if _hotspot_kind(r["path"]) == "code":
+            code_hits.append(f"`{name}`")
+        else:
+            other_hits.append(f"`{name}`")
+    take_code = min(len(code_hits), limit)
+    remaining = limit - take_code
+    return code_hits[:take_code] + other_hits[:remaining]
 
 
 def _get_conventions(conn) -> str:

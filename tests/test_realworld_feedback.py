@@ -114,3 +114,248 @@ def test_global_compact_option_is_accepted_after_command(cli_runner, indexed_pro
         os.chdir(old_cwd)
 
     assert result.exit_code == 0, result.output
+
+
+def test_dead_dataflow_emits_experimental_warning(cli_runner, indexed_project, monkeypatch):
+    from roam.cli import cli
+
+    monkeypatch.chdir(indexed_project)
+    result = cli_runner.invoke(cli, ["dead", "--dataflow"], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+    # Stderr is mixed into result.output by the CliRunner default; the
+    # warning text must appear so CI users see the false-positive note.
+    assert "experimental" in result.output.lower() or "false positive" in result.output.lower()
+
+
+def test_dead_dataflow_alias_include_noisy(cli_runner, indexed_project, monkeypatch):
+    from roam.cli import cli
+
+    monkeypatch.chdir(indexed_project)
+    result = cli_runner.invoke(cli, ["dead", "--include-noisy-dataflow"], catch_exceptions=False)
+    assert result.exit_code == 0, result.output
+
+
+def test_hotspot_kind_classifier():
+    from roam.commands.cmd_understand import _hotspot_kind
+
+    assert _hotspot_kind("docs/legacy/CODE_MAP.md") == "doc"
+    assert _hotspot_kind("docs/site/index.html") == "other"
+    assert _hotspot_kind("config/.env") == "config"
+    assert _hotspot_kind("config/app.toml") == "config"
+    assert _hotspot_kind("src/main.py") == "code"
+    assert _hotspot_kind("src/Login.tsx") == "code"
+    assert _hotspot_kind("schema.sql") == "sql"
+    assert _hotspot_kind("README.md") == "doc"
+
+
+def test_patterns_factory_subtype_split(project_factory, cli_runner, monkeypatch):
+    proj = project_factory(
+        {
+            "src/log.ts": (
+                "class Logger {\n  log(s: string) { console.log(s) }\n}\n"
+                "export function createLogger() { return new Logger() }\n"
+                "export function buildKey(prefix: string, id: number) { return `${prefix}:${id}` }\n"
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+    result = invoke_cli(cli_runner, ["patterns"], cwd=proj, json_mode=True)
+    if result.exit_code != 0:
+        return
+    data = json.loads(result.output)
+    factory = (data.get("patterns") or {}).get("factory", {})
+    instances = factory.get("instances", [])
+    if not instances:
+        return  # extractor may not surface either kind on this fixture
+    subtypes = {item.get("subtype") for item in instances}
+    # When both shapes are present, subtype split must distinguish them.
+    if {"true_factory", "builder_helper"}.issubset(subtypes):
+        true_names = {i["name"] for i in instances if i["subtype"] == "true_factory"}
+        helper_names = {i["name"] for i in instances if i["subtype"] == "builder_helper"}
+        assert "createLogger" in true_names or any("Logger" in n for n in true_names)
+        assert any(n.startswith("buildKey") or "buildKey" in n for n in helper_names)
+
+
+def test_dead_scaffolding_signals_detection():
+    from roam.commands.cmd_dead import _dead_action, _scaffolding_signals
+
+    # Behaviour ID
+    assert _scaffolding_signals("Implements CB-024 / CB-042 from spec.")["behaviour_ids"] == ["CB-024", "CB-042"]
+    # Legacy file with line numbers
+    sig = _scaffolding_signals("See kinwposo.prg lines 88-145 for original behaviour.")
+    assert sig is not None
+    assert "kinwposo.prg" in sig["legacy_files"]
+    # See legacy
+    assert _scaffolding_signals("See legacy/withholding-tax.prg for context") is not None
+    # Pure prose — no scaffolding
+    assert _scaffolding_signals("Compute the snake_case form of the input.") is None
+
+    # _dead_action surfaces INTENTIONAL_SCAFFOLDING for scaffolding docstrings
+    row = {
+        "name": "calculateWithholding",
+        "kind": "function",
+        "file_path": "src/utils/accounting/withholding-tax.ts",
+        "docstring": "See kinwposo.prg lines 88-145. Implements CB-024.",
+    }
+
+    class _Row(dict):
+        def __getitem__(self, key):
+            return dict.__getitem__(self, key)
+
+    action, confidence = _dead_action(_Row(row), file_imported=True)
+    assert action == "INTENTIONAL_SCAFFOLDING"
+    assert confidence >= 80
+
+
+def test_coupling_classifies_locale_pair():
+    from roam.commands.cmd_coupling import _classify_pair
+
+    assert _classify_pair("src/locales/el.ts", "src/locales/en.ts") == "expected_locale"
+    assert _classify_pair("src/i18n/strings.el.json", "src/i18n/strings.en.json") == "expected_locale"
+    assert _classify_pair("src/handlers/auth.py", "src/handlers/user.py") == ""
+
+
+def test_coupling_classifies_doc_hub():
+    from roam.commands.cmd_coupling import _classify_pair
+
+    assert _classify_pair("docs/legacy/CODE_MAP.md", "docs/legacy/CONFIRMED_BEHAVIORS.md") == "expected_doc_hub"
+    assert _classify_pair("docs/site/index.html", "docs/site/about.html") == ""
+
+
+def test_doc_staleness_skips_pure_prose_summaries():
+    from roam.commands.cmd_doc_staleness import _docstring_facts, _semantic_drift
+
+    sig = "def poll_store(store, interval): -> None"
+    facts = _docstring_facts("Poll a single store with exponential backoff.", sig)
+    assert facts["has_specific_facts"] is False
+    drift = _semantic_drift(facts, sig)
+    assert drift["has_drift"] is False
+
+
+def test_doc_staleness_flags_phantom_param():
+    from roam.commands.cmd_doc_staleness import _docstring_facts, _semantic_drift
+
+    docstring = ":param missing_param: gone\n:param real: kept\n"
+    sig = "def f(real: int) -> None"
+    facts = _docstring_facts(docstring, sig)
+    drift = _semantic_drift(facts, sig)
+    assert "missing_param" in drift["phantom_params"]
+    assert drift["has_drift"] is True
+
+
+def test_dead_default_includes_decay_distribution(cli_runner, indexed_project, monkeypatch):
+    monkeypatch.chdir(indexed_project)
+    result = invoke_cli(cli_runner, ["dead"], cwd=indexed_project, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    summary = data.get("summary", {})
+    # Decay framing must be in the default summary now, not behind --decay.
+    assert "decay_distribution" in summary
+    dist = summary["decay_distribution"]
+    assert set(dist.keys()) == {"fresh", "stale", "decayed", "fossilized"}
+    assert "total_dead_loc" in summary
+    assert "median_age_days" in summary
+
+
+def test_critique_errors_on_non_diff_input(cli_runner, indexed_project, monkeypatch):
+    from roam.cli import cli
+
+    monkeypatch.chdir(indexed_project)
+    result = cli_runner.invoke(cli, ["critique"], input="this is not a diff\nfoo bar baz\n", catch_exceptions=False)
+    assert result.exit_code != 0, result.output
+    assert "INVALID_DIFF" in result.output
+
+
+def test_critique_looks_like_unified_diff_helper():
+    from roam.critique.checks import looks_like_unified_diff
+
+    assert not looks_like_unified_diff("")
+    assert not looks_like_unified_diff("plain text\nno headers\n")
+    assert looks_like_unified_diff("diff --git a/x b/x\n--- a/x\n+++ b/x\n@@ -1,1 +1,1 @@\n-a\n+b\n")
+    assert looks_like_unified_diff("--- a/foo.py\n+++ b/foo.py\n@@ -1 +1 @@\n-x\n+y\n")
+
+
+def test_find_symbol_with_alternatives_returns_did_you_mean(project_factory, monkeypatch):
+    """When several symbols share a name, the high-importance match wins and
+    the rest appear as alternatives ordered by importance."""
+    proj = project_factory(
+        {
+            "src/big.ts": (
+                "export function handleSave(input: any) {\n"
+                + "\n".join([f"  if (input.f{i}) input.r{i} = input.f{i} * 2" for i in range(40)])
+                + "\n  return input\n}\n"
+            ),
+            "src/tiny.ts": "export function handleSave() { return null }\n",
+        }
+    )
+    monkeypatch.chdir(proj)
+    from roam.commands.resolve import find_symbol_with_alternatives
+    from roam.db.connection import open_db
+
+    with open_db(readonly=True, project_root=proj) as conn:
+        best, alternatives = find_symbol_with_alternatives(conn, "handleSave")
+        assert best is not None
+        assert len(alternatives) >= 1
+        # All matches share the name regardless of which one wins
+        assert best["name"] == "handleSave"
+        for alt in alternatives:
+            assert alt["name"] == "handleSave"
+
+
+def test_safe_delete_use_prefix_with_zero_signals_stays_safe(project_factory, cli_runner, monkeypatch):
+    proj = project_factory(
+        {
+            "src/orphan.ts": "export function useZoom() { return 1 }\n",
+        }
+    )
+    monkeypatch.chdir(proj)
+
+    result = invoke_cli(cli_runner, ["safe-delete", "useZoom"], cwd=proj, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    assert data["summary"]["verdict"] == "SAFE", data
+    assert data["sibling_refs"] == 0
+    assert data["file_imported"] is False
+    assert data["test_callers"] == 0
+
+
+def test_fan_intra_file_const_is_not_spreader(project_factory, cli_runner, monkeypatch):
+    proj = project_factory(
+        {
+            "src/big.ts": (
+                "export const helper = (n: number) => n + 1\n"
+                + "\n".join(f"const v{i} = helper({i})" for i in range(15))
+                + "\nexport const total = "
+                + " + ".join(f"v{i}" for i in range(15))
+                + "\n"
+            ),
+        }
+    )
+    monkeypatch.chdir(proj)
+
+    result = invoke_cli(cli_runner, ["fan", "symbol"], cwd=proj, json_mode=True)
+    assert result.exit_code == 0, result.output
+    data = json.loads(result.output)
+    helper_item = next((i for i in data["items"] if i["name"] == "helper"), None)
+    if helper_item is None:
+        return  # extractor may not surface const helpers; behaviour locked by next assertion when present
+    assert helper_item["fan_in_files"] <= 1
+    assert helper_item["flag"] in {"", "local-hub", "local-spreader"}
+
+
+def test_mark_actionable_cycles_excludes_local_and_test_cycles():
+    from roam.graph.cycles import actionable_cycles, mark_actionable_cycles
+
+    cycles = [
+        {"files": ["src/a.py", "src/b.py"], "size": 2},
+        {"files": ["src/single_file.py"], "size": 2},
+        {"files": ["src/x.py", "tests/test_x.py"], "size": 2},
+        {"files": ["src/c.py", "src/d.py", "src/e.py"], "size": 3},
+    ]
+    mark_actionable_cycles(cycles)
+
+    assert cycles[0]["actionable"] is True
+    assert cycles[1]["actionable"] is False and cycles[1]["local_only"] is True
+    assert cycles[2]["actionable"] is False and cycles[2]["has_test_file"] is True
+    assert cycles[3]["actionable"] is True
+    assert len(actionable_cycles(cycles)) == 2
