@@ -1274,6 +1274,18 @@ def _analyze_dataflow_dead(conn):
         "flag so the precise dead-export signal isn't drowned."
     ),
 )
+@click.option(
+    "--reachable-only",
+    "reachable_only",
+    is_flag=True,
+    default=False,
+    help=(
+        "Only show dead exports that ALSO fail roam oracle is-reachable-from-entry. "
+        "The really-really-dead set — safe to delete without further investigation. "
+        "Filters out scaffolding redacted) automatically since the oracle marks "
+        "those as reason_class=unreachable_scaffolding. Round 4 feature A."
+    ),
+)
 @click.pass_context
 def dead(
     ctx,
@@ -1290,6 +1302,7 @@ def dead(
     sort_by_effort,
     sort_by_decay,
     show_dataflow,
+    reachable_only,
 ):
     """Show unreferenced exported symbols (dead code).
 
@@ -1368,6 +1381,30 @@ def dead(
         # --- Standard dead code analysis ---
         high, low, imported_files, consumer_meta, file_import_meta, sibling_meta = _analyze_dead(conn)
         all_items = high + low
+
+        # Round 4 feature A: --reachable-only intersects with the
+        # is-reachable-from-entry oracle to surface the "really dead"
+        # set. Scaffolding flagged via the round-2 heuristic is also
+        # excluded because the oracle now classifies it.
+        reachable_oracle_results: dict[str, dict] | None = None
+        if reachable_only:
+            from roam.commands.cmd_oracle import oracle_is_reachable_from_entry
+
+            reachable_oracle_results = {}
+            kept_items = []
+            for item in all_items:
+                name = item["qualified_name"] or item["name"]
+                result = oracle_is_reachable_from_entry(conn, name, max_hops=10)
+                reachable_oracle_results[name] = {
+                    "reason_class": result.reason_class,
+                    "reason": result.reason,
+                }
+                if result.value is False and result.reason_class == "unreachable_dead":
+                    kept_items.append(item)
+            all_items = kept_items
+            high = [r for r in high if r in all_items]
+            low = [r for r in low if r in all_items]
+
         unused_assignments = collect_dataflow_findings(
             conn,
             patterns=["dead_assignment"],

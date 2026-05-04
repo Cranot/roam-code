@@ -1167,6 +1167,78 @@ _COMPOUND_WORKFLOW_RECIPES = {
 }
 
 
+def _extract_signal(data: dict, *path: str, default=0):
+    """Walk a nested dict by keys and return the leaf, or default."""
+    cur: object = data
+    for key in path:
+        if not isinstance(cur, dict):
+            return default
+        cur = cur.get(key, default)
+    if isinstance(cur, (int, float)):
+        return cur
+    return default
+
+
+def _score_prepare_change_recipe(sub_results: list[tuple[str, dict]]) -> str:
+    """Pick a recipe for ``prepare-change`` based on the symbol's profile.
+
+    Round 4 #9: previously defaulted to ``safe-delete-check`` for every
+    symbol, even orchestrators with cc=694, fan-out=13, churn=3244. The
+    auto-detector now scores all candidate recipes by signal vector and
+    returns the highest-scoring match.
+    """
+    pf = next((d for n, d in sub_results if n == "preflight" and isinstance(d, dict)), {})
+    if not pf:
+        return "safe-delete-check"
+    summary = pf if "summary" not in pf else pf.get("summary", {})
+
+    fan_in = _extract_signal(pf, "preflight", "fan_in") or _extract_signal(summary, "fan_in")
+    fan_out = _extract_signal(pf, "preflight", "fan_out") or _extract_signal(summary, "fan_out")
+    complexity = (
+        _extract_signal(pf, "complexity", "max_cognitive_complexity")
+        or _extract_signal(summary, "max_complexity")
+        or _extract_signal(pf, "complexity", "complexity")
+    )
+    churn = _extract_signal(pf, "blast", "churn") or _extract_signal(summary, "churn")
+    callers = _extract_signal(pf, "blast", "direct_callers") or _extract_signal(summary, "direct_callers")
+    transitive = _extract_signal(pf, "blast", "transitive_dependents") or _extract_signal(
+        summary, "transitive_dependents"
+    )
+
+    scores = {
+        "safe-delete-check": 1.0,  # baseline
+        "refactor-orchestrator": 0.0,
+        "api-change-impact": 0.0,
+        "find-bug": 0.0,
+    }
+
+    # High complexity + high fan-out = orchestrator redacted dogfood:
+    # useTableData with cc=694, fan-out=13, churn=3244 should NOT score
+    # safe-delete-check).
+    if complexity >= 50:
+        scores["refactor-orchestrator"] += 1.5
+    if fan_out >= 8:
+        scores["refactor-orchestrator"] += 1.2
+    if churn >= 1000:
+        scores["refactor-orchestrator"] += 1.0
+
+    # Wide blast radius — every consumer breaks.
+    if fan_in >= 20 or callers >= 20:
+        scores["api-change-impact"] += 1.5
+    if transitive >= 50:
+        scores["api-change-impact"] += 1.0
+
+    # Strong delete signal: nothing depends on it, low complexity.
+    if (fan_in or 0) <= 2 and (callers or 0) <= 2 and (complexity or 0) < 20 and (churn or 0) < 100:
+        scores["safe-delete-check"] += 1.0
+    else:
+        # Penalise the default when the symbol clearly isn't deletable.
+        scores["safe-delete-check"] -= 1.0
+
+    best = max(scores, key=lambda k: scores[k])
+    return best if scores[best] > 0 else "safe-delete-check"
+
+
 def _compound_envelope(
     command: str,
     sub_results: list[tuple[str, dict]],
@@ -1176,6 +1248,12 @@ def _compound_envelope(
     errors: list[dict] = []
     sections: dict = {}
     workflow_recipe = meta.pop("workflow_recipe", None) or _COMPOUND_WORKFLOW_RECIPES.get(command)
+    # Round 4 #9: replace the static recipe pick with a signal-based
+    # scorer when we have enough data to choose intelligently.
+    if command == "prepare-change":
+        scored = _score_prepare_change_recipe(sub_results)
+        if scored:
+            workflow_recipe = scored
 
     for name, data in sub_results:
         if not data or "error" in data:
@@ -1192,15 +1270,27 @@ def _compound_envelope(
             if isinstance(summary, dict) and "verdict" in summary:
                 verdicts.append(f"{name}: {summary['verdict']}")
 
+    failed_subcommands = [e.get("command", "?") for e in errors] if errors else []
+    partial_success = bool(failed_subcommands) and bool(sections)
     result: dict = {
         "command": command,
         "summary": {
             "verdict": " | ".join(verdicts) if verdicts else "compound operation completed",
             "sections": list(sections.keys()),
             "errors": len(errors),
+            # Round 4 #8, N: surface partial failure at the top level so
+            # agents don't read a successful-looking envelope while a
+            # subcommand silently failed.
+            "partial_success": partial_success,
+            "failed_subcommands": failed_subcommands,
             **meta,
         },
     }
+    if partial_success:
+        # Mention the failures explicitly in the verdict line so an LLM
+        # reading just the summary doesn't miss them.
+        prefix = f"PARTIAL ({len(failed_subcommands)} failed: {', '.join(failed_subcommands)}) — "
+        result["summary"]["verdict"] = prefix + result["summary"]["verdict"]
     workflow = workflow_metadata_for_recipe(str(workflow_recipe)) if workflow_recipe else None
     if workflow:
         result["workflow"] = workflow
@@ -2464,6 +2554,109 @@ def oracle_is_clone_of(name: str, root: str = ".") -> dict:
     table is empty.
     """
     return _run_roam(["oracle", "is-clone-of", name], root)
+
+
+@_tool(
+    name="roam_oracle_batch",
+    description=(
+        "Run multiple oracle queries in one call. Items: [{name, oracle, "
+        "max_hops?}, ...] where oracle is one of symbol-exists, route-exists, "
+        "is-test-only, is-reachable-from-entry, is-clone-of."
+    ),
+)
+def oracle_batch(items: list, root: str = ".") -> dict:
+    """Batch multiple oracle queries (round 4 feature E).
+
+    WHEN TO USE: replaces N round-trips when verifying multiple symbols.
+    Each item declares which oracle to invoke and the symbol/path to query.
+    Supports the full tri-state envelope per result.
+
+    Parameters
+    ----------
+    items: list of dicts. Required keys:
+      - ``oracle``: one of ``symbol-exists``, ``route-exists``,
+        ``is-test-only``, ``is-reachable-from-entry``, ``is-clone-of``.
+      - ``name`` (or ``path`` for route-exists): the query target.
+      - ``max_hops`` (optional, is-reachable-from-entry only).
+
+    Returns: ``{"results": [{...envelope per query...}]}``. Each entry
+    carries its own ``summary.value`` / ``summary.reason_class`` /
+    ``summary.confidence`` fields so a single batch call answers many
+    independent assumption-checks at once.
+    """
+    from roam.commands.cmd_oracle import (
+        oracle_is_clone_of as _is_clone_of,
+    )
+    from roam.commands.cmd_oracle import (
+        oracle_is_reachable_from_entry as _is_reachable,
+    )
+    from roam.commands.cmd_oracle import (
+        oracle_is_test_only as _is_test_only,
+    )
+    from roam.commands.cmd_oracle import (
+        oracle_route_exists as _route_exists,
+    )
+    from roam.commands.cmd_oracle import (
+        oracle_symbol_exists as _symbol_exists,
+    )
+    from roam.commands.resolve import ensure_index
+    from roam.db.connection import open_db
+
+    if not isinstance(items, list) or not items:
+        return _structured_error(
+            {
+                "error": "items must be a non-empty list",
+                "error_code": "EMPTY_INPUT",
+                "hint": "pass [{oracle: 'symbol-exists', name: 'foo'}, ...]",
+                "command": "roam_oracle_batch",
+            }
+        )
+
+    from pathlib import Path
+
+    ensure_index()
+    results: list[dict] = []
+    project_root_path = Path(root) if isinstance(root, str) else Path(".")
+    with open_db(readonly=True, project_root=project_root_path) as conn:
+        for item in items:
+            if not isinstance(item, dict):
+                results.append({"error": "item must be a dict", "input": item})
+                continue
+            oracle_name = (item.get("oracle") or "").strip()
+            target = item.get("name") or item.get("path") or ""
+            try:
+                if oracle_name == "symbol-exists":
+                    r = _symbol_exists(conn, target)
+                elif oracle_name == "route-exists":
+                    r = _route_exists(conn, target)
+                elif oracle_name == "is-test-only":
+                    r = _is_test_only(conn, target)
+                elif oracle_name == "is-reachable-from-entry":
+                    r = _is_reachable(conn, target, max_hops=int(item.get("max_hops", 10)))
+                elif oracle_name == "is-clone-of":
+                    r = _is_clone_of(conn, target)
+                else:
+                    results.append({"error": f"unknown oracle '{oracle_name}'", "input": item})
+                    continue
+            except Exception as exc:
+                results.append({"error": f"{oracle_name} crashed: {exc}", "input": item})
+                continue
+            results.append(
+                {
+                    "oracle": oracle_name,
+                    "target": target,
+                    "value": r.value,
+                    "reason": r.reason,
+                    "reason_class": r.reason_class,
+                    "confidence": r.confidence,
+                }
+            )
+
+    return {
+        "command": "oracle:batch",
+        "summary": {"verdict": f"{len(results)} oracle queries", "count": len(results)},
+        "results": results,
+    }
 
 
 # ---------------------------------------------------------------------------

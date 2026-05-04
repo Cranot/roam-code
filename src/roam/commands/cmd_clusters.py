@@ -278,8 +278,29 @@ def _clusters_json(conn, rows, min_size, quality, mermaid=None, detail=True, tok
 @click.command()
 @click.option("--min-size", default=3, show_default=True, help="Hide clusters smaller than this")
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
+@click.option(
+    "--weak",
+    "weak_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Rank clusters by lowest intra-density (split candidates). "
+        "Round 3 #21, B: surfaces clusters whose internal edges are weaker "
+        "than their cross-cluster coupling — refactor candidates."
+    ),
+)
+@click.option(
+    "--strong",
+    "strong_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "Rank clusters by highest intra-density (well-formed modules). "
+        "Useful as a 'leave these alone' baseline when planning a refactor."
+    ),
+)
 @click.pass_context
-def clusters(ctx, min_size, mermaid_mode):
+def clusters(ctx, min_size, mermaid_mode, weak_mode, strong_mode):
     """Show code clusters and directory mismatches."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     detail = ctx.obj.get("detail", False) if ctx.obj else False
@@ -356,6 +377,24 @@ def clusters(ctx, min_size, mermaid_mode):
                 if len(visible) > 5:
                     click.echo(f"    (+{len(visible) - 5} more — run `roam --detail clusters` for the full breakdown)")
             return
+
+        # Round 3 #21, B — sort by cohesion when --weak / --strong
+        # is requested. We need cohesion per cluster up front (rather
+        # than only inside the table loop) so the ordering decision
+        # has the data it needs.
+        if weak_mode or strong_mode:
+            scored: list[tuple[float, dict]] = []
+            for r in visible:
+                cid = r["cluster_id"]
+                c_intra = intra_count.get(cid, 0)
+                c_total = total_count.get(cid, 0)
+                cohesion = c_intra * 100 / c_total if c_total else 0
+                scored.append((cohesion, r))
+            scored.sort(key=lambda x: x[0])
+            ordered = [r for _, r in scored] if weak_mode else [r for _, r in reversed(scored)]
+            visible = ordered[:10]
+            label = "Weakest clusters (split candidates):" if weak_mode else "Strongest clusters (well-formed):"
+            click.echo(f"\n=== {label} ===")
 
         # Main table
         mega_ids = set()
