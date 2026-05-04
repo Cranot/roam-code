@@ -7,6 +7,71 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.5] - 2026-05-04
+
+A correctness sweep on the agent-orientation commands and a clarity
+sweep on the `doctor` output. The big finding: the prior tour and
+understand commands were ranking pytest fixtures at the top of "key
+abstractions" / "key symbols", and a newcomer's reading order
+started inside `tests/conftest.py`. The graph said it was correct
+(those fixtures genuinely have huge fan-in) but it's exactly the
+wrong shape for orientation.
+
+### `roam tour` and `roam understand` orient in source code
+
+Both commands now exclude symbols whose file is classified as
+``test`` from the Key Symbols / Key Abstractions list, and the
+reading-order / entry-points lists drop tests, dev scripts, generated
+code, configs, examples, benchmarks, build output, CI, and docs —
+keeping only ``source`` files (and a small extension of "where else
+might a real entry point live"). On roam itself the change pulls
+``cli_runner`` / ``indexed_project`` / ``project_factory`` /
+``conftest.py`` out of the top-10 list and surfaces ``cli`` /
+``open_db`` / ``json_envelope`` / ``ensure_index`` /
+``LanguageExtractor`` instead.
+
+### Generic-named property false positives
+
+Tour also drops kind=property/field/attribute symbols whose name is
+in a small list of generic names (``path``, ``name``, ``value``,
+``key``, ``id``, …). These are name-collision artifacts in the
+symbol resolver: every ``obj.path`` reference in unrelated code
+resolves to the first class with a ``path`` property, inflating
+that one symbol's in-degree to hundreds. ``WebhookBridge.path``
+was the live example — fan-in 490 against a 3-line property because
+the resolver couldn't tell which ``.path`` reference belonged to
+which class.
+
+### File-role classifier learns benchmark-shaped directories
+
+``benchmarks/``, ``benchmark/``, ``bench/``, and ``bench-repos/``
+now classify as ``examples`` (was ``source``). Without this fix the
+new tour / understand filters wouldn't help on roam itself —
+``benchmarks/agent-eval/prompts.py`` would still surface as the
+"start file". Four new tests in ``test_file_roles.py`` cover the
+new patterns.
+
+### `roam doctor` clarity
+
+- `tree-sitter` and `tree-sitter-language-pack` versions resolve
+  through ``importlib.metadata`` instead of the dunder attribute.
+  The dunder isn't set on those packages so the previous output
+  was always "unknown" even on a healthy install.
+- The MCP-tool-registry line now names the active preset and the
+  full-preset ceiling: ``36 MCP tools registered (core preset; 122
+  in full preset)`` instead of just ``36 MCP tools registered``.
+  Without the preset context, users assumed something was broken
+  when the docs claimed 122 tools.
+
+### Tests
+
+- ``test_tour_cmd.py::TestTourFiltering`` — synthetic project with
+  one fat ``conftest.py`` and many tests; asserts no test/conftest
+  symbol shows up in Key Symbols and the reading-order start file
+  is in source.
+- ``test_file_roles.py`` — four new cases for ``benchmarks/`` /
+  ``benchmark/`` / ``bench/`` / ``bench-repos/``.
+
 ## [12.12.4] - 2026-05-04
 
 Fix the MCP server card's tool count and add a guard test so it
