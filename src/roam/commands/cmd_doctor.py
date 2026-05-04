@@ -33,12 +33,41 @@ def _check_python_version() -> dict:
     }
 
 
+def _pkg_version(pkg_name: str, module_name: str | None = None) -> str:
+    """Resolve an installed package version.
+
+    Tries ``importlib.metadata.version(pkg_name)`` first (works for any
+    pip-installed distribution); falls back to ``module.__version__`` if
+    the dunder is set (some older C-extension packages); else ``unknown``.
+
+    Several roam dependencies (tree-sitter, tree-sitter-language-pack)
+    don't expose ``__version__`` so the previous direct attribute read
+    yielded "unknown" even when the wheel was correctly installed —
+    obscuring the real version in ``roam doctor`` diagnostics.
+    """
+    try:
+        import importlib.metadata as _md
+
+        return _md.version(pkg_name)
+    except Exception:
+        pass
+    if module_name:
+        try:
+            import importlib
+
+            mod = importlib.import_module(module_name)
+            return getattr(mod, "__version__", "unknown")
+        except Exception:
+            return "unknown"
+    return "unknown"
+
+
 def _check_tree_sitter() -> dict:
     """tree-sitter package importable."""
     try:
-        import tree_sitter
+        import tree_sitter  # noqa: F401
 
-        version = getattr(tree_sitter, "__version__", "unknown")
+        version = _pkg_version("tree-sitter", "tree_sitter")
         return {
             "name": "tree-sitter",
             "passed": True,
@@ -55,9 +84,9 @@ def _check_tree_sitter() -> dict:
 def _check_tree_sitter_language_pack() -> dict:
     """tree-sitter-language-pack importable."""
     try:
-        import tree_sitter_language_pack
+        import tree_sitter_language_pack  # noqa: F401
 
-        version = getattr(tree_sitter_language_pack, "__version__", "unknown")
+        version = _pkg_version("tree-sitter-language-pack", "tree_sitter_language_pack")
         return {
             "name": "tree-sitter-language-pack",
             "passed": True,
@@ -291,10 +320,37 @@ def _check_mcp_registry() -> dict:
             "passed": False,
             "detail": "no tools registered (FastMCP missing or registration broken)",
         }
+    # Preset awareness — a fresh import only registers the tools allowed
+    # by the active preset (default "core"). Without naming the preset
+    # in the doctor output a user sees "36 MCP tools registered" and
+    # wonders why the docs claim 122. v12.12.5: report the active
+    # preset and the full-preset ceiling so the count makes sense.
+    import os as _os
+    import re as _re
+
+    preset = _os.environ.get("ROAM_MCP_PRESET", "core")
+    full_count = 0
+    try:
+        from roam.surface_counts import mcp_surface_counts
+
+        full_count = int(mcp_surface_counts().get("registered_tools") or 0)
+    except Exception:
+        # Fallback: count @_tool decorators in the module source. The
+        # surface_counts helper isn't importable in some minimal envs.
+        try:
+            module_path = Path(getattr(mcp_server, "__file__", ""))
+            text = module_path.read_text(encoding="utf-8") if module_path.is_file() else ""
+            full_count = len(_re.findall(r"^@_tool\(\s*name=", text, _re.MULTILINE))
+        except Exception:
+            full_count = 0
+    if full_count and full_count != len(declared):
+        detail = f"{len(declared)} MCP tools registered ({preset} preset; {full_count} in full preset)"
+    else:
+        detail = f"{len(declared)} MCP tools registered"
     return {
         "name": "MCP tool registry",
         "passed": True,
-        "detail": f"{len(declared)} MCP tools registered",
+        "detail": detail,
     }
 
 
