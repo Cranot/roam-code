@@ -321,3 +321,69 @@ class TestTaintCLI:
         runner = CliRunner()
         result = runner.invoke(cli, ["--help"])
         assert "taint" in result.output
+
+    def test_rules_pack_choice_advertised_in_help(self, taint_project):
+        """v12.12 — close dogfood #18. The flag was claimed by external
+        docs since v12.3. Verify all advertised pack values appear in
+        --help so the CLI surface and doc surface agree."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["taint", "--help"])
+        assert result.exit_code == 0
+        # Each advertised pack in the Choice list must show up in help.
+        for pack in (
+            "sqli",
+            "xss",
+            "ssrf",
+            "path-traversal",
+            "command-injection",
+            "deserialization",
+            "open-redirect",
+            "urllib",
+            "socketio",
+            "fileupload",
+        ):
+            assert pack in result.output, f"pack {pack!r} missing from --help"
+
+    def test_every_advertised_pack_has_at_least_one_rule(self, taint_project):
+        """v12.12 — every Choice value in --rules-pack must match at
+        least one rule_id in the built-in rules pack. Without this
+        check, deserialization could silently filter to zero rules
+        and emit "No rules" without explaining why."""
+        from pathlib import Path
+
+        import roam
+        from roam.security.taint_engine import load_rules
+
+        # Resolve the rules dir from the installed package, not the
+        # test fixture's tmp_path, so this test is location-independent.
+        roam_pkg = Path(roam.__file__).resolve().parent
+        rules_dir = roam_pkg / "security" / "taint_rules"
+        rules = load_rules(rules_dir)
+        rule_ids = [r.rule_id.lower() for r in rules]
+        for pack in (
+            "sqli",
+            "xss",
+            "ssrf",
+            "path-traversal",
+            "command-injection",
+            "deserialization",
+            "open-redirect",
+            "urllib",
+            "socketio",
+            "fileupload",
+        ):
+            matches = [rid for rid in rule_ids if pack in rid]
+            assert matches, f"pack {pack!r} has no matching rule_id (would filter to zero rules)"
+
+    def test_deserialization_pack_loads(self, taint_project):
+        """v12.12 — the python-deserialization rule shipped with this
+        release; running --rules-pack deserialization must filter to
+        at least one rule and not crash."""
+        runner = CliRunner()
+        result = runner.invoke(cli, ["--json", "taint", "--rules-pack", "deserialization"])
+        assert result.exit_code == 0, result.output
+        data = json.loads(result.output)
+        # rule_ids may be present (with findings) or absent (no findings);
+        # either way, the verdict shouldn't say "No rules in".
+        verdict = data.get("summary", {}).get("verdict", "")
+        assert "No rules" not in verdict, verdict
