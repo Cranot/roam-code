@@ -24,59 +24,58 @@ from roam.retrieve.pipeline import run_retrieve
 from roam.retrieve.semantic import semantic_coverage
 
 
-def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
-    """Classify the confidence of a retrieve result.
+def _retrieve_confidence_score(candidates: list[dict], task: str = "") -> tuple[float, str]:
+    """Return a calibrated confidence number in ``[0.0, 1.0]`` plus a
+    string label (``"low"`` / ``"ok"``) for backwards compat.
 
-    Returns ``"low"`` when the top result probably doesn't match the
-    query, ``"ok"`` otherwise. Heuristic (redacted,
-    two iterations):
+    Three signals combine multiplicatively:
 
-    * **Token coverage** — count distinct query tokens that appear
-      across the top-5 candidate paths. If only 1 token is covered
-      across all 5 (e.g. "trace login flow" → only "trace" matches
-      anywhere), the answer is almost certainly junk: the lexical
-      hits are tracking one common word.
-    * **Score signals** — also flag when top score is < 0.30 AND
-      top-vs-fifth spread is < 0.10 (scores bunched at the noise
-      floor).
+    1. **Token coverage** — fraction of query tokens that appear in
+       the top-10 results' name/path. Strong signal: if you ask for
+       "auth login session" and only "auth" appears anywhere in the
+       results, the search missed the intent.
+    2. **Score gap** — how far does the top result outrank the
+       runners-up. A unique winner (gap ≥ 0.30 in normalised space)
+       is high-confidence; a flat distribution is low-confidence.
+    3. **Top-score absolute floor** — scores bunched near 0.20 with
+       no spread are noise-floor matches.
 
-    Either signal trips low-confidence; the token-coverage check
-    catches the original "trace the login flow" failure mode that
-    the score-only heuristic missed (top was 1.1 but covered just
-    one query token).
+    Returns ``(score, label)``. The label is "low" when ``score < 0.40``,
+    "ok" otherwise. The previous binary classifier preserved the
+    legacy threshold (token-cover ≤ 1 OR top<0.30+spread<0.10);
+    a continuous score lets the verdict carry more useful info
+    (e.g. "0.62 confidence" vs "low / ok").
     """
     if not candidates:
-        return "low"
+        return 0.0, "low"
     scores = [float(c.get("score") or 0.0) for c in candidates if c.get("score") is not None]
     if not scores:
-        return "ok"
+        return 0.50, "ok"  # have candidates but no scores — neutral
 
-    # High-confidence override (redacted): a top-1 that
-    # significantly outranks the 2nd hit (gap ≥ 0.30 in normalised
-    # space) signals a unique winner — the structural reranker found
-    # one strong answer rather than many equal candidates. Skip the
-    # token-coverage check in that case.
-    # Distinguishes the email query ("where is email sending" →
-    # send_welcome at 0.900, 2nd at 0.275 → gap 0.625, real answer)
-    # from the trace query ("trace the login flow" → 1.014, 2nd 0.942
-    # → gap 0.072, all matching one common word).
     top = scores[0]
     second = scores[1] if len(scores) > 1 else 0.0
-    if top - second >= 0.30:
-        return "ok"
     fifth = scores[min(4, len(scores) - 1)]
-    if top < 0.30 and (top - fifth) < 0.10:
-        return "low"
 
-    # Token-coverage check across top-10 path+name. Match against both
-    # path AND symbol name — a test like ``test_implements_edge`` in
-    # ``test_comprehensive.py`` covers "implements" via name even though
-    # the path doesn't. Trip low-confidence when ≥3 query tokens were
-    # supplied but ≤1 of them surfaces *anywhere* in the top-10. That
-    # catches "trace the login flow" (top-10 has "trace" everywhere
-    # but never "login" or "flow") while letting "AST clone detection
-    # implemented" pass (clone, implements, detect all surface).
-    if task and candidates:
+    # ---- Score-distribution signal ----
+    # A unique winner is the strongest signal: gap ≥ 0.30 → score 1.0;
+    # gap ≤ 0.05 → score 0.20; linear in between.
+    gap = top - second
+    if gap >= 0.30:
+        gap_signal = 1.0
+    elif gap <= 0.05:
+        gap_signal = 0.20
+    else:
+        gap_signal = 0.20 + 0.80 * (gap - 0.05) / 0.25
+
+    # Score floor: top < 0.30 with bunched tail → mostly noise.
+    if top < 0.20 or (top < 0.30 and (top - fifth) < 0.10):
+        floor_signal = 0.20
+    else:
+        floor_signal = min(1.0, top / 1.0)  # top score itself is in [0,1+]
+
+    # ---- Token-coverage signal ----
+    coverage_signal = 1.0  # default: one-token queries can't fail this check
+    if task:
         try:
             from roam.retrieve.seeds import extract_tokens
 
@@ -85,33 +84,45 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
             tokens = []
         if len(tokens) >= 2:
             lowered = {t.lower() for t in tokens if len(t) >= 4}
-            covered: set[str] = set()
-            for c in candidates[:10]:
-                surface = (
-                    (c.get("file_path") or c.get("file") or "")
-                    + " "
-                    + (c.get("name") or "")
-                    + " "
-                    + (c.get("qualified_name") or "")
-                ).lower()
-                for tok in lowered:
-                    if tok in surface:
-                        covered.add(tok)
-                    elif len(tok) >= 7:
-                        # Prefix match for plurals/derivations: "detection"
-                        # → look for "detect", "implementing" → "implement".
-                        # Length floor ≥7 means the prefix has ≥4 chars
-                        # which is past the noise floor for path tokens.
-                        if tok[:-3] in surface and len(tok[:-3]) >= 4:
+            if lowered:
+                covered: set[str] = set()
+                for c in candidates[:10]:
+                    surface = (
+                        (c.get("file_path") or c.get("file") or "")
+                        + " "
+                        + (c.get("name") or "")
+                        + " "
+                        + (c.get("qualified_name") or "")
+                    ).lower()
+                    for tok in lowered:
+                        if tok in surface:
                             covered.add(tok)
-            # Trip when ≥2 query tokens were supplied but ≤1 covered
-            # in top-10. Catches "trace login flow" (only "trace"
-            # matches, "login"/"flow" never appear) without firing
-            # on "AST clone detection implemented" where "clone" and
-            # "implemented" both surface in top-10.
-            if len(lowered) >= 2 and len(covered) <= 1:
-                return "low"
-    return "ok"
+                        elif len(tok) >= 7 and tok[:-3] in surface and len(tok[:-3]) >= 4:
+                            covered.add(tok)
+                # Coverage as a fraction of query tokens, squared so a
+                # missing key word penalizes harder than linear. Without
+                # this, "trace the login flow" (2/3 covered — "login"
+                # missing) scored ``coverage_signal=0.67`` and the result
+                # crossed the "ok" threshold, even though the missing
+                # word was the actual subject. Squaring drops 0.67 → 0.45,
+                # 1/3 → 0.11, 3/3 → 1.0 — preserving precision when all
+                # tokens land while pushing partial-coverage queries
+                # below the low-confidence threshold.
+                coverage_signal = (len(covered) / len(lowered)) ** 2
+
+    # Combine — weighted geometric mean preserves the "any signal at
+    # the floor crashes the result" property of the old binary check
+    # while letting strong signals compose.
+    confidence = (gap_signal * 0.35) + (floor_signal * 0.25) + (coverage_signal * 0.40)
+    confidence = max(0.0, min(1.0, confidence))
+    label = "low" if confidence < 0.40 else "ok"
+    return round(confidence, 3), label
+
+
+def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
+    """Backwards-compat shim — returns just the string label."""
+    _, label = _retrieve_confidence_score(candidates, task)
+    return label
 
 
 @click.command()
@@ -249,7 +260,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
             }
             stripped.append(keep)
         candidates = stripped
-    confidence = _retrieve_confidence(candidates, task_str)
+    confidence_score, confidence = _retrieve_confidence_score(candidates, task_str)
     base_verdict = (
         f"{len(candidates)} span{'s' if len(candidates) != 1 else ''} "
         f"({result['budget_used']}/{result['budget']} tokens, "
@@ -266,7 +277,13 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
     # rather than concentrated on a real match. The string formatting
     # is centralised in :mod:`roam.output.confidence` (v12.12) so future
     # commands surface the same shape.
+    # Phase-bonus 2026-05-04 — append the calibrated confidence
+    # number to the verdict so agents can branch on a continuous
+    # signal instead of a binary low/ok. The label-prefix shape is
+    # preserved for backwards compat.
     verdict = verdict_prefix(base_verdict, confidence == "low")
+    if candidates:
+        verdict = f"{verdict} (confidence {confidence_score:.2f})"
 
     if json_mode:
         click.echo(
@@ -276,6 +293,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
                     summary={
                         "verdict": verdict,
                         "low_confidence": confidence == "low",
+                        "confidence": confidence_score,
                         "candidates": len(candidates),
                         "total_candidates": result["total_candidates"],
                         "budget": result["budget"],
