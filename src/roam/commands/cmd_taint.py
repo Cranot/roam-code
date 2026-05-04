@@ -180,6 +180,18 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
         return
 
     if json_mode:
+        # Round 3 #23: only ship the OpenVEX vocabulary lists when there
+        # are findings to attach them to. Empty taint runs returning the
+        # static lists every call was metadata noise.
+        envelope_kwargs = dict(
+            budget=token_budget,
+            rules_dir=str(rules_path),
+            rule_ids=[r.rule_id for r in rules],
+            findings=findings_dump,
+        )
+        if findings_dump:
+            envelope_kwargs["openvex_justification_strings"] = sorted(OPENVEX_JUSTIFICATIONS)
+            envelope_kwargs["openvex_statuses"] = sorted(OPENVEX_STATUSES)
         click.echo(
             to_json(
                 json_envelope(
@@ -192,12 +204,7 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
                         "warnings": medium_count,
                         "sanitized": sanitized_count,
                     },
-                    budget=token_budget,
-                    rules_dir=str(rules_path),
-                    rule_ids=[r.rule_id for r in rules],
-                    findings=findings_dump,
-                    openvex_justification_strings=sorted(OPENVEX_JUSTIFICATIONS),
-                    openvex_statuses=sorted(OPENVEX_STATUSES),
+                    **envelope_kwargs,
                 )
             )
         )
