@@ -286,8 +286,19 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
         "redacted, M). The 'risk' framing is for production code."
     ),
 )
+@click.option(
+    "--show-suppressed",
+    "show_suppressed",
+    is_flag=True,
+    default=False,
+    help=(
+        "List the rows that were filtered out (test-file symbols, etc.) "
+        "instead of just counting them. Round 4 S4 — debug the heuristic "
+        "when it over-corrects."
+    ),
+)
 @click.pass_context
-def risk(ctx, count, domain_keywords, explain, include_tests):
+def risk(ctx, count, domain_keywords, explain, include_tests, show_suppressed):
     """Show domain-weighted risk ranking of symbols.
 
     Combines static risk (fan-in + fan-out + betweenness) with domain
@@ -336,11 +347,21 @@ def risk(ctx, count, domain_keywords, explain, include_tests):
         """).fetchall()
 
         suppressions = {"test_files": 0}
+        suppressed_items: list[dict] = []
         if not include_tests:
             kept = []
             for r in rows:
                 if is_test_file(r["file_path"] or ""):
                     suppressions["test_files"] += 1
+                    if show_suppressed:
+                        suppressed_items.append(
+                            {
+                                "name": r["name"],
+                                "kind": r["kind"],
+                                "location": loc(r["file_path"], r["line_start"]),
+                                "reason": "test_file",
+                            }
+                        )
                     continue
                 kept.append(r)
             rows = kept
@@ -492,13 +513,15 @@ def risk(ctx, count, domain_keywords, explain, include_tests):
                             "weight": s["zone_weight"],
                         }
                 items.append(item)
+            envelope_extra = {"items": items, "suppressions": suppressions}
+            if show_suppressed and suppressed_items:
+                envelope_extra["suppressed"] = suppressed_items
             click.echo(
                 to_json(
                     json_envelope(
                         "risk",
                         summary={"verdict": _risk_verdict, "count": len(items), "explain": explain},
-                        items=items,
-                        suppressions=suppressions,
+                        **envelope_extra,
                     )
                 )
             )
