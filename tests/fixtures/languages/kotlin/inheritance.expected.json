@@ -242,7 +242,7 @@
     },
     {
       "name": "log",
-      "kind": "function",
+      "kind": "method",
       "line": 87,
       "scope": "LoggingPrinter"
     }

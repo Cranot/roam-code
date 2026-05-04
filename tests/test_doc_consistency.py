@@ -152,7 +152,12 @@ class TestVersionConsistency:
 
     def test_pyproject_is_truth(self):
         v = _truth_version()
-        assert re.match(r"^\d+\.\d+\.\d+", v), f"Bad version format: {v!r}"
+        # Accept both 2-segment (12.12) and 3-segment (12.12.0) forms.
+        # The project switched to 2-segment versions in v12.11; the
+        # release commit explicitly noted "skipping the third version
+        # component going forward". Tests guard the *consistency*
+        # across pyproject/server.json/mcp-card, not the segment count.
+        assert re.match(r"^\d+\.\d+(\.\d+)?$", v), f"Bad version format: {v!r}"
 
     def test_server_json_matches_pyproject(self):
         truth = _truth_version()
