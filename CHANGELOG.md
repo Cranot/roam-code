@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.10.1] - 2026-05-04
+
+A patch release for the `12.10.0` workflow-synergy release.
+
+### Fixed
+
+- Restored Python 3.9 import compatibility in taint analysis by avoiding a
+  runtime PEP 604 union inside the `TaintOrigin` type alias.
+- Applied Ruff formatting to the release files so the CI format gate matches
+  the repository style.
+
 ## [12.10.0] - 2026-05-03
 
 A workflow-synergy and maintainability release. Headline work:

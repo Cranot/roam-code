@@ -176,8 +176,7 @@ def _semantic_activation_status(root: Path) -> dict:
         actions.append("roam config --semantic-backend onnx")
     if not settings.get("onnx_model_path") or not settings.get("onnx_tokenizer_path"):
         actions.append(
-            "roam config --semantic-backend onnx --set-onnx-model <model.onnx> "
-            "--set-onnx-tokenizer <tokenizer.json>"
+            "roam config --semantic-backend onnx --set-onnx-model <model.onnx> --set-onnx-tokenizer <tokenizer.json>"
         )
     if not deps_ok:
         actions.append('pip install "roam-code[semantic]"')
@@ -497,8 +496,16 @@ def config(
     if db_dir is not None and use_local_cache:
         raise click.UsageError("choose either --set-db-dir or --use-local-cache, not both")
 
-    mutating_semantic = any(value is not None for value in (semantic_backend, onnx_model, onnx_tokenizer, onnx_max_length))
-    if semantic_status and (db_dir is not None or use_local_cache or exclude_pattern is not None or remove_pattern is not None or mutating_semantic):
+    mutating_semantic = any(
+        value is not None for value in (semantic_backend, onnx_model, onnx_tokenizer, onnx_max_length)
+    )
+    if semantic_status and (
+        db_dir is not None
+        or use_local_cache
+        or exclude_pattern is not None
+        or remove_pattern is not None
+        or mutating_semantic
+    ):
         raise click.UsageError("--semantic-status cannot be combined with config mutation options")
 
     if db_dir is not None:

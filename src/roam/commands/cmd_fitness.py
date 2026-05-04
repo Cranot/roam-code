@@ -644,7 +644,9 @@ def _baseline_compare(all_violations: list[dict], baseline_path: Path | None) ->
     return baseline_info, baseline_info["new_violation_items"]
 
 
-def _maybe_write_baseline(root: Path, write_baseline: bool, rule_results: list[dict], all_violations: list[dict]) -> str | None:
+def _maybe_write_baseline(
+    root: Path, write_baseline: bool, rule_results: list[dict], all_violations: list[dict]
+) -> str | None:
     if not write_baseline:
         return None
     written_path = _default_baseline_path(root)
@@ -652,7 +654,9 @@ def _maybe_write_baseline(root: Path, write_baseline: bool, rule_results: list[d
     return str(written_path)
 
 
-def _fitness_summary(rule_results, passed: int, failed: int, all_violations, baseline_info, written_baseline_path) -> dict:
+def _fitness_summary(
+    rule_results, passed: int, failed: int, all_violations, baseline_info, written_baseline_path
+) -> dict:
     summary = {
         "rules_checked": len(rule_results),
         "passed": passed,
@@ -728,7 +732,9 @@ def _emit_baseline_delta_text(baseline_info: dict | None, new_violations: list[d
     _emit_violations_text(new_violations, heading="New violations")
 
 
-def _emit_fitness_text(rule_results, all_violations, baseline_info, new_violations, written_baseline_path, passed, failed, explain) -> None:
+def _emit_fitness_text(
+    rule_results, all_violations, baseline_info, new_violations, written_baseline_path, passed, failed, explain
+) -> None:
     click.echo(f"Fitness check: {len(rule_results)} rules\n")
     for rule_result in rule_results:
         _emit_rule_line(rule_result, explain)
