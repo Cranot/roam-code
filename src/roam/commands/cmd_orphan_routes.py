@@ -655,7 +655,7 @@ def orphan_routes_cmd(ctx, limit, confidence_filter, skip_unrouted):
                 )
             )
         else:
-            click.echo(msg)
+            click.echo(f"VERDICT: no routes found — {msg}")
         return
 
     # --- JSON output ---

@@ -254,13 +254,19 @@ def why(ctx, names):
             results.append(result)
 
         if json_mode:
+            crit = sum(1 for r in results if r.get("critical"))
             click.echo(
                 to_json(
                     json_envelope(
                         "why",
                         summary={
+                            "verdict": (
+                                f"{crit} of {len(results)} symbol(s) critical"
+                                if crit
+                                else f"{len(results)} symbol(s) — none critical"
+                            ),
                             "symbols": len(results),
-                            "critical": sum(1 for r in results if r.get("critical")),
+                            "critical": crit,
                         },
                         symbols=results,
                     )
