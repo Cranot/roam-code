@@ -100,6 +100,15 @@ def structural_score(
     # in rule-corpus paths *unless* the query is rule-shaped.
     rule_yaml_penalty = _rule_yaml_penalty(candidates, task)
 
+    # Phase-1 dogfood 2026-05-04 — test-file demotion. Same family
+    # of false positive: implementation-style queries surfaced
+    # ``test_verify_patch_match`` above the actual
+    # ``check_clones_not_edited`` because the test had higher
+    # PageRank (every conftest fixture is high-fan-in). Demote
+    # tests for "where is X" queries unless the query explicitly
+    # wants tests.
+    test_file_penalty = _test_file_penalty(candidates, task)
+
     # R.7 (dogfood 2026-05-01) — cmd-companion boost. The
     # ``commands/cmd_FOO.py`` file is the CLI wrapper for module
     # ``FOO/``; the two are conceptually linked but share no tokens
@@ -141,6 +150,25 @@ def structural_score(
         cfg = get_retrieve_config(config_root)
         lexical_baseline = float(cfg.get("lexical_baseline", DEFAULT_LEXICAL_BASELINE))
 
+    # Phase-1 dogfood 2026-05-04 — implementation-style queries shift
+    # weight from structural (alpha) toward lexical (lexical_baseline).
+    # The query "where is the symbol resolver" had ``_resolve_file``
+    # (PR=0.99, fts=0.65) ranking #1 over ``find_symbol`` (PR=0.16,
+    # fts=0.88). PR was dominating because alpha=0.40 vs
+    # lexical_baseline=0.50 wasn't enough headroom against a 6× PR
+    # ratio. For "where is X" queries we now down-weight alpha by 30%
+    # and up-weight lexical by 20% — within a single call, no
+    # config change. Only kicks in for the implementation prefixes
+    # ("where", "how", "find", "locate", "show me"); navigation /
+    # planning queries still use the structural-strong default.
+    impl_query = False
+    if task:
+        lowered_task = task.lower().strip()
+        impl_query = any(lowered_task.startswith(p) for p in ("where ", "how ", "find ", "locate ", "show me "))
+    if impl_query:
+        alpha = alpha * 0.70
+        lexical_baseline = lexical_baseline * 1.20
+
     out: list[dict] = []
     for c in candidates:
         sid = int(c["symbol_id"])
@@ -168,6 +196,7 @@ def structural_score(
             + cmd_companion_boost.get(sid, 0.0)
             + async_query_boost.get(sid, 0.0)
             + rule_yaml_penalty.get(sid, 0.0)  # already negative
+            + test_file_penalty.get(sid, 0.0)  # already negative
         )
 
         justifications: dict[str, object] = {}
@@ -287,6 +316,79 @@ def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
             continue
         if path.startswith("rules/") or "/rules/community/" in path or path.endswith(".yaml") or path.endswith(".yml"):
             out[sid] = -0.20
+    return out
+
+
+def _test_file_penalty(candidates: list[dict], task: str) -> dict[int, float]:
+    """Demote test-file candidates for implementation-style queries.
+
+    Phase-1 dogfood, 2026-05-04: a query like *"where is the patch
+    verifier with clones-not-edited check"* surfaced
+    ``test_verify_patch_match`` (a test) as the top result and the
+    actual ``check_clones_not_edited`` implementation at #4. The
+    structural reranker correctly flagged tests as high-fan-in /
+    high-PageRank (every test imports the conftest fixtures and the
+    function under test), but for "where is X" queries the user wants
+    the IMPLEMENTATION, not the test.
+
+    Heuristic: same shape as ``_rule_yaml_penalty`` —
+
+    * only fires for implementation-style queries (start with
+      ``where``, ``how``, ``find``, ``locate``).
+    * but skips when the query explicitly mentions tests or
+      assertions ("test", "spec", "fixture", "conftest", "assert",
+      "expect") — the user wants tests in that case.
+    * picks up paths that look like tests (``tests/``, ``test/``,
+      ``spec/``, ``__tests__/``, basename matching ``test_*`` /
+      ``*_test.py`` / ``*.test.*`` / ``*.spec.*``).
+
+    Magnitude: -0.18 — tuned against the 30-task bench to keep
+    legitimate test answers in top-20 (the bench expects tests as
+    co-answers for "where is X" queries) while still pushing
+    high-PR test fixtures below same-token implementations at
+    top-5/10. Stronger penalties (-0.25) regressed recall@20 even
+    while improving recall@5; -0.18 was the sweet spot.
+    """
+    if not task:
+        return {}
+    lowered_task = task.lower().strip()
+    impl_question = any(lowered_task.startswith(prefix) for prefix in ("where ", "how ", "find ", "locate "))
+    if not impl_question:
+        return {}
+    # User explicitly wants tests — leave the ranking alone.
+    if any(word in lowered_task for word in ("test", "spec", "fixture", "conftest", "assert", "expect")):
+        return {}
+
+    out: dict[int, float] = {}
+    for c in candidates:
+        sid = int(c.get("symbol_id") or 0)
+        path = (c.get("file_path") or c.get("file") or "").replace("\\", "/").lower()
+        if not sid or not path:
+            continue
+        # Path-prefix patterns
+        is_test_path = (
+            path.startswith("tests/")
+            or path.startswith("test/")
+            or path.startswith("spec/")
+            or "/tests/" in path
+            or "/test/" in path
+            or "/spec/" in path
+            or "/__tests__/" in path
+        )
+        if not is_test_path:
+            # Basename patterns
+            basename = path.rsplit("/", 1)[-1]
+            if (
+                basename.startswith("test_")
+                or basename.endswith("_test.py")
+                or basename.endswith("_test.go")
+                or basename.endswith("_test.rs")
+                or ".test." in basename
+                or ".spec." in basename
+            ):
+                is_test_path = True
+        if is_test_path:
+            out[sid] = -0.18
     return out
 
 

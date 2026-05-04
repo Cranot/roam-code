@@ -119,10 +119,28 @@ class TestExtractTokens:
         assert "critique" in tokens, "lowercase supplement must run alongside strong tokens"
 
     def test_short_lowercase_words_dropped(self):
-        """Words <5 chars never enter via the NL fallback."""
-        tokens = extract_tokens("look thing data file find")
-        for noise in ("look", "thing", "data", "file", "find"):
-            assert noise not in tokens
+        """Non-domain 4-letter words never enter via the NL fallback.
+
+        v12.12.6 added a curated 4-letter domain-noun pass (``file``,
+        ``code``, ``dead``, etc.), so this test now picks 4-letter
+        noise words that are deliberately *not* in the allow-list.
+        """
+        tokens = extract_tokens("look back some each more thing find")
+        for noise in ("look", "back", "some", "each", "more", "thing", "find"):
+            assert noise not in tokens, f"non-domain word leaked through: {noise!r}"
+
+    def test_curated_four_letter_domain_nouns_extracted(self):
+        """v12.12.6 — curated 4-letter programming-domain nouns ARE
+        captured even though they're below the lowercase-noun fallback
+        floor of 5 characters. Without these, queries like 'where is
+        dead code detection' or 'find file role classifier' returned
+        only the 5+ char words and missed the actual answer."""
+        tokens = extract_tokens("where is dead code detection")
+        assert "dead" in tokens
+        assert "code" in tokens
+        tokens = extract_tokens("find file role classifier")
+        assert "file" in tokens
+        assert "role" in tokens
 
     def test_extended_stopwords_filtered(self):
         """Extended NL stopwords are dropped from the fallback path."""
