@@ -7,6 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.12.1] - 2026-05-04
+
+Hotfix: bundle YAML data files in the wheel.
+
+PyPI installs of `roam-code` from at least v8.x through v12.12 silently
+shipped zero taint rules — the wheel didn't include
+`roam/security/taint_rules/*.yaml` because no `package-data` entry
+declared them. `roam taint` post-install on a clean venv reported
+"No rules in /.../security/taint_rules" with no actionable hint.
+Editable installs (``pip install -e .``) and source checkouts worked
+because the YAMLs were on disk; the bug only bit binary-wheel users.
+
+`pyproject.toml` now declares `[tool.setuptools.package-data]` for:
+
+- `roam.security.taint_rules` — 14 rule packs (sqli, xss, ssrf,
+  path-traversal, command-injection, deserialization, open-redirect,
+  urllib, socketio, fileupload, plus js-prototype-pollution,
+  js-insecure-jwt-decode, js-localstorage-secrets, js-api-error-leak,
+  vue-template-injection).
+- `roam.languages.extractors` — Kotlin YAML extractor.
+- `roam.templates.ci` — Azure / Bitbucket / GitLab CI templates.
+
+Verified via clean-venv install of the rebuilt wheel: `load_rules`
+returns 14 rules including `python-deserialization`.
+
 ## [12.12] - 2026-05-04
 
 A focused close-out of the v12.3 dogfood report's five remaining open
