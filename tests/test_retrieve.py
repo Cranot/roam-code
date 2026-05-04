@@ -557,7 +557,13 @@ class TestConfigDrivenKnobs:
             assert 1.5 < ratio < 2.5, f"expected ~2× budget_used, got ratio {ratio:.2f}"
 
     def test_lexical_baseline_zero_drops_pure_lexical_hits(self, indexed_project):
-        """With lexical_baseline=0, candidates with no PR mass score 0."""
+        """With lexical_baseline=0, the lexical contribution to a
+        pure-FTS candidate drops to zero. Other small boosts (e.g.
+        the v12.12.9 recency boost, +0.05 max for files edited
+        today) may still contribute, so we compare *with* vs
+        *without* the lexical baseline rather than asserting an
+        absolute zero score.
+        """
         from roam.db.connection import open_db
         from roam.retrieve.rerank import structural_score
 
@@ -573,8 +579,11 @@ class TestConfigDrivenKnobs:
             cand = {**dict(sym), "fts_score": 1.0}
             with_baseline = structural_score(conn, [cand], {}, {"alpha": 0.0, "epsilon": 0.0}, lexical_baseline=0.5)
             without_baseline = structural_score(conn, [cand], {}, {"alpha": 0.0, "epsilon": 0.0}, lexical_baseline=0.0)
-        assert with_baseline[0]["score"] > 0
-        assert without_baseline[0]["score"] == 0
+        assert with_baseline[0]["score"] > without_baseline[0]["score"]
+        # Without the lexical baseline the score is just whatever
+        # tiny per-symbol boosts contribute — well below the 0.5
+        # lift that lexical_baseline=0.5 + fts_norm=1.0 would give.
+        assert without_baseline[0]["score"] < 0.30
 
 
 class TestEdgeCases:

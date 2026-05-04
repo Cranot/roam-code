@@ -124,6 +124,15 @@ def structural_score(
     # path_token_boost so it can lift but not dominate.
     async_query_boost = _async_query_boost(candidates, task, conn=conn)
 
+    # R.10 (Phase-bonus 2026-05-04) — recency boost. Files edited in
+    # the last 14 days are more likely to be the answer to "where is
+    # X" — the user is usually asking about something they're
+    # actively working on. Magnitude up to +0.10, decays linearly to
+    # zero at 14 days. Suppressed when the query is shaped like a
+    # historical / archival question (mentions "old", "legacy",
+    # "deprecated", "history"). Adapts daily without retuning.
+    recency_boost = _recency_boost(conn, candidates, task)
+
     pr_scores = _pagerank_scores(conn, candidate_ids, seeds, use_personalized=use_personalized)
     clone_tags = _clone_tags(conn, candidates)
     cochange_scores = _cochange_scores(conn, candidate_ids, seeds)
@@ -195,6 +204,7 @@ def structural_score(
             + path_token_boost.get(sid, 0.0)
             + cmd_companion_boost.get(sid, 0.0)
             + async_query_boost.get(sid, 0.0)
+            + recency_boost.get(sid, 0.0)
             + rule_yaml_penalty.get(sid, 0.0)  # already negative
             + test_file_penalty.get(sid, 0.0)  # already negative
         )
@@ -441,6 +451,121 @@ def _async_query_boost(candidates: list[dict], task: str, *, conn=None) -> dict[
         return {}
     for r in rows:
         out[int(r[0])] = 0.10
+    return out
+
+
+_HISTORICAL_QUERY_TOKENS = frozenset(
+    {
+        "old",
+        "legacy",
+        "deprecated",
+        "history",
+        "historical",
+        "archive",
+        "archived",
+        "ancient",
+        "removed",
+        "former",
+    }
+)
+
+
+def _recency_boost(conn: sqlite3.Connection, candidates: list[dict], task: str) -> dict[int, float]:
+    """Boost candidates whose file was recently edited.
+
+    Hypothesis: when a developer asks "where is X?" they're usually
+    asking about code they're actively working on. Recent edits
+    correlate with relevance for the impl-style queries that
+    dominate the workload.
+
+    Magnitude: up to +0.05 for files edited *today*, decaying
+    linearly to zero at 14 days. Smaller than ``async_query_boost``
+    (0.10) because the synthetic 30-task bench couldn't validate a
+    larger recency tilt — the bench labels treat all expected files
+    as equal regardless of mtime, so a strong recency lift slightly
+    rearranges co-equal answers and shows as bench-neutral. The
+    magnitude is tuned to be bench-neutral while still nudging
+    real-world impl queries toward currently-active code.
+
+    Suppressed when the query is shaped like a historical question
+    ("where was the *old* auth handler", "deprecated routes",
+    "legacy code") — recent edits are the *opposite* of what the
+    user wants in those cases.
+
+    The signal comes from ``MAX(git_commits.timestamp)`` per file
+    via ``git_file_changes``; cheap once per call (one batched
+    query for the candidate set, no per-candidate I/O).
+    """
+    if not candidates:
+        return {}
+    # Suppress for historical queries — recent edits are anti-signal.
+    if task:
+        lowered = task.lower()
+        if any(tok in lowered for tok in _HISTORICAL_QUERY_TOKENS):
+            return {}
+
+    # Resolve candidate file_ids. Many candidates carry a path but
+    # not the file_id; we batch-resolve through ``files.path``.
+    paths = list({(c.get("file_path") or c.get("file") or "") for c in candidates})
+    paths = [p for p in paths if p]
+    if not paths:
+        return {}
+    placeholders = ",".join("?" for _ in paths)
+    try:
+        path_rows = conn.execute(
+            f"SELECT id, path FROM files WHERE path IN ({placeholders})",
+            paths,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    file_id_by_path = {r["path"]: int(r["id"]) for r in path_rows}
+    file_ids = list(file_id_by_path.values())
+    if not file_ids:
+        return {}
+
+    # Latest commit timestamp per file. Single batched query — no
+    # per-candidate fan-out. Files with no git history are absent
+    # from the result and thus get no boost.
+    placeholders = ",".join("?" for _ in file_ids)
+    try:
+        ts_rows = conn.execute(
+            f"""
+            SELECT gfc.file_id, MAX(gc.timestamp) AS latest
+            FROM git_file_changes gfc
+            JOIN git_commits gc ON gfc.commit_id = gc.id
+            WHERE gfc.file_id IN ({placeholders})
+            GROUP BY gfc.file_id
+            """,
+            file_ids,
+        ).fetchall()
+    except sqlite3.OperationalError:
+        return {}
+    if not ts_rows:
+        return {}
+    latest_by_file_id = {int(r["file_id"]): float(r["latest"] or 0) for r in ts_rows}
+
+    import time
+
+    now = time.time()
+    out: dict[int, float] = {}
+    for c in candidates:
+        sid = int(c.get("symbol_id") or 0)
+        path = c.get("file_path") or c.get("file") or ""
+        if not sid or not path:
+            continue
+        fid = file_id_by_path.get(path)
+        if fid is None:
+            continue
+        latest = latest_by_file_id.get(fid)
+        if latest is None or latest <= 0:
+            continue
+        age_days = (now - latest) / 86400.0
+        if age_days < 0 or age_days > 14:
+            continue
+        # Linear decay: 0d → 0.05, 14d → 0.
+        boost = 0.05 * max(0.0, (14.0 - age_days) / 14.0)
+        if boost > 0:
+            out[sid] = boost
     return out
 
 
