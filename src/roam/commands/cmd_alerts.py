@@ -448,8 +448,38 @@ def alerts(ctx):
         # 1) Threshold checks (always run) — round 4 #3 / G: respect
         # .roam/alerts.yaml overrides so projects can tune what 'critical'
         # means for their codebase shape.
+        cfg = _load_alerts_config()
         thresholds = _resolved_thresholds()
         all_alerts.extend(_check_thresholds(current, thresholds))
+
+        # Round 4 / G: delta-vs-baseline alerts. When a snapshot exists
+        # and `.roam/alerts.yaml` opts in (or the default behaviour
+        # detects regression), emit per-metric "regressed since
+        # baseline" alerts that are actionable today.
+        delta_enabled = cfg.get("delta_alerts", True) if cfg else True
+        if delta_enabled and len(snap_dicts) >= 2:
+            baseline_snap = snap_dicts[-2]
+            for metric, current_value in current.items():
+                if not isinstance(current_value, (int, float)):
+                    continue
+                baseline_value = baseline_snap.get(metric)
+                if not isinstance(baseline_value, (int, float)) or baseline_value == 0:
+                    continue
+                delta = current_value - baseline_value
+                pct = abs(delta) / max(abs(baseline_value), 1) * 100
+                regressed = (metric in _WORSE_WHEN_HIGHER and delta > 0) or (metric in _WORSE_WHEN_LOWER and delta < 0)
+                if regressed and pct >= 10:  # 10% regression floor
+                    arrow = "+" if delta > 0 else ""
+                    all_alerts.append(
+                        _make_alert(
+                            WARNING if pct < 25 else CRITICAL,
+                            metric,
+                            f"{metric} regressed since baseline: {baseline_value} -> {current_value} "
+                            f"({arrow}{delta}, {pct:.0f}%)",
+                            current_value,
+                            trend_direction="worse",
+                        )
+                    )
 
         # 2) Trend detection (need >= 3 snapshots)
         if len(snap_dicts) >= 3:

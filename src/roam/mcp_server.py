@@ -2904,16 +2904,26 @@ def trace(source: str, target: str, root: str = ".") -> dict:
 
 @_tool(
     name="roam_impact",
-    description="Blast radius: all symbols and files affected by changing a symbol.",
+    description=(
+        "Blast radius for 'is it safe to change?' — symbols + files affected, in "
+        "5 lines. Compact decision-support output. Round 4 / S: the right "
+        "default tool for safety-checks; preflight is heavier."
+    ),
     output_schema=_SCHEMA_IMPACT,
 )
 def impact(symbol: str, root: str = ".") -> dict:
     """Show the blast radius of changing a symbol.
 
-    Everything that would break if its signature or behavior changed.
-    Affected symbols by hop distance, affected files, severity. For
-    pre-change checks, prefer preflight (includes impact plus tests
-    and fitness)."""
+    WHEN TO USE: as the FIRST safety check before touching a symbol.
+    Compact output (typical: 2-5 lines) directly answers "if I change
+    this, what breaks?". Round 4 dogfood promoted this as the default
+    decision-support tool — cleaner than ``roam_diagnose`` for the
+    binary safety question, and lighter than ``roam_prepare_change``.
+
+    Everything that would break if the signature or behavior changed.
+    Affected symbols by hop distance, affected files, severity. Step up
+    to ``roam_preflight`` when you also need test coverage + fitness
+    rule analysis on the same target."""
     return _run_roam(["impact", symbol], root)
 
 
