@@ -204,6 +204,146 @@ def compute_difficulty_score(
 # ---------------------------------------------------------------------------
 
 
+def _accumulate_partition_meta(nodes, node_meta) -> tuple[set[str], Counter, float, set[str]]:
+    """Single pass over a partition's nodes — collect file set, per-language
+    counts, total complexity, and the lowercased names of test-file symbols."""
+    files_set: set[str] = set()
+    language_counter: Counter = Counter()
+    total_complexity = 0.0
+    test_names: set[str] = set()
+    for n in nodes:
+        meta = node_meta.get(n)
+        if not meta:
+            continue
+        files_set.add(meta["path"])
+        if meta["language"]:
+            lang_label = _EXTENSION_ROLES.get(
+                "." + (meta["language"] or "").lower().split("/")[-1],
+                meta["language"],
+            )
+            language_counter[lang_label] += 1
+        total_complexity += meta["complexity"]
+        if meta["file_role"] == "test":
+            test_names.add(meta["name"].lower())
+    return files_set, language_counter, total_complexity, test_names
+
+
+def _top_key_symbols(nodes, node_meta, limit: int = 5) -> list[dict]:
+    """Top-N partition members by PageRank, formatted for the manifest."""
+    ranked = sorted(
+        [n for n in nodes if n in node_meta],
+        key=lambda n: node_meta[n]["pagerank"],
+        reverse=True,
+    )
+    out: list[dict] = []
+    for n in ranked[:limit]:
+        m = node_meta[n]
+        out.append(
+            {
+                "name": m["name"],
+                "kind": abbrev_kind(m["kind"]),
+                "pagerank": round(m["pagerank"], 4),
+                "file": m["path"],
+            }
+        )
+    return out
+
+
+def _partition_test_coverage(nodes, node_meta, test_names: set[str]) -> float:
+    """Ratio of source symbols within the partition whose name matches a
+    test symbol (or test_<name>) in the same partition."""
+    total_source = sum(1 for n in nodes if n in node_meta and node_meta[n]["file_role"] != "test")
+    if total_source == 0 or not test_names:
+        return 0.0
+    symbols_with_tests = 0
+    for n in nodes:
+        meta = node_meta.get(n)
+        if not (meta and meta["file_role"] != "test"):
+            continue
+        lowered = meta["name"].lower()
+        if lowered in test_names or f"test_{lowered}" in test_names:
+            symbols_with_tests += 1
+    return round(symbols_with_tests / total_source, 2)
+
+
+def _partition_cross_edges(idx: int, nodes, node_part, G) -> int:
+    """Count edges crossing this partition's boundary (in either direction)."""
+    cross = 0
+    for n in nodes:
+        for succ in G.successors(n):
+            if succ in node_part and node_part[succ] != idx:
+                cross += 1
+        for pred in G.predecessors(n):
+            if pred in node_part and node_part[pred] != idx:
+                cross += 1
+    return cross
+
+
+def _partition_label(idx: int, files_set: set[str]) -> str:
+    """Cluster label from directory majority — falls back to partition-N or
+    root-N when no directory information is available."""
+    dirs = [os.path.dirname(f).replace("\\", "/") for f in files_set if f]
+    if not dirs:
+        return f"partition-{idx + 1}"
+    label = Counter(dirs).most_common(1)[0][0]
+    label = label.rstrip("/").rsplit("/", 1)[-1] if label else f"partition-{idx + 1}"
+    if not label:
+        return f"root-{idx + 1}"
+    return label
+
+
+def _build_partition_descriptor(
+    idx: int,
+    p: dict,
+    node_meta: dict,
+    node_part: dict,
+    G,
+    file_path_to_id: dict,
+    cochange_map: dict,
+    churn_by_file_id: dict,
+) -> tuple[dict, set[str]]:
+    """Build the per-partition manifest entry. Returns ``(descriptor, files_set)``.
+
+    The descriptor matches the schema documented in
+    ``compute_partition_manifest`` — keeping ``files_set`` separate so
+    callers can still maintain the ``all_partition_files`` index for
+    downstream conflict-hotspot analysis without iterating the descriptor.
+    """
+    nodes = p["nodes"]
+    files_set, language_counter, total_complexity, test_names = _accumulate_partition_meta(nodes, node_meta)
+    key_symbols = _top_key_symbols(nodes, node_meta)
+    test_coverage = _partition_test_coverage(nodes, node_meta, test_names)
+    cross_edges = _partition_cross_edges(idx, nodes, node_part, G)
+
+    partition_file_ids = {file_path_to_id[f] for f in files_set if f in file_path_to_id}
+    cochange_score = sum(
+        count
+        for (fid_a, fid_b), count in cochange_map.items()
+        if fid_a in partition_file_ids and fid_b not in partition_file_ids
+    )
+    conflict_risk = _classify_conflict_risk(cross_edges, cochange_score)
+    partition_churn = sum(churn_by_file_id.get(pfid, 0) for pfid in partition_file_ids)
+    role = _suggest_role(sorted(files_set), language_counter)
+    label = _partition_label(idx, files_set)
+
+    descriptor = {
+        "id": idx + 1,
+        "label": label,
+        "role": role,
+        "files": sorted(files_set),
+        "file_count": len(files_set),
+        "symbol_count": len(nodes),
+        "key_symbols": key_symbols,
+        "complexity": round(total_complexity, 1),
+        "churn": partition_churn,
+        "test_coverage": test_coverage,
+        "conflict_risk": conflict_risk,
+        "cross_partition_edges": cross_edges,
+        "cochange_score": cochange_score,
+    }
+    return descriptor, files_set
+
+
 def compute_partition_manifest(
     conn: sqlite3.Connection,
     n_agents: int | None = None,
@@ -305,129 +445,14 @@ def compute_partition_manifest(
             churn_by_file_id[row["file_id"]] = row["total_churn"]
 
     # -- 5. Build per-partition descriptors ----------------------------------
-    result_partitions = []
+    result_partitions: list[dict] = []
     all_partition_files: list[set[str]] = []
-
     for idx, p in enumerate(partitions):
-        nodes = p["nodes"]
-        files_set: set[str] = set()
-        language_counter: Counter = Counter()
-        total_complexity = 0.0
-        test_file_count = 0
-        symbols_with_tests = 0
-        key_symbols = []
-
-        for n in nodes:
-            meta = node_meta.get(n)
-            if not meta:
-                continue
-            files_set.add(meta["path"])
-            if meta["language"]:
-                lang_label = _EXTENSION_ROLES.get(
-                    "." + (meta["language"] or "").lower().split("/")[-1],
-                    meta["language"],
-                )
-                language_counter[lang_label] += 1
-            total_complexity += meta["complexity"]
-            if meta["file_role"] == "test":
-                test_file_count += 1
-
-        # Key symbols: top-5 by PageRank
-        ranked_nodes = sorted(
-            [n for n in nodes if n in node_meta],
-            key=lambda n: node_meta[n]["pagerank"],
-            reverse=True,
+        descriptor, files_set = _build_partition_descriptor(
+            idx, p, node_meta, node_part, G, file_path_to_id, cochange_map, churn_by_file_id
         )
-        for n in ranked_nodes[:5]:
-            m = node_meta[n]
-            key_symbols.append(
-                {
-                    "name": m["name"],
-                    "kind": abbrev_kind(m["kind"]),
-                    "pagerank": round(m["pagerank"], 4),
-                    "file": m["path"],
-                }
-            )
-
-        # Test coverage: ratio of symbols that have a test-role file in this partition
-        # or whose name appears in a test file within the partition
-        total_source_symbols = sum(1 for n in nodes if n in node_meta and node_meta[n]["file_role"] != "test")
-        test_names = set()
-        for n in nodes:
-            meta = node_meta.get(n)
-            if meta and meta["file_role"] == "test":
-                test_names.add(meta["name"].lower())
-
-        if total_source_symbols > 0 and test_names:
-            for n in nodes:
-                meta = node_meta.get(n)
-                if meta and meta["file_role"] != "test":
-                    # Check if any test symbol references this name
-                    if meta["name"].lower() in test_names:
-                        symbols_with_tests += 1
-                    elif f"test_{meta['name'].lower()}" in test_names:
-                        symbols_with_tests += 1
-
-        test_coverage = round(symbols_with_tests / total_source_symbols, 2) if total_source_symbols > 0 else 0.0
-
-        # Cross-partition edge count for this partition
-        cross_edges = 0
-        for n in nodes:
-            for succ in G.successors(n):
-                if succ in node_part and node_part[succ] != idx:
-                    cross_edges += 1
-            for pred in G.predecessors(n):
-                if pred in node_part and node_part[pred] != idx:
-                    cross_edges += 1
-
-        # Co-change conflict score: files in this partition that co-change
-        # with files in OTHER partitions
-        cochange_score = 0
-        partition_file_ids = {file_path_to_id[f] for f in files_set if f in file_path_to_id}
-        # Iterate known cochange pairs
-        for (fid_a, fid_b), count in cochange_map.items():
-            if fid_a in partition_file_ids and fid_b not in partition_file_ids:
-                cochange_score += count
-
-        conflict_risk = _classify_conflict_risk(cross_edges, cochange_score)
-
-        # Per-partition churn: sum of churn across files in this partition.
-        # Uses the pre-loaded ``churn_by_file_id`` to avoid an N+1.
-        partition_churn = sum(churn_by_file_id.get(pfid, 0) for pfid in partition_file_ids)
-
-        # Suggest role
-        role = _suggest_role(sorted(files_set), language_counter)
-
-        # Cluster label from directory majority
-        dirs = [os.path.dirname(f).replace("\\", "/") for f in files_set if f]
-        dir_counts = Counter(dirs) if dirs else Counter()
-        if dir_counts:
-            label = dir_counts.most_common(1)[0][0]
-            label = label.rstrip("/").rsplit("/", 1)[-1] if label else f"partition-{idx + 1}"
-            if not label:
-                label = f"root-{idx + 1}"
-        else:
-            label = f"partition-{idx + 1}"
-
+        result_partitions.append(descriptor)
         all_partition_files.append(files_set)
-
-        result_partitions.append(
-            {
-                "id": idx + 1,
-                "label": label,
-                "role": role,
-                "files": sorted(files_set),
-                "file_count": len(files_set),
-                "symbol_count": len(nodes),
-                "key_symbols": key_symbols,
-                "complexity": round(total_complexity, 1),
-                "churn": partition_churn,
-                "test_coverage": test_coverage,
-                "conflict_risk": conflict_risk,
-                "cross_partition_edges": cross_edges,
-                "cochange_score": cochange_score,
-            }
-        )
 
     # -- 6. Balance partitions by complexity → assign to agents ---------------
     # Sort partitions by complexity descending, assign round-robin to balance
