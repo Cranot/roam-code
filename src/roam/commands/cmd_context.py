@@ -609,25 +609,14 @@ def _table_budget(data) -> int:
         return 0
 
 
-def _render_single_text(data):
-    sym = data["sym"]
-    task = data["task"]
-    non_test_callers = data["non_test_callers"]
-    callees = data["callees"]
-    test_callers = data["test_callers"]
-    test_importers = data["test_importers"]
-    siblings = data["siblings"]
+def _render_single_header(data, sym, task_suffix, sig):
+    """Header block: VERDICT + signature line + badges + decorators."""
     files_to_read = data["files_to_read"]
-    skipped_callers = data["skipped_callers"]
-    skipped_callees = data["skipped_callees"]
-
-    sig = sym["signature"] or ""
-    task_suffix = f" (task={task})" if task else ""
+    non_test_callers = data["non_test_callers"]
     verdict = f"{len(files_to_read)} files, {len(non_test_callers)} callers for {sym['name']}{task_suffix}"
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"=== Context for: {sym['name']}{task_suffix} ===")
-    # redactedheader rendering extracted into helpers.
     _row_keys = sym.keys() if hasattr(sym, "keys") else []
     decorators_str = (sym["decorators"] if "decorators" in _row_keys else "") or ""
     sym_kind = sym["kind"] if "kind" in _row_keys else ""
@@ -641,16 +630,11 @@ def _render_single_text(data):
         f"{loc(sym['file_path'], data['line_start'])}"
     )
     click.echo()
+    return _row_keys, decorators_str, sym_kind
 
-    _render_annotations_text(data.get("annotations"))
 
-    if task == "understand" and data.get("docstring"):
-        click.echo("Docstring:")
-        for line in data["docstring"].strip().splitlines()[:10]:
-            click.echo(f"  {line}")
-        click.echo()
-
-    # Callers
+def _render_callers_block(non_test_callers, data):
+    """Callers section."""
     if non_test_callers:
         click.echo(f"Callers ({len(non_test_callers)}):")
         rows = [
@@ -670,7 +654,9 @@ def _render_single_text(data):
         click.echo("Callers: (none)")
         click.echo()
 
-    # Callees
+
+def _render_callees_block(callees, data):
+    """Callees section."""
     if callees:
         click.echo(f"Callees ({len(callees)}):")
         rows = [
@@ -690,7 +676,9 @@ def _render_single_text(data):
         click.echo("Callees: (none)")
         click.echo()
 
-    # Tests
+
+def _render_tests_block(test_callers, test_importers):
+    """Tests section."""
     if test_callers or test_importers:
         click.echo(f"Tests ({len(test_callers)} direct, {len(test_importers)} file-level):")
         for t in test_callers:
@@ -701,51 +689,75 @@ def _render_single_text(data):
         click.echo("Tests: (none)")
     click.echo()
 
-    # Siblings
-    if siblings:
-        click.echo(f"Siblings ({len(siblings)} exports in same file):")
-        for s in siblings[:10]:
-            click.echo(f"  {abbrev_kind(s['kind'])}  {s['name']}")
-        if len(siblings) > 10:
-            click.echo(f"  (+{len(siblings) - 10} more)")
-        click.echo()
 
-    # Python pivot v12.7: model-class fields. When the symbol is a
-    # Pydantic / dataclass / attrs / TypedDict / NamedTuple class,
-    # surface its fields directly (not just as siblings) so an agent
-    # working with the class immediately sees its shape.
-    if sym_kind == "class":
-        try:
-            from roam.catalog.python_idioms import is_model_class
+def _render_siblings_block(siblings):
+    """Siblings section."""
+    if not siblings:
+        return
+    click.echo(f"Siblings ({len(siblings)} exports in same file):")
+    for s in siblings[:10]:
+        click.echo(f"  {abbrev_kind(s['kind'])}  {s['name']}")
+    if len(siblings) > 10:
+        click.echo(f"  (+{len(siblings) - 10} more)")
+    click.echo()
 
-            sig_for_model = sym["signature"] if "signature" in _row_keys else ""
-            is_model, _label = is_model_class(sig_for_model, decorators_str)
-        except Exception:
-            is_model = False
-        if is_model:
-            from roam.db.connection import open_db as _open_db
 
-            try:
-                with _open_db(readonly=True) as _conn:
-                    field_rows = _conn.execute(
-                        "SELECT name, default_value FROM symbols "
-                        "WHERE parent_id = ? AND kind = 'property' ORDER BY line_start",
-                        (sym["id"],),
-                    ).fetchall()
-            except Exception:
-                field_rows = []
-            if field_rows:
-                click.echo(f"Fields ({len(field_rows)}):")
-                for fr in field_rows[:20]:
-                    fname = fr["name"] if "name" in fr.keys() else fr[0]
-                    fdef = (fr["default_value"] if "default_value" in fr.keys() else fr[1]) or ""
-                    badge = f" = {fdef}" if fdef and fdef not in ("None",) else ""
-                    click.echo(f"  {fname}{badge}")
-                if len(field_rows) > 20:
-                    click.echo(f"  (+{len(field_rows) - 20} more)")
-                click.echo()
+def _render_model_fields_block(sym, sym_kind, decorators_str, _row_keys):
+    """Pydantic / dataclass / attrs / TypedDict / NamedTuple field listing.
 
-    # Always render all extras
+    When the symbol is a model class, surface its fields directly so an
+    agent immediately sees the shape (not just as siblings). v12.7 pivot.
+    """
+    if sym_kind != "class":
+        return
+    try:
+        from roam.catalog.python_idioms import is_model_class
+
+        sig_for_model = sym["signature"] if "signature" in _row_keys else ""
+        is_model, _label = is_model_class(sig_for_model, decorators_str)
+    except Exception:
+        is_model = False
+    if not is_model:
+        return
+    from roam.db.connection import open_db as _open_db
+
+    try:
+        with _open_db(readonly=True) as _conn:
+            field_rows = _conn.execute(
+                "SELECT name, default_value FROM symbols WHERE parent_id = ? AND kind = 'property' ORDER BY line_start",
+                (sym["id"],),
+            ).fetchall()
+    except Exception:
+        field_rows = []
+    if not field_rows:
+        return
+    click.echo(f"Fields ({len(field_rows)}):")
+    for fr in field_rows[:20]:
+        fname = fr["name"] if "name" in fr.keys() else fr[0]
+        fdef = (fr["default_value"] if "default_value" in fr.keys() else fr[1]) or ""
+        badge = f" = {fdef}" if fdef and fdef not in ("None",) else ""
+        click.echo(f"  {fname}{badge}")
+    if len(field_rows) > 20:
+        click.echo(f"  (+{len(field_rows) - 20} more)")
+    click.echo()
+
+
+def _render_files_to_read_block(files_to_read, skipped_callers, skipped_callees):
+    """Files-to-read footer."""
+    skipped_total = skipped_callers + skipped_callees
+    extra_label = f", +{skipped_total} more" if skipped_total else ""
+    click.echo(f"Files to read ({len(files_to_read)}{extra_label}):")
+    for f in files_to_read:
+        end_str = f"-{f['end']}" if f["end"] and f["end"] != f["start"] else ""
+        lr = f":{f['start']}{end_str}" if f["start"] else ""
+        click.echo(f"  {f['path']:<50s} {lr:<12s} ({f['reason']})")
+
+
+def _render_extras_block(data):
+    """All the non-core analyses (complexity, churn, coupling, etc.).
+
+    Each helper handles its own None/empty input gracefully.
+    """
     _render_complexity_text(data.get("complexity"))
     _render_graph_centrality_text(data.get("graph_centrality"))
     _render_churn_text(data.get("git_churn"))
@@ -757,14 +769,30 @@ def _render_single_text(data):
     _render_entry_points_text(data.get("entry_points_reaching") or [])
     _render_file_context_text(data.get("file_context_syms") or [])
 
-    # Files to read
-    skipped_total = skipped_callers + skipped_callees
-    extra_label = f", +{skipped_total} more" if skipped_total else ""
-    click.echo(f"Files to read ({len(files_to_read)}{extra_label}):")
-    for f in files_to_read:
-        end_str = f"-{f['end']}" if f["end"] and f["end"] != f["start"] else ""
-        lr = f":{f['start']}{end_str}" if f["start"] else ""
-        click.echo(f"  {f['path']:<50s} {lr:<12s} ({f['reason']})")
+
+def _render_single_text(data):
+    sym = data["sym"]
+    task = data["task"]
+    sig = sym["signature"] or ""
+    task_suffix = f" (task={task})" if task else ""
+
+    _row_keys, decorators_str, sym_kind = _render_single_header(data, sym, task_suffix, sig)
+
+    _render_annotations_text(data.get("annotations"))
+
+    if task == "understand" and data.get("docstring"):
+        click.echo("Docstring:")
+        for line in data["docstring"].strip().splitlines()[:10]:
+            click.echo(f"  {line}")
+        click.echo()
+
+    _render_callers_block(data["non_test_callers"], data)
+    _render_callees_block(data["callees"], data)
+    _render_tests_block(data["test_callers"], data["test_importers"])
+    _render_siblings_block(data["siblings"])
+    _render_model_fields_block(sym, sym_kind, decorators_str, _row_keys)
+    _render_extras_block(data)
+    _render_files_to_read_block(data["files_to_read"], data["skipped_callers"], data["skipped_callees"])
 
     ns_text = format_next_steps_text(data.get("next_steps") or [])
     if ns_text:
