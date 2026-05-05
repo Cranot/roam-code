@@ -1416,10 +1416,10 @@ class Indexer:
                 )
 
             self._resolve_and_store_edges(conn, all_references, all_symbol_rows, file_id_by_path)
-            G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
             self._run_django_post_resolver(conn)
             self._run_pytest_fixture_resolver(conn)
             self._run_registry_dispatch_resolver(conn)
+            G, detect_clusters, label_clusters, store_clusters = self._compute_graph_metrics(conn)
             self._run_git_analysis(conn)
             self._run_clustering(conn, G, detect_clusters, label_clusters, store_clusters)
             self._run_effect_analysis(conn, G)
@@ -1429,3 +1429,10 @@ class Indexer:
             self._build_search_indexes(conn)
             self._log_parse_issues()
             self._set_completion_summary(conn, time.monotonic() - t0)
+
+        try:
+            from roam.graph.builder import clear_graph_cache
+
+            clear_graph_cache()
+        except Exception:
+            pass
