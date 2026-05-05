@@ -3,13 +3,40 @@
 from __future__ import annotations
 
 import json
+import subprocess
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
 
 
-def test_pass31_test_pyramid_runs():
+@pytest.fixture
+def _isolated_project(tmp_path, monkeypatch):
+    """Tiny indexed project so test-pyramid runs against known state.
+
+    The CI failure mode (12.21 round) was: result.output empty when this
+    test inherited a cwd left dirty by an earlier test. Isolating to a
+    fresh tmp_path makes the test independent of suite ordering.
+    """
+    (tmp_path / "tests").mkdir()
+    (tmp_path / "tests" / "test_unit.py").write_text("def test_x():\n    assert 1\n")
+    (tmp_path / "tests" / "test_integration.py").write_text("def test_y():\n    assert 1\n")
+    subprocess.run(["git", "init", "-q"], cwd=tmp_path, check=True)
+    subprocess.run(["git", "add", "."], cwd=tmp_path, check=True)
+    subprocess.run(
+        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-q", "-m", "init"],
+        cwd=tmp_path,
+        check=True,
+    )
+    monkeypatch.chdir(tmp_path)
+    from roam.index.indexer import Indexer
+
+    Indexer().run(quiet=True)
+    return tmp_path
+
+
+def test_pass31_test_pyramid_runs(_isolated_project):
     """`roam test-pyramid` returns a verdict + per-kind counts."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "test-pyramid"])

@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.22] - 2026-05-05
+
+Indexer pipeline ordering fix + two CI test-isolation fixes.
+
+### Indexer ordering — late-edge resolvers now run BEFORE graph metrics
+
+Pass 69 cached ``build_symbol_graph(conn)`` keyed on ``id(conn)``. The
+indexer pipeline ran graph metrics first, then the django-post,
+pytest-fixture, and registry-dispatch resolvers — which add edges to
+the DB AFTER the graph was already cached. When a follow-up command
+opened a new readonly connection that happened to be assigned the same
+``id()`` (Python reuses freed addresses), the cache returned the stale
+graph from before those late edges existed.
+
+The user-visible symptom: ``roam impact <fixture>`` showed "no
+dependents" when there were transitively-depending tests, because the
+``pytest_fixture_dep`` edges weren't in the cached graph the impact
+command read.
+
+Fix:
+
+1. Reorder the indexer to run all late-edge resolvers BEFORE
+   ``_compute_graph_metrics``. The graph metrics now reflect every
+   edge, not a stale subset.
+2. Clear the graph cache at the end of ``Indexer().run()`` so any
+   subsequent reader builds fresh — belt-and-suspenders against future
+   late-resolver additions.
+
+### CI test isolation
+
+- ``test_pass31_test_pyramid_runs`` ran against the project cwd. In
+  CI, when sequential tests left the cwd in an unexpected state, the
+  command produced empty stdout. Switched the test to use a fresh
+  ``tmp_path`` + ``monkeypatch.chdir`` + indexed mini-project so it's
+  independent of suite ordering.
+- ``test_impact_picks_up_fixture_edges`` was failing at 3.9 / 3.10 /
+  3.12 / 3.13. Same root cause as the indexer ordering above —
+  pytest_fixture_dep edges were missing from the impact graph because
+  the indexer cached metrics before adding them. Fixed by the indexer
+  reorder.
+
 ## [12.21] - 2026-05-05
 
 Ten quality + reliability passes (rounds 111-120). Three real CI bugs
