@@ -499,6 +499,122 @@ def compute_all_summaries(
 # ---------------------------------------------------------------------------
 
 
+def _build_call_adjacency(conn) -> dict[int, list[int]]:
+    """Build a source_id → list[target_id] adjacency for ``kind='calls'``
+    edges. One round-trip to the DB."""
+    call_edges: dict[int, list[int]] = {}
+    rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'calls'").fetchall()
+    for row in rows:
+        call_edges.setdefault(row["source_id"], []).append(row["target_id"])
+    return call_edges
+
+
+def _findings_from_param_origin(
+    origin_sym: int,
+    callee_id: int,
+    pidx: int,
+    callee_summary: TaintSummary,
+    summaries: dict[int, TaintSummary],
+    chain_so_far: list[int],
+    depth: int,
+) -> list[TaintFinding]:
+    """Findings emitted when a param-tainted argument flows through to a
+    callee that has a sink at the same parameter index."""
+    sinks_hit = callee_summary.param_to_sink.get(pidx, [])
+    if not sinks_hit:
+        return []
+    origin_summary = summaries.get(origin_sym)
+    source_type = "param"
+    if origin_summary and origin_summary.direct_sources:
+        source_type = origin_summary.direct_sources[0]
+    return [
+        TaintFinding(
+            source_symbol_id=origin_sym,
+            sink_symbol_id=callee_id,
+            source_type=source_type,
+            sink_type=sink,
+            call_chain=[origin_sym] + chain_so_far,
+            confidence=max(0.3, 0.9 - 0.1 * depth),
+        )
+        for sink in sinks_hit
+    ]
+
+
+def _findings_from_source_origin(
+    origin_sym: int,
+    callee_id: int,
+    source_label: str,
+    callee_summary: TaintSummary,
+    chain_so_far: list[int],
+    depth: int,
+) -> list[TaintFinding]:
+    """Findings emitted when a source-tainted value is passed to a callee
+    that has any sink at any parameter."""
+    out: list[TaintFinding] = []
+    for _pidx, sinks_hit in callee_summary.param_to_sink.items():
+        for sink in sinks_hit:
+            out.append(
+                TaintFinding(
+                    source_symbol_id=origin_sym,
+                    sink_symbol_id=callee_id,
+                    source_type=source_label,
+                    sink_type=sink,
+                    call_chain=[origin_sym] + chain_so_far,
+                    confidence=max(0.3, 0.9 - 0.1 * depth),
+                )
+            )
+    return out
+
+
+def _compute_returned_taint(
+    callee_summary: TaintSummary,
+    taint_origins: set[tuple[str, int | str]],
+) -> set[tuple[str, int | str]]:
+    """Decide what taint flows back through this callee's return value."""
+    returned_taint: set[tuple[str, int | str]] = set()
+    for origin in taint_origins:
+        if origin[0] == "param":
+            pidx = origin[1]
+            if callee_summary.param_taints_return.get(pidx, False):
+                returned_taint.update(taint_origins)
+        elif origin[0] == "source" and callee_summary.return_from_source:
+            returned_taint.add(origin)
+    if callee_summary.return_from_source:
+        for src in callee_summary.direct_sources:
+            returned_taint.add(("source", src))
+    return returned_taint
+
+
+def _initial_taint_origins(summary: TaintSummary) -> set[tuple[str, int | str]]:
+    """Seed taint origins for a starting symbol."""
+    taint_origins: set[tuple[str, int | str]] = set()
+    if summary.return_from_source:
+        for src in summary.direct_sources:
+            taint_origins.add(("source", src))
+    for pidx in summary.param_taints_return:
+        taint_origins.add(("param", pidx))
+    return taint_origins
+
+
+def _direct_findings(sym_id: int, summary: TaintSummary) -> list[TaintFinding]:
+    """Source-to-sink within a single function — emit immediately, no
+    propagation needed."""
+    if not (summary.direct_sources and summary.direct_sinks):
+        return []
+    return [
+        TaintFinding(
+            source_symbol_id=sym_id,
+            sink_symbol_id=sym_id,
+            source_type=src,
+            sink_type=snk,
+            call_chain=[sym_id],
+            confidence=0.9,
+        )
+        for src in summary.direct_sources
+        for snk in summary.direct_sinks
+    ]
+
+
 def propagate_taint(
     conn,
     summaries: dict[int, TaintSummary],
@@ -514,16 +630,9 @@ def propagate_taint(
     - If callee.param_taints_return[i], the call result inherits taint.
     - If callee is a sanitizer, taint dies.
     """
-    # Build adjacency from edges table for call edges
-    call_edges: dict[int, list[int]] = {}
-    rows = conn.execute("SELECT source_id, target_id FROM edges WHERE kind = 'calls'").fetchall()
-    for row in rows:
-        src = row["source_id"]
-        tgt = row["target_id"]
-        call_edges.setdefault(src, []).append(tgt)
-
+    call_edges = _build_call_adjacency(conn)
     findings: list[TaintFinding] = []
-    visited_pairs: set[tuple[int, int, int]] = set()  # (source_sym, sink_sym, depth)
+    visited_pairs: set[tuple[int, int, int]] = set()  # (origin, callee, depth)
 
     def _propagate(
         origin_sym: int,
@@ -534,110 +643,39 @@ def propagate_taint(
     ):
         if depth > max_depth:
             return
-
-        callees = call_edges.get(current_sym, [])
-        for callee_id in callees:
+        for callee_id in call_edges.get(current_sym, []):
             callee_summary = summaries.get(callee_id)
-            if callee_summary is None:
+            if callee_summary is None or callee_summary.is_sanitizer:
                 continue
-
-            # If callee is a sanitizer, taint dies
-            if callee_summary.is_sanitizer:
-                continue
-
-            new_chain = chain + [callee_id]
             pair_key = (origin_sym, callee_id, depth)
             if pair_key in visited_pairs:
                 continue
             visited_pairs.add(pair_key)
+            new_chain = chain + [callee_id]
 
-            # Check if any taint origin is a param that flows to a sink
-            # in the callee (simplified: we assume arg position matches
-            # the taint origin param index for direct calls)
             for origin in taint_origins:
                 if origin[0] == "param":
-                    pidx = origin[1]
-                    sinks_hit = callee_summary.param_to_sink.get(pidx, [])
-                    for sink in sinks_hit:
-                        # Get source info from the origin symbol
-                        origin_summary = summaries.get(origin_sym)
-                        source_type = "param"
-                        if origin_summary and origin_summary.direct_sources:
-                            source_type = origin_summary.direct_sources[0]
-                        findings.append(
-                            TaintFinding(
-                                source_symbol_id=origin_sym,
-                                sink_symbol_id=callee_id,
-                                source_type=source_type,
-                                sink_type=sink,
-                                call_chain=[origin_sym] + new_chain,
-                                confidence=max(0.3, 0.9 - 0.1 * depth),
-                            )
+                    findings.extend(
+                        _findings_from_param_origin(
+                            origin_sym, callee_id, origin[1], callee_summary, summaries, new_chain, depth
                         )
+                    )
                 elif origin[0] == "source":
-                    # A source-tainted value is passed to callee
-                    for pidx, sinks_hit in callee_summary.param_to_sink.items():
-                        for sink in sinks_hit:
-                            findings.append(
-                                TaintFinding(
-                                    source_symbol_id=origin_sym,
-                                    sink_symbol_id=callee_id,
-                                    source_type=str(origin[1]),
-                                    sink_type=sink,
-                                    call_chain=[origin_sym] + new_chain,
-                                    confidence=max(0.3, 0.9 - 0.1 * depth),
-                                )
-                            )
-
-            # Propagate through callee if it returns tainted data
-            returned_taint: set[tuple[str, int | str]] = set()
-            for origin in taint_origins:
-                if origin[0] == "param":
-                    pidx = origin[1]
-                    if callee_summary.param_taints_return.get(pidx, False):
-                        returned_taint.update(taint_origins)
-                elif origin[0] == "source":
-                    if callee_summary.return_from_source:
-                        returned_taint.add(origin)
-
-            if callee_summary.return_from_source:
-                for src in callee_summary.direct_sources:
-                    returned_taint.add(("source", src))
-
-            if returned_taint:
-                _propagate(origin_sym, callee_id, returned_taint, new_chain, depth + 1)
-
-    # Start propagation from symbols that have source-tainted data
-    for sym_id, summary in summaries.items():
-        if summary.is_sanitizer:
-            continue
-
-        taint_origins: set[tuple[str, int | str]] = set()
-
-        # Source-tainted returns: the function itself produces tainted data
-        if summary.return_from_source:
-            for src in summary.direct_sources:
-                taint_origins.add(("source", src))
-
-        # Params that flow to sinks in callees
-        for pidx in summary.param_taints_return:
-            taint_origins.add(("param", pidx))
-
-        # Direct source-to-sink within the function: record as finding
-        if summary.direct_sources and summary.direct_sinks:
-            for src in summary.direct_sources:
-                for snk in summary.direct_sinks:
-                    findings.append(
-                        TaintFinding(
-                            source_symbol_id=sym_id,
-                            sink_symbol_id=sym_id,
-                            source_type=src,
-                            sink_type=snk,
-                            call_chain=[sym_id],
-                            confidence=0.9,
+                    findings.extend(
+                        _findings_from_source_origin(
+                            origin_sym, callee_id, str(origin[1]), callee_summary, new_chain, depth
                         )
                     )
 
+            returned_taint = _compute_returned_taint(callee_summary, taint_origins)
+            if returned_taint:
+                _propagate(origin_sym, callee_id, returned_taint, new_chain, depth + 1)
+
+    for sym_id, summary in summaries.items():
+        if summary.is_sanitizer:
+            continue
+        findings.extend(_direct_findings(sym_id, summary))
+        taint_origins = _initial_taint_origins(summary)
         if taint_origins:
             _propagate(sym_id, sym_id, taint_origins, [], 0)
 
