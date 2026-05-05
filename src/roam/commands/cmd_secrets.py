@@ -379,6 +379,34 @@ def mask_secret(matched_text: str) -> str:
     return matched_text[:4] + "..."
 
 
+def _high_entropy_passes(pat: dict, match) -> bool:
+    """Apply the Shannon-entropy threshold for the High Entropy String
+    pattern. Other patterns always pass (returns True)."""
+    if pat["name"] != "High Entropy String":
+        return True
+    value = match.group(1) if match.lastindex else match.group()
+    return _shannon_entropy(value) >= _ENTROPY_THRESHOLD
+
+
+def _match_pattern_to_finding(line: str, pat: dict, file_path: str, line_num: int, min_rank: int) -> dict | None:
+    """Try one pattern against one line. Returns a finding dict or None."""
+    if _SEVERITY_RANK.get(pat["severity"], 0) < min_rank:
+        return None
+    match = pat["regex"].search(line)
+    if not match:
+        return None
+    if not _high_entropy_passes(pat, match):
+        return None
+    return {
+        "file": file_path,
+        "line": line_num,
+        "severity": pat["severity"],
+        "pattern_name": pat["name"],
+        "matched_text": mask_secret(match.group()),
+        "remediation": _REMEDIATION.get(pat["name"], "Move to environment variable or secrets manager"),
+    }
+
+
 def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: str = "all") -> list[dict]:
     """Scan a single file for secret patterns.
 
@@ -394,36 +422,12 @@ def scan_file(file_path: str, patterns: list[dict] | None = None, min_severity: 
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             for line_num, line in enumerate(f, start=1):
-                # Skip lines that look like examples or placeholders
-                if _is_placeholder_line(line):
-                    continue
-                # Skip lines that read from environment variables / config
-                if _is_env_var_line(line):
+                if _is_placeholder_line(line) or _is_env_var_line(line):
                     continue
                 for pat in patterns:
-                    if _SEVERITY_RANK.get(pat["severity"], 0) < min_rank:
-                        continue
-                    match = pat["regex"].search(line)
-                    if match:
-                        # For High Entropy String, apply entropy threshold
-                        if pat["name"] == "High Entropy String":
-                            # Use group(1) if available (the captured value),
-                            # otherwise use the full match
-                            value = match.group(1) if match.lastindex else match.group()
-                            if _shannon_entropy(value) < _ENTROPY_THRESHOLD:
-                                continue
-                        findings.append(
-                            {
-                                "file": file_path,
-                                "line": line_num,
-                                "severity": pat["severity"],
-                                "pattern_name": pat["name"],
-                                "matched_text": mask_secret(match.group()),
-                                "remediation": _REMEDIATION.get(
-                                    pat["name"], "Move to environment variable or secrets manager"
-                                ),
-                            }
-                        )
+                    finding = _match_pattern_to_finding(line, pat, file_path, line_num, min_rank)
+                    if finding is not None:
+                        findings.append(finding)
     except (OSError, UnicodeDecodeError):
         pass
 
