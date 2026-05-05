@@ -274,6 +274,140 @@ class _FuncInfo:
     hash_bag: Counter
 
 
+def _fetch_candidate_files(conn, scope: str | None):
+    """Pull candidate file rows from the DB, optionally narrowed to a path
+    prefix."""
+    scope_clause = ""
+    params: list = []
+    if scope:
+        scope_norm = scope.replace("\\", "/")
+        scope_clause = " AND f.path LIKE ?"
+        params.append(f"{scope_norm}%")
+    return conn.execute(
+        "SELECT f.id, f.path, f.language FROM files f WHERE f.language IS NOT NULL" + scope_clause,
+        params,
+    ).fetchall()
+
+
+def _extract_func_infos_from_file(file_row, min_lines: int, start_idx: int) -> list[_FuncInfo]:
+    """Re-parse a single file and yield its qualifying ``_FuncInfo``s.
+
+    Returns the list (possibly empty) and never raises — best-effort
+    extraction is the contract callers rely on.
+    """
+    from roam.index.parser import parse_file
+
+    file_path = file_row["path"]
+    try:
+        path = Path(file_path)
+        if not path.is_absolute():
+            from roam.db.connection import find_project_root
+
+            path = find_project_root() / path
+        if not path.exists():
+            return []
+        tree, source, _lang = parse_file(path, file_row["language"])
+        if tree is None or source is None:
+            return []
+    except Exception:
+        return []
+
+    out: list[_FuncInfo] = []
+    idx = start_idx
+    for fn_node in _find_function_nodes(tree):
+        line_start = fn_node.start_point[0] + 1
+        line_end = fn_node.end_point[0] + 1
+        if line_end - line_start + 1 < min_lines:
+            continue
+        name = _get_function_name(fn_node, source)
+        body = _get_function_body(fn_node)
+        bag, node_count = _ast_hash_bag(body)
+        if node_count < _MIN_AST_NODES:
+            continue
+        out.append(
+            _FuncInfo(
+                idx=idx,
+                file_path=file_path,
+                name=name,
+                qname=f"{file_path}:{name}",
+                line_start=line_start,
+                line_end=line_end,
+                node_count=node_count,
+                hash_bag=bag,
+            )
+        )
+        idx += 1
+    return out
+
+
+def _bucket_funcs_by_size(funcs: list[_FuncInfo]) -> dict[int, list[_FuncInfo]]:
+    """Bucket functions by AST-node-count so candidate pairs are restricted
+    to functions of similar size."""
+
+    def _bucket(f: _FuncInfo) -> int:
+        return f.node_count // max(f.node_count // 3, 5)
+
+    by_bucket: dict[int, list[_FuncInfo]] = defaultdict(list)
+    for f in funcs:
+        by_bucket[_bucket(f)].append(f)
+    return by_bucket
+
+
+def _compare_func_pair(a: _FuncInfo, b: _FuncInfo, min_similarity: float) -> ClonePair | None:
+    """Compute Jaccard similarity for one function pair. Returns a
+    ``ClonePair`` if they pass the size + similarity gates, else None."""
+    ratio = min(a.node_count, b.node_count) / max(a.node_count, b.node_count)
+    if ratio < 0.5:
+        return None
+    sim = _jaccard_bags(a.hash_bag, b.hash_bag)
+    if sim < min_similarity:
+        return None
+    return ClonePair(
+        file_a=a.file_path,
+        func_a=a.name,
+        qname_a=a.qname,
+        line_a=a.line_start,
+        line_end_a=a.line_end,
+        file_b=b.file_path,
+        func_b=b.name,
+        qname_b=b.qname,
+        line_b=b.line_start,
+        line_end_b=b.line_end,
+        similarity=round(sim, 3),
+    )
+
+
+def _find_clone_pairs(
+    funcs: list[_FuncInfo], min_similarity: float
+) -> tuple[list[ClonePair], _UnionFind, dict[tuple[int, int], float]]:
+    """Discover clone pairs by comparing functions inside the same bucket
+    and across adjacent buckets. Returns (pairs, union_find, pair_scores)."""
+    by_bucket = _bucket_funcs_by_size(funcs)
+    pairs: list[ClonePair] = []
+    uf = _UnionFind()
+    pair_scores: dict[tuple[int, int], float] = {}
+    checked: set[tuple[int, int]] = set()
+    for bucket_key, members in by_bucket.items():
+        candidates = list(members)
+        for delta in (-1, 1):
+            adj = by_bucket.get(bucket_key + delta)
+            if adj:
+                candidates.extend(adj)
+        for i in range(len(candidates)):
+            for j in range(i + 1, len(candidates)):
+                a, b = candidates[i], candidates[j]
+                key = (min(a.idx, b.idx), max(a.idx, b.idx))
+                if key in checked:
+                    continue
+                checked.add(key)
+                pair = _compare_func_pair(a, b, min_similarity)
+                if pair is not None:
+                    pairs.append(pair)
+                    pair_scores[key] = pair.similarity
+                    uf.union(a.idx, b.idx)
+    return pairs, uf, pair_scores
+
+
 def detect_clones(
     conn,
     *,
@@ -286,149 +420,20 @@ def detect_clones(
 
     Re-parses source files and compares function AST structures via
     subtree hashing.  Returns (pairs, clusters).
-
-    Parameters
-    ----------
-    conn : sqlite3.Connection
-        Open roam database connection (readonly).
-    min_similarity : float
-        Minimum Jaccard similarity threshold (0.0–1.0).
-    min_lines : int
-        Skip functions shorter than this.
-    scope : str or None
-        Limit to files matching this path prefix.
-    max_functions : int
-        Safety cap to avoid O(n^2) blowup.
     """
-    from roam.index.parser import parse_file
+    files = _fetch_candidate_files(conn, scope)
 
-    # 1. Get candidate files from DB
-    scope_clause = ""
-    params: list = []
-    if scope:
-        scope_norm = scope.replace("\\", "/")
-        scope_clause = " AND f.path LIKE ?"
-        params.append(f"{scope_norm}%")
-
-    files = conn.execute(
-        "SELECT f.id, f.path, f.language FROM files f WHERE f.language IS NOT NULL" + scope_clause,
-        params,
-    ).fetchall()
-
-    # 2. Parse files and extract function hash bags
     funcs: list[_FuncInfo] = []
-    idx = 0
-
     for f in files:
-        file_path = f["path"]
-        try:
-            path = Path(file_path)
-            if not path.is_absolute():
-                from roam.db.connection import find_project_root
-
-                path = find_project_root() / path
-            if not path.exists():
-                continue
-
-            tree, source, lang = parse_file(path, f["language"])
-            if tree is None or source is None:
-                continue
-
-            func_nodes = _find_function_nodes(tree)
-            for fn_node in func_nodes:
-                line_start = fn_node.start_point[0] + 1
-                line_end = fn_node.end_point[0] + 1
-                line_count = line_end - line_start + 1
-
-                if line_count < min_lines:
-                    continue
-
-                name = _get_function_name(fn_node, source)
-                body = _get_function_body(fn_node)
-                bag, node_count = _ast_hash_bag(body)
-
-                if node_count < _MIN_AST_NODES:
-                    continue
-
-                funcs.append(
-                    _FuncInfo(
-                        idx=idx,
-                        file_path=file_path,
-                        name=name,
-                        qname=f"{file_path}:{name}",
-                        line_start=line_start,
-                        line_end=line_end,
-                        node_count=node_count,
-                        hash_bag=bag,
-                    )
-                )
-                idx += 1
-        except Exception:
-            continue
+        funcs.extend(_extract_func_infos_from_file(f, min_lines, len(funcs)))
 
     if len(funcs) > max_functions:
-        # Take the largest functions (most likely to have meaningful clones)
         funcs.sort(key=lambda f: -f.node_count)
         funcs = funcs[:max_functions]
         for i, f in enumerate(funcs):
             f.idx = i
 
-    # 3. Pre-filter: bucket by node count (within 50% of each other)
-    def _bucket(f: _FuncInfo) -> int:
-        return f.node_count // max(f.node_count // 3, 5)
-
-    by_bucket: dict[int, list[_FuncInfo]] = defaultdict(list)
-    for f in funcs:
-        by_bucket[_bucket(f)].append(f)
-
-    # 4. Compare pairs within and between adjacent buckets
-    pairs: list[ClonePair] = []
-    uf = _UnionFind()
-    pair_scores: dict[tuple[int, int], float] = {}
-
-    checked = set()
-    for bucket_key, members in by_bucket.items():
-        # Collect candidates: same bucket + adjacent buckets
-        candidates = list(members)
-        for delta in (-1, 1):
-            adj = by_bucket.get(bucket_key + delta)
-            if adj:
-                candidates.extend(adj)
-
-        for i in range(len(candidates)):
-            for j in range(i + 1, len(candidates)):
-                a, b = candidates[i], candidates[j]
-                key = (min(a.idx, b.idx), max(a.idx, b.idx))
-                if key in checked:
-                    continue
-                checked.add(key)
-
-                # Quick size check: node counts within 50%
-                ratio = min(a.node_count, b.node_count) / max(a.node_count, b.node_count)
-                if ratio < 0.5:
-                    continue
-
-                sim = _jaccard_bags(a.hash_bag, b.hash_bag)
-                if sim >= min_similarity:
-                    pairs.append(
-                        ClonePair(
-                            file_a=a.file_path,
-                            func_a=a.name,
-                            qname_a=a.qname,
-                            line_a=a.line_start,
-                            line_end_a=a.line_end,
-                            file_b=b.file_path,
-                            func_b=b.name,
-                            qname_b=b.qname,
-                            line_b=b.line_start,
-                            line_end_b=b.line_end,
-                            similarity=round(sim, 3),
-                        )
-                    )
-                    pair_scores[key] = sim
-                    uf.union(a.idx, b.idx)
-
-    # 5. Build clusters from Union-Find
+    pairs, uf, pair_scores = _find_clone_pairs(funcs, min_similarity)
     pairs.sort(key=lambda p: -p.similarity)
 
     func_by_idx = {f.idx: f for f in funcs}
