@@ -145,14 +145,16 @@ class TestRunRoam:
 
     @pytest.fixture(autouse=True)
     def _clear_result_cache(self):
-        """Pass 21 introduced a process-wide MCP result cache; clear it
-        between tests so mocked failures aren't shadowed by a prior
-        mocked success keyed on the same args."""
-        from roam.mcp_server import _ROAM_RESULT_CACHE
+        """Pass 21 introduced a process-wide MCP result cache; Pass 87
+        added a process-wide storm-rate-limit counter. Reset both so
+        tests don't poison each other."""
+        from roam.mcp_server import _ROAM_RESULT_CACHE, _reset_error_storm
 
         _ROAM_RESULT_CACHE.clear()
+        _reset_error_storm()
         yield
         _ROAM_RESULT_CACHE.clear()
+        _reset_error_storm()
 
     def test_inprocess_success(self):
         """In-process path (root='.') parses CliRunner JSON output."""
