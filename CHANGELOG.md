@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.18.1] - 2026-05-05
+
+Hotfix for a CI failure spotted in the 12.18 release run. ``roam
+safe-zones --json <missing-symbol>`` printed a plain-text "Target
+symbol(s) not found in the dependency graph." line when the
+target wasn't in the graph, which broke ``json.loads`` consumers.
+The empty-result branch now emits a proper envelope with
+``summary.verdict``, ``internal_size=0``, and ``boundary_size=0``.
+
+The bug pre-dated this batch — it surfaced because CI runs in
+3.12 / 3.13 environments where the test fixture happened to seed
+a name that wasn't in the test-project graph. Local Python 3.11
+runs didn't trip it.
+
 ## [12.18] - 2026-05-05
 
 Ten more deep passes (rounds 81-90), shipped as a focused
