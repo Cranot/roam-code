@@ -398,20 +398,62 @@ def _find_accessor_methods(conn, model_id, model_info, appended_names):
     return accessors
 
 
-def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
-    """Trace an accessor method to see if it triggers I/O.
+_RELATIONSHIP_METHODS = {
+    "hasMany",
+    "hasOne",
+    "belongsTo",
+    "belongsToMany",
+    "morphMany",
+    "morphOne",
+    "morphTo",
+    "morphToMany",
+    "hasManyThrough",
+}
+_RELATIONSHIP_DEFINITION_CALLS = (
+    "hasMany",
+    "hasOne",
+    "belongsTo",
+    "belongsToMany",
+    "morphMany",
+    "morphOne",
+    "morphTo",
+    "morphToMany",
+    "hasManyThrough",
+    "hasOneThrough",
+)
+_QUERY_BUILDER_METHODS = (
+    "first",
+    "get",
+    "exists",
+    "count",
+    "pluck",
+    "find",
+    "findOrFail",
+    "all",
+    "orderBy",
+    "where",
+)
+_QUERY_BUILDER_CHAIN_PATTERNS = (
+    "->first()",
+    "->get()",
+    "->exists()",
+    "->count()",
+    "->pluck()",
+)
+_THIS_ACCESS_SKIP_METHODS = {
+    "relationLoaded",
+    "getAttribute",
+    "setAttribute",
+    "getKey",
+    "toArray",
+    "toJson",
+}
 
-    Uses two strategies:
-    1. Edge-based: follow outgoing edges to relationship/query methods
-    2. Source-based: pattern-match $this->relation in accessor source code
-       (needed for PHP where property access doesn't generate edges)
 
-    Returns list of (relationship_name, io_type) tuples found.
-    """
-    io_chains = []
-    model_method_names = {m["name"] for m in model_methods}
-
-    # --- Strategy 1: Edge-based tracing ---
+def _trace_io_via_edges(conn, accessor_id, model_method_names):
+    """Strategy 1: walk outgoing edges from the accessor to look for
+    relationship-defining methods or query-builder methods."""
+    io_chains: list[tuple[str, str]] = []
     callees = conn.execute(
         "SELECT t.id, t.name, t.qualified_name, t.kind, "
         "f.path as file_path, e.kind as edge_kind "
@@ -430,134 +472,90 @@ def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
                 (callee["id"],),
             ).fetchall()
             sub_names = {r["name"] for r in sub_callees}
-            rel_methods = sub_names & {
-                "hasMany",
-                "hasOne",
-                "belongsTo",
-                "belongsToMany",
-                "morphMany",
-                "morphOne",
-                "morphTo",
-                "morphToMany",
-                "hasManyThrough",
-            }
+            rel_methods = sub_names & _RELATIONSHIP_METHODS
             if rel_methods:
                 io_chains.append((name, f"relationship ({', '.join(rel_methods)})"))
                 continue
 
-        if name in (
-            "first",
-            "get",
-            "exists",
-            "count",
-            "pluck",
-            "find",
-            "findOrFail",
-            "all",
-            "orderBy",
-            "where",
-        ):
+        if name in _QUERY_BUILDER_METHODS:
             io_chains.append((name, "query builder"))
+    return io_chains
 
-    # --- Strategy 2: Source-based pattern matching ---
-    # Read accessor source and look for $this->relationName patterns
+
+def _classify_method_body(method_snippet: str) -> str | None:
+    """Decide whether a method body looks like a relationship definition or
+    a query-builder chain. Returns the matching io_type label or None."""
+    if any(rc in method_snippet for rc in _RELATIONSHIP_DEFINITION_CALLS):
+        return "lazy-load relationship"
+    if any(qb in method_snippet for qb in _QUERY_BUILDER_CHAIN_PATTERNS):
+        return "query builder"
+    return None
+
+
+def _trace_io_via_source(conn, accessor_info, model_methods, model_method_names):
+    """Strategy 2: read the accessor source and pattern-match
+    ``$this->relationName`` accesses (needed for PHP where property access
+    doesn't generate edges)."""
+    io_chains: list[tuple[str, str]] = []
+    file_path = accessor_info.get("file_path", "")
+    line_start = accessor_info.get("line_start", 0)
+    line_end = accessor_info.get("line_end") or line_start + 30
+
+    from roam.db.connection import find_project_root
+
+    root = find_project_root()
+    abs_path = root / file_path if root else None
+    if not (abs_path and abs_path.is_file()):
+        return io_chains
+
+    try:
+        with open(abs_path, encoding="utf-8", errors="replace") as fh:
+            lines = fh.readlines()
+    except OSError:
+        return io_chains
+
+    snippet = "".join(lines[max(0, line_start - 1) : line_end])
+    this_accesses = re.findall(r"\$this->(\w+?)(?:\s*->|\s*\?->|(?:\(\))\s*->|\s*;|\s*\))", snippet)
+    this_method_calls = re.findall(r"\$this->(\w+)\(\)", snippet)
+
+    methods_by_name = {m["name"]: m for m in model_methods}
+    for accessed in set(this_accesses + this_method_calls):
+        if accessed in _THIS_ACCESS_SKIP_METHODS:
+            continue
+        if accessed not in model_method_names:
+            continue
+        method_sym = methods_by_name.get(accessed)
+        if not method_sym:
+            continue
+        m_sym_full = conn.execute(
+            "SELECT s.line_start, s.line_end FROM symbols s WHERE s.id = ?",
+            (method_sym["id"],),
+        ).fetchone()
+        if not m_sym_full:
+            continue
+        m_start = max(0, m_sym_full["line_start"] - 1)
+        m_end = m_sym_full["line_end"] or m_start + 15
+        method_snippet = "".join(lines[m_start:m_end])
+        io_type = _classify_method_body(method_snippet)
+        if io_type:
+            io_chains.append((accessed, io_type))
+    return io_chains
+
+
+def _trace_accessor_io(conn, accessor_id, accessor_info, model_methods):
+    """Trace an accessor method to see if it triggers I/O.
+
+    Uses two strategies:
+    1. Edge-based: follow outgoing edges to relationship/query methods
+    2. Source-based: pattern-match $this->relation in accessor source code
+       (needed for PHP where property access doesn't generate edges)
+
+    Returns list of (relationship_name, io_type) tuples found.
+    """
+    model_method_names = {m["name"] for m in model_methods}
+    io_chains = _trace_io_via_edges(conn, accessor_id, model_method_names)
     if not io_chains:
-        file_path = accessor_info.get("file_path", "")
-        line_start = accessor_info.get("line_start", 0)
-        line_end = accessor_info.get("line_end") or line_start + 30
-
-        from roam.db.connection import find_project_root
-
-        root = find_project_root()
-        abs_path = root / file_path if root else None
-
-        if abs_path and abs_path.is_file():
-            try:
-                with open(abs_path, encoding="utf-8", errors="replace") as fh:
-                    lines = fh.readlines()
-                snippet = "".join(lines[max(0, line_start - 1) : line_end])
-
-                # Pattern: $this->someRelation (property access that triggers lazy load)
-                # Matches: $this->branch, $this->lines, $this->attachments()
-                this_accesses = re.findall(
-                    r"\$this->(\w+?)(?:\s*->|\s*\?->|(?:\(\))\s*->|\s*;|\s*\))",
-                    snippet,
-                )
-
-                # Also catch: $this->relation()->method() pattern
-                this_method_calls = re.findall(
-                    r"\$this->(\w+)\(\)",
-                    snippet,
-                )
-
-                # Helper calls to skip (not relationships)
-                _SKIP_METHODS = {
-                    "relationLoaded",
-                    "getAttribute",
-                    "setAttribute",
-                    "getKey",
-                    "toArray",
-                    "toJson",
-                }
-
-                # Check which accessed names are relationship methods on the model
-                # by verifying the method body contains a relationship definition
-                for accessed in set(this_accesses + this_method_calls):
-                    if accessed in _SKIP_METHODS:
-                        continue
-                    if accessed not in model_method_names:
-                        continue
-
-                    # Verify this method is actually a relationship (not just a helper)
-                    # by reading its source and checking for relationship calls
-                    method_sym = None
-                    for m in model_methods:
-                        if m["name"] == accessed:
-                            method_sym = m
-                            break
-                    if not method_sym:
-                        continue
-
-                    # Read the method source to check for relationship definitions
-                    m_sym_full = conn.execute(
-                        "SELECT s.line_start, s.line_end FROM symbols s WHERE s.id = ?",
-                        (method_sym["id"],),
-                    ).fetchone()
-                    if m_sym_full:
-                        m_start = max(0, m_sym_full["line_start"] - 1)
-                        m_end = m_sym_full["line_end"] or m_start + 15
-                        method_snippet = "".join(lines[m_start:m_end])
-                        # Check if method body contains relationship calls
-                        _REL_CALLS = (
-                            "hasMany",
-                            "hasOne",
-                            "belongsTo",
-                            "belongsToMany",
-                            "morphMany",
-                            "morphOne",
-                            "morphTo",
-                            "morphToMany",
-                            "hasManyThrough",
-                            "hasOneThrough",
-                        )
-                        if any(rc in method_snippet for rc in _REL_CALLS):
-                            io_chains.append((accessed, "lazy-load relationship"))
-                        # Also check if it calls query builder methods
-                        elif any(
-                            qb in method_snippet
-                            for qb in (
-                                "->first()",
-                                "->get()",
-                                "->exists()",
-                                "->count()",
-                                "->pluck()",
-                            )
-                        ):
-                            io_chains.append((accessed, "query builder"))
-
-            except OSError:
-                pass
-
+        io_chains = _trace_io_via_source(conn, accessor_info, model_methods, model_method_names)
     return io_chains
 
 
