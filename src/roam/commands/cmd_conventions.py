@@ -530,6 +530,109 @@ def _analyze_error_handling(conn) -> dict:
     }
 
 
+def _analyze_naming(conn) -> tuple[list, dict, list, dict]:
+    """Discover dominant naming style per (language_family, kind_group) and
+    surface symbols that violate it.
+
+    Returns ``(all_symbols, naming_summary, outliers, affixes)``.
+    """
+    all_symbols = conn.execute("""
+        SELECT s.name, s.kind, s.line_start, f.path as file_path,
+               COALESCE(f.language, '') as language
+        FROM symbols s
+        JOIN files f ON s.file_id = f.id
+        WHERE s.kind IN ('function', 'method', 'class', 'interface',
+                         'struct', 'trait', 'enum', 'variable',
+                         'constant', 'property', 'field', 'type_alias')
+    """).fetchall()
+
+    # Group by (language_family, kind_group) — round 3 #2 noted that
+    # imposing the codebase-wide dominant style on SQL files (which
+    # legitimately use snake_case for tables/views) produced 5384
+    # false-positive outliers. Each family has its own community
+    # default that we respect when computing "expected style".
+    group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
+    symbol_details: list[dict] = []
+
+    for sym in all_symbols:
+        group = _group_for_kind(sym["kind"])
+        style = classify_case(sym["name"])
+        family = _language_family(sym["language"])
+        if not style:
+            continue
+        group_cases[(family, group)][style] += 1
+        symbol_details.append(
+            {
+                "name": sym["name"],
+                "kind": sym["kind"],
+                "group": group,
+                "language_family": family,
+                "style": style,
+                "file": sym["file_path"],
+                "line": sym["line_start"],
+            }
+        )
+
+    naming_summary = _build_naming_summary(group_cases)
+    outliers = _find_naming_outliers(symbol_details, naming_summary)
+    all_names = [
+        sym["name"] for sym in all_symbols if len(sym["name"]) >= _MIN_NAME_LEN and sym["name"] not in _SKIP_NAMES
+    ]
+    affixes = _detect_affixes(all_names)
+    return all_symbols, naming_summary, outliers, affixes
+
+
+def _build_naming_summary(group_cases: dict[tuple[str, str], Counter]) -> dict[str, dict]:
+    """Pick the dominant style per (family, group). Documented community
+    defaults beat the empirical mode so a SQL-heavy project's bad habits
+    don't get treated as "the convention"."""
+    summary: dict[str, dict] = {}
+    for (family, group), counter in sorted(group_cases.items()):
+        total = sum(counter.values())
+        empirical_style, empirical_count = counter.most_common(1)[0]
+        documented = _LANGUAGE_KIND_DEFAULTS.get((family, group))
+        dominant_style = documented or empirical_style
+        dominant_count = counter.get(dominant_style, empirical_count)
+        pct = round(100 * dominant_count / total, 1) if total else 0
+        key = f"{family}/{group}" if family != "unknown" else group
+        summary[key] = {
+            "dominant_style": dominant_style,
+            "expected_source": "community_default" if documented else "empirical",
+            "dominant_count": dominant_count,
+            "total": total,
+            "percent": pct,
+            "language_family": family,
+            "kind_group": group,
+            "breakdown": dict(counter.most_common()),
+        }
+    return summary
+
+
+def _find_naming_outliers(symbol_details: list[dict], naming_summary: dict[str, dict]) -> list[dict]:
+    """Symbols whose case style doesn't match the dominant style for their
+    (family, group)."""
+    outliers: list[dict] = []
+    for det in symbol_details:
+        family = det["language_family"]
+        group = det["group"]
+        key = f"{family}/{group}" if family != "unknown" else group
+        grp_info = naming_summary.get(key)
+        if grp_info and det["style"] != grp_info["dominant_style"]:
+            outliers.append(
+                {
+                    "name": det["name"],
+                    "kind": det["kind"],
+                    "language_family": family,
+                    "actual_style": det["style"],
+                    "expected_style": grp_info["dominant_style"],
+                    "expected_source": grp_info["expected_source"],
+                    "file": det["file"],
+                    "line": det["line"],
+                }
+            )
+    return outliers
+
+
 # ---------------------------------------------------------------------------
 # Main command
 # ---------------------------------------------------------------------------
@@ -553,96 +656,7 @@ def conventions(ctx, max_outliers):
         project = find_project_root().name
 
         # ---- 1. Naming conventions ----
-        all_symbols = conn.execute("""
-            SELECT s.name, s.kind, s.line_start, f.path as file_path,
-                   COALESCE(f.language, '') as language
-            FROM symbols s
-            JOIN files f ON s.file_id = f.id
-            WHERE s.kind IN ('function', 'method', 'class', 'interface',
-                             'struct', 'trait', 'enum', 'variable',
-                             'constant', 'property', 'field', 'type_alias')
-        """).fetchall()
-
-        # Group by (language_family, kind_group) — round 3 #2 noted that
-        # imposing the codebase-wide dominant style on SQL files (which
-        # legitimately use snake_case for tables/views) produced 5384
-        # false-positive outliers. Each family has its own community
-        # default that we respect when computing "expected style".
-        group_cases: dict[tuple[str, str], Counter] = defaultdict(Counter)
-        group_names: dict[tuple[str, str], list[str]] = defaultdict(list)
-        symbol_details: list[dict] = []
-
-        for sym in all_symbols:
-            group = _group_for_kind(sym["kind"])
-            style = classify_case(sym["name"])
-            family = _language_family(sym["language"])
-            key = (family, group)
-            if style:
-                group_cases[key][style] += 1
-                group_names[key].append(sym["name"])
-                symbol_details.append(
-                    {
-                        "name": sym["name"],
-                        "kind": sym["kind"],
-                        "group": group,
-                        "language_family": family,
-                        "style": style,
-                        "file": sym["file_path"],
-                        "line": sym["line_start"],
-                    }
-                )
-
-        # Determine dominant style per (family, group). When a family has
-        # a documented community default (_LANGUAGE_KIND_DEFAULTS) we use
-        # THAT as the expected style, not the empirical mode — a project
-        # with bad SQL conventions shouldn't have its bad habit treated
-        # as "the convention".
-        naming_summary: dict[str, dict] = {}
-        for (family, group), counter in sorted(group_cases.items()):
-            total = sum(counter.values())
-            empirical_style, empirical_count = counter.most_common(1)[0]
-            documented = _LANGUAGE_KIND_DEFAULTS.get((family, group))
-            dominant_style = documented or empirical_style
-            dominant_count = counter.get(dominant_style, empirical_count)
-            pct = round(100 * dominant_count / total, 1) if total else 0
-            naming_summary[f"{family}/{group}" if family != "unknown" else group] = {
-                "dominant_style": dominant_style,
-                "expected_source": "community_default" if documented else "empirical",
-                "dominant_count": dominant_count,
-                "total": total,
-                "percent": pct,
-                "language_family": family,
-                "kind_group": group,
-                "breakdown": dict(counter.most_common()),
-            }
-
-        # Detect outliers (symbols that don't match dominant style for
-        # their language family + kind group).
-        outliers: list[dict] = []
-        for det in symbol_details:
-            family = det["language_family"]
-            group = det["group"]
-            key = f"{family}/{group}" if family != "unknown" else group
-            grp_info = naming_summary.get(key)
-            if grp_info and det["style"] != grp_info["dominant_style"]:
-                outliers.append(
-                    {
-                        "name": det["name"],
-                        "kind": det["kind"],
-                        "language_family": family,
-                        "actual_style": det["style"],
-                        "expected_style": grp_info["dominant_style"],
-                        "expected_source": grp_info["expected_source"],
-                        "file": det["file"],
-                        "line": det["line"],
-                    }
-                )
-
-        # Affix detection
-        all_names = [
-            sym["name"] for sym in all_symbols if len(sym["name"]) >= _MIN_NAME_LEN and sym["name"] not in _SKIP_NAMES
-        ]
-        affixes = _detect_affixes(all_names)
+        all_symbols, naming_summary, outliers, affixes = _analyze_naming(conn)
 
         # ---- 2. File organization ----
         file_rows = conn.execute("SELECT path FROM files ORDER BY path").fetchall()
@@ -684,7 +698,7 @@ def conventions(ctx, max_outliers):
             ]
             summary = {
                 "verdict": verdict,
-                "total_symbols_analyzed": len(symbol_details),
+                "total_symbols_analyzed": sum(g["total"] for g in naming_summary.values()),
                 "naming_groups": len(naming_summary),
                 "outlier_count": len(outliers),
                 "total_files": file_info["total_files"],
