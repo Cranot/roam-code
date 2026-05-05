@@ -15,11 +15,20 @@ from roam.output.formatter import (
 )
 
 
-def _collect_dependents(G, RG, sym_id, conn):
-    """Collect affected files, direct callers by kind, and SF test files."""
+def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
+    """Collect affected files, direct callers by kind, and SF test files.
+
+    When ``max_hops`` is set, the BFS is bounded to that many hops instead
+    of expanding to the full transitive descendants set (Pass 57).
+    """
     import networkx as nx
 
-    dependents = nx.descendants(RG, sym_id)
+    if max_hops is None:
+        dependents = nx.descendants(RG, sym_id)
+    else:
+        # Bounded BFS via single_source_shortest_path_length(cutoff=N).
+        lengths = nx.single_source_shortest_path_length(RG, sym_id, cutoff=int(max_hops))
+        dependents = {n for n in lengths if n != sym_id}
     affected_files = set()
     direct_callers = set(RG.successors(sym_id))
     by_kind: dict[str, list] = {}
@@ -80,8 +89,18 @@ def _impact_verdict(dependents, affected_files, total_syms):
 
 @click.command()
 @click.argument("name")
+@click.option(
+    "--hops",
+    type=int,
+    default=None,
+    help=(
+        "redactedbound the BFS at N hops (default: full transitive). "
+        "``--hops 1`` mirrors ``roam uses``; ``--hops 2`` shows callers "
+        "of callers; useful to scope a refactor to a controlled radius."
+    ),
+)
 @click.pass_context
-def impact(ctx, name):
+def impact(ctx, name, hops):
     """Show blast radius: what breaks if a symbol changes.
 
     Unlike ``uses`` (which lists direct callers), this command computes the
@@ -123,7 +142,9 @@ def impact(ctx, name):
             return
 
         RG = G.reverse()
-        dependents, affected_files, direct_callers, by_kind, sf_test_files = _collect_dependents(G, RG, sym_id, conn)
+        dependents, affected_files, direct_callers, by_kind, sf_test_files = _collect_dependents(
+            G, RG, sym_id, conn, max_hops=hops
+        )
 
         # Personalized PageRank for distance-weighted importance (Gleich 2015)
         ppr = {}

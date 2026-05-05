@@ -7,6 +7,420 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.17] - 2026-05-05
+
+Sixty deep passes (rounds 21-80), shipped together. Net new
+surface: 18 CLI commands (`plugins`, `test-pyramid`, `index-stats`,
+`telemetry`, `orphan-imports`, `changelog`, `graph-export`,
+`help-search`, `timeline`, `pr-prep`, `stats`, `why-fail`,
+`graph-stats`, `recommend`, `api`, `exit-codes`, `version`, plus
+the `oracle batch` subcommand), 1 MCP tool (`roam_catalog`), 2
+doctor checks, 11 new `ask` recipes, many new flags (`--explain`,
+`--danger`, `--env`, `--batch`, `--quality`, `--scope`,
+`--check`, `--quick`, `--hops`, `--mode`, `--since-tag`,
+`--focus`, `--inline`, `--by-file`, `--weights`, `--recent`,
+`--dry-run`, `--next`), 2 opt-in indexing
+structured error `doc_link` + `severity` field, ask-classifier
+auto-routing for unknown commands, opt-in local telemetry,
+richer `roam_catalog` metadata (when_to_use + examples), graceful
+Ctrl-C handling, MCP `roam_health` payload trimming when noisy,
+graph-builder memoization, and a deprecation registry hook.
+
+### redacted`roam why-fail <test>`
+
+Triage helper: traces from a failing test (or symbol) back to
+recently-changed symbols it transitively reaches. Sorted by
+recency × hop distance × PageRank.
+
+### redacted`roam graph-stats`
+
+Graph-level invariants: density, weak components, non-trivial
+cycles, average degree, top-inbound symbols. Single overview
+number for "how dense / connected is this codebase".
+
+### redacted`roam recommend <symbol>`
+
+Surfaces related symbols using three signals — call-graph
+neighbours, git co-change, persisted clone siblings —
+combined with normalised contribution scoring.
+
+### redacted`roam diff --since-tag`
+
+Auto-fills the commit range with `<last-tag>..HEAD` via
+``git describe --tags --abbrev=0``.
+
+### redacted`roam tour --focus <module>`
+
+Constrains the tour (top symbols, reading order, entry points)
+to files under the given path prefix.
+
+### redactedtaint risk score
+
+`roam taint` summary now includes a 0-100 ``risk_score``
+weighting errors 5×, warnings 1×, and discounting sanitized
+findings.
+
+### redacted`roam context --inline`
+
+Concatenates the recommended files into one paste-ready block
+with line numbers — for chat agents that prefer one big string
+over multi-file output.
+
+### redacted`roam clones --by-file`
+
+Aggregates clone pairs into (file, file) coupling. Shows which
+file pairs are most clone-coupled.
+
+### redactedgraph-builder memoization
+
+`build_symbol_graph` and `build_file_graph` cache by
+``id(conn)`` so compound commands like ``pr-prep`` (which
+internally call multiple subcommands) don't rebuild the graph
+multiple times.
+
+### redacted`roam api`
+
+Lists the public API surface (exported public symbols + their
+signatures). Useful for changelog generation and breaking-
+change detection.
+
+### redactederror envelope `severity`
+
+MCP error envelopes now include a ``severity`` field
+(`info | warning | error | fatal`) per error code. Lets agents
+branch on severity without parsing the message.
+
+### redacted`roam search --recent`
+
+Boost results in files modified within N days. Useful when
+retracing very recent changes.
+
+### redacted`roam config --weights`
+
+Surfaces the active rerank weights (alpha/beta/gamma/delta/
+epsilon/zeta) merged with defaults. Replaces grepping the
+source.
+
+### redacted`roam diagnose --batch`
+
+Run diagnose on N symbols from a newline-separated list (file
+or stdin). Mirrors the oracle batch pattern.
+
+### redactedMCP `roam_health` payload trimming
+
+When the issue count is ≥ 50, the MCP envelope drops the verbose
+issue list and keeps the score, category counts, and
+breakdown. Set ``ROAM_MCP_HEALTH_FULL=1`` for the unfiltered
+shape.
+
+### redacted`roam reset --dry-run`
+
+Preview the destructive reset (DB path + size) without deleting.
+No --force required for the preview.
+
+### redacted`roam exit-codes`
+
+Lists every roam exit code with its meaning. Replaces grepping
+the docs or source.
+
+### redacted`roam workflow --next`
+
+Given a previously-run command name, suggest what to run next
+(e.g. after `preflight`: `context`, `impact`, `diff`).
+
+### redacteddeprecation registry
+
+Adds the ``_DEPRECATED_COMMANDS`` map in ``cli.py``. When a
+deprecated command is invoked, the LazyGroup resolver prints a
+"use X instead" note on stderr without breaking the call.
+
+### redacted`roam version --check`
+
+Prints the installed version and (with ``--check``) queries
+PyPI for the latest version. Offline-friendly: falls back
+silently when PyPI is unreachable.
+
+### redacted`roam timeline <symbol>`
+
+Chronological commit history for the file owning a symbol:
+SHA, date, author, lines added/removed, subject. Joins
+``symbols`` × ``git_file_changes`` × ``git_commits`` with a
+GROUP BY commit_id to dedupe duplicate change rows.
+
+### redacted`roam pr-prep`
+
+One-shot pre-PR fitness check that bundles ``diff`` +
+``critique`` + ``pr-risk`` into a single envelope with a
+top-level ``ready_to_open`` boolean. Replaces calling four
+commands sequentially before opening a PR.
+
+### redacted`roam eval-retrieve --quick`
+
+Runs the first 5 tasks of the bench harness for fast local
+iteration. The full 30-task bench takes too long for tight
+weight-tuning loops.
+
+### redacted`roam config --check`
+
+Validates ``.roam/config.json`` against the known-keys schema.
+Flags unknown keys (typo guard) and type mismatches. Lists the
+canonical key set with one-line descriptions when no issues are
+found.
+
+### redactedricher `roam_catalog` metadata
+
+Tool catalog now includes ``when_to_use`` (extracted from each
+docstring's "WHEN TO USE:" line) and up to three doctest-style
+``>>> roam ...`` examples per tool. Lets agents pick the right
+tool without fetching each individual description.
+
+### redacted`roam impact --hops N`
+
+Bound the BFS at N hops instead of full transitive descendants.
+``--hops 1`` mirrors ``roam uses``; ``--hops 3`` shows callers
+of callers of callers. Lets agents scope a refactor to a
+controlled radius.
+
+### redacted`ROAM_QUERY_TIMEOUT_S` query timeout
+
+Opt-in SQLite progress handler that interrupts long queries
+past N seconds. Prevents hangs on huge codebases. Default
+behaviour unchanged when env var is absent.
+
+### redacted`roam search --mode regex|exact|substring`
+
+Three matching modes. Default is ``substring`` (LIKE %p%, the
+existing behaviour). ``regex`` registers a Python ``re``-backed
+SQLite REGEXP function. ``exact`` matches name = pattern only.
+
+### redacted`roam stats`
+
+Aggregate metrics over the index: file count, symbol count,
+total lines, recent commit activity (last N days), broken down
+by language / file role / symbol kind. Useful as the first
+thing an agent runs after ``roam init``.
+
+### redacted`roam test-pyramid`
+
+Counts test files by sub-kind (unit / integration / e2e / smoke /
+unknown) using ``classify_test_kind`` from Pass 23. Verdict flags
+inverted pyramids (``e2e+integration > unit``) and unstructured
+test layouts (``unknown >= 4× classified``).
+
+### redactedworking-tree drift in `index_status`
+
+Adds a ``dirty_files`` field to the staleness envelope. Even when
+``HEAD`` matches the indexed commit, an outstanding working-tree edit
+makes the symbol/edge data stale; we count modified files via
+``git status --porcelain`` and surface a refresh hint.
+
+### redacted`roam_catalog` MCP tool
+
+Machine-readable list of every registered MCP tool with capability
+flags (``core`` / ``read_only`` / ``destructive``). Replaces having to
+enumerate ``list_tools`` and parse each one — the catalog is one
+round-trip and is part of the core preset.
+
+### redacted`roam health --explain`
+
+The 0-100 health score is a weighted geometric mean of five factors;
+``--explain`` shows each factor's "loss" in points so the user can
+see which dimension is dragging the score down. Surfaced in both
+text mode (sorted breakdown table) and JSON envelope
+(``score_breakdown`` array).
+
+### redacteddoctor adds plugin + table checks
+
+``roam doctor`` now runs 13 checks (was 11). New entries: plugin
+discovery error count via ``get_plugin_errors()``, and required-table
+presence (``files``, ``symbols``, ``edges``, ``git_commits``,
+``file_stats``) — surfaces a half-migrated DB before a downstream
+"no such table" error.
+
+### redacted`roam config --env`
+
+Walks ``src/roam/`` for ``ROAM_*`` references and prints a sorted,
+deduped inventory of every env var the codebase reads, with the
+file/line of the first read and whether it's currently set.
+Replaces grepping the source manually.
+
+### redacted`roam hotspots --danger`
+
+Files in the top quartile of churn × file complexity × max
+fan-in. Score is the geometric mean of the metric ratios so a
+moderate-everywhere file ranks above one that's extreme in only
+one dimension.
+
+### redacted`roam index-stats`
+
+Surface the ``.roam/index.db`` size, table row counts, and SQLite
+fragmentation (``freelist_count / page_count``). Verdict suggests
+``VACUUM`` above 25% fragmentation and ``roam reset`` when both
+fragmented and oversized (default 200 MB threshold, override via
+``ROAM_INDEX_SIZE_WARN_MB``).
+
+### redacted`roam critique --batch <dir>`
+
+Reviews every ``*.diff`` and ``*.patch`` in the directory in a single
+pass. Handy for reviewing a stack of PRs or a series of
+``git format-patch`` output. Per-diff verdict + aggregate gate fail
+when any diff has a high-severity finding.
+
+### redactedgraceful Ctrl-C
+
+``python -m roam`` now catches ``KeyboardInterrupt`` at the top level
+and exits with the conventional 130 instead of dumping a traceback.
+The indexer also catches the interrupt to release its lock cleanly,
+so a rerun resumes from the last committed checkpoint instead of
+stumbling on a stale ``.roam/index.lock``.
+
+### redactedauto-route unknown commands
+
+When ``roam <unknown>`` doesn't have a close edit-distance neighbour in
+``_COMMANDS``, the LazyGroup's resolver now consults the ``ask``
+TF-IDF classifier. If a recipe matches with confidence ≥ 0.5, the
+``UsageError`` suggests ``roam ask "<input>"`` so a natural-language
+attempt ("trace login flow through middleware") still leads
+somewhere useful in one turn.
+
+### redactedopt-in local telemetry
+
+``ROAM_TELEMETRY_LOCAL=1`` enables a tiny SQLite ring buffer
+(`.roam/telemetry.db`, 500-row cap, prune-on-write) that records
+``(command, duration_ms, exit_code, ts)`` for every CLI invocation.
+Surface via ``roam telemetry`` (slowest + recent calls). Strictly
+local — no network. No-op when env var is absent so the hot path
+stays unaffected.
+
+### redacted`roam oracle batch`
+
+The five boolean oracles (``symbol-exists``, ``route-exists``,
+``is-test-only``, ``is-reachable-from-entry``, ``is-clone-of``)
+now accept a JSONL stream via ``roam oracle batch [--input -]``.
+Each line is one ``{oracle, args}`` object; output is a single
+JSON envelope with all results. Useful for fleet-style pre-flight
+checks (50 symbols at once instead of 50 round-trips).
+
+### redacted`roam orphan-imports`
+
+Quick Python-only lint that flags imports the indexer couldn't
+resolve. Distinguishes ``internal_typo`` (top-level package
+indexed but submodule missing — e.g. ``roam.cmds.foo`` instead
+of ``roam.commands.cmd_foo``) from ``missing_package`` (genuinely
+absent). JS/TS/Go versions deferred — per-language scaffolding
+overhead is too much for one pass.
+
+### redacted`roam docs-coverage --quality`
+
+Buckets every public symbol's docstring into ``ABSENT / SHALLOW
+/ RICH``. Heuristic: a docstring is ``RICH`` when its length ≥ 80
+chars AND it mentions params/returns or has an example block;
+``SHALLOW`` otherwise. Surfaces in both text and JSON output, with
+sample symbols per bucket so the user can see the gap concretely.
+
+### redacted`roam search --explain` shows PageRank
+
+The ``--explain`` flag already showed BM25 + matched fields +
+highlights + term counts. Pass 46 adds the per-result PageRank to
+the explanation so users can see when ordering is structural-rerank-
+driven vs. lexical.
+
+### redacted`roam retrieve --scope <dir>`
+
+Restrict candidates to files under a given path prefix —
+useful for monorepos and large codebases where the user knows
+the relevant subtree. Post-filter on the ranked candidate list,
+so no rerun of the heavy retrieval pipeline.
+
+### redacted`roam changelog --suggest`
+
+Read commits since the last tag, classify them via Conventional
+Commits prefixes (feat / fix / perf / refactor / docs / test / chore /
+build / ci), emit a draft ``## [Unreleased]`` markdown section grouped
+by bucket. ``--since <ref>`` overrides the tag autodetect.
+
+### redacted`roam graph-export`
+
+Write the symbol or file dependency graph as ``GraphML / DOT /
+JSONL`` for plugging into external graph tooling (Gephi, Cytoscape,
+igraph, or custom analyses). ``--scope file`` switches from the
+symbol-level graph to the file-level graph.
+
+### redacted`roam help-search <query>`
+
+Fuzzy match across every command's name + short docstring.
+Replaces grepping ``--help-all`` output of 158 commands. Score
+weights name matches above docstring matches and rewards shorter
+matching names.
+
+### redactedMCP-level result caching
+
+The MCP server already had per-cell caching for a handful of hot paths
+(`understand`, `tour`); Pass 21 promotes ~30 read-only commands into a
+shared, index-mtime-keyed result cache. Cache hit drops the round-trip
+from 153ms to 1ms (153× speedup) without changing tool semantics.
+Auto-invalidates on reindex (mtime bump on `.roam/index.db`).
+
+### redacted`roam ask` recipe expansion (13 → 24)
+
+Eleven new TF-IDF-classifiable recipes covering common agent
+workflows: `trace-bug`, `who-owns`, `what-changed`, `audit-security`,
+`explore-impact`, `find-similar`, `why-this-exists`, `check-pr`,
+`explore-tests`, `dependency-update`, `visualize-architecture`. Each
+maps to an existing roam command pipeline so the dispatcher stays a
+thin classifier-and-route — no new analysis logic.
+
+### redactedtest sub-classification
+
+`file_roles.py` now exports ``classify_test_kind(path)`` returning
+``unit | integration | e2e | smoke | unknown``. Path-pattern first
+(``e2e/``, ``integration/``, ``cypress/``, ``playwright/``), then
+filename-pattern fallback (``*_e2e.py``, ``*_smoke.py``). Lays the
+groundwork for "test pyramid" reports (Pass 31+) without changing
+the existing ``is_test`` boolean contract.
+
+### redactederror envelope `doc_link` field
+
+The MCP error path already emitted ``error_code``, ``hint``, and
+``retryable``. Pass 28 fills the fourth field of the structured-
+error contract: every classified ``error_code`` now carries a
+stable ``doc_link`` pointing at an anchor in the public
+troubleshooting page. Agents get one URL to fetch when self-
+serving an error, instead of grep-the-docs-and-pray.
+
+### redactedopt-in parallel source prefetch
+
+``ROAM_PARALLEL_INDEX=1`` enables a thread-pool source prefetcher
+in the indexer. Disk reads run in parallel up to ``min(32,
+cpu_count*2)`` workers ahead of the (still-serial) parse + DB
+write loop. The serial section is unchanged, so this is safe
+under concurrency and a no-op without the env var.
+
+I/O-dominated indexes (cold cache, OneDrive-mirrored repos,
+network drives) see the biggest wins; CPU-bound indexes see no
+regression because the cache is consumed in-order.
+
+### redacted`roam plugins`
+
+The plugin discovery system has shipped since v11 (entry points
++ ``ROAM_PLUGIN_MODULES``) but had no introspection surface.
+``roam plugins`` lists discovered commands, detectors, language
+extractors, extensions, grammar aliases, and any discovery
+errors. JSON envelope mirrors the same fields. With no plugins
+registered, prints the activation hint instead.
+
+### Decisions logged (no shipped change)
+
+- Pass 24 (``--markdown`` global flag) — deferred. Rendering layer
+  would touch every command. Adding the flag without a working
+  renderer is dead code; revisit when there's a concrete agent
+  surface that benefits from it.
+- Pass 25 (``roam impact-commit <hash>``) — already covered by
+  ``roam diff <commit-range>`` (e.g. ``roam diff HEAD~1``).
+- Pass 26 (compound ``roam_explore`` MCP tool) — already shipped.
+- Pass 27 (stale-command audit) — all 162 CLI command names appear
+  in at least one test. No cleanup needed.
+
 ## [12.14] - 2026-05-05
 
 Ten more research passes building on v12.13's speed wins. Three

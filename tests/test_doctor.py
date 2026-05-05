@@ -99,6 +99,8 @@ class TestDoctorCheckCoverage:
         "Index exists",
         "Index freshness",
         "SQLite operational",
+        "Plugin discovery",
+        "Required tables",
     }
 
     def test_all_expected_checks_present(self):
@@ -111,7 +113,9 @@ class TestDoctorCheckCoverage:
         result, data = invoke_doctor_json()
         # Round 4 added three checks (CLI registry + MCP registry +
         # MCP backpressure), bringing the total from 8 to 11.
-        assert data["summary"]["total"] == 11
+        # v12.16 / Pass 35 added two more (Plugin discovery + Required
+        # tables) for a total of 13.
+        assert data["summary"]["total"] == 13
 
     def test_passed_plus_failed_equals_total(self):
         result, data = invoke_doctor_json()

@@ -109,6 +109,15 @@ def _default_task_path() -> Path:
     show_default=True,
     help="Top-K candidates to include in each emitted record (CodeRAG/BEIR formats only).",
 )
+@click.option(
+    "--quick",
+    is_flag=True,
+    help=(
+        "redactedrun the first 5 tasks only for fast local iteration "
+        "while tweaking rerank weights. The full 30-task bench takes too "
+        "long for tight loops."
+    ),
+)
 @click.pass_context
 def eval_retrieve(
     ctx,
@@ -120,6 +129,7 @@ def eval_retrieve(
     emit_format,
     emit_out_path,
     emit_k,
+    quick,
 ):
     """Run the retrieval eval harness over a labeled task set."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
@@ -134,6 +144,8 @@ def eval_retrieve(
         )
 
     tasks = load_tasks(path)
+    if quick:
+        tasks = tasks[:5]
 
     # Validate emit-format / emit-out combination up front.
     fmt = (emit_format or "roam").lower()

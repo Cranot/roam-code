@@ -480,12 +480,42 @@ def _render_text(data):
     """Print text output for any mode."""
     mode = data["mode"]
 
+    if data.get("inline_mode"):
+        _render_inline_text(data)
+        return
+
     if mode == "file":
         _render_file_text(data)
     elif mode == "batch":
         _render_batch_text(data)
     else:
         _render_single_text(data)
+
+
+def _render_inline_text(data) -> None:
+    """redactedconcatenate the recommended files into one paste-ready block.
+
+    Each file is preceded by a header line ``=== <path> ===`` and each
+    line is prefixed with a 1-based line number for reference. Files
+    that can't be read are skipped with a one-line warning.
+    """
+    files = data.get("files_to_read") or []
+    sym = data.get("sym") or {}
+    sym_name = sym["name"] if hasattr(sym, "keys") and "name" in sym.keys() else ""
+    click.echo(f"VERDICT: inline context for {sym_name} — {len(files)} file(s)")
+    for f in files:
+        path = f.get("path") if isinstance(f, dict) else getattr(f, "path", None)
+        if not path:
+            continue
+        click.echo()
+        click.echo(f"=== {path} ===")
+        try:
+            text = open(path, encoding="utf-8", errors="replace").read()
+        except OSError as exc:
+            click.echo(f"  [unreadable: {exc}]")
+            continue
+        for i, line in enumerate(text.splitlines(), start=1):
+            click.echo(f"{i:>5}  {line}")
 
 
 def _render_json(data, budget=0):
@@ -1113,8 +1143,18 @@ def _resolve_file(conn, path):
     default=False,
     help="Disable call-graph propagation ranking (use legacy PageRank-only mode).",
 )
+@click.option(
+    "--inline",
+    "inline_mode",
+    is_flag=True,
+    default=False,
+    help=(
+        "redactedemit the recommended file content as one concatenated "
+        "string with line markers, ready to paste into a chat agent."
+    ),
+)
 @click.pass_context
-def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propagation):
+def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propagation, inline_mode):
     """Get the minimal context needed to safely modify a symbol.
 
     Unlike single-purpose commands like ``impact`` or ``uses``, this command
@@ -1201,4 +1241,7 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
             # Single symbol mode — always gather everything
             data = _gather_single(conn, resolved[0], task, session_hint, recent_symbols, use_propagation)
 
+    # redactedpass inline-mode flag through to the renderer.
+    if inline_mode:
+        data["inline_mode"] = True
     _render_json(data, budget=token_budget) if json_mode else _render_text(data)

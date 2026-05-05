@@ -17,6 +17,7 @@ import json
 import os
 import subprocess
 import sys
+import time as _time
 from pathlib import Path
 
 import click
@@ -108,6 +109,8 @@ _CORE_TOOLS = {
     "roam_oracle_is_clone_of",
     # v12.1 — LLM-augmented taint classification (1)
     "roam_taint_classify",
+    # v12.16 / redactedmachine-readable tool catalog (1)
+    "roam_catalog",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -252,6 +255,9 @@ else:
 
 
 _REGISTERED_TOOLS: list[str] = []
+# redactedparallel registry of tool metadata so ``roam_catalog`` can
+# enumerate every tool in one call without re-introspecting FastMCP.
+_TOOL_METADATA: dict[str, dict] = {}
 
 # Tools with side effects or non-idempotent behavior.
 _NON_READ_ONLY_TOOLS = {
@@ -762,6 +768,36 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
 
         fn = wrap_with_guard(name, fn)
         _REGISTERED_TOOLS.append(name)
+        # redactedextract richer metadata from the tool's docstring so
+        # ``roam_catalog`` consumers don't need to fetch each tool's
+        # full description to pick the right one.
+        when_to_use = ""
+        examples: list[str] = []
+        doc = fn.__doc__ or ""
+        if doc:
+            # ``WHEN TO USE:`` block — single line up to a blank line.
+            for line in doc.splitlines():
+                stripped = line.strip()
+                if stripped.upper().startswith("WHEN TO USE:"):
+                    when_to_use = stripped.split(":", 1)[1].strip()
+                    break
+            # First three doctest-style example lines (``>>> roam ...``).
+            for line in doc.splitlines():
+                ls = line.strip()
+                if ls.startswith(">>>") and "roam" in ls:
+                    examples.append(ls[3:].strip())
+                if len(examples) >= 3:
+                    break
+        _TOOL_METADATA[name] = {
+            "name": name,
+            "title": _tool_title(name),
+            "description": description,
+            "when_to_use": when_to_use,
+            "examples": examples,
+            "core": name in _CORE_TOOLS,
+            "read_only": name not in _NON_READ_ONLY_TOOLS,
+            "destructive": name in _DESTRUCTIVE_TOOLS,
+        }
         kwargs: dict = {"name": name, "title": _tool_title(name)}
         if description:
             kwargs["description"] = description
@@ -843,6 +879,25 @@ _ERROR_PATTERNS: list[tuple[str, str, str]] = [
 _RETRYABLE_CODES = {"DB_LOCKED", "INDEX_STALE"}
 
 
+# Doc-link table — agents use this to fetch the full self-service playbook
+# for a given error code. Anchors point at the troubleshooting section of
+# the public docs site so the URL stays stable across roam versions.
+_DOC_LINKS: dict[str, str] = {
+    "INDEX_NOT_FOUND": "redactedtroubleshooting.html#index-not-found",
+    "INDEX_STALE": "redactedtroubleshooting.html#index-stale",
+    "DB_LOCKED": "redactedtroubleshooting.html#db-locked",
+    "NOT_GIT_REPO": "redactedtroubleshooting.html#not-a-git-repo",
+    "PERMISSION_DENIED": "redactedtroubleshooting.html#permission-denied",
+    "NO_RESULTS": "redactedtroubleshooting.html#no-results",
+    "USAGE_ERROR": "redactedtroubleshooting.html#usage-error",
+    "GATE_FAILURE": "redactedtroubleshooting.html#gate-failure",
+    "PARTIAL_FAILURE": "redactedtroubleshooting.html#partial-failure",
+    "RATE_LIMITED": "redactedtroubleshooting.html#rate-limited",
+    "COMMAND_FAILED": "redactedtroubleshooting.html#command-failed",
+    "UNKNOWN": "redactedtroubleshooting.html",
+}
+
+
 def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
     """Classify error and return (error_code, hint, retryable).
 
@@ -881,12 +936,38 @@ def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
     return ("UNKNOWN", "check the error message for details.", False)
 
 
+# redactedseverity bucket per error code. Lets agents branch on
+# "warning vs error vs fatal" without parsing the message.
+_SEVERITY_MAP: dict[str, str] = {
+    "INDEX_NOT_FOUND": "error",
+    "INDEX_STALE": "warning",
+    "DB_LOCKED": "warning",
+    "NOT_GIT_REPO": "warning",
+    "PERMISSION_DENIED": "error",
+    "NO_RESULTS": "info",
+    "USAGE_ERROR": "error",
+    "GATE_FAILURE": "error",
+    "PARTIAL_FAILURE": "warning",
+    "RATE_LIMITED": "warning",
+    "COMMAND_FAILED": "error",
+    "UNKNOWN": "error",
+}
+
+
 def _structured_error(error_dict: dict) -> dict:
-    """Wrap error dict with MCP-compliant structured error fields (#116, #117)."""
+    """Wrap error dict with MCP-compliant structured error fields (#116, #117).
+
+    redactedalso fills the ``doc_link`` field so agents have a stable
+    URL for self-service troubleshooting per error code.
+    redactedadds a ``severity`` field (info | warning | error | fatal)
+    so agents can branch on severity without parsing the message.
+    """
     error_dict["isError"] = True
     code = error_dict.get("error_code", "UNKNOWN")
     error_dict["retryable"] = code in _RETRYABLE_CODES
     error_dict["suggested_action"] = error_dict.get("hint", "check the error message")
+    error_dict.setdefault("doc_link", _DOC_LINKS.get(code, _DOC_LINKS["UNKNOWN"]))
+    error_dict.setdefault("severity", _SEVERITY_MAP.get(code, "error"))
     return error_dict
 
 
@@ -898,14 +979,106 @@ def _ensure_fresh_index(root: str = ".") -> dict | None:
     return None
 
 
+# 12.15 — in-process result cache for read-only MCP tool calls. The MCP
+# server is long-running; an agent doing five consecutive
+# ``roam_preflight`` / ``roam_context`` / ``roam_impact`` calls on the
+# same symbol within a session pays the full DB+graph cost every time.
+# A small TTL cache keyed on (cmd, args-tuple, index-mtime) returns the
+# same envelope when the index hasn't changed — typical hit window for
+# an agent reasoning about one symbol is 30–120 seconds, well under
+# the 300s TTL.
+_ROAM_RESULT_CACHE: dict[tuple, tuple[float, float, dict]] = {}
+_ROAM_CACHE_TTL_S = 300.0
+# Read-only commands eligible for caching. Adding a write-y command
+# here would violate the "fresh after mutation" invariant; never list
+# ``init``, ``index``, ``mutate``, ``annotate``, ``ingest-trace``, etc.
+_CACHEABLE_COMMANDS = frozenset(
+    {
+        "search",
+        "context",
+        "impact",
+        "uses",
+        "refs",
+        "preflight",
+        "tour",
+        "understand",
+        "onboard",
+        "health",
+        "describe",
+        "module",
+        "file",
+        "symbol",
+        "fan",
+        "trace",
+        "relate",
+        "diagnose",
+        "smells",
+        "complexity",
+        "dead",
+        "duplicates",
+        "patterns",
+        "layers",
+        "clusters",
+        "endpoints",
+        "orphan-routes",
+        "fingerprint",
+        "weather",
+        "churn",
+        "hotspots",
+        "doctor",
+        "map",
+    }
+)
+
+
+def _index_mtime() -> float:
+    """Return current index DB mtime (cache invalidation key)."""
+    try:
+        from roam.db.connection import get_db_path
+
+        p = get_db_path()
+        if p and p.exists():
+            return p.stat().st_mtime
+    except Exception:
+        pass
+    return 0.0
+
+
 def _run_roam(args: list[str], root: str = ".") -> dict:
     """Run a roam CLI command with ``--json`` and return parsed output.
 
     Uses in-process Click invocation (fast, no subprocess overhead) when
     *root* is ``"."``.  Falls back to subprocess for non-local roots.
+
+    v12.15: caches read-only command results in-memory for 5 minutes
+    (TTL keyed on the index DB's mtime so any reindex invalidates the
+    cache automatically). Same call within the window returns the
+    same envelope without re-running the command.
     """
     if root != ".":
         return _run_roam_subprocess(args, root)
+
+    # Cache lookup — only for read-only commands.
+    if args and args[0] in _CACHEABLE_COMMANDS:
+        cache_key = tuple(args)
+        cached = _ROAM_RESULT_CACHE.get(cache_key)
+        if cached is not None:
+            ts, mt, payload = cached
+            now = _time.time()
+            if (now - ts) < _ROAM_CACHE_TTL_S and mt == _index_mtime():
+                # Stamp the envelope with a cache-hit marker so callers
+                # can observe the optimisation. Don't mutate the cached
+                # dict in case a future caller compares object identity.
+                if isinstance(payload, dict):
+                    out = dict(payload)
+                    meta = dict(out.get("_meta") or {})
+                    meta["cache_hit"] = True
+                    out["_meta"] = meta
+                    return out
+        result = _run_roam_inprocess(args)
+        if isinstance(result, dict) and "error" not in result:
+            _ROAM_RESULT_CACHE[cache_key] = (_time.time(), _index_mtime(), result)
+        return result
     return _run_roam_inprocess(args)
 
 
@@ -2109,6 +2282,34 @@ async def health(
         back to the raw envelope when sampling is unavailable.
     """
     result = _run_roam(["health"], root)
+    # redactedwhen the issue count is huge, drop the verbose lists
+    # and keep only the score + per-category counts. The full payload is
+    # always fetched on disk (cache hit on the next call would still
+    # have it); this just trims the per-call MCP transport. Caller can
+    # still pass ``summarize=True`` for prose, or call without the
+    # token-conscious shape by setting ``ROAM_MCP_HEALTH_FULL=1``.
+    if isinstance(result, dict) and not os.environ.get("ROAM_MCP_HEALTH_FULL"):
+        issue_count = (result.get("summary") or {}).get("issue_count", 0) or 0
+        if issue_count >= 50:
+            keep = {
+                "_meta",
+                "command",
+                "schema",
+                "schema_version",
+                "summary",
+                "health_score",
+                "tangle_ratio",
+                "propagation_cost",
+                "category_severity",
+                "score_breakdown",
+            }
+            trimmed = {k: v for k, v in result.items() if k in keep}
+            trimmed["truncated"] = True
+            trimmed["truncated_hint"] = (
+                "issue list dropped (>= 50 issues). Run `roam health` from CLI for the full list, "
+                "or set ROAM_MCP_HEALTH_FULL=1 for the unfiltered MCP envelope."
+            )
+            result = trimmed
     task = _mcp_session.session_hint(ctx) if _mcp_session is not None else ""
     return await _maybe_summarize(result, ctx=ctx, summarize=summarize, task=task)
 
@@ -5855,6 +6056,71 @@ def roam_clean(root: str = ".") -> dict:
     Returns: counts of files/symbols/edges removed.
     """
     return _run_roam(["clean"], root)
+
+
+# ---------------------------------------------------------------------------
+# redactedroam_catalog: machine-readable list of all registered tools
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_catalog",
+    description=(
+        "Return the full machine-readable list of every roam MCP tool currently "
+        "registered, including title, description, and capability flags "
+        "(core / read_only / destructive). Use this once at session start "
+        "to discover what's available without enumerating tools."
+    ),
+    output_schema=_make_schema(
+        {
+            "tool_count": {"type": "integer"},
+            "core_count": {"type": "integer"},
+        },
+        tools={
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "name": {"type": "string"},
+                    "title": {"type": "string"},
+                    "description": {"type": "string"},
+                    "when_to_use": {"type": "string"},
+                    "examples": {"type": "array", "items": {"type": "string"}},
+                    "core": {"type": "boolean"},
+                    "read_only": {"type": "boolean"},
+                    "destructive": {"type": "boolean"},
+                },
+            },
+        },
+        preset={"type": "string"},
+    ),
+)
+def roam_catalog(root: str = ".") -> dict:
+    """List every registered MCP tool with capability metadata.
+
+    WHEN TO USE: at the start of a long session, before the agent picks
+    which tools to call. Replaces enumerating ``list_tools`` and parsing
+    each one — the catalog is one round-trip.
+
+    Returns
+    -------
+    {
+      "summary": {"verdict": "...", "tool_count": N, "core_count": M},
+      "tools": [{name, title, description, core, read_only, destructive}, ...],
+      "preset": "max" | "core" | ...
+    }
+    """
+    tools = sorted(_TOOL_METADATA.values(), key=lambda t: (not t["core"], t["name"]))
+    core_count = sum(1 for t in tools if t["core"])
+    return {
+        "summary": {
+            "verdict": f"{len(tools)} tools registered ({core_count} core)",
+            "tool_count": len(tools),
+            "core_count": core_count,
+        },
+        "tools": tools,
+        "preset": _ACTIVE_PRESET,
+    }
 
 
 # ---------------------------------------------------------------------------

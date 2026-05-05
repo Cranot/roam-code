@@ -86,6 +86,25 @@ def _emit_recipe_detail(recipe: Recipe, query: str, json_mode: bool) -> None:
             click.echo(f"  {item}")
 
 
+_NEXT_HINTS: dict[str, list[str]] = {
+    "preflight": ["roam context <symbol>", "roam impact <symbol>", "roam diff"],
+    "context": ["roam preflight <symbol>", "roam diff"],
+    "diff": ["git diff | roam critique", "roam pr-prep", "roam pr-risk"],
+    "critique": ["roam pr-prep", "roam diff"],
+    "pr-risk": ["roam pr-prep", "roam fitness"],
+    "health": ["roam debt", "roam complexity", "roam hotspots --danger"],
+    "search": ["roam context <symbol>", "roam impact <symbol>"],
+    "retrieve": ["roam context <symbol>", "roam preflight <symbol>"],
+    "understand": ["roam tour", "roam stats", "roam health"],
+    "tour": ["roam health", "roam minimap"],
+    "init": ["roam understand", "roam tour", "roam stats"],
+    "index": ["roam health", "roam diagnose <symbol>"],
+    "stats": ["roam health", "roam tour"],
+    "impact": ["roam preflight <symbol>", "roam affected-tests <symbol>"],
+    "diagnose": ["roam timeline <symbol>", "roam recommend <symbol>"],
+}
+
+
 @click.command("workflow")
 @click.argument("recipe_name", required=False)
 @click.option("--list", "list_recipes", is_flag=True, help="List available workflow recipes.")
@@ -94,10 +113,43 @@ def _emit_recipe_detail(recipe: Recipe, query: str, json_mode: bool) -> None:
     default="",
     help="Render {symbol}/{task} placeholders using this query without running commands.",
 )
+@click.option(
+    "--next",
+    "next_after",
+    type=str,
+    default=None,
+    help="redactedgiven the previously-run command, suggest what to run next.",
+)
 @click.pass_context
-def workflow(ctx, recipe_name, list_recipes, query):
+def workflow(ctx, recipe_name, list_recipes, query, next_after):
     """Inspect a workflow recipe DAG, review lenses, and next commands."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
+
+    if next_after:
+        # redactedsuggest what to run next given the prior command.
+        from roam.output.formatter import json_envelope, to_json
+
+        suggestions = _NEXT_HINTS.get(next_after.lower(), [])
+        verdict = (
+            f"{len(suggestions)} suggestion(s) after `roam {next_after}`"
+            if suggestions
+            else f"no canned next-command for `roam {next_after}`"
+        )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "workflow",
+                        summary={"verdict": verdict, "after": next_after},
+                        suggestions=suggestions,
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {verdict}")
+        for s in suggestions:
+            click.echo(f"  {s}")
+        return
 
     if list_recipes or not recipe_name:
         _emit_recipe_list(json_mode)

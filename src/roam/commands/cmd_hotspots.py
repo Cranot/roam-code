@@ -353,6 +353,99 @@ def _compute_security_hotspots(conn) -> dict:
     }
 
 
+def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
+    """redactedfiles in the intersection of high churn × complexity × fan-in.
+
+    Computes the 75th-percentile threshold for each metric, then lists
+    files above all three thresholds. The score is the geometric mean
+    of the metric ratios so a moderate-everywhere file ranks above one
+    that's extreme in only one dimension.
+    """
+    import math as _math
+
+    with open_db(readonly=True) as conn:
+        rows = conn.execute(
+            """
+            SELECT f.path, f.id AS file_id,
+                   COALESCE(fs.total_churn, 0) AS churn,
+                   COALESCE(fs.complexity, 0) AS complexity,
+                   (SELECT COALESCE(MAX(gm.in_degree), 0)
+                      FROM symbols s
+                      JOIN graph_metrics gm ON gm.symbol_id = s.id
+                     WHERE s.file_id = f.id) AS max_fan_in
+              FROM files f
+              LEFT JOIN file_stats fs ON fs.file_id = f.id
+             WHERE COALESCE(f.file_role, 'source') = 'source'
+            """
+        ).fetchall()
+
+    candidates = [
+        {
+            "path": r["path"],
+            "churn": r["churn"] or 0,
+            "complexity": r["complexity"] or 0.0,
+            "max_fan_in": r["max_fan_in"] or 0,
+        }
+        for r in rows
+    ]
+
+    def _percentile(values: list[float], pct: float) -> float:
+        if not values:
+            return 0.0
+        sorted_v = sorted(values)
+        k = max(0, min(len(sorted_v) - 1, int(len(sorted_v) * pct) - 1))
+        return float(sorted_v[k])
+
+    p75_churn = _percentile([c["churn"] for c in candidates], 0.75)
+    p75_complex = _percentile([c["complexity"] for c in candidates], 0.75)
+    p75_fanin = _percentile([c["max_fan_in"] for c in candidates], 0.75)
+
+    danger = []
+    for c in candidates:
+        if c["churn"] >= p75_churn > 0 and c["complexity"] >= p75_complex > 0 and c["max_fan_in"] >= p75_fanin > 0:
+            ratio_churn = c["churn"] / p75_churn if p75_churn else 1.0
+            ratio_complex = c["complexity"] / p75_complex if p75_complex else 1.0
+            ratio_fanin = c["max_fan_in"] / p75_fanin if p75_fanin else 1.0
+            score = _math.exp((_math.log(ratio_churn) + _math.log(ratio_complex) + _math.log(ratio_fanin)) / 3.0)
+            danger.append({**c, "danger_score": round(score, 3)})
+
+    danger.sort(key=lambda d: d["danger_score"], reverse=True)
+    verdict = (
+        f"{len(danger)} file(s) in the danger zone "
+        f"(p75 churn≥{int(p75_churn)}, complexity≥{p75_complex:.1f}, fan-in≥{int(p75_fanin)})"
+    )
+
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "hotspots",
+                    budget=token_budget,
+                    summary={"verdict": verdict, "count": len(danger)},
+                    thresholds={
+                        "churn_p75": p75_churn,
+                        "complexity_p75": p75_complex,
+                        "fan_in_p75": p75_fanin,
+                    },
+                    danger_zone=danger[:50],
+                )
+            )
+        )
+        return
+    click.echo(f"VERDICT: {verdict}")
+    click.echo()
+    if not danger:
+        click.echo("No files cross all three p75 thresholds.")
+        return
+    click.echo(f"{'Path':<60}  {'Churn':>5}  {'Cx':>6}  {'FanIn':>5}  {'Score':>5}")
+    click.echo(f"{'-' * 60}  {'-' * 5}  {'-' * 6}  {'-' * 5}  {'-' * 5}")
+    for d in danger[:25]:
+        path = d["path"][:60]
+        click.echo(
+            f"{path:<60}  {d['churn']:>5}  {d['complexity']:>6.2f}  {d['max_fan_in']:>5}  {d['danger_score']:>5.2f}"
+        )
+
+
 @click.command()
 @click.option("--runtime", "sort_runtime", is_flag=True, help="Sort by runtime metrics")
 @click.option("--discrepancy", is_flag=True, help="Only show static/runtime mismatches")
@@ -362,8 +455,14 @@ def _compute_security_hotspots(conn) -> dict:
     is_flag=True,
     help="Detect security hotspots (dangerous APIs) with entry-point reachability",
 )
+@click.option(
+    "--danger",
+    "danger_mode",
+    is_flag=True,
+    help="Files in top quartile of churn × complexity × max-fan-in (redacted'danger zone')",
+)
 @click.pass_context
-def hotspots(ctx, sort_runtime, discrepancy, security_mode):
+def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):
     """Show runtime hotspots comparing static analysis vs runtime data.
 
     Requires prior trace ingestion via ``roam ingest-trace``.
@@ -388,6 +487,13 @@ def hotspots(ctx, sort_runtime, discrepancy, security_mode):
     if security_mode and (sort_runtime or discrepancy):
         click.echo("Cannot combine --security with --runtime or --discrepancy")
         raise SystemExit(1)
+    if danger_mode and (sort_runtime or discrepancy or security_mode):
+        click.echo("Cannot combine --danger with --runtime, --discrepancy, or --security")
+        raise SystemExit(1)
+
+    if danger_mode:
+        _run_danger_mode(json_mode, token_budget)
+        return
 
     if security_mode:
         with open_db(readonly=True) as conn:

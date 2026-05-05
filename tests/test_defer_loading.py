@@ -169,6 +169,8 @@ class TestDeferLoading:
             # v12.6 — Python-pivot tools
             "roam_py_types",
             "roam_py_modern",
+            # v12.16 / redactedmachine-readable tool catalog
+            "roam_catalog",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"

@@ -183,10 +183,17 @@ def _recent_changes(conn, file_id, limit=5):
 
 
 @click.command()
-@click.argument("name")
+@click.argument("name", required=False, default=None)
 @click.option("--depth", default=2, help="How many hops to analyze (default 2)")
+@click.option(
+    "--batch",
+    "batch_input",
+    type=str,
+    default=None,
+    help='redactedread newline-separated symbol names from this file ("-" for stdin) and run diagnose on each.',
+)
 @click.pass_context
-def diagnose(ctx, name, depth):
+def diagnose(ctx, name, depth, batch_input):
     """Root cause analysis for a failing symbol.
 
     Unlike ``why`` (which explains a symbol's architectural role), this
@@ -207,6 +214,71 @@ def diagnose(ctx, name, depth):
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
+
+    # redactedbatch mode runs diagnose on N symbols. Stream output as
+    # one envelope per symbol so the consumer can newline-split the JSON.
+    if batch_input:
+        import sys as _sys
+
+        if batch_input == "-":
+            stream = _sys.stdin
+            close_on_exit = False
+        else:
+            stream = open(batch_input, encoding="utf-8")
+            close_on_exit = True
+        try:
+            names = [ln.strip() for ln in stream if ln.strip()]
+        finally:
+            if close_on_exit:
+                stream.close()
+        results = []
+        with open_db(readonly=True) as conn:
+            for nm in names:
+                sym, _alts = find_symbol_with_alternatives(conn, nm)
+                if sym is None:
+                    results.append({"name": nm, "error": "symbol not found"})
+                    continue
+                metrics = _get_symbol_metrics(conn, sym["id"])
+                dist = _build_distribution_stats(conn)
+                risk = _risk_score(metrics, dist)
+                results.append(
+                    {
+                        "name": nm,
+                        "risk_score": risk,
+                        "kind": sym["kind"],
+                        "file": sym["file_path"],
+                        "line": sym["line_start"],
+                    }
+                )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "diagnose.batch",
+                        summary={
+                            "verdict": f"{len(results)} symbol(s) diagnosed",
+                            "count": len(results),
+                        },
+                        results=results,
+                    )
+                )
+            )
+            return
+        click.echo(f"VERDICT: {len(results)} symbol(s) diagnosed")
+        click.echo()
+        click.echo(f"{'Name':<32}  {'Risk':>5}  {'Kind':<10}  Location")
+        click.echo(f"{'-' * 32}  {'-' * 5}  {'-' * 10}  {'-' * 30}")
+        for r in results:
+            if "error" in r:
+                click.echo(f"{r['name']:<32}  {'-':>5}  {'(error)':<10}  {r['error']}")
+                continue
+            click.echo(f"{r['name'][:32]:<32}  {r['risk_score']:>5}  {r['kind'][:10]:<10}  {r['file']}:{r['line']}")
+        return
+
+    if not name:
+        from roam.output.errors import MISSING_REQUIRED_ARG, structured_usage_error
+
+        raise structured_usage_error(MISSING_REQUIRED_ARG, "Pass a symbol name or use --batch <file>.")
 
     with open_db(readonly=True) as conn:
         sym, alternatives = find_symbol_with_alternatives(conn, name)

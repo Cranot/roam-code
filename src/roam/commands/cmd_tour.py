@@ -350,8 +350,15 @@ def _tour_mermaid(conn, G, top, order):
     help="Write the tour to a Markdown file instead of stdout",
 )
 @click.option("--mermaid", "mermaid_mode", is_flag=True, help="Output Mermaid diagram")
+@click.option(
+    "--focus",
+    "focus_path",
+    type=str,
+    default=None,
+    help="redactedlimit tour items (top symbols, reading order, entries) to files under this path prefix.",
+)
 @click.pass_context
-def tour(ctx, write_file, mermaid_mode):
+def tour(ctx, write_file, mermaid_mode, focus_path):
     """Generate a codebase onboarding tour.
 
     Produces a structured guide: project overview, top symbols to learn,
@@ -377,6 +384,20 @@ def tour(ctx, write_file, mermaid_mode):
         top = _top_symbols(conn, G, limit=10)
         order = _reading_order(conn, G)
         entries = _entry_points(conn)
+
+        # redactedfocus filter. Apply after the heavy queries so we
+        # benefit from the cache / index, then drop anything outside
+        # the prefix. Normalise slashes to keep Windows happy.
+        if focus_path:
+            scope = focus_path.replace("\\", "/").rstrip("/") + "/"
+
+            def _in_scope(item) -> bool:
+                p = (item.get("file") or "").replace("\\", "/")
+                return p.startswith(scope)
+
+            top = [t for t in top if _in_scope(t)]
+            order = [o for o in order if _in_scope(o)]
+            entries = [e for e in entries if _in_scope(e)]
 
         # Build verdict — look up the language of the actual starting
         # file rather than the project's dominant language (otherwise a

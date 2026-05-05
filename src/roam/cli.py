@@ -16,6 +16,11 @@ import click
 # This avoids importing networkx (~500ms) on every CLI call.
 # Total: 158 invokable command names (155 canonical commands + 3 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
+# redacteddeprecated commands map to their replacement.  When a user
+# invokes a deprecated name, we still resolve it (no breaking change)
+# but print a note on stderr suggesting the replacement.
+_DEPRECATED_COMMANDS: dict[str, str] = {}
+
 _COMMANDS = {
     "index": ("roam.commands.cmd_index", "index"),
     "map": ("roam.commands.cmd_map", "map_cmd"),
@@ -104,6 +109,23 @@ _COMMANDS = {
     "attest": ("roam.commands.cmd_attest", "attest"),
     "capsule": ("roam.commands.cmd_capsule", "capsule"),
     "path-coverage": ("roam.commands.cmd_path_coverage", "path_coverage"),
+    "plugins": ("roam.commands.cmd_plugins", "plugins_cmd"),
+    "test-pyramid": ("roam.commands.cmd_test_pyramid", "test_pyramid"),
+    "index-stats": ("roam.commands.cmd_index_stats", "index_stats"),
+    "telemetry": ("roam.commands.cmd_telemetry", "telemetry"),
+    "orphan-imports": ("roam.commands.cmd_orphan_imports", "orphan_imports"),
+    "changelog": ("roam.commands.cmd_changelog", "changelog"),
+    "graph-export": ("roam.commands.cmd_graph_export", "graph_export"),
+    "graph-stats": ("roam.commands.cmd_graph_stats", "graph_stats"),
+    "help-search": ("roam.commands.cmd_help_search", "help_search"),
+    "timeline": ("roam.commands.cmd_timeline", "timeline"),
+    "pr-prep": ("roam.commands.cmd_pr_prep", "pr_prep"),
+    "stats": ("roam.commands.cmd_stats", "stats"),
+    "why-fail": ("roam.commands.cmd_why_fail", "why_fail"),
+    "recommend": ("roam.commands.cmd_recommend", "recommend"),
+    "api": ("roam.commands.cmd_api", "api"),
+    "exit-codes": ("roam.commands.cmd_exit_codes", "exit_codes"),
+    "version": ("roam.commands.cmd_version", "version"),
     "forecast": ("roam.commands.cmd_forecast", "forecast"),
     "plan": ("roam.commands.cmd_plan", "plan"),
     "adversarial": ("roam.commands.cmd_adversarial", "adversarial"),
@@ -217,6 +239,14 @@ _CATEGORIES = {
         "mcp-setup",
         "ci-setup",
         "adrs",
+        "changelog",
+        "exit-codes",
+        "help-search",
+        "plugins",
+        "version",
+        "index-stats",
+        "stats",
+        "telemetry",
     ],
     "Daily Workflow": [
         "preflight",
@@ -224,6 +254,7 @@ _CATEGORIES = {
         "agent-plan",
         "agent-context",
         "pr-risk",
+        "pr-prep",
         "pr-diff",
         "api-changes",
         "semantic-diff",
@@ -241,6 +272,9 @@ _CATEGORIES = {
         "fleet",
         "affected-tests",
         "diagnose",
+        "why-fail",
+        "recommend",
+        "api",
         "annotate",
         "annotations",
         "plan",
@@ -258,6 +292,7 @@ _CATEGORIES = {
         "trends",
         "weather",
         "churn",
+        "timeline",
         "debt",
         "complexity",
         "py-types",
@@ -277,6 +312,8 @@ _CATEGORIES = {
     ],
     "Architecture": [
         "map",
+        "graph-export",
+        "graph-stats",
         "layers",
         "clusters",
         "spectral",
@@ -343,6 +380,7 @@ _CATEGORIES = {
     ],
     "Refactoring": [
         "dead",
+        "orphan-imports",
         "flag-dead",
         "duplicates",
         "safe-delete",
@@ -355,6 +393,7 @@ _CATEGORIES = {
         "conventions",
         "sketch",
         "test-map",
+        "test-pyramid",
         "why",
         "pr-risk",
         "invariants",
@@ -482,7 +521,20 @@ class LazyGroup(click.Group):
         isn't in ``_COMMANDS`` we look for the closest existing names
         by edit distance and surface them in the UsageError so the
         agent can retry with the right command in one turn.
+
+        redactedalso surface a deprecation note on stderr when the
+        invoked command is in ``_DEPRECATED_COMMANDS`` so users know
+        about a planned rename / replacement.
         """
+        # redactedpre-resolve deprecation hint.
+        if args:
+            cmd_name = args[0]
+            replacement = _DEPRECATED_COMMANDS.get(cmd_name)
+            if replacement:
+                click.echo(
+                    f"NOTE: `roam {cmd_name}` is deprecated — use `roam {replacement}` instead.",
+                    err=True,
+                )
         try:
             return super().resolve_command(ctx, args)
         except click.UsageError as exc:
@@ -499,9 +551,29 @@ class LazyGroup(click.Group):
 
             _ensure_plugin_commands_loaded()
             close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=3, cutoff=0.6)
+            # redactedwhen no edit-distance match lands but the user
+            # typed a phrase, route them through the ``ask`` classifier
+            # so a natural-language attempt ("trace login flow") still
+            # gets a useful suggestion.
+            recipe_hint = None
+            if not close and len(bad) >= 6:
+                try:
+                    from roam.ask.classifier import classify
+
+                    matches = classify(bad)
+                    # ``classify`` returns ``[(Recipe, score), ...]``; pick the top
+                    # entry only when its score is above a confidence floor so
+                    # one-word typos don't get force-routed into a recipe.
+                    if matches and matches[0][1] >= 0.5:
+                        recipe = matches[0][0]
+                        recipe_hint = f'`roam ask "{bad}"` (matches recipe: {recipe.name})'
+                except Exception:
+                    recipe_hint = None
             if close:
                 suggestions = ", ".join(f"`roam {c}`" for c in close)
                 raise click.UsageError(f"No such command: '{bad}'. Did you mean {suggestions}?") from exc
+            if recipe_hint:
+                raise click.UsageError(f"No such command: '{bad}'. Try {recipe_hint}.") from exc
             raise
 
     def invoke(self, ctx):
@@ -788,3 +860,24 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     ctx.obj["budget"] = budget
     ctx.obj["include_excluded"] = include_excluded
     ctx.obj["detail"] = detail
+
+    # redactedopt-in local telemetry. Records (cmd, duration_ms,
+    # exit_code) when ROAM_TELEMETRY_LOCAL=1. Strictly local; no
+    # network. Recording itself is no-op when disabled, so the
+    # uninstrumented hot path stays unaffected.
+    import time as _time
+
+    from roam.telemetry import record as _telemetry_record
+
+    _start = _time.perf_counter()
+
+    def _on_close():
+        try:
+            cmd_name = ctx.invoked_subcommand or "<root>"
+            duration_ms = int((_time.perf_counter() - _start) * 1000)
+            # exit code propagates through SystemExit; default 0 if not raised.
+            _telemetry_record(cmd_name, duration_ms, exit_code=0)
+        except Exception:
+            pass
+
+    ctx.call_on_close(_on_close)

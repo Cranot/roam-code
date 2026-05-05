@@ -50,6 +50,36 @@ def index_staleness_hint() -> str | None:
     return status.get("hint")
 
 
+def _git_dirty_count() -> int | None:
+    """Return the number of files with working-tree modifications.
+
+    Uses ``git status --porcelain`` so it's fast (metadata-only). Counts
+    every entry: modified, added, deleted, untracked. Returns ``None`` if
+    git is unavailable. redactedsurfaces working-tree drift that the
+    HEAD-vs-indexed check misses (you can be at the same commit but have
+    edits the index hasn't seen).
+    """
+    try:
+        root = find_project_root()
+    except Exception:
+        return None
+    try:
+        result = subprocess.run(
+            ["git", "status", "--porcelain"],
+            cwd=str(root),
+            capture_output=True,
+            text=True,
+            timeout=5,
+            check=False,
+        )
+    except (subprocess.TimeoutExpired, FileNotFoundError, OSError):
+        return None
+    if result.returncode != 0:
+        return None
+    lines = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    return len(lines)
+
+
 def index_status() -> dict | None:
     """Return a structured ``index_status`` dict for envelope use.
 
@@ -60,6 +90,7 @@ def index_status() -> dict | None:
           "fresh": bool,
           "indexed_commit": "...",
           "head_commit": "...",
+          "dirty_files": int | None,   # redactedworking-tree drift count
           "hint": "...",
         }
 
@@ -82,17 +113,33 @@ def index_status() -> dict | None:
         return None
     if not indexed_short:
         return None
+    dirty = _git_dirty_count()
+    # redactedeven when HEAD matches, working-tree edits make the
+    # index stale for symbol-resolution purposes. Surface that.
     if indexed_short == head:
+        if dirty and dirty > 0:
+            return {
+                "fresh": False,
+                "indexed_commit": indexed_short,
+                "head_commit": head,
+                "dirty_files": dirty,
+                "hint": (
+                    f"{dirty} file(s) modified in working tree since last index — "
+                    "run `roam index` to refresh symbol/edge data."
+                ),
+            }
         return {
             "fresh": True,
             "indexed_commit": indexed_short,
             "head_commit": head,
+            "dirty_files": dirty,
             "hint": None,
         }
     return {
         "fresh": False,
         "indexed_commit": indexed_short,
         "head_commit": head,
+        "dirty_files": dirty,
         "hint": (
             f"index latest commit {indexed_short} != HEAD {head} — git-derived metrics "
             f"(commits, churn, co-change, weather) may be stale. Run `roam index --force`."

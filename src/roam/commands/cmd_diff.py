@@ -298,8 +298,13 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
 @click.option("--tests", is_flag=True, help="Show affected test files")
 @click.option("--coupling", is_flag=True, help="Warn about missing co-change partners")
 @click.option("--fitness", is_flag=True, help="Check fitness rules against changed files")
+@click.option(
+    "--since-tag",
+    is_flag=True,
+    help="redactedanalyze commits since the most recent tag (auto-detected via git describe).",
+)
 @click.pass_context
-def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
+def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_tag):
     """Show blast radius: what code is affected by your changes.
 
     Unlike ``pr-diff`` (which compares CI-level metrics before and after),
@@ -316,6 +321,26 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness):
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
     ensure_index()
     root = find_project_root()
+
+    # redacted--since-tag auto-fills commit_range with <last-tag>..HEAD.
+    if since_tag and not commit_range:
+        import subprocess as _sub
+
+        try:
+            proc = _sub.run(
+                ["git", "describe", "--tags", "--abbrev=0"],
+                capture_output=True,
+                text=True,
+                cwd=str(root),
+                timeout=5,
+                check=False,
+            )
+            if proc.returncode == 0:
+                last_tag = proc.stdout.strip()
+                if last_tag:
+                    commit_range = f"{last_tag}..HEAD"
+        except (OSError, _sub.SubprocessError):
+            pass
 
     # --full implies all three extras
     if full:

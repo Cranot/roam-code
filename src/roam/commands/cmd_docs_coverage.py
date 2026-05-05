@@ -53,6 +53,38 @@ def _has_docs(symbol: dict) -> bool:
     return bool((symbol.get("docstring") or "").strip())
 
 
+def _docstring_quality(text: str) -> tuple[str, dict]:
+    """redactedbucket a docstring into PRESENT / SHALLOW / RICH.
+
+    PRESENT: any non-empty docstring.
+    SHALLOW: present, < 80 chars, no examples block, no parameter mentions.
+    RICH:    >= 80 chars AND (mentions params/returns/raises OR has an
+             examples or fenced code block).
+
+    Returns ``(bucket, signals)`` where signals records the boolean checks
+    that contributed to the verdict — useful for explaining a low score.
+    """
+    s = (text or "").strip()
+    signals = {
+        "length": len(s),
+        "has_params": False,
+        "has_returns": False,
+        "has_raises": False,
+        "has_example": False,
+    }
+    if not s:
+        return "ABSENT", signals
+    lower = s.lower()
+    signals["has_params"] = "param" in lower or "args:" in lower or "arguments:" in lower or ":param" in lower
+    signals["has_returns"] = "return" in lower or ":returns:" in lower
+    signals["has_raises"] = "raise" in lower or ":raises:" in lower
+    signals["has_example"] = ">>>" in s or "```" in s or "example" in lower or "examples\n" in lower
+    rich_signal = signals["has_params"] or signals["has_returns"] or signals["has_example"]
+    if len(s) >= 80 and rich_signal:
+        return "RICH", signals
+    return "SHALLOW", signals
+
+
 def _compute_coverage(symbols: list[dict]) -> tuple[int, int, float]:
     total = len(symbols)
     documented = sum(1 for s in symbols if _has_docs(s))
@@ -120,8 +152,13 @@ def _stale_docs(symbols: list[dict], threshold_days: int) -> list[dict]:
     show_default=True,
     help="Fail with exit code 5 if coverage %% is below threshold (0 = no gate).",
 )
+@click.option(
+    "--quality",
+    is_flag=True,
+    help="redactedbucket each documented symbol into ABSENT/SHALLOW/RICH.",
+)
 @click.pass_context
-def docs_coverage(ctx, limit, days, threshold):
+def docs_coverage(ctx, limit, days, threshold, quality):
     """Analyze exported-symbol doc coverage and stale docs in one report.
 
     Reports coverage percentage, PageRank-ranked missing-doc hotlist, and
@@ -143,6 +180,23 @@ def docs_coverage(ctx, limit, days, threshold):
     missing = _missing_docs(symbols)
     stale = _stale_docs(symbols, days)
 
+    quality_buckets: dict[str, int] = {"ABSENT": 0, "SHALLOW": 0, "RICH": 0}
+    quality_samples: dict[str, list[dict]] = {"ABSENT": [], "SHALLOW": [], "RICH": []}
+    if quality:
+        for s in symbols:
+            bucket, _signals = _docstring_quality(s.get("docstring") or "")
+            quality_buckets[bucket] = quality_buckets.get(bucket, 0) + 1
+            samples = quality_samples.setdefault(bucket, [])
+            if len(samples) < 5:
+                samples.append(
+                    {
+                        "name": s["name"],
+                        "kind": s["kind"],
+                        "file": s["file_path"],
+                        "line": s["line_start"],
+                    }
+                )
+
     display_missing = missing[:limit]
     display_stale = stale[:limit]
 
@@ -151,21 +205,25 @@ def docs_coverage(ctx, limit, days, threshold):
         gate_passed = False
 
     if json_mode:
+        summary_payload = {
+            "public_symbols": total_public,
+            "documented_symbols": documented_public,
+            "coverage_pct": coverage_pct,
+            "missing_docs": len(missing),
+            "stale_docs": len(stale),
+            "threshold": threshold,
+            "gate_passed": gate_passed,
+            "verdict": (f"{coverage_pct:.1f}% doc coverage ({documented_public}/{total_public} public symbols)"),
+        }
+        if quality:
+            summary_payload["quality_buckets"] = quality_buckets
         payload = json_envelope(
             "docs-coverage",
-            summary={
-                "public_symbols": total_public,
-                "documented_symbols": documented_public,
-                "coverage_pct": coverage_pct,
-                "missing_docs": len(missing),
-                "stale_docs": len(stale),
-                "threshold": threshold,
-                "gate_passed": gate_passed,
-                "verdict": (f"{coverage_pct:.1f}% doc coverage ({documented_public}/{total_public} public symbols)"),
-            },
+            summary=summary_payload,
             missing_docs=display_missing,
             stale_docs=display_stale,
             threshold_days=days,
+            quality_samples=quality_samples if quality else {},
         )
         click.echo(to_json(payload))
 
@@ -178,6 +236,14 @@ def docs_coverage(ctx, limit, days, threshold):
     click.echo("Documentation coverage\n")
     click.echo(f"  Public symbols: {total_public}\n  Documented: {documented_public}\n  Coverage: {coverage_pct:.1f}%")
     click.echo(f"  Missing docs: {len(missing)}\n  Stale docs (>{days}d): {len(stale)}")
+
+    if quality:
+        click.echo("\nQuality buckets:")
+        for bucket in ("ABSENT", "SHALLOW", "RICH"):
+            n = quality_buckets.get(bucket, 0)
+            sample = quality_samples.get(bucket) or []
+            sample_text = ", ".join(f"{s['name']} ({s['file']}:{s['line']})" for s in sample[:3]) or "—"
+            click.echo(f"  {bucket:<8}  {n:>5}  e.g. {sample_text}")
 
     if display_missing:
         click.echo("\nTop undocumented symbols (PageRank-ranked):")

@@ -239,8 +239,19 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
         "would be retrieved before paying the token cost."
     ),
 )
+@click.option(
+    "--scope",
+    "scope_path",
+    type=str,
+    default=None,
+    help=(
+        "redactedrestrict candidates to files under this directory "
+        "(repeat-friendly for monorepos, e.g. ``--scope src/api`` or "
+        "``--scope packages/web/src``)."
+    ),
+)
 @click.pass_context
-def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
+def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
     """Return ranked code spans for a free-form task.
 
     Composes hybrid first-stage (FTS5) + structural reranker (PageRank +
@@ -328,6 +339,15 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
         )
 
     candidates = result["candidates"]
+    if scope_path:
+        # redactedpost-filter candidates by path prefix. Normalising
+        # to forward slashes keeps Windows happy.
+        normalised_scope = scope_path.replace("\\", "/").rstrip("/")
+        candidates = [
+            c for c in candidates if (c.get("file_path") or "").replace("\\", "/").startswith(normalised_scope + "/")
+        ]
+        result["candidates"] = candidates
+        result["scope_applied"] = normalised_scope
     if dry_run:
         # Strip span content so the agent sees what *would* be retrieved
         # without paying the token cost. Keeps location / score / why.

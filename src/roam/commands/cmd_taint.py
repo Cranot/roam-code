@@ -148,10 +148,18 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
     medium_count = sum(1 for f in findings if f.severity == "warning")
     sanitized_count = sum(1 for f in findings if f.sanitizer_in_path)
 
+    # redactedsingle 0-100 risk score. ``error`` weighs 5×; ``warning``
+    # 1×; sanitized findings count for half (mitigated, not eliminated).
+    # The score saturates at 100 for >20 effective points so a clean
+    # repo lands at 0 and any non-trivial risk is visible.
+    raw_points = (high_count * 5) + medium_count - (sanitized_count * 2)
+    raw_points = max(0, raw_points)
+    risk_score = min(100, int(round(raw_points / 20.0 * 100)))
+
     verdict = (
         f"{len(findings)} finding(s) "
         f"({high_count} error, {medium_count} warning, "
-        f"{sanitized_count} sanitized) across {len(rules)} rule(s)"
+        f"{sanitized_count} sanitized) across {len(rules)} rule(s); risk_score={risk_score}"
         if findings
         else f"No taint findings across {len(rules)} rule(s)"
     )
@@ -203,6 +211,7 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
                         "errors": high_count,
                         "warnings": medium_count,
                         "sanitized": sanitized_count,
+                        "risk_score": risk_score,
                     },
                     **envelope_kwargs,
                 )

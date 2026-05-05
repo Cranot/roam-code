@@ -616,6 +616,13 @@ class Indexer:
             return
         try:
             self._do_run(force, verbose=verbose, include_excluded=include_excluded)
+        except KeyboardInterrupt:
+            # redactedgraceful Ctrl-C: drop the lock so the user can
+            # rerun without manual cleanup. Periodic commits in
+            # _advance_processing_progress mean we keep what's been
+            # processed; the indexer is incremental and resumes safely.
+            self._log("Indexing interrupted. Lock released; rerun `roam index` to resume.")
+            raise
         finally:
             _quiet_mode = False
             _release_index_lock(lock_path)
@@ -701,6 +708,10 @@ class Indexer:
             pass
 
     def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
+        # Prefetched cache hit (redactedparallel I/O prefetch).
+        cache = getattr(self, "_source_cache", None)
+        if cache is not None and rel_path in cache:
+            return cache.pop(rel_path)
         try:
             with open(full_path, "rb") as f:
                 return f.read()
@@ -708,6 +719,37 @@ class Indexer:
             if verbose:
                 self._log(f"  Warning: Could not read {rel_path}: {e}")
             return None
+
+    def _prefetch_sources(self, files_to_process, verbose: bool) -> None:
+        """Pre-read source bytes into memory in parallel.
+
+        redactedopt-in via ``ROAM_PARALLEL_INDEX=1``. File I/O dominates
+        on cold caches (network drives, OneDrive, etc.). A thread pool
+        eliminates that wait without touching the (serial) DB write path.
+        Bytes are stored on ``self._source_cache`` and consumed by
+        ``_read_index_source`` so the rest of the pipeline is unchanged.
+        """
+        if os.environ.get("ROAM_PARALLEL_INDEX", "").strip() not in {"1", "true", "yes"}:
+            return
+        from concurrent.futures import ThreadPoolExecutor
+
+        def _read(rel_path: str) -> tuple[str, bytes | None]:
+            full_path = self.root / rel_path
+            try:
+                with open(full_path, "rb") as f:
+                    return rel_path, f.read()
+            except OSError:
+                return rel_path, None
+
+        max_workers = min(32, (os.cpu_count() or 4) * 2)
+        cache: dict[str, bytes] = {}
+        with ThreadPoolExecutor(max_workers=max_workers) as ex:
+            for rel_path, data in ex.map(_read, list(files_to_process)):
+                if data is not None:
+                    cache[rel_path] = data
+        self._source_cache = cache
+        if verbose:
+            self._log(f"  Prefetched {len(cache)} source files in parallel")
 
     def _insert_file_record(
         self, conn, full_path: Path, rel_path: str, language: str | None, source: bytes
@@ -810,6 +852,7 @@ class Indexer:
         all_references = []
         file_id_by_path = {}
         total = len(files_to_process)
+        self._prefetch_sources(files_to_process, verbose)
         bar_ctx, bar_obj = self._start_processing_progress(total)
 
         try:

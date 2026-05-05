@@ -138,6 +138,30 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     conn.execute("PRAGMA foreign_keys=ON")
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
+
+    # redactedopt-in query timeout. ``ROAM_QUERY_TIMEOUT_S=N``
+    # installs a progress handler that interrupts queries running
+    # past N seconds. SQLite raises ``OperationalError: interrupted``
+    # so callers can either retry with a tighter scope or surface a
+    # structured error. Skipped when the env var is absent so the
+    # default behaviour is unchanged.
+    timeout_str = os.environ.get("ROAM_QUERY_TIMEOUT_S", "").strip()
+    if timeout_str:
+        try:
+            timeout_s = float(timeout_str)
+        except ValueError:
+            timeout_s = 0.0
+        if timeout_s > 0:
+            import time as _time
+
+            deadline = _time.monotonic() + timeout_s
+
+            def _interrupter():
+                # Returning non-zero from progress handler aborts the query.
+                return 1 if _time.monotonic() > deadline else 0
+
+            # 1000 vops between callbacks — cheap and bounded.
+            conn.set_progress_handler(_interrupter, 1000)
     return conn
 
 

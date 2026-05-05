@@ -185,8 +185,13 @@ def _load_gate_config() -> dict:
     help="Filter out framework/boilerplate symbols from god components and bottlenecks",
 )
 @click.option("--gate", is_flag=True, help="Run quality gate checks (exit 5 on failure)")
+@click.option(
+    "--explain",
+    is_flag=True,
+    help="Show how the 0-100 score decomposes into category contributions (Pass 34).",
+)
 @click.pass_context
-def health(ctx, no_framework, gate):
+def health(ctx, no_framework, gate, explain):
     """Show code health: cycles, god components, bottlenecks."""
     json_mode = ctx.obj.get("json") if ctx.obj else False
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
@@ -460,6 +465,25 @@ def health(ctx, no_framework, gate):
         log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
         health_score = max(0, min(100, int(100 * math.exp(log_score))))
 
+        # redactedrecord per-factor contributions so --explain can show
+        # WHY the score is what it is. Each factor's "loss" (1 - h) is
+        # what's pulling the score down; the weight scales the impact.
+        _factor_names = ["tangle_ratio", "god_components", "bottlenecks", "layer_violations", "file_health"]
+        if len(_health_factors) > len(_factor_names):
+            _factor_names.append("imported_coverage")
+        score_breakdown = []
+        for (h, w), name in zip(_health_factors, _factor_names):
+            loss_pp = round((1 - h) * w * 100, 1)
+            score_breakdown.append(
+                {
+                    "factor": name,
+                    "health": round(h, 3),
+                    "weight": round(w, 2),
+                    "loss_pp": loss_pp,
+                }
+            )
+        score_breakdown.sort(key=lambda b: b["loss_pp"], reverse=True)
+
         # Phase-3 — name the dominant issue category. The four
         # category counts (cycles, god_components, bottlenecks,
         # layer_violations) lead the user at a fix; the largest is
@@ -700,6 +724,7 @@ def health(ctx, no_framework, gate):
                 imported_coverage_files=coverage_import.get("files_with_coverage", 0),
                 imported_covered_lines=coverage_import.get("covered_lines", 0),
                 imported_coverable_lines=coverage_import.get("coverable_lines", 0),
+                score_breakdown=score_breakdown,
                 framework_filtered=filtered_count,
                 actionable_count=actionable_count,
                 utility_count=utility_count,
@@ -765,6 +790,15 @@ def health(ctx, no_framework, gate):
         if _idx_status and not _idx_status.get("fresh"):
             click.echo(f"NOTE: {_idx_status['hint']}\n")
         click.echo(f"VERDICT: {verdict}\n")
+        # redactedwhen --explain, decompose the score before everything
+        # else so the user understands which factor is dragging it down.
+        if explain:
+            click.echo("=== Score Breakdown (sorted by impact) ===")
+            click.echo("Factor               Health  Weight  Loss (pp)")
+            click.echo("-------------------  ------  ------  ---------")
+            for b in score_breakdown:
+                click.echo(f"{b['factor']:<19}  {b['health']:>6.3f}  {b['weight']:>6.2f}  {b['loss_pp']:>9.1f}")
+            click.echo()
         issue_count = len(actionable_cycles) + len(god_items) + len(bn_items) + len(violations)
         parts = []
         if formatted_cycles:

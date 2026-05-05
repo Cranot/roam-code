@@ -24,7 +24,7 @@ from tests.conftest import make_src_project as _make_project
 class TestRecipes:
     def test_v12_recipe_set(self):
         names = {r.name for r in RECIPES}
-        # The v12.0 expanded set + v12.8 fixture-impact recipe
+        # The v12.0 expanded set + v12.8 fixture-impact + v12.15 (Pass 22)
         assert names == {
             # First batch
             "safe-delete-check",
@@ -42,12 +42,24 @@ class TestRecipes:
             "architecture-debt",
             # v12.8 — pytest fixture impact
             "fixture-impact",
+            # v12.15 / redactedagent workflow recipes
+            "trace-bug",
+            "who-owns",
+            "what-changed",
+            "audit-security",
+            "explore-impact",
+            "find-similar",
+            "why-this-exists",
+            "check-pr",
+            "explore-tests",
+            "dependency-update",
+            "visualize-architecture",
         }
 
     def test_recipe_count(self):
         # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 13
+        assert len(RECIPES) == 24
 
     def test_readme_recipe_count_matches_registry(self):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")

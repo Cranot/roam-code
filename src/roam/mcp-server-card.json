@@ -2,8 +2,8 @@
   "$schema": "https://schemas.modelcontextprotocol.io/server-card/v1",
   "name": "roam-code",
   "display_name": "roam — instant codebase intelligence",
-  "version": "12.14",
-  "description": "Architectural sight for AI agents before they edit. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 122 MCP tools, 10 resources, 5 prompts, 27 languages. 100% local, zero API keys.",
+  "version": "12.17",
+  "description": "Architectural sight for AI agents before they edit. Pre-indexes symbols, call graphs, dependencies, architecture layers, and git history into a local SQLite DB. 123 MCP tools, 10 resources, 5 prompts, 27 languages. 100% local, zero API keys.",
   "vendor": {
     "name": "Cranot",
     "url": "https://github.com/Cranot"
@@ -51,15 +51,15 @@
   },
   "capabilities": {
     "tools": {
-      "total": 122,
+      "total": 123,
       "presets": {
-        "core": 35,
+        "core": 36,
         "review": 50,
         "refactor": 60,
         "debug": 55,
         "architecture": 70,
         "compliance": 14,
-        "full": 122
+        "full": 123
       },
       "tasks_api": {
         "supported": true,

@@ -552,3 +552,112 @@ def is_clone_of_cmd(ctx, name: str) -> None:
     with open_db(readonly=True) as conn:
         result = oracle_is_clone_of(conn, name)
     _emit(ctx, "is-clone-of", result, name=name)
+
+
+@oracle.command("batch")
+@click.option(
+    "--input",
+    "input_path",
+    type=str,
+    default="-",
+    help='JSONL file (default: "-" for stdin). Each line: {"oracle": "symbol-exists", "args": {...}}',
+)
+@click.pass_context
+def oracle_batch_cmd(ctx, input_path: str) -> None:
+    """redactedrun a stream of oracle queries from JSONL.
+
+    \b
+    Each input line is a JSON object with:
+      ``oracle``: name (symbol-exists | route-exists | is-test-only |
+                   is-reachable-from-entry | is-clone-of)
+      ``args``: dict of named arguments to pass through
+
+    Emits one JSON envelope with ``results`` array. Exit 0 always —
+    individual oracle failures are surfaced as ``{"error": ...}`` rows.
+    Useful for fleet-style pre-flight: check 50 symbols at once
+    instead of paying 50× MCP round-trips.
+    """
+    import json
+    import sys as _sys
+
+    from roam.output.formatter import json_envelope, to_json
+
+    ensure_index()
+
+    if input_path == "-":
+        stream = _sys.stdin
+        close_on_exit = False
+    else:
+        stream = open(input_path, encoding="utf-8")
+        close_on_exit = True
+
+    results = []
+    try:
+        for line_no, raw in enumerate(stream, 1):
+            raw = raw.strip()
+            if not raw:
+                continue
+            try:
+                spec = json.loads(raw)
+            except Exception as exc:
+                results.append({"line": line_no, "error": f"invalid JSON: {exc}"})
+                continue
+            name = spec.get("oracle", "").strip()
+            args = spec.get("args") or {}
+            try:
+                with open_db(readonly=True) as conn:
+                    if name == "symbol-exists":
+                        r = oracle_symbol_exists(conn, args["name"])
+                    elif name == "route-exists":
+                        r = oracle_route_exists(conn, args["path"])
+                    elif name == "is-test-only":
+                        r = oracle_is_test_only(conn, args["name"])
+                    elif name == "is-reachable-from-entry":
+                        r = oracle_is_reachable_from_entry(conn, args["name"], max_hops=int(args.get("max_hops", 10)))
+                    elif name == "is-clone-of":
+                        r = oracle_is_clone_of(conn, args["name"])
+                    else:
+                        results.append({"line": line_no, "error": f"unknown oracle '{name}'"})
+                        continue
+                results.append(
+                    {
+                        "line": line_no,
+                        "oracle": name,
+                        "args": args,
+                        "answer": r.value,
+                        "reason": r.reason,
+                        "reason_class": r.reason_class,
+                        "confidence": r.confidence,
+                    }
+                )
+            except KeyError as exc:
+                results.append({"line": line_no, "error": f"missing arg: {exc}"})
+            except Exception as exc:
+                results.append({"line": line_no, "error": f"{type(exc).__name__}: {exc}"})
+    finally:
+        if close_on_exit:
+            stream.close()
+
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    summary = {
+        "verdict": f"{len(results)} oracle queries processed",
+        "count": len(results),
+    }
+    if json_mode:
+        click.echo(to_json(json_envelope("oracle.batch", summary=summary, results=results)))
+        return
+    click.echo(f"VERDICT: {summary['verdict']}")
+    click.echo()
+    click.echo(f"{'#':>4}  {'Oracle':<24}  {'Answer':<6}  Reason")
+    click.echo(f"{'-' * 4}  {'-' * 24}  {'-' * 6}  {'-' * 30}")
+    for r in results:
+        if "error" in r:
+            click.echo(f"{r.get('line', 0):>4}  {'(error)':<24}  {'-':<6}  {r['error']}")
+            continue
+        if r["answer"] is True:
+            ans = "yes"
+        elif r["answer"] is False:
+            ans = "no"
+        else:
+            ans = "?"
+        click.echo(f"{r['line']:>4}  {r['oracle']:<24}  {ans:<6}  {r['reason'][:40]}")

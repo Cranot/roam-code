@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 150 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 167 specialised commands are advanced surface for specialised workflows.
 
-*155 commands · 122 MCP tools · 27 languages · 100% local · zero API keys*
+*172 commands · 123 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -98,7 +98,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **155 CLI commands, 122 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **155 CLI commands, 123 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -269,7 +269,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 150 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **155 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 167 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **172 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -300,6 +300,23 @@ roam health
 | `roam mcp-setup <platform>` | Generate MCP config snippets for AI platforms: claude-code, cursor, windsurf, vscode, gemini-cli, codex-cli |
 | `roam ci-setup [--platform P] [--write]` | Generate CI/CD pipeline config (GitHub Actions, GitLab CI, Azure Pipelines, Jenkins, Bitbucket) with SARIF + quality gates |
 | `roam adrs [--status S] [--limit N]` | Discover Architecture Decision Records, link to affected code modules, show status and coverage |
+| `roam plugins` | List discovered plugins (commands, detectors, language extractors) registered via `ROAM_PLUGIN_MODULES` or entry points |
+| `roam index-stats` | Report .roam index size, row counts, and SQLite fragmentation; hints when VACUUM or `roam reset` is overdue |
+| `roam test-pyramid` | Count tests by kind (unit/integration/e2e/smoke) using path + filename heuristics; flags inverted pyramids |
+| `roam telemetry` | Surface the opt-in local telemetry ring buffer (slowest + recent calls); enable via `ROAM_TELEMETRY_LOCAL=1` |
+| `roam orphan-imports` | List Python imports that don't resolve to any indexed module or installed package |
+| `roam changelog [--suggest]` | List commits since the last tag, optionally as a Conventional-Commits-bucketed markdown CHANGELOG draft |
+| `roam graph-export [--format graphml\|dot\|jsonl]` | Export the symbol or file dependency graph for external tooling (Gephi, Cytoscape, custom analyses) |
+| `roam help-search <query>` | Fuzzy match across every command's name + help text (replaces grepping `--help-all` output) |
+| `roam stats` | Aggregate metrics over the index: count by language, file role, kind, plus recent commit activity |
+| `roam timeline <symbol>` | Chronological commits that touched the file owning the symbol — author, date, lines added/removed |
+| `roam pr-prep [<range>]` | One-shot pre-PR fitness check that bundles diff + critique + pr-risk into one envelope |
+| `roam why-fail <test>` | Find recently-changed symbols transitively reachable from a failing test |
+| `roam recommend <symbol>` | Surface related symbols using call-graph + co-change + clone signals |
+| `roam graph-stats` | Graph-level invariants: density, weak components, non-trivial cycles, top inbound symbols |
+| `roam api [--scope <dir>]` | List the public API surface (exported public symbols + signatures) |
+| `roam exit-codes` | List every roam exit code with its meaning |
+| `roam version [--check]` | Show installed version; with `--check` also queries PyPI for newer releases |
 
 ### Daily Workflow
 
@@ -312,7 +329,7 @@ roam health
 | `roam retrieve <task> [--budget N] [--k N] [--seed-files PATH]` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget |
 | `roam critique [--input DIFF] [--intent TEXT] [--high-callers N]` | Verify a patch against the graph: clones-not-edited + blast radius + intent-vs-semantic-diff. Pipe `git diff` in. Exit 5 on high severity. |
 | `roam fleet plan <goal> [--n-agents N] [--adapter raw\|composio\|copilot]` | Graph-aware planner: Louvain partition + co-change + PageRank anchors → `.roam-fleet.json` for Composio/Copilot CLI/raw. |
-| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 13-recipe registry with phase, review-lens, gate, and follow-up metadata — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
+| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 24-recipe registry with phase, review-lens, gate, and follow-up metadata — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
 | `roam workflow [RECIPE] [--list] [--query TEXT]` | Inspect a recipe DAG, review lenses, gates, rendered command arguments, and follow-up commands without running the workflow. |
 | `roam taint [--rules-dir PATH] [--rule NAME] [--rules-pack PACK] [--ci]` | Graph-reach taint analysis with OpenVEX-correct VEX justifications. YAML rule packs (10 starter packs: sqli, xss, ssrf, path-traversal, command-injection, deserialization, open-redirect, urllib, socketio, fileupload). |
 | `roam cga emit [--include-taint] [--sign --key]` | Code Graph Attestation — in-toto v1 statement with `roam-code.dev/CodeGraph/v1` predicate, Merkle root + edge bundle digest. `--include-taint` embeds OpenVEX-shaped reachability claims from `roam taint`. `--sign` signs with cosign (graceful skip if absent); `roam cga verify` round-trips both predicate digest and cosign signature. |
@@ -912,7 +929,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 122)</strong></summary>
+<summary><strong>MCP tool list (all 123)</strong></summary>
 
 | Tool | Description |
 |------|-------------|
@@ -1035,6 +1052,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_reindex` | Refresh or force-rebuild the index with task-mode support |
 | `roam_reset` | Reset the roam index and cached data |
 | `roam_clean` | Remove stale or orphaned index entries |
+| `roam_catalog` | Machine-readable list of every registered MCP tool with capability flags (read_only / destructive / core) |
 | `roam_batch_search` | Batch symbol search: run multiple pattern queries in a single call |
 | `roam_batch_get` | Batch context retrieval: fetch multiple symbols/files in a single call |
 | `roam_dev_profile` | Developer productivity profile: commit patterns, specialization, and impact |
@@ -1647,7 +1665,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 155 canonical CLI commands and 122 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 155 canonical CLI commands and 123 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

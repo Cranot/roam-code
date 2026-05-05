@@ -376,6 +376,271 @@ RECIPES: list[Recipe] = [
         followups=("roam fingerprint", "roam health --json"),
         gates=("Stop on new cycles", "Extract boundaries before moving highly coupled modules"),
     ),
+    # 12.15 — recipe expansion. Cover the agent workflows that
+    # showed up repeatedly in dogfood but weren't classified.
+    Recipe(
+        name="trace-bug",
+        intent="Diagnose a failing test, error, or bug back to its root cause",
+        examples=(
+            "why is my test failing",
+            "trace this exception to its source",
+            "debug this error",
+            "what's causing this bug",
+        ),
+        keywords=("debug", "bug", "error", "failing", "broken", "crash", "exception", "traceback"),
+        commands=(
+            ("diagnose", ("{symbol}",)),
+            ("trace", ("{symbol}",)),
+            ("affected-tests", ("{symbol}",)),
+        ),
+        summary=(
+            "Risk-ranked upstream/downstream suspects, dependency paths, and the "
+            "tests that exercise the symbol — three lenses on the same bug."
+        ),
+        phase="diagnose",
+        perspectives=("root-cause", "execution-path", "test-coverage"),
+        followups=("roam context {symbol}", "roam diff"),
+        gates=("Confirm reproduction before changing anything",),
+    ),
+    Recipe(
+        name="who-owns",
+        intent="Identify the human owners or expert authors of a symbol or area",
+        examples=(
+            "who owns this code",
+            "who should review my change to UserSession",
+            "who is the expert on auth",
+            "find the maintainer",
+        ),
+        keywords=("owner", "owns", "expert", "maintainer", "author", "review", "loop in"),
+        commands=(
+            ("owner", ("{symbol}",)),
+            ("suggest-reviewers", ()),
+            ("bus-factor", ()),
+        ),
+        summary=(
+            "Code-ownership map (CODEOWNERS + git churn) plus suggested reviewers "
+            "and bus-factor warnings. Use to route changes through the right humans."
+        ),
+        phase="ownership",
+        perspectives=("ownership", "review-routing", "bus-factor"),
+        followups=("roam codeowners --check", "roam dev-profile <author>"),
+        gates=("Loop in original author when bus-factor is 1",),
+    ),
+    Recipe(
+        name="what-changed",
+        intent="Summarise recent activity in a file, symbol, or directory",
+        examples=(
+            "what changed in this file recently",
+            "show recent commits to auth.py",
+            "what's the history of UserSession",
+            "who last touched this",
+        ),
+        keywords=("recent", "history", "commits", "lately", "last week", "last month", "what changed"),
+        commands=(
+            ("weather", ()),
+            ("trends", ("--days", "30")),
+        ),
+        summary=("Hot file weather plus 30-day trend snapshot. Use to spot churn spikes before reviewing a PR."),
+        phase="discover",
+        perspectives=("churn", "velocity", "regression-risk"),
+        followups=("roam diagnose <symbol>", "roam pr-risk"),
+        gates=("Re-run trends weekly to track movement",),
+    ),
+    Recipe(
+        name="audit-security",
+        intent="Run a security audit: secrets, taint flows, dependency vulnerabilities",
+        examples=(
+            "audit security",
+            "any vulnerabilities here",
+            "find secrets and SQLi",
+            "check for security issues",
+        ),
+        keywords=("security", "audit", "vulnerability", "vuln", "secret", "taint", "sqli", "xss"),
+        commands=(
+            ("secrets", ()),
+            ("taint", ()),
+            ("vulns", ()),
+            ("supply-chain", ()),
+        ),
+        summary=(
+            "Four parallel security passes: secret leakage, taint reachability, "
+            "known-CVE mapping, supply-chain trust. Treat any HIGH severity "
+            "as a release blocker."
+        ),
+        phase="security",
+        perspectives=("secrets", "data-flow", "supply-chain", "vulnerability-reachability"),
+        followups=("roam taint --rules-pack sqli", "roam cga emit --include-taint"),
+        gates=("Stop on any HIGH severity finding",),
+    ),
+    Recipe(
+        name="explore-impact",
+        intent="Predict the blast radius and risk of an upcoming change",
+        examples=(
+            "what will break if I change UserSession",
+            "predict the impact of editing auth.py",
+            "blast radius of this change",
+            "is this change risky",
+        ),
+        keywords=("impact", "blast", "break", "predict", "ripple", "risky"),
+        commands=(
+            ("impact", ("{symbol}",)),
+            ("affected-tests", ("{symbol}",)),
+            ("preflight", ("{symbol}",)),
+        ),
+        summary=(
+            "Transitive blast radius (PageRank-personalized), test coverage, "
+            "and the unified preflight verdict — three lenses on one change."
+        ),
+        phase="scope",
+        perspectives=("blast-radius", "test-coverage", "risk"),
+        followups=("roam closure {symbol}", "roam diff"),
+        gates=("Stop on CRITICAL preflight risk", "Cover all impacted tests before merging"),
+    ),
+    Recipe(
+        name="find-similar",
+        intent="Find code that duplicates or closely resembles a target",
+        examples=(
+            "find duplicates of this function",
+            "are there similar implementations of UserSession",
+            "show me clones",
+            "what code looks like this",
+        ),
+        keywords=("duplicate", "clone", "similar", "copy", "redundant", "dedup"),
+        commands=(
+            ("clones", ("--threshold", "0.7")),
+            ("duplicates", ()),
+        ),
+        summary=(
+            "AST-hash clone detection + lexical duplicate finder. Use to consolidate copy-paste before a refactor."
+        ),
+        phase="cleanup",
+        perspectives=("clone-detection", "deduplication", "consolidation"),
+        followups=("roam suggest-refactoring", "roam plan-refactor"),
+        gates=("Confirm tests still pass after consolidation",),
+    ),
+    Recipe(
+        name="why-this-exists",
+        intent="Understand why a piece of code exists — purpose, history, role",
+        examples=(
+            "why does this function exist",
+            "what is UserSession for",
+            "explain this code",
+            "purpose of handle_login",
+        ),
+        keywords=("why", "purpose", "what for", "explain", "describe", "role"),
+        commands=(
+            ("why", ("{symbol}",)),
+            ("symbol", ("{symbol}",)),
+            ("hover", ("{symbol}",)),
+        ),
+        summary=(
+            "Architectural role classification, full symbol metadata, and a "
+            "compact one-line summary — three views on one symbol's purpose."
+        ),
+        phase="understand",
+        perspectives=("role", "metadata", "summary"),
+        followups=("roam context {symbol}", "roam trace <caller> {symbol}"),
+        gates=("Don't repeat already-known intent — focus on unstated rationale",),
+    ),
+    Recipe(
+        name="check-pr",
+        intent="Run a full pre-merge review on a pull request",
+        examples=(
+            "review this PR",
+            "is my pull request ready to merge",
+            "audit the diff",
+            "pre-merge check",
+        ),
+        keywords=("pr", "pull request", "merge", "ship", "review", "ready"),
+        commands=(
+            ("pr-risk", ()),
+            ("pr-diff", ()),
+            ("breaking", ()),
+        ),
+        summary=(
+            "Risk score (with driver named), structural diff impact, and "
+            "breaking-change detection. Pair with `roam critique` for the "
+            "graph-grounded patch verifier."
+        ),
+        phase="review",
+        perspectives=("risk-score", "structural-diff", "breaking-changes"),
+        followups=("roam critique", "roam suggest-reviewers"),
+        gates=("Stop on HIGH risk score", "Stop on any breaking change without major version bump"),
+    ),
+    Recipe(
+        name="explore-tests",
+        intent="Map test coverage, gaps, and orphaned tests",
+        examples=(
+            "show test coverage",
+            "find untested code",
+            "what tests exercise this",
+            "are there orphan tests",
+        ),
+        keywords=("test", "coverage", "untested", "tests", "fixtures"),
+        commands=(
+            ("test-map", ()),
+            ("coverage-gaps", ("--gate-pattern", ".*")),
+            ("affected-tests", ("{symbol}",)),
+        ),
+        summary=(
+            "Source↔test mapping, coverage gaps for the gate pattern, "
+            "and the test set that exercises a specific symbol."
+        ),
+        phase="testing",
+        perspectives=("coverage", "test-discovery", "untested-paths"),
+        followups=("roam test-scaffold {symbol}", "roam pytest-fixtures"),
+        gates=("Cover every gate-protected entry point",),
+    ),
+    Recipe(
+        name="dependency-update",
+        intent="Assess the safety of upgrading or removing a dependency",
+        examples=(
+            "is it safe to upgrade flask",
+            "what depends on requests",
+            "remove this package",
+            "audit this dependency",
+        ),
+        keywords=("upgrade", "depend", "package", "library", "version", "lock", "remove"),
+        commands=(
+            ("supply-chain", ()),
+            ("vulns", ()),
+            ("vuln-reach", ()),
+        ),
+        summary=(
+            "Dependency tree + known-CVE mapping + reachability. The "
+            "reachability layer turns a 'CVE in transitive dep' alert into "
+            "an actionable 'this CVE is reachable from your code'."
+        ),
+        phase="dependency",
+        perspectives=("supply-chain", "vulnerability", "reachability"),
+        followups=("roam sbom --format cyclonedx", "roam cga emit"),
+        gates=("Block upgrades that introduce reachable HIGH CVEs",),
+    ),
+    Recipe(
+        name="visualize-architecture",
+        intent="Generate a diagram of the architecture, layers, or a focus area",
+        examples=(
+            "show me an architecture diagram",
+            "draw the layers",
+            "visualize the auth subsystem",
+            "diagram of UserSession's neighborhood",
+        ),
+        keywords=("diagram", "visualize", "draw", "graph", "mermaid", "picture", "layout"),
+        commands=(
+            ("visualize", ()),
+            ("layers", ()),
+            ("clusters", ()),
+        ),
+        summary=(
+            "Mermaid architecture diagram + topological layer breakdown + "
+            "Louvain cluster grouping. Use the diagram in PR descriptions "
+            "or design documents."
+        ),
+        phase="architecture",
+        perspectives=("structure", "layers", "clusters"),
+        followups=("roam visualize --focus <symbol>", "roam fingerprint"),
+        gates=("Diagrams complement reading the code, they don't replace it",),
+    ),
 ]
 
 

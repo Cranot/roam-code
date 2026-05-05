@@ -12,8 +12,15 @@ from roam.output.formatter import json_envelope, to_json
 @click.command("reset")
 @click.option("--force", is_flag=True, default=False, help="Required to confirm destructive reset")
 @click.option("--root", default=".", help="Project root")
+@click.option(
+    "--dry-run",
+    "dry_run",
+    is_flag=True,
+    default=False,
+    help="redactedpreview the reset (db path + size) without deleting.",
+)
 @click.pass_context
-def reset(ctx, force, root):
+def reset(ctx, force, root, dry_run):
     """Delete the index DB and rebuild from scratch.
 
     Requires --force to confirm the destructive operation. Unlike ``clean``
@@ -22,6 +29,35 @@ def reset(ctx, force, root):
     ``doctor`` to verify environment health after a reset.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+
+    project_root = find_project_root(root)
+    db_path_preview = get_db_path(project_root)
+    if dry_run:
+        # redactedpreview shouldn't require --force.
+        size_bytes = 0
+        if db_path_preview.exists():
+            try:
+                size_bytes = db_path_preview.stat().st_size
+            except OSError:
+                size_bytes = 0
+        verdict = (
+            f"would delete {db_path_preview} ({size_bytes} bytes)"
+            if size_bytes
+            else f"no index at {db_path_preview} — nothing to delete"
+        )
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "reset",
+                        summary={"verdict": verdict, "dry_run": True, "would_remove_bytes": size_bytes},
+                        db_path=str(db_path_preview),
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+        return
 
     if not force:
         if json_mode:
@@ -43,7 +79,6 @@ def reset(ctx, force, root):
         ctx.exit(EXIT_USAGE)
         return
 
-    project_root = find_project_root(root)
     db_path = get_db_path(project_root)
 
     removed = False

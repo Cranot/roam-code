@@ -45,8 +45,15 @@ from roam.output.formatter import (
     default=False,
     help="Write results to clone_pairs and clone_clusters tables for downstream consumers (roam critique, roam retrieve).",
 )
+@click.option(
+    "--by-file",
+    "by_file",
+    is_flag=True,
+    default=False,
+    help="redactedaggregate clone pairs into file-pair coupling, surface the top-coupled file pairs.",
+)
 @click.pass_context
-def clones(ctx, threshold, min_lines, scope, top, persist):
+def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
     """Detect near-duplicate code via AST structural hashing.
 
     Re-parses source files and compares function AST structures via subtree
@@ -94,6 +101,39 @@ def clones(ctx, threshold, min_lines, scope, top, persist):
             if clusters
             else "No structural clones detected"
         )
+
+        # redactedaggregate clone pairs into (file_a, file_b) coupling.
+        if by_file:
+            file_pair_counts: dict[tuple[str, str], int] = {}
+            for p in pairs:
+                key = tuple(sorted((p.file_a, p.file_b)))
+                file_pair_counts[key] = file_pair_counts.get(key, 0) + 1
+            file_pairs = [
+                {"file_a": a, "file_b": b, "clone_pairs": n}
+                for (a, b), n in sorted(file_pair_counts.items(), key=lambda x: -x[1])
+            ]
+            file_pairs_top = file_pairs[: max(1, top or 25)]
+            verdict = f"{len(file_pairs)} clone-coupled file pair(s) (top {len(file_pairs_top)} shown)"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "clones",
+                            summary={"verdict": verdict, "file_pairs_total": len(file_pairs)},
+                            file_pairs=file_pairs_top,
+                        )
+                    )
+                )
+                return
+            click.echo(f"VERDICT: {verdict}")
+            if not file_pairs:
+                return
+            click.echo()
+            click.echo(f"{'Pairs':>5}  File A  ↔  File B")
+            click.echo(f"{'-' * 5}  {'-' * 60}")
+            for fp in file_pairs_top:
+                click.echo(f"{fp['clone_pairs']:>5}  {fp['file_a']}  ↔  {fp['file_b']}")
+            return
 
         if json_mode:
             clusters_json = []

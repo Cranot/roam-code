@@ -17,6 +17,7 @@ import os
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+import pytest
 from click.testing import CliRunner
 
 # ---------------------------------------------------------------------------
@@ -141,6 +142,17 @@ class TestEnsureFreshIndex:
 
 class TestRunRoam:
     """Test the roam CLI runner wrapper."""
+
+    @pytest.fixture(autouse=True)
+    def _clear_result_cache(self):
+        """Pass 21 introduced a process-wide MCP result cache; clear it
+        between tests so mocked failures aren't shadowed by a prior
+        mocked success keyed on the same args."""
+        from roam.mcp_server import _ROAM_RESULT_CACHE
+
+        _ROAM_RESULT_CACHE.clear()
+        yield
+        _ROAM_RESULT_CACHE.clear()
 
     def test_inprocess_success(self):
         """In-process path (root='.') parses CliRunner JSON output."""
@@ -286,14 +298,16 @@ class TestToolDecorator:
             # v12.6 — Python pivot tools (2)
             "roam_py_types",
             "roam_py_modern",
+            # v12.16 / redactedmachine-readable tool catalog (1)
+            "roam_catalog",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35.
-        assert len(_CORE_TOOLS) == 35
+        # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36.
+        assert len(_CORE_TOOLS) == 36
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
@@ -418,8 +432,9 @@ class TestExpandToolset:
         from roam.mcp_server import expand_toolset
 
         result = expand_toolset(preset="core")
-        # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35 (+py-pivot 2).
-        assert result["tool_count"] == 35
+        # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35 (+py-pivot 2),
+        # v12.16=36 (+roam_catalog).
+        assert result["tool_count"] == 36
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

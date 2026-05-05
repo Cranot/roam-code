@@ -563,6 +563,62 @@ def is_test(path: str) -> bool:
     return False
 
 
+# 12.15 — sub-classify test files into unit / integration / e2e / smoke.
+# Used by commands that benefit from the distinction (affected-tests
+# could prioritise unit tests; coverage-gaps could weight e2e differently).
+# Path-pattern based — content-aware classification can layer on later.
+TEST_KIND_UNIT = "unit"
+TEST_KIND_INTEGRATION = "integration"
+TEST_KIND_E2E = "e2e"
+TEST_KIND_SMOKE = "smoke"
+TEST_KIND_UNKNOWN = "unknown"
+
+_TEST_KIND_PATH_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    # Most specific first.
+    (re.compile(r"(^|/)(e2e|end-to-end|cypress|playwright|selenium)/"), TEST_KIND_E2E),
+    (re.compile(r"(^|/)(integration|integ|int)/"), TEST_KIND_INTEGRATION),
+    (re.compile(r"(^|/)(unit)/"), TEST_KIND_UNIT),
+    (re.compile(r"(^|/)(smoke|sanity)/"), TEST_KIND_SMOKE),
+]
+_TEST_KIND_NAME_PATTERNS: list[tuple[re.Pattern[str], str]] = [
+    (re.compile(r"(?i)(^|[._-])(e2e|end[._-]to[._-]end)([._-]|$)"), TEST_KIND_E2E),
+    (re.compile(r"(?i)(^|[._-])(integration|integ)([._-]|$)"), TEST_KIND_INTEGRATION),
+    (re.compile(r"(?i)(^|[._-])(unit)([._-]|$)"), TEST_KIND_UNIT),
+    (re.compile(r"(?i)(^|[._-])(smoke|sanity)([._-]|$)"), TEST_KIND_SMOKE),
+]
+
+
+def classify_test_kind(path: str) -> str:
+    """Sub-classify a test file. Returns one of:
+    ``unit``, ``integration``, ``e2e``, ``smoke``, or ``unknown``.
+
+    Path-pattern based. Falls back to ``unknown`` when the test file
+    has no kind hint in its path or name (most repos that don't
+    organise by kind end up here, which is fine — agents can ignore
+    the field when it's unknown).
+
+    >>> classify_test_kind("tests/e2e/test_login.py")
+    'e2e'
+    >>> classify_test_kind("tests/integration/test_db.py")
+    'integration'
+    >>> classify_test_kind("test/test_auth.py")
+    'unknown'
+    >>> classify_test_kind("test_e2e_signup.py")
+    'e2e'
+    """
+    if not is_test(path):
+        return TEST_KIND_UNKNOWN
+    normalised = _normalise_path(path)
+    _dir, basename, _ext = _get_parts(normalised)
+    for pattern, kind in _TEST_KIND_PATH_PATTERNS:
+        if pattern.search(normalised):
+            return kind
+    for pattern, kind in _TEST_KIND_NAME_PATTERNS:
+        if pattern.search(basename):
+            return kind
+    return TEST_KIND_UNKNOWN
+
+
 def is_source(path: str) -> bool:
     """Check if a file is source code.
 

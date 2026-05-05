@@ -132,7 +132,12 @@ def _format_explanation_text(expl: dict) -> list[str]:
     """Format an explanation dict into human-readable text lines."""
     lines = []
     bm25 = expl.get("bm25_score")
-    if bm25 is not None:
+    pagerank = expl.get("pagerank")
+    if bm25 is not None and pagerank is not None:
+        # redactedsurface the structural boost so the user can see
+        # whether ordering is BM25-driven or rerank-driven.
+        lines.append(f"  score:  BM25={bm25:.4f}  PageRank={pagerank:.6f}")
+    elif bm25 is not None:
         lines.append(f"  score:  BM25={bm25:.4f}")
     matched = expl.get("matched_fields", [])
     if matched:
@@ -182,8 +187,27 @@ def _format_explanation_text(expl: dict) -> list[str]:
     help="Shortcut for ``--decorator pytest.fixture`` (Python pivot v12.4-iter).",
 )
 @click.option("--explain", is_flag=True, help="Show score breakdown for each result")
+@click.option(
+    "--mode",
+    type=click.Choice(["substring", "regex", "exact"], case_sensitive=False),
+    default="substring",
+    show_default=True,
+    help=(
+        "redactedmatch style: ``substring`` (default, LIKE %p%), "
+        "``regex`` (SQLite REGEXP via stdlib re), or ``exact`` "
+        "(name = pattern)."
+    ),
+)
+@click.option(
+    "--recent",
+    "recent_days",
+    type=int,
+    default=0,
+    show_default=True,
+    help="redactedboost results in files modified within N days (0 = no boost).",
+)
 @click.pass_context
-def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain):
+def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
     """Find symbols matching a name substring (case-insensitive).
 
     Unlike ``grep`` (which searches file contents) and ``search-semantic``
@@ -205,13 +229,37 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         )
     ensure_index()
     like_pattern = f"%{pattern}%"
+    mode_lower = (mode or "substring").lower()
     with open_db(readonly=True) as conn:
+        # redactedregister a REGEXP function so SQLite can route
+        # ``WHERE name REGEXP ?`` through Python's ``re`` module. Exact
+        # mode bypasses LIKE entirely. Substring mode (default) keeps
+        # the existing ``%p%`` semantics.
+        if mode_lower == "regex":
+            import re as _re
+
+            def _regexp(expr, val):
+                if val is None:
+                    return False
+                try:
+                    return _re.search(expr, val) is not None
+                except _re.error:
+                    return False
+
+            conn.create_function("REGEXP", 2, _regexp)
         # Python pivot v12.4-iter: filters MUST be in SQL, not Python
         # post-filter, otherwise rare-shape symbols (async, specific
         # decorator) get stripped by the LIMIT 50 before they can be
         # selected. Build the WHERE clause dynamically.
-        where_parts = ["s.name LIKE ? COLLATE NOCASE"]
-        params: list = [like_pattern]
+        if mode_lower == "regex":
+            where_parts = ["s.name REGEXP ?"]
+            params: list = [pattern]
+        elif mode_lower == "exact":
+            where_parts = ["s.name = ?"]
+            params: list = [pattern]
+        else:
+            where_parts = ["s.name LIKE ? COLLATE NOCASE"]
+            params: list = [like_pattern]
         if async_only:
             where_parts.append("s.is_async = 1")
         if fixtures_only:
@@ -230,16 +278,37 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             params.append(full_kind)
         where_sql = " AND ".join(where_parts)
         params.append(9999 if full else 50)
-        rows = conn.execute(
-            f"""
-            SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
-            FROM symbols s JOIN files f ON s.file_id = f.id
-            LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
-            WHERE {where_sql}
-            ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
-            """,
-            params,
-        ).fetchall()
+        # redactedrecency boost: when --recent N is set, add a
+        # synthetic ``recency_boost`` column (1 for files modified in the
+        # last N days, 0 otherwise) and add it to ORDER BY in front of
+        # PageRank. ``files.mtime`` is set during indexing.
+        if recent_days and recent_days > 0:
+            import time as _time
+
+            cutoff = _time.time() - recent_days * 86400
+            rows = conn.execute(
+                f"""
+                SELECT s.*, f.path as file_path,
+                       COALESCE(gm.pagerank, 0) as pagerank,
+                       CASE WHEN f.mtime >= ? THEN 1 ELSE 0 END AS recency_boost
+                FROM symbols s JOIN files f ON s.file_id = f.id
+                LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+                WHERE {where_sql}
+                ORDER BY recency_boost DESC, COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
+                """,
+                [cutoff, *params],
+            ).fetchall()
+        else:
+            rows = conn.execute(
+                f"""
+                SELECT s.*, f.path as file_path, COALESCE(gm.pagerank, 0) as pagerank
+                FROM symbols s JOIN files f ON s.file_id = f.id
+                LEFT JOIN graph_metrics gm ON s.id = gm.symbol_id
+                WHERE {where_sql}
+                ORDER BY COALESCE(gm.pagerank, 0) DESC, s.name LIMIT ?
+                """,
+                params,
+            ).fetchall()
 
         if not rows:
             suffix = f" of kind '{kind_filter}'" if kind_filter else ""
@@ -277,7 +346,12 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         explanations: dict[int, dict] = {}
         if explain:
             for r in rows:
-                explanations[r["id"]] = _get_explain_data(conn, r["id"], pattern)
+                expl = _get_explain_data(conn, r["id"], pattern)
+                # redactedaugment with the per-result PageRank so the
+                # user can see structural boost contribution alongside
+                # BM25.
+                expl["pagerank"] = round(r["pagerank"], 6) if r["pagerank"] else 0
+                explanations[r["id"]] = expl
 
         _search_verdict = f"{len(rows)} matches for '{pattern}'"
         if kind_filter:

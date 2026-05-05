@@ -151,6 +151,113 @@ def _bench_relevance_hint(regions, overrides=None) -> str:
     return ""
 
 
+def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) -> tuple[dict, list]:
+    """Run the check pipeline against a single diff. Returns (result, findings).
+
+    Pulled out of ``critique`` so ``--batch`` can iterate without
+    duplicating the check setup.
+    """
+    regions = parse_diff(diff_text)
+    effective_intent = intent_text
+    if effective_intent is None:
+        try:
+            proc = subprocess.run(
+                ["git", "log", "-1", "--pretty=%s"],
+                capture_output=True,
+                text=True,
+                encoding="utf-8",
+                errors="replace",
+                timeout=5,
+            )
+            if proc.returncode == 0:
+                effective_intent = proc.stdout.strip() or None
+        except (OSError, subprocess.SubprocessError):
+            effective_intent = None
+    with open_db(readonly=True) as conn:
+        changed_symbols = find_changed_symbols(conn, regions)
+        findings = []
+        findings.extend(check_clones_not_edited(conn, changed_symbols, regions))
+        findings.extend(check_impact(conn, changed_symbols, high_callers=high_callers))
+        if effective_intent:
+            findings.extend(check_intent_alignment(effective_intent, changed_symbols, regions))
+    result = aggregate(findings)
+    result["regions"] = regions
+    result["changed_symbols"] = changed_symbols
+    result["intent"] = effective_intent
+    return result, findings
+
+
+def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_mode: bool, token_budget: int) -> None:
+    """redactedreview every *.diff / *.patch in ``batch_dir``."""
+    from pathlib import Path as _Path
+
+    base = _Path(batch_dir)
+    diffs = sorted([*base.glob("*.diff"), *base.glob("*.patch")])
+    if not diffs:
+        from roam.output.errors import EMPTY_INPUT, structured_usage_error
+
+        raise structured_usage_error(EMPTY_INPUT, f"no *.diff or *.patch files found in {batch_dir}")
+    ensure_index()
+    per_file = []
+    high_count = 0
+    for diff_path in diffs:
+        try:
+            diff_text = diff_path.read_text(encoding="utf-8")
+        except OSError as exc:
+            per_file.append({"file": diff_path.name, "error": f"read failed: {exc}"})
+            continue
+        if not diff_text.strip() or not looks_like_unified_diff(diff_text):
+            per_file.append({"file": diff_path.name, "error": "not a unified diff"})
+            continue
+        result, _ = _critique_one(diff_text, high_callers, intent_text)
+        high_count += result["severity_breakdown"].get("high", 0)
+        per_file.append(
+            {
+                "file": diff_path.name,
+                "verdict": result["verdict"],
+                "changed_files": len(result["regions"]),
+                "changed_symbols": len(result["changed_symbols"]),
+                "findings": len(result["findings"]),
+                "severity_breakdown": result["severity_breakdown"],
+            }
+        )
+    summary = {
+        "verdict": (
+            f"{len(per_file)} diff(s) reviewed, {high_count} high-severity finding(s)"
+            if high_count == 0
+            else f"GATE FAIL — {high_count} high-severity finding(s) across {len(per_file)} diff(s)"
+        ),
+        "diff_count": len(per_file),
+        "high_severity_total": high_count,
+    }
+    if json_mode:
+        click.echo(
+            to_json(
+                json_envelope(
+                    "critique",
+                    summary=summary,
+                    budget=token_budget,
+                    diffs=per_file,
+                )
+            )
+        )
+    else:
+        click.echo(f"VERDICT: {summary['verdict']}")
+        click.echo()
+        click.echo(f"{'File':<40}  {'Findings':>8}  {'High':>4}  Verdict")
+        click.echo(f"{'-' * 40}  {'-' * 8}  {'-' * 4}  {'-' * 30}")
+        for entry in per_file:
+            if "error" in entry:
+                click.echo(f"{entry['file']:<40}  {'—':>8}  {'—':>4}  {entry['error']}")
+                continue
+            high = entry["severity_breakdown"].get("high", 0)
+            click.echo(f"{entry['file']:<40}  {entry['findings']:>8}  {high:>4}  {entry['verdict'][:30]}")
+    if high_count > 0:
+        from roam.exit_codes import GateFailureError
+
+        raise GateFailureError(f"batch critique: {high_count} high-severity finding(s)")
+
+
 @click.command()
 @click.option(
     "--input",
@@ -158,6 +265,13 @@ def _bench_relevance_hint(regions, overrides=None) -> str:
     type=click.Path(exists=True, dir_okay=False),
     default=None,
     help="Read diff from a file instead of stdin.",
+)
+@click.option(
+    "--batch",
+    "batch_dir",
+    type=click.Path(exists=True, file_okay=False, dir_okay=True),
+    default=None,
+    help="redactedreview every *.diff/*.patch in this directory in one pass.",
 )
 @click.option(
     "--high-callers",
@@ -179,7 +293,7 @@ def _bench_relevance_hint(regions, overrides=None) -> str:
     ),
 )
 @click.pass_context
-def critique(ctx, input_path, high_callers, intent_text):
+def critique(ctx, input_path, batch_dir, high_callers, intent_text):
     """Verify a patch against the indexed graph.
 
     Pipe a unified diff in via stdin (``git diff | roam critique``) or
@@ -193,6 +307,14 @@ def critique(ctx, input_path, high_callers, intent_text):
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
+
+    if batch_dir:
+        if input_path:
+            from roam.output.errors import INVALID_OPTIONS, structured_usage_error
+
+            raise structured_usage_error(INVALID_OPTIONS, "--batch and --input are mutually exclusive")
+        _run_batch(batch_dir, high_callers, intent_text, json_mode, token_budget)
+        return
 
     if input_path:
         with open(input_path, encoding="utf-8") as fh:
