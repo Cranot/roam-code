@@ -198,6 +198,150 @@ def _normalize_patterns(patterns: list[str] | tuple[str, ...] | str | None) -> s
     return out
 
 
+def _table_available(conn, *names: str) -> bool:
+    """Cheap existence check on every table in ``names``."""
+    for name in names:
+        try:
+            conn.execute(f"SELECT 1 FROM {name} LIMIT 0")
+        except Exception:
+            return False
+    return True
+
+
+def _inter_source_to_sink_findings(conn, file_glob: str | None) -> list[dict]:
+    """Cross-function taint flows: a tainted source reaches a sink in
+    another function. Reads from ``taint_findings``."""
+    rows = conn.execute(
+        """
+        SELECT tf.source_type, tf.sink_type, tf.call_chain,
+               tf.chain_length, tf.confidence,
+               s1.name AS src_name, COALESCE(s1.qualified_name, s1.name) AS src_qname,
+               f1.path AS src_file, s1.line_start AS src_line,
+               s2.name AS sink_name, COALESCE(s2.qualified_name, s2.name) AS sink_qname,
+               f2.path AS sink_file, s2.line_start AS sink_line
+        FROM taint_findings tf
+        JOIN symbols s1 ON tf.source_symbol_id = s1.id
+        JOIN files f1 ON s1.file_id = f1.id
+        JOIN symbols s2 ON tf.sink_symbol_id = s2.id
+        JOIN files f2 ON s2.file_id = f2.id
+        WHERE tf.sanitized = 0
+        ORDER BY tf.confidence DESC
+        """
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        src_file = (row["src_file"] or "").replace("\\", "/")
+        sink_file = (row["sink_file"] or "").replace("\\", "/")
+        if file_glob and not _match_glob(src_file, file_glob) and not _match_glob(sink_file, file_glob):
+            continue
+        out.append(
+            {
+                "type": "inter_source_to_sink",
+                "symbol": row["src_qname"],
+                "file": src_file,
+                "line": row["src_line"],
+                "sink_symbol": row["sink_qname"],
+                "sink_file": sink_file,
+                "sink_line": row["sink_line"],
+                "source": row["source_type"],
+                "sink": row["sink_type"],
+                "chain_length": row["chain_length"],
+                "confidence": row["confidence"],
+                "reason": "cross-function taint: {} in {} -> {} in {} (depth {})".format(
+                    row["source_type"],
+                    row["src_qname"],
+                    row["sink_type"],
+                    row["sink_qname"],
+                    row["chain_length"],
+                ),
+            }
+        )
+    return out
+
+
+def _inter_unused_param_findings(conn, file_glob: str | None) -> list[dict]:
+    """Parameters that don't influence the return value or any sink."""
+    if not _table_available(conn, "taint_summaries"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT ts.symbol_id, ts.param_taints_return, ts.param_to_sink,
+               s.name, COALESCE(s.qualified_name, s.name) AS qname,
+               s.signature, f.path AS file_path, s.line_start
+        FROM taint_summaries ts
+        JOIN symbols s ON ts.symbol_id = s.id
+        JOIN files f ON s.file_id = f.id
+        WHERE ts.is_sanitizer = 0
+        """
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        fp = (row["file_path"] or "").replace("\\", "/")
+        if file_glob and not _match_glob(fp, file_glob):
+            continue
+        try:
+            ptr = json.loads(row["param_taints_return"] or "{}")
+            pts = json.loads(row["param_to_sink"] or "{}")
+        except Exception:
+            continue
+        params = _parse_param_names(row["signature"])
+        for idx, pname in enumerate(params):
+            sidx = str(idx)
+            if not ptr.get(sidx, False) and not pts.get(sidx):
+                out.append(
+                    {
+                        "type": "inter_unused_param",
+                        "symbol": row["qname"],
+                        "file": fp,
+                        "line": row["line_start"],
+                        "variable": pname,
+                        "reason": "parameter '{}' in {} has no dataflow effect (not in return, not in sink)".format(
+                            pname, row["qname"]
+                        ),
+                    }
+                )
+    return out
+
+
+def _inter_unused_return_findings(conn, file_glob: str | None) -> list[dict]:
+    """Return values that are computed but never reach a source."""
+    if not _table_available(conn, "taint_summaries", "symbol_metrics"):
+        return []
+    rows = conn.execute(
+        """
+        SELECT ts.symbol_id, s.name, COALESCE(s.qualified_name, s.name) AS qname,
+               f.path AS file_path, s.line_start
+        FROM taint_summaries ts
+        JOIN symbols s ON ts.symbol_id = s.id
+        JOIN files f ON s.file_id = f.id
+        JOIN symbol_metrics sm ON s.id = sm.symbol_id
+        WHERE sm.return_count > 0
+          AND ts.return_from_source = 0
+          AND ts.is_sanitizer = 0
+        """
+    ).fetchall()
+    out: list[dict] = []
+    for row in rows:
+        fp = (row["file_path"] or "").replace("\\", "/")
+        if file_glob and not _match_glob(fp, file_glob):
+            continue
+        caller_count = conn.execute(
+            "SELECT COUNT(*) FROM edges WHERE target_id = ? AND kind = 'calls'",
+            (row["symbol_id"],),
+        ).fetchone()[0]
+        if caller_count > 0:
+            out.append(
+                {
+                    "type": "inter_unused_return",
+                    "symbol": row["qname"],
+                    "file": fp,
+                    "line": row["line_start"],
+                    "reason": "return value of {} is computed but may not be used by callers".format(row["qname"]),
+                }
+            )
+    return out
+
+
 def _collect_inter_findings(
     conn,
     *,
@@ -206,147 +350,16 @@ def _collect_inter_findings(
     max_matches: int = 0,
 ) -> list[dict]:
     """Collect inter-procedural dataflow findings from taint analysis tables."""
-    findings: list[dict] = []
-
-    # Check if taint tables exist
-    try:
-        conn.execute("SELECT 1 FROM taint_findings LIMIT 0")
-    except Exception:
+    if not _table_available(conn, "taint_findings"):
         return []
 
+    findings: list[dict] = []
     if "inter_source_to_sink" in patterns:
-        rows = conn.execute(
-            """
-            SELECT tf.source_type, tf.sink_type, tf.call_chain,
-                   tf.chain_length, tf.confidence,
-                   s1.name AS src_name, COALESCE(s1.qualified_name, s1.name) AS src_qname,
-                   f1.path AS src_file, s1.line_start AS src_line,
-                   s2.name AS sink_name, COALESCE(s2.qualified_name, s2.name) AS sink_qname,
-                   f2.path AS sink_file, s2.line_start AS sink_line
-            FROM taint_findings tf
-            JOIN symbols s1 ON tf.source_symbol_id = s1.id
-            JOIN files f1 ON s1.file_id = f1.id
-            JOIN symbols s2 ON tf.sink_symbol_id = s2.id
-            JOIN files f2 ON s2.file_id = f2.id
-            WHERE tf.sanitized = 0
-            ORDER BY tf.confidence DESC
-            """
-        ).fetchall()
-        for row in rows:
-            src_file = (row["src_file"] or "").replace("\\", "/")
-            sink_file = (row["sink_file"] or "").replace("\\", "/")
-            if file_glob and not _match_glob(src_file, file_glob) and not _match_glob(sink_file, file_glob):
-                continue
-            findings.append(
-                {
-                    "type": "inter_source_to_sink",
-                    "symbol": row["src_qname"],
-                    "file": src_file,
-                    "line": row["src_line"],
-                    "sink_symbol": row["sink_qname"],
-                    "sink_file": sink_file,
-                    "sink_line": row["sink_line"],
-                    "source": row["source_type"],
-                    "sink": row["sink_type"],
-                    "chain_length": row["chain_length"],
-                    "confidence": row["confidence"],
-                    "reason": (
-                        "cross-function taint: {} in {} -> {} in {} (depth {})".format(
-                            row["source_type"],
-                            row["src_qname"],
-                            row["sink_type"],
-                            row["sink_qname"],
-                            row["chain_length"],
-                        )
-                    ),
-                }
-            )
-
+        findings.extend(_inter_source_to_sink_findings(conn, file_glob))
     if "inter_unused_param" in patterns:
-        try:
-            conn.execute("SELECT 1 FROM taint_summaries LIMIT 0")
-        except Exception:
-            pass
-        else:
-            rows = conn.execute(
-                """
-                SELECT ts.symbol_id, ts.param_taints_return, ts.param_to_sink,
-                       s.name, COALESCE(s.qualified_name, s.name) AS qname,
-                       s.signature, f.path AS file_path, s.line_start
-                FROM taint_summaries ts
-                JOIN symbols s ON ts.symbol_id = s.id
-                JOIN files f ON s.file_id = f.id
-                WHERE ts.is_sanitizer = 0
-                """
-            ).fetchall()
-            for row in rows:
-                fp = (row["file_path"] or "").replace("\\", "/")
-                if file_glob and not _match_glob(fp, file_glob):
-                    continue
-                try:
-                    ptr = json.loads(row["param_taints_return"] or "{}")
-                    pts = json.loads(row["param_to_sink"] or "{}")
-                except Exception:
-                    continue
-                params = _parse_param_names(row["signature"])
-                for idx, pname in enumerate(params):
-                    sidx = str(idx)
-                    if not ptr.get(sidx, False) and not pts.get(sidx):
-                        findings.append(
-                            {
-                                "type": "inter_unused_param",
-                                "symbol": row["qname"],
-                                "file": fp,
-                                "line": row["line_start"],
-                                "variable": pname,
-                                "reason": (
-                                    "parameter '{}' in {} has no dataflow effect (not in return, not in sink)".format(
-                                        pname, row["qname"]
-                                    )
-                                ),
-                            }
-                        )
-
+        findings.extend(_inter_unused_param_findings(conn, file_glob))
     if "inter_unused_return" in patterns:
-        try:
-            conn.execute("SELECT 1 FROM taint_summaries LIMIT 0")
-            conn.execute("SELECT 1 FROM symbol_metrics LIMIT 0")
-        except Exception:
-            pass
-        else:
-            rows = conn.execute(
-                """
-                SELECT ts.symbol_id, s.name, COALESCE(s.qualified_name, s.name) AS qname,
-                       f.path AS file_path, s.line_start
-                FROM taint_summaries ts
-                JOIN symbols s ON ts.symbol_id = s.id
-                JOIN files f ON s.file_id = f.id
-                JOIN symbol_metrics sm ON s.id = sm.symbol_id
-                WHERE sm.return_count > 0
-                  AND ts.return_from_source = 0
-                  AND ts.is_sanitizer = 0
-                """
-            ).fetchall()
-            for row in rows:
-                fp = (row["file_path"] or "").replace("\\", "/")
-                if file_glob and not _match_glob(fp, file_glob):
-                    continue
-                caller_count = conn.execute(
-                    "SELECT COUNT(*) FROM edges WHERE target_id = ? AND kind = 'calls'",
-                    (row["symbol_id"],),
-                ).fetchone()[0]
-                if caller_count > 0:
-                    findings.append(
-                        {
-                            "type": "inter_unused_return",
-                            "symbol": row["qname"],
-                            "file": fp,
-                            "line": row["line_start"],
-                            "reason": (
-                                "return value of {} is computed but may not be used by callers".format(row["qname"])
-                            ),
-                        }
-                    )
+        findings.extend(_inter_unused_return_findings(conn, file_glob))
 
     if max_matches > 0:
         findings = findings[:max_matches]
