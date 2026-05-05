@@ -114,8 +114,10 @@ def collect_symbol_metrics(
         if sm:
             result["complexity"] = sm["cognitive_complexity"] or 0
             result["loc"] = sm["line_count"] or 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
     # Optional imported coverage columns (safe on older DB schemas)
     try:
         cov = conn.execute(
@@ -126,8 +128,10 @@ def collect_symbol_metrics(
             result["coverage_pct"] = cov["coverage_pct"]
             result["covered_lines"] = cov["covered_lines"] or 0
             result["coverable_lines"] = cov["coverable_lines"] or 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
 
     # -- graph_metrics (pagerank, in_degree, out_degree, betweenness) --
     try:
@@ -140,8 +144,10 @@ def collect_symbol_metrics(
             result["fan_in"] = gm["in_degree"] or 0
             result["fan_out"] = gm["out_degree"] or 0
             result["betweenness"] = gm["betweenness"] or 0.0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
     # Optional SNA v2 columns (safe on older DB schemas)
     try:
         extra = conn.execute(
@@ -153,8 +159,10 @@ def collect_symbol_metrics(
             result["eigenvector"] = extra["eigenvector"] or 0.0
             result["clustering_coefficient"] = extra["clustering_coefficient"] or 0.0
             result["debt_score"] = extra["debt_score"] or 0.0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
 
     # -- edges (fallback fan-in / fan-out from raw edges) --
     if result["fan_in"] == 0 and result["fan_out"] == 0:
@@ -169,8 +177,10 @@ def collect_symbol_metrics(
             ).fetchone()
             result["fan_in"] = fi[0] if fi else 0
             result["fan_out"] = fo[0] if fo else 0
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_metrics:nested_query", _exc)
 
     # -- dead_code_risk: fan_in == 0 for non-entry-point symbols --
     sym_row = conn.execute(
@@ -195,8 +205,10 @@ def collect_symbol_metrics(
             if fs:
                 result["commits"] = fs["commit_count"] or 0
                 result["churn"] = fs["total_churn"] or 0
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_metrics:nested_query", _exc)
 
         # -- test files: count files with file_role='test' that reference
         #    the same file via file_edges --
@@ -209,8 +221,10 @@ def collect_symbol_metrics(
                 (file_id,),
             ).fetchone()
             result["test_files"] = tf[0] if tf else 0
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_metrics:nested_query", _exc)
 
         # -- co_change_count --
         try:
@@ -219,8 +233,10 @@ def collect_symbol_metrics(
                 (file_id, file_id),
             ).fetchone()
             result["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_metrics:nested_query", _exc)
 
         # Comprehension difficulty metrics (#71):
         # - information scatter: distinct files in 2-hop closure
@@ -361,8 +377,10 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
         if fs:
             commits = fs["commit_count"] or 0
             churn = fs["total_churn"] or 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
     try:
         cov = conn.execute(
             "SELECT coverage_pct, covered_lines, coverable_lines FROM file_stats WHERE file_id = ?",
@@ -372,8 +390,10 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
             coverage_pct = cov["coverage_pct"]
             covered_lines = cov["covered_lines"] or 0
             coverable_lines = cov["coverable_lines"] or 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
 
     # Test files referencing this file
     test_files = 0
@@ -386,8 +406,10 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
             (file_id,),
         ).fetchone()
         test_files = tf[0] if tf else 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
 
     # Co-change count
     co_change = 0
@@ -397,8 +419,10 @@ def collect_file_metrics(conn: sqlite3.Connection, file_id: int) -> dict:
             (file_id, file_id),
         ).fetchone()
         co_change = cc_row["total"] or 0 if cc_row else 0
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_metrics:metric_query", _exc)
 
     file_metrics = {
         "complexity": round(total_complexity, 1),

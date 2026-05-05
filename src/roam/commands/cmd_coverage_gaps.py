@@ -436,14 +436,29 @@ def coverage_gaps(
         return
 
     if not gate_names and not gate_pattern:
-        click.echo("VERDICT: missing required filter — pass --gate or --gate-pattern")
-        click.echo()
-        click.echo("  --gate NAME         single gate symbol (e.g. handle_login)")
-        click.echo("  --gate-pattern RE   regex over symbol names (e.g. '^auth_.*')")
-        click.echo()
-        click.echo("Examples:")
-        click.echo("  roam coverage-gaps --gate handle_payment")
-        click.echo("  roam coverage-gaps --gate-pattern '^validate_.*'")
+        verdict = "missing required filter — pass --gate or --gate-pattern"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "coverage-gaps",
+                        summary={"verdict": verdict, "error": "missing_filter"},
+                        usage={
+                            "--gate": "single gate symbol (e.g. handle_login)",
+                            "--gate-pattern": "regex over symbol names (e.g. '^auth_.*')",
+                        },
+                    )
+                )
+            )
+        else:
+            click.echo(f"VERDICT: {verdict}")
+            click.echo()
+            click.echo("  --gate NAME         single gate symbol (e.g. handle_login)")
+            click.echo("  --gate-pattern RE   regex over symbol names (e.g. '^auth_.*')")
+            click.echo()
+            click.echo("Examples:")
+            click.echo("  roam coverage-gaps --gate handle_payment")
+            click.echo("  roam coverage-gaps --gate-pattern '^validate_.*'")
         raise SystemExit(2)
 
     with open_db(readonly=True) as conn:
