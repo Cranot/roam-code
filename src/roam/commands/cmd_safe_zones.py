@@ -99,7 +99,20 @@ def safe_zones(ctx, target, depth):
         # Filter seed_ids to nodes present in the graph
         seed_ids = {s for s in seed_ids if s in G}
         if not seed_ids:
-            click.echo("Target symbol(s) not found in the dependency graph.")
+            verdict = "Target symbol(s) not found in the dependency graph."
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "safe-zones",
+                            summary={"verdict": verdict, "internal_size": 0, "boundary_size": 0},
+                            internal_zone=[],
+                            boundary=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(verdict)
             return
 
         # --- BFS forward (callees / downstream) and backward (callers / upstream) ---
