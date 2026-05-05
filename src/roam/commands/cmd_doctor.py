@@ -354,6 +354,91 @@ def _check_mcp_registry() -> dict:
     }
 
 
+def _check_plugin_discovery() -> dict:
+    """Plugin discovery completed without errors (Pass 35).
+
+    A user-installed plugin that fails to import would silently disappear
+    from the surface; this check surfaces ``get_plugin_errors`` so the
+    failure is loud during ``roam doctor``.
+    """
+    try:
+        from roam.plugins import discover_plugins, get_plugin_errors
+    except Exception as exc:
+        return {
+            "name": "Plugin discovery",
+            "passed": False,
+            "detail": f"plugins module import failed: {type(exc).__name__}: {exc}",
+        }
+    try:
+        discover_plugins()
+        errors = get_plugin_errors()
+    except Exception as exc:
+        return {
+            "name": "Plugin discovery",
+            "passed": False,
+            "detail": f"discovery raised: {type(exc).__name__}: {exc}",
+        }
+    if errors:
+        first = errors[0]
+        more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
+        return {
+            "name": "Plugin discovery",
+            "passed": False,
+            "detail": f"{first}{more}",
+        }
+    return {
+        "name": "Plugin discovery",
+        "passed": True,
+        "detail": "no errors during plugin discovery",
+    }
+
+
+def _check_required_tables() -> dict:
+    """Required tables are present in the index (Pass 35).
+
+    A failed mid-migration would leave the DB without expected tables.
+    Surfacing it here is faster than discovering it via a downstream
+    "no such table" sqlite error mid-command.
+    """
+    try:
+        from roam.db.connection import db_exists, open_db
+    except Exception as exc:
+        return {
+            "name": "Required tables",
+            "passed": False,
+            "detail": f"connection module import failed: {type(exc).__name__}: {exc}",
+        }
+    if not db_exists():
+        return {
+            "name": "Required tables",
+            "passed": True,
+            "detail": "no index — table check skipped",
+        }
+    required = {"files", "symbols", "edges", "git_commits", "file_stats"}
+    try:
+        with open_db(readonly=True) as conn:
+            rows = conn.execute("SELECT name FROM sqlite_master WHERE type='table'").fetchall()
+            present = {r[0] for r in rows}
+    except Exception as exc:
+        return {
+            "name": "Required tables",
+            "passed": False,
+            "detail": f"could not list tables: {type(exc).__name__}: {exc}",
+        }
+    missing = required - present
+    if missing:
+        return {
+            "name": "Required tables",
+            "passed": False,
+            "detail": f"missing tables: {', '.join(sorted(missing))}; run `roam reset` to rebuild.",
+        }
+    return {
+        "name": "Required tables",
+        "passed": True,
+        "detail": f"all {len(required)} required tables present",
+    }
+
+
 def _check_mcp_backpressure() -> dict:
     """MCP backpressure module loads with sensible limits.
 
@@ -424,6 +509,8 @@ def doctor(ctx):
     checks.append(_check_command_registry())
     checks.append(_check_mcp_registry())
     checks.append(_check_mcp_backpressure())
+    checks.append(_check_plugin_discovery())
+    checks.append(_check_required_tables())
 
     # Index checks: existence feeds into freshness and SQLite checks
     index_check = _check_index_exists()
