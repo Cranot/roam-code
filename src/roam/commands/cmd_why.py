@@ -194,6 +194,84 @@ def _analyze_symbol(conn, G, RG, name, communities, sym_to_cluster, cluster_labe
     }
 
 
+def _detect_communities(G) -> list[set]:
+    """Best-effort Louvain (then greedy-modularity fallback) on the
+    undirected graph. Empty list when neither is available or the graph
+    has no edges."""
+    UG = G.to_undirected()
+    if UG.number_of_nodes() < 2 or UG.number_of_edges() == 0:
+        return []
+    try:
+        return list(nx.community.louvain_communities(UG, seed=42))
+    except (AttributeError, TypeError):
+        try:
+            return list(nx.community.greedy_modularity_communities(UG))
+        except Exception:
+            return []
+
+
+def _emit_why_json(results: list[dict]) -> None:
+    """JSON envelope for the why command — single OR multi-symbol."""
+    crit = sum(1 for r in results if r.get("critical"))
+    verdict = f"{crit} of {len(results)} symbol(s) critical" if crit else f"{len(results)} symbol(s) — none critical"
+    click.echo(
+        to_json(
+            json_envelope(
+                "why",
+                summary={"verdict": verdict, "symbols": len(results), "critical": crit},
+                symbols=results,
+            )
+        )
+    )
+
+
+def _emit_why_batch_table(results: list[dict]) -> None:
+    """Compact one-row-per-symbol table for batch invocations."""
+    table_rows = []
+    for r in results:
+        if "error" in r:
+            table_rows.append([r["name"], "?", "", "", "", r["error"]])
+            continue
+        risk = "CRITICAL" if r["critical"] else ("moderate" if r["reach"] > 5 else "low")
+        table_rows.append(
+            [
+                r["name"],
+                r["role"],
+                f"fan-in:{r['fan_in']}",
+                f"reach:{r['reach']}",
+                risk,
+                r["verdict"],
+            ]
+        )
+    click.echo(format_table(["Symbol", "Role", "Fan", "Reach", "Risk", "Verdict"], table_rows))
+
+
+def _emit_why_single(r: dict) -> None:
+    """Detailed multi-line output for a single symbol."""
+    if "error" in r:
+        click.echo(r["error"])
+        raise SystemExit(1)
+    click.echo(f"\n{r['name']}  {r['location']}")
+    click.echo(f"  ROLE:      {r['role']}  (fan-in: {r['fan_in']}, fan-out: {r['fan_out']})")
+    click.echo(f"  REACH:     {r['reach']} transitive dependents across {r['affected_files']} files")
+
+    crit_str = "Yes" if r["critical"] else "No"
+    if r["critical"]:
+        crit_str += f" — betweenness {r['betweenness']:.1f}"
+    elif r["reach"] > 5:
+        crit_str += f" — moderate (reach: {r['reach']})"
+    click.echo(f"  CRITICAL:  {crit_str}")
+
+    if r["cluster"] is not None:
+        coh = f", cohesion: {r['cluster_cohesion']}%" if r["cluster_cohesion"] is not None else ""
+        click.echo(f"  CLUSTER:   {r['cluster']} ({r['cluster_size']} symbols{coh})")
+    else:
+        click.echo("  CLUSTER:   (none — disconnected)")
+
+    click.echo(f"  VERDICT:   {r['verdict']}")
+    click.echo()
+
+
 @click.command()
 @click.argument("names", nargs=-1, required=True)
 @click.pass_context
@@ -219,29 +297,16 @@ def why(ctx, names):
         G = build_symbol_graph(conn)
         RG = G.reverse()
 
-        # Pre-compute clusters for bridge detection + cluster membership
-        UG = G.to_undirected()
-        communities: list[set] = []
-        if UG.number_of_nodes() >= 2 and UG.number_of_edges() > 0:
-            try:
-                communities = list(nx.community.louvain_communities(UG, seed=42))
-            except (AttributeError, TypeError):
-                try:
-                    communities = list(nx.community.greedy_modularity_communities(UG))
-                except Exception:
-                    pass
-
+        communities = _detect_communities(G)
         sym_to_cluster: dict[int, int] = {}
         for i, comm in enumerate(communities):
             for sid in comm:
                 sym_to_cluster[sid] = i
-
         cluster_label_cache: dict[int, str] = {}
         cluster_cohesion_cache: dict[int, int | None] = {}
 
-        results = []
-        for name in names:
-            result = _analyze_symbol(
+        results = [
+            _analyze_symbol(
                 conn,
                 G,
                 RG,
@@ -251,86 +316,13 @@ def why(ctx, names):
                 cluster_label_cache,
                 cluster_cohesion_cache,
             )
-            results.append(result)
+            for name in names
+        ]
 
         if json_mode:
-            crit = sum(1 for r in results if r.get("critical"))
-            click.echo(
-                to_json(
-                    json_envelope(
-                        "why",
-                        summary={
-                            "verdict": (
-                                f"{crit} of {len(results)} symbol(s) critical"
-                                if crit
-                                else f"{len(results)} symbol(s) — none critical"
-                            ),
-                            "symbols": len(results),
-                            "critical": crit,
-                        },
-                        symbols=results,
-                    )
-                )
-            )
+            _emit_why_json(results)
             return
-
-        # --- Batch mode: compact table ---
         if len(results) > 1:
-            table_rows = []
-            for r in results:
-                if "error" in r:
-                    table_rows.append(
-                        [
-                            r["name"],
-                            "?",
-                            "",
-                            "",
-                            "",
-                            r["error"],
-                        ]
-                    )
-                    continue
-                risk = "CRITICAL" if r["critical"] else ("moderate" if r["reach"] > 5 else "low")
-                table_rows.append(
-                    [
-                        r["name"],
-                        r["role"],
-                        f"fan-in:{r['fan_in']}",
-                        f"reach:{r['reach']}",
-                        risk,
-                        r["verdict"],
-                    ]
-                )
-            click.echo(
-                format_table(
-                    ["Symbol", "Role", "Fan", "Reach", "Risk", "Verdict"],
-                    table_rows,
-                )
-            )
+            _emit_why_batch_table(results)
             return
-
-        # --- Single symbol: detailed output ---
-        r = results[0]
-        if "error" in r:
-            click.echo(r["error"])
-            raise SystemExit(1)
-
-        click.echo(f"\n{r['name']}  {r['location']}")
-        click.echo(f"  ROLE:      {r['role']}  (fan-in: {r['fan_in']}, fan-out: {r['fan_out']})")
-        click.echo(f"  REACH:     {r['reach']} transitive dependents across {r['affected_files']} files")
-
-        crit_str = "Yes" if r["critical"] else "No"
-        if r["critical"]:
-            crit_str += f" — betweenness {r['betweenness']:.1f}"
-        elif r["reach"] > 5:
-            crit_str += f" — moderate (reach: {r['reach']})"
-        click.echo(f"  CRITICAL:  {crit_str}")
-
-        if r["cluster"] is not None:
-            coh = f", cohesion: {r['cluster_cohesion']}%" if r["cluster_cohesion"] is not None else ""
-            click.echo(f"  CLUSTER:   {r['cluster']} ({r['cluster_size']} symbols{coh})")
-        else:
-            click.echo("  CLUSTER:   (none — disconnected)")
-
-        click.echo(f"  VERDICT:   {r['verdict']}")
-        click.echo()
+        _emit_why_single(results[0])
