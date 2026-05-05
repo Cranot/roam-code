@@ -7,6 +7,85 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.14] - 2026-05-05
+
+Ten more research passes building on v12.13's speed wins. Three
+land as concrete features; the rest were research-decided
+(existing surface adequate or out of scope).
+
+### Did-you-mean for command typos (Pass 14)
+
+``LazyGroup.resolve_command`` now catches Click's "No such command"
+and surfaces the closest names by edit distance. Previous behaviour:
+
+```
+$ roam contxt
+Usage: python -m roam [OPTIONS] COMMAND [ARGS]...
+```
+
+— bare error, no recovery hint. Now:
+
+```
+$ roam contxt
+Error: No such command: 'contxt'. Did you mean `roam context`, `roam agent-context`?
+```
+
+Up to 3 suggestions at edit-distance ≤ 0.6, picked from the live
+``_COMMANDS`` table so plugin commands also surface.
+
+### Auto-refine on low-confidence retrieve (Pass 13)
+
+When ``roam retrieve`` confidence drops below 0.40, the verdict now
+appends a ``REFINE:`` block with 2-3 alternative queries:
+
+1. **Drop NL filler** — ``"trace the login flow"`` → ``"login flow"``,
+   removing the words that diluted the lexical signal.
+2. **Anchor on top result's file** — adds ``--seed-files <path>``
+   pointing at the highest-scoring candidate.
+3. **Pivot to ``roam search``** — when the query contains an
+   identifier-shaped token, exact-name lookup may beat structural
+   retrieval.
+
+Surfaced in both text mode (``REFINE:`` block) and JSON
+(``summary.refinements``), so MCP clients can branch on it.
+
+### ``--help-all`` global option (Pass 19)
+
+``roam --help`` shows priority categories + 66 names from "More
+Commands" without descriptions. Agents mapping the surface want
+every command's one-liner. ``roam --help-all`` renders all 162
+invokable names with their AST-extracted short-help, sub-second.
+The flat list is alphabetical, deterministic, and pipeable.
+
+### Smaller fixes
+
+- ``roam dead`` empty-state now leads with ``VERDICT: no dead exports
+  — every exported symbol has at least one consumer`` instead of just
+  the bare section header.
+
+### Research findings (decided not to ship)
+
+- **Pass 11 (indexing speed)** — incremental index is ~2.8s warm.
+  ``compute_file_stats`` and friends already early-exit on no-change.
+  Further wins would require a daemon mode.
+- **Pass 12 (symbol disambiguation)** — ``pick_best`` already uses a
+  6-level tiebreak (edge count → PageRank → cc → churn → path
+  priority → id). Live tests confirm canonical paths win
+  consistently.
+- **Pass 15 (cold-start of common commands)** — ``cmd_search``
+  subprocess at 320ms is mostly Python interpreter (~90ms) + Click
+  parse + execute. Hot path already tight; further wins need a
+  daemon or in-process MCP path (already free for MCP clients).
+- **Pass 16 (empty / edge-case repos)** — most commands handle empty
+  repos correctly; one cosmetic dead-empty fix landed.
+- **Pass 17 (mermaid quality)** — ``visualize`` output is
+  well-structured (color-coded by kind, named clusters).
+- **Pass 18 (schema export)** — ``roam schema`` already validates
+  envelopes. Per-command schema introspection is a bigger feature.
+- **Pass 20 (cross-command consistency)** — verdict-first compliance
+  surveyed across 33 commands; previously-flagged outliers all
+  resolved in v12.12.8 polish round.
+
 ## [12.13] - 2026-05-05
 
 Ten dedicated research passes plus three check phases. Drops the
