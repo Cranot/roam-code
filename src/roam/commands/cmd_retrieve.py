@@ -24,6 +24,77 @@ from roam.retrieve.pipeline import run_retrieve
 from roam.retrieve.semantic import semantic_coverage
 
 
+def _suggest_refinements(task: str, candidates: list[dict]) -> list[str]:
+    """Generate 2-3 refined queries when confidence is low.
+
+    Heuristics:
+    1. **Drop common NL words** — "trace the login flow" → "login flow".
+       Removes filler that diluted the lexical signal.
+    2. **Suggest --seed-files anchor** — using the file of the
+       highest-scoring candidate as a seed often promotes the right
+       neighbours.
+    3. **Pivot to roam search** — when the query contains a clear
+       identifier (PascalCase / snake_case), exact-match search may
+       beat structural retrieval.
+
+    Returns a list of human-readable suggested commands.
+    """
+    if not task:
+        return []
+    suggestions: list[str] = []
+
+    # 1. Drop NL filler — keep the noun-shaped tokens only.
+    filler = {
+        "the",
+        "a",
+        "an",
+        "is",
+        "are",
+        "of",
+        "to",
+        "in",
+        "on",
+        "for",
+        "where",
+        "what",
+        "how",
+        "find",
+        "show",
+        "tell",
+        "me",
+        "this",
+        "that",
+        "with",
+        "by",
+        "from",
+        "and",
+        "or",
+        "as",
+        "at",
+    }
+    words = task.split()
+    kept = [w for w in words if w.lower().strip(".,!?") not in filler]
+    if len(kept) < len(words) and len(kept) >= 1:
+        tighter = " ".join(kept)
+        if tighter.strip() and tighter != task:
+            suggestions.append(f'roam retrieve "{tighter}"')
+
+    # 2. Anchor on the top candidate's file.
+    if candidates:
+        top_file = (candidates[0].get("file_path") or candidates[0].get("file") or "").replace("\\", "/")
+        if top_file:
+            suggestions.append(f'roam retrieve "{task}" --seed-files {top_file}')
+
+    # 3. If the query contains an identifier-shape, suggest exact search.
+    import re
+
+    ident_match = re.search(r"\b([A-Z][A-Za-z0-9]{2,}|[a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b", task)
+    if ident_match:
+        suggestions.append(f"roam search {ident_match.group(1)}")
+
+    return suggestions[:3]
+
+
 def _retrieve_confidence_score(candidates: list[dict], task: str = "") -> tuple[float, str]:
     """Return a calibrated confidence number in ``[0.0, 1.0]`` plus a
     string label (``"low"`` / ``"ok"``) for backwards compat.
@@ -313,6 +384,9 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
                         "verdict": verdict,
                         "low_confidence": confidence == "low",
                         "confidence": confidence_score,
+                        "refinements": (
+                            _suggest_refinements(task_str, candidates) if confidence_score < 0.40 and candidates else []
+                        ),
                         "candidates": len(candidates),
                         "total_candidates": result["total_candidates"],
                         "budget": result["budget"],
@@ -375,3 +449,16 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run):
             "SEMANTIC: 0 dense vectors available; zeta is currently inert. "
             "Configure semantic backend and rerun `roam index` to activate it."
         )
+
+    # 12.14 — auto-refine on low confidence. When the score crosses
+    # below 0.40 we know the user is unlikely to find the answer in
+    # the returned spans. Surface 2-3 refined queries the agent can
+    # try next: dropping generic NL words, adding a seed-files
+    # anchor, or pivoting to ``roam search`` for exact name match.
+    if confidence_score < 0.40 and candidates:
+        refined = _suggest_refinements(task_str, candidates)
+        if refined:
+            click.echo()
+            click.echo("REFINE: low confidence — try a tighter query:")
+            for r in refined:
+                click.echo(f"  {r}")

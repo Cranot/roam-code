@@ -1488,6 +1488,8 @@ def dead(
                     )
                 )
             else:
+                click.echo("VERDICT: no dead exports — every exported symbol has at least one consumer")
+                click.echo()
                 click.echo("=== Unreferenced Exports (0) ===")
                 click.echo("  (none -- all exports are referenced)")
                 if unused_assignments:
