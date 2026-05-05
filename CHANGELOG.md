@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.24] - 2026-05-05
+
+CI fix: narrow the fastmcp dev-dep marker so Python 3.9 stops failing
+to install. fastmcp >= 2.0 requires Python >= 3.10, which means the
+unconditional ``"fastmcp>=2.0"`` shipped in 12.23 broke the 3.9 lane:
+
+```
+ERROR: Could not find a version that satisfies the requirement
+fastmcp>=2.0; extra == "dev" (from roam-code[dev])
+```
+
+Marker is now ``"fastmcp>=2.0; python_version >= '3.10'"`` so 3.9
+skips the install entirely. The MCP-runtime test already guards on
+``_HAS_FASTMCP`` (12.23) so 3.9 simply skips that single assertion.
+
 ## [12.23] - 2026-05-05
 
 CI bring-up: surface fastmcp dependency for the MCP-runtime tests.
