@@ -574,137 +574,146 @@ def _composite_covered(cols: list[str], indexed_tuples: set[tuple[str, ...]]) ->
     return False
 
 
+def _check_composite_where(pat, query_cols, indexed, seen) -> dict | None:
+    """Multi-column WHERE without a covering composite index."""
+    if not (pat.table and not _composite_covered(query_cols, indexed)):
+        return None
+    dedup_key = ("composite", pat.table, tuple(sorted(query_cols)), pat.file_path)
+    if dedup_key in seen:
+        return None
+    seen.add(dedup_key)
+    missing_individual = [c for c in query_cols if not _column_has_any_index(c, indexed)]
+    confidence = "high" if pat.has_paginate else "medium"
+    fix_cols = ", ".join(query_cols)
+    suggestion = f"Add composite index on ({fix_cols})"
+    if missing_individual:
+        suggestion += " — also missing individual indexes for: " + ", ".join(missing_individual)
+    return {
+        "confidence": confidence,
+        "table": pat.table,
+        "columns": query_cols,
+        "issue": f"no composite index covering ({fix_cols})",
+        "query_location": loc(pat.file_path, pat.line_no),
+        "query_kind": pat.kind,
+        "has_paginate": pat.has_paginate,
+        "pattern_type": "composite_where",
+        "suggestion": suggestion,
+        "missing_individual": missing_individual,
+    }
+
+
+def _check_single_where(pat, col, indexed, seen) -> dict | None:
+    """Single-column WHERE on an unindexed, non-low-cardinality column."""
+    if _is_low_cardinality(col):
+        return None
+    if not (pat.table and not _column_has_any_index(col, indexed)):
+        return None
+    dedup_key = ("single_where", pat.table, col, pat.file_path)
+    if dedup_key in seen:
+        return None
+    seen.add(dedup_key)
+    confidence = "high" if pat.has_paginate else "medium"
+    return {
+        "confidence": confidence,
+        "table": pat.table,
+        "columns": [col],
+        "issue": f"no index on {col}",
+        "query_location": loc(pat.file_path, pat.line_no),
+        "query_kind": pat.kind,
+        "has_paginate": pat.has_paginate,
+        "pattern_type": "single_where",
+        "suggestion": f"Add index on {col}, or a composite index starting with {col}",
+        "missing_individual": [col],
+    }
+
+
+def _check_orderby_unindexed(pat, col, indexed, seen) -> dict | None:
+    """ORDER BY on a non-indexed, non-low-cardinality column."""
+    if _is_low_cardinality(col):
+        return None
+    if not (pat.table and not _column_has_any_index(col, indexed)):
+        return None
+    dedup_key = ("orderby", pat.table, col, pat.file_path)
+    if dedup_key in seen:
+        return None
+    seen.add(dedup_key)
+    confidence = "high" if pat.has_paginate else "medium"
+    suggestion = f"Add index on {col}"
+    if pat.where_cols:
+        suggestion += f", or composite index starting with a filter column + {col}"
+    return {
+        "confidence": confidence,
+        "table": pat.table,
+        "columns": [col],
+        "issue": f"orderBy on non-indexed column {col}",
+        "query_location": loc(pat.file_path, pat.line_no),
+        "query_kind": pat.kind,
+        "has_paginate": pat.has_paginate,
+        "pattern_type": "orderby",
+        "suggestion": suggestion,
+        "missing_individual": [col],
+    }
+
+
+def _check_orderby_composite(pat, col, indexed, seen) -> dict | None:
+    """ORDER BY column has an individual index but no composite covering
+    filter+sort columns."""
+    if _is_low_cardinality(col):
+        return None
+    if not (pat.table and _column_has_any_index(col, indexed) and pat.where_cols):
+        return None
+    non_skip_where = [c for c in pat.where_cols if c not in _SKIP_COLUMNS]
+    if not (non_skip_where and not _composite_covered(non_skip_where + [col], indexed)):
+        return None
+    dedup_key = ("orderby_composite", pat.table, col, pat.file_path)
+    if dedup_key in seen:
+        return None
+    seen.add(dedup_key)
+    fix_cols = ", ".join(non_skip_where + [col])
+    return {
+        "confidence": "low",
+        "table": pat.table,
+        "columns": [col],
+        "issue": f"{col} has an index but no composite index covering filter+sort ({fix_cols})",
+        "query_location": loc(pat.file_path, pat.line_no),
+        "query_kind": pat.kind,
+        "has_paginate": pat.has_paginate,
+        "pattern_type": "orderby_with_where",
+        "suggestion": f"Consider a composite index on ({fix_cols})",
+        "missing_individual": [],
+    }
+
+
 def _build_findings(
     patterns: list[_QueryPattern],
     table_indexes: dict[str, set[tuple[str, ...]]],
 ) -> list[dict]:
     """Cross-reference query patterns with known indexes and build finding dicts."""
     findings: list[dict] = []
-    seen: set[tuple] = set()  # deduplicate identical (table, cols) pairs
+    seen: set[tuple] = set()
 
     for pat in patterns:
         table = pat.table
         indexed = table_indexes.get(table, set()) if table else set()
 
-        # --- WHERE clause analysis ---
+        # WHERE-clause analysis (composite vs single).
         query_cols = [c for c in pat.where_cols if c not in _SKIP_COLUMNS]
-
         if len(query_cols) >= 2:
-            # Multi-column WHERE: check for composite index
-            if table and not _composite_covered(query_cols, indexed):
-                dedup_key = ("composite", table, tuple(sorted(query_cols)), pat.file_path)
-                if dedup_key not in seen:
-                    seen.add(dedup_key)
-                    # Check if individual indexes exist for each column
-                    missing_individual = [c for c in query_cols if not _column_has_any_index(c, indexed)]
-                    confidence = "high" if pat.has_paginate else "medium"
-                    fix_cols = ", ".join(query_cols)
-                    findings.append(
-                        {
-                            "confidence": confidence,
-                            "table": table,
-                            "columns": query_cols,
-                            "issue": f"no composite index covering ({fix_cols})",
-                            "query_location": loc(pat.file_path, pat.line_no),
-                            "query_kind": pat.kind,
-                            "has_paginate": pat.has_paginate,
-                            "pattern_type": "composite_where",
-                            "suggestion": (
-                                f"Add composite index on ({fix_cols})"
-                                + (
-                                    " — also missing individual indexes for: " + ", ".join(missing_individual)
-                                    if missing_individual
-                                    else ""
-                                )
-                            ),
-                            "missing_individual": missing_individual,
-                        }
-                    )
+            f = _check_composite_where(pat, query_cols, indexed, seen)
+            if f:
+                findings.append(f)
         elif len(query_cols) == 1:
-            col = query_cols[0]
-            if _is_low_cardinality(col):
-                continue
-            if table and not _column_has_any_index(col, indexed):
-                dedup_key = ("single_where", table, col, pat.file_path)
-                if dedup_key not in seen:
-                    seen.add(dedup_key)
-                    confidence = "high" if pat.has_paginate else "medium"
-                    findings.append(
-                        {
-                            "confidence": confidence,
-                            "table": table,
-                            "columns": [col],
-                            "issue": f"no index on {col}",
-                            "query_location": loc(pat.file_path, pat.line_no),
-                            "query_kind": pat.kind,
-                            "has_paginate": pat.has_paginate,
-                            "pattern_type": "single_where",
-                            "suggestion": (f"Add index on {col}, or a composite index starting with {col}"),
-                            "missing_individual": [col],
-                        }
-                    )
+            f = _check_single_where(pat, query_cols[0], indexed, seen)
+            if f:
+                findings.append(f)
 
-        # --- ORDER BY analysis ---
+        # ORDER-BY analysis (per column).
         order_cols = [c for c in pat.orderby_cols if c not in _SKIP_COLUMNS]
         for col in order_cols:
-            if _is_low_cardinality(col):
-                continue
-            if table and not _column_has_any_index(col, indexed):
-                dedup_key = ("orderby", table, col, pat.file_path)
-                if dedup_key not in seen:
-                    seen.add(dedup_key)
-                    # orderBy without index is always medium confidence
-                    # (becomes high if paginated)
-                    confidence = "high" if pat.has_paginate else "medium"
-                    findings.append(
-                        {
-                            "confidence": confidence,
-                            "table": table,
-                            "columns": [col],
-                            "issue": f"orderBy on non-indexed column {col}",
-                            "query_location": loc(pat.file_path, pat.line_no),
-                            "query_kind": pat.kind,
-                            "has_paginate": pat.has_paginate,
-                            "pattern_type": "orderby",
-                            "suggestion": (
-                                f"Add index on {col}"
-                                + (
-                                    f", or composite index starting with a filter column + {col}"
-                                    if pat.where_cols
-                                    else ""
-                                )
-                            ),
-                            "missing_individual": [col],
-                        }
-                    )
+            f = _check_orderby_unindexed(pat, col, indexed, seen) or _check_orderby_composite(pat, col, indexed, seen)
+            if f:
+                findings.append(f)
 
-            elif table and _column_has_any_index(col, indexed) and pat.where_cols:
-                # Column IS individually indexed but may need a composite
-                # index with the WHERE columns for efficient sort+filter
-                non_skip_where = [c for c in pat.where_cols if c not in _SKIP_COLUMNS]
-                if non_skip_where and not _composite_covered(non_skip_where + [col], indexed):
-                    dedup_key = ("orderby_composite", table, col, pat.file_path)
-                    if dedup_key not in seen:
-                        seen.add(dedup_key)
-                        fix_cols = ", ".join(non_skip_where + [col])
-                        findings.append(
-                            {
-                                "confidence": "low",
-                                "table": table,
-                                "columns": [col],
-                                "issue": (
-                                    f"{col} has an index but no composite index covering filter+sort ({fix_cols})"
-                                ),
-                                "query_location": loc(pat.file_path, pat.line_no),
-                                "query_kind": pat.kind,
-                                "has_paginate": pat.has_paginate,
-                                "pattern_type": "orderby_with_where",
-                                "suggestion": f"Consider a composite index on ({fix_cols})",
-                                "missing_individual": [],
-                            }
-                        )
-
-    # Sort: high → medium → low
     _order = {"high": 0, "medium": 1, "low": 2}
     findings.sort(key=lambda f: _order.get(f["confidence"], 9))
     return findings
