@@ -12,7 +12,7 @@ A local code graph (SQLite + tree-sitter + git history) that gives any agent —
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
 [![CI](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml/badge.svg)](https://github.com/Cranot/roam-code/actions/workflows/roam-ci.yml)
 [![Python 3.9+](https://img.shields.io/badge/python-3.9+-3776AB?logo=python&logoColor=white)](https://www.python.org/downloads/)
-[![License: MIT](https://img.shields.io/badge/License-MIT-green.svg)](https://opensource.org/licenses/MIT)
+[![License: Apache 2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](https://opensource.org/licenses/Apache-2.0)
 
 </div>
 
@@ -1252,7 +1252,7 @@ Zero infrastructure, zero vendor lock-in, zero data leaving your network.
 | SonarQube Server | $15,000-$45,000 | Self-hosted server | Days |
 | CodeScene | $20,000-$60,000 | SaaS or on-prem | Hours |
 | Code Climate | $12,000-$36,000 | SaaS | Hours |
-| **Roam** | **$0 (MIT license)** | **None (local)** | **5 minutes** |
+| **Roam** | **$0 (Apache 2.0)** | **None (local)** | **5 minutes** |
 
 <details>
 <summary><strong>Team rollout guide</strong></summary>
@@ -1491,7 +1491,7 @@ Documentation (local HTML in `docs/site/`, CI-deployed via `.github/workflows/pa
 | MCP tools for agents | 101 (24 in default core preset) | Client only | Client only | 34 (SonarQube) |
 | Languages | 26 | 70+ | 50+ | 12-42 |
 | 100% local, zero API keys | Yes | No | No | Partial |
-| Open source | MIT | No | Partial | Partial |
+| Open source | Apache 2.0 | No | Partial | Partial |
 
 ### Key Differentiators
 
@@ -1706,4 +1706,4 @@ Please open an issue first to discuss larger changes.
 
 ## License
 
-[MIT](LICENSE)
+[Apache 2.0](LICENSE)

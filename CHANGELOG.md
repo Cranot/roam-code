@@ -7,6 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.23] - 2026-05-05
+
+CI bring-up: surface fastmcp dependency for the MCP-runtime tests.
+
+After 12.22 fixed the indexer-order bug, CI exposed the next layer of
+the saga: ``test_pass93_mcp_wrappers_registered`` asserted
+``"roam_why_fail" in _TOOL_METADATA`` but CI installed only the
+``[dev]`` extras (no ``fastmcp``). Without ``fastmcp`` the
+``@_tool(...)`` decorator becomes a no-op and ``_TOOL_METADATA`` stays
+empty — the test had been masked by the earlier blockers since 12.17.
+
+Fix:
+
+1. Add ``fastmcp>=2.0`` to the ``[dev]`` extra so CI exercises the
+   actual MCP registration path.
+2. Defense-in-depth: ``test_pass93_mcp_wrappers_registered`` is now
+   ``@pytest.mark.skipif(not _HAS_FASTMCP, ...)`` so it stops gating
+   environments that intentionally skip the optional extra.
+
 ## [12.22] - 2026-05-05
 
 Indexer pipeline ordering fix + two CI test-isolation fixes.

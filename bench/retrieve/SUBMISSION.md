@@ -122,4 +122,4 @@ licensing rules:
 > input. Defects4J / BugsInPy / first-party PRs are MIT-or-equivalent
 > and safe to use here.
 
-The roam_self bench is first-party and MIT-licensed (this repository).
+The roam_self bench is first-party and Apache-2.0-licensed (this repository).
