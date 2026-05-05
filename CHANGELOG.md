@@ -7,6 +7,82 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.18] - 2026-05-05
+
+Ten more deep passes (rounds 81-90), shipped as a focused
+follow-up to 12.17. Net new surface: 5 CLI commands
+(`disambiguate`, `pre-commit`, `mcp-status`, `test-impact`,
+`recipes`), 1 new flag (`map --seed/--depth`), 1 new env-var
+override family (`ROAM_RERANK_*`), MCP error-storm rate-limiter
+that drops verbose envelope on repeated failures, and a
+recheck-driven shipping pipeline that caught residual stale
+counts left over from the 12.17 ship.
+
+### redacted`roam disambiguate <name>`
+
+Lists every symbol matching the name with file/line/kind/
+signature/docstring snippet + PageRank tiebreaker. Saves
+agents from picking the wrong overload when names collide.
+
+### redacted`roam pre-commit`
+
+Generates a git pre-commit hook that runs `git diff --cached |
+roam critique` on staged changes. Idempotent installer
+(``--install``); preview-only by default (``--print``).
+``ROAM_PRECOMMIT_SKIP=1`` to bypass.
+
+### redacted`roam mcp-status`
+
+Companion to `roam doctor` for the MCP transport: preset,
+registered tool count, backpressure limits (max_concurrent,
+in_flight, busy_responses_total), result-cache size, watcher
+state.
+
+### redacted`roam test-impact <range>`
+
+Sharper than `affected-tests`. Walks BFS over the reverse call
+graph from each changed symbol; ranks tests by the number of
+changed symbols that reach them.
+
+### redactedrerank weights via env vars
+
+`ROAM_RERANK_ALPHA` / `BETA` / `GAMMA` / `DELTA` / `EPSILON` /
+`ZETA` override `[retrieve]` config without touching
+config.toml. Useful for quick weight-tuning loops.
+
+### redacted`roam fitness --explain`
+
+Confirmed already shipped. Verified the existing flag covers
+the per-violation rule citation requirement.
+
+### redactedMCP error storm rate-limit
+
+When the same `error_code` fires ≥ 3× in a row, the MCP error
+envelope drops the verbose fields (`hint`, `suggested_action`,
+`doc_link`, `severity`) and replaces them with a tight
+`{error_code, repeat_count, trimmed: True}` shape. Reduces
+token bloat in agent retry loops. Counter resets when a
+different error_code fires.
+
+### redacted`roam recipes`
+
+Sugar over `roam ask --list` for discoverability. Lists every
+recipe with intent + example queries + commands. JSON envelope
+includes the full recipe metadata.
+
+### redacted`roam why --json` audit
+
+Verified that the existing `why --json` payload already returns
+structured per-symbol fields (`role`, `fan_in`, `fan_out`,
+`pagerank`, `reach`, `cluster`). No work needed — the
+explanation is already structured.
+
+### redacted`roam map --seed --depth`
+
+Restricts the project map's top-symbols list to symbols
+reachable from a seed file within N hops. For monorepo
+navigation where the full map is overwhelming.
+
 ## [12.17] - 2026-05-05
 
 Sixty deep passes (rounds 21-80), shipped together. Net new

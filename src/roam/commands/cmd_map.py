@@ -42,8 +42,23 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
 @click.option("-n", "count", default=20, help="Number of top symbols to show")
 @click.option("--full", is_flag=True, help="Show all results without truncation")
 @click.option("--budget", type=int, default=None, help="Approximate token limit for output")
+@click.option(
+    "--seed",
+    "seed_path",
+    type=str,
+    default=None,
+    help="redactedrestrict the top-symbols list to symbols reachable from this file.",
+)
+@click.option(
+    "--depth",
+    "seed_depth",
+    type=int,
+    default=2,
+    show_default=True,
+    help="redactedBFS hop limit when --seed is given.",
+)
 @click.pass_context
-def map_cmd(ctx, count, full, budget):
+def map_cmd(ctx, count, full, budget, seed_path, seed_depth):
     """Show project skeleton with entry points and key symbols.
 
     Unlike ``describe`` (which generates a prose project overview), this
@@ -95,6 +110,36 @@ def map_cmd(ctx, count, full, budget):
         # filling up to the token limit.  Otherwise honour the -n count.
         fetch_limit = count if budget is None else 10_000
         all_ranked = conn.execute(TOP_SYMBOLS_BY_PAGERANK, (fetch_limit,)).fetchall()
+
+        # redactedif a seed file is given, narrow ``all_ranked`` to
+        # symbols reachable from that file within ``seed_depth`` hops.
+        if seed_path:
+            try:
+                import networkx as nx
+
+                from roam.graph.builder import build_symbol_graph
+            except ImportError:
+                seed_path = None  # graph unavailable, fall through
+            if seed_path:
+                seed_norm = seed_path.replace("\\", "/")
+                seed_rows = conn.execute(
+                    "SELECT s.id FROM symbols s JOIN files f ON f.id = s.file_id "
+                    "WHERE REPLACE(f.path, '\\', '/') = ? OR REPLACE(f.path, '\\', '/') LIKE ?",
+                    (seed_norm, f"{seed_norm}%"),
+                ).fetchall()
+                seed_ids = [r["id"] for r in seed_rows]
+                if seed_ids:
+                    G = build_symbol_graph(conn)
+                    reach: set[int] = set(seed_ids)
+                    for sid in seed_ids:
+                        if sid not in G:
+                            continue
+                        try:
+                            lengths = nx.single_source_shortest_path_length(G, sid, cutoff=int(seed_depth))
+                            reach.update(lengths.keys())
+                        except Exception:
+                            continue
+                    all_ranked = [r for r in all_ranked if r["id"] in reach]
 
         # ---- Budget-aware symbol selection ----
         if budget is not None:

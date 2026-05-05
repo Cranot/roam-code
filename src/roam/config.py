@@ -119,9 +119,28 @@ def load_config(project_root: Path | None = None) -> dict[str, dict[str, Any]]:
 
 
 def get_retrieve_weights(project_root: Path | None = None) -> dict[str, float]:
-    """Convenience accessor — return the five reranker weights as floats."""
+    """Convenience accessor — return the five reranker weights as floats.
+
+    redactedenv vars override config.toml so quick weight-tuning loops
+    don't need to mutate the project file. Recognised vars:
+    ``ROAM_RERANK_ALPHA`` ``ROAM_RERANK_BETA`` ``ROAM_RERANK_GAMMA``
+    ``ROAM_RERANK_DELTA`` ``ROAM_RERANK_EPSILON`` ``ROAM_RERANK_ZETA``.
+    Invalid floats are silently ignored.
+    """
+    import os as _os
+
     cfg = load_config(project_root).get("retrieve", {})
-    return {key: float(cfg.get(key, default)) for key, default in DEFAULT_RETRIEVE_WEIGHTS.items()}
+    out = {key: float(cfg.get(key, default)) for key, default in DEFAULT_RETRIEVE_WEIGHTS.items()}
+    for key in DEFAULT_RETRIEVE_WEIGHTS:
+        env_name = f"ROAM_RERANK_{key.upper()}"
+        env_val = _os.environ.get(env_name)
+        if env_val is None:
+            continue
+        try:
+            out[key] = float(env_val)
+        except ValueError:
+            continue
+    return out
 
 
 def get_retrieve_config(project_root: Path | None = None) -> dict[str, Any]:

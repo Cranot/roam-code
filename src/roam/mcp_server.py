@@ -954,6 +954,15 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
+# redactederror storm rate-limit. When the same error_code fires N
+# times in a row, the verbose envelope (hint, suggested_action,
+# doc_link, severity) is dropped on subsequent fires and replaced with
+# a tight ``{error_code, repeat_count}`` shape. The full envelope
+# returns the moment a different error_code fires (resets the counter).
+_ERROR_STORM_THRESHOLD = 3
+_ERROR_STORM_STATE: dict[str, int] = {"_last_code": 0, "_count": 0}
+
+
 def _structured_error(error_dict: dict) -> dict:
     """Wrap error dict with MCP-compliant structured error fields (#116, #117).
 
@@ -961,6 +970,9 @@ def _structured_error(error_dict: dict) -> dict:
     URL for self-service troubleshooting per error code.
     redactedadds a ``severity`` field (info | warning | error | fatal)
     so agents can branch on severity without parsing the message.
+    redactedwhen the same ``error_code`` fires ≥
+    ``_ERROR_STORM_THRESHOLD`` times in a row, drop the verbose fields
+    on subsequent fires to save tokens in agent loops.
     """
     error_dict["isError"] = True
     code = error_dict.get("error_code", "UNKNOWN")
@@ -968,7 +980,32 @@ def _structured_error(error_dict: dict) -> dict:
     error_dict["suggested_action"] = error_dict.get("hint", "check the error message")
     error_dict.setdefault("doc_link", _DOC_LINKS.get(code, _DOC_LINKS["UNKNOWN"]))
     error_dict.setdefault("severity", _SEVERITY_MAP.get(code, "error"))
+
+    if _ERROR_STORM_STATE.get("_last_code") == code:
+        _ERROR_STORM_STATE["_count"] = int(_ERROR_STORM_STATE.get("_count", 0)) + 1
+    else:
+        _ERROR_STORM_STATE["_last_code"] = code
+        _ERROR_STORM_STATE["_count"] = 1
+    repeat = int(_ERROR_STORM_STATE["_count"])
+    if repeat >= _ERROR_STORM_THRESHOLD:
+        return {
+            "isError": True,
+            "error_code": code,
+            "severity": error_dict["severity"],
+            "repeat_count": repeat,
+            "trimmed": True,
+            "trimmed_hint": (
+                f"same error fired {repeat}× — fetch the full envelope by varying inputs "
+                "or by calling another tool first to reset the counter."
+            ),
+        }
     return error_dict
+
+
+def _reset_error_storm() -> None:
+    """Test helper — reset the storm counter."""
+    _ERROR_STORM_STATE["_last_code"] = 0
+    _ERROR_STORM_STATE["_count"] = 0
 
 
 def _ensure_fresh_index(root: str = ".") -> dict | None:
