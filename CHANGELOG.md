@@ -7,6 +7,95 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.21] - 2026-05-05
+
+Ten quality + reliability passes (rounds 111-120). Three real CI bugs
+fixed (CI has been red since 12.17), three more cognitive-complexity
+splits, a new audit-report template, and a latent graph-cache leak
+fix from Pass 69.
+
+### redactedcmd_impact JSON contract
+
+CI failure at 3.9 + 3.12. When ``roam impact`` finds the symbol in
+the index but NOT in the dependency graph, the path emitted plain
+text on stdout, breaking ``--json`` consumers. Wrapped in a proper
+envelope (``summary.in_graph: False``) with the same hint surfaced
+in the ``tip`` field.
+
+### redactedhealth --gate exit code
+
+CI failure at 3.13. The test asserted ``health_min: 100`` is
+unreachably high but a tiny fixture project scores exactly 100, and
+the comparison is ``score >= h_min`` so 100 ≥ 100 passes. Switched
+the test to ``health_min: 999`` to make the threshold genuinely
+unreachable.
+
+### redactedMCP sampling test
+
+CI failure at 3.11. Pass 98 added the ``ROAM_AI_ENABLED`` opt-in
+gate; the existing test never set the env var, so sampling
+returned None on CI. Updated the success-path test to set
+``ROAM_AI_ENABLED=1`` and added a default-OFF assertion test.
+
+### redacted_compute_reachability split
+
+cc 150 (deepest nesting in repo at depth 8) → ~10. Decomposed
+into ``_node_match_keys``, ``_matches_dep``,
+``_trace_entry_reach``, ``_build_norm_lookup``, ``_record_match``.
+Orchestrator stays under 10 LOC of branching.
+
+### redactedpoll_loop split
+
+cc 154 with 17 params at ``cmd_watch.py:457``. Pulled per-event
+helpers (``_need_force``, ``_scan_disk_changes``,
+``_label_webhook_events``, ``_refresh_tracked_after_reindex``,
+``_run_guardian_step``) keeping the public signature stable so
+callers and tests are unaffected.
+
+### redactedtests for 5 untested commands
+
+Added behavioural tests for ``py-modern`` (had 0 references),
+``graph-stats``, ``mcp-status``, ``pre-commit``, ``exit-codes``
+(each had 1 registration-only reference). 9 new tests.
+
+### redactedROAM_QUERY_TIMEOUT_S coverage
+
+Pass 58 shipped an opt-in SQLite progress handler. Zero test
+coverage existed. Added 4 tests exercising no-env / invalid /
+zero / and a tiny-budget interrupt that should fire OperationalError.
+
+### redactedformat_table budget threading (cmd_context)
+
+20 ``format_table()`` calls across 5 files lacked ``budget=``.
+Added ``_table_budget(data)`` helper and threaded the global
+``--budget`` through cmd_context's ``data`` dict. Wired into the
+two highest-volume call sites (callers + callees lists).
+
+### redactedaudit-report Markdown template
+
+P1.2 strategic blocker per build_priorities.md. Built a 9-section,
+185-line template at ``docs/audit_report_template.md`` with
+placeholders for every ``roam audit --json`` field. Bridges the
+gap between the engine (Pass 97 ``roam audit``) and the deliverable
+artifact paying customers see.
+
+### redacted_build_agent_descriptors split + graph-cache fix
+
+Top remaining complexity offender: ``_build_agent_descriptors``
+cc=161 in ``graph/partition.py``. Decomposed into 6 small helpers
+(``_node_partition_index``, ``_fetch_node_metadata``,
+``_file_majority_owners``, ``_read_only_files_for``,
+``_boundary_contracts``, ``_cluster_label_for``).
+
+Also fixed a latent state-leak bug from Pass 69's graph-builder
+memoization: the cache was keyed on ``id(conn)`` and Python reuses
+``id`` values across short-lived objects, so partition tests
+running after orchestrate tests in the same process saw a stale
+graph from a closed connection. Added an ``autouse`` fixture in
+``conftest.py`` that calls ``clear_graph_cache()`` between tests.
+
+Surface counts unchanged: 178 CLI commands, 128 MCP tools, 41 core.
+
 ## [12.20] - 2026-05-05
 
 Ten quality-focused passes (rounds 101-110). No new commands; this

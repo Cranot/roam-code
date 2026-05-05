@@ -601,6 +601,14 @@ def _render_json(data, budget=0):
 # ---------------------------------------------------------------------------
 
 
+def _table_budget(data) -> int:
+    """redactedread the threaded ``--budget`` so format_table honors it."""
+    try:
+        return int(data.get("token_budget") or 0)
+    except (TypeError, ValueError):
+        return 0
+
+
 def _render_single_text(data):
     sym = data["sym"]
     task = data["task"]
@@ -654,7 +662,7 @@ def _render_single_text(data):
             ]
             for cr in non_test_callers[:20]
         ]
-        click.echo(format_table(["kind", "name", "location", "edge"], rows))
+        click.echo(format_table(["kind", "name", "location", "edge"], rows, budget=_table_budget(data)))
         if len(non_test_callers) > 20:
             click.echo(f"  (+{len(non_test_callers) - 20} more)")
         click.echo()
@@ -674,7 +682,7 @@ def _render_single_text(data):
             ]
             for ce in callees[:15]
         ]
-        click.echo(format_table(["kind", "name", "location", "edge"], rows))
+        click.echo(format_table(["kind", "name", "location", "edge"], rows, budget=_table_budget(data)))
         if len(callees) > 15:
             click.echo(f"  (+{len(callees) - 15} more)")
         click.echo()
@@ -1263,4 +1271,7 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
     # redactedpass inline-mode flag through to the renderer.
     if inline_mode:
         data["inline_mode"] = True
+    # redactedthread the global --budget through to renderers so
+    # format_table calls in cmd_context can honor it.
+    data["token_budget"] = token_budget
     _render_json(data, budget=token_budget) if json_mode else _render_text(data)

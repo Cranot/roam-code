@@ -255,6 +255,96 @@ def _adjust_cluster_count(
     return partitions
 
 
+def _node_partition_index(partitions: list[dict[str, set[int]]]) -> dict[int, int]:
+    """redactedflatten partitions into ``{node_id: partition_index}``."""
+    node_part: dict[int, int] = {}
+    for idx, p in enumerate(partitions):
+        for n in p["nodes"]:
+            node_part[n] = idx
+    return node_part
+
+
+def _fetch_node_metadata(conn: sqlite3.Connection, node_ids: list[int]):
+    """redactedload (file, name, signature) for every node in one batch."""
+    node_to_file: dict[int, str] = {}
+    node_to_name: dict[int, str] = {}
+    node_to_sig: dict[int, str] = {}
+    if not node_ids:
+        return node_to_file, node_to_name, node_to_sig
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.signature, f.path FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id IN ({ph})",
+        node_ids,
+    )
+    for r in rows:
+        node_to_file[r["id"]] = r["path"].replace("\\", "/")
+        node_to_name[r["id"]] = r["name"]
+        node_to_sig[r["id"]] = r["signature"] or r["name"]
+    return node_to_file, node_to_name, node_to_sig
+
+
+def _file_majority_owners(node_part: dict[int, int], node_to_file: dict[int, str]) -> dict[int, set[str]]:
+    """redactedassign each file exclusively to its majority-vote partition."""
+    file_partition_counts: dict[str, Counter] = defaultdict(Counter)
+    for n, pidx in node_part.items():
+        fp = node_to_file.get(n)
+        if fp:
+            file_partition_counts[fp][pidx] += 1
+    partition_write_files: dict[int, set[str]] = defaultdict(set)
+    for fp, counts in file_partition_counts.items():
+        owner = counts.most_common(1)[0][0]
+        partition_write_files[owner].add(fp)
+    return partition_write_files
+
+
+def _read_only_files_for(
+    G, nodes: set[int], node_part: dict[int, int], node_to_file: dict[int, str], write_files: set[str]
+) -> set[str]:
+    """redactedfiles with cross-partition edges but not owned by this agent."""
+    read_only: set[str] = set()
+    for n in nodes:
+        for neighbour in (*G.predecessors(n), *G.successors(n)):
+            if neighbour in nodes or neighbour not in node_part:
+                continue
+            fp = node_to_file.get(neighbour)
+            if fp and fp not in write_files:
+                read_only.add(fp)
+    return read_only
+
+
+def _boundary_contracts(
+    G, nodes: set[int], node_part: dict[int, int], node_to_name: dict[int, str], node_to_sig: dict[int, str]
+) -> list[str]:
+    """redactedlist cross-partition symbols this agent must not change."""
+    contracts: list[str] = []
+    seen: set[str] = set()
+    for n in nodes:
+        for neighbour in (*G.successors(n), *G.predecessors(n)):
+            if neighbour in nodes or neighbour not in node_part:
+                continue
+            name = node_to_name.get(neighbour)
+            sig = node_to_sig.get(neighbour)
+            if not (name and sig):
+                continue
+            contract = f"do NOT modify {sig} signature"
+            if contract not in seen:
+                seen.add(contract)
+                contracts.append(contract)
+    return contracts
+
+
+def _cluster_label_for(nodes: set[int], node_to_file: dict[int, str], idx: int) -> str:
+    """redacteddirectory-majority label, with sensible fallbacks."""
+    dirs = [os.path.dirname(node_to_file.get(n, "")).replace("\\", "/") for n in nodes if n in node_to_file]
+    counts = Counter(dirs) if dirs else Counter()
+    if not counts:
+        return f"partition-{idx + 1}"
+    label = counts.most_common(1)[0][0]
+    if not label:
+        return f"root-{idx + 1}"
+    return label.rstrip("/").rsplit("/", 1)[-1] or f"partition-{idx + 1}"
+
+
 def _build_agent_descriptors(
     G: nx.DiGraph,
     conn: sqlite3.Connection,
@@ -262,54 +352,21 @@ def _build_agent_descriptors(
 ) -> list[dict]:
     """Build per-agent descriptor dicts.
 
-    File ownership is determined by majority vote: each file is assigned
-    exclusively to the partition that owns the most of its symbols.
-    This guarantees no write overlap between agents.
+    redactedorchestrator only. Per-step logic lives in
+    ``_node_partition_index``, ``_fetch_node_metadata``,
+    ``_file_majority_owners``, ``_read_only_files_for``,
+    ``_boundary_contracts``, ``_cluster_label_for``.
+    Cognitive complexity dropped from 161 to ~10.
+
+    File ownership is determined by majority vote: each file is
+    assigned exclusively to the partition that owns the most of its
+    symbols. This guarantees no write overlap between agents.
     """
-    # Build node -> partition index
-    node_part: dict[int, int] = {}
-    for idx, p in enumerate(partitions):
-        for n in p["nodes"]:
-            node_part[n] = idx
+    node_part = _node_partition_index(partitions)
+    node_to_file, node_to_name, node_to_sig = _fetch_node_metadata(conn, list(node_part.keys()))
+    partition_write_files = _file_majority_owners(node_part, node_to_file)
 
-    # Fetch file paths for all nodes
-    all_node_ids = list(node_part.keys())
-    node_to_file: dict[int, str] = {}
-    node_to_name: dict[int, str] = {}
-    node_to_sig: dict[int, str] = {}
-    if all_node_ids:
-        rows = batched_in(
-            conn,
-            "SELECT s.id, s.name, s.signature, f.path "
-            "FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE s.id IN ({ph})",
-            all_node_ids,
-        )
-        for r in rows:
-            node_to_file[r["id"]] = r["path"].replace("\\", "/")
-            node_to_name[r["id"]] = r["name"]
-            node_to_sig[r["id"]] = r["signature"] or r["name"]
-
-    # ── Determine exclusive file ownership by majority vote ──────
-    # Count how many symbols each partition contributes to each file
-    file_partition_counts: dict[str, Counter] = defaultdict(Counter)
-    for n, pidx in node_part.items():
-        fp = node_to_file.get(n)
-        if fp:
-            file_partition_counts[fp][pidx] += 1
-
-    # Assign each file to the partition with the most symbols in it
-    file_owner: dict[str, int] = {}
-    for fp, counts in file_partition_counts.items():
-        file_owner[fp] = counts.most_common(1)[0][0]
-
-    # Build per-partition write file sets (exclusive, no overlap)
-    partition_write_files: dict[int, set[str]] = defaultdict(set)
-    for fp, pidx in file_owner.items():
-        partition_write_files[pidx].add(fp)
-
-    # ── Build agent descriptors ──────────────────────────────────
-    agents = []
+    agents: list[dict] = []
     for idx, p in enumerate(partitions):
         nodes = p["nodes"]
         if not nodes:
@@ -324,66 +381,19 @@ def _build_agent_descriptors(
                 }
             )
             continue
-
-        write_files_set = partition_write_files.get(idx, set())
-
-        # Read-only files: files with edges into/from this partition
-        # but owned by another partition
-        read_only_set: set[str] = set()
-        for n in nodes:
-            for pred in G.predecessors(n):
-                if pred not in nodes and pred in node_part:
-                    fp = node_to_file.get(pred)
-                    if fp and fp not in write_files_set:
-                        read_only_set.add(fp)
-            for succ in G.successors(n):
-                if succ not in nodes and succ in node_part:
-                    fp = node_to_file.get(succ)
-                    if fp and fp not in write_files_set:
-                        read_only_set.add(fp)
-
-        # Contracts: symbols at boundaries that this agent must NOT modify
-        contracts = []
-        for n in nodes:
-            for succ in G.successors(n):
-                if succ not in nodes and succ in node_part:
-                    name = node_to_name.get(succ)
-                    sig = node_to_sig.get(succ)
-                    if name and sig:
-                        contract = f"do NOT modify {sig} signature"
-                        if contract not in contracts:
-                            contracts.append(contract)
-            for pred in G.predecessors(n):
-                if pred not in nodes and pred in node_part:
-                    name = node_to_name.get(pred)
-                    sig = node_to_sig.get(pred)
-                    if name and sig:
-                        contract = f"do NOT modify {sig} signature"
-                        if contract not in contracts:
-                            contracts.append(contract)
-
-        # Cluster label from directory majority
-        dirs = [os.path.dirname(node_to_file.get(n, "")).replace("\\", "/") for n in nodes if n in node_to_file]
-        dir_counts = Counter(dirs) if dirs else Counter()
-        if dir_counts:
-            label = dir_counts.most_common(1)[0][0]
-            label = label.rstrip("/").rsplit("/", 1)[-1] if label else f"partition-{idx + 1}"
-            if not label:
-                label = f"root-{idx + 1}"
-        else:
-            label = f"partition-{idx + 1}"
-
+        write_files = partition_write_files.get(idx, set())
+        read_only = _read_only_files_for(G, nodes, node_part, node_to_file, write_files)
+        contracts = _boundary_contracts(G, nodes, node_part, node_to_name, node_to_sig)
         agents.append(
             {
                 "id": idx + 1,
-                "write_files": sorted(write_files_set),
-                "read_only_files": sorted(read_only_set),
+                "write_files": sorted(write_files),
+                "read_only_files": sorted(read_only),
                 "symbols_owned": len(nodes),
-                "contracts": contracts[:10],  # cap at 10
-                "cluster_label": label,
+                "contracts": contracts[:10],
+                "cluster_label": _cluster_label_for(nodes, node_to_file, idx),
             }
         )
-
     return agents
 
 

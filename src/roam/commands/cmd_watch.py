@@ -454,6 +454,76 @@ class DebounceAccumulator:
         return result
 
 
+def _need_force(webhook_events: list, webhook_force: bool) -> bool:
+    """redacteddoes the current event batch require a forced re-index?"""
+    has_explicit = any(bool(evt.get("force")) for evt in webhook_events if isinstance(evt, dict))
+    return has_explicit or (webhook_force and bool(webhook_events))
+
+
+def _scan_disk_changes(_discover, project_root: Path, tracked: dict, quiet: bool):
+    """redacteddiscover + diff disk state, optionally print per-file lines."""
+    current_paths = _discover()
+    current_disk = scan_disk_mtimes(current_paths, project_root)
+    added, modified, removed = detect_changes(tracked, current_disk)
+    changed = added + modified + removed
+    if changed and not quiet:
+        for path in added:
+            click.echo(f"  + {path}")
+        for path in modified:
+            click.echo(f"  ~ {path}")
+        for path in removed:
+            click.echo(f"  - {path}")
+    return tracked, changed
+
+
+def _label_webhook_events(webhook_events: list, quiet: bool) -> list[str]:
+    """redactedturn webhook event dicts into ``<webhook:name>`` labels."""
+    if not webhook_events:
+        return []
+    labels = [
+        f"<webhook:{str(evt.get('event', 'webhook')).strip() or 'webhook'}>"
+        for evt in webhook_events
+        if isinstance(evt, dict)
+    ]
+    if labels and not quiet:
+        for label in labels:
+            click.echo(f"  * {label}")
+    return labels
+
+
+def _refresh_tracked_after_reindex(project_root: Path, prev_file_count: int, quiet: bool):
+    """redactedreload tracked-files state and emit a status line."""
+    tracked = load_tracked_files(project_root)
+    new_count = len(tracked)
+    if not quiet:
+        click.echo(f"Re-index complete. Watching {new_count} files.")
+    elif new_count != prev_file_count:
+        click.echo(f"Re-indexed. Watching {new_count} files.")
+    return tracked, new_count
+
+
+def _run_guardian_step(_guardian_collect, _guardian_write, guardian_report: str, quiet: bool) -> None:
+    """redactedcollect + write a guardian snapshot, log the verdict."""
+    try:
+        payload = _guardian_collect()
+        if guardian_report:
+            _guardian_write(payload)
+        if quiet:
+            return
+        gate_state = "PASS" if payload.get("gates", {}).get("health_gate_pass") else "FAIL"
+        click.echo(
+            "Guardian: health={} trend={} drift={} ({})".format(
+                payload.get("current", {}).get("health_score", "n/a"),
+                payload.get("trend", {}).get("verdict", "n/a"),
+                payload.get("drift", {}).get("drift_files", "n/a"),
+                gate_state,
+            )
+        )
+    except Exception as exc:
+        if not quiet:
+            click.echo(f"Guardian update failed: {exc}")
+
+
 def poll_loop(
     project_root: Path,
     interval: float,
@@ -530,77 +600,28 @@ def poll_loop(
     while True:
         _sleep(interval)
 
-        changed: list[str] = []
         webhook_events = _external_events() or []
-        force_needed = any(bool(evt.get("force")) for evt in webhook_events if isinstance(evt, dict))
-        force_needed = force_needed or (webhook_force and bool(webhook_events))
-        pending_force = pending_force or force_needed
+        pending_force = pending_force or _need_force(webhook_events, webhook_force)
 
+        changed: list[str] = []
         if not webhook_only:
-            # Discover current files on disk
-            current_paths = _discover()
-            current_disk = scan_disk_mtimes(current_paths, project_root)
-
-            added, modified, removed = detect_changes(tracked, current_disk)
-            changed.extend(added + modified + removed)
-
-            if changed and not quiet:
-                for path in added:
-                    click.echo(f"  + {path}")
-                for path in modified:
-                    click.echo(f"  ~ {path}")
-                for path in removed:
-                    click.echo(f"  - {path}")
-
-        if webhook_events:
-            webhook_labels = [
-                f"<webhook:{str(evt.get('event', 'webhook')).strip() or 'webhook'}>"
-                for evt in webhook_events
-                if isinstance(evt, dict)
-            ]
-            changed.extend(webhook_labels)
-            if not quiet:
-                for label in webhook_labels:
-                    click.echo(f"  * {label}")
+            tracked, disk_changes = _scan_disk_changes(_discover, project_root, tracked, quiet)
+            changed.extend(disk_changes)
+        changed.extend(_label_webhook_events(webhook_events, quiet))
 
         if changed:
             acc.add(changed)
 
-        now = time.monotonic()
-        if acc.should_fire(now):
+        if acc.should_fire(time.monotonic()):
             batch = acc.flush()
             if not quiet:
                 mode_label = "force re-indexing" if pending_force else "re-indexing"
                 click.echo(f"Changed: {len(batch)} event(s) -- {mode_label}...")
             _reindex(force=pending_force)
             pending_force = False
-            # Refresh tracked state from DB after re-index
-            tracked = load_tracked_files(project_root)
-            new_count = len(tracked)
-            if not quiet:
-                click.echo(f"Re-index complete. Watching {new_count} files.")
-            elif new_count != file_count:
-                click.echo(f"Re-indexed. Watching {new_count} files.")
-            file_count = new_count
-
+            tracked, file_count = _refresh_tracked_after_reindex(project_root, file_count, quiet)
             if guardian or guardian_report:
-                try:
-                    guard_payload = _guardian_collect()
-                    if guardian_report:
-                        _guardian_write(guard_payload)
-                    if not quiet:
-                        gate_state = "PASS" if guard_payload.get("gates", {}).get("health_gate_pass") else "FAIL"
-                        click.echo(
-                            "Guardian: health={} trend={} drift={} ({})".format(
-                                guard_payload.get("current", {}).get("health_score", "n/a"),
-                                guard_payload.get("trend", {}).get("verdict", "n/a"),
-                                guard_payload.get("drift", {}).get("drift_files", "n/a"),
-                                gate_state,
-                            )
-                        )
-                except Exception as exc:
-                    if not quiet:
-                        click.echo(f"Guardian update failed: {exc}")
+                _run_guardian_step(_guardian_collect, _guardian_write, guardian_report, quiet)
 
 
 @click.command("watch")

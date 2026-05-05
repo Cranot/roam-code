@@ -47,87 +47,103 @@ def _normalize_dep_name(name: str) -> str:
     return name.lower().replace("-", "_").replace(".", "_")
 
 
-def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
-    """Check which dependencies are referenced in the codebase symbol graph.
+def _node_match_keys(data) -> tuple[str, str, str]:
+    """redactedpre-normalise the three node fields used for dep matching."""
+    qname = (data.get("qualified_name") or "").lower().replace("-", "_").replace(".", "_")
+    name_lower = (data.get("name") or "").lower().replace("-", "_").replace(".", "_")
+    file_path = (data.get("file_path") or "").lower().replace("-", "_").replace(".", "_")
+    return qname, name_lower, file_path
 
-    For each dependency, look for import references or qualified-name matches
-    in the ``edges`` / ``symbols`` tables.  When a match is found, trace
-    entry points (in-degree 0) that can reach the matched symbol.
 
-    Returns ``{dep_name: {"reachable": bool, "entry_points": [str, ...], "matched_symbols": [str, ...]}}``
-    """
+def _matches_dep(qname: str, name_lower: str, file_path: str, norm: str) -> bool:
+    """redactedpredicate version of the inner dep-match check."""
+    if qname and (qname.startswith(norm + "_") or qname.startswith(norm + "/") or qname == norm):
+        return True
+    if norm in file_path:
+        return True
+    if name_lower == norm:
+        return True
+    return False
+
+
+def _trace_entry_reach(G, entries, nid):
+    """redactedreturn the entry-point node IDs that can reach ``nid``."""
     import networkx as nx
 
-    from roam.graph.builder import build_symbol_graph
+    reach: list = []
+    for eid in entries:
+        try:
+            if nx.has_path(G, eid, nid):
+                reach.append(eid)
+        except (nx.NetworkXError, nx.NodeNotFound):
+            continue
+    return reach
 
-    result: dict[str, dict] = {}
 
-    # Pre-populate with defaults
-    for dep in dep_names:
-        result[dep] = {"reachable": False, "entry_points": [], "matched_symbols": []}
-
-    if not dep_names:
-        return result
-
-    # Build graph once
-    try:
-        G = build_symbol_graph(conn)
-    except Exception:
-        return result
-
-    if not G.nodes:
-        return result
-
-    # Compute entry points (in-degree 0)
-    entries = [n for n in G.nodes() if G.in_degree(n) == 0]
-
-    # Build a lookup: normalized name fragment -> list of node IDs
-    # We match dependency names against import targets and qualified names.
+def _build_norm_lookup(dep_names: list[str]) -> dict[str, list[str]]:
+    """redactedgroup orig dep names by their normalised key."""
     norm_to_dep: dict[str, list[str]] = {}
     for dep in dep_names:
         norm = _normalize_dep_name(dep)
         if norm:
             norm_to_dep.setdefault(norm, []).append(dep)
+    return norm_to_dep
 
-    # Scan symbols for matches
+
+def _record_match(info: dict, display_name: str, G, entries, nid) -> None:
+    """redactedupdate a single dep's reachability record."""
+    if display_name not in info["matched_symbols"]:
+        info["matched_symbols"].append(display_name)
+    if info["reachable"]:
+        return
+    for eid in _trace_entry_reach(G, entries, nid):
+        info["reachable"] = True
+        entry_name = G.nodes[eid].get("qualified_name") or G.nodes[eid].get("name", str(eid))
+        if entry_name not in info["entry_points"]:
+            info["entry_points"].append(entry_name)
+
+
+def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
+    """Check which dependencies are referenced in the codebase symbol graph.
+
+    For each dependency, look for import references or qualified-name
+    matches in the ``edges`` / ``symbols`` tables. When a match is
+    found, trace entry points (in-degree 0) that can reach the matched
+    symbol.
+
+    Returns ``{dep_name: {"reachable": bool, "entry_points": [...],
+    "matched_symbols": [...]}}``.
+
+    redactedorchestrator only. Pre-Pass 114 this function had cc=150
+    and nesting depth 8 (the deepest in the repo). Per-symbol logic now
+    lives in ``_node_match_keys``, ``_matches_dep``,
+    ``_trace_entry_reach``, ``_build_norm_lookup``, ``_record_match``.
+    """
+    from roam.graph.builder import build_symbol_graph
+
+    result: dict[str, dict] = {
+        dep: {"reachable": False, "entry_points": [], "matched_symbols": []} for dep in dep_names
+    }
+    if not dep_names:
+        return result
+    try:
+        G = build_symbol_graph(conn)
+    except Exception:
+        return result
+    if not G.nodes:
+        return result
+
+    entries = [n for n in G.nodes() if G.in_degree(n) == 0]
+    norm_to_dep = _build_norm_lookup(dep_names)
+
     for nid, data in G.nodes(data=True):
-        qname = (data.get("qualified_name") or "").lower().replace("-", "_").replace(".", "_")
-        name_lower = (data.get("name") or "").lower().replace("-", "_").replace(".", "_")
-        file_path = (data.get("file_path") or "").lower().replace("-", "_").replace(".", "_")
-
+        qname, name_lower, file_path = _node_match_keys(data)
         for norm, orig_deps in norm_to_dep.items():
-            # Match if the normalized dep name appears as a prefix in qualified
-            # name, or in the file path (e.g., node_modules/lodash/...).
-            matched = False
-            if qname and (qname.startswith(norm + "_") or qname.startswith(norm + "/") or qname == norm):
-                matched = True
-            elif norm in file_path:
-                matched = True
-            elif name_lower == norm:
-                matched = True
-
-            if not matched:
+            if not _matches_dep(qname, name_lower, file_path, norm):
                 continue
-
             display_name = data.get("qualified_name") or data.get("name", str(nid))
-
             for dep_name in orig_deps:
-                info = result[dep_name]
-                if display_name not in info["matched_symbols"]:
-                    info["matched_symbols"].append(display_name)
-
-                if not info["reachable"]:
-                    # Check if any entry point can reach this node
-                    for eid in entries:
-                        try:
-                            if nx.has_path(G, eid, nid):
-                                info["reachable"] = True
-                                entry_name = G.nodes[eid].get("qualified_name") or G.nodes[eid].get("name", str(eid))
-                                if entry_name not in info["entry_points"]:
-                                    info["entry_points"].append(entry_name)
-                        except (nx.NetworkXError, nx.NodeNotFound):
-                            continue
-
+                _record_match(result[dep_name], display_name, G, entries, nid)
     return result
 
 

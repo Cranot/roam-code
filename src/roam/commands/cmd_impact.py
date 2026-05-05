@@ -191,11 +191,30 @@ def impact(ctx, name, hops):
 
         G = build_symbol_graph(conn)
         if sym_id not in G:
-            click.echo(
-                f"Symbol '{name}' exists in the index but is not in the dependency graph.\n"
-                f"  Tip: Run `roam index` to rebuild the graph, or use `roam symbol {name}`"
-                " to view raw symbol data."
-            )
+            verdict = f"Symbol '{name}' exists in the index but is not in the dependency graph."
+            tip = f"Run `roam index` to rebuild the graph, or use `roam symbol {name}` to view raw symbol data."
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "impact",
+                            budget=token_budget,
+                            summary={
+                                "verdict": verdict,
+                                "affected_symbols": 0,
+                                "affected_files": 0,
+                                "in_graph": False,
+                            },
+                            symbol=sym["qualified_name"] or sym["name"],
+                            tip=tip,
+                            direct_dependents={},
+                            affected_file_list=[],
+                            indirect_refs=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(f"{verdict}\n  Tip: {tip}")
             return
 
         RG = G.reverse()

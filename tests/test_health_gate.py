@@ -31,16 +31,20 @@ class TestHealthGate:
         assert data["summary"]["gate_passed"] is True
 
     def test_gate_fail_high_threshold(self, cli_runner, indexed_project, monkeypatch):
-        """Gate should fail when threshold is unreachably high."""
+        """Gate should fail when threshold is unreachably high.
+
+        redacteda tiny fixture project can score exactly 100, and the
+        comparison is ``score >= h_min`` so ``health_min: 100`` is
+        reachable on Linux CI (score 100 ≥ 100 passes). Use 999 instead
+        to make the threshold genuinely unreachable.
+        """
         monkeypatch.chdir(indexed_project)
-        # Write a config with health_min=100
         config = indexed_project / ".roam-gates.yml"
-        config.write_text("health:\n  health_min: 100\n")
+        config.write_text("health:\n  health_min: 999\n")
 
         from roam.cli import cli
 
         result = cli_runner.invoke(cli, ["health", "--gate"], catch_exceptions=True)
-        # Should fail with exit code 5 (GateFailureError)
         assert result.exit_code == 5
         assert "FAIL" in result.output or "failed" in result.output.lower()
 

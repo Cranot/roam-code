@@ -120,7 +120,9 @@ class TestSampling:
         result = asyncio.run(sampling.compress_with_sampling(ctx, {"k": "v"}, task="x"))
         assert result is None
 
-    def test_successful_sample(self):
+    def test_successful_sample(self, monkeypatch):
+        """redactedmust set ROAM_AI_ENABLED=1 (Pass 98 default-OFF gate)."""
+        monkeypatch.setenv("ROAM_AI_ENABLED", "1")
         captured = {}
 
         class CtxOK(_FakeCtx):
@@ -137,6 +139,18 @@ class TestSampling:
         assert "healthy" in out["summary"]
         assert "score" in captured["prompt"]  # payload included
         assert captured["max_tokens"] == 600
+
+    def test_ai_disabled_returns_none(self, monkeypatch):
+        """Pass 98 / redactedwithout ROAM_AI_ENABLED, sampling is bypassed."""
+        monkeypatch.delenv("ROAM_AI_ENABLED", raising=False)
+
+        class CtxAlwaysSample(_FakeCtx):
+            async def sample(self, *args, **kwargs):
+                raise AssertionError("sample must not be invoked when ROAM_AI_ENABLED is unset")
+
+        ctx = CtxAlwaysSample()
+        out = asyncio.run(sampling.compress_with_sampling(ctx, {"score": 1}, task="overview"))
+        assert out is None
 
     def test_payload_truncation(self):
         big = {"data": "x" * 200_000}
