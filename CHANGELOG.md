@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.25] - 2026-05-05
+
+CI fix: backport ``QueryCursor`` for tree-sitter < 0.24 (Python 3.9
+lane). The 12.24 narrowing got past the install layer; the next
+breakage was an unconditional ``from tree_sitter import QueryCursor``
+in ``roam/languages/query_engine.py``. ``QueryCursor`` was added to
+the Python bindings in tree-sitter 0.24, but Python 3.9 pins to
+tree-sitter 0.23.x (newer versions require ≥ 3.10).
+
+This was also a real runtime bug — any Python 3.9 user installing
+``roam-code`` from PyPI would have hit ``ImportError`` the first
+time the indexer hit a YAML-extractor language.
+
+Fix: ``try: from tree_sitter import QueryCursor; except ImportError:``
+falls back to a thin shim that delegates ``.matches()`` and
+``.captures()`` to the underlying ``Query`` object — the old
+tree-sitter 0.23 API exposes the same methods on ``Query`` directly.
+
 ## [12.24] - 2026-05-05
 
 CI fix: narrow the fastmcp dev-dep marker so Python 3.9 stops failing
