@@ -396,6 +396,104 @@ def _deduplicate(alerts):
 # ---------------------------------------------------------------------------
 
 
+def _build_snap_dicts(snaps_raw) -> list[dict]:
+    """Convert the DB rows (newest-first) into chronological dict list."""
+    out: list[dict] = []
+    for s in reversed(snaps_raw):
+        out.append(
+            {
+                "timestamp": s["timestamp"],
+                "files": s["files"],
+                "symbols": s["symbols"],
+                "edges": s["edges"],
+                "cycles": s["cycles"],
+                "god_components": s["god_components"],
+                "bottlenecks": s["bottlenecks"],
+                "dead_exports": s["dead_exports"],
+                "layer_violations": s["layer_violations"],
+                "health_score": s["health_score"],
+            }
+        )
+    return out
+
+
+def _delta_baseline_alerts(current: dict, baseline_snap: dict) -> list[dict]:
+    """Per-metric regression alerts vs. the previous snapshot."""
+    out: list[dict] = []
+    for metric, current_value in current.items():
+        if not isinstance(current_value, (int, float)):
+            continue
+        baseline_value = baseline_snap.get(metric)
+        if not isinstance(baseline_value, (int, float)) or baseline_value == 0:
+            continue
+        delta = current_value - baseline_value
+        pct = abs(delta) / max(abs(baseline_value), 1) * 100
+        regressed = (metric in _WORSE_WHEN_HIGHER and delta > 0) or (metric in _WORSE_WHEN_LOWER and delta < 0)
+        if regressed and pct >= 10:
+            arrow = "+" if delta > 0 else ""
+            out.append(
+                _make_alert(
+                    WARNING if pct < 25 else CRITICAL,
+                    metric,
+                    f"{metric} regressed since baseline: {baseline_value} -> {current_value} "
+                    f"({arrow}{delta}, {pct:.0f}%)",
+                    current_value,
+                    trend_direction="worse",
+                )
+            )
+    return out
+
+
+def _alerts_summary_parts(counts: dict) -> list[str]:
+    """Render the ``N critical, M warnings, K info`` clauses."""
+    parts: list[str] = []
+    if counts[CRITICAL]:
+        parts.append(f"{counts[CRITICAL]} critical")
+    if counts[WARNING]:
+        parts.append(f"{counts[WARNING]} warning{'s' if counts[WARNING] != 1 else ''}")
+    if counts[INFO]:
+        parts.append(f"{counts[INFO]} info")
+    return parts
+
+
+def _alerts_verdict(all_alerts: list[dict], counts: dict) -> str:
+    if not all_alerts:
+        return "no alerts — all metrics within normal ranges"
+    parts = _alerts_summary_parts(counts)
+    return f"{len(all_alerts)} alert{'s' if len(all_alerts) != 1 else ''}: {', '.join(parts)}"
+
+
+def _emit_alerts_json(verdict: str, all_alerts: list[dict], counts: dict, snapshots_analyzed: int) -> None:
+    click.echo(
+        to_json(
+            json_envelope(
+                "alerts",
+                summary={
+                    "verdict": verdict,
+                    "total": len(all_alerts),
+                    "critical": counts[CRITICAL],
+                    "warning": counts[WARNING],
+                    "info": counts[INFO],
+                    "snapshots_analyzed": snapshots_analyzed,
+                },
+                alerts=all_alerts,
+            )
+        )
+    )
+
+
+def _emit_alerts_text(verdict: str, all_alerts: list[dict], counts: dict) -> None:
+    click.echo(f"VERDICT: {verdict}\n")
+    if not all_alerts:
+        click.echo("No health alerts. All metrics are within normal ranges.")
+        return
+    click.echo("Health alerts:\n")
+    for a in all_alerts:
+        click.echo(f"  {a['level'].ljust(9)} {a['message']}")
+    click.echo()
+    click.echo(", ".join(_alerts_summary_parts(counts)))
+
+
 @click.command()
 @click.pass_context
 def alerts(ctx):
@@ -414,142 +512,36 @@ def alerts(ctx):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    all_alerts = []
-
+    all_alerts: list[dict] = []
     with open_db(readonly=True) as conn:
-        # Fetch snapshot history (newest first from DB)
-        snaps_raw = get_snapshots(conn)
+        snap_dicts = _build_snap_dicts(get_snapshots(conn))
+        current = snap_dicts[-1] if snap_dicts else collect_metrics(conn)
 
-        # Build chronological list of snapshot dicts (oldest first)
-        snap_dicts = []
-        for s in reversed(snaps_raw):
-            snap_dicts.append(
-                {
-                    "timestamp": s["timestamp"],
-                    "files": s["files"],
-                    "symbols": s["symbols"],
-                    "edges": s["edges"],
-                    "cycles": s["cycles"],
-                    "god_components": s["god_components"],
-                    "bottlenecks": s["bottlenecks"],
-                    "dead_exports": s["dead_exports"],
-                    "layer_violations": s["layer_violations"],
-                    "health_score": s["health_score"],
-                }
-            )
-
-        if snap_dicts:
-            # Use the most recent snapshot as "current" metrics
-            current = snap_dicts[-1]
-        else:
-            # No snapshots at all -- compute live metrics
-            current = collect_metrics(conn)
-
-        # 1) Threshold checks (always run) — round 4 #3 / G: respect
-        # .roam/alerts.yaml overrides so projects can tune what 'critical'
-        # means for their codebase shape.
+        # 1) Threshold checks (respect .roam/alerts.yaml overrides).
         cfg = _load_alerts_config()
         thresholds = _resolved_thresholds()
         all_alerts.extend(_check_thresholds(current, thresholds))
 
-        # Round 4 / G: delta-vs-baseline alerts. When a snapshot exists
-        # and `.roam/alerts.yaml` opts in (or the default behaviour
-        # detects regression), emit per-metric "regressed since
-        # baseline" alerts that are actionable today.
+        # 2) Delta-vs-baseline alerts (need >= 2 snapshots, opt-out via config).
         delta_enabled = cfg.get("delta_alerts", True) if cfg else True
         if delta_enabled and len(snap_dicts) >= 2:
-            baseline_snap = snap_dicts[-2]
-            for metric, current_value in current.items():
-                if not isinstance(current_value, (int, float)):
-                    continue
-                baseline_value = baseline_snap.get(metric)
-                if not isinstance(baseline_value, (int, float)) or baseline_value == 0:
-                    continue
-                delta = current_value - baseline_value
-                pct = abs(delta) / max(abs(baseline_value), 1) * 100
-                regressed = (metric in _WORSE_WHEN_HIGHER and delta > 0) or (metric in _WORSE_WHEN_LOWER and delta < 0)
-                if regressed and pct >= 10:  # 10% regression floor
-                    arrow = "+" if delta > 0 else ""
-                    all_alerts.append(
-                        _make_alert(
-                            WARNING if pct < 25 else CRITICAL,
-                            metric,
-                            f"{metric} regressed since baseline: {baseline_value} -> {current_value} "
-                            f"({arrow}{delta}, {pct:.0f}%)",
-                            current_value,
-                            trend_direction="worse",
-                        )
-                    )
+            all_alerts.extend(_delta_baseline_alerts(current, snap_dicts[-2]))
 
-        # 2) Trend detection (need >= 3 snapshots)
+        # 3) Trend detection (Mann-Kendall + Sen's slope, need >= 3 snapshots).
         if len(snap_dicts) >= 3:
             all_alerts.extend(_check_trends(snap_dicts))
 
-        # 3) Rate-of-change detection (need >= 2 snapshots)
+        # 4) Rate-of-change detection (need >= 2 snapshots).
         if len(snap_dicts) >= 2:
             all_alerts.extend(_check_rate_of_change(snap_dicts))
 
-    # Deduplicate and sort
     all_alerts = _deduplicate(all_alerts)
-
-    # Count by level
     counts = {CRITICAL: 0, WARNING: 0, INFO: 0}
     for a in all_alerts:
         counts[a["level"]] += 1
+    verdict = _alerts_verdict(all_alerts, counts)
 
-    # Build verdict
-    if all_alerts:
-        parts = []
-        if counts[CRITICAL]:
-            parts.append(f"{counts[CRITICAL]} critical")
-        if counts[WARNING]:
-            parts.append(f"{counts[WARNING]} warning{'s' if counts[WARNING] != 1 else ''}")
-        if counts[INFO]:
-            parts.append(f"{counts[INFO]} info")
-        verdict = f"{len(all_alerts)} alert{'s' if len(all_alerts) != 1 else ''}: {', '.join(parts)}"
-    else:
-        verdict = "no alerts — all metrics within normal ranges"
-
-    # --- JSON output ---
     if json_mode:
-        click.echo(
-            to_json(
-                json_envelope(
-                    "alerts",
-                    summary={
-                        "verdict": verdict,
-                        "total": len(all_alerts),
-                        "critical": counts[CRITICAL],
-                        "warning": counts[WARNING],
-                        "info": counts[INFO],
-                        "snapshots_analyzed": len(snap_dicts),
-                    },
-                    alerts=all_alerts,
-                )
-            )
-        )
+        _emit_alerts_json(verdict, all_alerts, counts, len(snap_dicts))
         return
-
-    # --- Text output ---
-    click.echo(f"VERDICT: {verdict}\n")
-    if not all_alerts:
-        click.echo("No health alerts. All metrics are within normal ranges.")
-        return
-
-    click.echo("Health alerts:\n")
-
-    for a in all_alerts:
-        level_str = a["level"].ljust(9)
-        click.echo(f"  {level_str} {a['message']}")
-
-    click.echo()
-
-    # Summary line
-    parts = []
-    if counts[CRITICAL]:
-        parts.append(f"{counts[CRITICAL]} critical")
-    if counts[WARNING]:
-        parts.append(f"{counts[WARNING]} warning{'s' if counts[WARNING] != 1 else ''}")
-    if counts[INFO]:
-        parts.append(f"{counts[INFO]} info")
-    click.echo(", ".join(parts))
+    _emit_alerts_text(verdict, all_alerts, counts)
