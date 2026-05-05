@@ -549,8 +549,10 @@ def _detect_patterns_summary(conn):
                     "count": r["impl_count"],
                 }
             )
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_understand", _exc)
 
     # Factory: functions named create_*/build_*/make_*
     try:
@@ -561,8 +563,10 @@ def _detect_patterns_summary(conn):
         ).fetchone()[0]
         if count > 0:
             patterns.append({"type": "factory", "name": "factory functions", "count": count})
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_understand", _exc)
 
     return patterns
 

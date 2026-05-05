@@ -40,8 +40,10 @@ def _compute_health_score(
             for scc in find_cycles_fn(G):
                 cyc_ids.update(scc)
             tangle_r = len(cyc_ids) / symbols * 100
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("metrics_history:nested", _exc)
 
     # Score signal: actionable items only (utilities are expected to
     # have high fan-in / high betweenness — penalising them tanks the
@@ -141,8 +143,10 @@ def collect_metrics(conn):
             layer_map = detect_layers(G)
             if layer_map:
                 layer_violations = len(find_violations(G, layer_map))
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("metrics_history:nested", _exc)
 
     health_score = _compute_health_score(
         conn,
@@ -167,8 +171,10 @@ def collect_metrics(conn):
             for scc in cycle_list:
                 cycle_sym_ids.update(scc)
             tangle_ratio = round(len(cycle_sym_ids) / symbols * 100, 1)
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("metrics_history:nested", _exc)
 
     # Average complexity from symbol_metrics
     avg_complexity = 0.0
@@ -176,8 +182,10 @@ def collect_metrics(conn):
         row = conn.execute("SELECT AVG(cognitive_complexity) FROM symbol_metrics").fetchone()
         if row and row[0] is not None:
             avg_complexity = round(row[0], 1)
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history", _exc)
 
     # Brain methods (cc >= 25 AND line_count >= 50)
     brain_methods = 0
@@ -187,8 +195,10 @@ def collect_metrics(conn):
         ).fetchone()
         if row:
             brain_methods = row[0]
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history", _exc)
 
     return {
         "files": files,
@@ -222,8 +232,10 @@ def _git_info(root):
         )
         if r.returncode == 0:
             branch = r.stdout.strip()
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history", _exc)
     try:
         r = subprocess.run(
             ["git", "rev-parse", "--short", "HEAD"],
@@ -236,8 +248,10 @@ def _git_info(root):
         )
         if r.returncode == 0:
             commit = r.stdout.strip()
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("metrics_history", _exc)
     return branch, commit
 
 
