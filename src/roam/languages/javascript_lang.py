@@ -563,64 +563,76 @@ class JavaScriptExtractor(LanguageExtractor):
         }
     )
 
+    def _emit_argument_identifier_ref(self, child, source, refs, scope_name) -> None:
+        """Bug 2 — identifiers passed as function arguments (callbacks by
+        reference, e.g. ``addEventListener('keydown', handleKeyboardShortcut)``)."""
+        name = self.node_text(child, source)
+        if name and name not in self._JS_KEYWORDS:
+            refs.append(
+                self._make_reference(
+                    target_name=name,
+                    kind="reference",
+                    line=child.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
+
+    def _emit_shorthand_property_ref(self, child, source, refs, scope_name) -> None:
+        """Bug 3 — shorthand properties are always variable references
+        (e.g. ``defineExpose({ resetForm, loadUserData })``). Leaf node, so
+        no recursion needed."""
+        name = self.node_text(child, source)
+        if name:
+            refs.append(
+                self._make_reference(
+                    target_name=name,
+                    kind="reference",
+                    line=child.start_point[0] + 1,
+                    source_name=scope_name,
+                )
+            )
+
+    def _scope_name_for_child(self, child, source, scope_name) -> str:
+        """Decide the scope name to use when recursing into ``child``. For
+        function/class/generator declarations and const/let/var declarations
+        the scope expands; otherwise it inherits the parent scope."""
+        if child.type in (
+            "function_declaration",
+            "class_declaration",
+            "generator_function_declaration",
+        ):
+            n = child.child_by_field_name("name")
+            if n:
+                fname = self.node_text(n, source)
+                return f"{scope_name}.{fname}" if scope_name else fname
+            return scope_name
+        if child.type in ("lexical_declaration", "variable_declaration"):
+            for sub in child.children:
+                if sub.type == "variable_declarator":
+                    n = sub.child_by_field_name("name")
+                    if n and n.type == "identifier":
+                        vname = self.node_text(n, source)
+                        return f"{scope_name}.{vname}" if scope_name else vname
+                    break
+        return scope_name
+
     def _walk_refs(self, node, source, refs, scope_name):
         for child in node.children:
-            if child.type == "import_statement":
+            ctype = child.type
+            if ctype == "import_statement":
                 self._extract_esm_import(child, source, refs, scope_name)
-            elif child.type == "export_statement":
+            elif ctype == "export_statement":
                 self._walk_refs(child, source, refs, scope_name)
-            elif child.type == "call_expression":
+            elif ctype == "call_expression":
                 self._extract_call(child, source, refs, scope_name)
-            elif child.type == "new_expression":
+            elif ctype == "new_expression":
                 self._extract_new(child, source, refs, scope_name)
-            elif child.type == "identifier" and node.type == "arguments":
-                # Bug 2: Identifiers passed as function arguments (callbacks by reference)
-                # e.g. addEventListener('keydown', handleKeyboardShortcut)
-                name = self.node_text(child, source)
-                if name and name not in self._JS_KEYWORDS:
-                    refs.append(
-                        self._make_reference(
-                            target_name=name,
-                            kind="reference",
-                            line=child.start_point[0] + 1,
-                            source_name=scope_name,
-                        )
-                    )
-            elif child.type == "shorthand_property_identifier":
-                # Bug 3: Shorthand properties are always variable references
-                # e.g. defineExpose({ resetForm, loadUserData })
-                name = self.node_text(child, source)
-                if name:
-                    refs.append(
-                        self._make_reference(
-                            target_name=name,
-                            kind="reference",
-                            line=child.start_point[0] + 1,
-                            source_name=scope_name,
-                        )
-                    )
-                # No recursion needed — shorthand_property_identifier is a leaf node
+            elif ctype == "identifier" and node.type == "arguments":
+                self._emit_argument_identifier_ref(child, source, refs, scope_name)
+            elif ctype == "shorthand_property_identifier":
+                self._emit_shorthand_property_ref(child, source, refs, scope_name)
             else:
-                new_scope = scope_name
-                if child.type in (
-                    "function_declaration",
-                    "class_declaration",
-                    "generator_function_declaration",
-                ):
-                    n = child.child_by_field_name("name")
-                    if n:
-                        fname = self.node_text(n, source)
-                        new_scope = f"{scope_name}.{fname}" if scope_name else fname
-                elif child.type in ("lexical_declaration", "variable_declaration"):
-                    # Track const/let/var declarations as scope for their initializers
-                    for sub in child.children:
-                        if sub.type == "variable_declarator":
-                            n = sub.child_by_field_name("name")
-                            if n and n.type == "identifier":
-                                vname = self.node_text(n, source)
-                                new_scope = f"{scope_name}.{vname}" if scope_name else vname
-                                break
-                self._walk_refs(child, source, refs, new_scope)
+                self._walk_refs(child, source, refs, self._scope_name_for_child(child, source, scope_name))
 
     def _resolve_salesforce_import(self, path: str) -> tuple[str, str] | None:
         """Resolve @salesforce/* import paths to (target_name, edge_kind).
