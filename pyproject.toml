@@ -4,11 +4,11 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.22"
+version = "12.23"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
-license = "MIT"
+license = "Apache-2.0"
 authors = [
     {name = "CosmoHac"},
 ]
@@ -95,6 +95,12 @@ dev = [
     # alpha-override / chain-propagation invariants. Production users
     # without scipy still get the (less accurate but correct) fallback.
     "scipy>=1.11",
+    # fastmcp is required by tests that exercise the MCP server tool
+    # registry (``_TOOL_METADATA`` is empty without it because the
+    # decorator becomes a no-op). v12.22 round 121 — without this CI
+    # short-circuited at test_pass93_mcp_wrappers_registered as soon as
+    # earlier blockers were lifted.
+    "fastmcp>=2.0",
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",

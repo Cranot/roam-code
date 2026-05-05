@@ -4,9 +4,17 @@ from __future__ import annotations
 
 import json
 
+import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
+
+try:
+    import fastmcp  # noqa: F401
+
+    _HAS_FASTMCP = True
+except ImportError:
+    _HAS_FASTMCP = False
 
 
 def test_pass91_complexity_empty_state_emits_json():
@@ -68,6 +76,7 @@ def test_pass92_observability_silent_by_default(monkeypatch):
     assert fake_err.getvalue() == ""
 
 
+@pytest.mark.skipif(not _HAS_FASTMCP, reason="fastmcp not installed (optional [mcp] extra)")
 def test_pass93_mcp_wrappers_registered():
     from roam.mcp_server import _CORE_TOOLS, _TOOL_METADATA
 
