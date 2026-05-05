@@ -474,6 +474,36 @@ class LazyGroup(click.Group):
         mod = importlib.import_module(module_path)
         return getattr(mod, attr_name)
 
+    def resolve_command(self, ctx, args):
+        """Resolve a subcommand, with a did-you-mean hint on typos.
+
+        v12.14 — Click's default ``"No such command: 'contxt'"`` ends
+        the conversation; we can do better. When the requested name
+        isn't in ``_COMMANDS`` we look for the closest existing names
+        by edit distance and surface them in the UsageError so the
+        agent can retry with the right command in one turn.
+        """
+        try:
+            return super().resolve_command(ctx, args)
+        except click.UsageError as exc:
+            msg = str(exc)
+            if "No such command" not in msg:
+                raise
+            # Click's UsageError exposes the bad token as its first arg
+            # in some versions; fall back to parsing the message.
+            bad = args[0] if args else ""
+            bad = bad.strip("'\"")
+            if not bad:
+                raise
+            import difflib
+
+            _ensure_plugin_commands_loaded()
+            close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=3, cutoff=0.6)
+            if close:
+                suggestions = ", ".join(f"`roam {c}`" for c in close)
+                raise click.UsageError(f"No such command: '{bad}'. Did you mean {suggestions}?") from exc
+            raise
+
     def invoke(self, ctx):
         """Override invoke to map unhandled exceptions to standardized exit codes.
 
@@ -677,6 +707,28 @@ def _check_gate(gate_expr: str, data: dict) -> bool:
     return True
 
 
+def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> None:
+    """Eager callback for --help-all: print every command + short help.
+
+    The default ``roam --help`` shows priority categories + a flat
+    "More Commands" name list (66 names, no descriptions). Agents
+    mapping the territory often want every command's one-liner;
+    --help-all renders that without categorisation, sub-second
+    because the same AST short-help extraction --help uses.
+    """
+    if not value or ctx.resilient_parsing:
+        return
+    _ensure_plugin_commands_loaded()
+    click.echo("Usage: roam [OPTIONS] COMMAND [ARGS]...\n")
+    click.echo(f"All {len(_COMMANDS)} invokable command names:\n")
+    for cmd_name in sorted(_COMMANDS):
+        help_text = _short_help_via_ast(cmd_name) or ""
+        click.echo(f"  {cmd_name:32s} {help_text}")
+    click.echo()
+    click.echo("Run `roam <command> --help` for details on any command.")
+    ctx.exit(0)
+
+
 @click.group(cls=LazyGroup)
 @click.version_option(package_name="roam-code")
 @click.option(
@@ -686,6 +738,15 @@ def _check_gate(gate_expr: str, data: dict) -> bool:
     expose_value=False,
     callback=_run_check,
     help="Quick setup verification: checks Python, tree-sitter, git, SQLite",
+)
+@click.option(
+    "--help-all",
+    "help_all",
+    is_flag=True,
+    is_eager=True,
+    expose_value=False,
+    callback=_run_help_all,
+    help="Print every command (no categories, no truncation) and exit.",
 )
 @click.option("--json", "json_mode", is_flag=True, help="Output in JSON format")
 @click.option("--compact", is_flag=True, help="Compact output: TSV tables, minimal JSON envelope")
