@@ -43,6 +43,7 @@ except ImportError:
         def captures(self, root):
             return self._query.captures(root)
 
+
 from roam.languages.extractor_schema import (
     InheritancePattern,
     LanguageConfig,
