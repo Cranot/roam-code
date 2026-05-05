@@ -396,6 +396,90 @@ class _QueryPattern:
         self.kind = kind  # 'scope', 'service', 'controller', 'generic'
 
 
+def _line_offsets(content: str) -> list[int]:
+    """Pre-compute character offsets for the start of each line."""
+    offsets = [0]
+    for ln in content.splitlines():
+        offsets.append(offsets[-1] + len(ln) + 1)
+    return offsets
+
+
+def _line_no_for_pos(line_offsets: list[int], pos: int) -> int:
+    """Binary-search the line number (1-based) for a character position."""
+    lo, hi = 0, len(line_offsets) - 1
+    while lo < hi:
+        mid = (lo + hi) // 2
+        if line_offsets[mid] <= pos < line_offsets[mid + 1]:
+            return mid + 1
+        if pos < line_offsets[mid]:
+            hi = mid
+        else:
+            lo = mid + 1
+    return lo + 1
+
+
+def _extract_brace_body(content: str, start_search_pos: int) -> str | None:
+    """From a search position, find the next ``{`` and return the substring
+    up to the matching ``}``. Returns None if no opening brace was found."""
+    brace_start = content.find("{", start_search_pos)
+    if brace_start == -1:
+        return None
+    depth = 0
+    pos = brace_start
+    while pos < len(content):
+        if content[pos] == "{":
+            depth += 1
+        elif content[pos] == "}":
+            depth -= 1
+            if depth == 0:
+                break
+        pos += 1
+    return content[brace_start : pos + 1]
+
+
+def _file_kind_from_path(rel_path: str) -> str:
+    """Bucket the path into a Laravel-ish layer name for confidence scoring."""
+    p_lower = rel_path.replace("\\", "/").lower()
+    if "service" in p_lower:
+        return "service"
+    if "controller" in p_lower:
+        return "controller"
+    if "scope" in p_lower or "model" in p_lower:
+        return "model"
+    return "generic"
+
+
+def _query_pattern_from_body(
+    body: str,
+    rel_path: str,
+    line_no: int,
+    table: str | None,
+    kind: str,
+) -> _QueryPattern | None:
+    """Scan a function/scope body for WHERE/ORDER BY/paginate patterns.
+
+    Returns a populated ``_QueryPattern`` or None when there's nothing to
+    emit.
+    """
+    where_cols = [m.group(1) for m in _RE_WHERE.finditer(body)]
+    where_cols += [m.group(1) for m in _RE_WHERE_IN.finditer(body)]
+    orderby_cols = [m.group(1) for m in _RE_ORDER_BY.finditer(body)]
+    has_paginate = bool(_RE_PAGINATE.search(body))
+    where_cols = [c.split(".")[-1] for c in where_cols]
+    orderby_cols = [c.split(".")[-1] for c in orderby_cols]
+    if not (where_cols or orderby_cols):
+        return None
+    return _QueryPattern(
+        file_path=rel_path,
+        line_no=line_no,
+        table=table,
+        where_cols=list(dict.fromkeys(where_cols)),
+        orderby_cols=list(dict.fromkeys(orderby_cols)),
+        has_paginate=has_paginate,
+        kind=kind,
+    )
+
+
 def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
     """Read PHP source files and extract WHERE / ORDER BY patterns with context."""
     patterns: list[_QueryPattern] = []
@@ -407,123 +491,40 @@ def _parse_query_patterns(root, source_paths: list[str]) -> list[_QueryPattern]:
         except OSError:
             continue
 
-        # Determine file kind for confidence scoring
-        p_lower = rel_path.replace("\\", "/").lower()
-        if "service" in p_lower:
-            file_kind = "service"
-        elif "controller" in p_lower:
-            file_kind = "controller"
-        elif "scope" in p_lower or "model" in p_lower:
-            file_kind = "model"
-        else:
-            file_kind = "generic"
+        file_kind = _file_kind_from_path(rel_path)
+        offsets = _line_offsets(content)
 
-        lines = content.splitlines()
-        line_offsets = [0]
-        for ln in lines:
-            line_offsets.append(line_offsets[-1] + len(ln) + 1)
-
-        def _line_no_for_pos(pos: int) -> int:
-            lo, hi = 0, len(line_offsets) - 1
-            while lo < hi:
-                mid = (lo + hi) // 2
-                if line_offsets[mid] <= pos < line_offsets[mid + 1]:
-                    return mid + 1
-                elif pos < line_offsets[mid]:
-                    hi = mid
-                else:
-                    lo = mid + 1
-            return lo + 1
-
-        # --- Scope methods: extract scope body for local analysis ---
+        # Scope methods (Laravel ``scope*`` query helpers).
         for scope_match in _RE_SCOPE_METHOD.finditer(content):
-            # Find the opening brace and grab until matching close
-            brace_start = content.find("{", scope_match.end())
-            if brace_start == -1:
+            scope_body = _extract_brace_body(content, scope_match.end())
+            if scope_body is None:
                 continue
-            depth = 0
-            pos = brace_start
-            while pos < len(content):
-                if content[pos] == "{":
-                    depth += 1
-                elif content[pos] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                pos += 1
-            scope_body = content[brace_start : pos + 1]
-            scope_line = _line_no_for_pos(scope_match.start())
-            table = _infer_table_from_context(content, scope_match.start())
+            pat = _query_pattern_from_body(
+                scope_body,
+                rel_path,
+                _line_no_for_pos(offsets, scope_match.start()),
+                _infer_table_from_context(content, scope_match.start()),
+                "scope",
+            )
+            if pat is not None:
+                patterns.append(pat)
 
-            where_cols = [m.group(1) for m in _RE_WHERE.finditer(scope_body)]
-            where_cols += [m.group(1) for m in _RE_WHERE_IN.finditer(scope_body)]
-            orderby_cols = [m.group(1) for m in _RE_ORDER_BY.finditer(scope_body)]
-            has_paginate = bool(_RE_PAGINATE.search(scope_body))
-
-            # Strip table prefix from column references (e.g. 'table.col' → 'col')
-            where_cols = [c.split(".")[-1] for c in where_cols]
-            orderby_cols = [c.split(".")[-1] for c in orderby_cols]
-
-            if where_cols or orderby_cols:
-                patterns.append(
-                    _QueryPattern(
-                        file_path=rel_path,
-                        line_no=scope_line,
-                        table=table,
-                        where_cols=list(dict.fromkeys(where_cols)),
-                        orderby_cols=list(dict.fromkeys(orderby_cols)),
-                        has_paginate=has_paginate,
-                        kind="scope",
-                    )
-                )
-
-        # --- Method-level analysis: chunk file into method bodies ---
-        # Find all method declarations and process them as logical blocks
-        method_matches = list(_RE_METHOD_DECL.finditer(content))
-
-        for mi, mm in enumerate(method_matches):
-            # Skip scope methods (already handled above)
-            fn_name = mm.group(1)
-            if fn_name.startswith("scope"):
+        # Regular method bodies (skip scope methods — already handled above).
+        for mm in _RE_METHOD_DECL.finditer(content):
+            if mm.group(1).startswith("scope"):
                 continue
-
-            brace_start = content.find("{", mm.end())
-            if brace_start == -1:
+            body = _extract_brace_body(content, mm.end())
+            if body is None:
                 continue
-            depth = 0
-            pos = brace_start
-            while pos < len(content):
-                if content[pos] == "{":
-                    depth += 1
-                elif content[pos] == "}":
-                    depth -= 1
-                    if depth == 0:
-                        break
-                pos += 1
-            body = content[brace_start : pos + 1]
-            fn_line = _line_no_for_pos(mm.start())
-            table = _infer_table_from_context(content, mm.start())
-
-            where_cols = [m.group(1) for m in _RE_WHERE.finditer(body)]
-            where_cols += [m.group(1) for m in _RE_WHERE_IN.finditer(body)]
-            orderby_cols = [m.group(1) for m in _RE_ORDER_BY.finditer(body)]
-            has_paginate = bool(_RE_PAGINATE.search(body))
-
-            where_cols = [c.split(".")[-1] for c in where_cols]
-            orderby_cols = [c.split(".")[-1] for c in orderby_cols]
-
-            if where_cols or orderby_cols:
-                patterns.append(
-                    _QueryPattern(
-                        file_path=rel_path,
-                        line_no=fn_line,
-                        table=table,
-                        where_cols=list(dict.fromkeys(where_cols)),
-                        orderby_cols=list(dict.fromkeys(orderby_cols)),
-                        has_paginate=has_paginate,
-                        kind=file_kind,
-                    )
-                )
+            pat = _query_pattern_from_body(
+                body,
+                rel_path,
+                _line_no_for_pos(offsets, mm.start()),
+                _infer_table_from_context(content, mm.start()),
+                file_kind,
+            )
+            if pat is not None:
+                patterns.append(pat)
 
     return patterns
 
