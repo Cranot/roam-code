@@ -205,6 +205,44 @@ def _class_to_table(class_name: str) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _add_composite(indexes: set[tuple[str, ...]], cols: tuple[str, ...]) -> None:
+    """Register a composite index plus each member as a single-col sub-index."""
+    if not cols:
+        return
+    indexes.add(cols)
+    for c in cols:
+        indexes.add((c,))
+
+
+def _extract_schema_block_indexes(block: str, indexes: set[tuple[str, ...]]) -> None:
+    """Scan one Schema::create/table closure body for the six index shapes."""
+    for m in _RE_INDEX_ARRAY.finditer(block):
+        _add_composite(indexes, tuple(_extract_string_list(m.group(1))))
+    for m in _RE_INDEX_SINGLE.finditer(block):
+        indexes.add((m.group(1),))
+    for m in _RE_UNIQUE_SINGLE.finditer(block):
+        indexes.add((m.group(1),))
+    for m in _RE_PRIMARY_SINGLE.finditer(block):
+        indexes.add((m.group(1),))
+    for m in _RE_PRIMARY_COMPOSITE.finditer(block):
+        _add_composite(indexes, tuple(_extract_string_list(m.group(1))))
+    for m in _RE_INLINE_INDEX.finditer(block):
+        indexes.add((m.group(1),))
+
+
+def _extract_raw_create_index(
+    content: str,
+    table_indexes: dict[str, set[tuple[str, ...]]],
+) -> None:
+    """Pattern 7: raw ``CREATE INDEX ... ON table(...)`` outside Schema blocks."""
+    for m in _RE_CREATE_INDEX_RAW.finditer(content):
+        tbl = m.group(1).rsplit(".", 1)[-1].strip("{}\"' $")
+        cols = tuple(_extract_string_list(m.group(2)))
+        if not cols:
+            cols = tuple(c.strip() for c in m.group(2).split(",") if c.strip())
+        _add_composite(table_indexes[tbl], cols)
+
+
 def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[tuple[str, ...]]]:
     """Read migration files and build table -> set-of-indexed-column-tuples.
 
@@ -222,75 +260,18 @@ def _parse_migration_indexes(root, migration_paths: list[str]) -> dict[str, set[
         except OSError:
             continue
 
-        # Find all Schema::create / Schema::table blocks and their table names
         schema_matches = list(_RE_SCHEMA_TABLE.finditer(content))
-        if not schema_matches:
-            continue
-
-        # For each schema block, extract the table name and then collect
-        # index declarations within the closure that follows it.
         for i, sm in enumerate(schema_matches):
             raw_table = sm.group(1)
             table_name = raw_table.rsplit(".", 1)[-1].strip("{}\"' $")
-
-            # The closure starts after the match and ends at the next
-            # Schema:: call or end of file.
             block_start = sm.end()
             block_end = schema_matches[i + 1].start() if i + 1 < len(schema_matches) else len(content)
             block = content[block_start:block_end]
-
-            # Always index 'id' — every Eloquent table has a primary key
+            # Eloquent tables always have an ``id`` primary key.
             table_indexes[table_name].add(("id",))
+            _extract_schema_block_indexes(block, table_indexes[table_name])
 
-            # 1. Composite index / unique: $table->index(['a','b'])
-            for m in _RE_INDEX_ARRAY.finditer(block):
-                cols = tuple(_extract_string_list(m.group(1)))
-                if cols:
-                    table_indexes[table_name].add(cols)
-                    # Also register individual columns as single-col sub-indexes
-                    for c in cols:
-                        table_indexes[table_name].add((c,))
-
-            # 2. Single-column index: $table->index('col')
-            for m in _RE_INDEX_SINGLE.finditer(block):
-                col = m.group(1)
-                table_indexes[table_name].add((col,))
-
-            # 3. Single-column unique: $table->unique('col')
-            for m in _RE_UNIQUE_SINGLE.finditer(block):
-                col = m.group(1)
-                table_indexes[table_name].add((col,))
-
-            # 4. Single primary: $table->primary('col')
-            for m in _RE_PRIMARY_SINGLE.finditer(block):
-                col = m.group(1)
-                table_indexes[table_name].add((col,))
-
-            # 5. Composite primary: $table->primary(['a','b'])
-            for m in _RE_PRIMARY_COMPOSITE.finditer(block):
-                cols = tuple(_extract_string_list(m.group(1)))
-                if cols:
-                    table_indexes[table_name].add(cols)
-                    for c in cols:
-                        table_indexes[table_name].add((c,))
-
-            # 6. Inline chained ->index() on column definition
-            for m in _RE_INLINE_INDEX.finditer(block):
-                col = m.group(1)
-                table_indexes[table_name].add((col,))
-
-        # 7. Raw SQL CREATE INDEX outside Schema blocks
-        for m in _RE_CREATE_INDEX_RAW.finditer(content):
-            raw_tbl = m.group(1)
-            tbl = raw_tbl.rsplit(".", 1)[-1].strip("{}\"' $")
-            cols = tuple(_extract_string_list(m.group(2)))
-            if not cols:
-                # Fallback: split on comma for unquoted column names
-                cols = tuple(c.strip() for c in m.group(2).split(",") if c.strip())
-            if cols:
-                table_indexes[tbl].add(cols)
-                for c in cols:
-                    table_indexes[tbl].add((c,))
+        _extract_raw_create_index(content, table_indexes)
 
     return dict(table_indexes)
 
