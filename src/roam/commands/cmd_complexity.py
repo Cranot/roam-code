@@ -111,11 +111,21 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
         try:
             count = conn.execute("SELECT COUNT(*) FROM symbol_metrics").fetchone()[0]
         except Exception:
-            click.echo("No complexity data found. Re-index with: roam index --force")
-            raise SystemExit(1)
-
-        if count == 0:
-            click.echo("No complexity data found. Re-index with: roam index --force")
+            count = -1
+        if count <= 0:
+            verdict = "No complexity data found. Re-index with: roam index --force"
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "complexity",
+                            summary={"verdict": verdict, "total": 0},
+                            results=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(verdict)
             raise SystemExit(1)
 
         if bumpy_road:
@@ -179,7 +189,19 @@ def complexity(ctx, target, limit, threshold, by_file, bumpy_road, include_tooli
                 sarif = complexity_to_sarif([], threshold=threshold or 0)
                 click.echo(write_sarif(sarif))
                 return
-            click.echo("No matching symbols found.")
+            verdict = "No matching symbols found."
+            if json_mode:
+                click.echo(
+                    to_json(
+                        json_envelope(
+                            "complexity",
+                            summary={"verdict": verdict, "total": 0},
+                            results=[],
+                        )
+                    )
+                )
+            else:
+                click.echo(verdict)
             return
 
         if sarif_mode:
@@ -398,7 +420,19 @@ def _bumpy_road(conn, json_mode, limit, threshold):
     ).fetchall()
 
     if not rows:
-        click.echo("No bumpy-road files found.")
+        verdict = "No bumpy-road files found."
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "complexity",
+                        summary={"verdict": verdict, "total": 0},
+                        bumpy_road=[],
+                    )
+                )
+            )
+        else:
+            click.echo(verdict)
         return
 
     if json_mode:

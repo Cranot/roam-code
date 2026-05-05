@@ -543,18 +543,19 @@ def _no_mutating_options(
     exclude_pattern,
     remove_pattern,
 ) -> bool:
-    return all(
-        value is None
-        for value in (
-            db_dir,
-            use_local_cache,
-            semantic_backend,
-            onnx_model,
-            onnx_tokenizer,
-            onnx_max_length,
-            exclude_pattern,
-            remove_pattern,
-        )
+    # redacted``use_local_cache`` is a ``is_flag=True`` Click option,
+    # so its default is ``False`` not ``None``. The previous all(... is
+    # None) check returned False even when nothing was passed, leaving
+    # ``roam config`` (no flags, no --show) silent in --json mode.
+    return (
+        db_dir is None
+        and not use_local_cache
+        and semantic_backend is None
+        and onnx_model is None
+        and onnx_tokenizer is None
+        and onnx_max_length is None
+        and exclude_pattern is None
+        and remove_pattern is None
     )
 
 

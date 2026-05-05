@@ -7,6 +7,104 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.19] - 2026-05-05
+
+Ten quality-focused passes (rounds 91-100). Net new surface:
+1 CLI command (`audit` — Priority 1 strategic blocker), 5 MCP
+wrappers (`roam_alerts`, `roam_timeline`, `roam_test_impact`,
+`roam_disambiguate`, `roam_why_fail`), cross-language
+`orphan-imports` (JS/TS/Go), auto-generated complete-reference
+appendix in the docs site, MCP error-storm rate-limiter,
+agent-export `--brief` mode, observability hook for swallowed
+exceptions, and registry-dispatch detection in `roam impact`.
+
+### redacted`--json` empty-state sweep
+
+Same class of bug as the 12.18.1 safe-zones hotfix. Fixed three
+real bypasses uncovered by JSON-parse probes:
+``cmd_complexity`` (3 sites: empty data, no matches, no bumpy
+roads), ``cmd_coverage_gaps`` (missing-filter usage error),
+and ``cmd_config`` where a flag-default mismatch made
+``roam --json config`` silently produce empty output.
+
+### redactedsilent `except: pass` observability hook
+
+84 ``except Exception: pass`` blocks across 40 files masked
+real failures (missing schema columns, optional dependencies,
+sqlite errors). Added ``roam.observability.log_swallowed``
+which is a no-op unless ``ROAM_VERBOSE=1`` (or
+``ROAM_OBSERVABILITY=1``) is set. Applied to the heaviest
+offenders: ``cmd_metrics`` (12 sites) and ``cmd_describe`` (8
+sites). Rate-limited to 5 reports per scope per process.
+
+### redactedfive MCP wrappers
+
+Wired up agent-actionable signals that were CLI-only:
+``roam_alerts``, ``roam_timeline``, ``roam_test_impact``,
+``roam_disambiguate``, ``roam_why_fail``. All five added to
+the core preset (35 → 41 core tools).
+
+### redactedN+1 SQL batching
+
+Replaced per-symbol ``conn.execute`` loops in
+``cmd_adversarial`` (orphaned-symbols + high-fan-out checks)
+with a single ``batched_in()`` query. On a 14k-symbol repo,
+``roam adversarial`` previously made thousands of round-trips;
+now one batch per check. Same pattern for ``cmd_affected``
+(start-symbol collection).
+
+### redactedauto-regenerated command reference
+
+Hand-curated workflow sections in
+``docs/site/command-reference.html`` now have a complete
+auto-generated appendix listing every command + short help line
+organised by category, between
+``<!-- BEGIN auto-reference -->`` markers. Regenerate with
+``python dev/build_command_reference.py``. Coverage went from
+73 to 185 commands documented.
+
+### redactedcross-language `orphan-imports`
+
+Pass 44 was Python-only. Extended to JS/TS (path-rewrite
+resolution + bare-specifier detection) and Go (stdlib +
+hostname-shaped import path heuristic). New ``--lang`` flag
+(``all`` / ``python`` / ``javascript`` / ``go``).
+
+### redacted`roam audit`
+
+Build-priorities P1: revenue-blocker meta-command. Chains
+``health → debt → dead → test-pyramid → api → stats →
+hotspots --danger`` into one envelope with a
+top-level summary (verdict, health_score, debt_total,
+danger_zone_count, api_surface, etc.). Pass ``--brief`` to drop
+per-section detail.
+
+### redactedAI-on-client-code default OFF
+
+Sampling/LLM hook in ``mcp_extras/sampling.py`` now requires
+``ROAM_AI_ENABLED=1`` (or ``=true``) to dispatch payloads to
+the client's LLM. Without the env var, the hook returns
+``None`` and callers fall back to the raw envelope. GDPR / EU
+AI Act credibility blocker for the first paid audit.
+
+### redacted`roam impact` dispatch-via-registry
+
+Dogfood #189 — the call graph misses consumers that route
+through string-lookup tables (cli ``_COMMANDS``, ask recipes,
+plugin entry points). New ``indirect_refs`` field in the
+``impact`` envelope scans source files for string literals
+matching the symbol's name/qname. Surfaces ``43 sites`` for
+``health`` that the static graph misses.
+
+### redactedagent-export `--brief`
+
+``roam --json agent-export`` previously emitted ~6 KB of
+nested JSON (directory layout, key files, hotspots, layers,
+clusters). New ``--brief`` flag drops the verbose payload and
+keeps only the top-level summary — 6197 → 608 bytes (10×
+reduction). Useful for CI / fleet workflows that just need
+project metadata.
+
 ## [12.18.1] - 2026-05-05
 
 Hotfix for a CI failure spotted in the 12.18 release run. ``roam

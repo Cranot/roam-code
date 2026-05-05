@@ -243,11 +243,17 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         changed_paths = set(file_map.keys())
 
-        # Collect all symbol IDs in changed files
+        # Collect all symbol IDs in changed files. redactedsingle
+        # batched IN-clause replaces N round-trips (was one query per
+        # changed file; now one query for the whole set).
         start_sym_ids = set()
-        for path, fid in file_map.items():
-            syms = conn.execute("SELECT id FROM symbols WHERE file_id = ?", (fid,)).fetchall()
-            start_sym_ids.update(s["id"] for s in syms)
+        if file_map:
+            sym_rows = batched_in(
+                conn,
+                "SELECT id FROM symbols WHERE file_id IN ({ph})",
+                list(file_map.values()),
+            )
+            start_sym_ids.update(s["id"] for s in sym_rows)
 
         # BFS forward to find all dependents
         reachable = _bfs_forward_with_depth(conn, start_sym_ids, max_depth)

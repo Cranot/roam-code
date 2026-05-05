@@ -86,6 +86,12 @@ async def compress_with_sampling(
     ``ctx.sample`` method, transport failure). Callers should treat
     ``None`` as "fall back to the raw payload".
 
+    redactedsending payloads through the client's LLM is OFF by
+    default for GDPR / EU AI Act credibility. Set
+    ``ROAM_AI_ENABLED=1`` (or ``=true``) to opt in. Without the env
+    var, this function returns ``None`` even if the client offers
+    sampling — the caller falls back to the raw envelope.
+
     On success returns a dict::
 
         {
@@ -97,6 +103,10 @@ async def compress_with_sampling(
             "raw": <original payload>  # only when include_raw=True
         }
     """
+    import os as _os
+
+    if _os.environ.get("ROAM_AI_ENABLED", "").strip().lower() not in {"1", "true", "yes"}:
+        return None
     if ctx is None:
         return None
     sampler = getattr(ctx, "sample", None)

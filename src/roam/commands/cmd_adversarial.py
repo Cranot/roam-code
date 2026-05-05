@@ -12,7 +12,7 @@ import click
 
 from roam.commands.changed_files import get_changed_files, resolve_changed_to_db
 from roam.commands.resolve import ensure_index
-from roam.db.connection import find_project_root, open_db
+from roam.db.connection import batched_in, find_project_root, open_db
 from roam.output.formatter import abbrev_kind, json_envelope, loc, to_json
 
 # ---------------------------------------------------------------------------
@@ -308,28 +308,30 @@ def _check_cross_cluster(conn, changed_sym_ids):
 
 
 def _check_orphaned_symbols(conn, changed_sym_ids):
-    """Check for symbols in changed files with zero incoming edges."""
+    """Check for symbols in changed files with zero incoming edges.
+
+    redactedsingle batched query for in-degree + symbol metadata
+    instead of two queries per changed symbol.
+    """
     challenges = []
     if not changed_sym_ids:
         return challenges
 
-    for sid in changed_sym_ids:
-        try:
-            row = conn.execute("SELECT COUNT(*) as cnt FROM edges WHERE target_id = ?", (sid,)).fetchone()
-        except Exception:
-            continue
-        if not row or row["cnt"] != 0:
-            continue
+    sid_list = list(changed_sym_ids)
+    # One query per batch instead of two queries per symbol.
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
+        "       (SELECT COUNT(*) FROM edges WHERE target_id = s.id) AS in_degree "
+        "  FROM symbols s JOIN files f ON s.file_id = f.id "
+        " WHERE s.id IN ({ph})",
+        sid_list,
+    )
+    sym_by_id = {r["id"]: r for r in rows if r["in_degree"] == 0}
 
-        try:
-            sym = conn.execute(
-                "SELECT s.name, s.kind, f.path as file_path, s.line_start "
-                "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                (sid,),
-            ).fetchone()
-        except Exception:
-            continue
-        if not sym:
+    for sid in changed_sym_ids:
+        sym = sym_by_id.get(sid)
+        if sym is None:
             continue
 
         # Only flag substantive symbols
@@ -371,25 +373,23 @@ def _check_high_fan_out(conn, changed_sym_ids):
 
     _FAN_OUT_THRESHOLD = 10
 
-    for sid in changed_sym_ids:
-        try:
-            row = conn.execute("SELECT COUNT(*) as cnt FROM edges WHERE source_id = ?", (sid,)).fetchone()
-        except Exception:
-            continue
-        if not row or row["cnt"] <= _FAN_OUT_THRESHOLD:
-            continue
+    # redactedsingle batched query for fan-out + metadata.
+    sid_list = list(changed_sym_ids)
+    rows = batched_in(
+        conn,
+        "SELECT s.id, s.name, s.kind, f.path AS file_path, s.line_start, "
+        "       (SELECT COUNT(*) FROM edges WHERE source_id = s.id) AS fan_out "
+        "  FROM symbols s JOIN files f ON s.file_id = f.id "
+        " WHERE s.id IN ({ph})",
+        sid_list,
+    )
+    sym_by_id = {r["id"]: r for r in rows if r["fan_out"] > _FAN_OUT_THRESHOLD}
 
-        fan_out = row["cnt"]
-        try:
-            sym = conn.execute(
-                "SELECT s.name, s.kind, f.path as file_path, s.line_start "
-                "FROM symbols s JOIN files f ON s.file_id = f.id WHERE s.id = ?",
-                (sid,),
-            ).fetchone()
-        except Exception:
+    for sid in changed_sym_ids:
+        sym = sym_by_id.get(sid)
+        if sym is None:
             continue
-        if not sym:
-            continue
+        fan_out = sym["fan_out"]
 
         file_path = (sym["file_path"] or "").replace("\\", "/")
         name = sym["name"] or ""

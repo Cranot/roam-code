@@ -66,6 +66,63 @@ def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
     return dependents, affected_files, direct_callers, by_kind, sf_test_files
 
 
+def _find_indirect_refs(conn, sym, already_affected_files: set, *, limit: int = 50) -> list[dict]:
+    """Scan source files for string-literal references to a symbol.
+
+    redactedpicks up registry-dispatch consumers (e.g. cli's
+    ``_COMMANDS = {"foo": ("module.path", "attr_name")}``) that the
+    static call graph misses. Excludes the symbol's own file and any
+    file already in the directly-affected set so we surface NEW edges,
+    not duplicates.
+    """
+    import re as _re
+    from pathlib import Path as _Path
+
+    name = (sym["name"] or "").strip()
+    qname = (sym["qualified_name"] or "").strip()
+    if not name:
+        return []
+    own_file = (sym["file_path"] or "").replace("\\", "/")
+    affected_norm = {p.replace("\\", "/") for p in already_affected_files}
+
+    # Build a single regex that matches the qname OR the bare name when
+    # quoted as a string literal. Bare-name-only matches generate too
+    # many false positives, so we require the literal to contain a dot
+    # (qualified) OR the symbol name length to be >= 5 to filter out
+    # short generic names like "id" or "url".
+    candidates = []
+    if qname:
+        candidates.append(_re.escape(qname))
+    if len(name) >= 5:
+        candidates.append(_re.escape(name))
+    if not candidates:
+        return []
+    pattern = _re.compile(r"['\"](?:" + "|".join(candidates) + r")['\"]")
+
+    # Narrow to source files only (exclude tests/docs/data).
+    rows = conn.execute(
+        "SELECT path FROM files WHERE COALESCE(file_role, 'source') IN ('source','config','scripts')"
+    ).fetchall()
+    refs: list[dict] = []
+    for r in rows:
+        rel = (r["path"] or "").replace("\\", "/")
+        if rel == own_file or rel in affected_norm:
+            continue
+        full = _Path(rel)
+        if not full.is_file():
+            continue
+        try:
+            text = full.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        for m in pattern.finditer(text):
+            line_no = text.count("\n", 0, m.start()) + 1
+            refs.append({"file": rel, "line": line_no, "match": m.group(0)})
+            if len(refs) >= limit:
+                return refs
+    return refs
+
+
 def _impact_verdict(dependents, affected_files, total_syms):
     """Generate blast radius verdict string."""
     reach_pct = (len(dependents) / total_syms * 100) if total_syms > 0 else 0
@@ -175,6 +232,14 @@ def impact(ctx, name, hops):
             return
 
         weighted_impact = sum(ppr.get(d, 0) for d in dependents)
+
+        # redacteddispatch-via-registry detection. roam's call graph
+        # only sees direct calls; consumers that route through string
+        # lookup tables (cli ``_COMMANDS``, ask recipe registry, plugin
+        # entry points) are invisible. Scan source files for string
+        # literals matching this symbol's name and qualified name to
+        # surface those callsites as ``indirect_refs``.
+        indirect_refs = _find_indirect_refs(conn, sym, affected_files)
         verdict, reach_pct = _impact_verdict(dependents, affected_files, len(G))
 
         if json_mode:
@@ -223,6 +288,7 @@ def impact(ctx, name, hops):
                         direct_dependents=json_deps,
                         affected_file_list=affected_file_dicts,
                         sf_convention_tests=sorted(sf_test_files),
+                        indirect_refs=indirect_refs,
                     )
                 )
             )
@@ -230,6 +296,11 @@ def impact(ctx, name, hops):
 
         click.echo(f"VERDICT: {verdict}\n")
         click.echo(f"Affected symbols: {len(dependents)}  Affected files: {len(affected_files)}")
+        if indirect_refs:
+            click.echo(
+                f"Indirect refs (registry / string-dispatch): {len(indirect_refs)} site(s) — "
+                "agent-blast may be larger than direct call graph indicates"
+            )
         click.echo()
 
         if by_kind:

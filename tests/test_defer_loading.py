@@ -171,6 +171,12 @@ class TestDeferLoading:
             "roam_py_modern",
             # v12.16 / redactedmachine-readable tool catalog
             "roam_catalog",
+            # v12.19 / redactedagent-actionable wrappers
+            "roam_alerts",
+            "roam_timeline",
+            "roam_test_impact",
+            "roam_disambiguate",
+            "roam_why_fail",
         }
         assert core_names == expected_core, (
             f"Core tools mismatch.\n  Extra: {core_names - expected_core}\n  Missing: {expected_core - core_names}"

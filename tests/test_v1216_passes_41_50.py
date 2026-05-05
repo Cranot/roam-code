@@ -79,14 +79,18 @@ def test_pass44_orphan_imports_command_runs():
 
 
 def test_pass44_classify_internal_typo_vs_missing():
-    """The detector distinguishes internal-typo from missing-package classes."""
-    from roam.commands.cmd_orphan_imports import _is_external_package
+    """The detector distinguishes internal-typo from missing-package classes.
+
+    v12.19 / redactedfunction renamed to ``_is_external_python_package``
+    when JS/TS/Go scanners landed.
+    """
+    from roam.commands.cmd_orphan_imports import _is_external_python_package
 
     # A clearly built-in module returns True
-    assert _is_external_package("os")
-    assert _is_external_package("json")
+    assert _is_external_python_package("os")
+    assert _is_external_python_package("json")
     # A truly missing package returns False
-    assert not _is_external_package("definitely_not_a_real_package_xyz123")
+    assert not _is_external_python_package("definitely_not_a_real_package_xyz123")
 
 
 def test_pass45_docstring_quality_buckets():

@@ -302,6 +302,12 @@ class TestToolDecorator:
             "roam_py_modern",
             # v12.16 / redactedmachine-readable tool catalog (1)
             "roam_catalog",
+            # v12.19 / redactedagent-actionable wrappers (5)
+            "roam_alerts",
+            "roam_timeline",
+            "roam_test_impact",
+            "roam_disambiguate",
+            "roam_why_fail",
         }
         assert _CORE_TOOLS == expected
 
@@ -309,7 +315,7 @@ class TestToolDecorator:
         from roam.mcp_server import _CORE_TOOLS
 
         # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36.
-        assert len(_CORE_TOOLS) == 36
+        assert len(_CORE_TOOLS) == 41
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS
@@ -436,7 +442,7 @@ class TestExpandToolset:
         result = expand_toolset(preset="core")
         # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35 (+py-pivot 2),
         # v12.16=36 (+roam_catalog).
-        assert result["tool_count"] == 36
+        assert result["tool_count"] == 41
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

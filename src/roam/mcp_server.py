@@ -111,6 +111,12 @@ _CORE_TOOLS = {
     "roam_taint_classify",
     # v12.16 / redactedmachine-readable tool catalog (1)
     "roam_catalog",
+    # v12.19 / redactedagent-actionable wrappers for previously CLI-only signals (5)
+    "roam_alerts",
+    "roam_timeline",
+    "roam_test_impact",
+    "roam_disambiguate",
+    "roam_why_fail",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -6158,6 +6164,99 @@ def roam_catalog(root: str = ".") -> dict:
         "tools": tools,
         "preset": _ACTIVE_PRESET,
     }
+
+
+# ---------------------------------------------------------------------------
+# redactedfive MCP wrappers for previously CLI-only agent signals
+# ---------------------------------------------------------------------------
+
+
+@_tool(
+    name="roam_alerts",
+    description="Active health alerts: thresholds breached on tangle, complexity, churn, or coverage.",
+    output_schema=_ENVELOPE_SCHEMA,
+)
+def roam_alerts(root: str = ".") -> dict:
+    """Active health alerts. Call this to know what to act on RIGHT NOW.
+
+    Reads the configured thresholds from .roam/config.json and returns
+    every metric currently breaching a threshold (tangle ratio,
+    complexity, churn, coverage drop).
+
+    >>> roam alerts
+    """
+    return _run_roam(["alerts"], root)
+
+
+@_tool(
+    name="roam_timeline",
+    description="Chronological commits that touched the file owning a symbol — author, date, lines added/removed.",
+    output_schema=_ENVELOPE_SCHEMA,
+)
+def roam_timeline(symbol: str, limit: int = 20, root: str = ".") -> dict:
+    """Show commit history for the file containing a symbol.
+
+    WHEN TO USE: before refactoring a hub function — see who's been
+    active and how often the file changes.
+
+    >>> roam timeline ensure_index --limit 10
+    """
+    args = ["timeline", symbol, "--limit", str(limit)]
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_test_impact",
+    description="Tests transitively reachable from changed symbols — sharper scope than affected_tests.",
+    output_schema=_ENVELOPE_SCHEMA,
+)
+def roam_test_impact(commit_range: str = "", max_hops: int = 5, root: str = ".") -> dict:
+    """Tests reachable from changed symbols within N hops.
+
+    WHEN TO USE: after a commit (or when staging) — pick which tests
+    to run. Walks reverse call graph from each changed symbol.
+
+    >>> roam test-impact HEAD~3
+    """
+    args = ["test-impact"]
+    if commit_range:
+        args.append(commit_range)
+    args.extend(["--max-hops", str(max_hops)])
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_disambiguate",
+    description="List every symbol matching a name with file/line/kind/signature/PageRank — pick the right overload.",
+    output_schema=_ENVELOPE_SCHEMA,
+)
+def roam_disambiguate(name: str, limit: int = 20, root: str = ".") -> dict:
+    """List every symbol matching a name with disambiguators.
+
+    WHEN TO USE: when search returns multiple matches and you need to
+    pick the right one. Saves an agent from picking the wrong overload.
+
+    >>> roam disambiguate handle_login
+    """
+    args = ["disambiguate", name, "--limit", str(limit)]
+    return _run_roam(args, root)
+
+
+@_tool(
+    name="roam_why_fail",
+    description="Triage a failing test/symbol: recently-changed symbols transitively reachable from it.",
+    output_schema=_ENVELOPE_SCHEMA,
+)
+def roam_why_fail(target: str, days: int = 14, max_hops: int = 5, limit: int = 10, root: str = ".") -> dict:
+    """Triage a failing test by surfacing recently-changed reachable symbols.
+
+    WHEN TO USE: a test just started failing — what changed?
+    Combines BFS reach with git recency to rank suspects.
+
+    >>> roam why-fail tests/test_login.py --days 7
+    """
+    args = ["why-fail", target, "--days", str(days), "--max-hops", str(max_hops), "--limit", str(limit)]
+    return _run_roam(args, root)
 
 
 # ---------------------------------------------------------------------------

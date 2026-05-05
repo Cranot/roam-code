@@ -1,4 +1,4 @@
-"""``roam orphan-imports`` — Python imports that don't resolve to a known module.
+"""``roam orphan-imports`` — imports that don't resolve to a known module.
 
 redactedquick lint that catches:
 
@@ -7,8 +7,9 @@ redactedquick lint that catches:
 * Typo'd local imports (e.g. ``from roam.cmds.foo import bar`` when the
   module is ``roam.commands.cmd_foo``).
 
-Strictly Python-only for now. JS/TS/Go orphan-import detection would need
-per-language scaffolding; this is the 80/20 starting point.
+redactedextended to JS / TS (``import 'x'``) and Go (``import "x"``).
+Each language gets its own ``_indexed_modules`` accumulator and import
+regex; the resolution rules differ per language.
 """
 
 from __future__ import annotations
@@ -24,35 +25,103 @@ from roam.commands.resolve import ensure_index
 from roam.db.connection import open_db
 from roam.output.formatter import json_envelope, to_json
 
-_IMPORT_RE = re.compile(r"^\s*(?:import\s+([\w.]+)|from\s+([\w.]+)\s+import\s+)", re.MULTILINE)
-# Skip relative imports — resolution depends on package depth.
-_RELATIVE_PREFIX_RE = re.compile(r"^\s*from\s+\.")
+# Python ----------------------------------------------------------------------
+
+_PY_IMPORT_RE = re.compile(r"^\s*(?:import\s+([\w.]+)|from\s+([\w.]+)\s+import\s+)", re.MULTILINE)
+_PY_RELATIVE_PREFIX_RE = re.compile(r"^\s*from\s+\.")
+
+# JS/TS — capture the bare module specifier in any of the four shapes:
+#   import x from 'pkg';        import 'pkg';          import * as a from "pkg";
+#   import {a, b} from "@scope/pkg/sub";   const x = require("pkg");
+_JS_IMPORT_RE = re.compile(
+    r"""(?:^|[\s;])(?:import\s+(?:[^'"]+\s+from\s+)?|require\s*\()\s*['"]([^'"]+)['"]""",
+    re.MULTILINE,
+)
+# Go — `import "pkg"` and grouped imports inside `import ( ... )`.
+_GO_IMPORT_LINE_RE = re.compile(r'^\s*(?:_\s+|[\w]+\s+)?"([^"]+)"', re.MULTILINE)
+_GO_IMPORT_BLOCK_RE = re.compile(r"^\s*import\s*\(([^)]*)\)", re.MULTILINE | re.DOTALL)
+_GO_IMPORT_SINGLE_RE = re.compile(r'^\s*import\s+(?:_\s+|[\w]+\s+)?"([^"]+)"', re.MULTILINE)
+
+# Module names — common stdlib heuristics for non-Python so we don't flag
+# everyday standard imports as orphans.
+_GO_STDLIB = frozenset(
+    {
+        "fmt",
+        "os",
+        "io",
+        "net",
+        "errors",
+        "strings",
+        "strconv",
+        "time",
+        "context",
+        "encoding",
+        "log",
+        "math",
+        "sync",
+        "regexp",
+        "bytes",
+        "path",
+        "sort",
+        "bufio",
+        "testing",
+        "reflect",
+        "html",
+        "database",
+        "crypto",
+        "container",
+        "compress",
+        "archive",
+        "image",
+        "runtime",
+        "go",
+        "flag",
+        "unicode",
+        "syscall",
+        "hash",
+        "embed",
+        "iter",
+        "slices",
+        "maps",
+        "cmp",
+        "internal",
+        "encoding/json",
+        "net/http",
+        "net/url",
+    }
+)
+_JS_BUILTIN_PREFIXES = (
+    "node:",
+    "fs",
+    "path",
+    "child_process",
+    "stream",
+    "events",
+    "util",
+    "http",
+    "https",
+    "crypto",
+    "url",
+    "os",
+    "process",
+)
 
 
-def _indexed_modules() -> set[str]:
-    """Return dotted-module names derivable from indexed Python files.
-
-    Includes anything under ``src/`` regardless of role classification —
-    a path like ``src/roam/index/test_conventions.py`` is a real source
-    module even though the filename triggers the test-role classifier.
-    Excludes top-level ``tests/`` and ``benchmarks/`` directories.
-    """
+def _indexed_python_modules(conn) -> set[str]:
+    """Return dotted-module names derivable from indexed Python files."""
     out: set[str] = set()
-    with open_db(readonly=True) as conn:
-        rows = conn.execute(
-            """
-            SELECT path FROM files
-            WHERE language = 'python'
-              AND path NOT LIKE 'tests/%'
-              AND path NOT LIKE 'tests\\%'
-              AND path NOT LIKE 'benchmarks/%'
-              AND path NOT LIKE 'benchmarks\\%'
-            """
-        ).fetchall()
+    rows = conn.execute(
+        """
+        SELECT path FROM files
+         WHERE language = 'python'
+           AND path NOT LIKE 'tests/%'
+           AND path NOT LIKE 'tests\\%'
+           AND path NOT LIKE 'benchmarks/%'
+           AND path NOT LIKE 'benchmarks\\%'
+        """
+    ).fetchall()
     for r in rows:
         path = Path(r[0])
-        # Treat ``src/<root>/...`` and top-level layout. Strip the ``src/``
-        # prefix if present so ``src/roam/cli.py`` becomes ``roam.cli``.
         parts = path.with_suffix("").parts
         if parts and parts[0] == "src":
             parts = parts[1:]
@@ -62,15 +131,53 @@ def _indexed_modules() -> set[str]:
             parts = parts[:-1]
         if parts:
             out.add(".".join(parts))
-            # Also register every prefix: ``roam.commands.cmd_foo`` → ``roam``,
-            # ``roam.commands``, ``roam.commands.cmd_foo``.
             for i in range(1, len(parts)):
                 out.add(".".join(parts[:i]))
     return out
 
 
-def _is_external_package(module: str) -> bool:
-    """Best-effort check: does Python think this top-level module exists?"""
+def _indexed_js_modules(conn) -> set[str]:
+    """Return path-style module identifiers for indexed JS/TS files.
+
+    A JS import like ``./utils/format`` or ``../models/user`` resolves
+    relative to the importing file. Path-relative imports we keep as-is
+    (they're handled per-file). Bare specifiers like ``react`` or
+    ``@scope/pkg`` are treated as external packages by default; we
+    flag them only when no node_modules signal exists. Indexed modules
+    are accumulated as posix paths *without* extension so an import of
+    ``./utils/format`` matches ``src/utils/format.ts``.
+    """
+    out: set[str] = set()
+    rows = conn.execute("SELECT path FROM files WHERE language IN ('javascript','typescript','tsx','jsx')").fetchall()
+    for r in rows:
+        path = (r[0] or "").replace("\\", "/")
+        # Strip extension and `index` filename
+        without_ext = re.sub(r"\.(js|jsx|ts|tsx|mjs|cjs)$", "", path)
+        out.add(without_ext)
+        if without_ext.endswith("/index"):
+            out.add(without_ext[: -len("/index")])
+    return out
+
+
+def _indexed_go_packages(conn) -> set[str]:
+    """Return Go import paths derivable from indexed .go files.
+
+    Without `go.mod` parsing this is best-effort: we register every
+    directory containing at least one .go file as a possible local
+    package path. External imports are caught by stdlib + 'looks like
+    domain.com/...' heuristics.
+    """
+    out: set[str] = set()
+    rows = conn.execute("SELECT path FROM files WHERE language = 'go'").fetchall()
+    for r in rows:
+        path = (r[0] or "").replace("\\", "/")
+        parts = path.split("/")
+        if len(parts) > 1:
+            out.add("/".join(parts[:-1]))
+    return out
+
+
+def _is_external_python_package(module: str) -> bool:
     head = module.split(".", 1)[0]
     if head in sys.builtin_module_names:
         return True
@@ -80,16 +187,33 @@ def _is_external_package(module: str) -> bool:
         return False
 
 
-@click.command(name="orphan-imports")
-@click.pass_context
-def orphan_imports(ctx) -> None:
-    """List Python imports that don't resolve to any indexed module or installed package."""
-    json_mode = ctx.obj.get("json") if ctx.obj else False
-    ensure_index()
-    with open_db(readonly=True) as conn:
-        rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
+def _is_external_go_package(module: str) -> bool:
+    if module in _GO_STDLIB:
+        return True
+    head = module.split("/", 1)[0]
+    if head in _GO_STDLIB:
+        return True
+    # Module path with a hostname-shaped first segment is almost
+    # certainly a third-party Go module (github.com/x/y, gopkg.in/x.v1).
+    if "." in head:
+        return True
+    return False
 
-    indexed = _indexed_modules()
+
+def _is_external_js_package(module: str) -> bool:
+    if not module:
+        return True
+    if any(module.startswith(p) for p in _JS_BUILTIN_PREFIXES):
+        return True
+    # Bare specifier (no leading dot or slash) → npm package by default.
+    if not module.startswith(".") and not module.startswith("/"):
+        return True
+    return False
+
+
+def _scan_python(conn) -> tuple[list[dict], int]:
+    indexed = _indexed_python_modules(conn)
+    rows = conn.execute("SELECT path FROM files WHERE language = 'python' ORDER BY path").fetchall()
     orphans: list[dict] = []
     files_scanned = 0
     for r in rows:
@@ -102,26 +226,21 @@ def orphan_imports(ctx) -> None:
         except OSError:
             continue
         files_scanned += 1
-        for m in _IMPORT_RE.finditer(text):
-            # Skip relative imports — they depend on package context which
-            # we can't easily resolve without re-parsing.
+        for m in _PY_IMPORT_RE.finditer(text):
             line_start = m.start()
             line_end = text.find("\n", line_start)
             line = text[line_start:line_end] if line_end > 0 else text[line_start:]
-            if _RELATIVE_PREFIX_RE.match(line):
+            if _PY_RELATIVE_PREFIX_RE.match(line):
                 continue
             mod = m.group(1) or m.group(2)
-            if not mod:
-                continue
-            if mod in indexed:
+            if not mod or mod in indexed:
                 continue
             head = mod.split(".", 1)[0]
+            line_no = text.count("\n", 0, line_start) + 1
             if head in indexed:
-                # Top-level package is indexed but the dotted submodule isn't —
-                # that's the typo case we care about. Flag it.
-                line_no = text.count("\n", 0, line_start) + 1
                 orphans.append(
                     {
+                        "language": "python",
                         "file": rel_path,
                         "line": line_no,
                         "module": mod,
@@ -130,11 +249,11 @@ def orphan_imports(ctx) -> None:
                     }
                 )
                 continue
-            if _is_external_package(mod):
+            if _is_external_python_package(mod):
                 continue
-            line_no = text.count("\n", 0, line_start) + 1
             orphans.append(
                 {
+                    "language": "python",
                     "file": rel_path,
                     "line": line_no,
                     "module": mod,
@@ -142,11 +261,147 @@ def orphan_imports(ctx) -> None:
                     "hint": "neither indexed nor importable; check spelling or install package",
                 }
             )
+    return orphans, files_scanned
+
+
+def _scan_javascript(conn) -> tuple[list[dict], int]:
+    indexed = _indexed_js_modules(conn)
+    rows = conn.execute(
+        "SELECT path FROM files WHERE language IN ('javascript','typescript','tsx','jsx') ORDER BY path"
+    ).fetchall()
+    orphans: list[dict] = []
+    files_scanned = 0
+    for r in rows:
+        rel_path = (r[0] or "").replace("\\", "/")
+        full = Path(rel_path)
+        if not full.is_file():
+            continue
+        try:
+            text = full.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        files_scanned += 1
+        # Build the file's directory once for relative resolution.
+        importer_dir = "/".join(rel_path.split("/")[:-1])
+        for m in _JS_IMPORT_RE.finditer(text):
+            spec = m.group(1)
+            if not spec:
+                continue
+            line_start = m.start()
+            line_no = text.count("\n", 0, line_start) + 1
+            if _is_external_js_package(spec):
+                continue  # bare specifier = npm package; trust resolver
+            # Relative path resolve.
+            target = spec
+            if target.startswith("./") or target.startswith("../"):
+                pieces = (importer_dir + "/" + target).split("/") if importer_dir else target.split("/")
+                stack: list[str] = []
+                for p in pieces:
+                    if p in ("", "."):
+                        continue
+                    if p == "..":
+                        if stack:
+                            stack.pop()
+                    else:
+                        stack.append(p)
+                target = "/".join(stack)
+            if target in indexed:
+                continue
+            orphans.append(
+                {
+                    "language": "javascript",
+                    "file": rel_path,
+                    "line": line_no,
+                    "module": spec,
+                    "kind": "missing_local",
+                    "hint": f"resolved path '{target}' not in indexed JS/TS files",
+                }
+            )
+    return orphans, files_scanned
+
+
+def _scan_go(conn) -> tuple[list[dict], int]:
+    indexed = _indexed_go_packages(conn)
+    rows = conn.execute("SELECT path FROM files WHERE language = 'go' ORDER BY path").fetchall()
+    orphans: list[dict] = []
+    files_scanned = 0
+    for r in rows:
+        rel_path = (r[0] or "").replace("\\", "/")
+        full = Path(rel_path)
+        if not full.is_file():
+            continue
+        try:
+            text = full.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        files_scanned += 1
+        candidates: list[tuple[int, str]] = []
+        # Single-line imports.
+        for m in _GO_IMPORT_SINGLE_RE.finditer(text):
+            line_no = text.count("\n", 0, m.start()) + 1
+            candidates.append((line_no, m.group(1)))
+        # Block imports.
+        for m in _GO_IMPORT_BLOCK_RE.finditer(text):
+            block_offset = m.start(1)
+            for inner in _GO_IMPORT_LINE_RE.finditer(m.group(1)):
+                line_no = text.count("\n", 0, block_offset + inner.start()) + 1
+                candidates.append((line_no, inner.group(1)))
+        for line_no, spec in candidates:
+            if not spec or spec in indexed:
+                continue
+            if _is_external_go_package(spec):
+                continue
+            orphans.append(
+                {
+                    "language": "go",
+                    "file": rel_path,
+                    "line": line_no,
+                    "module": spec,
+                    "kind": "missing_local",
+                    "hint": "Go import path not in indexed packages",
+                }
+            )
+    return orphans, files_scanned
+
+
+_SCANNERS = {
+    "python": _scan_python,
+    "javascript": _scan_javascript,
+    "go": _scan_go,
+}
+
+
+@click.command(name="orphan-imports")
+@click.option(
+    "--lang",
+    type=click.Choice(["all", "python", "javascript", "go"], case_sensitive=False),
+    default="all",
+    show_default=True,
+    help="Restrict to a single language scan.",
+)
+@click.pass_context
+def orphan_imports(ctx, lang) -> None:
+    """List imports that don't resolve to any indexed module / installed package.
+
+    Python (default), JavaScript/TypeScript and Go are supported. Pass
+    ``--lang`` to limit the scan.
+    """
+    json_mode = ctx.obj.get("json") if ctx.obj else False
+    ensure_index()
+    targets = ["python", "javascript", "go"] if lang.lower() == "all" else [lang.lower()]
+    all_orphans: list[dict] = []
+    files_scanned = 0
+    with open_db(readonly=True) as conn:
+        for tgt in targets:
+            scanner = _SCANNERS[tgt]
+            orphans, n = scanner(conn)
+            all_orphans.extend(orphans)
+            files_scanned += n
 
     verdict = (
-        f"OK — no orphan imports across {files_scanned} Python file(s)"
-        if not orphans
-        else f"{len(orphans)} orphan import(s) across {files_scanned} Python file(s)"
+        f"OK — no orphan imports across {files_scanned} file(s)"
+        if not all_orphans
+        else f"{len(all_orphans)} orphan import(s) across {files_scanned} file(s)"
     )
 
     if json_mode:
@@ -154,22 +409,27 @@ def orphan_imports(ctx) -> None:
             to_json(
                 json_envelope(
                     "orphan-imports",
-                    summary={"verdict": verdict, "count": len(orphans), "files_scanned": files_scanned},
-                    orphans=orphans[:200],
+                    summary={
+                        "verdict": verdict,
+                        "count": len(all_orphans),
+                        "files_scanned": files_scanned,
+                        "languages": targets,
+                    },
+                    orphans=all_orphans[:200],
                 )
             )
         )
         return
 
     click.echo(f"VERDICT: {verdict}")
-    if not orphans:
+    if not all_orphans:
         return
     click.echo()
-    click.echo(f"{'File:Line':<55}  {'Kind':<16}  Module")
-    click.echo(f"{'-' * 55}  {'-' * 16}  {'-' * 30}")
-    for o in orphans[:50]:
-        loc = f"{o['file']}:{o['line']}"
-        click.echo(f"{loc:<55}  {o['kind']:<16}  {o['module']}")
-    if len(orphans) > 50:
+    click.echo(f"{'File:Line':<55}  {'Lang':<10}  {'Kind':<16}  Module")
+    click.echo(f"{'-' * 55}  {'-' * 10}  {'-' * 16}  {'-' * 30}")
+    for o in all_orphans[:50]:
+        loc_str = f"{o['file']}:{o['line']}"
+        click.echo(f"{loc_str:<55}  {o['language']:<10}  {o['kind']:<16}  {o['module']}")
+    if len(all_orphans) > 50:
         click.echo()
-        click.echo(f"… {len(orphans) - 50} more (use --json for the full list)")
+        click.echo(f"… {len(all_orphans) - 50} more (use --json for the full list)")

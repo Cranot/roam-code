@@ -699,8 +699,14 @@ def _write_with_preserve(filepath, content):
     is_flag=True,
     help="Write directly to project root (CLAUDE/AGENTS/CODEX/GEMINI/.cursorrules)",
 )
+@click.option(
+    "--brief",
+    "brief_mode",
+    is_flag=True,
+    help="redactedemit a compact summary (top-level fields only) instead of the full agent doc.",
+)
 @click.pass_context
-def agent_export(ctx, output, fmt, profile, bundle, write_flag):
+def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
     """Generate an AI agent context file from the roam index.
 
     Produces a concise markdown document with architecture, key files,
@@ -781,6 +787,36 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
 
     # JSON output
     if json_mode:
+        envelope_kwargs = dict(
+            format=formats[0],
+            formats=formats,
+            profile=profile,
+            bundle=bundle,
+            project_name=project_name,
+        )
+        if not brief_mode:
+            # redactedfull payload only when --brief is OFF.
+            envelope_kwargs.update(
+                languages=languages,
+                stats=stats,
+                directory_layout=layout,
+                key_files=key_files,
+                entry_points=entry_points,
+                hotspots=hotspots,
+                test_info=test_info,
+                health_summary=(
+                    {
+                        "score": health.get("health_score"),
+                        "cycles": health.get("cycles", 0),
+                        "god_components": health.get("god_components", 0),
+                        "dead_exports": health.get("dead_exports", 0),
+                    }
+                    if health
+                    else None
+                ),
+                layers=layers,
+                clusters=clusters,
+            )
         click.echo(
             to_json(
                 json_envelope(
@@ -794,29 +830,9 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag):
                         "sections": section_count,
                         "files": stats["files"],
                         "symbols": stats["symbols"],
+                        "brief": brief_mode,
                     },
-                    format=formats[0],
-                    formats=formats,
-                    profile=profile,
-                    bundle=bundle,
-                    project_name=project_name,
-                    languages=languages,
-                    stats=stats,
-                    directory_layout=layout,
-                    key_files=key_files,
-                    entry_points=entry_points,
-                    hotspots=hotspots,
-                    test_info=test_info,
-                    health_summary={
-                        "score": health.get("health_score"),
-                        "cycles": health.get("cycles", 0),
-                        "god_components": health.get("god_components", 0),
-                        "dead_exports": health.get("dead_exports", 0),
-                    }
-                    if health
-                    else None,
-                    layers=layers,
-                    clusters=clusters,
+                    **envelope_kwargs,
                 )
             )
         )

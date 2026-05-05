@@ -212,8 +212,10 @@ def _read_manifest_info(project_root):
             if desc:
                 lines.append(f"- **Package:** {name}")
                 lines.append(f"- **Description:** {desc}")
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_describe:nested", _exc)
         break
 
     for manifest in ("pyproject.toml",):
@@ -228,8 +230,10 @@ def _read_manifest_info(project_root):
                     if desc:
                         lines.append(f"- **Description:** {desc}")
                     break
-        except Exception:
-            pass
+        except Exception as _exc:  # noqa: BLE001 — defensive
+            from roam.observability import log_swallowed
+
+            log_swallowed("cmd_describe:nested", _exc)
         break
     return lines
 
@@ -450,8 +454,10 @@ def _section_domain(conn):
         from roam.db.connection import find_project_root
 
         project_root = find_project_root()
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
 
     lines.extend(_read_manifest_info(project_root))
 
@@ -524,8 +530,10 @@ def _section_conventions(conn):
                 lines.append(f"- **Imports:** Prefer absolute imports ({pct}% are cross-directory)")
             else:
                 lines.append(f"- **Imports:** Relative imports common ({100 - pct}% same-directory)")
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
 
     # Test patterns
     test_files = conn.execute("SELECT path FROM files WHERE path LIKE '%test%'").fetchall()
@@ -577,8 +585,10 @@ def _section_complexity_guide(conn):
             lines.append("|----------|-----------|----------|")
             for r in critical:
                 lines.append(f"| `{r['name']}` | {r['cognitive_complexity']:.0f} | `{r['path']}:{r['line_start']}` |")
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
 
     return lines
 
@@ -715,8 +725,10 @@ def _agent_prompt_data(conn):
         """).fetchall()
         for s in top:
             abstractions.append(f"{s['name']} ({s['kind']}, {s['file_path']})")
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
     data["key_abstractions"] = abstractions
 
     # ── Hotspots (top 3 by churn * complexity) ───────────────────────
@@ -737,8 +749,10 @@ def _agent_prompt_data(conn):
             hotspots.append(
                 f"{r['name']} (complexity={r['cognitive_complexity']:.0f}, churn={r['churn']}, {r['path']})"
             )
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
     data["hotspots"] = hotspots
 
     # ── Cycle-only health estimate + actionable cycle count ─────────
@@ -767,8 +781,10 @@ def _agent_prompt_data(conn):
             data["cycles"] = len(actionable)
             # Keep the legacy alias around so existing tooling doesn't break.
             data["health_score"] = score
-    except Exception:
-        pass
+    except Exception as _exc:  # noqa: BLE001 — defensive
+        from roam.observability import log_swallowed
+
+        log_swallowed("cmd_describe:section", _exc)
 
     # ── Test command guess redacted — read package.json/etc. first) ──
     from roam.output.project_shape import detect_project_shape
