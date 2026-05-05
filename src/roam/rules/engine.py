@@ -352,55 +352,10 @@ def _evaluate_path_match(rule: dict, conn) -> dict:
 # ---------------------------------------------------------------------------
 
 
-def _evaluate_symbol_match(rule: dict, conn) -> dict:
-    """Evaluate a symbol_match rule: find symbols matching criteria.
-
-    Supports requirement checks under ``match.require``:
-    - ``has_test``: matched symbols must have test coverage
-    - ``name_regex``: symbol name must match regex
-    - ``max_params`` / ``min_params``
-    - ``max_symbol_lines`` / ``min_symbol_lines``
-    - ``max_file_lines`` / ``min_file_lines``
-    """
-    match = rule.get("match", {})
-    exempt = rule.get("exempt", {})
-
-    kind_filter = match.get("kind")
-    exported_filter = match.get("exported")
-    file_glob = match.get("file_glob")
-    min_fan_in = match.get("min_fan_in")
-    max_fan_in = match.get("max_fan_in")
-
-    require = match.get("require", {})
-    require_has_test = bool(require.get("has_test", False))
-    require_name_regex = require.get("name_regex")
-    require_max_params = _as_float_or_none(require.get("max_params"))
-    require_min_params = _as_float_or_none(require.get("min_params"))
-    require_max_symbol_lines = _as_float_or_none(require.get("max_symbol_lines"))
-    require_min_symbol_lines = _as_float_or_none(require.get("min_symbol_lines"))
-    require_max_file_lines = _as_float_or_none(require.get("max_file_lines"))
-    require_min_file_lines = _as_float_or_none(require.get("min_file_lines"))
-
-    compiled_name_regex = None
-    if isinstance(require_name_regex, str) and require_name_regex.strip():
-        try:
-            compiled_name_regex = re.compile(require_name_regex)
-        except re.error as exc:
-            return {
-                "name": rule.get("name", "unnamed"),
-                "severity": rule.get("severity", "error"),
-                "passed": False,
-                "violations": [
-                    {
-                        "symbol": "",
-                        "file": rule.get("_file", ""),
-                        "line": None,
-                        "reason": "invalid require.name_regex: {}".format(exc),
-                    }
-                ],
-            }
-
-    # Build the base query
+def _build_symbol_match_query(conn) -> tuple[str, str, str]:
+    """Compute the schema-aware SQL fragments needed for the symbol_match
+    SELECT. Returns ``(file_role_expr, param_expr, symbol_lines_expr,
+    file_lines_expr, symbol_metrics_join)``."""
     file_cols = _table_columns(conn, "files")
     symbol_cols = _table_columns(conn, "symbols")
     has_symbol_metrics = _table_exists(conn, "symbol_metrics")
@@ -414,10 +369,7 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
     else:
         file_lines_expr = "NULL"
 
-    if "file_role" in file_cols:
-        file_role_expr = "f.file_role"
-    else:
-        file_role_expr = "NULL"
+    file_role_expr = "f.file_role" if "file_role" in file_cols else "NULL"
 
     symbol_lines_fallback = (
         "(CASE WHEN s.line_start IS NOT NULL AND s.line_end IS NOT NULL "
@@ -425,7 +377,6 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
         if "line_end" in symbol_cols
         else "NULL"
     )
-
     if has_symbol_metrics:
         param_expr = "sm.param_count"
         symbol_lines_expr = "COALESCE(sm.line_count, {})".format(symbol_lines_fallback)
@@ -454,15 +405,136 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
         file_lines_expr=file_lines_expr,
         symbol_metrics_join=symbol_metrics_join,
     )
-    params: list = []
+    return query
 
+
+def _parse_match_requirements(match: dict) -> tuple[dict, re.Pattern | None, str | None]:
+    """Parse and normalise the require-* parameters under ``match.require``.
+
+    Returns ``(requires_dict, compiled_name_regex, regex_error)``. The
+    error string is non-None when a name_regex was provided but failed to
+    compile; callers should surface it as a violation.
+    """
+    require = match.get("require", {})
+    requires = {
+        "has_test": bool(require.get("has_test", False)),
+        "max_params": _as_float_or_none(require.get("max_params")),
+        "min_params": _as_float_or_none(require.get("min_params")),
+        "max_symbol_lines": _as_float_or_none(require.get("max_symbol_lines")),
+        "min_symbol_lines": _as_float_or_none(require.get("min_symbol_lines")),
+        "max_file_lines": _as_float_or_none(require.get("max_file_lines")),
+        "min_file_lines": _as_float_or_none(require.get("min_file_lines")),
+    }
+    compiled_regex = None
+    regex_error = None
+    require_name_regex = require.get("name_regex")
+    if isinstance(require_name_regex, str) and require_name_regex.strip():
+        try:
+            compiled_regex = re.compile(require_name_regex)
+        except re.error as exc:
+            regex_error = str(exc)
+    return requires, compiled_regex, regex_error
+
+
+def _bound_check(label: str, value: float | None, max_v: float | None, min_v: float | None) -> list[str]:
+    """Standard min/max bound check that returns the reason strings.
+
+    Centralises the 'value unavailable / exceeds / is below' messaging that
+    every numeric requirement (params, symbol_lines, file_lines) repeats.
+    """
+    if max_v is None and min_v is None:
+        return []
+    if value is None:
+        return ["{} unavailable".format(label)]
+    out: list[str] = []
+    if max_v is not None and value > max_v:
+        out.append("{} {:.0f} exceeds {:.0f}".format(label, value, max_v))
+    if min_v is not None and value < min_v:
+        out.append("{} {:.0f} is below {:.0f}".format(label, value, min_v))
+    return out
+
+
+def _row_violation_reasons(row, requires, compiled_regex, conn) -> list[str]:
+    """Apply every require-* check to a single row and return the failures.
+
+    Empty list means the row passes all requirements.
+    """
+    reasons: list[str] = []
+    symbol_name = row["name"]
+    if requires["has_test"] and not _symbol_has_test(conn, row["id"]):
+        reasons.append("{} has no test coverage".format(symbol_name))
+    if compiled_regex and not compiled_regex.search(symbol_name):
+        reasons.append("name '{}' does not match {}".format(symbol_name, compiled_regex.pattern))
+    reasons.extend(
+        _bound_check(
+            "parameter count",
+            _as_float_or_none(row["param_count"]),
+            requires["max_params"],
+            requires["min_params"],
+        )
+    )
+    reasons.extend(
+        _bound_check(
+            "symbol line count",
+            _as_float_or_none(row["symbol_line_count"]),
+            requires["max_symbol_lines"],
+            requires["min_symbol_lines"],
+        )
+    )
+    reasons.extend(
+        _bound_check(
+            "file line count",
+            _as_float_or_none(row["file_line_count"]),
+            requires["max_file_lines"],
+            requires["min_file_lines"],
+        )
+    )
+    return reasons
+
+
+def _evaluate_symbol_match(rule: dict, conn) -> dict:
+    """Evaluate a symbol_match rule: find symbols matching criteria.
+
+    Supports requirement checks under ``match.require``:
+    - ``has_test``: matched symbols must have test coverage
+    - ``name_regex``: symbol name must match regex
+    - ``max_params`` / ``min_params``
+    - ``max_symbol_lines`` / ``min_symbol_lines``
+    - ``max_file_lines`` / ``min_file_lines``
+    """
+    match = rule.get("match", {})
+    exempt = rule.get("exempt", {})
+
+    kind_filter = match.get("kind")
+    exported_filter = match.get("exported")
+    file_glob = match.get("file_glob")
+    min_fan_in = match.get("min_fan_in")
+    max_fan_in = match.get("max_fan_in")
+
+    requires, compiled_regex, regex_error = _parse_match_requirements(match)
+    if regex_error is not None:
+        return {
+            "name": rule.get("name", "unnamed"),
+            "severity": rule.get("severity", "error"),
+            "passed": False,
+            "violations": [
+                {
+                    "symbol": "",
+                    "file": rule.get("_file", ""),
+                    "line": None,
+                    "reason": "invalid require.name_regex: {}".format(regex_error),
+                }
+            ],
+        }
+
+    query = _build_symbol_match_query(conn)
+    params: list = []
     if kind_filter:
         if isinstance(kind_filter, str):
             kind_filter = [kind_filter]
         placeholders = ",".join("?" for _ in kind_filter)
         query += f" AND s.kind IN ({placeholders})"
         params.extend(kind_filter)
-
     if exported_filter is True:
         query += " AND s.is_exported = 1"
     elif exported_filter is False:
@@ -472,14 +544,14 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
 
     has_requirements = any(
         [
-            require_has_test,
-            compiled_name_regex is not None,
-            require_max_params is not None,
-            require_min_params is not None,
-            require_max_symbol_lines is not None,
-            require_min_symbol_lines is not None,
-            require_max_file_lines is not None,
-            require_min_file_lines is not None,
+            requires["has_test"],
+            compiled_regex is not None,
+            requires["max_params"] is not None,
+            requires["min_params"] is not None,
+            requires["max_symbol_lines"] is not None,
+            requires["min_symbol_lines"] is not None,
+            requires["max_file_lines"] is not None,
+            requires["min_file_lines"] is not None,
         ]
     )
 
@@ -488,80 +560,20 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
         file_path = row["file_path"]
         symbol_name = row["name"]
         in_deg = _as_float_or_none(row["in_degree"]) or 0.0
-        param_count = _as_float_or_none(row["param_count"])
-        symbol_line_count = _as_float_or_none(row["symbol_line_count"])
-        file_line_count = _as_float_or_none(row["file_line_count"])
 
-        # File glob filter
         if file_glob and not _matches_glob(file_path, file_glob):
             continue
-
-        # Min fan-in filter
         if min_fan_in is not None and in_deg < float(min_fan_in):
             continue
         if max_fan_in is not None and in_deg > float(max_fan_in):
             continue
-
-        # Exemptions
         if _is_exempt(symbol_name, file_path, exempt):
             continue
 
         if has_requirements:
-            reasons: list[str] = []
-
-            if require_has_test and not _symbol_has_test(conn, row["id"]):
-                reasons.append("{} has no test coverage".format(symbol_name))
-
-            if compiled_name_regex and not compiled_name_regex.search(symbol_name):
-                reasons.append("name '{}' does not match {}".format(symbol_name, compiled_name_regex.pattern))
-
-            if require_max_params is not None:
-                if param_count is None:
-                    reasons.append("parameter count unavailable")
-                elif param_count > require_max_params:
-                    reasons.append("parameter count {:.0f} exceeds {:.0f}".format(param_count, require_max_params))
-
-            if require_min_params is not None:
-                if param_count is None:
-                    reasons.append("parameter count unavailable")
-                elif param_count < require_min_params:
-                    reasons.append("parameter count {:.0f} is below {:.0f}".format(param_count, require_min_params))
-
-            if require_max_symbol_lines is not None:
-                if symbol_line_count is None:
-                    reasons.append("symbol line count unavailable")
-                elif symbol_line_count > require_max_symbol_lines:
-                    reasons.append(
-                        "symbol line count {:.0f} exceeds {:.0f}".format(symbol_line_count, require_max_symbol_lines)
-                    )
-
-            if require_min_symbol_lines is not None:
-                if symbol_line_count is None:
-                    reasons.append("symbol line count unavailable")
-                elif symbol_line_count < require_min_symbol_lines:
-                    reasons.append(
-                        "symbol line count {:.0f} is below {:.0f}".format(symbol_line_count, require_min_symbol_lines)
-                    )
-
-            if require_max_file_lines is not None:
-                if file_line_count is None:
-                    reasons.append("file line count unavailable")
-                elif file_line_count > require_max_file_lines:
-                    reasons.append(
-                        "file line count {:.0f} exceeds {:.0f}".format(file_line_count, require_max_file_lines)
-                    )
-
-            if require_min_file_lines is not None:
-                if file_line_count is None:
-                    reasons.append("file line count unavailable")
-                elif file_line_count < require_min_file_lines:
-                    reasons.append(
-                        "file line count {:.0f} is below {:.0f}".format(file_line_count, require_min_file_lines)
-                    )
-
+            reasons = _row_violation_reasons(row, requires, compiled_regex, conn)
             if not reasons:
                 continue
-
             violations.append(
                 {
                     "symbol": symbol_name,
@@ -571,7 +583,6 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                 }
             )
         else:
-            # If no requirements are set, the match itself is the violation.
             violations.append(
                 {
                     "symbol": symbol_name,
@@ -581,14 +592,10 @@ def _evaluate_symbol_match(rule: dict, conn) -> dict:
                 }
             )
 
-    name = rule.get("name", "unnamed")
-    severity = rule.get("severity", "error")
-    passed = len(violations) == 0
-
     return {
-        "name": name,
-        "severity": severity,
-        "passed": passed,
+        "name": rule.get("name", "unnamed"),
+        "severity": rule.get("severity", "error"),
+        "passed": len(violations) == 0,
         "violations": violations,
     }
 
