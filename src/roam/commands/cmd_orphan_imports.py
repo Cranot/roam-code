@@ -107,8 +107,30 @@ _JS_BUILTIN_PREFIXES = (
 )
 
 
+def _modules_from_path(rel_path: str, out: set[str]) -> None:
+    """Add every dotted-prefix module name derivable from a Python file path."""
+    parts = Path(rel_path).with_suffix("").parts
+    if parts and parts[0] == "src":
+        parts = parts[1:]
+    if not parts:
+        return
+    if parts[-1] == "__init__":
+        parts = parts[:-1]
+    if not parts:
+        return
+    out.add(".".join(parts))
+    for i in range(1, len(parts)):
+        out.add(".".join(parts[:i]))
+
+
 def _indexed_python_modules(conn) -> set[str]:
-    """Return dotted-module names derivable from indexed Python files."""
+    """Return dotted-module names derivable from indexed Python files.
+
+    redactedalso walks ``src/`` directly (filesystem) so modules
+    added since the last index don't get falsely flagged as
+    internal-typo orphans. The DB query catches the bulk; the filesystem
+    walk fills in any new files the index hasn't seen yet.
+    """
     out: set[str] = set()
     rows = conn.execute(
         """
@@ -121,18 +143,17 @@ def _indexed_python_modules(conn) -> set[str]:
         """
     ).fetchall()
     for r in rows:
-        path = Path(r[0])
-        parts = path.with_suffix("").parts
-        if parts and parts[0] == "src":
-            parts = parts[1:]
-        if not parts:
-            continue
-        if parts[-1] == "__init__":
-            parts = parts[:-1]
-        if parts:
-            out.add(".".join(parts))
-            for i in range(1, len(parts)):
-                out.add(".".join(parts[:i]))
+        _modules_from_path(r[0], out)
+
+    # redactedfilesystem fallback for newly-added files.
+    src_root = Path("src")
+    if src_root.is_dir():
+        for py in src_root.rglob("*.py"):
+            try:
+                rel = py.relative_to(Path(".")).as_posix()
+            except ValueError:
+                rel = py.as_posix()
+            _modules_from_path(rel, out)
     return out
 
 

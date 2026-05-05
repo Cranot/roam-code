@@ -318,6 +318,103 @@ class QueryEngine:
             errors=errors,
         )
 
+    def _find_name_node(self, name_nodes, def_node):
+        """Pick the name node that is a child of ``def_node`` (Pass 101)."""
+        for n in name_nodes:
+            if self._is_child_of(n, def_node):
+                return n
+        return None
+
+    def _decode_capture(self, source: bytes, captures_dict: dict, capture_name, def_node):
+        """Decode the first child-of-def_node capture as utf-8 (Pass 101)."""
+        if not capture_name:
+            return None
+        nodes = captures_dict.get(capture_name, [])
+        for n in nodes:
+            if self._is_child_of(n, def_node):
+                return source[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
+        return None
+
+    def _resolve_kotlin_class_kind(self, def_node, kind: str) -> str:
+        """Disambiguate Kotlin ``class_declaration`` into class/interface/enum.
+
+        redactedextracted from the original mega-function. Tree-sitter
+        emits ``class_declaration`` for both ``class``, ``interface`` and
+        ``enum class`` in Kotlin; the first child distinguishes them.
+        """
+        if (
+            self.config.language != "kotlin"
+            or def_node.type != "class_declaration"
+            or kind != "class"
+            or def_node.child_count == 0
+        ):
+            return kind
+        first_child = def_node.children[0]
+        first_type = first_child.type
+        if first_type == "interface":
+            return "interface"
+        if first_type == "enum":
+            return "enum"
+        if first_type == "modifiers":
+            for mod_child in first_child.children:
+                if mod_child.type != "class_modifier":
+                    continue
+                for cm in mod_child.children:
+                    if cm.type in ("data", "sealed"):
+                        return "class"
+        return kind
+
+    def _build_symbol_from_def(
+        self,
+        def_node,
+        captures_dict: dict,
+        pattern: SymbolPattern,
+        source: bytes,
+        file_path: str,
+        seen_positions: set,
+    ):
+        """Build a single ExtractedSymbol from a captured def-node (Pass 101).
+
+        Returns ``None`` when the capture should be skipped (no name,
+        invalid name, duplicate position).
+        """
+        name_node = self._find_name_node(captures_dict.get(pattern.name_capture, []), def_node)
+        if name_node is None:
+            return None
+        name = source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
+        if not name or not re.match(r"^[\w_]", name):
+            return None
+
+        pos_key = (def_node.start_point[0], def_node.start_point[1])
+        if pos_key in seen_positions:
+            return None
+        seen_positions.add(pos_key)
+
+        scope_context = self._get_scope_context(def_node, source)
+        kind = self._resolve_kotlin_class_kind(def_node, pattern.kind.resolve(scope_context))
+        parent_scope = self._get_parent_scope_name(def_node, source)
+        signature = self._decode_capture(source, captures_dict, pattern.signature_capture, def_node)
+        docstring = None
+        if pattern.doc_capture:
+            doc_nodes = captures_dict.get(pattern.doc_capture, [])
+            if doc_nodes:
+                docstring = source[doc_nodes[0].start_byte : doc_nodes[0].end_byte].decode("utf-8", errors="replace")
+        node_text = source[def_node.start_byte : def_node.end_byte].decode("utf-8", errors="replace")
+        return ExtractedSymbol(
+            name=name,
+            kind=kind,
+            file_path=file_path,
+            line=def_node.start_point[0] + 1,
+            column=def_node.start_point[1],
+            end_line=def_node.end_point[0] + 1,
+            end_column=def_node.end_point[1],
+            signature=signature,
+            docstring=docstring,
+            scope=parent_scope,
+            modifiers=pattern.modifiers.copy(),
+            node_text=node_text,
+        )
+
     def _extract_symbols_from_pattern(
         self,
         pattern: SymbolPattern,
@@ -325,111 +422,21 @@ class QueryEngine:
         source: bytes,
         file_path: str,
     ) -> list[ExtractedSymbol]:
-        """Extract symbols using a single SymbolPattern."""
-        query = self._compile_query(pattern.query)
-        cursor = QueryCursor(query)
+        """Extract symbols using a single SymbolPattern.
+
+        redactedorchestrator only. Per-symbol logic moved into
+        ``_build_symbol_from_def`` and three new helpers, dropping
+        cognitive complexity from 198 to ~10.
+        """
+        cursor = QueryCursor(self._compile_query(pattern.query))
         matches = cursor.matches(root)
-
-        symbols = []
-        seen_positions = set()  # Deduplicate
-
-        # matches returns list of (pattern_index, captures_dict)
-        # where captures_dict is {capture_name: [nodes]}
-        for pattern_idx, captures_dict in matches:
-            # Get the definition nodes
-            def_nodes = captures_dict.get(pattern.def_capture, [])
-            name_nodes = captures_dict.get(pattern.name_capture, [])
-
-            for def_node in def_nodes:
-                # Find the matching name node (must be a child of def_node)
-                name_node = None
-                for n in name_nodes:
-                    if self._is_child_of(n, def_node):
-                        name_node = n
-                        break
-
-                if name_node is None:
-                    continue
-
-                name = source[name_node.start_byte : name_node.end_byte].decode("utf-8", errors="replace")
-
-                # Skip empty or invalid names
-                if not name or not re.match(r"^[\w_]", name):
-                    continue
-
-                # Deduplicate by position
-                pos_key = (def_node.start_point[0], def_node.start_point[1])
-                if pos_key in seen_positions:
-                    continue
-                seen_positions.add(pos_key)
-
-                # Determine kind based on context
-                scope_context = self._get_scope_context(def_node, source)
-                kind = pattern.kind.resolve(scope_context)
-
-                # Special handling for Kotlin class_declaration
-                # Check first child to distinguish class/interface/enum
-                if self.config.language == "kotlin" and def_node.type == "class_declaration" and kind == "class":
-                    if def_node.child_count > 0:
-                        first_child = def_node.children[0]
-                        first_type = first_child.type
-                        if first_type == "interface":
-                            kind = "interface"
-                        elif first_type == "enum":
-                            kind = "enum"
-                        elif first_type == "modifiers":
-                            # Check for data/sealed in modifiers
-                            for mod_child in first_child.children:
-                                if mod_child.type == "class_modifier":
-                                    for cm in mod_child.children:
-                                        if cm.type == "data":
-                                            kind = "class"
-                                            break
-                                        elif cm.type == "sealed":
-                                            kind = "class"
-                                            break
-
-                # Get parent scope name
-                parent_scope = self._get_parent_scope_name(def_node, source)
-
-                # Get signature if configured
-                signature = None
-                if pattern.signature_capture:
-                    sig_nodes = captures_dict.get(pattern.signature_capture, [])
-                    for n in sig_nodes:
-                        if self._is_child_of(n, def_node):
-                            signature = source[n.start_byte : n.end_byte].decode("utf-8", errors="replace")
-                            break
-
-                # Get docstring if configured
-                docstring = None
-                if pattern.doc_capture:
-                    doc_nodes = captures_dict.get(pattern.doc_capture, [])
-                    if doc_nodes:
-                        docstring = source[doc_nodes[0].start_byte : doc_nodes[0].end_byte].decode(
-                            "utf-8", errors="replace"
-                        )
-
-                # Get full node text
-                node_text = source[def_node.start_byte : def_node.end_byte].decode("utf-8", errors="replace")
-
-                symbols.append(
-                    ExtractedSymbol(
-                        name=name,
-                        kind=kind,
-                        file_path=file_path,
-                        line=def_node.start_point[0] + 1,  # 1-indexed
-                        column=def_node.start_point[1],
-                        end_line=def_node.end_point[0] + 1,
-                        end_column=def_node.end_point[1],
-                        signature=signature,
-                        docstring=docstring,
-                        scope=parent_scope,
-                        modifiers=pattern.modifiers.copy(),
-                        node_text=node_text,
-                    )
-                )
-
+        symbols: list[ExtractedSymbol] = []
+        seen_positions: set = set()
+        for _pattern_idx, captures_dict in matches:
+            for def_node in captures_dict.get(pattern.def_capture, []):
+                sym = self._build_symbol_from_def(def_node, captures_dict, pattern, source, file_path, seen_positions)
+                if sym is not None:
+                    symbols.append(sym)
         return symbols
 
     def _extract_references_from_pattern(

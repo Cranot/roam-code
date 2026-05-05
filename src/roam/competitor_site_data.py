@@ -1364,7 +1364,7 @@ MAP_METADATA: dict[str, dict[str, object]] = {
         "peer": True,
         "graph": "PageRank + Tarjan + Louvain + layers",
         "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 128 MCP tools, 178 CLI commands. 19 Python idiom detectors (v12.7+).",
-        "version_evaluated": "12.19",
+        "version_evaluated": "12.20",
         "repo_url": "https://github.com/Cranot/roam-code",
     },
     "CKB/CodeMCP": {
@@ -2154,17 +2154,6 @@ def build_site_payload(tracker_path: Path | None = None) -> dict[str, object]:
         "methodology": methodology,
         "rubric": rubric_out,
     }
-
-
-def write_site_payload(
-    output_path: Path | None = None,
-    tracker_path: Path | None = None,
-) -> dict[str, object]:
-    payload = build_site_payload(tracker_path=tracker_path)
-    target = output_path or default_output_path()
-    target.parent.mkdir(parents=True, exist_ok=True)
-    target.write_text(json.dumps(payload, indent=2, ensure_ascii=True) + "\n", encoding="utf-8")
-    return payload
 
 
 def main() -> int:

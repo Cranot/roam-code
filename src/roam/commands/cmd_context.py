@@ -476,6 +476,72 @@ def _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propag
 # ---------------------------------------------------------------------------
 
 
+def _render_async_badge(sym, row_keys) -> None:
+    """redactedsingle-line async badge above the signature."""
+    if "is_async" in row_keys and sym["is_async"]:
+        click.echo("  [async coroutine]")
+
+
+def _render_idiom_badge(sym, sym_kind: str, decorators_str: str, row_keys) -> None:
+    """redactedsurface model-class / fixture / param-test badges."""
+    try:
+        from roam.catalog.python_idioms import fixture_kind, is_model_class
+    except Exception:
+        return
+    if sym_kind == "class":
+        sig_text = sym["signature"] if "signature" in row_keys else ""
+        try:
+            is_model, kind_label = is_model_class(sig_text, decorators_str)
+        except Exception:
+            return
+        if is_model and kind_label:
+            click.echo(f"  [{kind_label} model]")
+    elif sym_kind in ("function", "method"):
+        try:
+            fkind = fixture_kind(decorators_str)
+        except Exception:
+            return
+        if fkind:
+            click.echo(f"  [{fkind}]")
+
+
+def _split_decorators_paren_aware(decorators_str: str) -> list[str]:
+    """redactedparen-aware split.
+
+    ``@parametrize("a,b", [...])`` has commas inside its argument; the
+    naive ``str.split(",")`` would break it into fragments. Track
+    bracket depth so we only split on top-level commas.
+    """
+    decos: list[str] = []
+    depth = 0
+    current: list[str] = []
+    for ch in decorators_str:
+        if ch == "," and depth == 0:
+            if current:
+                decos.append("".join(current).strip())
+                current = []
+        else:
+            current.append(ch)
+            if ch in "([{":
+                depth += 1
+            elif ch in ")]}":
+                depth = max(0, depth - 1)
+    if current:
+        decos.append("".join(current).strip())
+    return decos
+
+
+def _render_decorators_block(decorators_str: str) -> None:
+    """redactedprint up to 5 decorator first-lines for the symbol."""
+    if not decorators_str:
+        return
+    for d in _split_decorators_paren_aware(decorators_str)[:5]:
+        first_line = d.splitlines()[0] if d else ""
+        if len(d.splitlines()) > 1:
+            first_line += "..."
+        click.echo(f"  {first_line}")
+
+
 def _render_text(data):
     """Print text output for any mode."""
     mode = data["mode"]
@@ -553,60 +619,13 @@ def _render_single_text(data):
     click.echo(f"VERDICT: {verdict}")
     click.echo()
     click.echo(f"=== Context for: {sym['name']}{task_suffix} ===")
-    # Python pivot v12.4: surface async + decorators above the
-    # signature so agents reading context know coroutine semantics
-    # without scanning source. ``sym`` is a sqlite3.Row which doesn't
-    # expose ``.get`` — guard each access with a key check.
+    # redactedheader rendering extracted into helpers.
     _row_keys = sym.keys() if hasattr(sym, "keys") else []
-    if "is_async" in _row_keys and sym["is_async"]:
-        click.echo("  [async coroutine]")
     decorators_str = (sym["decorators"] if "decorators" in _row_keys else "") or ""
-    # Python pivot v12.4-iter: model-class + fixture badges — agents
-    # reading context immediately see whether this is "data with
-    # validation" (Pydantic/dataclass/attrs/etc.) or a pytest fixture
-    # / parametrized test, without scanning source.
     sym_kind = sym["kind"] if "kind" in _row_keys else ""
-    try:
-        from roam.catalog.python_idioms import fixture_kind, is_model_class
-
-        if sym_kind == "class":
-            sig_text = sym["signature"] if "signature" in _row_keys else ""
-            is_model, kind_label = is_model_class(sig_text, decorators_str)
-            if is_model and kind_label:
-                click.echo(f"  [{kind_label} model]")
-        elif sym_kind in ("function", "method"):
-            fkind = fixture_kind(decorators_str)
-            if fkind:
-                click.echo(f"  [{fkind}]")
-    except Exception:
-        pass
-    if decorators_str:
-        # Decorators are comma-joined but ``@parametrize("a,b,c", [...])``
-        # has commas inside its arguments — naive split breaks the
-        # display into nonsense fragments. Re-tokenise paren-aware.
-        decos: list[str] = []
-        depth = 0
-        current = []
-        for ch in decorators_str:
-            if ch == "," and depth == 0:
-                if current:
-                    decos.append("".join(current).strip())
-                    current = []
-            else:
-                current.append(ch)
-                if ch in "([{":
-                    depth += 1
-                elif ch in ")]}":
-                    depth = max(0, depth - 1)
-        if current:
-            decos.append("".join(current).strip())
-        for d in decos[:5]:
-            # Show the first line of the decorator only — keeps
-            # multi-line decorators (e.g. click.option blocks) compact.
-            first_line = d.splitlines()[0] if d else ""
-            if len(d.splitlines()) > 1:
-                first_line += "..."
-            click.echo(f"  {first_line}")
+    _render_async_badge(sym, _row_keys)
+    _render_idiom_badge(sym, sym_kind, decorators_str, _row_keys)
+    _render_decorators_block(decorators_str)
     click.echo(
         f"{abbrev_kind(sym['kind'])}  "
         f"{sym['qualified_name'] or sym['name']}"

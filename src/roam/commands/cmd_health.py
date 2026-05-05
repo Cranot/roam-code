@@ -49,6 +49,14 @@ _UTILITY_PATH_PATTERNS = (
     "common/",
     "internal/",
     "infra/",
+    # redactedinfrastructure hubs that are EXPECTED to have high
+    # fan-in. Without these patterns the health-score classifier
+    # mislabels architectural roots (Click root group, MCP dispatch,
+    # graph builder, file-role classifier) as actionable refactor
+    # targets, which they are not.
+    "graph/",
+    "mcp_extras/",
+    "languages/",
 )
 
 _UTILITY_FILE_PATTERNS = (
@@ -56,6 +64,11 @@ _UTILITY_FILE_PATTERNS = (
     "helpers.py",
     "common.py",
     "base.py",
+    # redactedsingle-file architectural hubs. Same reasoning as
+    # ``_UTILITY_PATH_PATTERNS`` additions above.
+    "cli.py",
+    "mcp_server.py",
+    "file_roles.py",
 )
 
 # Paths that are NOT production code — treat as expected utilities

@@ -742,28 +742,6 @@ def detect_dict_keys_iter(conn: sqlite3.Connection) -> list[dict]:
     return findings
 
 
-def detect_string_format_old(conn: sqlite3.Connection) -> list[dict]:
-    """Find ``"..."`` ``.format(...)`` calls — prefer f-strings on Py3.6+.
-
-    Conservative: only flag the explicit ``"literal".format(...)``
-    pattern, not ``some_var.format(...)`` (which might be a template
-    method on a non-string type).
-    """
-    findings: list[dict] = []
-    for file_id, path in _python_files(conn):
-        text = _file_text(conn, file_id)
-        if text:
-            text = _strip_strings_and_comments(text)
-        if not text:
-            continue
-        # The string-strip blanks the literal, so we can't match
-        # ``"...".format(``. Skip entirely — this detector is best
-        # implemented on the raw text. Falls back to no-op when
-        # text was stripped. Future: implement an "unstripped scan"
-        # that's still safe.
-        return findings  # disabled until we have a string-aware variant
-
-
 def detect_async_with_missing(conn: sqlite3.Connection) -> list[dict]:
     """Find ``aiofiles.open(...)`` / ``httpx.AsyncClient(...)`` not
     inside an ``async with`` — async resource leak.

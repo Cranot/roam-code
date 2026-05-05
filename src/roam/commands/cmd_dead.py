@@ -1057,113 +1057,130 @@ def _extended_summary(extended_data):
     }
 
 
-def _analyze_dataflow_dead(conn):
-    """Analyze dataflow-based dead code patterns using taint summaries.
+def _table_exists(conn, name: str) -> bool:
+    """redactedsmall probe used by the dataflow analyzer.
 
-    Returns list of findings: [{type, symbol, file, line, reason, confidence, call_sites}]
+    Replaces the ``try: SELECT ... LIMIT 0; except: pass`` pattern
+    repeated 3 times in the original ``_analyze_dataflow_dead``.
     """
-    findings = []
-    project_root = find_project_root()
-
-    # Check if required tables exist
     try:
-        conn.execute("SELECT 1 FROM taint_summaries LIMIT 0")
+        conn.execute(f"SELECT 1 FROM {name} LIMIT 0")
+        return True
     except Exception:
+        return False
+
+
+def _read_caller_line(project_root, file_cache: dict, file_path: str, line_no: int) -> str | None:
+    """redactedreturn the caller's source line text or ``None`` on miss."""
+    if file_path not in file_cache:
+        try:
+            file_cache[file_path] = (
+                (project_root / file_path).read_text(encoding="utf-8", errors="replace").splitlines()
+            )
+        except Exception:
+            file_cache[file_path] = []
+    lines = file_cache.get(file_path, [])
+    if 0 < line_no <= len(lines):
+        return lines[line_no - 1].strip()
+    return None
+
+
+def _is_return_captured(line_text: str, func_name: str) -> bool:
+    """redacted`<var> = func(...)` captures, but `== func()` does not."""
+    if func_name not in line_text:
+        return False
+    prefix = line_text.split(func_name)[0]
+    return bool(re.search(r"[A-Za-z_]\w*\s*=(?!=)", prefix))
+
+
+def _detect_unused_returns(conn, project_root) -> list[dict]:
+    """redactedA. functions whose return value every caller discards."""
+    findings: list[dict] = []
+    funcs_with_return = conn.execute(
+        "SELECT s.id, s.name, COALESCE(s.qualified_name, s.name) AS qname, "
+        "f.path AS file_path, s.line_start, sm.return_count "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN symbol_metrics sm ON s.id = sm.symbol_id "
+        "WHERE sm.return_count > 0 "
+        "  AND s.kind IN ('function', 'method')"
+    ).fetchall()
+    if not funcs_with_return:
         return findings
 
-    has_effects = True
-    try:
-        conn.execute("SELECT 1 FROM symbol_effects LIMIT 0")
-    except Exception:
-        has_effects = False
+    from roam.db.connection import batched_in
 
-    has_metrics = True
-    try:
-        conn.execute("SELECT 1 FROM symbol_metrics LIMIT 0")
-    except Exception:
-        has_metrics = False
+    target_ids = [f["id"] for f in funcs_with_return]
+    callers_by_target: dict[int, list] = {}
+    for row in batched_in(
+        conn,
+        "SELECT e.target_id, e.source_id, e.line, s.name AS caller_name, "
+        "f.path AS caller_file, s.line_start AS caller_start "
+        "FROM edges e "
+        "JOIN symbols s ON e.source_id = s.id "
+        "JOIN files f ON s.file_id = f.id "
+        "WHERE e.target_id IN ({ph}) AND e.kind = 'calls'",
+        target_ids,
+    ):
+        callers_by_target.setdefault(row["target_id"], []).append(row)
 
-    # A. Unused Return Values
-    if has_metrics:
-        funcs_with_return = conn.execute(
-            "SELECT s.id, s.name, COALESCE(s.qualified_name, s.name) AS qname, "
-            "f.path AS file_path, s.line_start, sm.return_count "
-            "FROM symbols s "
-            "JOIN files f ON s.file_id = f.id "
-            "JOIN symbol_metrics sm ON s.id = sm.symbol_id "
-            "WHERE sm.return_count > 0 "
-            "  AND s.kind IN ('function', 'method')"
-        ).fetchall()
+    file_cache: dict[str, list[str]] = {}
+    for func in funcs_with_return:
+        callers = callers_by_target.get(func["id"], [])
+        if not callers:
+            continue
+        all_discard = True
+        call_site_info: list[dict] = []
+        for caller in callers:
+            call_line = caller["line"]
+            if not call_line:
+                all_discard = False
+                break
+            line_text = _read_caller_line(project_root, file_cache, caller["caller_file"], call_line)
+            if line_text is None:
+                all_discard = False
+                break
+            if _is_return_captured(line_text, func["name"]):
+                all_discard = False
+                break
+            call_site_info.append({"file": caller["caller_file"], "line": call_line, "caller": caller["caller_name"]})
+        if all_discard and callers:
+            findings.append(
+                {
+                    "type": "unused_return",
+                    "symbol": func["qname"],
+                    "file": func["file_path"],
+                    "line": func["line_start"],
+                    "reason": f"return value of {func['qname']} is discarded by all {len(callers)} caller(s)",
+                    "confidence": 85,
+                    "call_sites": call_site_info[:5],
+                }
+            )
+    return findings
 
-        file_cache: dict[str, list[str]] = {}
 
-        # Pre-load callers for every candidate in one batched scan to
-        # avoid an N+1 against the edges table (one SELECT per function).
-        callers_by_target: dict[int, list] = {}
-        if funcs_with_return:
-            from roam.db.connection import batched_in
+def _parse_param_names(sig: str) -> list[str]:
+    """redactedextract concrete parameter names from a signature string."""
+    m = re.search(r"\(([^)]*)\)", sig or "")
+    if not m:
+        return []
+    params_str = m.group(1).strip()
+    if not params_str:
+        return []
+    out: list[str] = []
+    for part in params_str.split(","):
+        token = part.strip().split(":")[0].split("=")[0].strip()
+        while token.startswith("*"):
+            token = token[1:]
+        if token and token not in ("self", "cls", "_"):
+            out.append(token)
+    return out
 
-            target_ids = [f["id"] for f in funcs_with_return]
-            for row in batched_in(
-                conn,
-                "SELECT e.target_id, e.source_id, e.line, s.name AS caller_name, "
-                "f.path AS caller_file, s.line_start AS caller_start "
-                "FROM edges e "
-                "JOIN symbols s ON e.source_id = s.id "
-                "JOIN files f ON s.file_id = f.id "
-                "WHERE e.target_id IN ({ph}) AND e.kind = 'calls'",
-                target_ids,
-            ):
-                callers_by_target.setdefault(row["target_id"], []).append(row)
 
-        for func in funcs_with_return:
-            callers = callers_by_target.get(func["id"], [])
-            if not callers:
-                continue
-
-            # Check each call site
-            all_discard = True
-            call_site_info = []
-            for caller in callers:
-                call_line = caller["line"]
-                if not call_line:
-                    all_discard = False
-                    break
-                caller_file = caller["caller_file"]
-                if caller_file not in file_cache:
-                    try:
-                        fpath = project_root / caller_file
-                        file_cache[caller_file] = fpath.read_text(encoding="utf-8", errors="replace").splitlines()
-                    except Exception:
-                        file_cache[caller_file] = []
-                lines = file_cache.get(caller_file, [])
-                if call_line <= len(lines):
-                    line_text = lines[call_line - 1].strip()
-                    # Check if return value is captured (= before function name, but not == or !=)
-                    prefix = line_text.split(func["name"])[0] if func["name"] in line_text else ""
-                    if re.search(r"[A-Za-z_]\w*\s*=(?!=)", prefix):
-                        all_discard = False
-                        break
-                    call_site_info.append({"file": caller_file, "line": call_line, "caller": caller["caller_name"]})
-                else:
-                    all_discard = False
-                    break
-
-            if all_discard and callers:
-                findings.append(
-                    {
-                        "type": "unused_return",
-                        "symbol": func["qname"],
-                        "file": func["file_path"],
-                        "line": func["line_start"],
-                        "reason": (f"return value of {func['qname']} is discarded by all {len(callers)} caller(s)"),
-                        "confidence": 85,
-                        "call_sites": call_site_info[:5],
-                    }
-                )
-
-    # B. Dead Parameter Chains
-    param_rows = conn.execute(
+def _detect_dead_param_chains(conn) -> list[dict]:
+    """redactedB. parameters with no return / sink dataflow effect."""
+    findings: list[dict] = []
+    rows = conn.execute(
         "SELECT ts.symbol_id, ts.param_taints_return, ts.param_to_sink, "
         "s.name, COALESCE(s.qualified_name, s.name) AS qname, "
         "s.signature, f.path AS file_path, s.line_start "
@@ -1173,85 +1190,94 @@ def _analyze_dataflow_dead(conn):
         "WHERE ts.is_sanitizer = 0 "
         "  AND s.kind IN ('function', 'method')"
     ).fetchall()
-
-    for row in param_rows:
+    for row in rows:
         try:
             ptr = json.loads(row["param_taints_return"] or "{}")
             pts = json.loads(row["param_to_sink"] or "{}")
         except Exception:
             continue
-
-        # Parse param names from signature
-        sig = row["signature"] or ""
-        m = re.search(r"\(([^)]*)\)", sig)
-        if not m:
-            continue
-        params_str = m.group(1).strip()
-        if not params_str:
-            continue
-        param_names = []
-        for part in params_str.split(","):
-            token = part.strip().split(":")[0].split("=")[0].strip()
-            while token.startswith("*"):
-                token = token[1:]
-            if token and token not in ("self", "cls", "_"):
-                param_names.append(token)
-
+        param_names = _parse_param_names(row["signature"])
         for idx, pname in enumerate(param_names):
             sidx = str(idx)
-            has_return_effect = ptr.get(sidx, False)
-            has_sink_effect = bool(pts.get(sidx))
-            if not has_return_effect and not has_sink_effect:
-                findings.append(
-                    {
-                        "type": "dead_param_chain",
-                        "symbol": row["qname"],
-                        "file": row["file_path"],
-                        "line": row["line_start"],
-                        "variable": pname,
-                        "reason": (
-                            f"parameter '{pname}' of {row['qname']} has no dataflow effect "
-                            f"(not returned, not used in sink)"
-                        ),
-                        "confidence": 75,
-                        "call_sites": [],
-                    }
-                )
+            if ptr.get(sidx, False) or bool(pts.get(sidx)):
+                continue
+            findings.append(
+                {
+                    "type": "dead_param_chain",
+                    "symbol": row["qname"],
+                    "file": row["file_path"],
+                    "line": row["line_start"],
+                    "variable": pname,
+                    "reason": (
+                        f"parameter '{pname}' of {row['qname']} has no dataflow effect (not returned, not used in sink)"
+                    ),
+                    "confidence": 75,
+                    "call_sites": [],
+                }
+            )
+    return findings
 
-    # C. Side-Effect-Only Functions
+
+def _detect_side_effect_only(conn, unused_return_findings: list[dict]) -> list[dict]:
+    """redactedC. discard-return funcs whose only effects are pure/logging."""
+    findings: list[dict] = []
+    benign = {"pure", "logging"}
+    for f in unused_return_findings:
+        if f["type"] != "unused_return":
+            continue
+        sym_id_row = conn.execute(
+            "SELECT id FROM symbols WHERE qualified_name = ? OR name = ? LIMIT 1",
+            (f["symbol"], f["symbol"]),
+        ).fetchone()
+        if not sym_id_row:
+            continue
+        sym_id = sym_id_row["id"]
+        effects = conn.execute(
+            "SELECT DISTINCT effect_type FROM symbol_effects WHERE symbol_id = ?",
+            (sym_id,),
+        ).fetchall()
+        effect_types = {e["effect_type"] for e in effects}
+        if effect_types and effect_types <= benign:
+            findings.append(
+                {
+                    "type": "side_effect_only",
+                    "symbol": f["symbol"],
+                    "file": f["file"],
+                    "line": f["line"],
+                    "reason": (
+                        f"{f['symbol']} has only {'/'.join(sorted(effect_types))} effects "
+                        "and return is always discarded"
+                    ),
+                    "confidence": 70,
+                    "call_sites": f.get("call_sites", []),
+                }
+            )
+    return findings
+
+
+def _analyze_dataflow_dead(conn):
+    """Analyze dataflow-based dead code patterns using taint summaries.
+
+    Returns list of findings: ``[{type, symbol, file, line, reason,
+    confidence, call_sites}]``.
+
+    redactedorchestrator only; per-pattern logic moved into
+    ``_detect_unused_returns`` / ``_detect_dead_param_chains`` /
+    ``_detect_side_effect_only``. Cognitive complexity dropped from
+    160 to ~10.
+    """
+    if not _table_exists(conn, "taint_summaries"):
+        return []
+    has_effects = _table_exists(conn, "symbol_effects")
+    has_metrics = _table_exists(conn, "symbol_metrics")
+    project_root = find_project_root()
+
+    findings: list[dict] = []
+    if has_metrics:
+        findings.extend(_detect_unused_returns(conn, project_root))
+    findings.extend(_detect_dead_param_chains(conn))
     if has_effects:
-        # Find functions where all callers discard return AND effects are only logging/pure
-        for f in findings:
-            if f["type"] != "unused_return":
-                continue
-            sym_id_row = conn.execute(
-                "SELECT id FROM symbols WHERE qualified_name = ? OR name = ? LIMIT 1",
-                (f["symbol"], f["symbol"]),
-            ).fetchone()
-            if not sym_id_row:
-                continue
-            sym_id = sym_id_row["id"]
-            effects = conn.execute(
-                "SELECT DISTINCT effect_type FROM symbol_effects WHERE symbol_id = ?",
-                (sym_id,),
-            ).fetchall()
-            effect_types = {e["effect_type"] for e in effects}
-            benign = {"pure", "logging"}
-            if effect_types and effect_types <= benign:
-                findings.append(
-                    {
-                        "type": "side_effect_only",
-                        "symbol": f["symbol"],
-                        "file": f["file"],
-                        "line": f["line"],
-                        "reason": (
-                            f"{f['symbol']} has only {'/'.join(sorted(effect_types))} effects "
-                            f"and return is always discarded"
-                        ),
-                        "confidence": 70,
-                        "call_sites": f.get("call_sites", []),
-                    }
-                )
+        findings.extend(_detect_side_effect_only(conn, findings))
 
     findings.sort(key=lambda f: (-f["confidence"], f["file"], f.get("line") or 0))
     return findings

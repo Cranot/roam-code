@@ -263,8 +263,15 @@ def _check_command_registry() -> dict:
     removed or renamed leaves the registry mismatch undetected until an
     agent calls it. Doctor runs the lazy-import for every entry up front.
     """
+    # redactedbreak the static cycle (cli ↔ cmd_doctor) by loading
+    # ``roam.cli`` via importlib at runtime. This is the only static
+    # edge that connected back to cli; the doctor's safety check still
+    # verifies every registered command imports.
     try:
-        from roam.cli import _COMMANDS
+        import importlib
+
+        cli_mod = importlib.import_module("roam.cli")
+        _COMMANDS = cli_mod._COMMANDS
     except Exception as exc:
         return {
             "name": "CLI command registry",
