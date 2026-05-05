@@ -79,8 +79,3 @@ def structured_usage_error(code: str, message: str) -> click.UsageError:
     to get the code.
     """
     return click.UsageError(f"{code}: {message}")
-
-
-def structured_click_exception(code: str, message: str) -> click.ClickException:
-    """Same prefix contract for ``click.ClickException`` (non-usage errors)."""
-    return click.ClickException(f"{code}: {message}")

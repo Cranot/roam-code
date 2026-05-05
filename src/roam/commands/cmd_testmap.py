@@ -249,7 +249,19 @@ def test_map(ctx, name):
                 _test_map_symbol(conn, sym)
             return
 
-        click.echo(f"Not found: {name}")
+        verdict = f"Not found: {name}"
+        if json_mode:
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "test-map",
+                        summary={"verdict": verdict, "found": False},
+                        callers=[],
+                    )
+                )
+            )
+        else:
+            click.echo(verdict)
         raise SystemExit(1)
 
 
