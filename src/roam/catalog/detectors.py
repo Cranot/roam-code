@@ -1093,6 +1093,241 @@ def detect_regex_in_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+_IO_HIGH_EXACT = {
+    "requests.get",
+    "requests.post",
+    "requests.put",
+    "requests.delete",
+    "requests.patch",
+    "urllib.request.urlopen",
+    "session.execute",
+    "session.query",
+    "cursor.execute",
+    "http.Get",
+    "http.Post",
+}
+_IO_HIGH_EXACT_LOWER = {c.lower() for c in _IO_HIGH_EXACT}
+_IO_HIGH_LEAF = {"execute", "executemany", "query", "urlopen"}
+_IO_AMBIGUOUS_BARE = {"query", "find", "get"}
+_IO_MEDIUM_LEAF = {"fetchone", "fetchall", "fetchmany", "fetch", "find", "get", "open"}
+_IO_RECEIVER_HINTS = {
+    "session",
+    "cursor",
+    "db",
+    "conn",
+    "connection",
+    "repo",
+    "repository",
+    "queryset",
+    "client",
+    "api",
+    "http",
+    "requests",
+    "urllib",
+}
+_IN_MEMORY_EXACT = {
+    "queryclient.setquerydata",
+    "queryclient.getquerydata",
+    "queryclient.getqueriesdata",
+    "queryclient.setqueriesdata",
+    "qc.setquerydata",
+    "qc.getquerydata",
+    "qc.getqueriesdata",
+    "qc.setqueriesdata",
+    "redux.dispatch",
+    "store.dispatch",
+}
+_IN_MEMORY_LEAVES = {
+    "setquerydata",
+    "getquerydata",
+    "setqueriesdata",
+    "getqueriesdata",
+    "dispatch",
+    "setstate",
+}
+_IN_MEMORY_RECEIVER_HINTS = {
+    "queryclient",
+    "qc",
+    "store",
+    "redux",
+    "cache",
+    "state",
+    "router",
+}
+_IO_WRAPPER_NAMES = {
+    "batch",
+    "bulk",
+    "migrate",
+    "seed",
+    "import",
+    "export",
+    "sync_all",
+    "backfill",
+}
+
+
+def _io_receiver_hint(call: str) -> str:
+    if "." not in call:
+        return ""
+    return call.rsplit(".", 1)[0].lower()
+
+
+def _io_receiver_is_ioish(call: str) -> bool:
+    recv = _io_receiver_hint(call)
+    if not recv:
+        return False
+    return any(h in recv for h in _IO_RECEIVER_HINTS)
+
+
+def _io_is_known_in_memory_call(call: str) -> bool:
+    lower_c = call.lower()
+    leaf = _call_leaf(lower_c)
+    recv = _io_receiver_hint(lower_c)
+    if lower_c in _IN_MEMORY_EXACT:
+        return True
+    if leaf in _IN_MEMORY_LEAVES and any(h in recv for h in _IN_MEMORY_RECEIVER_HINTS):
+        return True
+    return False
+
+
+def _io_match_framework_pack(call: str, language: str | None) -> dict | None:
+    leaf = _call_leaf(call).lower()
+    recv = _io_receiver_hint(call)
+    lower_c = call.lower()
+    for pack in _framework_packs(language):
+        leaves = {str(v).lower() for v in pack.get("leaves", set())}
+        recv_hints = {str(v).lower() for v in pack.get("receiver_hints", set())}
+        if lower_c in {c.lower() for c in pack.get("exact", set())}:
+            return pack
+        if leaf not in leaves:
+            continue
+        if not recv_hints:
+            return pack
+        if any(h in recv for h in recv_hints):
+            return pack
+    return None
+
+
+def _io_classify_call(c: str, language: str | None, conn, r) -> tuple[str | None, dict | None]:
+    """Classify a single call inside a loop.
+
+    Returns ``(level, framework_pack)`` where level is ``"high"``,
+    ``"medium"``, ``"ambiguous"``, or None for in-memory / local-helper /
+    non-I/O calls.
+    """
+    if _io_is_known_in_memory_call(c):
+        return None, None
+    pack = _io_match_framework_pack(c, language)
+    if pack:
+        if pack.get("confidence") == "high":
+            return "high", pack
+        return "medium", pack
+
+    lower_c = c.lower()
+    leaf = _call_leaf(c).lower()
+    if lower_c in _IO_HIGH_EXACT_LOWER:
+        return "high", None
+    if leaf in _IO_HIGH_LEAF and _io_receiver_is_ioish(c):
+        return "high", None
+    if leaf in {"get", "post", "put", "delete", "patch", "request"}:
+        recv = _io_receiver_hint(c)
+        if "requests" in recv or recv.endswith("http"):
+            return "high", None
+    if leaf in _IO_MEDIUM_LEAF and _io_receiver_is_ioish(c):
+        return "medium", None
+    if "." not in c and leaf in _IO_AMBIGUOUS_BARE:
+        local_helper = conn.execute(
+            "SELECT 1 FROM edges e "
+            "JOIN symbols t ON e.target_id = t.id "
+            "WHERE e.source_id = ? "
+            "AND lower(t.name) = ? "
+            "AND t.file_id = ? "
+            "LIMIT 1",
+            (r["id"], leaf, r["file_id"]),
+        ).fetchone()
+        if local_helper:
+            return None, None
+        return "ambiguous", None
+    if leaf == "open":
+        return "medium", None
+    return None, None
+
+
+def _io_emit_finding(
+    level: str,
+    high_calls: list[str],
+    medium_calls: list[str],
+    ambiguous_calls: list[str],
+    frameworks: set[str],
+    fixes: set[str],
+    guard_hints: list[str],
+    guard_applies: bool,
+    evidence_io_calls: list[str],
+    r,
+) -> dict:
+    """Build the finding dict for one of high/medium/ambiguous result branches."""
+    fix_text = "; ".join(sorted(fixes)) if fixes else None
+    if level == "high":
+        reason_calls = _dedupe(high_calls)[:2]
+        reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
+        confidence = "high"
+        if guard_applies:
+            confidence = _lower_confidence(confidence)
+            reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
+        return _finding(
+            "io-in-loop",
+            "loop-query",
+            r,
+            f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
+            confidence,
+            evidence={
+                "io_calls": evidence_io_calls,
+                "frameworks": sorted(frameworks),
+                "guard_hints": guard_hints,
+            },
+            fix=fix_text,
+        )
+    if level == "medium":
+        reason_calls = _dedupe(medium_calls)[:2]
+        reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
+        confidence = "medium"
+        if guard_applies:
+            confidence = _lower_confidence(confidence)
+            reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
+        return _finding(
+            "io-in-loop",
+            "loop-query",
+            r,
+            f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
+            confidence,
+            evidence={
+                "io_calls": evidence_io_calls,
+                "frameworks": sorted(frameworks),
+                "guard_hints": guard_hints,
+            },
+            fix=fix_text,
+        )
+    # Ambiguous bare calls (get/find/query) — weak evidence, low confidence.
+    reason_calls = _dedupe(ambiguous_calls)[:2]
+    finding = _finding(
+        "io-in-loop",
+        "loop-query",
+        r,
+        f"Ambiguous bare call ({', '.join(reason_calls)}) inside loop (possible I/O, review manually)",
+        "low",
+        evidence={
+            "io_calls": evidence_io_calls,
+            "ambiguous_io_calls": _dedupe(ambiguous_calls)[:4],
+            "ambiguous_io_only": True,
+            "frameworks": sorted(frameworks),
+            "guard_hints": guard_hints,
+        },
+        fix=fix_text,
+    )
+    finding["precision"] = "low"
+    return finding
+
+
 def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
     """Database query, HTTP request, or file I/O inside a loop β€” N+1 pattern.
 
@@ -1122,119 +1357,6 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
             "AND ms.loop_depth >= 1"
         ).fetchall()
 
-    # High-confidence calls: strongly indicative DB/API round trips.
-    _HIGH_EXACT = {
-        "requests.get",
-        "requests.post",
-        "requests.put",
-        "requests.delete",
-        "requests.patch",
-        "urllib.request.urlopen",
-        "session.execute",
-        "session.query",
-        "cursor.execute",
-        "http.Get",
-        "http.Post",
-    }
-    _HIGH_EXACT_LOWER = {c.lower() for c in _HIGH_EXACT}
-    _HIGH_LEAF = {"execute", "executemany", "query", "urlopen"}
-    _AMBIGUOUS_BARE = {"query", "find", "get"}
-    _MEDIUM_LEAF = {"fetchone", "fetchall", "fetchmany", "fetch", "find", "get", "open"}
-    _IO_RECEIVER_HINTS = {
-        "session",
-        "cursor",
-        "db",
-        "conn",
-        "connection",
-        "repo",
-        "repository",
-        "queryset",
-        "client",
-        "api",
-        "http",
-        "requests",
-        "urllib",
-    }
-    _IN_MEMORY_EXACT = {
-        "queryclient.setquerydata",
-        "queryclient.getquerydata",
-        "queryclient.getqueriesdata",
-        "queryclient.setqueriesdata",
-        "qc.setquerydata",
-        "qc.getquerydata",
-        "qc.getqueriesdata",
-        "qc.setqueriesdata",
-        "redux.dispatch",
-        "store.dispatch",
-    }
-    _IN_MEMORY_LEAVES = {
-        "setquerydata",
-        "getquerydata",
-        "setqueriesdata",
-        "getqueriesdata",
-        "dispatch",
-        "setstate",
-    }
-    _IN_MEMORY_RECEIVER_HINTS = {
-        "queryclient",
-        "qc",
-        "store",
-        "redux",
-        "cache",
-        "state",
-        "router",
-    }
-
-    # Suppress functions that are intentionally batch/migration wrappers.
-    _IO_WRAPPER_NAMES = {
-        "batch",
-        "bulk",
-        "migrate",
-        "seed",
-        "import",
-        "export",
-        "sync_all",
-        "backfill",
-    }
-
-    def _receiver_hint(call: str) -> str:
-        if "." not in call:
-            return ""
-        return call.rsplit(".", 1)[0].lower()
-
-    def _receiver_is_ioish(call: str) -> bool:
-        recv = _receiver_hint(call)
-        if not recv:
-            return False
-        return any(h in recv for h in _IO_RECEIVER_HINTS)
-
-    def _is_known_in_memory_call(call: str) -> bool:
-        lower_c = call.lower()
-        leaf = _call_leaf(lower_c)
-        recv = _receiver_hint(lower_c)
-        if lower_c in _IN_MEMORY_EXACT:
-            return True
-        if leaf in _IN_MEMORY_LEAVES and any(h in recv for h in _IN_MEMORY_RECEIVER_HINTS):
-            return True
-        return False
-
-    def _match_framework_pack(call: str, language: str | None) -> dict | None:
-        leaf = _call_leaf(call).lower()
-        recv = _receiver_hint(call)
-        lower_c = call.lower()
-        for pack in _framework_packs(language):
-            leaves = {str(v).lower() for v in pack.get("leaves", set())}
-            recv_hints = {str(v).lower() for v in pack.get("receiver_hints", set())}
-            if lower_c in {c.lower() for c in pack.get("exact", set())}:
-                return pack
-            if leaf not in leaves:
-                continue
-            if not recv_hints:
-                return pack
-            if any(h in recv for h in recv_hints):
-                return pack
-        return None
-
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -1256,55 +1378,17 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         frameworks: set[str] = set()
         fixes: set[str] = set()
         for c in calls:
-            if _is_known_in_memory_call(c):
-                continue
-            pack = _match_framework_pack(c, language)
+            level, pack = _io_classify_call(c, language, conn, r)
             if pack:
                 frameworks.add(pack["framework"])
                 if pack.get("fix"):
                     fixes.add(pack["fix"])
-                if pack.get("confidence") == "high":
-                    high_calls.append(c)
-                else:
-                    medium_calls.append(c)
-                continue
-
-            lower_c = c.lower()
-            leaf = _call_leaf(c).lower()
-            if lower_c in _HIGH_EXACT_LOWER:
+            if level == "high":
                 high_calls.append(c)
-                continue
-            if leaf in _HIGH_LEAF and _receiver_is_ioish(c):
-                high_calls.append(c)
-                continue
-            # requests.<verb> style HTTP calls
-            if leaf in {"get", "post", "put", "delete", "patch", "request"}:
-                recv = _receiver_hint(c)
-                if "requests" in recv or recv.endswith("http"):
-                    high_calls.append(c)
-                    continue
-            if leaf in _MEDIUM_LEAF and _receiver_is_ioish(c):
+            elif level == "medium":
                 medium_calls.append(c)
-                continue
-            # Bare helper names without a receiver are ambiguous: if they
-            # resolve to a local helper in the same file, treat as non-I/O.
-            if "." not in c and leaf in _AMBIGUOUS_BARE:
-                local_helper = conn.execute(
-                    "SELECT 1 FROM edges e "
-                    "JOIN symbols t ON e.target_id = t.id "
-                    "WHERE e.source_id = ? "
-                    "AND lower(t.name) = ? "
-                    "AND t.file_id = ? "
-                    "LIMIT 1",
-                    (r["id"], leaf, r["file_id"]),
-                ).fetchone()
-                if local_helper:
-                    continue
+            elif level == "ambiguous":
                 ambiguous_calls.append(c)
-                continue
-            if leaf == "open":
-                medium_calls.append(c)
-                continue
 
         if not high_calls and not medium_calls and not ambiguous_calls:
             continue
@@ -1316,76 +1400,25 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         guard_applies = bool(frameworks and guard_hints)
         evidence_io_calls = _dedupe(high_calls + medium_calls + ambiguous_calls)[:6]
         if high_calls:
-            reason_calls = _dedupe(high_calls)[:2]
-            reason_suffix = ""
-            if frameworks:
-                reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}"
-            confidence = "high"
-            if guard_applies:
-                confidence = _lower_confidence(confidence)
-                reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-            results.append(
-                _finding(
-                    "io-in-loop",
-                    "loop-query",
-                    r,
-                    f"I/O call ({', '.join(reason_calls)}) inside loop (N+1 pattern){reason_suffix}",
-                    confidence,
-                    evidence={
-                        "io_calls": evidence_io_calls,
-                        "frameworks": sorted(frameworks),
-                        "guard_hints": guard_hints,
-                    },
-                    fix="; ".join(sorted(fixes)) if fixes else None,
-                )
-            )
+            level = "high"
         elif medium_calls:
-            reason_calls = _dedupe(medium_calls)[:2]
-            reason_suffix = ""
-            if frameworks:
-                reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}"
-            confidence = "medium"
-            if guard_applies:
-                confidence = _lower_confidence(confidence)
-                reason_suffix += f"; eager/batch guards: {', '.join(guard_hints[:2])}"
-            results.append(
-                _finding(
-                    "io-in-loop",
-                    "loop-query",
-                    r,
-                    f"I/O-like call ({', '.join(reason_calls)}) inside loop (may be N+1){reason_suffix}",
-                    confidence,
-                    evidence={
-                        "io_calls": evidence_io_calls,
-                        "frameworks": sorted(frameworks),
-                        "guard_hints": guard_hints,
-                    },
-                    fix="; ".join(sorted(fixes)) if fixes else None,
-                )
-            )
+            level = "medium"
         else:
-            # Ambiguous bare calls (get/find/query) are weak evidence. Emit as
-            # low confidence so strict/balanced profiles can downrank these
-            # without losing runtime escalation opportunities.
-            reason_calls = _dedupe(ambiguous_calls)[:2]
-            finding = _finding(
-                "io-in-loop",
-                "loop-query",
+            level = "ambiguous"
+        results.append(
+            _io_emit_finding(
+                level,
+                high_calls,
+                medium_calls,
+                ambiguous_calls,
+                frameworks,
+                fixes,
+                guard_hints,
+                guard_applies,
+                evidence_io_calls,
                 r,
-                f"Ambiguous bare call ({', '.join(reason_calls)}) inside loop (possible I/O, review manually)",
-                "low",
-                evidence={
-                    "io_calls": evidence_io_calls,
-                    "ambiguous_io_calls": _dedupe(ambiguous_calls)[:4],
-                    "ambiguous_io_only": True,
-                    "frameworks": sorted(frameworks),
-                    "guard_hints": guard_hints,
-                },
-                fix="; ".join(sorted(fixes)) if fixes else None,
             )
-            # This path has weak static precision by design.
-            finding["precision"] = "low"
-            results.append(finding)
+        )
     return results
 
 
