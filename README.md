@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 167 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 172 specialised commands are advanced surface for specialised workflows.
 
-*172 commands · 123 MCP tools · 27 languages · 100% local · zero API keys*
+*177 commands · 123 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -25,7 +25,7 @@ Roam is a structural intelligence engine for software. It pre-indexes your codeb
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
 ```
-Codebase ──> [Index] ──> Semantic Graph ──> 155 Commands ──> AI Agent
+Codebase ──> [Index] ──> Semantic Graph ──> 177 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
            27 languages   + edges            govern
@@ -98,7 +98,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **155 CLI commands, 123 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **177 CLI commands, 123 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -269,7 +269,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 167 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **172 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 172 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **177 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -317,6 +317,11 @@ roam health
 | `roam api [--scope <dir>]` | List the public API surface (exported public symbols + signatures) |
 | `roam exit-codes` | List every roam exit code with its meaning |
 | `roam version [--check]` | Show installed version; with `--check` also queries PyPI for newer releases |
+| `roam disambiguate <name>` | List every symbol matching the name with file/line/kind/signature/docstring snippet to pick the right one |
+| `roam pre-commit [--install\|--print]` | Install or preview a roam-critique git pre-commit hook |
+| `roam mcp-status` | MCP server health: preset, registered tools, backpressure limits, cache entries, watcher state |
+| `roam test-impact [<range>]` | Tests transitively reachable from changed symbols (sharper scope than `affected-tests`) |
+| `roam recipes` | List every `roam ask` recipe with intent + example queries (sugar over `ask --list`) |
 
 ### Daily Workflow
 
@@ -1570,7 +1575,7 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (155 canonical + 6 aliases)
+│   ├── cli.py                         # Click CLI (177 canonical + 7 aliases)
 │   ├── mcp_server.py                  # MCP server (122 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
@@ -1665,7 +1670,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 155 canonical CLI commands and 123 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 177 canonical CLI commands and 123 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.
