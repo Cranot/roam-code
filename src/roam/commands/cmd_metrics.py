@@ -68,6 +68,122 @@ def _health_label(metrics: dict) -> str:
 # ---------------------------------------------------------------------------
 
 
+def _swallow(tag: str, exc: BaseException) -> None:
+    """Centralised swallowed-exception logger to keep the helpers tight."""
+    from roam.observability import log_swallowed
+
+    log_swallowed(tag, exc)
+
+
+def _populate_symbol_metrics(conn, symbol_id: int, result: dict) -> None:
+    """Pull cognitive complexity + LOC + (optional) coverage columns."""
+    try:
+        sm = conn.execute(
+            "SELECT cognitive_complexity, line_count FROM symbol_metrics WHERE symbol_id = ?",
+            (symbol_id,),
+        ).fetchone()
+        if sm:
+            result["complexity"] = sm["cognitive_complexity"] or 0
+            result["loc"] = sm["line_count"] or 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:metric_query", exc)
+    try:
+        cov = conn.execute(
+            "SELECT coverage_pct, covered_lines, coverable_lines FROM symbol_metrics WHERE symbol_id = ?",
+            (symbol_id,),
+        ).fetchone()
+        if cov:
+            result["coverage_pct"] = cov["coverage_pct"]
+            result["covered_lines"] = cov["covered_lines"] or 0
+            result["coverable_lines"] = cov["coverable_lines"] or 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:metric_query", exc)
+
+
+def _populate_graph_metrics(conn, symbol_id: int, result: dict) -> None:
+    """Pull pagerank/fan-in/fan-out/betweenness + (optional) SNA-v2 cols."""
+    try:
+        gm = conn.execute(
+            "SELECT pagerank, in_degree, out_degree, betweenness FROM graph_metrics WHERE symbol_id = ?",
+            (symbol_id,),
+        ).fetchone()
+        if gm:
+            result["pagerank"] = gm["pagerank"] or 0.0
+            result["fan_in"] = gm["in_degree"] or 0
+            result["fan_out"] = gm["out_degree"] or 0
+            result["betweenness"] = gm["betweenness"] or 0.0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:metric_query", exc)
+    try:
+        extra = conn.execute(
+            "SELECT closeness, eigenvector, clustering_coefficient, debt_score FROM graph_metrics WHERE symbol_id = ?",
+            (symbol_id,),
+        ).fetchone()
+        if extra:
+            result["closeness"] = extra["closeness"] or 0.0
+            result["eigenvector"] = extra["eigenvector"] or 0.0
+            result["clustering_coefficient"] = extra["clustering_coefficient"] or 0.0
+            result["debt_score"] = extra["debt_score"] or 0.0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:metric_query", exc)
+
+
+def _populate_edge_fanout_fallback(conn, symbol_id: int, result: dict) -> None:
+    """When graph_metrics returned 0/0, fall back to raw edge counts."""
+    if result["fan_in"] != 0 or result["fan_out"] != 0:
+        return
+    try:
+        fi = conn.execute("SELECT COUNT(*) FROM edges WHERE target_id = ?", (symbol_id,)).fetchone()
+        fo = conn.execute("SELECT COUNT(*) FROM edges WHERE source_id = ?", (symbol_id,)).fetchone()
+        result["fan_in"] = fi[0] if fi else 0
+        result["fan_out"] = fo[0] if fo else 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:nested_query", exc)
+
+
+def _populate_file_level_metrics(conn, file_id: int, result: dict) -> None:
+    """Pull churn/commits, test-file count, and co-change count for a file."""
+    try:
+        fs = conn.execute(
+            "SELECT commit_count, total_churn FROM file_stats WHERE file_id = ?",
+            (file_id,),
+        ).fetchone()
+        if fs:
+            result["commits"] = fs["commit_count"] or 0
+            result["churn"] = fs["total_churn"] or 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:nested_query", exc)
+    try:
+        tf = conn.execute(
+            "SELECT COUNT(DISTINCT fe.source_file_id) "
+            "FROM file_edges fe "
+            "JOIN files f ON fe.source_file_id = f.id "
+            "WHERE fe.target_file_id = ? AND f.file_role = 'test'",
+            (file_id,),
+        ).fetchone()
+        result["test_files"] = tf[0] if tf else 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:nested_query", exc)
+    try:
+        cc_row = conn.execute(
+            "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
+            (file_id, file_id),
+        ).fetchone()
+        result["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
+    except Exception as exc:  # noqa: BLE001 — defensive
+        _swallow("cmd_metrics:nested_query", exc)
+
+
+def _populate_dead_code_risk(sym_row, result: dict) -> None:
+    """Mark symbols with zero fan-in as dead-code risks unless they're
+    exported (entry points)."""
+    if result["fan_in"] != 0:
+        return
+    kind = sym_row["kind"] or ""
+    if kind in ("function", "method", "class") and not sym_row["is_exported"]:
+        result["dead_code_risk"] = True
+
+
 def collect_symbol_metrics(
     conn: sqlite3.Connection,
     symbol_id: int,
@@ -105,143 +221,21 @@ def collect_symbol_metrics(
         "coverable_lines": 0,
     }
 
-    # -- symbol_metrics (cognitive complexity, line_count) --
-    try:
-        sm = conn.execute(
-            "SELECT cognitive_complexity, line_count FROM symbol_metrics WHERE symbol_id = ?",
-            (symbol_id,),
-        ).fetchone()
-        if sm:
-            result["complexity"] = sm["cognitive_complexity"] or 0
-            result["loc"] = sm["line_count"] or 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
+    _populate_symbol_metrics(conn, symbol_id, result)
+    _populate_graph_metrics(conn, symbol_id, result)
+    _populate_edge_fanout_fallback(conn, symbol_id, result)
 
-        log_swallowed("cmd_metrics:metric_query", _exc)
-    # Optional imported coverage columns (safe on older DB schemas)
-    try:
-        cov = conn.execute(
-            "SELECT coverage_pct, covered_lines, coverable_lines FROM symbol_metrics WHERE symbol_id = ?",
-            (symbol_id,),
-        ).fetchone()
-        if cov:
-            result["coverage_pct"] = cov["coverage_pct"]
-            result["covered_lines"] = cov["covered_lines"] or 0
-            result["coverable_lines"] = cov["coverable_lines"] or 0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-
-    # -- graph_metrics (pagerank, in_degree, out_degree, betweenness) --
-    try:
-        gm = conn.execute(
-            "SELECT pagerank, in_degree, out_degree, betweenness FROM graph_metrics WHERE symbol_id = ?",
-            (symbol_id,),
-        ).fetchone()
-        if gm:
-            result["pagerank"] = gm["pagerank"] or 0.0
-            result["fan_in"] = gm["in_degree"] or 0
-            result["fan_out"] = gm["out_degree"] or 0
-            result["betweenness"] = gm["betweenness"] or 0.0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-    # Optional SNA v2 columns (safe on older DB schemas)
-    try:
-        extra = conn.execute(
-            "SELECT closeness, eigenvector, clustering_coefficient, debt_score FROM graph_metrics WHERE symbol_id = ?",
-            (symbol_id,),
-        ).fetchone()
-        if extra:
-            result["closeness"] = extra["closeness"] or 0.0
-            result["eigenvector"] = extra["eigenvector"] or 0.0
-            result["clustering_coefficient"] = extra["clustering_coefficient"] or 0.0
-            result["debt_score"] = extra["debt_score"] or 0.0
-    except Exception as _exc:  # noqa: BLE001 — defensive
-        from roam.observability import log_swallowed
-
-        log_swallowed("cmd_metrics:metric_query", _exc)
-
-    # -- edges (fallback fan-in / fan-out from raw edges) --
-    if result["fan_in"] == 0 and result["fan_out"] == 0:
-        try:
-            fi = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE target_id = ?",
-                (symbol_id,),
-            ).fetchone()
-            fo = conn.execute(
-                "SELECT COUNT(*) FROM edges WHERE source_id = ?",
-                (symbol_id,),
-            ).fetchone()
-            result["fan_in"] = fi[0] if fi else 0
-            result["fan_out"] = fo[0] if fo else 0
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            from roam.observability import log_swallowed
-
-            log_swallowed("cmd_metrics:nested_query", _exc)
-
-    # -- dead_code_risk: fan_in == 0 for non-entry-point symbols --
     sym_row = conn.execute(
         "SELECT kind, is_exported, file_id FROM symbols WHERE id = ?",
         (symbol_id,),
     ).fetchone()
     if sym_row:
-        kind = sym_row["kind"] or ""
-        is_exported = sym_row["is_exported"]
-        if result["fan_in"] == 0 and kind in ("function", "method", "class"):
-            # Entry points (exported, main, __init__) are not dead code
-            if not is_exported:
-                result["dead_code_risk"] = True
+        _populate_dead_code_risk(sym_row, result)
+        _populate_file_level_metrics(conn, sym_row["file_id"], result)
 
-        # -- churn / commits from git_file_stats via file_id --
-        file_id = sym_row["file_id"]
-        try:
-            fs = conn.execute(
-                "SELECT commit_count, total_churn FROM file_stats WHERE file_id = ?",
-                (file_id,),
-            ).fetchone()
-            if fs:
-                result["commits"] = fs["commit_count"] or 0
-                result["churn"] = fs["total_churn"] or 0
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            from roam.observability import log_swallowed
-
-            log_swallowed("cmd_metrics:nested_query", _exc)
-
-        # -- test files: count files with file_role='test' that reference
-        #    the same file via file_edges --
-        try:
-            tf = conn.execute(
-                "SELECT COUNT(DISTINCT fe.source_file_id) "
-                "FROM file_edges fe "
-                "JOIN files f ON fe.source_file_id = f.id "
-                "WHERE fe.target_file_id = ? AND f.file_role = 'test'",
-                (file_id,),
-            ).fetchone()
-            result["test_files"] = tf[0] if tf else 0
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            from roam.observability import log_swallowed
-
-            log_swallowed("cmd_metrics:nested_query", _exc)
-
-        # -- co_change_count --
-        try:
-            cc_row = conn.execute(
-                "SELECT SUM(cochange_count) AS total FROM git_cochange WHERE file_id_a = ? OR file_id_b = ?",
-                (file_id, file_id),
-            ).fetchone()
-            result["co_change_count"] = cc_row["total"] or 0 if cc_row else 0
-        except Exception as _exc:  # noqa: BLE001 — defensive
-            from roam.observability import log_swallowed
-
-            log_swallowed("cmd_metrics:nested_query", _exc)
-
-        # Comprehension difficulty metrics (#71):
-        # - information scatter: distinct files in 2-hop closure
-        # - working set size: symbols in 2-hop closure
-        # - composite score from fan-out, scatter, working set, complexity
+        # Comprehension difficulty metrics (#71): information scatter
+        # (distinct files in 2-hop closure) + working set size + composite
+        # score from fan-out, scatter, working set, complexity.
         if include_comprehension:
             scatter, working_set = _comprehension_neighborhood(conn, symbol_id)
             result["information_scatter"] = scatter
