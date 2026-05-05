@@ -17,7 +17,31 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from tree_sitter import Node, Parser, Query, QueryCursor
+from tree_sitter import Node, Parser, Query
+
+try:
+    from tree_sitter import QueryCursor as _QueryCursor
+
+    QueryCursor = _QueryCursor
+except ImportError:
+
+    class QueryCursor:
+        """Shim for tree-sitter < 0.24 (Python 3.9 lane) where ``QueryCursor``
+        wasn't yet exported.
+
+        The old ``Query`` exposes ``.matches(node)`` and ``.captures(node)``
+        directly, so we just delegate. Once 3.9 support is dropped this
+        shim can go.
+        """
+
+        def __init__(self, query):
+            self._query = query
+
+        def matches(self, root):
+            return self._query.matches(root)
+
+        def captures(self, root):
+            return self._query.captures(root)
 
 from roam.languages.extractor_schema import (
     InheritancePattern,
