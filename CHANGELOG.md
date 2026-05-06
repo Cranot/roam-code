@@ -7,6 +7,136 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.28] - 2026-05-06
+
+### Detector quality round (M1-M14) — false-positive fixes
+
+User feedback after running `roam math` / `over-fetch` / `missing-index` /
+`auth-gaps` on a multi-tenant Laravel + Vue 3 codebase surfaced systematic
+FP patterns. This release ships fixes for all of them.
+
+#### Math (`roam math` / `algo`)
+
+- **M1 — findings now point at the exact AST node, not the enclosing
+  function declaration.** User: "highest single-leverage fix on its own —
+  cuts triage time in half." Sort/IO/regex-in-loop detectors all walk the
+  snippet to find the actual match line.
+- **M2 — bounded-recursion FP killed.** Depth-guard regex now recognises
+  the `if (depth > limit) return` early-return form (was only matching
+  `if (depth < limit)` continue form). Plus new `Set/Map/WeakSet`
+  parameter detection — functions that carry their own memoisation
+  collection no longer flagged as O(2^n). Real-world FP eliminated:
+  `deepEqual` flagged on redacted with `if (depth > 10) return false`
+  on the next line.
+- **M3 — cache-vs-IO distinction expanded.** In-memory call allowlist
+  now covers Apollo (`client.readQuery`, `cache.modify`), SWR (`mutate`),
+  TanStack Query lifecycle methods (`invalidateQueries`, `removeQueries`,
+  `cancelQueries`), and native collection ops (`Map.has`, `Set.delete`,
+  `WeakMap.set`) when the receiver hint matches. Real-world FP
+  eliminated: `queryClient.getQueryData` inside a TanStack factory no
+  longer flagged as N+1 round trips.
+- **M4 — DEV-only block recognition.** Detectors recognise
+  `if (import.meta.env.DEV)`, `if (process.env.NODE_ENV !== 'production')`,
+  `if (__DEV__)`, `if (DEBUG)`, `console.assert(...)`. IO-in-loop
+  findings inside DEV gates demoted two confidence tiers (production-
+  stripped code shouldn't gate releases).
+- **M5 — sort-then-subscript with full iteration → demoted.** When the
+  sort result is also iterated/returned (display-order pattern), drop
+  confidence from "high" to "medium" (or "medium" to "low") and add a
+  note explaining the subscript may be incidental.
+- **M6 — every finding now carries a `to_suppress` evidence block.** No
+  more reverse-engineering the heuristic: each emitted finding tells
+  you exactly what would have made it not fire.
+- **M8 — confidence calibration floor.** Categories where the FP-fix is
+  heuristic-only (`branching-recursion`, `sort-to-select`) cap at
+  "medium" unless there's strong runtime signal. Real-world calibration
+  on redacted showed "high confidence" for these was 0/1 true positive.
+
+#### Missing-index (`roam missing-index`)
+
+- **M9 — `$table` property is now the source of truth, not class-name
+  derivation.** New cross-file `_build_model_table_overrides` pass
+  walks every model file and indexes `protected $table = '...'`
+  declarations. `_class_to_table` consults this BEFORE applying snake_
+  case-plural derivation. Real-world FP eliminated: 6/6 high-confidence
+  findings on `advances` / `payments` / `reminders` (which were actually
+  `payroll_advances` / etc. via `$table` override).
+- **M13 — multi-tenant per-schema migration pattern recognised.**
+  `Schema::connection('payroll')->create("{$schema}.payroll_advances",
+  ...)` is now matched by the table regex (was only matching
+  `Schema::create(...)` directly). Plus a normalise-prefix helper
+  strips `{$schema}.` / `$schema.` from captured table names so the
+  index map keys on the bare table name.
+
+#### Auth-gaps (`roam auth-gaps`)
+
+- **M10 — non-auth route guards (throttle / signed / verified / can /
+  scope) are recognised as intentional.** Routes with `->middleware
+  ('throttle:60,1')` etc. but no `auth:*` are now flagged at "low"
+  confidence with the explanation "looks like an intentional public-
+  but-protected endpoint" instead of "missing auth".
+- **M11 — tenant-scoped controllers recognised as authorization-
+  equivalent.** When a controller method scopes its query to the
+  current tenant (`officeScoped()`, `multiTenant()`, `Resource::for()`,
+  `forTenant()`, `forUser()`, `belongsToCurrentUser()`, `currentTeam()`),
+  the route auth + tenant scope counts as the authorization layer.
+  CRUD methods downgraded from "medium" to "low"; read methods skipped
+  entirely. Real-world FP eliminated: ~115 controller methods on
+  redacted flagged for missing `$this->authorize()` despite being
+  protected by route Sanctum + officeScoped queries.
+
+#### Over-fetch (`roam over-fetch`)
+
+- **M12 — direct-return scan is now method-body-scoped, not file-
+  level.** Previously: any controller importing `LedgerAccount` could
+  get flagged for over-fetching it just because `return $aadeService
+  ->getDocs()` matched the generic `return $var;` pattern. Now: only
+  flag direct returns when the model is *actually used* in the same
+  method body (`Model::find/all/...`, `new Model(`, etc.).
+
+### Suppression mechanism (M7)
+
+Three layered paths for marking a finding as a known FP:
+
+- **Inline annotation** — `# roam: ignore-math[branching-recursion]`
+  on the symbol line (or sym-line) suppresses just that one finding.
+  Bare `# roam: ignore-math` (no `[task-id]`) suppresses every math
+  task on that line. `[*]` covers all task-ids. Supported across
+  `math`, `over-fetch`, `missing-index`, `auth-gaps`.
+- **`.roamignore-findings`** — repo-level YAML/JSON file with `rules:`
+  blocks matching by `task_id` + `path_glob`. Use for project-wide
+  carve-outs.
+- **`.roam/suppressions.json` via `roam suppress` command** — record a
+  one-off audit-trail-friendly suppression with reason. Each finding
+  now carries a deterministic `finding_id` (sha256 of task_id +
+  location + symbol_name, 16 chars) so the suppression survives reindex.
+
+Suppressed findings stay in the JSON envelope under
+`finding["suppressed"] = {source, reason}` instead of being silently
+dropped — consumers can detect over-suppression. Text output filters
+them by default. Verdict line (M14) now reflects "N unsuppressed
+candidates surfaced; M suppressed via …" when any suppression fires.
+
+### Added — new command
+
+- **`roam suppress <finding-id> --reason "…"`** — companion to the
+  inline / file paths above. `--list` to view all, `--remove` to drop
+  one. JSON envelope mode for scripts.
+
+### Surface counts
+
+- CLI commands: 186 → **187** (+1: `suppress`)
+- MCP tools: **136** (unchanged)
+- Core MCP preset: **49** (unchanged)
+
+### Tests
+
+- 198 detector tests pass (+72 new across `test_math_fp_fixes.py` (22),
+  `test_finding_suppress.py` (20), `test_laravel_fp_fixes.py` (16),
+  plus existing math (83) / missing-index (33) / auth-gaps (19) /
+  over-fetch (5) regression files).
+- 405 v2 + adjacent tests still pass; no behavioural regressions.
+
 ## [12.27] - 2026-05-06
 
 ### Added — round-5 polish + dogfood
