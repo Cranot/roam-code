@@ -102,21 +102,12 @@ def _load_last_pr_analysis(path: Path | None = None) -> dict | None:
         return None
 
 
-def _build_payload(
-    audit_envelope: dict,
-    *,
-    repo_id: str,
-    git_meta: dict,
-    anonymize: bool,
-    include_hotspots: bool,
-    last_pr_envelope: dict | None = None,
-) -> dict:
-    """Compose the metrics-only payload from a ``roam audit`` envelope.
+def _extract_metrics(audit_envelope: dict) -> dict:
+    """Pull the allow-listed numeric metrics out of an audit envelope.
 
-    Source-code bodies are NEVER included. Only numbers, file paths
-    (or hashes when --anonymize), bucket counts, and aggregate scores.
-    Per the Cloud Lite spec, the receiving API rejects any payload
-    containing keys outside this allow-listed schema.
+    Source-code bodies are NEVER included — only numbers, bucket counts,
+    aggregate scores. The receiving API rejects any payload containing
+    keys outside this allow-listed schema.
     """
     summary = audit_envelope.get("summary") or {}
     sections = audit_envelope.get("sections") or {}
@@ -125,9 +116,8 @@ def _build_payload(
     dead_summary = (sections.get("dead") or {}).get("summary") or {}
     pyramid_summary = (sections.get("test_pyramid") or {}).get("summary") or {}
     danger_summary = (sections.get("hotspots_danger") or {}).get("summary") or {}
-    danger_section = sections.get("hotspots_danger") or {}
 
-    metrics = {
+    return {
         "health_score": health_summary.get("health_score") or summary.get("health_score"),
         "debt_total_minutes": debt_summary.get("total_remediation_minutes") or debt_summary.get("total_minutes"),
         "debt_total_hours": debt_summary.get("total_remediation_hours"),
@@ -153,6 +143,72 @@ def _build_payload(
         "tangle_ratio": health_summary.get("tangle_ratio"),
     }
 
+
+def _extract_hotspots(audit_envelope: dict, *, anonymize: bool, limit: int = 10) -> list[dict]:
+    """Pull the top-N danger-zone rows. Path is hashed under anonymize."""
+    danger_section = (audit_envelope.get("sections") or {}).get("hotspots_danger") or {}
+    danger_zone = danger_section.get("danger_zone") or []
+    out: list[dict] = []
+    for row in danger_zone[:limit]:
+        path = row.get("path", "")
+        entry = {
+            "danger_score": row.get("danger_score"),
+            "churn": row.get("churn"),
+            "complexity": row.get("complexity"),
+            "max_fan_in": row.get("max_fan_in"),
+        }
+        if anonymize:
+            entry["path_hash"] = _path_hash(path) if path else None
+        else:
+            entry["path"] = path
+        out.append(entry)
+    return out
+
+
+def _build_last_pr_block(last_pr_envelope: dict) -> dict:
+    """Compose the last_pr_analysis block from a saved pr-analyze envelope.
+
+    Folds in only summary numerics + verdict + primary language + timestamp.
+    Computes ``age_days`` + ``stale`` (>7 days) so dashboards can grey
+    stale entries without needing to compute age client-side.
+    """
+    pr_summary = last_pr_envelope.get("summary") or {}
+    ai_section = last_pr_envelope.get("ai_likelihood") or {}
+    ts = (last_pr_envelope.get("_meta") or {}).get("timestamp")
+    block = {
+        "verdict": pr_summary.get("verdict"),
+        "blast_radius": pr_summary.get("blast_radius"),
+        "ai_likelihood": pr_summary.get("ai_likelihood"),
+        "rule_violations": pr_summary.get("rule_violations"),
+        "high_severity_critique": pr_summary.get("high_severity_critique"),
+        "primary_language": ai_section.get("primary_language"),
+        "timestamp": ts,
+    }
+    if ts:
+        try:
+            pr_dt = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            age_days = (_dt.datetime.now(_dt.timezone.utc) - pr_dt).days
+            block["age_days"] = age_days
+            block["stale"] = age_days > 7
+        except (TypeError, ValueError):
+            pass
+    return block
+
+
+def _build_payload(
+    audit_envelope: dict,
+    *,
+    repo_id: str,
+    git_meta: dict,
+    anonymize: bool,
+    include_hotspots: bool,
+    last_pr_envelope: dict | None = None,
+) -> dict:
+    """Compose the metrics-only payload from a ``roam audit`` envelope.
+
+    Refactor (P23): metrics, hotspots, and last-pr-analysis blocks are
+    extracted into helpers above. This function is now a flat coordinator.
+    """
     payload: dict = {
         "schema": "roam-metrics-v1",
         "schema_version": "1.0.0",
@@ -162,55 +218,12 @@ def _build_payload(
         "timestamp": utc_timestamp(),
         "tool_version": detect_roam_version(),
         "anonymized": bool(anonymize),
-        "metrics": metrics,
+        "metrics": _extract_metrics(audit_envelope),
     }
-
     if include_hotspots:
-        danger_zone = danger_section.get("danger_zone") or []
-        hotspot_rows: list[dict] = []
-        for row in danger_zone[:10]:
-            path = row.get("path", "")
-            entry = {
-                "danger_score": row.get("danger_score"),
-                "churn": row.get("churn"),
-                "complexity": row.get("complexity"),
-                "max_fan_in": row.get("max_fan_in"),
-            }
-            if anonymize:
-                entry["path_hash"] = _path_hash(path) if path else None
-            else:
-                entry["path"] = path
-            hotspot_rows.append(entry)
-        payload["hotspots"] = hotspot_rows
-
+        payload["hotspots"] = _extract_hotspots(audit_envelope, anonymize=anonymize)
     if last_pr_envelope:
-        # Fold the latest pr-analyze summary into the payload so Cloud Lite
-        # can show "last PR verdict" alongside health-trend without a 2nd call.
-        # No diff text or source bodies — only summary numerics + verdict.
-        pr_summary = last_pr_envelope.get("summary") or {}
-        ai_section = last_pr_envelope.get("ai_likelihood") or {}
-        ts = (last_pr_envelope.get("_meta") or {}).get("timestamp")
-        last_pr_block = {
-            "verdict": pr_summary.get("verdict"),
-            "blast_radius": pr_summary.get("blast_radius"),
-            "ai_likelihood": pr_summary.get("ai_likelihood"),
-            "rule_violations": pr_summary.get("rule_violations"),
-            "high_severity_critique": pr_summary.get("high_severity_critique"),
-            "primary_language": ai_section.get("primary_language"),
-            "timestamp": ts,
-        }
-        # Synergy C.1.hhh: surface "stale" so dashboards can grey it out
-        # without needing to compute age client-side.
-        if ts:
-            try:
-                pr_dt = _dt.datetime.fromisoformat(ts.replace("Z", "+00:00"))
-                age_days = (_dt.datetime.now(_dt.timezone.utc) - pr_dt).days
-                last_pr_block["age_days"] = age_days
-                last_pr_block["stale"] = age_days > 7
-            except (TypeError, ValueError):
-                pass
-        payload["last_pr_analysis"] = last_pr_block
-
+        payload["last_pr_analysis"] = _build_last_pr_block(last_pr_envelope)
     return payload
 
 
