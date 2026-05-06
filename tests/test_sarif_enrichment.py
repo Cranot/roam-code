@@ -4,6 +4,7 @@ The enrichment lets GitHub Code Scanning correlate runs across re-ingests,
 maps findings to a specific git commit, and respects user-defined
 suppressions from .roam/suppressions.json.
 """
+
 from __future__ import annotations
 
 import json
@@ -72,15 +73,17 @@ def test_suppressions_applied_when_file_present(tmp_path, monkeypatch) -> None:
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
     (suppressions_dir / "suppressions.json").write_text(
-        json.dumps([
-            {
-                "rule_id": "ROAM-DEMO-1",
-                "location": "src/x.py:10",
-                "reason": "false positive: this is intentional",
-                "kind": "external",
-                "status": "accepted",
-            }
-        ]),
+        json.dumps(
+            [
+                {
+                    "rule_id": "ROAM-DEMO-1",
+                    "location": "src/x.py:10",
+                    "reason": "false positive: this is intentional",
+                    "kind": "external",
+                    "status": "accepted",
+                }
+            ]
+        ),
         encoding="utf-8",
     )
 
@@ -104,15 +107,17 @@ def test_suppressions_object_shape_also_supported(tmp_path, monkeypatch) -> None
     suppressions_dir = tmp_path / ".roam"
     suppressions_dir.mkdir()
     (suppressions_dir / "suppressions.json").write_text(
-        json.dumps({
-            "suppressions": [
-                {
-                    "rule_id": "ROAM-DEMO-1",
-                    "location": "src/x.py:10",
-                    "reason": "wrapped",
-                }
-            ]
-        }),
+        json.dumps(
+            {
+                "suppressions": [
+                    {
+                        "rule_id": "ROAM-DEMO-1",
+                        "location": "src/x.py:10",
+                        "reason": "wrapped",
+                    }
+                ]
+            }
+        ),
         encoding="utf-8",
     )
 
