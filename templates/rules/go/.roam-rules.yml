@@ -1,0 +1,104 @@
+# Go starter rule pack for `roam pr-analyze`
+#
+# 12 rules covering the most common AI-generated-code anti-patterns in
+# Go projects. Drop at `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
+# focus on the Go-specific failure modes (panic-instead-of-error,
+# unsafe imports, banned reflect uses).
+#
+# Validate before shipping:
+#   roam rules-validate templates/rules/go/.roam-rules.yml --explain
+
+rules:
+  # ---- Dangerous APIs ----
+
+  - id: go-no-unsafe
+    description: "unsafe.Pointer bypasses memory safety; only justified in performance-critical FFI."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: unsafe
+    severity: WARN
+
+  - id: go-no-cgo
+    description: "C interop adds a non-Go toolchain dependency; lock changes behind a clear ADR."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "C"
+    severity: WARN
+
+  - id: go-no-os-exec-shell
+    description: "os/exec usage often masks shell-injection; review inputs carefully."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "os/exec"
+    severity: WARN
+
+  - id: go-no-md5-sha1
+    description: "crypto/md5 + crypto/sha1 are broken for security; use crypto/sha256 or crypto/sha512."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "crypto/{md5,sha1}"
+    severity: BLOCK
+
+  - id: go-no-net-rpc
+    description: "net/rpc is deprecated for new services; use gRPC / connect-go / fiber."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "net/rpc*"
+    severity: WARN
+
+  # ---- Common AI-generated anti-patterns ----
+
+  - id: go-no-panic
+    description: "panic() in library code propagates failure modes badly; return errors instead."
+    pattern: function_call
+    source_glob: "**/*.go"
+    forbidden_target_glob: panic
+    severity: WARN
+
+  - id: go-no-fmt-println-in-prod
+    description: "fmt.Println in production code suggests forgotten debugging output."
+    pattern: function_call
+    source_glob: "**/*.go"
+    forbidden_target_glob: fmt.Println
+    severity: WARN
+
+  - id: go-no-init-funcs-in-libs
+    description: "init() in libraries causes hidden ordering issues; prefer explicit constructors."
+    pattern: function_call
+    source_glob: "lib/**/*.go"
+    forbidden_target_glob: init
+    severity: WARN
+
+  # ---- LLM-favourite hallucinated imports ----
+
+  - id: go-no-numbered-modules
+    description: "Numbered modules (foo_v2, util1) often signal LLM hallucinations."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "*_v[0-9]*"
+    severity: WARN
+
+  - id: go-no-helpers-helpers
+    description: "helpers/helpers and utils/utils paths are LLM placeholders; pick a real name."
+    pattern: import_from
+    source_glob: "**/*.go"
+    forbidden_target_glob: "*helpers/helpers*"
+    severity: WARN
+
+  # ---- Layer-violation rules ----
+
+  - id: go-no-direct-db-from-handler
+    description: "HTTP handlers must not import db packages directly; go through service layer."
+    pattern: import_from
+    source_glob: "internal/handlers/**/*.go"
+    forbidden_target_glob: "*/db/*"
+    severity: BLOCK
+
+  - id: go-no-internal-from-public
+    description: "Public packages must not depend on internal/ — Go enforces this but custom layouts can drift."
+    pattern: import_from
+    source_glob: "pkg/**/*.go"
+    forbidden_target_glob: "*/internal/*"
+    severity: BLOCK

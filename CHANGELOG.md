@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.26.1] - 2026-05-06
+
+### Added
+
+- **`audit-trail-conformance-check --sarif`** — emit SARIF 2.1.0
+  envelope with failed checks as findings (drops into GitHub Code
+  Scanning UI). Pair with global `--sarif` flag (consistent with
+  `roam health --sarif`, `roam dead --sarif`, etc.).
+- **`templates/rules/go/.roam-rules.yml`** — 12-rule starter pack for Go
+  (no-unsafe, no-cgo, no-md5/sha1, no-panic, no-init-funcs,
+  hallucinated-import detection, layer violations).
+- **`templates/rules/java/.roam-rules.yml`** — 12-rule starter pack for
+  Java (no-Runtime.exec, no-System.exit-in-libs, no-ObjectInputStream,
+  no-printStackTrace, no-raw-types, no-Thread.stop, hallucinated-import
+  detection, controller-from-jdbc layer violation).
+- **`.github/workflows/dogfood.yml`** — self-CI workflow for roam-code
+  itself: runs `roam dogfood` on every PR + push, posts a sticky
+  PR comment via `roam pr-comment-render`, uploads the audit trail as
+  a workflow artifact. Eat our own cooking publicly.
+
+### Fixed
+
+- **`_save_baseline` now stamps `_meta.timestamp`** at save time. Without
+  this, `pr-comment-render --from-baseline` couldn't compute baseline
+  age (the "saved X days ago" line silently never fired). Caught by
+  the new end-to-end integration test.
+
+### Internal
+
+- Cognitive complexity reductions (continued from 12.26):
+  - `_build_payload` cc=49 → split into `_extract_metrics` +
+    `_extract_hotspots` + `_build_last_pr_block` helpers
+  - `pr_analyze` (the command coordinator) cc=38 → extracted
+    `_serve_from_cache` + `_apply_drift` + `_emit_audit_trail`
+- New `tests/test_v2_integration.py` — 3 end-to-end tests exercise the
+  whole v2 pipeline (audit → pr-analyze → audit-trail-verify →
+  audit-trail-export → audit-trail-conformance-check → pr-comment-render
+  → metrics-push → dogfood). Catches schema drift across the chain.
+- Cache stress-test on a 30-real-commit batch: **54.7× warm-cache
+  speedup** (60s cold → 1.1s warm) sequentially; **2.55× cold speedup**
+  with `--parallel 4`.
+- Real-OSS validation: ran pr-analyze on 3 small human-written PRs
+  (fastapi#15482, requests#7401, httpx#3773); all SAFE with
+  AI-likelihood 13-23. Confirms scorer doesn't false-positive on
+  legitimate human work.
+
 ## [12.26] - 2026-05-06
 
 ### Added — Roam Agent Review + Cloud Lite engines (redacted)

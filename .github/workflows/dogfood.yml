@@ -1,0 +1,109 @@
+name: Dogfood (roam on roam)
+
+# DF.1 / DF.18 — eat our own cooking publicly. On every PR + push to main:
+#   1. Install roam-code from this checkout
+#   2. Run `roam dogfood` (audit + pr-analyze + audit-trail + conformance)
+#   3. Surface verdict + score in the workflow summary
+#   4. Post a sticky PR comment via `roam pr-comment-render`
+#   5. Upload the audit trail as a workflow artifact for compliance review
+#
+# This workflow uses the same engines that ship to customers — when it
+# breaks, customers will too. When it passes, our trust signal is real.
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+  pull-requests: write   # post sticky comment
+  checks: write          # for the comment marker
+
+jobs:
+  dogfood:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 50  # enough for pr-prep churn analysis
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+
+      - name: Install roam-code from checkout
+        run: |
+          python -m pip install --upgrade pip
+          pip install -e .
+
+      - name: Index repo
+        run: roam index
+
+      - name: Run dogfood (audit + pr-analyze + audit-trail + conformance)
+        id: dogfood
+        run: |
+          set -e
+          roam --json dogfood --no-audit-trail > dogfood.json || true
+          # Surface the headline verdict + score regardless of exit
+          python - <<'PY'
+          import json, os, pathlib
+          env = json.loads(pathlib.Path("dogfood.json").read_text())
+          s = env.get("summary") or {}
+          verdict = s.get("verdict", "?")
+          health = s.get("health_score", "?")
+          pr_verdict = s.get("pr_verdict", "?")
+          conf = s.get("conformance_score", "?")
+          summary_md = (
+              f"## Roam dogfood verdict\n\n"
+              f"**{verdict}**\n\n"
+              f"| metric | value |\n|---|---|\n"
+              f"| health | {health}/100 |\n"
+              f"| pr-analyze | {pr_verdict} |\n"
+              f"| conformance | {conf}/100 |\n"
+          )
+          gh_summary = os.environ.get("GITHUB_STEP_SUMMARY")
+          if gh_summary:
+              pathlib.Path(gh_summary).write_text(summary_md)
+          # Set output for the comment step
+          gh_output = os.environ.get("GITHUB_OUTPUT")
+          if gh_output:
+              with open(gh_output, "a") as f:
+                  f.write(f"verdict={verdict}\n")
+                  f.write(f"pr_verdict={pr_verdict}\n")
+          PY
+
+      - name: Render PR comment (pr-analyze on PR diff)
+        if: github.event_name == 'pull_request'
+        run: |
+          set -e
+          # Fetch base ref so pr-analyze can compute the diff
+          git fetch origin ${{ github.base_ref }}:${{ github.base_ref }}
+          git diff ${{ github.base_ref }}..HEAD > pr.diff
+          roam --json pr-analyze --input pr.diff --explain > pr-analyze.json || true
+          roam pr-comment-render --input pr-analyze.json > pr-comment.md
+
+      - name: Post sticky comment to PR
+        if: github.event_name == 'pull_request'
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          header: roam-dogfood
+          path: pr-comment.md
+
+      - name: Upload audit trail (if any)
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: roam-dogfood-${{ github.run_id }}
+          path: |
+            dogfood.json
+            pr-analyze.json
+            pr-comment.md
+          if-no-files-found: ignore
+          retention-days: 30
