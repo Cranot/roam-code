@@ -265,6 +265,37 @@ def _compute_drift(current: dict, baseline: dict | None) -> dict | None:
         blast_delta <= 0 and ai_delta < 0 and new_count == 0
     )
 
+    # B6 (C.1.ll) — per-rule drift breakdown.
+    # Distinguish "new rule was added" from "existing rule's violation count
+    # changed". Lets the renderer show a richer story than a single delta.
+    cur_rule_ids = {v.get("rule_id", "") for v in cur_violations}
+    base_rule_ids = {v.get("rule_id", "") for v in base_violations}
+    rules_first_seen = sorted(cur_rule_ids - base_rule_ids)
+    rules_resolved_entirely = sorted(base_rule_ids - cur_rule_ids)
+    common_rules = cur_rule_ids & base_rule_ids
+
+    def _count_by_rule(violations: list[dict]) -> dict[str, int]:
+        out: dict[str, int] = {}
+        for v in violations:
+            rid = v.get("rule_id", "")
+            out[rid] = out.get(rid, 0) + 1
+        return out
+
+    cur_counts = _count_by_rule(cur_violations)
+    base_counts = _count_by_rule(base_violations)
+    rule_count_changes = []
+    for rid in sorted(common_rules):
+        delta = cur_counts.get(rid, 0) - base_counts.get(rid, 0)
+        if delta != 0:
+            rule_count_changes.append(
+                {
+                    "rule_id": rid,
+                    "before": base_counts.get(rid, 0),
+                    "after": cur_counts.get(rid, 0),
+                    "delta": delta,
+                }
+            )
+
     return {
         "baseline_timestamp": (baseline.get("_meta") or {}).get("timestamp"),
         "blast_radius_delta": blast_delta,
@@ -277,6 +308,10 @@ def _compute_drift(current: dict, baseline: dict | None) -> dict | None:
         "improvement": improvement,
         "verdict_changed": cur_summary.get("verdict") != base_summary.get("verdict"),
         "previous_verdict": base_summary.get("verdict"),
+        # B6 — per-rule breakdown
+        "rules_first_seen": rules_first_seen,
+        "rules_resolved_entirely": rules_resolved_entirely,
+        "rule_count_changes": rule_count_changes,
     }
 
 
@@ -331,14 +366,52 @@ def _capture_pr_prep(commit_range: str | None, high_callers: int) -> dict:
         }
 
 
-def _acquire_diff(input_file: str | None, commit_range: str | None, staged: bool) -> str:
+_GITHUB_PR_URL_RE = re.compile(r"https?://github\.com/(?P<owner>[^/]+)/(?P<repo>[^/]+)/pull/(?P<num>\d+)")
+
+
+def _fetch_diff_from_pr_url(url: str) -> str:
+    """Fetch a GitHub PR diff via ``gh pr diff`` (delegates auth to gh CLI).
+
+    Returns empty string on any failure; the caller (which already handles
+    empty diffs as the trivial case) gets a clean error path.
+    """
+    m = _GITHUB_PR_URL_RE.search(url)
+    if not m:
+        return ""
+    repo = f"{m.group('owner')}/{m.group('repo')}"
+    pr_num = m.group("num")
+    try:
+        proc = subprocess.run(
+            ["gh", "pr", "diff", pr_num, "--repo", repo],
+            capture_output=True,
+            text=True,
+            timeout=30,
+            check=False,
+            encoding="utf-8",
+            errors="replace",
+        )
+        if proc.returncode == 0:
+            return proc.stdout
+    except (OSError, subprocess.SubprocessError):
+        pass
+    return ""
+
+
+def _acquire_diff(
+    input_file: str | None,
+    commit_range: str | None,
+    staged: bool,
+    diff_from_pr: str | None = None,
+) -> str:
     """Return the diff text from the highest-priority available source.
 
-    Order: ``--input`` file > stdin (when piped, not a tty) > ``--staged``
-    git diff > ``COMMIT_RANGE`` git diff > unstaged ``git diff``.
-    Returns empty string on any acquisition failure; downstream signals
-    handle that as the trivial-diff case.
+    Order: ``--diff-from-pr URL`` > ``--input`` file > stdin (when piped, not
+    a tty) > ``--staged`` git diff > ``COMMIT_RANGE`` git diff > unstaged
+    ``git diff``. Returns empty string on any acquisition failure; downstream
+    signals handle that as the trivial-diff case.
     """
+    if diff_from_pr:
+        return _fetch_diff_from_pr_url(diff_from_pr)
     if input_file:
         try:
             return Path(input_file).read_text(encoding="utf-8")
@@ -1454,6 +1527,94 @@ def _apply_drift(
     return verdict, reasons
 
 
+def _run_watch_loop(
+    *,
+    watch_seconds: int,
+    commit_range: str | None,
+    input_file: str | None,
+    staged: bool,
+    diff_from_pr: str | None,
+) -> None:
+    """B7 (C.1.ff) — Poll the diff source every N seconds; re-run on change.
+
+    Uses a SHA-256 of the diff text as the change signal. On each change,
+    re-invokes pr-analyze in-process (without --watch) so the user sees
+    fresh output. Ctrl-C exits cleanly with a brief summary.
+
+    Conscious decision: this is a thin wrapper, NOT a daemon. It's meant
+    for "leave it open in a terminal while I refactor" — not for headless
+    CI use. CI gates should fire on push via .github/workflows/agent-review.yml.
+    """
+    import time
+
+    from roam.cli import cli
+
+    last_hash = ""
+    runs = 0
+    click.echo(f"watch mode: polling every {watch_seconds}s. Ctrl-C to exit.", err=True)
+    try:
+        while True:
+            diff_text = _acquire_diff(input_file, commit_range, staged, diff_from_pr=diff_from_pr)
+            cur_hash = hashlib.sha256((diff_text or "").encode("utf-8")).hexdigest()
+            if cur_hash != last_hash:
+                runs += 1
+                click.echo(f"\n--- watch run #{runs} ({utc_timestamp()}) ---", err=True)
+                # Re-invoke pr-analyze without --watch (single-shot per fire)
+                runner = CliRunner()
+                args = ["pr-analyze"]
+                if commit_range:
+                    args.append(commit_range)
+                if input_file:
+                    args.extend(["--input", input_file])
+                if staged:
+                    args.append("--staged")
+                if diff_from_pr:
+                    args.extend(["--diff-from-pr", diff_from_pr])
+                result = runner.invoke(cli, args, catch_exceptions=False)
+                click.echo(result.output)
+                last_hash = cur_hash
+            time.sleep(watch_seconds)
+    except KeyboardInterrupt:
+        click.echo(f"\nwatch mode exited after {runs} run(s).", err=True)
+
+
+def _run_conformance_check_inline(bundle: dict, trail_path: Path) -> None:
+    """Score the freshly-appended trail against Article 12 + attach to bundle.
+
+    Advisory only — silently no-ops if the conformance module fails to load
+    (e.g. partial install) or the trail is unreadable. Never raises.
+    """
+    try:
+        from roam.commands.audit_trail_helpers import load_records as _load_recs
+        from roam.commands.cmd_audit_trail_conformance import (
+            _check_actors,
+            _check_chain_integrity,
+            _check_reproducibility,
+            _check_retention,
+            _check_timestamps,
+            _check_verdicts_and_rationale,
+        )
+
+        records = _load_recs(trail_path)
+        if not records:
+            return
+        chain_ok, _ = _check_chain_integrity(trail_path)
+        ts_ok, _ = _check_timestamps(records)
+        actor_ok, _ = _check_actors(records)
+        repro_ok, _ = _check_reproducibility(records)
+        verdict_ok, _ = _check_verdicts_and_rationale(records)
+        retention_ok, _ = _check_retention(records, retention_days=180)
+        passed = sum([chain_ok, ts_ok, actor_ok, repro_ok, verdict_ok, retention_ok])
+        bundle.setdefault("audit_trail", {})["conformance"] = {
+            "score": round(100 * passed / 6),
+            "checks_passed": passed,
+            "checks_total": 6,
+            "schema_reference": "EU AI Act Regulation 2024/1689, Article 12",
+        }
+    except Exception:  # noqa: BLE001 — advisory only
+        return
+
+
 def _emit_audit_trail(
     bundle: dict,
     trail_path: Path,
@@ -1623,6 +1784,7 @@ def _emit_batch(
     show_progress: bool = False,
     cache: bool = False,
     cache_dir: str | None = None,
+    stream_jsonl: bool = False,
 ) -> None:
     """Run pr-analyze across every *.diff / *.patch in ``batch_dir``.
 
@@ -1650,6 +1812,10 @@ def _emit_batch(
     def _accept(row: dict, idx: int) -> None:
         if show_progress and total > 0:
             click.echo(f"  [{idx}/{total}] {row.get('file', '?')} -> {row.get('verdict', 'ERROR')}", err=True)
+        if stream_jsonl:
+            # Emit each row as a JSONL line as soon as it's available so long
+            # batches feel responsive — pipe-friendly for downstream tools.
+            click.echo(_json.dumps(row, separators=(",", ":")))
         per_file.append(row)
         v = row.get("verdict")
         if v:
@@ -1683,7 +1849,11 @@ def _emit_batch(
     }
     bundle = {"summary": summary, "files": per_file}
 
-    if json_mode:
+    if stream_jsonl:
+        # Per-file rows already emitted line-by-line above; finish with the
+        # summary as the last JSONL line so consumers can detect end-of-stream.
+        click.echo(_json.dumps({"_summary": summary}, separators=(",", ":")))
+    elif json_mode:
         click.echo(to_json(json_envelope("pr-analyze", **bundle)))
     else:
         click.echo(f"VERDICT: {summary['verdict']}")
@@ -1720,6 +1890,12 @@ def _emit_batch(
     type=click.Path(exists=True, dir_okay=False),
     default=None,
     help="Read diff from file instead of stdin / git diff.",
+)
+@click.option(
+    "--diff-from-pr",
+    "diff_from_pr",
+    default=None,
+    help="Fetch a GitHub PR diff via `gh pr diff` (e.g. https://github.com/o/r/pull/123). Requires gh CLI.",
 )
 @click.option("--staged", is_flag=True, help="Analyse staged changes.")
 @click.option(
@@ -1831,6 +2007,19 @@ def _emit_batch(
     help="Emit per-file progress lines to stderr while processing a batch.",
 )
 @click.option(
+    "--stream-jsonl",
+    "stream_jsonl",
+    is_flag=True,
+    help="Batch mode: emit each per-file row as a JSONL line as soon as it completes.",
+)
+@click.option(
+    "--watch",
+    "watch_seconds",
+    type=int,
+    default=0,
+    help="Poll git diff every N seconds; re-run analysis when the diff changes. Ctrl-C to exit.",
+)
+@click.option(
     "--save-baseline",
     is_flag=True,
     help=f"Save the current envelope to {DEFAULT_BASELINE_PATH} for future drift comparison.",
@@ -1847,6 +2036,7 @@ def pr_analyze(
     ctx,
     commit_range: str | None,
     input_file: str | None,
+    diff_from_pr: str | None,
     staged: bool,
     rules_file: str | None,
     rules_strict: bool,
@@ -1868,6 +2058,8 @@ def pr_analyze(
     cache_dir: str | None,
     parallel: int,
     show_progress: bool,
+    stream_jsonl: bool,
+    watch_seconds: int,
 ) -> None:
     """Analyse a PR diff for structural risk and AI-likelihood.
 
@@ -1887,6 +2079,19 @@ def pr_analyze(
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
+
+    # B7 (C.1.ff) — --watch mode: re-run analysis whenever the working
+    # tree's diff hash changes. Useful for live dogfooding during a
+    # long refactor session. Ctrl-C exits cleanly.
+    if watch_seconds > 0:
+        _run_watch_loop(
+            watch_seconds=watch_seconds,
+            commit_range=commit_range,
+            input_file=input_file,
+            staged=staged,
+            diff_from_pr=diff_from_pr,
+        )
+        return
 
     # P.6 — soft warning when --quiet + --json (--json wins, but be explicit).
     if quiet and json_mode:
@@ -1918,10 +2123,11 @@ def pr_analyze(
             show_progress=show_progress,
             cache=cache,
             cache_dir=cache_dir,
+            stream_jsonl=stream_jsonl,
         )
         return
 
-    diff_text = _acquire_diff(input_file, commit_range, staged)
+    diff_text = _acquire_diff(input_file, commit_range, staged, diff_from_pr=diff_from_pr)
 
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
@@ -2039,6 +2245,10 @@ def pr_analyze(
             verdict,
             reasons,
         )
+        # C.1.zz — Auto-run conformance check on the freshly-appended trail.
+        # Surfaces "compliance posture is dropping" without a separate command.
+        # Advisory only: never block on the conformance computation itself.
+        _run_conformance_check_inline(bundle, trail_path)
 
     if json_mode:
         click.echo(to_json(json_envelope("pr-analyze", **bundle)))
@@ -2054,6 +2264,14 @@ def pr_analyze(
         click.echo(f"  critique high:   {high_severity}")
         if rules:
             click.echo(f"  rules loaded:    {len(rules)} from {rules_path}")
+        # C.1.zz — surface the conformance posture inline when --audit-trail was used.
+        conf = (bundle.get("audit_trail") or {}).get("conformance") or {}
+        if conf:
+            score = conf.get("score", 0)
+            passed = conf.get("checks_passed", 0)
+            total = conf.get("checks_total", 6)
+            warn = " (warning: dropped below 100)" if score < 100 else ""
+            click.echo(f"  conformance:     {score}/100 ({passed}/{total} Article 12 checks){warn}")
         if rules_warnings:
             click.echo()
             click.echo(f"Rules warnings ({len(rules_warnings)}):")

@@ -246,6 +246,26 @@ def test_pr_analyze_audit_trail_break_escalates_verdict_to_block(tmp_path, tiny_
     assert any("chain broken" in r for r in env["summary"]["reasons"])
 
 
+def test_pr_analyze_audit_trail_attaches_conformance_score(tmp_path, tiny_indexed, cli_runner):
+    """C.1.zz — pr-analyze --audit-trail should auto-run conformance-check
+    and attach the score to bundle.audit_trail.conformance.
+    """
+    from roam.cli import cli
+
+    diff = tmp_path / "x.diff"
+    diff.write_text("")
+    result = cli_runner.invoke(
+        cli,
+        ["--json", "pr-analyze", "--audit-trail", "--input", str(diff)],
+    )
+    env = _last_json_object(result.output)
+    conf = (env.get("audit_trail") or {}).get("conformance")
+    assert conf is not None, "expected conformance block in audit_trail"
+    assert "score" in conf
+    assert conf["checks_total"] == 6
+    assert "Article 12" in conf["schema_reference"]
+
+
 def test_pr_analyze_audit_trail_break_with_gate_exits_5(tmp_path, tiny_indexed, cli_runner):
     """The escalated BLOCK verdict from a broken chain should fail --gate."""
     from roam.cli import cli
