@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 181 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 182 specialised commands are advanced surface for specialised workflows.
 
-*186 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
+*187 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -274,7 +274,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 181 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **186 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 182 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **187 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -324,6 +324,7 @@ roam health
 | `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against an EU AI Act Article 12 checklist (chain integrity, timestamps, actors, reproducibility, retention) |
 | `roam rules-validate [PATH] [--against DIFF] [--strict] [--gate] [--explain]` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs; optional dry-run against a sample diff |
 | `roam dogfood [--no-audit] [--no-pr-analyze] [--no-audit-trail]` | One-shot v2 stack runner: audit + pr-analyze + audit-trail + Article 12 conformance — first-touch demo for any repo |
+| `roam suppress <finding-id> --reason "…"` | Suppress a math / over-fetch / missing-index / auth-gaps false positive with audit-trail-friendly record (`.roam/suppressions.json`); `--list` / `--remove` complete the workflow |
 | `roam why-fail <test>` | Find recently-changed symbols transitively reachable from a failing test |
 | `roam recommend <symbol>` | Surface related symbols using call-graph + co-change + clone signals |
 | `roam graph-stats` | Graph-level invariants: density, weak components, non-trivial cycles, top inbound symbols |
