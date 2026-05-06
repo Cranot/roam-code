@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.37"
+version = "12.38"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"
@@ -102,6 +102,17 @@ dev = [
     # ships in our matrix). The MCP-runtime test guards on _HAS_FASTMCP
     # so 3.9 simply skips that single test.
     "fastmcp>=2.0; python_version >= '3.10'",
+    # PyYAML is the canonical parser for .roam/rules.yml + .roamignore-findings.
+    # In production it stays optional — the in-tree _parse_simple_yaml /
+    # _emit_simple_yaml fallback covers the documented shapes. But the test
+    # suite asserts PyYAML-equivalent behaviour (warnings on malformed YAML,
+    # round-trip preserves severity case, top-level-list detection, etc.) and
+    # without PyYAML on Python 3.9 every divergence becomes a CI red. Pin
+    # here so the matrix has a consistent reference parser.
+    # Added 12.38 (2026-05-06) after seven consecutive Python-3.9-only CI
+    # failures across 12.31-12.37; root cause was fastmcp's transitive
+    # PyYAML dep being unavailable on 3.9.
+    "pyyaml>=6.0",
     "ruff>=0.4",
     "build>=1.0",
     "twine>=5.0",
