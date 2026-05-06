@@ -1,0 +1,140 @@
+---
+title: "AI Agent Readiness Audit"
+subtitle: "Prepared for {{CLIENT_NAME}}"
+author: "roam-code · Cranot"
+date: "{{AUDIT_DATE}}"
+toc: true
+toc-own-page: true
+fontsize: 11pt
+geometry: margin=2.5cm
+---
+
+# Executive Summary
+
+<!-- TODO[narrative]: Replace this block with 3-5 sentences covering:
+     1. The single most important finding (the one that justifies action this quarter).
+     2. The recommended starting move (the 30-day priority).
+     3. Order-of-magnitude effort estimate or expected payoff. -->
+
+**Audit verdict:** {{VERDICT}}
+
+| Metric | Value |
+|---|---|
+| Composite health score | {{HEALTH_SCORE}} / 100 |
+| Total estimated debt | {{DEBT_TOTAL_HOURS}} |
+| Dead-symbol candidates | {{DEAD_COUNT}} |
+| Danger-zone files | {{DANGER_ZONE_COUNT}} |
+| Imported test coverage | {{COVERAGE_PCT}} |
+| Public API surface | {{API_SURFACE}} symbols |
+| Files / symbols indexed | {{FILE_TOTAL}} / {{SYMBOL_TOTAL}} |
+
+\newpage
+
+# 1. Repository Overview
+
+{{REPO_OVERVIEW}}
+
+## 1.1 Architecture map
+
+{{ARCHITECTURE_MAP}}
+
+\newpage
+
+# 2. Health Scorecard
+
+The following findings come from `roam health`. CRITICAL items block ship; WARNINGs are next-quarter work; INFO is hygiene.
+
+{{HEALTH_FINDINGS}}
+
+\newpage
+
+# 3. Top Risk Findings
+
+Files ranked by `danger_score` — a composite of churn, complexity, and structural fan-in. These are the architectural pressure points where AI-generated PRs are most likely to introduce regressions.
+
+{{RISK_FINDINGS}}
+
+\newpage
+
+# 4. Dead Code
+
+Symbols that no other code references, grouped by verdict (`SAFE` to remove, `REVIEW` manually, `INTENTIONAL` keep).
+
+{{DEAD_FINDINGS}}
+
+\newpage
+
+# 5. Ownership & Bus-Factor
+
+Files with concentrated ownership (a single active maintainer or none) — the highest-risk files for an unexpected departure or extended absence.
+
+{{OWNER_FINDINGS}}
+
+\newpage
+
+# 6. Test Coverage Gaps
+
+{{TEST_FINDINGS}}
+
+\newpage
+
+# 7. Suggested CLAUDE.md / AGENTS.md Drop-in
+
+The block below is auto-generated from `roam describe --agent-prompt` and is ready to commit to your repo. It tells AI agents (Claude Code, Cursor, Codex CLI, Gemini CLI, Aider, Continue) how to navigate this codebase using `roam`.
+
+```
+{{AGENT_PROMPT_BLOCK}}
+```
+
+\newpage
+
+# 8. Suggested CI Gates
+
+<!-- TODO[narrative]: Recommend specific gates that map to this audit's findings.
+     Template menu (pick the ones that apply):
+     - `roam pr-risk --gate <N>` to block PRs that affect more than N files / cross more than M layers.
+     - `roam health --gate` with `.roam-gates.yml` thresholds derived from Section 2 above.
+     - `roam dead --strict` if Section 4 dead-code count is over the noise floor.
+     - `roam clones --persist` to surface clone-class issues during PR review.
+     - Pin `roam-code` version in CI so health-score deltas are comparable across PRs.
+     Tie each recommended gate to a specific finding above. -->
+
+# 9. 30 / 60 / 90 Day Fix Roadmap
+
+<!-- TODO[narrative]: Phase the recommendations:
+     Days 0-30  high-leverage low-effort wins (mostly Section 4 SAFE deletions + Section 8 CI gates)
+     Days 31-60 structural fixes that need a design conversation (cycles, god components)
+     Days 61-90 hygiene encoded as ongoing rules (custom .roam/rules.yml entries)
+     Each phase should reference the specific findings it addresses. -->
+
+\newpage
+
+# Appendix A — Methodology
+
+This audit was produced with **roam-code** (Apache 2.0, <https://github.com/Cranot/roam-code>). All analysis runs locally on the auditor's machine; no client code is transmitted to any third-party service.
+
+**Pipeline.** `roam init` indexes the codebase into a local SQLite graph (symbols, edges, file relationships, git stats). `roam audit --json` then chains `health`, `debt`, `dead`, `test-pyramid`, `api`, `stats`, and `hotspots --danger` into a single envelope. Sections 1, 1.1, 5, and 7 of this report come from `roam describe`, `roam map`, and `roam bus-factor`, run separately.
+
+**Determinism.** Every metric in this report is reproducible from the same git SHA. There is no LLM-derived content (no probabilistic ranking, no AI summaries) — re-running the pipeline at the same SHA produces byte-identical output.
+
+**Roam version:** {{ROAM_VERSION}}
+
+**Data handling.** Per SOW Section 2, the repo is deleted within 14 days of delivery; access logs available on request.
+
+# Appendix B — Reproducing this report
+
+```bash
+# 1. Index the target repo
+cd /path/to/target && roam init
+
+# 2. Render auto-content
+python templates/audit-report/render.py \
+    --client "{{CLIENT_NAME}}" \
+    --date "{{AUDIT_DATE}}" \
+    --repo /path/to/target \
+    --output audit-report.md
+
+# 3. Fill narrative sections by hand, then convert to PDF
+pandoc audit-report.md -o audit-report.pdf \
+    --template eisvogel --listings --toc
+```
