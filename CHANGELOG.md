@@ -7,6 +7,90 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.27] - 2026-05-06
+
+### Added — round-5 polish + dogfood
+
+15 small-to-medium improvements driven by the round-5 task capture.
+No new top-level commands; all flags + helpers + content additions.
+
+- **`roam pr-analyze --diff-from-pr URL`** — fetch a GitHub PR diff via
+  `gh pr diff` (delegates auth to gh CLI). Lets you analyse a PR
+  without cloning. Smoke-tested against fastapi#15482.
+- **`roam pr-analyze --watch SECONDS`** — poll the diff source every N
+  seconds; re-run when it changes. Local dogfood mode for refactor
+  sessions. Ctrl-C exits cleanly.
+- **`roam pr-analyze --batch --stream-jsonl`** — emit each per-file row
+  as a JSONL line as soon as it completes. Long batches feel responsive;
+  closing line carries the summary so consumers detect end-of-stream.
+- **`roam pr-analyze --audit-trail` auto-runs conformance check** — the
+  Article 12 score is now attached to the envelope (under
+  `audit_trail.conformance`) on every audit-trail emission. Surfaced
+  in text output as `conformance: NN/100`. Advisory; never blocks.
+- **`roam audit-trail-export --top-actors N`** — procurement-friendly
+  hot list ranking actors by BLOCK count first, total count as tiebreaker.
+  Markdown / CSV / JSON variants.
+- **`roam rules-validate --fix`** — auto-coerce safe schema mistakes
+  (severity casing → uppercase; trim whitespace on glob fields). Skips
+  real typos so they're still flagged. Writes back to the file.
+- **`roam metrics-push` last-pr block now includes conformance score** —
+  when `--include-pr-analysis` is set AND the saved baseline carries an
+  `audit_trail.conformance` block, fold it into the payload. Cloud Lite
+  Growth-tier dashboards can show compliance posture alongside trends
+  without a separate API call.
+- **Kotlin starter rule pack** at `templates/rules/kotlin/.roam-rules.yml`
+  (12 rules: no-runBlocking-in-suspend, no-GlobalScope, no-System.exit-
+  in-libs, no-Runtime.exec, hallucinated-import detection, layer
+  violations, deprecated-annotation).
+- **Rust starter rule pack** at `templates/rules/rust/.roam-rules.yml`
+  (12 rules: no-unwrap-in-prod, no-mem::transmute, no-process::exit,
+  no-eprintln-in-prod, hallucinated-crate-import, layer violations).
+
+### Fixed
+
+- **`_compute_drift` per-rule breakdown** — drift output now distinguishes
+  "rule fired this PR for the first time" from "existing rule's
+  violation count changed". The PR comment surfaces both as separate
+  sentences instead of a generic delta.
+
+### Internal
+
+- Cognitive complexity reductions (continued from 12.26.1):
+  - `_build_payload` cc=49 → split into 3 helpers (already in 12.26.1)
+  - `_load_rules_yaml` cc=71 → extracted `_warn_or_raise` +
+    `_parse_rules_data` + `_coerce_rule` (already in 12.26.1)
+  - `_emit_batch` cc=48 → split into `_run_batch_serial` +
+    `_run_batch_parallel`
+  - `_build_rationale` cc=39 → split into per-concern collectors +
+    `_compose_next_steps` + `_extract_suggested_reviewers`
+- New `tests/test_pr_analyze_helpers.py` — 17 unit tests for the
+  small helpers extracted across rounds 3-5: `_serve_from_cache`,
+  `_apply_drift`, `_emit_audit_trail`, `_run_batch_serial`,
+  `_run_batch_parallel`, `_process_single_diff`,
+  `_run_conformance_check_inline`, `_compute_drift` per-rule breakdown.
+- **PyPI Trusted Publishing workflow hardened**: triggers on tag push
+  (`v*`) AND release creation, includes `skip-existing: true` for
+  idempotency, fails build if wheel doesn't contain ≥8 v2 command files.
+  Manual twine uploads no longer collide with the workflow.
+- README v2 quickstart subsection — `git diff | roam pr-analyze` and
+  `roam dogfood` now appear in the main Quick Start section, not just
+  the dedicated Roam Agent Review section.
+- Templates index — README now points users at `templates/rules/` (6
+  starter packs) and `templates/audit-report/` for customer-facing
+  artifacts.
+
+### Surface counts
+
+- CLI commands: **186** (unchanged)
+- MCP tools: **136** (unchanged)
+- Core MCP preset: **49** (unchanged)
+- Rule packs shipped: 4 → **6** (+Kotlin, Rust)
+
+### Tests
+
+- 405 v2 + adjacent tests pass (was 386 in 12.26.1). +19 new tests
+  across 4 files.
+
 ## [12.26.1] - 2026-05-06
 
 ### Added
