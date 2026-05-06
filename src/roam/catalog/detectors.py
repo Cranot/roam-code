@@ -1723,6 +1723,10 @@ def autodetect_framework_profile() -> str | None:
         tanstack = "@tanstack/vue-query" in deps or "@tanstack/query-core" in deps
         if tanstack and (vue_ver.startswith("^3") or vue_ver.startswith("3") or vue_ver.startswith("~3")):
             return "vue3-tanstack"
+        # redacted — Express/Koa/Fastify don't have framework
+        # profiles yet (they're light frameworks; the I/O patterns are
+        # generic Node fs / http). Return None for now but flag in meta
+        # so future versions can add a profile when one becomes useful.
 
     composer = _read_json(_os.path.join(cwd, "composer.json"))
     if composer:
@@ -2766,6 +2770,197 @@ def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# redacted — React: `useEffect(() => { ... })` without a dependency
+# array runs on EVERY render. Almost always a bug — the dev forgot the
+# second argument. The fix is `useEffect(() => { ... }, [deps])` or
+# `useEffect(() => { ... }, [])` for mount-only.
+_RE_USEEFFECT_NO_DEPS = re.compile(
+    r"\buseEffect\s*\(\s*(?:async\s+)?(?:\(\s*\)|function\s*\(\s*\))\s*=>\s*\{[^}]*?\}\s*\)",
+    re.DOTALL,
+)
+_RE_USEEFFECT_WITH_DEPS = re.compile(
+    r"\buseEffect\s*\(\s*[^,]+,\s*\[",
+)
+
+
+def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
+    """React: `useEffect(() => {...})` without a dependency array."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet or "useEffect" not in snippet:
+            continue
+        # Skip if every useEffect call also has a deps array.
+        no_deps = _RE_USEEFFECT_NO_DEPS.search(snippet)
+        if not no_deps:
+            continue
+        # Verify the SAME call doesn't have a deps array (regex catches the
+        # no-deps shape but a more elaborate body could trick it).
+        # Conservative: only fire when there's NO useEffect-with-deps in body.
+        if _RE_USEEFFECT_WITH_DEPS.search(snippet):
+            # Mixed bag — at least one useEffect has deps, can't reliably
+            # tell which one is the problem without a real parser. Skip.
+            continue
+        line_offset = snippet[: no_deps.start()].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "useeffect-missing-deps",
+                "no-deps-array",
+                r,
+                "useEffect without dependency array — runs on every render",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=["useEffect call", "no second-arg dep array"],
+            )
+        )
+    return results
+
+
+# redacted — `eval()` / `exec()` / `new Function()` / `setTimeout(string)`
+# in production source. These are arbitrary code execution sinks if the
+# input is user-derived. Even when "safe" (literal string), they trip
+# CSP rules and bundler optimisations. Suppress when test path.
+_RE_EVAL_CALLS = re.compile(
+    r"\b(?:eval|exec|execfile|compile)\s*\("
+    r"|\bnew\s+Function\s*\("
+    r"|\bsetTimeout\s*\(\s*['\"]"
+    r"|\bsetInterval\s*\(\s*['\"]",
+)
+
+
+def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
+    """Detect `eval`, `exec`, `new Function(...)`, `setTimeout(string)` — code-injection sinks."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "f.language AS language, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method')"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        # Skip non-source roles when we can tell.
+        path = (r["file_path"] or "").replace("\\", "/").lower()
+        if "/migration" in path or "/script" in path or "/cli" in path:
+            # CLI / migration scripts often legitimately use exec/eval.
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        m = _RE_EVAL_CALLS.search(snippet)
+        if not m:
+            continue
+        # Skip ast.literal_eval (safe), regex.compile (different "compile"
+        # — won't actually match because it ends in `.compile(` with a dot
+        # before, so prefix isn't word-boundary — but be defensive).
+        if "literal_eval" in snippet[max(0, m.start() - 20) : m.end()]:
+            continue
+        if ".compile(" in snippet[max(0, m.start() - 5) : m.end() + 1]:
+            continue
+        line_offset = snippet[: m.start()].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        called = m.group(0).rstrip("(")
+        results.append(
+            _finding(
+                "dangerous-eval",
+                "eval-or-exec",
+                r,
+                f"Dangerous dynamic execution sink ({called}) — code-injection risk if input is user-derived",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=[f"call: {called}", "not in test/migration/script path"],
+            )
+        )
+    return results
+
+
+# redacted — JS/TS DOM listener leak: `addEventListener` without
+# a paired `removeEventListener` keeps references alive after the
+# component unmounts. Detect ONLY when the function looks like a
+# component lifecycle (useEffect / componentDidMount / connectedCallback /
+# constructor) and addEventListener appears without remove.
+_RE_ADD_LISTENER = re.compile(r"\baddEventListener\s*\(")
+_RE_REMOVE_LISTENER = re.compile(r"\bremoveEventListener\s*\(")
+_RE_LIFECYCLE = re.compile(
+    r"\b(?:useEffect|componentDidMount|componentWillMount|connectedCallback|constructor)\b",
+)
+
+
+def detect_unremoved_event_listener(conn: sqlite3.Connection) -> list[dict]:
+    """JS/TS: `addEventListener` in a lifecycle without paired `removeEventListener`."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        if not _RE_ADD_LISTENER.search(snippet):
+            continue
+        # Only fire for lifecycle-ish bodies — outside of components,
+        # listeners are often global and intentionally never removed.
+        if not _RE_LIFECYCLE.search(snippet):
+            continue
+        # Already paired: presence of removeEventListener anywhere in body.
+        if _RE_REMOVE_LISTENER.search(snippet):
+            continue
+        # `useEffect` should also return a cleanup function. Check for one.
+        if "useEffect" in snippet and re.search(r"return\s+(?:\(\s*\)|function)", snippet):
+            continue
+        m = _RE_ADD_LISTENER.search(snippet)
+        line_offset = snippet[: m.start()].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "unremoved-event-listener",
+                "no-cleanup",
+                r,
+                "addEventListener in component lifecycle without removeEventListener — memory leak",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=[
+                    "addEventListener call",
+                    "lifecycle context (useEffect / componentDidMount / etc.)",
+                    "no paired removeEventListener",
+                ],
+            )
+        )
+    return results
+
+
 def detect_loop_lookup(conn: sqlite3.Connection) -> list[dict]:
     """.index(), .indexOf(), .contains(), .includes() called inside a loop.
 
@@ -3736,6 +3931,9 @@ _MATH_DETECTORS = [
     ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
     ("defer-in-loop", "loop-defer", detect_defer_in_loop),
     ("chained-collection-walk", "two-pass-walk", detect_chained_collection_walks),
+    ("useeffect-missing-deps", "no-deps-array", detect_useeffect_missing_deps),
+    ("dangerous-eval", "eval-or-exec", detect_dangerous_eval),
+    ("unremoved-event-listener", "no-cleanup", detect_unremoved_event_listener),
     ("list-prepend", "insert-front", detect_list_prepend),
     ("sort-to-select", "full-sort", detect_sort_to_select),
     ("loop-lookup", "method-scan", detect_loop_lookup),

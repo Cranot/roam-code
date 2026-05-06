@@ -29,8 +29,9 @@ class TestCatalog:
 
         # T3 added serial-await-loop; X1-X5 added async-blocking-sleep,
         # broad-except-swallow, spread-accumulator, defer-in-loop;
-        # X13 added chained-collection-walk → 29.
-        assert len(CATALOG) == 29, f"Expected 29 tasks, got {len(CATALOG)}"
+        # X13 added chained-collection-walk; Z1/Z2/Z5 added useeffect-
+        # missing-deps, dangerous-eval, unremoved-event-listener → 32.
+        assert len(CATALOG) == 32, f"Expected 32 tasks, got {len(CATALOG)}"
 
     def test_detector_registry_covers_catalog(self):
         from roam.catalog.detectors import _MATH_DETECTORS
@@ -1163,6 +1164,82 @@ class TestBroadExceptSwallow:
 
         with open_db(readonly=True, project_root=proj) as conn:
             hits = detect_broad_except_swallow(conn)
+            assert hits == []
+
+
+class TestUseEffectMissingDeps:
+    """redacted — React useEffect without deps array."""
+
+    def test_detects_missing_deps(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "Comp.tsx": (
+                    "import { useEffect } from 'react';\n"
+                    "export function Comp() {\n"
+                    "  useEffect(() => { console.log('hi'); });\n"
+                    "  return null;\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_useeffect_missing_deps
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_useeffect_missing_deps(conn)
+            assert len(hits) >= 1
+
+    def test_skips_when_deps_present(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "Comp.tsx": (
+                    "import { useEffect } from 'react';\n"
+                    "export function Comp(props: { id: string }) {\n"
+                    "  useEffect(() => { fetch(props.id); }, [props.id]);\n"
+                    "  return null;\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_useeffect_missing_deps
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_useeffect_missing_deps(conn)
+            assert hits == []
+
+
+class TestDangerousEval:
+    """redacted — eval / exec / new Function in production source."""
+
+    def test_detects_eval(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "service.py": ("def evaluate(expr):\n    return eval(expr)\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_dangerous_eval(conn)
+            assert len(hits) >= 1
+
+    def test_skips_test_paths(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "tests/test_eval.py": ("def test_eval():\n    return eval('1+1')\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_dangerous_eval
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_dangerous_eval(conn)
             assert hits == []
 
 

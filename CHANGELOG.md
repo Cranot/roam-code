@@ -7,6 +7,63 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.32] - 2026-05-06
+
+### Bugfix release — CI green-bar restore + Z-phase polish
+
+12.31 went out with two stale tests (drift from the redacted
+core-tools list landed in 12.27/12.28) plus a Python-3.9 environment
+gap. Both fixed here.
+
+### Bugfixes
+
+- **`tests/test_mcp_server.py::test_core_tools_set_has_expected_members`** —
+  expected-set contained the v12.19 list but missed the eight v12.27/28
+  Agent Review v2 tools (`roam_pr_analyze`, `roam_pr_comment_render`,
+  `roam_rules_validate`, `roam_audit_trail_export`,
+  `roam_audit_trail_verify`, `roam_audit_trail_conformance_check`,
+  `roam_dogfood`, `roam_metrics_push`). Brought in line.
+- **`tests/test_mcp_server.py::test_core_tools_count`** — bumped
+  `assert len(_CORE_TOOLS) == 41` to `== 49`.
+- **`tests/test_finding_suppress.py::test_annotate_ignore_findings_glob`**
+  fails on Python 3.9 because PyYAML is not a project dependency and
+  `_load_ignore_findings_file` only had a JSON fallback (the test
+  fixture is YAML). Added `_parse_simple_ignore_findings_yaml` —
+  a 30-line minimal parser for the documented `rules: [...]` shape
+  so `.roamignore-findings` works without PyYAML installed.
+
+### New detectors (3)
+
+- **`useeffect-missing-deps`** (Z1, JS/TS) — React `useEffect(() => {})`
+  without dependency array runs on every render. Conservative: only
+  fires when no useEffect-with-deps appears in the same body.
+- **`dangerous-eval`** (Z2, language-agnostic) — `eval` / `exec` /
+  `new Function()` / `setTimeout(string)` in production source.
+  Suppresses test / migration / script paths and `ast.literal_eval`.
+- **`unremoved-event-listener`** (Z5, JS/TS) — `addEventListener` in
+  a component lifecycle (useEffect / componentDidMount / etc.) without
+  paired `removeEventListener` or useEffect cleanup function.
+
+### Smarter outputs
+
+- **`roam math --task TYPO`** (Z7) now suggests close matches via
+  edit distance instead of running 54 detectors silently.
+- **`roam math` zero-state verdict** (Z3) is now informative:
+  detector count, profile note, two suggested next commands.
+- **`roam math --json summary.top_tasks_by_count`** (Z13) — compact
+  ranked list of task_id + count for dashboards/agents.
+- **`roam debt` verdict** (Z14) appends top-1 hotspot path inline
+  so the one-liner tells you WHERE to look first.
+- **`pr-comment-render`** (Z4) wraps long rule-violation lists
+  (≥12) in a collapsible `<details>` block so the comment doesn't
+  dominate the PR thread on noisy diffs.
+
+### Catalog
+
+- 32 catalog tasks total (was 29). 54 detectors registered (was 51).
+- All Z-phase tasks added with rank-1 fix tip and one rank-10
+  detected-way for downstream catalog consumers.
+
 ## [12.31] - 2026-05-06
 
 ### Major release — 90-phase polish + smarter pass

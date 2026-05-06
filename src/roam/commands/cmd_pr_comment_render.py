@@ -287,6 +287,13 @@ def _section_rule_violations(rule_violations: list[dict]) -> list[str]:
     out = ["### Architecture rule violations", ""]
     block_v = [v for v in rule_violations if v.get("severity") == "BLOCK"]
     warn_v = [v for v in rule_violations if v.get("severity") in ("WARN", "WARNING")]
+    # redacted — when total violations is huge, wrap the per-item
+    # detail in a collapsible <details> block so the comment doesn't
+    # dominate the PR thread on noisy diffs.
+    use_details = len(rule_violations) >= 12
+    if use_details:
+        out.append(f"<details><summary>{len(rule_violations)} violation(s) — expand for detail</summary>")
+        out.append("")
     for v in block_v[:5]:
         out.append(f"- **BLOCK** `{v['rule_id']}`: `{v['file']}` -> `{v['matched_import']}`")
         if v.get("description"):
@@ -309,6 +316,10 @@ def _section_rule_violations(rule_violations: list[dict]) -> list[str]:
         chunks = [f"`{rid}` x{n} ({sev})" for (sev, rid), n in counts.most_common(5)]
         more_total = extra_block + extra_warn
         out.append(f"- _...{more_total} more violation(s): " + ", ".join(chunks) + "._")
+    # Z4 — close the collapsible block when we opened one.
+    if use_details:
+        out.append("")
+        out.append("</details>")
     out.append("")
     return out
 

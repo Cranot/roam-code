@@ -562,10 +562,17 @@ def debt(ctx, limit, by_kind, threshold, roi):
         _debt_label = (
             "low debt" if stats["mean_debt"] < 0.1 else "moderate debt" if stats["mean_debt"] < 0.3 else "high debt"
         )
+        # redacted — append top-1 hotspot to the verdict so the
+        # one-line summary tells you WHERE to look first, not just IF
+        # there's debt.
+        top_hint = ""
+        if all_items:
+            top1 = all_items[0]
+            top_hint = f" — top hotspot: {top1['path']} (score={top1['debt_score']})"
         _debt_verdict = (
             f"{_debt_label}: {_n_cycles} cycle files, "
             f"{_n_gods} god components, {_n_hotspots} hotspots "
-            f"across {stats['total_files']} files"
+            f"across {stats['total_files']} files{top_hint}"
         )
 
         roi_summary, roi_by_path = ({}, {})

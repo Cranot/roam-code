@@ -308,14 +308,24 @@ class TestToolDecorator:
             "roam_test_impact",
             "roam_disambiguate",
             "roam_why_fail",
+            # v12.27 / v12.28 — Roam Agent Review v2 layer (8)
+            "roam_pr_analyze",
+            "roam_pr_comment_render",
+            "roam_rules_validate",
+            "roam_audit_trail_export",
+            "roam_audit_trail_verify",
+            "roam_audit_trail_conformance_check",
+            "roam_dogfood",
+            "roam_metrics_push",
         }
         assert _CORE_TOOLS == expected
 
     def test_core_tools_count(self):
         from roam.mcp_server import _CORE_TOOLS
 
-        # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36.
-        assert len(_CORE_TOOLS) == 41
+        # v12.1: 27 + 6 = 33; v12.6: +2 Python-pivot = 35; v12.16: +1 catalog = 36;
+        # v12.19: +5 agent wrappers = 41; v12.28: +8 Agent Review v2 = 49.
+        assert len(_CORE_TOOLS) == 49
 
     def test_required_task_tools_declared(self):
         from roam.mcp_server import _TASK_REQUIRED_TOOLS

@@ -147,6 +147,23 @@ def math_cmd(
             click.echo(name)
         return
 
+    # redacted — validate --task against the catalog; on typo, show
+    # the closest matches by edit distance instead of running 49 detectors
+    # silently to find zero results.
+    if task_filter:
+        from roam.catalog.tasks import CATALOG
+
+        if task_filter not in CATALOG:
+            import difflib
+
+            close = difflib.get_close_matches(task_filter, list(CATALOG.keys()), n=3, cutoff=0.4)
+            hint = f" Did you mean: {', '.join(close)}?" if close else ""
+            click.echo(
+                f"NOTE: --task '{task_filter}' is not a known task id."
+                f" Run `roam math --json` then look at distinct `task_id` values." + hint,
+                err=True,
+            )
+
     ensure_index()
 
     from roam.catalog.detectors import autodetect_framework_profile, run_detectors
@@ -289,7 +306,18 @@ def math_cmd(
             if top_n >= max(3, total // 2):
                 category_hint = f"; mostly: {top_cat}"
         if total == 0:
-            verdict = "No algorithmic issues detected"
+            # redacted — informative zero-state. When 0 findings,
+            # tell the user (a) which profile filter was active, (b) how
+            # many detectors ran, (c) what to try next.
+            profile_note = ""
+            if profile != "balanced":
+                profile_note = f" (profile={profile} may be too strict; try --profile balanced)"
+            verdict = (
+                f"No algorithmic issues detected{profile_note} — "
+                f"{detector_meta.get('detectors_executed', 0)} detector(s) ran cleanly. "
+                f"Try `roam math --profile aggressive` for more candidates "
+                f"or `roam debt --top 10` for refactoring ROI hotspots."
+            )
         elif suppressed_count > 0:
             verdict = (
                 f"{unsuppressed_total} unsuppressed candidate{'s' if unsuppressed_total != 1 else ''} "
@@ -341,6 +369,15 @@ def math_cmd(
                                 [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
                                 default=0.0,
                             ),
+                            # redacted — top_tasks_by_count helps CI
+                            # dashboards / agents prioritise without iterating
+                            # every finding. Format: [{task_id, count}, ...].
+                            "top_tasks_by_count": [
+                                {"task_id": tid, "count": n}
+                                for tid, n in __import__("collections")
+                                .Counter(f.get("task_id", "?") for f in findings)
+                                .most_common(3)
+                            ],
                         },
                         findings=findings,
                     )
