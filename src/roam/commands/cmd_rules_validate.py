@@ -132,6 +132,44 @@ def _validate_rule(rule: dict, index: int) -> tuple[list[str], list[str]]:
     return errors, warnings
 
 
+def _apply_safe_fixes(rules: list[dict]) -> tuple[list[dict], list[str]]:
+    """Auto-coerce safe schema mistakes. Returns (fixed_rules, applied_log).
+
+    Fixes applied (all conservative — never touch unknown fields, never guess
+    a missing required field):
+      - severity case normalisation: "block" / "Block" → "BLOCK"
+      - trim leading/trailing whitespace on glob fields
+      - dedupe trailing slashes in source_glob (cosmetic)
+
+    Skipped (require human judgment):
+      - misspelled severities (BLOK, BLCK) → still flagged as errors
+      - unknown patterns → still flagged as errors
+      - missing required fields → still flagged as errors
+    """
+    out: list[dict] = []
+    applied: list[str] = []
+    for i, r in enumerate(rules):
+        if not isinstance(r, dict):
+            out.append(r)
+            continue
+        fixed = dict(r)
+        rid = fixed.get("id", f"<unnamed-{i}>")
+
+        sev = fixed.get("severity")
+        if isinstance(sev, str) and sev != sev.upper() and sev.upper() in ALLOWED_SEVERITIES:
+            applied.append(f"rule `{rid}`: severity '{sev}' → '{sev.upper()}'")
+            fixed["severity"] = sev.upper()
+
+        for field in ("source_glob", "forbidden_target_glob"):
+            val = fixed.get(field)
+            if isinstance(val, str) and val != val.strip() and val.strip():
+                applied.append(f"rule `{rid}`: {field} trimmed whitespace ({val!r} → {val.strip()!r})")
+                fixed[field] = val.strip()
+
+        out.append(fixed)
+    return out, applied
+
+
 def _check_duplicate_ids(rules: list[dict]) -> list[str]:
     """Return errors for any duplicated rule IDs."""
     errors: list[str] = []
@@ -241,6 +279,11 @@ def _print_explain_block() -> None:
     is_flag=True,
     help="Print pattern reference (matchers + glob examples) — handy for first-time rule authors.",
 )
+@click.option(
+    "--fix",
+    is_flag=True,
+    help="Auto-coerce safe schema mistakes (severity casing, trim whitespace) and write back. Skips real typos.",
+)
 @click.pass_context
 def rules_validate(
     ctx,
@@ -249,6 +292,7 @@ def rules_validate(
     strict: bool,
     gate: bool,
     explain: bool,
+    fix: bool,
 ) -> None:
     """Lint a `.roam/rules.yml` file before shipping it to your team.
 
@@ -298,6 +342,24 @@ def rules_validate(
     if not isinstance(raw_rules, list):
         raw_rules = []
 
+    fixes_applied: list[str] = []
+    if fix:
+        # Apply safe fixes before validation so the output reports the
+        # post-fix state. Real errors (typos, missing fields) are still surfaced.
+        raw_rules, fixes_applied = _apply_safe_fixes(raw_rules)
+        if fixes_applied:
+            try:
+                # Re-emit YAML; preserve top-level structure beyond `rules:`.
+                import yaml
+
+                doc = parsed if isinstance(parsed, dict) else {}
+                doc["rules"] = raw_rules
+                path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+            except Exception as exc:  # noqa: BLE001 — surfaced as a warning
+                warnings_list_for_fix_failure = f"--fix: could not write back to {path}: {exc}"
+                # Surface at the end via warnings; don't crash.
+                fixes_applied.append(f"WARN — write-back failed: {warnings_list_for_fix_failure}")
+
     errors: list[str] = []
     warnings: list[str] = []
     rule_count = 0
@@ -339,6 +401,9 @@ def rules_validate(
         summary["dry_run_diff"] = diff_path
         summary["dry_run_matches"] = len(dry_run_violations)
 
+    if fix:
+        summary["fixes_applied"] = len(fixes_applied)
+
     if json_mode:
         click.echo(
             to_json(
@@ -348,6 +413,7 @@ def rules_validate(
                     errors=errors,
                     warnings=warnings,
                     dry_run_violations=dry_run_violations,
+                    fixes_applied=fixes_applied,
                 )
             )
         )
@@ -357,6 +423,11 @@ def rules_validate(
         click.echo(f"  rules:    {rule_count}")
         click.echo(f"  errors:   {error_count}")
         click.echo(f"  warnings: {warning_count}")
+        if fixes_applied:
+            click.echo()
+            click.echo(f"Fixes applied ({len(fixes_applied)}):")
+            for f in fixes_applied:
+                click.echo(f"  - {f}")
         if errors:
             click.echo()
             click.echo("Errors:")

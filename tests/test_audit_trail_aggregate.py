@@ -201,6 +201,82 @@ def test_aggregate_snapshot_handles_empty():
     assert snap["top_verdict"] is None
 
 
+def test_top_actors_ranks_by_block_count():
+    from roam.commands.cmd_audit_trail_export import _build_top_actors
+
+    records = [
+        _record("BLOCK", "alice@x", "r", "2026-05-05T00:00:00Z"),
+        _record("BLOCK", "alice@x", "r", "2026-05-06T00:00:00Z"),
+        _record("REVIEW", "alice@x", "r", "2026-05-07T00:00:00Z"),
+        _record("BLOCK", "bob@x", "r", "2026-05-05T00:00:00Z"),
+        _record("SAFE", "carol@x", "r", "2026-05-05T00:00:00Z"),
+    ]
+    out = _build_top_actors(records, limit=10)
+    assert out[0]["actor"] == "alice@x"
+    assert out[0]["BLOCK"] == 2
+    assert out[1]["actor"] == "bob@x"
+    assert out[1]["BLOCK"] == 1
+    # Tiebreaker: carol has 0 BLOCK + 1 total → after bob
+    assert out[2]["actor"] == "carol@x"
+
+
+def test_top_actors_truncates_to_limit():
+    from roam.commands.cmd_audit_trail_export import _build_top_actors
+
+    records = [_record("BLOCK", f"actor{i}@x", "r", "2026-05-05T00:00:00Z") for i in range(10)]
+    out = _build_top_actors(records, limit=3)
+    assert len(out) == 3
+
+
+def test_top_actors_handles_empty():
+    from roam.commands.cmd_audit_trail_export import _build_top_actors
+
+    assert _build_top_actors([], limit=5) == []
+
+
+def test_cli_top_actors_md(tmp_path):
+    from roam.cli import cli
+
+    trail = tmp_path / "trail.jsonl"
+    trail.write_text(
+        _json.dumps(_record("BLOCK", "alice@x", "r", "2026-05-05T00:00:00Z"))
+        + "\n"
+        + _json.dumps(_record("REVIEW", "bob@x", "r", "2026-05-06T00:00:00Z"))
+        + "\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["audit-trail-export", "--input", str(trail), "--top-actors", "5"],
+        catch_exceptions=False,
+    )
+    assert result.exit_code == 0
+    assert "Top actors by BLOCK" in result.output
+    assert "alice@x" in result.output
+    assert "bob@x" in result.output
+
+
+def test_cli_top_actors_json(tmp_path):
+    from roam.cli import cli
+
+    trail = tmp_path / "trail.jsonl"
+    trail.write_text(
+        _json.dumps(_record("BLOCK", "alice@x", "r", "2026-05-05T00:00:00Z")) + "\n",
+        encoding="utf-8",
+    )
+    runner = CliRunner()
+    result = runner.invoke(
+        cli,
+        ["--json", "audit-trail-export", "--input", str(trail), "--top-actors", "3"],
+        catch_exceptions=False,
+    )
+    env = _json.loads(result.output)
+    assert "top_actors" in env
+    assert env["top_actors"][0]["actor"] == "alice@x"
+    assert env["summary"]["top_actors_limit"] == 3
+
+
 def test_render_aggregate_markdown_includes_snapshot_line():
     records = [_record("BLOCK", "alice@x", "github.com/o/r", "2026-05-01T00:00:00Z")]
     md = _render_aggregate_markdown(_aggregate_records(records), Path("trail.jsonl"))

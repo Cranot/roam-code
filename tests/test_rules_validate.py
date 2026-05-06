@@ -244,3 +244,82 @@ def test_pattern_docs_cover_all_allowed_patterns():
     from roam.commands.cmd_rules_validate import _PATTERN_DOCS
 
     assert set(_PATTERN_DOCS.keys()) == set(ALLOWED_PATTERNS)
+
+
+# ---- B3: --fix mode ---------------------------------------------------------
+
+
+def test_apply_safe_fixes_normalises_severity_case():
+    from roam.commands.cmd_rules_validate import _apply_safe_fixes
+
+    rules = [{"id": "x", "pattern": "function_call", "forbidden_target_glob": "eval", "severity": "block"}]
+    fixed, applied = _apply_safe_fixes(rules)
+    assert fixed[0]["severity"] == "BLOCK"
+    assert any("severity 'block' → 'BLOCK'" in a for a in applied)
+
+
+def test_apply_safe_fixes_trims_glob_whitespace():
+    from roam.commands.cmd_rules_validate import _apply_safe_fixes
+
+    rules = [
+        {
+            "id": "x",
+            "pattern": "import_from",
+            "forbidden_target_glob": "  bad.module  ",
+            "source_glob": "  src/**/*.py ",
+        }
+    ]
+    fixed, applied = _apply_safe_fixes(rules)
+    assert fixed[0]["forbidden_target_glob"] == "bad.module"
+    assert fixed[0]["source_glob"] == "src/**/*.py"
+    assert len(applied) >= 2  # both fields trimmed
+
+
+def test_apply_safe_fixes_skips_real_typos():
+    """Misspelled severity (BLOK) is NOT auto-fixed — that's a human-judgment call."""
+    from roam.commands.cmd_rules_validate import _apply_safe_fixes
+
+    rules = [{"id": "x", "pattern": "function_call", "forbidden_target_glob": "eval", "severity": "BLOK"}]
+    fixed, applied = _apply_safe_fixes(rules)
+    # severity BLOK stays — validate will still flag it as an error
+    assert fixed[0]["severity"] == "BLOK"
+    assert applied == []
+
+
+def test_apply_safe_fixes_handles_non_dict():
+    from roam.commands.cmd_rules_validate import _apply_safe_fixes
+
+    rules = ["not a dict", {"id": "valid", "severity": "warn"}]
+    fixed, applied = _apply_safe_fixes(rules)
+    assert fixed[0] == "not a dict"  # passed through unchanged
+    assert fixed[1]["severity"] == "WARN"
+    assert any("severity 'warn'" in a for a in applied)
+
+
+def test_cli_fix_mode_writes_back_to_file(tmp_path):
+    """--fix should rewrite the file with normalised values."""
+    rules = tmp_path / "rules.yml"
+    rules.write_text(
+        "rules:\n  - id: a\n    pattern: function_call\n    forbidden_target_glob: eval\n    severity: block\n",
+        encoding="utf-8",
+    )
+    code, out = _run(["rules-validate", str(rules), "--fix"])
+    assert code == 0
+    # File should now contain BLOCK (uppercase)
+    new_text = rules.read_text(encoding="utf-8")
+    assert "BLOCK" in new_text
+    assert "Fixes applied" in out
+
+
+def test_cli_fix_mode_no_op_on_clean_file(tmp_path):
+    """--fix on an already-clean file applies no fixes + reports 0."""
+    rules = tmp_path / "rules.yml"
+    rules.write_text(
+        "rules:\n  - id: a\n    description: test\n    pattern: function_call\n    "
+        "forbidden_target_glob: eval\n    source_glob: 'src/**'\n    severity: BLOCK\n",
+        encoding="utf-8",
+    )
+    code, out = _run(["--json", "rules-validate", str(rules), "--fix"])
+    assert code == 0
+    env = _json.loads(out)
+    assert env["summary"]["fixes_applied"] == 0
