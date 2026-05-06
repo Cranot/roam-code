@@ -1,0 +1,227 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Privacy Policy — Roam</title>
+  <meta name="description" content="What data Roam collects, why, where it goes, and the rights you have. GDPR-compliant.">
+  <link rel="canonical" href="https://roam-code.com/privacy">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/terms">Terms</a></li>
+        <li><a href="/refund">Refund</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>Privacy Policy</h1>
+      <p class="legal-meta">Last updated: 2026-05-07 · Effective: 2026-05-07</p>
+    </header>
+
+    <article>
+      <p>
+        This page explains what data we collect, why, where it goes, how long we
+        keep it, and what rights you have. It applies to <strong>roam-code.com</strong>
+        and all paid Roam services (Roam Review, Roam Cloud, Roam Self-Hosted).
+        It does not apply to the open-source CLI when run locally — that runs
+        entirely on your machine and sends nothing to us.
+      </p>
+
+      <h2>1. Who we are</h2>
+      <p>
+        The data controller is <strong>Cranot (Dimitris)</strong>, a sole-trader
+        operating from Athens, Greece.
+      </p>
+      <p>
+        Contact: <a href="mailto:hello@roam-code.com">hello@roam-code.com</a><br>
+        Privacy + data-subject requests: <a href="mailto:hello@roam-code.com?subject=Privacy%20request">hello@roam-code.com</a><br>
+        Security disclosures: <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+      </p>
+
+      <h2>2. What runs locally vs. what touches our servers</h2>
+      <p>
+        The <strong>open-source CLI</strong> (<code>roam-code</code> on PyPI)
+        runs entirely on your machine. It writes a SQLite file inside your
+        repo's <code>.roam/</code> directory. <strong>It does not phone home,
+        send telemetry, or transmit any source code.</strong> No data crosses
+        the network.
+      </p>
+      <p>The paid services collect different things, listed below.</p>
+
+      <h2>3. What this website (roam-code.com) collects</h2>
+      <ul>
+        <li>
+          <strong>No analytics, no cookies, no tracking pixels.</strong>
+          We don't run Google Analytics, Plausible, PostHog, or any
+          equivalent. The page sets no first-party cookies.
+        </li>
+        <li>
+          <strong>Standard server logs</strong> via Cloudflare (IP address,
+          User-Agent, requested path, timestamp, response code). Retained
+          for 30 days for security + abuse-prevention purposes. Legal basis:
+          legitimate interest (GDPR Art. 6(1)(f)) — operating a website
+          securely.
+        </li>
+        <li>
+          <strong>Email contents you send us</strong> at hello@ or security@.
+          We retain these as long as the conversation is operationally
+          relevant, then delete. Legal basis: contract performance or
+          legitimate interest, depending on the message.
+        </li>
+      </ul>
+
+      <h2>4. What Roam Cloud collects (paid SaaS)</h2>
+      <ul>
+        <li>
+          <strong>Metrics only.</strong> Health scores, complexity numbers,
+          dependency counts, language breakdown, file-role counts, repo size.
+          <strong>Never the source code itself.</strong>
+        </li>
+        <li>
+          <strong>Account data.</strong> Email, name, organisation name,
+          subscription tier. Provided by you at signup.
+        </li>
+        <li>
+          <strong>Billing data.</strong> Handled by Stripe under their privacy
+          policy. We see card-brand, last 4 digits, billing country — not the
+          full card number.
+        </li>
+      </ul>
+      <p>Legal basis: performance of the contract you signed by subscribing.</p>
+
+      <h2>5. What Roam Review collects (paid GitHub App)</h2>
+      <ul>
+        <li>
+          <strong>Pull-request diffs</strong> are processed in our cloud (or in
+          your own infrastructure if you self-host). Diffs are held in memory
+          for the duration of the analysis, then discarded.
+        </li>
+        <li>
+          <strong>Repository metadata</strong> required to post comments back
+          (repo name, PR number, commit SHA, author).
+        </li>
+        <li>
+          <strong>GitHub installation token</strong> stored encrypted at rest,
+          revocable by uninstalling the App.
+        </li>
+      </ul>
+      <p>
+        Legal basis: performance of the contract. Roam Review does <strong>not</strong>
+        retain source code after analysis. The audit-trail JSONL Roam emits
+        contains metadata (verdict, finding count, confidence) — never the
+        diff text.
+      </p>
+
+      <h2>6. Sub-processors</h2>
+      <ul>
+        <li><strong>Cloudflare</strong> (US/EU) — DNS, CDN, edge compute, server logs. <a href="https://www.cloudflare.com/privacypolicy/">privacy policy</a></li>
+        <li><strong>Stripe</strong> (US/EU) — payment processing for paid tiers. <a href="https://stripe.com/privacy">privacy policy</a></li>
+        <li><strong>GitHub</strong> (US) — for Roam Review only, the App auth + comment-posting layer. <a href="https://docs.github.com/en/site-policy/privacy-policies/github-general-privacy-statement">privacy policy</a></li>
+        <li><strong>Hosting provider</strong> for Roam Cloud + Roam Review backend (Hetzner / DigitalOcean / similar EU-based provider; specifics in the DPA).</li>
+      </ul>
+      <p>
+        We will keep this list current. Material changes will be announced 30
+        days in advance to subscribers, allowing you to object.
+      </p>
+
+      <h2>7. International transfers</h2>
+      <p>
+        Some sub-processors are US-based (Cloudflare, Stripe, GitHub). Transfers
+        happen under the EU Standard Contractual Clauses (2021/914) and / or
+        the EU-US Data Privacy Framework. We do not transfer source code outside
+        the EEA from the CLI (it stays local) or from Roam Cloud (metrics only).
+      </p>
+
+      <h2>8. Retention</h2>
+      <ul>
+        <li>Server logs: 30 days</li>
+        <li>Email correspondence: as long as operationally relevant, then deleted on a 12-month rolling basis</li>
+        <li>Account data: until account deletion + 30 days for backup expiry</li>
+        <li>Billing records: 7 years (Greek tax law requirement)</li>
+        <li>Audit-trail records (Roam Review): 1 year by default; longer on Self-Hosted per your retention policy</li>
+      </ul>
+
+      <h2>9. Your rights</h2>
+      <p>Under the GDPR you have the right to:</p>
+      <ul>
+        <li>Access the personal data we hold about you</li>
+        <li>Have inaccurate data corrected</li>
+        <li>Have data erased ("right to be forgotten")</li>
+        <li>Restrict processing</li>
+        <li>Receive your data in a portable format</li>
+        <li>Object to processing based on legitimate interest</li>
+        <li>Withdraw consent (for any processing based on consent)</li>
+        <li>Lodge a complaint with your local data protection authority. In Greece, that's the Hellenic Data Protection Authority (<a href="https://www.dpa.gr/en">www.dpa.gr</a>).</li>
+      </ul>
+      <p>
+        To exercise any of these rights, email
+        <a href="mailto:hello@roam-code.com?subject=GDPR%20request">hello@roam-code.com</a>.
+        We respond within 30 days.
+      </p>
+
+      <h2>10. Automated decision-making</h2>
+      <p>
+        Roam analyses code and emits findings. None of those findings result in
+        a legal or similarly significant decision about you as an individual.
+        We do not engage in profiling or automated decision-making within the
+        meaning of GDPR Art. 22.
+      </p>
+
+      <h2>11. Children</h2>
+      <p>
+        Roam is a developer tool not directed at children under 16. We do not
+        knowingly collect data from children.
+      </p>
+
+      <h2>12. Changes to this policy</h2>
+      <p>
+        Material changes will be announced at least 30 days in advance to
+        active subscribers. The effective date at the top of this page tracks
+        the latest version.
+      </p>
+
+      <p class="legal-foot">
+        Questions? <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
