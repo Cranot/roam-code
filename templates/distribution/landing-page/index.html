@@ -22,6 +22,7 @@
   <link rel="canonical" href="https://roam-code.com/">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="./landing.css">
 
   <script type="application/ld+json">
@@ -87,8 +88,8 @@
         <strong>Roam tells you what else it broke.</strong>
       </h1>
       <p class="hero-subhead">
-        Free open-source command-line tool that maps every function, file, and dependency in your codebase.
-        Plus a pull-request bot, a dashboard, and a self-hosted option for teams that need them.
+        A free CLI that maps every function, file, and dependency.
+        A PR bot, dashboard, and self-hosted bundle when teams need them.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
@@ -128,7 +129,7 @@
         <h3>Your first 5 minutes</h3>
         <ol>
           <li><code>cd</code> into any Git repo</li>
-          <li><code>roam init</code> — indexes the whole codebase (about 0.6 seconds per 1k lines)</li>
+          <li><code>roam init</code> — index the whole codebase (a typical 100k-LOC repo finishes in seconds)</li>
           <li><code>roam understand</code> — get a guided tour</li>
           <li><code>roam tour</code> — see the entry points</li>
           <li><code>roam mcp</code> — start the MCP server so your AI agent can call it</li>
@@ -162,22 +163,21 @@
         <li>
           <span class="flow-num">3</span>
           <strong>The agent writes better code.</strong>
-          With the answers, the agent edits with the same blast-radius awareness a senior engineer would have.
+          Now it edits like someone who's been on the team for a year — knows what breaks, what's a clone, what needs a test.
         </li>
       </ol>
 
       <h3 class="how-it-works-sub">The five verbs you'll use most</h3>
       <div class="verbs-grid">
-        <div class="verb-cell"><code>roam understand</code><span>Get a guided tour of an unfamiliar codebase.</span></div>
-        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for a task description.</span></div>
-        <div class="verb-cell"><code>roam context</code><span>List the exact files and line ranges to read.</span></div>
-        <div class="verb-cell"><code>roam preflight</code><span>Check what changing a function will affect.</span></div>
-        <div class="verb-cell"><code>roam critique</code><span>Verify a patch against the dependency graph.</span></div>
+        <div class="verb-cell"><code>roam understand</code><span>Take a guided tour of an unfamiliar codebase.</span></div>
+        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for any task.</span></div>
+        <div class="verb-cell"><code>roam context</code><span>List the exact files and lines to read.</span></div>
+        <div class="verb-cell"><code>roam preflight</code><span>See what a change will break.</span></div>
+        <div class="verb-cell"><code>roam critique</code><span>Check a patch against the graph.</span></div>
       </div>
 
       <p class="how-it-works-foot">
-        Tested with Claude Code, Cursor, Windsurf, VS Code, Codex CLI, Gemini CLI.
-        Drops into any MCP-aware editor.
+        Works with Claude Code, Cursor, Windsurf, VS Code, Codex, Gemini — and any MCP-aware editor.
       </p>
     </div>
   </section>
@@ -194,7 +194,7 @@
           Thirty-hour outage. The AI agent was confident.
           <span class="pain-source">— <a href="https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/">The Register, April 2026</a></span>
         </p>
-        <p class="tie-back">→ The clones-not-edited detector catches the exact pattern that broke this.</p>
+        <p class="tie-back">→ The clones-not-edited detector catches this class of AI-shaped bug.</p>
       </div>
       <div class="pain-cell">
         <p class="pain-quote">
@@ -202,7 +202,7 @@
           SVP Treadwell now requires senior-engineer signoff on every agent-generated change.
           <span class="pain-source">— per <a href="https://www.cnbc.com/2026/03/10/amazon-plans-deep-dive-internal-meeting-address-ai-related-outages.html">CNBC, March 2026</a></span>
         </p>
-        <p class="tie-back">→ Roam Review BLOCKs PRs that cross blast-radius and senior-signoff thresholds.</p>
+        <p class="tie-back">→ Roam Review blocks the PR before merge and routes it to a senior, when those gates are configured.</p>
       </div>
       <div class="pain-cell">
         <p class="pain-quote">
@@ -211,7 +211,7 @@
           Speed went up. So did the cleanup.
           <span class="pain-source">— <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a></span>
         </p>
-        <p class="tie-back">→ <code>roam preflight</code> shows who else this PR affects, before merge.</p>
+        <p class="tie-back">→ <code>roam preflight</code> shows what else this PR breaks — before merge.</p>
       </div>
     </div>
   </section>
@@ -223,12 +223,12 @@
     <div class="demo-block-inner">
       <h2>What Roam looks like in practice</h2>
       <p class="lede">
-        Two surfaces: your terminal (free), or a comment on every pull request (paid).
+        Two surfaces. Your terminal — free. A comment on every PR — paid.
       </p>
 
       <div class="demo-grid">
         <div class="demo-col">
-          <p class="demo-label">In your terminal — example output</p>
+          <p class="demo-label">In your terminal — example output (illustrative)</p>
           <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
 <span class="t-line">VERDICT: BLOCK  (1 high, 3 medium, 0 low)</span>
 <span class="t-line">  reason: clones-not-edited (high)</span>
@@ -252,7 +252,7 @@
         </div>
 
         <div class="demo-col">
-          <p class="demo-label">On a pull request — example comment</p>
+          <p class="demo-label">On a pull request — example comment (illustrative)</p>
           <div class="gh-pr" aria-label="Sample Roam Review PR comment">
             <div class="gh-pr-head">
               <span class="gh-avatar" aria-hidden="true">R</span>
@@ -299,25 +299,27 @@
        ────────────────────────────────────────────────────────── -->
   <section class="compare" id="compare">
     <div class="compare-inner">
-      <h2>How Roam compares</h2>
+      <h2>Roam isn't competing with your reviewer</h2>
       <p class="lede">
-        Most teams adopt Roam <em>alongside</em> a semantic reviewer. Different layer, different findings.
+        Semantic reviewers (CodeRabbit, Greptile, Qodo) read what the code <em>does</em>.
+        Roam reads what it <em>touches</em>. You want both.
       </p>
       <div class="compare-table-wrap">
         <table class="compare-table">
+          <caption class="visually-hidden">Roam compared with CodeRabbit, Greptile, Qodo, and SonarQube on nine product axes.</caption>
           <thead>
             <tr>
-              <th></th>
-              <th><strong>Roam</strong></th>
-              <th>CodeRabbit</th>
-              <th>Greptile</th>
-              <th>Qodo</th>
-              <th>SonarQube</th>
+              <th scope="col"></th>
+              <th scope="col"><strong>Roam</strong></th>
+              <th scope="col">CodeRabbit</th>
+              <th scope="col">Greptile</th>
+              <th scope="col">Qodo</th>
+              <th scope="col">SonarQube</th>
             </tr>
           </thead>
           <tbody>
             <tr>
-              <td>Reviews structure (callers, layers, cycles)</td>
+              <th scope="row">Reviews what the code <em>touches</em> (callers, layers, cycles)</th>
               <td class="yes">Yes</td>
               <td class="ltd">Limited</td>
               <td class="ltd">Limited</td>
@@ -325,7 +327,7 @@
               <td class="yes">Yes</td>
             </tr>
             <tr>
-              <td>Reviews semantics (what the code does)</td>
+              <th scope="row">Reviews what the code <em>does</em> (semantics)</th>
               <td class="ltd">Limited</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
@@ -333,39 +335,39 @@
               <td class="ltd">Limited</td>
             </tr>
             <tr>
-              <td>Catches clone-not-edited (AI-shaped bug)</td>
+              <th scope="row">Catches the clone-not-edited bug AI keeps shipping</th>
               <td class="yes">Yes</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
             </tr>
             <tr>
-              <td>Local CLI (no source uploaded)</td>
+              <th scope="row">Runs locally — source never uploaded</th>
               <td class="yes">Yes</td>
-              <td class="no">Cloud</td>
-              <td class="no">Cloud</td>
-              <td class="no">Cloud</td>
+              <td class="no">Cloud<sup>*</sup></td>
+              <td class="no">Cloud<sup>*</sup></td>
+              <td class="no">Cloud<sup>*</sup></td>
               <td class="yes">Yes (paid)</td>
             </tr>
             <tr>
-              <td>EU AI Act Article 12 evidence built in</td>
+              <th scope="row">Publishes EU AI Act Article 12 evidence pack</th>
               <td class="yes">Yes</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
             </tr>
             <tr>
-              <td>MCP server for AI agents</td>
+              <th scope="row">MCP server for AI agents</th>
               <td class="yes">Yes (136 tools)</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
-              <td class="no">No</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
             </tr>
             <tr>
-              <td>Open source</td>
+              <th scope="row">Open source</th>
               <td class="yes">Apache 2.0</td>
               <td class="no">No</td>
               <td class="no">No</td>
@@ -373,7 +375,7 @@
               <td class="ltd">Community ed.</td>
             </tr>
             <tr>
-              <td>Free CLI tier</td>
+              <th scope="row">Free tier for individuals</th>
               <td class="yes">Yes, forever</td>
               <td class="ltd">Trial</td>
               <td class="ltd">Trial</td>
@@ -381,19 +383,20 @@
               <td class="ltd">Community ed.</td>
             </tr>
             <tr>
-              <td>Starting price (team tier)</td>
+              <th scope="row">Starting price (team tier)</th>
               <td>$25/dev/mo</td>
-              <td>$24/dev/mo</td>
-              <td>~$30/dev/mo</td>
-              <td>$19/dev/mo</td>
-              <td>$32/dev/mo</td>
+              <td>$24/dev/mo<sup>**</sup></td>
+              <td>$30/seat/mo + usage</td>
+              <td>$30/user/mo</td>
+              <td>from $32/mo (LOC-based)</td>
             </tr>
           </tbody>
         </table>
       </div>
       <p class="compare-foot">
-        Comparison verified against each vendor's public pricing and documentation as of 2026-05-07.
-        Help us correct anything inaccurate: <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
+        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing.
+        Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs.
+        See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
       </p>
     </div>
   </section>
@@ -536,7 +539,10 @@
           evidence a conformity assessment will ask for.
         </p>
         <p>
-          Your own conformity assessment is still on you. Run
+          Roam is provided as evidence-generation tooling. Whether your AI
+          system falls under Annex III high-risk classification, and what
+          conformity assessment it needs, is a determination only you and
+          your DPO or legal counsel can make. Run
           <code>roam article-12-check</code> on your repo for a one-page
           readiness score.
         </p>
@@ -554,10 +560,8 @@
         <p>
           From <strong>Roam Review</strong>: the PR diff is processed in our
           cloud (or yours, if you self-host). Same scope as any other PR-bot
-          product. The CodeRabbit August 2025 breach
-          (<a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">Kudelski writeup</a>)
-          is a useful reminder: ask any PR-bot vendor what's in their threat
-          model.
+          product. Always a fair question to ask any PR-bot vendor what
+          their threat model is.
         </p>
       </details>
       <details>
