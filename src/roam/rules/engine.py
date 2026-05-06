@@ -218,6 +218,90 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     return cleaned
 
 
+def _emit_simple_yaml(doc: dict) -> str:
+    """Minimal YAML emitter for the rules.yml shape (no PyYAML dependency).
+
+    Output mirrors what `yaml.safe_dump(doc, sort_keys=False)` would
+    produce for the documented `{"rules": [{...}, {...}]}` structure.
+    Used by `roam rules-validate --fix` when PyYAML isn't available
+    (the parse path already has a fallback; this completes the
+    round-trip).
+
+    12.37 (2026-05-06) — added so the `--fix` write-back works on
+    Python 3.9 without PyYAML installed.
+    """
+
+    def _dump_scalar(v) -> str:
+        if v is None:
+            return "null"
+        if v is True:
+            return "true"
+        if v is False:
+            return "false"
+        if isinstance(v, (int, float)):
+            return str(v)
+        s = str(v)
+        # Quote when the scalar contains characters that change YAML semantics:
+        # leading/trailing whitespace, special chars, glob/wildcard, leading
+        # comment, leading bracket/dash, or empty string.
+        if not s:
+            return "''"
+        special = set("[]{}#&*!|>'\"%@`,:?")
+        if s[0] in special or s[-1] in (" ", "\t") or any(c in s for c in special):
+            escaped = s.replace("\\", "\\\\").replace('"', '\\"')
+            return f'"{escaped}"'
+        return s
+
+    def _dump_value(v, indent: int) -> str:
+        if isinstance(v, dict):
+            if not v:
+                return "{}"
+            lines = [""]
+            pad = " " * indent
+            for k, sub in v.items():
+                if isinstance(sub, (dict, list)) and sub:
+                    lines.append(f"{pad}{k}:" + _dump_value(sub, indent + 2))
+                else:
+                    lines.append(f"{pad}{k}: {_dump_scalar(sub)}")
+            return "\n".join(lines)
+        if isinstance(v, list):
+            if not v:
+                return "[]"
+            lines = [""]
+            pad = " " * indent
+            for item in v:
+                if isinstance(item, dict):
+                    if not item:
+                        lines.append(f"{pad}- {{}}")
+                        continue
+                    keys = list(item.keys())
+                    first_key, *rest_keys = keys
+                    first_val = item[first_key]
+                    if isinstance(first_val, (dict, list)) and first_val:
+                        lines.append(f"{pad}- {first_key}:" + _dump_value(first_val, indent + 4))
+                    else:
+                        lines.append(f"{pad}- {first_key}: {_dump_scalar(first_val)}")
+                    for k in rest_keys:
+                        sub = item[k]
+                        sub_pad = " " * (indent + 2)
+                        if isinstance(sub, (dict, list)) and sub:
+                            lines.append(f"{sub_pad}{k}:" + _dump_value(sub, indent + 4))
+                        else:
+                            lines.append(f"{sub_pad}{k}: {_dump_scalar(sub)}")
+                else:
+                    lines.append(f"{pad}- {_dump_scalar(item)}")
+            return "\n".join(lines)
+        return f" {_dump_scalar(v)}"
+
+    out_lines: list[str] = []
+    for k, v in doc.items():
+        if isinstance(v, (dict, list)) and v:
+            out_lines.append(f"{k}:" + _dump_value(v, 2))
+        else:
+            out_lines.append(f"{k}: {_dump_scalar(v)}")
+    return "\n".join(out_lines) + "\n"
+
+
 # ---------------------------------------------------------------------------
 # Rule loading
 # ---------------------------------------------------------------------------
