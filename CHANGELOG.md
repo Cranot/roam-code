@@ -7,6 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.34] - 2026-05-06
+
+### Bugfix release — `_parse_simple_yaml` list-of-dicts (Python 3.9 CI red)
+
+12.33 fixed three test files but missed a fourth red on Python 3.9:
+`tests/test_pr_analyze.py::test_load_rules_yaml_simple`. The test's
+fixture YAML is a list-of-dicts (`rules: [- id: ...]`) — the canonical
+shape of `.roam/rules.yml`. Without PyYAML, the fallback parser at
+`roam.rules.engine._parse_simple_yaml` only handled flat key-value
+shapes and inline lists, so the result on 3.9 was an empty
+single-dict and the assertion `len(rules) == 1` failed.
+
+### Bugfix
+
+- **`_parse_simple_yaml` now handles `key:\n  - dict-item` shape.**
+  Frame stack tracks `parent_dict + parent_key` per push so that when
+  a `- ` item arrives under an empty placeholder dict, the parser can
+  promote that placeholder into a list at the recorded location and
+  push a fresh dict for the item. Returns the same shape PyYAML would
+  for the documented rules.yml format.
+- 12.34 carries the v12.33 surface (54 detectors, 32 catalog tasks)
+  plus the bugbear lint sweep — no functional changes beyond the
+  parser fix.
+
+### How this slipped through (running tally)
+
+- 12.30: stale `_CORE_TOOLS` count in `test_defer_loading` (caught locally).
+- 12.31: shipped without re-running the broader CI matrix.
+- 12.32: stale `_CORE_TOOLS == 41` in `test_mcp_server.py` (two assertions).
+  CI red on all 5 Python versions.
+- 12.33: stale `tool_count == 41` in `test_inspect_core_preset` (third
+  assertion in same file). CI red on all 5 Python versions.
+- 12.34: list-of-dicts YAML fallback bug. CI red ONLY on Python 3.9
+  (every other version has PyYAML pulled in by transitive deps).
+
+The pattern: each fix covered the reported failure but didn't sweep
+for siblings. Added a release-checklist note in 12.33 about the
+triple-grep for `_CORE_TOOLS`. Adding now: also `grep "yaml.safe_load"
+src/` to spot every fallback path that needs `_parse_simple_yaml`
+coverage of advanced YAML shapes.
+
 ## [12.33] - 2026-05-06
 
 ### Bugfix release — third stale assertion + bugbear lint sweep

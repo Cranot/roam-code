@@ -41,11 +41,40 @@ def _load_yaml(path: Path) -> dict | None:
         return None
 
 
+def _coerce_scalar(val: str) -> object:
+    """Best-effort YAML scalar coercion: bool / int / float / quoted string."""
+    val = val.strip().strip('"').strip("'")
+    if val.lower() == "true":
+        return True
+    if val.lower() == "false":
+        return False
+    try:
+        return int(val)
+    except ValueError:
+        try:
+            return float(val)
+        except ValueError:
+            return val
+
+
 def _parse_simple_yaml(path: Path) -> dict | None:
     """Minimal YAML subset parser for rule files (no PyYAML dependency).
 
-    Handles flat key-value pairs, lists as ``[a, b]``, and nested maps
-    introduced by indented keys under a parent key.
+    Handles:
+    * flat key-value pairs
+    * inline lists ``[a, b, c]``
+    * nested maps under an indented key
+    * list-of-dicts shape introduced by ``- key: value`` items (the
+      ``rules:`` block in rules.yml is the canonical use)
+
+    12.34 (2026-05-06) — added list-of-dicts support; CI 12.33 failed
+    on Python 3.9 (PyYAML not installed) because
+    ``test_load_rules_yaml_simple`` uses that shape.
+
+    Frames track ``(indent, container, kind, parent_key)``. When we hit
+    a ``- key: value`` item and the current frame is an empty dict, we
+    promote it to a list inside the parent container at the recorded
+    ``parent_key``, then push a new dict frame for the item.
     """
     try:
         text = path.read_text(encoding="utf-8")
@@ -53,52 +82,80 @@ def _parse_simple_yaml(path: Path) -> dict | None:
         return None
 
     result: dict = {}
-    stack: list[tuple[int, dict]] = [(0, result)]
+    # Frame: (indent, container, kind, parent_dict, parent_key)
+    # The root frame has parent_dict=None / parent_key=None.
+    stack: list[tuple[int, object, str, object, object]] = [(0, result, "dict", None, None)]
 
-    for line in text.split("\n"):
-        stripped = line.strip()
+    for raw in text.split("\n"):
+        stripped = raw.strip()
         if not stripped or stripped.startswith("#"):
             continue
 
-        indent = len(line) - len(line.lstrip())
+        indent = len(raw) - len(raw.lstrip())
 
-        # Pop stack to matching indent
         while len(stack) > 1 and indent < stack[-1][0]:
             stack.pop()
+
+        if stripped.startswith("- "):
+            after_dash = stripped[2:].strip()
+            top = stack[-1]
+            top_indent, top_container, top_kind, top_parent, top_pkey = top
+
+            # If current frame is an empty dict that was opened by a parent
+            # `key:` (no value), promote it to a list and replace it in the
+            # parent. This is how `rules:\n  - id: ...` becomes
+            # `{"rules": [{"id": ...}]}` instead of `{"rules": {"- id": ...}}`.
+            if (
+                top_kind == "dict"
+                and isinstance(top_container, dict)
+                and not top_container
+                and top_parent is not None
+                and top_pkey is not None
+            ):
+                new_list: list = []
+                top_parent[top_pkey] = new_list
+                stack[-1] = (top_indent, new_list, "list", top_parent, top_pkey)
+                top_container = new_list
+                top_kind = "list"
+
+            if top_kind == "list" and isinstance(top_container, list):
+                if ":" in after_dash:
+                    new_item: dict = {}
+                    top_container.append(new_item)
+                    key, _, val = after_dash.partition(":")
+                    key = key.strip()
+                    if val.strip():
+                        new_item[key] = _coerce_scalar(val)
+                    else:
+                        new_item[key] = {}
+                    # Push the new item dict so subsequent same-indent keys
+                    # populate it. Indent of children = indent + 2.
+                    stack.append((indent + 2, new_item, "dict", top_container, len(top_container) - 1))
+                else:
+                    top_container.append(_coerce_scalar(after_dash))
+            continue
 
         if ":" not in stripped:
             continue
 
         key, _, val = stripped.partition(":")
         key = key.strip()
+        val_raw = val
         val = val.strip()
 
-        current = stack[-1][1]
+        _i, container, kind, _pp, _pk = stack[-1]
+        if kind != "dict" or not isinstance(container, dict):
+            continue
 
         if not val:
-            # Start a nested dict
             child: dict = {}
-            current[key] = child
-            stack.append((indent + 2, child))
+            container[key] = child
+            stack.append((indent + 2, child, "dict", container, key))
         elif val.startswith("[") and val.endswith("]"):
-            # Inline list
             items = [v.strip().strip('"').strip("'") for v in val[1:-1].split(",") if v.strip()]
-            current[key] = items
+            container[key] = items
         else:
-            val = val.strip('"').strip("'")
-            if val.lower() == "true":
-                parsed_val: object = True
-            elif val.lower() == "false":
-                parsed_val = False
-            else:
-                try:
-                    parsed_val = int(val)
-                except ValueError:
-                    try:
-                        parsed_val = float(val)
-                    except ValueError:
-                        parsed_val = val
-            current[key] = parsed_val
+            container[key] = _coerce_scalar(val_raw)
 
     return result if result else None
 
