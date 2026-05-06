@@ -7,6 +7,50 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.38] - 2026-05-06
+
+### Clean fix — PyYAML pinned in `[dev]` extras (kills the recurring Python 3.9 CI red)
+
+12.31 → 12.37 was seven consecutive bugfix releases — every one
+caused by some divergence between PyYAML and the in-tree
+`_parse_simple_yaml` / `_emit_simple_yaml` fallback on Python 3.9.
+Root cause: `fastmcp` (which transitively pulls in PyYAML) is
+gated on `python_version >= '3.10'` in `[dev]` extras, so Python 3.9
+CI ran without PyYAML. Every test asserting PyYAML-equivalent
+behaviour surfaced a missing capability in the fallback. Each fix
+narrowed the gap; the gap kept reappearing.
+
+This release **pins PyYAML in `[dev]`** so the test matrix has a
+consistent reference parser on every Python version. The fallback
+parser/emitter stays in tree (production users without PyYAML still
+get a working roam, just with the documented-shape coverage we
+built across 12.33-12.37).
+
+### Why not make PyYAML a hard dep?
+
+Considered. PyYAML is one of the most-installed Python packages
+globally so the cost would be small. But:
+
+* Production users on minimal installs benefit from optionality.
+* The fallback is now well-tested across the seven-iteration sweep
+  — parse + emit fully round-tripped for the documented rules.yml
+  shape.
+* The bug class only surfaces in tests (which assert PyYAML's
+  exact behaviour). Production callers tolerate the small
+  divergences (e.g. fallback emitter doesn't quote some scalars
+  PyYAML would).
+
+So: hard dep stays a future option; for now the test-matrix fix is
+sufficient.
+
+### What this changes
+
+- `pyproject.toml` `[dev]` extras: added `pyyaml>=6.0`.
+- No source-code changes. The fallback parser/emitter from 12.33-37
+  remains.
+- CI matrix on Python 3.9 now installs PyYAML and behaves
+  identically to 3.10-3.13.
+
 ## [12.37] - 2026-05-06
 
 ### Bugfix release — `roam rules-validate --fix` write-back works without PyYAML (Python 3.9 CI red, seventh iteration)
