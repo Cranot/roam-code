@@ -443,12 +443,12 @@
       "status": "Graph-first code intelligence CLI + MCP server",
       "relationship": "self",
       "peer": true,
-      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 187 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.33).",
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 187 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.34).",
       "confidence": "Medium",
       "source_count": 1,
       "last_verified": "2026-02-27",
       "claim_type": "measured",
-      "version_evaluated": "12.33",
+      "version_evaluated": "12.34",
       "repo_url": "https://github.com/Cranot/roam-code"
     },
     {
