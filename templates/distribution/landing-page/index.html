@@ -6,7 +6,6 @@
   <title>Roam — Catches the AI-generated PRs that break production</title>
   <meta name="description" content="Free open-source CLI that maps your codebase. Plus a PR bot, dashboard, and self-hosted option for teams. Catches what AI-generated changes break elsewhere — before merge.">
 
-  <!-- Open Graph / Twitter -->
   <meta property="og:title" content="Roam — Catches the AI-generated PRs that break production">
   <meta property="og:description" content="Your AI writes the code. Roam tells you what else it broke. Free open-source CLI plus paid PR bot, dashboard, and self-hosted tiers.">
   <meta property="og:type" content="website">
@@ -39,9 +38,9 @@
     "license": "https://www.apache.org/licenses/LICENSE-2.0",
     "offers": [
       {"@type": "Offer", "name": "CLI", "price": "0", "priceCurrency": "USD"},
-      {"@type": "Offer", "name": "Roam Review", "price": "25", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "25", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "developer per month"}},
-      {"@type": "Offer", "name": "Roam Cloud", "price": "19", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "19", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "repository per month"}},
-      {"@type": "Offer", "name": "Roam Self-Hosted", "price": "15000", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "15000", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "year"}}
+      {"@type": "Offer", "name": "Roam Review", "price": "25", "priceCurrency": "USD"},
+      {"@type": "Offer", "name": "Roam Cloud", "price": "19", "priceCurrency": "USD"},
+      {"@type": "Offer", "name": "Roam Self-Hosted", "price": "15000", "priceCurrency": "USD"}
     ],
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"}
   }
@@ -71,9 +70,8 @@
       <ul class="nav-links">
         <li><a href="#install">Free CLI</a></li>
         <li><a href="#how-it-works">How it works</a></li>
-        <li><a href="#review">Review</a></li>
-        <li><a href="#cloud">Cloud</a></li>
-        <li><a href="#self-hosted">Self-Hosted</a></li>
+        <li><a href="#compare">Compare</a></li>
+        <li><a href="#review">Paid plans</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
       </ul>
     </div>
@@ -94,15 +92,17 @@
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
-        <a class="btn-secondary" href="#what-you-get">See what's in it</a>
+        <a class="btn-secondary" href="#how-it-works">See how it works</a>
       </div>
       <p class="hero-trust-strip">
-        Apache 2.0 · Runs entirely on your machine · 27 languages · 459 stars · 6k+ installs/month
+        Apache 2.0 · 27 languages · Runs entirely on your machine · 459 GitHub stars · 6,189 PyPI installs/month
       </p>
     </div>
   </header>
 
-  <!-- What you get for free — the complete-product view -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 1 — What's in the free CLI
+       ────────────────────────────────────────────────────────── -->
   <section class="whats-in" id="what-you-get">
     <div class="whats-in-inner">
       <h2>What's in the free CLI</h2>
@@ -114,42 +114,45 @@
         <div class="num-cell"><strong>190</strong><span>CLI commands</span></div>
         <div class="num-cell"><strong>136</strong><span>tools your AI agent can call</span></div>
         <div class="num-cell"><strong>27</strong><span>languages</span></div>
-        <div class="num-cell"><strong>2,489+</strong><span>community rules</span></div>
-        <div class="num-cell"><strong>54</strong><span>code-quality checks</span></div>
-        <div class="num-cell"><strong>5</strong><span>cross-language bridges</span></div>
+        <div class="num-cell"><strong>459</strong><span>GitHub stars</span></div>
+        <div class="num-cell"><strong>6,189</strong><span>PyPI installs / month</span></div>
         <div class="num-cell"><strong>54</strong><span>releases shipped</span></div>
-        <div class="num-cell"><strong>0</strong><span>data sent back to us</span></div>
       </div>
+      <p class="numbers-date">numbers as of 2026-05-07</p>
+
       <p class="install-cmd" id="install">
         <code>pip install roam-code &amp;&amp; roam init</code>
       </p>
-      <p class="install-note">
-        Five commands cover most of what you'll do day-to-day. The other 185 are there when you need them.
-      </p>
-      <div class="verbs-grid">
-        <div class="verb-cell"><code>roam understand</code><span>Get a guided tour of an unfamiliar codebase.</span></div>
-        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for a task description.</span></div>
-        <div class="verb-cell"><code>roam context</code><span>List the exact files and line ranges to read.</span></div>
-        <div class="verb-cell"><code>roam preflight</code><span>Check what changing a function will affect.</span></div>
-        <div class="verb-cell"><code>roam critique</code><span>Verify a patch against the dependency graph.</span></div>
+
+      <div class="first-5-min">
+        <h3>Your first 5 minutes</h3>
+        <ol>
+          <li><code>cd</code> into any Git repo</li>
+          <li><code>roam init</code> — indexes the whole codebase (about 0.6 seconds per 1k lines)</li>
+          <li><code>roam understand</code> — get a guided tour</li>
+          <li><code>roam tour</code> — see the entry points</li>
+          <li><code>roam mcp</code> — start the MCP server so your AI agent can call it</li>
+        </ol>
       </div>
     </div>
   </section>
 
-  <!-- How AI agents use Roam — MCP story -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 2 — How it works (MCP flow + verbs + demo)
+       ────────────────────────────────────────────────────────── -->
   <section class="how-it-works" id="how-it-works">
     <div class="how-it-works-inner">
-      <h2>Your AI agent talks to Roam</h2>
+      <h2>How it works</h2>
       <p class="lede">
-        Roam is also a Model Context Protocol server. Your coding agent —
-        Claude Code, Cursor, Codex, Continue, anything that speaks MCP —
+        Roam is a Model Context Protocol server. Your coding agent —
+        Claude Code, Cursor, Codex, anything that speaks MCP —
         can call Roam's 136 tools to understand your codebase before it edits it.
       </p>
       <ol class="flow">
         <li>
           <span class="flow-num">1</span>
           <strong>You install Roam locally.</strong>
-          One command. The agent starts up alongside your editor or terminal.
+          One command. The MCP server starts up alongside your editor or terminal.
         </li>
         <li>
           <span class="flow-num">2</span>
@@ -162,6 +165,16 @@
           With the answers, the agent edits with the same blast-radius awareness a senior engineer would have.
         </li>
       </ol>
+
+      <h3 class="how-it-works-sub">The five verbs you'll use most</h3>
+      <div class="verbs-grid">
+        <div class="verb-cell"><code>roam understand</code><span>Get a guided tour of an unfamiliar codebase.</span></div>
+        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for a task description.</span></div>
+        <div class="verb-cell"><code>roam context</code><span>List the exact files and line ranges to read.</span></div>
+        <div class="verb-cell"><code>roam preflight</code><span>Check what changing a function will affect.</span></div>
+        <div class="verb-cell"><code>roam critique</code><span>Verify a patch against the dependency graph.</span></div>
+      </div>
+
       <p class="how-it-works-foot">
         Tested with Claude Code, Cursor, Windsurf, VS Code, Codex CLI, Gemini CLI.
         Drops into any MCP-aware editor.
@@ -169,61 +182,225 @@
     </div>
   </section>
 
-  <!-- The buyer-pain band — production incidents from public reporting -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 3 — Pain band (with tie-backs)
+       ────────────────────────────────────────────────────────── -->
   <section class="pain-band">
     <div class="pain-band-inner">
       <h2 class="visually-hidden">Why this matters</h2>
-      <p class="pain-quote">
-        <strong>PocketOS:</strong> the production database and three months of backups, gone in nine seconds.
-        Thirty-hour outage. The AI agent was confident.
-        <span class="pain-source">— <a href="https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/">The Register, April 2026</a></span>
-      </p>
-      <p class="pain-quote">
-        <strong>Amazon, March 2026:</strong> 6.3 million orders lost in a single outage traced to AI-assisted code.
-        SVP Treadwell now requires senior-engineer signoff on every agent-generated change.
-        <span class="pain-source">— per <a href="https://www.cnbc.com/2026/03/10/amazon-plans-deep-dive-internal-meeting-address-ai-related-outages.html">CNBC, March 2026</a></span>
-      </p>
-      <p class="pain-quote">
-        <strong>Faros AI 2026 (22,000 developers):</strong>
-        teams adopting AI saw bugs per developer rise <strong>+54%</strong> and incidents per PR rise <strong>+242.7%</strong>.
-        Speed went up. So did the cleanup.
-        <span class="pain-source">— <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a></span>
-      </p>
+      <div class="pain-cell">
+        <p class="pain-quote">
+          <strong>PocketOS:</strong> the production database and three months of backups, gone in nine seconds.
+          Thirty-hour outage. The AI agent was confident.
+          <span class="pain-source">— <a href="https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/">The Register, April 2026</a></span>
+        </p>
+        <p class="tie-back">→ The clones-not-edited detector catches the exact pattern that broke this.</p>
+      </div>
+      <div class="pain-cell">
+        <p class="pain-quote">
+          <strong>Amazon, March 2026:</strong> 6.3 million orders lost in a single outage traced to AI-assisted code.
+          SVP Treadwell now requires senior-engineer signoff on every agent-generated change.
+          <span class="pain-source">— per <a href="https://www.cnbc.com/2026/03/10/amazon-plans-deep-dive-internal-meeting-address-ai-related-outages.html">CNBC, March 2026</a></span>
+        </p>
+        <p class="tie-back">→ Roam Review BLOCKs PRs that cross blast-radius and senior-signoff thresholds.</p>
+      </div>
+      <div class="pain-cell">
+        <p class="pain-quote">
+          <strong>Faros AI 2026 (22,000 developers):</strong>
+          teams adopting AI saw bugs per developer rise <strong>+54%</strong> and incidents per PR rise <strong>+242.7%</strong>.
+          Speed went up. So did the cleanup.
+          <span class="pain-source">— <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a></span>
+        </p>
+        <p class="tie-back">→ <code>roam preflight</code> shows who else this PR affects, before merge.</p>
+      </div>
     </div>
   </section>
 
-  <!-- A look at the actual output -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 4 — Demo: terminal output + GitHub PR mockup
+       ────────────────────────────────────────────────────────── -->
   <section class="demo-block">
     <div class="demo-block-inner">
-      <h2>What a Roam review looks like</h2>
+      <h2>What Roam looks like in practice</h2>
       <p class="lede">
-        Pipe a diff through <code>roam critique</code> and you get a verdict.
-        BLOCK on high severity, REVIEW on medium, APPROVE on low. Plain output, exit codes for CI.
+        Two surfaces: your terminal (free), or a comment on every pull request (paid).
       </p>
-      <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
+
+      <div class="demo-grid">
+        <div class="demo-col">
+          <p class="demo-label">In your terminal — example output</p>
+          <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
 <span class="t-line">VERDICT: BLOCK  (1 high, 3 medium, 0 low)</span>
 <span class="t-line">  reason: clones-not-edited (high)</span>
-<span class="t-line">         AI updated <span class="t-em">src/api/users.py:create_user</span> but left</span>
-<span class="t-line">         <span class="t-em">src/admin/users.py:create_user</span> (95% similar) untouched.</span>
+<span class="t-line">         AI updated <span class="t-em">api/users.py:create_user</span> but left</span>
+<span class="t-line">         <span class="t-em">admin/users.py:create_user</span> (95% similar) untouched.</span>
 <span class="t-line">         Both call <span class="t-em">db.commit()</span>; behavior will diverge.</span>
 <span class="t-line"></span>
 <span class="t-line">  reason: blast-radius (medium)</span>
-<span class="t-line">         <span class="t-em">UserService.authenticate</span> has 47 callers across</span>
-<span class="t-line">         12 files. Add tests covering the new error path.</span>
+<span class="t-line">         <span class="t-em">UserService.authenticate</span> has 47 callers.</span>
+<span class="t-line">         Add tests covering the new error path.</span>
 <span class="t-line"></span>
 <span class="t-line">  reason: layer-violation (medium)</span>
-<span class="t-line">         Domain layer now imports HTTP layer (<span class="t-em">requests.post</span>).</span>
+<span class="t-line">         Domain layer now imports HTTP layer.</span>
 <span class="t-line">         Move side-effect to controller.</span>
 <span class="t-line"></span>
 <span class="t-prompt">$</span> <span class="t-cmd">echo $?</span>
 <span class="t-line">5</span></pre>
-      <p class="demo-foot">
-        Exit code 5 fails CI. Same engine powers Roam Review on every pull request.
+          <p class="demo-foot">
+            Exit code 5 fails CI. Same engine powers Roam Review on every pull request.
+          </p>
+        </div>
+
+        <div class="demo-col">
+          <p class="demo-label">On a pull request — example comment</p>
+          <div class="gh-pr" aria-label="Sample Roam Review PR comment">
+            <div class="gh-pr-head">
+              <span class="gh-avatar" aria-hidden="true">R</span>
+              <div class="gh-pr-meta">
+                <strong>roam-review-bot</strong> <span class="gh-time">commented just now</span>
+              </div>
+            </div>
+            <div class="gh-pr-body">
+              <div class="gh-verdict gh-verdict-block">
+                <strong>BLOCK</strong> &nbsp;·&nbsp; 1 high, 3 medium
+              </div>
+              <div class="gh-finding">
+                <span class="gh-sev gh-sev-high">HIGH</span>
+                <strong>clones-not-edited</strong> &nbsp;<span class="gh-conf">conf 0.94</span><br>
+                <span class="gh-meta">api/users.py:42 ↔ admin/users.py:38 (95% similar)</span><br>
+                AI updated one copy of <code>create_user</code>; the other still calls <code>db.commit()</code> with the old logic.
+                <span class="gh-fix">Suggested fix: apply the same change to <code>admin/users.py:38</code></span>
+              </div>
+              <div class="gh-finding">
+                <span class="gh-sev gh-sev-med">MED</span>
+                <strong>blast-radius</strong> &nbsp;<span class="gh-conf">47 callers</span><br>
+                <code>UserService.authenticate</code> is called from 12 files. Test coverage is at 64% on the new error path.
+              </div>
+              <div class="gh-finding">
+                <span class="gh-sev gh-sev-med">MED</span>
+                <strong>layer-violation</strong><br>
+                Domain layer now imports HTTP layer (<code>requests.post</code>). Move the side-effect to a controller.
+              </div>
+              <div class="gh-actions">
+                <code>/roam re-review</code> &nbsp;·&nbsp; <code>/roam explain api/users.py</code>
+              </div>
+            </div>
+          </div>
+          <p class="demo-foot">
+            Roam Review posts this on every PR. Click the suggested fix to apply.
+          </p>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 5 — Comparison table
+       ────────────────────────────────────────────────────────── -->
+  <section class="compare" id="compare">
+    <div class="compare-inner">
+      <h2>How Roam compares</h2>
+      <p class="lede">
+        Most teams adopt Roam <em>alongside</em> a semantic reviewer. Different layer, different findings.
+      </p>
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <thead>
+            <tr>
+              <th></th>
+              <th><strong>Roam</strong></th>
+              <th>CodeRabbit</th>
+              <th>Greptile</th>
+              <th>Qodo</th>
+              <th>SonarQube</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <td>Reviews structure (callers, layers, cycles)</td>
+              <td class="yes">Yes</td>
+              <td class="ltd">Limited</td>
+              <td class="ltd">Limited</td>
+              <td class="ltd">Limited</td>
+              <td class="yes">Yes</td>
+            </tr>
+            <tr>
+              <td>Reviews semantics (what the code does)</td>
+              <td class="ltd">Limited</td>
+              <td class="yes">Yes</td>
+              <td class="yes">Yes</td>
+              <td class="yes">Yes</td>
+              <td class="ltd">Limited</td>
+            </tr>
+            <tr>
+              <td>Catches clone-not-edited (AI-shaped bug)</td>
+              <td class="yes">Yes</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+            </tr>
+            <tr>
+              <td>Local CLI (no source uploaded)</td>
+              <td class="yes">Yes</td>
+              <td class="no">Cloud</td>
+              <td class="no">Cloud</td>
+              <td class="no">Cloud</td>
+              <td class="yes">Yes (paid)</td>
+            </tr>
+            <tr>
+              <td>EU AI Act Article 12 evidence built in</td>
+              <td class="yes">Yes</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+            </tr>
+            <tr>
+              <td>MCP server for AI agents</td>
+              <td class="yes">Yes (136 tools)</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+            </tr>
+            <tr>
+              <td>Open source</td>
+              <td class="yes">Apache 2.0</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="ltd">Community ed.</td>
+            </tr>
+            <tr>
+              <td>Free CLI tier</td>
+              <td class="yes">Yes, forever</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Community ed.</td>
+            </tr>
+            <tr>
+              <td>Starting price (team tier)</td>
+              <td>$25/dev/mo</td>
+              <td>$24/dev/mo</td>
+              <td>~$30/dev/mo</td>
+              <td>$19/dev/mo</td>
+              <td>$32/dev/mo</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-foot">
+        Comparison verified against each vendor's public pricing and documentation as of 2026-05-07.
+        Help us correct anything inaccurate: <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
       </p>
     </div>
   </section>
 
-  <!-- Paid product cards -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 6 — Paid product cards
+       ────────────────────────────────────────────────────────── -->
   <section class="products-intro">
     <div class="products-intro-inner">
       <h2>For teams: three paid options</h2>
@@ -290,7 +467,9 @@
     </div>
   </section>
 
-  <!-- Trust strip -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 7 — Trust strip
+       ────────────────────────────────────────────────────────── -->
   <section class="trust-strip">
     <div class="trust-strip-inner">
       <div class="trust-cell">
@@ -299,7 +478,7 @@
       </div>
       <div class="trust-cell">
         <strong>The CLI sends nothing back to us</strong>
-        <span>No telemetry. No analytics. No API keys. After the August 2025 <a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">CodeRabbit security breach</a> (write access to ~1M repos), this isn't a feature — it's the minimum bar.</span>
+        <span>No telemetry. No analytics. No API keys. After the August 2025 <a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">CodeRabbit security breach</a>, this isn't a feature — it's the minimum bar.</span>
       </div>
       <div class="trust-cell">
         <strong>27 languages, 5 cross-language bridges</strong>
@@ -312,7 +491,9 @@
     </div>
   </section>
 
-  <!-- FAQ -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 8 — FAQ
+       ────────────────────────────────────────────────────────── -->
   <section class="faq">
     <div class="faq-inner">
       <h2>Common questions</h2>
@@ -392,7 +573,9 @@
     </div>
   </section>
 
-  <!-- Audit upsell — moved to end, after FAQ, as the soft on-ramp -->
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 9 — Audit upsell (soft on-ramp at the end)
+       ────────────────────────────────────────────────────────── -->
   <section class="audit-upsell" id="audit">
     <div class="audit-upsell-inner">
       <h2>Want help getting started?</h2>
@@ -413,7 +596,7 @@
       <div class="footer-col">
         <strong>Roam</strong>
         <span>A second opinion on AI-generated code.</span>
-        <span class="footer-meta">Made in the EU.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
       </div>
       <div class="footer-col">
         <a href="https://github.com/Cranot/roam-code">GitHub</a>
@@ -423,6 +606,7 @@
       <div class="footer-col">
         <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
         <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
       </div>
     </div>
   </footer>
