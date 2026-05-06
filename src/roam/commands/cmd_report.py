@@ -102,7 +102,7 @@ def _load_custom_presets(config_path: str) -> dict:
         try:
             data = json.load(f)
         except json.JSONDecodeError as exc:
-            raise click.BadParameter(f"Invalid JSON in config file: {exc}")
+            raise click.BadParameter(f"Invalid JSON in config file: {exc}") from exc
 
     if not isinstance(data, dict):
         raise click.BadParameter(f"Config must be a JSON object, got {type(data).__name__}")
