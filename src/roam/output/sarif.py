@@ -165,6 +165,7 @@ def _automation_details(tool_name: str, version: str) -> dict:
     """
     import os
     from datetime import datetime, timezone
+
     run_guid = f"{tool_name}/{version}/{datetime.now(timezone.utc).strftime('%Y%m%d')}"
     branch = os.environ.get("GITHUB_REF_NAME") or os.environ.get("CI_COMMIT_BRANCH") or "main"
     return {
@@ -180,24 +181,34 @@ def _version_control_provenance() -> list[dict]:
     Returns an empty list when git is unavailable so SARIF stays valid.
     """
     import subprocess
+
     try:
         sha = subprocess.run(
             ["git", "rev-parse", "HEAD"],
-            capture_output=True, text=True, timeout=2,
+            capture_output=True,
+            text=True,
+            timeout=2,
         ).stdout.strip()
         if not sha:
             return []
         try:
-            branch = subprocess.run(
-                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
-                capture_output=True, text=True, timeout=2,
-            ).stdout.strip() or "main"
+            branch = (
+                subprocess.run(
+                    ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                    capture_output=True,
+                    text=True,
+                    timeout=2,
+                ).stdout.strip()
+                or "main"
+            )
         except Exception:
             branch = "main"
         try:
             remote = subprocess.run(
                 ["git", "config", "--get", "remote.origin.url"],
-                capture_output=True, text=True, timeout=2,
+                capture_output=True,
+                text=True,
+                timeout=2,
             ).stdout.strip()
         except Exception:
             remote = ""
@@ -221,6 +232,7 @@ def _load_suppressions() -> list[dict]:
     """
     import json
     from pathlib import Path
+
     candidate = Path.cwd() / ".roam" / "suppressions.json"
     if not candidate.exists():
         return []
