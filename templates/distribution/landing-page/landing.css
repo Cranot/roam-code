@@ -54,7 +54,7 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
-[id] { scroll-margin-top: 80px; }
+[id] { scroll-margin-top: 60px; }
 
 .skip-link {
   position: absolute;
@@ -279,7 +279,6 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   text-align: left;
 }
 @media (max-width: 900px) { .verbs-grid { grid-template-columns: repeat(2, 1fr); } }
-@media (max-width: 540px) { .verbs-grid { grid-template-columns: 1fr; } }
 .verb-cell {
   background: var(--bg-alt);
   border: 1px solid var(--border);
@@ -569,13 +568,13 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   vertical-align: middle;
 }
 .gh-sev-high { background: #ffebe9; color: #cf222e; }
-.gh-sev-med  { background: #fff8c5; color: #9a6700; }
+.gh-sev-med  { background: #fff8c5; color: #7a5100; }
 .gh-conf {
   font-size: 11px;
-  color: #59636e;
+  color: #4d555c;
   font-family: 'IBM Plex Mono', monospace;
 }
-.gh-meta { color: #59636e; font-size: 12.5px; font-family: 'IBM Plex Mono', monospace; }
+.gh-meta { color: #4d555c; font-size: 12.5px; font-family: 'IBM Plex Mono', monospace; }
 .gh-finding code {
   background: #eaeef2;
   padding: 1px 4px;
@@ -649,7 +648,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 .compare-table tbody td { padding: 12px 12px; text-align: center; vertical-align: middle; }
 .compare-table tbody td:first-child { text-align: left; padding-left: 18px; color: var(--text); font-weight: 500; }
 .compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
-.compare-table .no  { color: #999; font-size: 13px; }
+.compare-table .no  { color: #6b6b6b; font-size: 13px; }
 .compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
 .compare-foot {
   margin: 18px 0 0;
