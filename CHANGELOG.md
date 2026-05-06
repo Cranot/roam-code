@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.35] - 2026-05-06
+
+### Bugfix release — `_parse_simple_yaml` malformed-input + top-level-list (Python 3.9 CI red)
+
+Fifth iteration on the same CI matrix. 12.34's list-of-dicts fix made
+the fallback parser TOO permissive — `tests/test_pr_analyze_edge_cases.py::test_load_rules_yaml_handles_non_yaml_file`
+expects malformed YAML to surface a warning, but the fallback parsed
+`"this is not: valid: yaml: at all: ["` as a non-failing dict and no
+warning was emitted. Same for `test_load_rules_yaml_top_level_not_dict`
+where PyYAML returns a list and the loader warns "must be a mapping",
+but the fallback returned `{}` silently.
+
+### Bugfixes (`_parse_simple_yaml`)
+
+- **Bracket-balance check** — unbalanced `[`/`]`/`{`/`}` on a single
+  line now raises `ValueError`; the caller's `except Exception`
+  wrapper surfaces it as a warning. Mirrors PyYAML's error behaviour.
+- **Top-level-list detection** — when the first non-comment line
+  starts with `- `, return a Python list (matching PyYAML). The
+  downstream loader then triggers its existing
+  `not isinstance(data, dict)` warning instead of silently treating
+  the file as empty.
+
+### Sweep done while waiting on CI
+
+While CI 12.34 was running, swept all 25 `yaml.safe_load` call sites
+across 7 files — every one already has an `except ImportError`
+fallback. So the parser bug surfaced in just one place
+(`cmd_pr_analyze._parse_rules_data`) but the fix lands in the shared
+`roam.rules.engine._parse_simple_yaml` so all callers benefit.
+
 ## [12.34] - 2026-05-06
 
 ### Bugfix release — `_parse_simple_yaml` list-of-dicts (Python 3.9 CI red)
