@@ -306,8 +306,6 @@ _NL_EXTRA_STOPWORDS = frozenset(
         "often",
         "actually",
         "though",
-        "until",
-        "while",
     }
 )
 

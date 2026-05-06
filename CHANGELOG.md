@@ -7,6 +7,54 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.33] - 2026-05-06
+
+### Bugfix release — third stale assertion + bugbear lint sweep
+
+12.32 fixed two stale `_CORE_TOOLS == ...` assertions but missed a
+third one in the same file. CI on 12.32 stayed red. Fixed here, plus
+a bugbear-lint sweep (B033 duplicate set items, B023 closure-over-
+loop-variable) that surfaced four real micro-bugs.
+
+### Bugfixes
+
+- **`tests/test_mcp_server.py::test_inspect_core_preset`** — hardcoded
+  `assert result["tool_count"] == 41` updated to 49 (matches the
+  v12.28 Agent Review v2 surface). Same drift class as the two we
+  caught in 12.32; this was a third copy of the assertion in a
+  different test class. Now the file has zero stale tool-count
+  references.
+- **B033 duplicate set items**:
+  - `_FUNCTION_NODE_TYPES` in `roam.graph.clone_detect` — six
+    languages share `function_definition`/`method_declaration`/
+    `function_declaration` node-type names; the set contained each
+    duplicate. Set semantics were unaffected (sets de-dup) but
+    the apparent intent was a per-language map that's been wrong
+    all along. Cleaned + comments document the sharing.
+  - `_MODEL_PARENTS` in `cmd_n1` — bare `"Model"` listed twice
+    (once for Laravel, once for Django). Collapsed.
+  - 17 other smaller duplicates across `cmd_describe`, complexity
+    indexer, foxpro extractor, retrieve seeds, tfidf search,
+    auto-fixed by ruff.
+- **B023 loop-variable closure**:
+  - `cmd_orphan_routes._is_self_reference` — defined inside
+    `for route in all_routes:` and closed over `controller_name`
+    and `route_file_prefixes`. Fine in practice (called within
+    same iteration) but a latent bug if anyone refactors. Bound
+    as default args.
+  - `resolve._score` — closes over `signals` from the enclosing
+    `for table in (...):` loop. Same fix.
+  - `hcl_lang._add` (closure inside `for ln, line in enumerate(...)`)
+    — captures `ln` and `current_block`. Bound as default args.
+
+### How this slipped through
+
+The `_CORE_TOOLS` count appears in **three** assertions across two
+test files. 12.30 updated one. 12.32 caught the second on CI red.
+12.33 caught the third on CI red. Lesson: a `grep -rn "tool_count"`
+sweep at every surface bump would have caught all three at once.
+Added that as a release-checklist note in `dev/redacted`.
+
 ## [12.32] - 2026-05-06
 
 ### Bugfix release — CI green-bar restore + Z-phase polish

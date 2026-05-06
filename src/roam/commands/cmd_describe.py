@@ -353,7 +353,6 @@ _DOMAIN_STOP_WORDS = frozenset(
         "context",
         "hook",
         # DOM events / UI interactions
-        "click",
         "focus",
         "blur",
         "hover",

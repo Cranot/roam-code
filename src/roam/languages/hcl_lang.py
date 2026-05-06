@@ -359,16 +359,18 @@ class HclExtractor(LanguageExtractor):
                 if mb:
                     current_block = mb.group(2)
 
-            def _add(target: str):
-                key = (target, str(ln))
+            # B023: bind ln + current_block as defaults so the closure
+            # captures THIS iteration's values (loop-variable late-binding fix).
+            def _add(target: str, _ln: int = ln, _cur: str | None = current_block):
+                key = (target, str(_ln))
                 if key not in seen:
                     seen.add(key)
                     refs.append(
                         self._make_reference(
                             target_name=target,
                             kind="call",
-                            line=ln,
-                            source_name=current_block,
+                            line=_ln,
+                            source_name=_cur,
                         )
                     )
 

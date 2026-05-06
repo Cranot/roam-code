@@ -329,8 +329,6 @@ _VFP_BUILTINS = frozenset(
         "TRIM",
         "UPPER",
         # ── Date / Time ──
-        "CDOW",
-        "CMONTH",
         "CTOD",
         "CTOT",
         "DATE",

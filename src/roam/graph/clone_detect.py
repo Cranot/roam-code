@@ -158,29 +158,19 @@ def _jaccard_bags(a: Counter, b: Counter) -> float:
 
 _FUNCTION_NODE_TYPES = frozenset(
     {
-        # Python
+        # Python / C / C++ all share `function_definition`
         "function_definition",
-        # JS/TS
+        # JS/TS / Swift share `function_declaration`
         "function_declaration",
         "method_definition",
         "arrow_function",
-        # Java/C#/Kotlin/Scala
+        # Java/C#/Kotlin/Scala / Go / PHP all share `method_declaration`
         "method_declaration",
         "constructor_declaration",
-        # Go
-        "function_declaration",
-        "method_declaration",
         # Rust
         "function_item",
-        # C/C++
-        "function_definition",
         # Ruby
         "method",
-        # PHP
-        "function_definition",
-        "method_declaration",
-        # Swift
-        "function_declaration",
     }
 )
 

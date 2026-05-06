@@ -468,17 +468,20 @@ def _analyse_orphan_routes(project_root: Path, conn, limit: int) -> dict:
         # Deduplicate
         all_matching = list(set(all_matching))
 
-        # Remove the route files themselves and the controller file from matches
+        # Remove the route files themselves and the controller file from matches.
+        # `_ctrl` and `_route_files` are bound as defaults so the closure
+        # captures THIS iteration's values (per-loop B023 fix).
         controller_name = route.get("controller") or ""
 
-        def _is_self_reference(file_path: str) -> bool:
+        def _is_self_reference(
+            file_path: str,
+            _ctrl: str = controller_name,
+            _route_files: set = route_file_prefixes,
+        ) -> bool:
             norm = file_path.replace("\\", "/")
-            # Exclude the route definition files
-            if norm in route_file_prefixes:
+            if norm in _route_files:
                 return True
-            # Exclude the controller file itself
-            if controller_name and controller_name.lower() in norm.lower():
-                # Check it actually looks like a controller path
+            if _ctrl and _ctrl.lower() in norm.lower():
                 if "controller" in norm.lower() or "http" in norm.lower():
                     return True
             return False
