@@ -1,0 +1,121 @@
+# TypeScript / JavaScript starter rule pack for `roam pr-analyze`
+#
+# 14 rules covering the most common AI-generated-code anti-patterns in
+# TS/JS projects. Drop at `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
+# focus on the JS-specific failure modes (eval, dangerous DOM APIs,
+# loose imports). Each rule includes a `description` so the PR comment
+# surfaces *why* it fired.
+#
+# Validate this pack before shipping it to your team:
+#   roam rules-validate templates/rules/typescript/.roam-rules.yml --explain
+
+rules:
+  # ---- Dangerous APIs ----
+
+  - id: ts-no-eval
+    description: eval() executes arbitrary code; use JSON.parse or a safe parser.
+    pattern: function_call
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: eval
+    severity: BLOCK
+
+  - id: ts-no-function-constructor
+    description: new Function(...) is eval-equivalent at runtime.
+    pattern: function_call
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: Function
+    severity: BLOCK
+
+  - id: ts-no-document-write
+    description: document.write is a known XSS vector and blocks rendering.
+    pattern: function_call
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: document.write
+    severity: BLOCK
+
+  - id: ts-no-inner-html
+    description: innerHTML assignments enable XSS; use textContent or React state instead.
+    pattern: function_call
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "*.innerHTML"
+    severity: WARN
+
+  - id: ts-no-set-timeout-string
+    description: setTimeout/setInterval with a string argument is eval-equivalent.
+    pattern: function_call
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: setTimeout
+    severity: WARN
+
+  # ---- Layer-violation rules ----
+
+  - id: ts-no-frontend-db-import
+    description: Frontend modules must not import from db/ directly; use services/.
+    pattern: import_from
+    source_glob: "frontend/**/*.{ts,tsx,js,jsx,vue}"
+    forbidden_target_glob: "lib/db/*"
+    severity: BLOCK
+
+  - id: ts-no-deep-relative-imports
+    description: Imports like `../../../../foo` indicate poor layering; use a path alias.
+    pattern: import_from
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "../../../*"
+    severity: WARN
+
+  - id: ts-no-internal-from-public
+    description: Public exports must not import private modules.
+    pattern: import_from
+    source_glob: "src/**/api/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "*/_internal/*"
+    severity: BLOCK
+
+  # ---- LLM-favourite hallucinated imports ----
+
+  - id: ts-no-numbered-modules
+    description: Numbered modules (foo_v2, util1) are typical LLM hallucinations.
+    pattern: import_from
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "*_v[0-9]*"
+    severity: WARN
+
+  - id: ts-no-helper-helper
+    description: helpers/helpers and utils/utils paths are LLM placeholders.
+    pattern: import_from
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "*helpers/helpers*"
+    severity: WARN
+
+  # ---- Test-file boundary ----
+
+  - id: ts-no-test-imports-in-prod
+    description: Production code must not import from test fixtures.
+    pattern: import_from
+    source_glob: "src/**/*.{ts,tsx,js,jsx}"
+    forbidden_target_glob: "*__tests__/fixtures/*"
+    severity: BLOCK
+
+  # ---- Decorators / class-inherit (TS-only) ----
+
+  - id: ts-no-deprecated-decorator
+    description: "New code should not be marked @deprecated."
+    pattern: decorator_use
+    source_glob: "src/**/*.ts"
+    forbidden_target_glob: deprecated
+    severity: WARN
+
+  - id: ts-no-experimental-base
+    description: Inheriting from Experimental* base classes ships pre-API code.
+    pattern: class_inherit
+    source_glob: "src/**/*.{ts,tsx}"
+    forbidden_target_glob: "*Experimental*"
+    severity: WARN
+
+  - id: ts-no-internal-base
+    description: Inheriting from *Internal* base leaks private API to subclasses.
+    pattern: class_inherit
+    source_glob: "src/**/*.{ts,tsx}"
+    forbidden_target_glob: "*Internal*"
+    severity: WARN

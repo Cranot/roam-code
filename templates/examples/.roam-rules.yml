@@ -1,0 +1,77 @@
+# .roam/rules.yml — example architecture rules for roam pr-analyze.
+#
+# Drop this file at .roam/rules.yml in your repo root and roam pr-analyze
+# will auto-load it. Each rule matches one of the four pattern types:
+#
+#   - import_from   — banned imports (Python `from X import`, JS `import ... from "X"`)
+#   - function_call — banned calls anywhere in added lines (e.g. eval, pickle.loads)
+#   - class_inherit — banned base classes in `class Foo(Base, ...)` declarations
+#   - decorator_use — banned decorators on added lines (@deprecated, @unsafe.*)
+#
+# Severities: BLOCK (gate failure) | WARN | INFO. Glob syntax is fnmatch
+# (`*` matches segments, `**` matches recursively, `{a,b}` enumerates options).
+
+rules:
+  # ---- Layer-violation rules: forbid imports across architectural boundaries.
+
+  - id: no-frontend-db-import
+    description: Frontend modules must not import from db/ directly — go through services/
+    pattern: import_from
+    source_glob: "frontend/**/*.{ts,tsx,js,jsx,vue}"
+    forbidden_target_glob: "lib/db/**"
+    severity: BLOCK
+
+  - id: no-test-imports-from-prod
+    description: Production code must not import from test fixtures
+    pattern: import_from
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "tests.fixtures.*"
+    severity: BLOCK
+
+  # ---- Function-call bans: surface dangerous APIs at PR time.
+
+  - id: no-eval
+    description: Banned — eval is unsafe; use ast.literal_eval or a real parser
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "eval"
+    severity: BLOCK
+
+  - id: no-pickle-loads
+    description: Use safe serialisation (json, msgpack) instead of pickle
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "pickle.loads"
+    severity: WARN
+
+  - id: no-os-system
+    description: os.system bypasses argv quoting; use subprocess.run with a list
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "os.system"
+    severity: BLOCK
+
+  # ---- Class-inheritance bans: prevent extending deprecated bases.
+
+  - id: no-deprecated-base
+    description: DeprecatedModel is being phased out — extend Model instead
+    pattern: class_inherit
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "DeprecatedModel"
+    severity: WARN
+
+  # ---- Decorator-use bans.
+
+  - id: no-deprecated-decorator
+    description: New code shouldn't be marked @deprecated
+    pattern: decorator_use
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "deprecated"
+    severity: WARN
+
+  - id: no-unsafe-decorators
+    description: Anything under @unsafe.* needs explicit security review
+    pattern: decorator_use
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "unsafe.*"
+    severity: BLOCK

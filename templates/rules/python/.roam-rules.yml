@@ -1,0 +1,126 @@
+# Python starter rule pack for `roam pr-analyze`
+#
+# 14 rules covering the most common AI-generated-code anti-patterns in
+# Python projects. Drop at `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026. Each rule
+# includes a `description` so the PR comment surfaces *why* it fired.
+#
+# Severities: BLOCK (gate failure) | WARN | INFO. CI gate fires on any
+# BLOCK; WARN/INFO are advisory.
+#
+# Validate this pack before shipping it to your team:
+#   roam rules-validate templates/rules/python/.roam-rules.yml --explain
+#
+# See `roam audit-trail-conformance-check` if you also need EU AI Act
+# Article 12 record-keeping (the audit-trail flag on pr-analyze emits the
+# JSONL records this checker validates).
+
+rules:
+  # ---- Dangerous APIs ----
+
+  - id: py-no-eval
+    description: eval() executes arbitrary code; use ast.literal_eval or a real parser.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: eval
+    severity: BLOCK
+
+  - id: py-no-exec
+    description: exec() executes arbitrary code at runtime; almost always wrong.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: exec
+    severity: BLOCK
+
+  - id: py-no-pickle-loads
+    description: pickle.loads on untrusted data is RCE. Use json/msgpack instead.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: pickle.loads
+    severity: BLOCK
+
+  - id: py-no-os-system
+    description: os.system bypasses argv quoting; use subprocess.run with a list arg.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: os.system
+    severity: BLOCK
+
+  - id: py-no-shell-true
+    description: subprocess with shell=True is shell-injection territory; always pass a list.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: subprocess.*
+    severity: WARN
+
+  - id: py-no-yaml-load
+    description: yaml.load without SafeLoader is unsafe; use yaml.safe_load.
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: yaml.load
+    severity: BLOCK
+
+  # ---- LLM-favourite hallucinated imports ----
+
+  - id: py-no-numbered-modules
+    description: Numbered modules (foo_v2, util1) are typical LLM hallucinations; rename or remove.
+    pattern: import_from
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "*_v[0-9]*"
+    severity: WARN
+
+  - id: py-no-helper-helper
+    description: helpers.helpers / utils.utils are LLM placeholder modules; pick a real name.
+    pattern: import_from
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "*helpers.helpers*"
+    severity: WARN
+
+  # ---- Architecture / layer-violation ----
+
+  - id: py-no-test-imports-from-prod
+    description: Production code must not import from test fixtures.
+    pattern: import_from
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "tests.fixtures.*"
+    severity: BLOCK
+
+  - id: py-no-internal-from-public
+    description: Public API must not import private/internal modules directly.
+    pattern: import_from
+    source_glob: "src/**/api/*.py"
+    forbidden_target_glob: "*._internal.*"
+    severity: BLOCK
+
+  # ---- Stale-code markers in new code ----
+
+  - id: py-no-deprecated-decorator
+    description: "New code should not be marked @deprecated. Remove the decorator or remove the function."
+    pattern: decorator_use
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: deprecated
+    severity: WARN
+
+  - id: py-no-todo-decorator
+    description: "@todo decorators leak unfinished work to production."
+    pattern: decorator_use
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: todo*
+    severity: WARN
+
+  # ---- Dangerous base classes ----
+
+  - id: py-no-deprecated-base
+    description: Inheriting from a deprecated base class compounds tech debt.
+    pattern: class_inherit
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "*Deprecated*"
+    severity: WARN
+
+  - id: py-no-unsafe-base
+    description: Base classes named *Unsafe* signal known-risky subclassing.
+    pattern: class_inherit
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "*Unsafe*"
+    severity: BLOCK
