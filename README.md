@@ -322,6 +322,9 @@ roam health
 | `roam audit-trail-verify [--input F] [--gate]` | Walk the EU AI Act audit-trail JSONL and verify SHA-256 chain integrity; exit 5 on broken chain |
 | `roam audit-trail-export [--format md\|json\|csv] [--since T] [--verdict V] [--aggregate]` | Export the audit trail for procurement / compliance review; `--aggregate` rolls up per actor / repo / verdict / month |
 | `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against an EU AI Act Article 12 checklist (chain integrity, timestamps, actors, reproducibility, retention) |
+| `roam article-12-check [--output F] [--pdf F]` | EU AI Act Article 12 readiness assessment; 6-item checklist → 1-page Markdown / PDF report. Captures redacted (Aug 2 2026 deadline). |
+| `roam permit [--staged] [--input F] [--symbol N]` | Structural-permission verdict facade for AI agents: ALLOW/REVIEW/BLOCK over critique + preflight + blast-radius. Exit codes 0/5/6 for Cursor rules / Claude Code hooks / pre-commit / CI gates. |
+| `roam postmortem <commit-range> [--limit N] [--show N]` | Replay current detectors against past commits; reports findings that would have surfaced pre-merge. The "would Roam have caught my Q1 incident?" demo. |
 | `roam rules-validate [PATH] [--against DIFF] [--strict] [--gate] [--explain]` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs; optional dry-run against a sample diff |
 | `roam dogfood [--no-audit] [--no-pr-analyze] [--no-audit-trail]` | One-shot v2 stack runner: audit + pr-analyze + audit-trail + Article 12 conformance — first-touch demo for any repo |
 | `roam suppress <finding-id> --reason "…"` | Suppress a math / over-fetch / missing-index / auth-gaps false positive with audit-trail-friendly record (`.roam/suppressions.json`); `--list` / `--remove` complete the workflow |
