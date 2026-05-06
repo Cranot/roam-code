@@ -139,6 +139,23 @@ def _short_finding_summary(critique_payload: dict, *, max_kinds: int = 3) -> lis
     return [f"{k} x{v}" for k, v in sorted(kinds.items(), key=lambda kv: -kv[1])[:max_kinds]]
 
 
+from roam.capability import roam_capability
+
+
+@roam_capability(
+    category="review",
+    summary="Replay current detectors against past commits — show the findings that would have surfaced pre-merge.",
+    inputs=["commit_range"],
+    outputs=["findings_per_commit", "summary"],
+    examples=[
+        "roam postmortem HEAD~30..HEAD",
+        "roam postmortem v12.0..v12.40 --limit 50",
+    ],
+    tags=["audit", "review", "phase0", "demo"],
+    ai_safe=True,
+    requires_index=True,
+    since="12.40",
+)
 @click.command(name="postmortem")
 @click.argument("commit_range", required=True)
 @click.option(

@@ -295,6 +295,23 @@ def _render_pdf_report(markdown_text: str, output_path: Path) -> bool:
     return True
 
 
+from roam.capability import roam_capability
+
+
+@roam_capability(
+    category="compliance",
+    summary="EU AI Act Article 12 readiness assessment — 6-item checklist over the current repo.",
+    inputs=["repo_path"],
+    outputs=["readiness_score", "checklist_results", "markdown_report"],
+    examples=[
+        "roam article-12-check",
+        "roam article-12-check --pdf report.pdf",
+    ],
+    tags=["compliance", "eu-ai-act", "audit", "phase0"],
+    ai_safe=True,
+    requires_index=False,
+    since="12.40",
+)
 @click.command(name="article-12-check")
 @click.option(
     "--output",
