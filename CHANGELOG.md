@@ -7,6 +7,176 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.26] - 2026-05-06
+
+### Added — Roam Agent Review + Cloud Lite engines (redacted)
+
+8 new commands ship the Roam Agent Review and Roam Cloud Lite product
+engines plus the EU AI Act Article 12 audit-trail toolkit.
+
+- **`roam pr-analyze`** — agent-aware PR risk verdict (INTENTIONAL / SAFE /
+  REVIEW / BLOCK). Aggregates `pr-prep` (diff + critique + pr-risk) with
+  **9-signal AI-likelihood scoring**: add/remove ratio, comment density,
+  test coverage, function-size variance, generic naming, orphan imports,
+  **placeholder density** (TODO/FIXME/NotImplementedError stubs),
+  **LLM-phrase density** ("we use this approach because…"),
+  **suspicious imports** (numbered modules / mass typing imports /
+  helper.helper). Language-aware weights for 7 languages.
+  `.roam/rules.yml` enforcement (4 pattern types: `import_from`,
+  `function_call`, `class_inherit`, `decorator_use`).
+  Reviewer suggestions (`--with-reviewers`), drift detection vs a saved
+  baseline with auto-escalation, CI gate (`--gate` exits 5 on BLOCK).
+  Flags: `--explain`, `--quiet`, `--rules-strict`, `--audit-trail`,
+  `--save-baseline`, `--baseline`, `--batch DIR`, `--parallel N`,
+  `--progress`, `--cache`, `--cache-dir`. The CLI engine behind Roam
+  Agent Review.
+- **`roam pr-comment-render`** — render a markdown PR comment from a
+  `pr-analyze --json` envelope. GitHub / GitLab / plain styles. Before-after
+  drift rendering (`(45 → 50, +5)`), regression / improvement banners,
+  reviewer block, plain-English signal explanations, previous-verdict link
+  on drift, baseline-age banner on `--from-baseline`.
+- **`roam metrics-push`** — push metrics-only summary (no source code) from
+  `roam audit` to a Roam Cloud Lite endpoint. Allow-listed payload schema
+  (`roam-metrics-v1`), SHA-256 path-hashing under `--anonymize`, `--dry-run`
+  default-safe inspection, `--timeout SECONDS` for slow networks.
+  `--include-pr-analysis` folds `.roam/last-pr-analysis.json` summary
+  (verdict, blast, ai, primary language) plus computed `age_days` + `stale`
+  fields into the payload. The CLI engine behind Roam Cloud Lite.
+- **`roam audit-trail-verify`** — verify SHA-256 chain integrity of an EU AI
+  Act Article 12 audit trail. Detects tampered records by line number;
+  `--gate` exits 5 on broken chain.
+- **`roam audit-trail-export`** — export the audit trail as markdown / JSON /
+  CSV with `--since`, `--until`, `--verdict` filters. `--aggregate` emits
+  procurement-ready summary tables bucketed by actor / repo / verdict /
+  month, plus a top-snapshot block (`top_actor`, `top_repo`, `top_month`,
+  `top_verdict`). `--finalize` appends a closing `AuditIntegritySummary`
+  record (chain head + event count + algorithm, per the canonical
+  forensic-format pattern).
+- **`roam audit-trail-conformance-check`** — score the audit trail against
+  an EU AI Act Article 12 6-check checklist: chain integrity, timestamp
+  completeness, actor attribution, reproducibility metadata, verdict +
+  rationale present, retention (≥ `--retention-days`, default 180).
+  `--gate` exits 5 on score < 100.
+- **`roam rules-validate`** — lint a `.roam/rules.yml` for typos, schema
+  mistakes, unknown patterns, duplicate rule IDs, unbalanced glob brackets.
+  `--against DIFF` dry-runs the rules. `--strict` treats warnings as
+  failures. `--gate` exits 5 on errors. `--explain` prints a pattern
+  reference with matchers + glob examples + use cases.
+- **`roam dogfood`** — one-shot v2 stack runner: `audit` + `pr-analyze`
+  (uncommitted) + audit-trail emission + `audit-trail-conformance-check`
+  in a single envelope. The "show me everything" first-touch demo.
+
+### Added — pr-analyze hardening
+
+- **Audit-trail safety**: `pr-analyze --audit-trail` now pre-verifies the
+  existing chain BEFORE appending. A broken chain auto-escalates the
+  verdict to BLOCK + appends a reason + fires `--gate`. Prevents compound
+  corruption of compliance records.
+- **`--rules-strict`** — the rules loader now returns `(rules, warnings)`.
+  Default tolerant mode surfaces warnings (missing file, malformed YAML,
+  type-coerced fields) into the envelope under `rules_warnings`. `--rules-strict`
+  raises `ValueError` and fires `--gate` on any malformed input.
+- **Type-coerced rule loading**: `severity: 42` (number, not string) and
+  `forbidden_target_glob: <non-string>` are now caught with structured
+  warnings instead of silently miscomparing later.
+- **Sequence numbers**: every `pr-analyze --audit-trail` record carries a
+  monotonic `sequence_number`. Gaps signal partial-write corruption that
+  hash chains alone can't detect.
+- **Cache** (`--cache` + `--cache-dir`): pr-analyze envelopes are keyed by
+  `sha256(diff + rules + threshold + language + version)`. Repeats short-
+  circuit before pr-prep runs. Dogfooded on a 5-real-commit batch:
+  **24.5× speedup** (12.2s cold → 0.5s warm). Cache works through batch
+  mode; hit-rate surfaced in batch summary.
+- **Batch parallelism**: `pr-analyze --batch DIR --parallel N` runs files
+  through a `ProcessPoolExecutor`. `--progress` emits per-file stderr
+  lines so long batches don't feel hung. Oversubscription warning fires
+  when N > cpu_count.
+
+### Added — MCP tool surface
+
+- 8 new MCP tools registered in `mcp_server.py`:
+  `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`,
+  `roam_audit_trail_verify`, `roam_audit_trail_export`,
+  `roam_audit_trail_conformance_check`, `roam_rules_validate`,
+  `roam_dogfood`.
+- Total MCP tool count: 128 → 136. Core preset: 41 → 49.
+
+### Added — distribution surface
+
+- `templates/examples/.roam-rules.yml` — example rule pack showing all 4
+  pattern types and BLOCK / WARN severities.
+- **`templates/rules/python/.roam-rules.yml`** — 14-rule starter pack for
+  Python: dangerous APIs (eval/exec/pickle.loads/os.system/yaml.load),
+  hallucinated imports, layer violations, stale-code markers, dangerous
+  base classes. Validated clean by `rules-validate`.
+- **`templates/rules/typescript/.roam-rules.yml`** — 14-rule starter pack
+  for TS/JS: eval/Function/document.write/innerHTML, layer violations,
+  hallucinated imports, deprecated decorators. Validated clean.
+- `templates/rules/README.md` — index of starter packs + customisation
+  guidance.
+- `src/roam/templates/ci/agent-review.yml` — drop-in GitHub Actions
+  workflow that runs `roam pr-analyze` on every PR, posts a sticky markdown
+  comment via `roam pr-comment-render`, verifies audit-trail integrity, and
+  fails the check on BLOCK verdict.
+- README.md gains dedicated "Roam Agent Review" + "Roam Cloud Lite" sections
+  explaining the v2 paid layers on top of the OSS CLI.
+
+### Added — shared helpers
+
+- `roam.commands.git_helpers` — centralised `git_actor`, `git_origin_url`,
+  `git_head_sha`, `git_branch`, `git_metadata`, `detect_roam_version`,
+  `utc_timestamp`. Replaces 4-way duplicated git invocation code across
+  `cmd_pr_analyze` and `cmd_metrics_push`. UTC timestamp formatting is
+  now Python-version-stable.
+- `roam.commands.audit_trail_helpers` — `DEFAULT_AUDIT_TRAIL_PATH`,
+  `AUDIT_TRAIL_SCHEMA`, `INTEGRITY_SUMMARY_SCHEMA`, `load_records`,
+  `next_sequence_number`. Eliminates 3-way `_load_records` duplication
+  between `cmd_audit_trail_export` and `cmd_audit_trail_conformance`.
+
+### Changed
+
+- License switched from MIT to **Apache 2.0** (landed in 12.23). All
+  references updated across LICENSE, pyproject, README, MCP server cards,
+  docs/site, and SUBMISSION.md.
+
+### Internal — cognitive complexity reductions
+
+Self-dogfood with `roam complexity` surfaced 2 CRITICAL functions
+(cc ≥ 99) and 3 HIGH functions in v2 modules. All five refactored:
+
+- `_compute_ai_likelihood` (cc=110 → <28) — split into 9 per-signal helpers
+  + `_parse_diff_into_buckets` + `_bucket_score`.
+- `_render_github_markdown` (cc=101 → <28) — split into 8 per-section
+  helpers (header, scores, drift banner, concerns, reviewers, rule
+  violations, next steps, top signals, footer).
+- `_load_rules_yaml` (cc=71 → <23) — strict-vs-tolerant branching
+  collapsed into `_warn_or_raise`; YAML parsing into `_parse_rules_data`;
+  per-rule type-coercion into `_coerce_rule`.
+- `_emit_batch` (cc=48 → 26) — parallel-vs-serial paths split into
+  `_run_batch_serial` / `_run_batch_parallel`.
+- `_build_rationale` (cc=39 → <23) — concern collectors + next-steps
+  composer + reviewer extractor pulled into small helpers.
+
+### Surface counts
+
+- CLI commands: 178 → **186** (+8: `pr-analyze`, `pr-comment-render`,
+  `metrics-push`, `audit-trail-verify`, `audit-trail-export`,
+  `audit-trail-conformance-check`, `rules-validate`, `dogfood`)
+- MCP tools: 128 → **136**
+- Core MCP preset: 41 → **49**
+
+### Tests
+
+- +280 new tests across 11 new test files: `test_pr_analyze.py` (~50),
+  `test_pr_analyze_edge_cases.py` (33), `test_pr_analyze_v2_signals.py`
+  (19), `test_pr_analyze_cache.py` (10), `test_pr_comment_render.py` (37),
+  `test_metrics_push.py` (~30), `test_audit_trail_verify.py` (12),
+  `test_audit_trail_aggregate.py` (15), `test_audit_trail_conformance.py`
+  (22), `test_audit_trail_sequence.py` (7), `test_rules_validate.py` (25),
+  `test_git_helpers.py` (14), `test_v2_edge_cases.py` (19),
+  `test_dogfood.py` (7).
+- 383 tests pass in the targeted v2 sweep (2 skipped).
+
 ## [12.25] - 2026-05-05
 
 CI fix: backport ``QueryCursor`` for tree-sitter < 0.24 (Python 3.9
