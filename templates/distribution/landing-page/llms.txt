@@ -1,0 +1,41 @@
+# roam-code
+
+> Free open-source CLI that gives AI coding agents structural awareness of a codebase before they edit it. Plus a paid PR bot, dashboard, and self-hosted bundle for engineering teams.
+
+roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
+symbols, call graphs, dependencies, architectural layers, and git history into
+a SQLite database in your repo's `.roam/` directory. The CLI exposes 190
+commands and 136 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
+can call to answer questions like "what else does this PR break", "what tests
+exercise this function", "is this clone of another implementation".
+
+100% local. No telemetry. No API keys. Apache 2.0.
+
+## Products
+
+- [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever.
+- [Roam Review](https://roam-code.com/#review) — $25/dev/mo. PR bot that posts a structural-risk verdict on every pull request.
+- [Roam Cloud](https://roam-code.com/#cloud) — $19/repo/mo. Hosted dashboard for code-health metrics over time. Source code never uploaded.
+- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — from $15K/yr. The full Roam stack inside your own network.
+
+## Key links
+
+- Docs: redacted
+- GitHub: https://github.com/Cranot/roam-code
+- PyPI: https://pypi.org/project/roam-code/
+- Landing page: https://roam-code.com/
+- MCP server card: redacted.well-known/mcp-server-card.json
+
+## Compliance
+
+- EU AI Act Article 12 audit-trail support: every analysis emits in-toto v1 attestations and a chained audit-trail JSONL file.
+- Run `roam article-12-check` for a one-page readiness assessment.
+- License: Apache-2.0
+
+## Differentiation
+
+Roam reviews what code *touches* (callers, layers, dependency cycles, copy-paste
+duplicates). Other AI code reviewers (CodeRabbit, Greptile, Qodo) review what
+code *does* (semantics). Different layer; most teams use both. The CLI
+running entirely on the user's machine is load-bearing for trust after the
+August 2025 CodeRabbit RCE that exposed write access to ~1M repos.

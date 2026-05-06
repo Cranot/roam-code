@@ -3,149 +3,217 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Tells you when AI-generated changes are structurally risky</title>
-  <meta name="description" content="A local code-graph engine + a hosted dashboard + a PR bot. Indie devs run Roam free; engineering teams pay for the parts that protect production from AI-assisted changes.">
+  <title>Roam — Catches the AI-generated PRs that break production</title>
+  <meta name="description" content="Free open-source CLI that maps your codebase. Plus a PR bot, dashboard, and self-hosted option for teams. Catches what AI-generated changes break elsewhere — before merge.">
 
   <!-- Open Graph / Twitter -->
-  <meta property="og:title" content="Roam — Structural risk for AI-generated changes">
-  <meta property="og:description" content="Your team uses Claude, Cursor, Codex. Roam tells you when their changes are structurally risky — before you merge.">
+  <meta property="og:title" content="Roam — Catches the AI-generated PRs that break production">
+  <meta property="og:description" content="Your AI writes the code. Roam tells you what else it broke. Free open-source CLI plus paid PR bot, dashboard, and self-hosted tiers.">
   <meta property="og:type" content="website">
   <meta property="og:url" content="https://roam-code.com/">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta property="og:image:width" content="1200">
+  <meta property="og:image:height" content="630">
+  <meta property="og:image:alt" content="Roam — Catches the AI-generated PRs that break production">
   <meta name="twitter:card" content="summary_large_image">
-  <meta name="twitter:title" content="Roam — Structural risk for AI-generated changes">
-  <meta name="twitter:description" content="Your team uses Claude, Cursor, Codex. Roam tells you when their changes are structurally risky.">
+  <meta name="twitter:title" content="Roam — Catches the AI-generated PRs that break production">
+  <meta name="twitter:description" content="Your AI writes the code. Roam tells you what else it broke.">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
 
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-  <link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Space+Grotesk:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="canonical" href="https://roam-code.com/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+
+  <!-- Self-hosted fonts: see /fonts/ directory; falls back to system fonts if not yet present -->
   <link rel="stylesheet" href="./landing.css">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "SoftwareApplication",
+    "name": "roam-code",
+    "applicationCategory": "DeveloperApplication",
+    "operatingSystem": "Linux, macOS, Windows",
+    "description": "Code-graph engine and MCP server that gives AI coding agents structural awareness of a codebase before they edit it. Free CLI plus paid PR bot, dashboard, and self-hosted tiers.",
+    "url": "https://roam-code.com/",
+    "downloadUrl": "https://pypi.org/project/roam-code/",
+    "softwareVersion": "12.42",
+    "license": "https://www.apache.org/licenses/LICENSE-2.0",
+    "offers": [
+      {"@type": "Offer", "name": "CLI", "price": "0", "priceCurrency": "USD"},
+      {"@type": "Offer", "name": "Roam Review", "price": "25", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "25", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "developer per month"}},
+      {"@type": "Offer", "name": "Roam Cloud", "price": "19", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "19", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "repository per month"}},
+      {"@type": "Offer", "name": "Roam Self-Hosted", "price": "15000", "priceCurrency": "USD", "priceSpecification": {"@type": "UnitPriceSpecification", "price": "15000", "priceCurrency": "USD", "billingIncrement": "1", "unitText": "year"}}
+    ],
+    "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"}
+  }
+  </script>
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "FAQPage",
+    "mainEntity": [
+      {"@type": "Question", "name": "How is Roam different from CodeRabbit, Greptile, and Qodo?", "acceptedAnswer": {"@type": "Answer", "text": "They review what the code does. Roam reviews what the code touches. Different layer, different findings. Most teams keep their existing reviewer and add Roam alongside it. Two extras: the CLI runs entirely on your machine, and every analysis emits an EU AI Act Article 12 audit-trail entry."}},
+      {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0. Free for individuals, teams, and companies of any size. We charge for the hosted PR bot, the dashboard, and the self-hosted bundle, not the local engine."}},
+      {"@type": "Question", "name": "What does 'EU AI Act Article 12 audit-trail support' mean?", "acceptedAnswer": {"@type": "Answer", "text": "Article 12 of the EU AI Act takes effect August 2, 2026 for high-risk AI systems. It requires automatic event logging. Roam emits in-toto attestations and a chained audit-trail JSONL on every analysis. We give you the evidence; the conformity assessment for your own system is still on you."}},
+      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs in our cloud (or yours, if you self-host)."}}
+    ]
+  }
+  </script>
 </head>
 <body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
 
   <nav class="site-nav" aria-label="Main navigation">
     <div class="nav-inner">
       <a href="./" class="site-logo">roam<span class="logo-dot">.</span></a>
       <ul class="nav-links">
+        <li><a href="#install">Free CLI</a></li>
         <li><a href="#review">Review</a></li>
         <li><a href="#cloud">Cloud</a></li>
         <li><a href="#self-hosted">Self-Hosted</a></li>
-        <li><a href="#audit">Audit</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
       </ul>
     </div>
   </nav>
 
+  <main id="main">
+
   <header class="hero">
     <div class="hero-inner">
-      <p class="eyebrow">Code intelligence for the agent era</p>
+      <p class="eyebrow">For teams using Cursor, Claude Code, and Copilot</p>
       <h1 class="hero-headline">
-        Your team uses <span class="hl-claude">Claude</span>, <span class="hl-cursor">Cursor</span>, <span class="hl-codex">Codex</span>.<br>
-        <strong>Roam tells you when AI-generated changes are structurally risky.</strong>
+        Your AI writes the code.<br>
+        <strong>Roam tells you what else it broke.</strong>
       </h1>
       <p class="hero-subhead">
-        A local code-graph engine, a hosted dashboard, and a PR bot.
-        Indie devs run Roam free. Engineering teams pay for the parts that protect production.
+        Free open-source CLI that maps every function, file, and dependency in your codebase.
+        Plus a PR bot, a dashboard, and a self-hosted option for teams that need them.
       </p>
       <div class="hero-ctas">
-        <a class="btn-primary popular-badge" href="#review"><strong>Roam Review</strong> — $25/dev/mo</a>
-        <a class="btn-secondary" href="#cloud">Roam Cloud — $19/repo/mo</a>
-        <a class="btn-secondary" href="#self-hosted">Self-Hosted — from $15K/yr</a>
+        <a class="btn-primary" href="#install">Install the free CLI</a>
+        <a class="btn-secondary" href="#what-you-get">See what's in it</a>
       </div>
       <p class="hero-trust-strip">
-        Apache 2.0 CLI · Source code never leaves your machine ·
-        <a href="#audit">EU AI Act Article 12 ready</a> · 30-day refund guarantee
+        Apache 2.0 · Runs entirely on your machine · 27 languages · No telemetry, no API keys
       </p>
     </div>
   </header>
 
-  <!-- The buyer-pain band — pulled directly from production incident reporting -->
-  <section class="pain-band">
-    <div class="pain-band-inner">
-      <p class="pain-quote">
-        <strong>"PocketOS lost prod DB + 3 months of backups in 9 seconds.
-        30-hour outage."</strong> — The Register, April 2026 (Cursor + Claude agent)
+  <!-- What you get for free — the complete-product view -->
+  <section class="whats-in" id="what-you-get">
+    <div class="whats-in-inner">
+      <h2>What's in the free CLI</h2>
+      <p class="lede">
+        Install once. Works on any Git repo. Indexes 100k LOC in seconds.
+        Asks the same questions a senior engineer would, before you merge.
       </p>
-      <p class="pain-quote">
-        <strong>Amazon March 2026:</strong> 6.3M lost orders in one outage,
-        traced to AI-assisted code. SVP Treadwell memo now mandates senior-engineer
-        signoff on agent changes.
+      <div class="numbers-grid">
+        <div class="num-cell"><strong>190</strong><span>CLI commands</span></div>
+        <div class="num-cell"><strong>136</strong><span>MCP tools for AI agents</span></div>
+        <div class="num-cell"><strong>27</strong><span>languages</span></div>
+        <div class="num-cell"><strong>2,489+</strong><span>community rules</span></div>
+        <div class="num-cell"><strong>54</strong><span>code-quality checks</span></div>
+        <div class="num-cell"><strong>0 KB</strong><span>data sent anywhere</span></div>
+      </div>
+      <p class="install-cmd" id="install">
+        <code>pip install roam-code &amp;&amp; roam init</code>
       </p>
-      <p class="pain-quote">
-        <strong>DORA 2025 (22,000 devs):</strong> AI adoption correlates with
-        bugs/dev <strong>+54%</strong> and incidents/PR <strong>+242.7%</strong>.
+      <p class="install-note">
+        Five verbs cover most of what you'll do day-to-day:
+        <code>understand</code>, <code>retrieve</code>, <code>context</code>, <code>preflight</code>, <code>critique</code>.
+        The other 185 commands are there when you need them.
       </p>
     </div>
   </section>
 
-  <!-- Product cards -->
+  <!-- The buyer-pain band — production incidents from public reporting -->
+  <section class="pain-band">
+    <div class="pain-band-inner">
+      <h2 class="visually-hidden">Why this matters</h2>
+      <p class="pain-quote">
+        <strong>PocketOS:</strong> the production database and three months of backups, gone in nine seconds.
+        Thirty-hour outage. The AI agent was confident.
+        <span class="pain-source">— <a href="https://www.theregister.com/2026/04/27/cursoropus_agent_snuffs_out_pocketos/">The Register, April 2026</a></span>
+      </p>
+      <p class="pain-quote">
+        <strong>Amazon, March 2026:</strong> 6.3 million orders lost in a single outage traced to AI-assisted code.
+        SVP Treadwell now requires senior-engineer signoff on every agent-generated change.
+        <span class="pain-source">— per <a href="https://www.cnbc.com/2026/03/10/amazon-plans-deep-dive-internal-meeting-address-ai-related-outages.html">CNBC, March 2026</a></span>
+      </p>
+      <p class="pain-quote">
+        <strong>Faros AI 2026 (22,000 developers):</strong>
+        teams adopting AI saw bugs per developer rise <strong>+54%</strong> and incidents per PR rise <strong>+242.7%</strong>.
+        Speed went up. So did the cleanup.
+        <span class="pain-source">— <a href="https://www.faros.ai/blog/key-takeaways-from-the-dora-report-2025">Faros AI, 2026 telemetry analysis</a></span>
+      </p>
+    </div>
+  </section>
+
+  <!-- Paid product cards -->
+  <section class="products-intro">
+    <div class="products-intro-inner">
+      <h2>For teams: three paid options</h2>
+      <p class="lede">
+        The free CLI is the engine. These are the places teams pay so the engine
+        runs in the right places — on every PR, in a shared dashboard, or inside
+        your own network.
+      </p>
+    </div>
+  </section>
+
   <section class="products" id="review">
-    <div class="product-card popular">
-      <div class="badge">MOST POPULAR</div>
-      <h2>Roam Review</h2>
-      <p class="tagline">Structural-risk verdict on every PR. The PR bot.</p>
+    <div class="product-card">
+      <h3>Roam Review</h3>
+      <p class="tagline">A second opinion on every pull request.</p>
       <ul class="features">
-        <li>Verdict-first comment: BLOCK / REVIEW / APPROVE</li>
-        <li>Inline severity + confidence + one-click suggested-fix</li>
-        <li>Blast-radius header: dependents, runtime hotspots, test gaps</li>
-        <li>Clones-not-edited detector — Roam-unique vs all 4 competitors</li>
-        <li><code>/roam re-review</code>, <code>/roam explain &lt;file&gt;</code> slash commands</li>
-        <li>GitHub Marketplace, two-click install</li>
+        <li>Plain verdict on every PR: <strong>BLOCK</strong>, <strong>REVIEW</strong>, or <strong>APPROVE</strong></li>
+        <li>Lists everything else the change touches — callers, tests, runtime hot spots</li>
+        <li>Catches when AI copied a function and only updated one of the copies</li>
+        <li>Inline severity, confidence score, and a one-click suggested fix</li>
+        <li><code>/roam re-review</code> and <code>/roam explain &lt;file&gt;</code> slash commands</li>
+        <li>Two-click install from GitHub Marketplace</li>
       </ul>
       <div class="price">
         <span class="price-amount">$25<span class="price-unit">/dev/mo</span></span>
-        <span class="price-note">Annual · Free for OSS forever · 14-day Pro+ trial</span>
+        <span class="price-note">Annual · Free for open-source forever · 14-day Pro+ trial</span>
       </div>
-      <a class="btn-primary" href="#waitlist-review">Join waitlist · GitHub Marketplace launch</a>
+      <a class="btn-primary" href="#waitlist-review">Get early access</a>
     </div>
 
     <div class="product-card" id="cloud">
-      <h2>Roam Cloud</h2>
-      <p class="tagline">Hosted metrics + history dashboard. <strong>No source code upload.</strong></p>
+      <h3>Roam Cloud</h3>
+      <p class="tagline">A dashboard for your code health over time. <strong>We never see your source.</strong></p>
       <ul class="features">
-        <li>Health + debt + complexity over time</li>
-        <li>Per-team / per-repo trend charts</li>
-        <li>Article 12 audit-trail browser (paid tier)</li>
-        <li>"Audit log for whatever AI tool you use"</li>
+        <li>Health, debt, and complexity tracked across every commit</li>
+        <li>Per-team and per-repo trend charts</li>
+        <li>One audit log across Cursor, Copilot, Claude Code, and Codex</li>
+        <li>Article 12 audit-trail browser (paid tiers)</li>
         <li>Stripe self-serve, no sales call</li>
       </ul>
       <div class="price">
         <span class="price-amount">$19<span class="price-unit">/repo/mo</span></span>
-        <span class="price-note">$99/mo Team (10 repos) · $299/mo Growth · 30-day refund</span>
+        <span class="price-note">$99/mo Team (10 repos) · $299/mo Growth · 30-day money back</span>
       </div>
-      <a class="btn-secondary" href="#waitlist-cloud">Join waitlist · Self-serve launch</a>
+      <a class="btn-secondary" href="#waitlist-cloud">Get early access</a>
     </div>
 
     <div class="product-card" id="self-hosted">
-      <h2>Roam Self-Hosted</h2>
-      <p class="tagline">Air-gapped deployment for security-conscious teams.</p>
+      <h3>Roam Self-Hosted</h3>
+      <p class="tagline">Roam running entirely inside your network.</p>
       <ul class="features">
-        <li>Full Roam + Cloud Lite + Audit Trail in your cluster</li>
-        <li>SSO/SAML + audit logs + custom rules</li>
-        <li>ISO 42001 + SOC 2 mapping</li>
-        <li>EU AI Act Article 12-by-design</li>
+        <li>The full Roam stack — Review, Cloud, Audit Trail — in your cluster</li>
+        <li>SSO/SAML, audit logs, custom rules</li>
+        <li>Maps cleanly to ISO 42001 and SOC 2 controls</li>
+        <li>EU AI Act Article 12 conformity pack included</li>
         <li>SLA, dedicated support, conformity-assessment-ready</li>
       </ul>
       <div class="price">
         <span class="price-amount">from $15K<span class="price-unit">/yr</span></span>
-        <span class="price-note">$25K Business · $50K-$100K Enterprise · regulated buyers</span>
+        <span class="price-note">$25K Business · $50K-$100K Enterprise · for regulated buyers</span>
       </div>
-      <a class="btn-secondary" href="#contact-self-hosted">Talk to us</a>
-    </div>
-  </section>
-
-  <!-- Audit upsell callout -->
-  <section class="audit-upsell" id="audit">
-    <div class="audit-upsell-inner">
-      <h2>Need white-glove setup?</h2>
-      <p>
-        Our <strong>AI Agent Readiness Audit</strong> walks your team through
-        Roam adoption, threat modelling for AI-assisted changes, and EU AI Act
-        Article 12 conformity preparation. Three tiers ($1.8K / $4.5K / $12K)
-        depending on team size and depth.
-      </p>
-      <p class="audit-list-toggle">
-        <a href="#audit-detail"><strong>See audit tiers →</strong></a>
-      </p>
+      <a class="btn-secondary" href="#contact-self-hosted">Book a 30-min call</a>
     </div>
   </section>
 
@@ -153,86 +221,120 @@
   <section class="trust-strip">
     <div class="trust-strip-inner">
       <div class="trust-cell">
-        <strong>Apache 2.0 CLI</strong>
-        <span>Always free. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
+        <strong>Apache 2.0</strong>
+        <span>Free forever. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
       </div>
       <div class="trust-cell">
-        <strong>100% local analysis</strong>
-        <span>Source code never leaves your machine. Post-CodeRabbit-RCE trust play.</span>
+        <strong>The CLI never phones home</strong>
+        <span>No telemetry, no analytics, no API keys. After the August 2025 <a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">CodeRabbit RCE</a>, that's not a feature — it's the floor.</span>
       </div>
       <div class="trust-cell">
         <strong>27 languages</strong>
         <span>Python · TypeScript · PHP · Go · Rust · Java · C# · Kotlin · Scala · SQL · 17 more</span>
       </div>
       <div class="trust-cell">
-        <strong>54 algorithm detectors</strong>
-        <span>69% with structured matched_patterns explainability</span>
+        <strong>54 code-quality checks</strong>
+        <span>Every finding shows you exactly the patterns it matched.</span>
       </div>
     </div>
   </section>
 
-  <!-- FAQ teaser -->
+  <!-- FAQ -->
   <section class="faq">
     <div class="faq-inner">
-      <h2>FAQ (short)</h2>
+      <h2>Common questions</h2>
       <details>
-        <summary>How is Roam different from CodeRabbit / Greptile / Qodo?</summary>
+        <summary>How is Roam different from CodeRabbit, Greptile, or Qodo?</summary>
         <p>
-          Three things: (1) <strong>deterministic structural depth</strong>
-          via PageRank + Tarjan SCC + Louvain coupling — they ship lighter
-          graph reasoning. (2) <strong>100% local CLI</strong> — your code
-          never leaves your machine. (3) <strong>EU AI Act Article 12 audit
-          trail</strong> built in. CodeRabbit's August 2025 RCE shipped
-          write access to ~1M repos; we don't pull your code into our cloud.
+          They review what the code <em>does</em> — semantics. Roam reviews what
+          the code <em>touches</em> — structure: callers, layers, dependency
+          cycles, copy-paste duplicates. Different layer, different findings.
+          Most teams keep their existing reviewer and add Roam alongside it.
         </p>
-      </details>
-      <details>
-        <summary>Why does pricing start at $25/dev/mo when CodeRabbit is $24?</summary>
         <p>
-          Category floor for Team tier (Greptile $30, Snyk $25, Codacy $18).
-          We sit one tier above the floor because the analysis depth is
-          measurably higher. We'll publish the head-to-head precision
-          benchmark on AI-shaped diffs alongside Marketplace launch.
-        </p>
-      </details>
-      <details>
-        <summary>What does "EU AI Act Article 12 ready" mean?</summary>
-        <p>
-          Article 12 takes effect August 2, 2026 for high-risk AI systems
-          and requires automatic event logging built into the system.
-          Penalties: €15M or 3% of global turnover. Roam emits in-toto
-          v1 attestations + chained audit-trail JSONL on every PR-analyze
-          run. Self-Hosted ships an Article-12-by-design conformity pack.
-          Run <code>roam article-12-check</code> on your repo for a
-          1-page readiness assessment.
+          Two extras most teams care about:
+          (1) the CLI runs entirely on your machine — no PR diff is uploaded
+          anywhere from local use, and
+          (2) every analysis emits an EU AI Act Article 12 audit-trail entry.
         </p>
       </details>
       <details>
         <summary>Will the CLI stay free?</summary>
         <p>
-          Yes. Forever. Apache 2.0. The CLI is the top of every funnel
-          and the trust foundation. We monetize the hosted layers (Cloud,
-          Review, Audit Trail) and the enterprise distribution
-          (Self-Hosted), not the local engine.
+          Yes. Forever. Apache 2.0. Free for individuals, teams, and companies
+          of any size. We charge for the hosted PR bot, the dashboard, and the
+          self-hosted bundle — not the local engine.
+        </p>
+      </details>
+      <details>
+        <summary>What does "EU AI Act Article 12 audit-trail support" mean?</summary>
+        <p>
+          Article 12 of the EU AI Act
+          (<a href="https://artificialintelligenceact.eu/article/12/">text here</a>)
+          takes effect August 2, 2026 for high-risk AI systems. It requires
+          automatic event logging built into the system, with penalties up to
+          €15M or 3% of global turnover.
+        </p>
+        <p>
+          Roam emits in-toto attestations and a chained audit-trail JSONL
+          file on every analysis. We give you the evidence a conformity
+          assessment will ask for. Your own conformity assessment is still on
+          you. Run <code>roam article-12-check</code> on your repo for a
+          one-page readiness assessment.
+        </p>
+      </details>
+      <details>
+        <summary>Does any of my source code leave my machine?</summary>
+        <p>
+          From the CLI: no. It runs locally and only writes a SQLite file
+          inside your repo's <code>.roam/</code> directory.
+        </p>
+        <p>
+          From <strong>Roam Cloud</strong>: metrics only — health scores,
+          complexity numbers, dependency counts. Never source code.
+        </p>
+        <p>
+          From <strong>Roam Review</strong>: the PR diff is processed in our
+          cloud (or yours, if you self-host). Same scope as any other PR-bot
+          product. The CodeRabbit August 2025 RCE
+          (<a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">Kudelski writeup</a>)
+          is a useful reminder: ask any PR-bot vendor what's in their threat
+          model.
         </p>
       </details>
     </div>
   </section>
 
+  <!-- Audit upsell — moved to end, after FAQ, as the soft on-ramp -->
+  <section class="audit-upsell" id="audit">
+    <div class="audit-upsell-inner">
+      <h2>Want us to roll this out for you?</h2>
+      <p>
+        Our <strong>AI Agent Readiness Audit</strong> walks your team through
+        Roam adoption, threat-modelling for AI-assisted changes, and EU AI Act
+        Article 12 readiness. Three tiers ($1.8K / $4.5K / $12K) depending on
+        team size and depth. Email
+        <a href="mailto:hello@roam-code.com?subject=Audit%20enquiry">hello@roam-code.com</a>.
+      </p>
+    </div>
+  </section>
+
+  </main>
+
   <footer>
     <div class="footer-inner">
-      <div>
-        <strong>Roam</strong> · Code intelligence for the agent era
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
       </div>
-      <div>
+      <div class="footer-col">
         <a href="https://github.com/Cranot/roam-code">GitHub</a> ·
         <a href="https://pypi.org/project/roam-code/">PyPI</a> ·
         <a href="redacted">Docs</a>
       </div>
-      <div>
-        <a href="#privacy">Privacy</a> ·
-        <a href="#terms">Terms</a> ·
-        <a href="#refund">30-day refund</a>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a> ·
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
       </div>
     </div>
   </footer>
