@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.44] - 2026-05-07
+
+### CI fix — register R5's two new detectors in the catalog
+
+Hotfix after 12.43. The two new async detectors added in R5
+(async-fire-and-forget-task, async-nested-run) were registered in
+the detector dispatch table but missing from the catalog/tasks.py
+CATALOG dict. test_math.py::test_detector_registry_covers_catalog
+caught the mismatch on all 5 Python versions.
+
+Adds full catalog entries for both new tasks: name, category, kind,
+and the two-way ranked-solutions list that the rest of the algo
+infrastructure expects. Bumps test_math.py's expected-task count
+32 -> 34. No behavior change to the detectors themselves.
+
 ## [12.43] - 2026-05-07
 
 ### Major: Capability Registry + 4 new commands + landing-page launch
