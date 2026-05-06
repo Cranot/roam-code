@@ -208,6 +208,22 @@ def _section_drift_banner(drift: dict) -> list[str]:
     if prev_ts:
         prev_v = drift.get("previous_verdict") or "?"
         out.append(f"> _Previous: {prev_v} at {prev_ts}._")
+
+    # B6 (C.1.ll) — per-rule drift surfaces "new rule fired this PR"
+    # vs "existing rule's violation count grew" as distinct narratives.
+    first_seen = drift.get("rules_first_seen") or []
+    resolved = drift.get("rules_resolved_entirely") or []
+    rule_changes = drift.get("rule_count_changes") or []
+    if first_seen:
+        rule_list = ", ".join(f"`{r}`" for r in first_seen[:5])
+        more = f" (+{len(first_seen) - 5} more)" if len(first_seen) > 5 else ""
+        out.append(f"> _Rules first seen this PR: {rule_list}{more}._")
+    if resolved:
+        rule_list = ", ".join(f"`{r}`" for r in resolved[:5])
+        more = f" (+{len(resolved) - 5} more)" if len(resolved) > 5 else ""
+        out.append(f"> _Rules resolved entirely vs prev: {rule_list}{more}._")
+    for rc in rule_changes[:5]:
+        out.append(f"> _`{rc['rule_id']}`: {rc['before']} → {rc['after']} ({rc['delta']:+d})._")
     out.append("")
     return out
 

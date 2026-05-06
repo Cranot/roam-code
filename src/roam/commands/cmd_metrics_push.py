@@ -171,6 +171,11 @@ def _build_last_pr_block(last_pr_envelope: dict) -> dict:
     Folds in only summary numerics + verdict + primary language + timestamp.
     Computes ``age_days`` + ``stale`` (>7 days) so dashboards can grey
     stale entries without needing to compute age client-side.
+
+    A7 (C.1.ddd): if the saved envelope contains an ``audit_trail.conformance``
+    block (auto-attached when pr-analyze ran with --audit-trail), surface
+    the score so Cloud Lite Growth-tier dashboards can show compliance
+    posture alongside trends without a separate API call.
     """
     pr_summary = last_pr_envelope.get("summary") or {}
     ai_section = last_pr_envelope.get("ai_likelihood") or {}
@@ -192,6 +197,12 @@ def _build_last_pr_block(last_pr_envelope: dict) -> dict:
             block["stale"] = age_days > 7
         except (TypeError, ValueError):
             pass
+    # A7 — fold in the auto-attached Article 12 conformance score when present.
+    conf = (last_pr_envelope.get("audit_trail") or {}).get("conformance")
+    if conf:
+        block["conformance_score"] = conf.get("score")
+        block["conformance_checks_passed"] = conf.get("checks_passed")
+        block["conformance_checks_total"] = conf.get("checks_total")
     return block
 
 

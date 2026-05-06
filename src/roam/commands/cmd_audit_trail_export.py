@@ -245,6 +245,63 @@ def _build_integrity_summary(records: list[dict], path: Path) -> dict:
     }
 
 
+def _build_top_actors(records: list[dict], limit: int) -> list[dict]:
+    """Rank actors by BLOCK count first, total verdict count as tiebreaker.
+
+    Returns a list of ``{actor, total, block, review, safe, intentional, other}``
+    dicts truncated to ``limit``. Used by `--top-actors N`.
+    """
+    by_actor: dict[str, dict[str, int]] = {}
+    for r in records:
+        actor = r.get("actor") or "<unknown>"
+        verdict = (r.get("verdict") or "UNKNOWN").upper()
+        bucket = by_actor.setdefault(
+            actor,
+            {"actor": actor, "total": 0, "BLOCK": 0, "REVIEW": 0, "SAFE": 0, "INTENTIONAL": 0, "OTHER": 0},
+        )
+        slot = verdict if verdict in ("BLOCK", "REVIEW", "SAFE", "INTENTIONAL") else "OTHER"
+        bucket[slot] += 1
+        bucket["total"] += 1
+
+    ranked = sorted(by_actor.values(), key=lambda b: (-b["BLOCK"], -b["total"]))
+    return ranked[:limit] if limit > 0 else ranked
+
+
+def _render_top_actors_markdown(actors: list[dict], path: Path) -> str:
+    """Procurement-friendly hot list: who triggered the most BLOCKs."""
+    if not actors:
+        return f"_No audit-trail records in `{path}`._\n"
+    lines = [
+        f"# Top actors by BLOCK count — {path}",
+        "",
+        f"**Showing top {len(actors)} actor(s).**",
+        "",
+        "| Rank | Actor | BLOCK | REVIEW | SAFE | INTENTIONAL | Other | Total |",
+        "|---|---|---|---|---|---|---|---|",
+    ]
+    for i, a in enumerate(actors, 1):
+        lines.append(
+            f"| {i} | {a['actor']} | {a['BLOCK']} | {a['REVIEW']} | {a['SAFE']} | "
+            f"{a['INTENTIONAL']} | {a['OTHER']} | {a['total']} |"
+        )
+    lines.append("")
+    lines.append(
+        "_Ranked by BLOCK count first, total record count as tiebreaker. "
+        "Actors with no BLOCKs are sorted by total record count._"
+    )
+    return "\n".join(lines) + "\n"
+
+
+def _render_top_actors_csv(actors: list[dict]) -> str:
+    """Flat CSV: rank, actor, block, review, safe, intentional, other, total."""
+    buf = io.StringIO()
+    writer = csv.writer(buf)
+    writer.writerow(["rank", "actor", "block", "review", "safe", "intentional", "other", "total"])
+    for i, a in enumerate(actors, 1):
+        writer.writerow([i, a["actor"], a["BLOCK"], a["REVIEW"], a["SAFE"], a["INTENTIONAL"], a["OTHER"], a["total"]])
+    return buf.getvalue()
+
+
 def _render_aggregate_csv(agg: dict) -> str:
     """Flat CSV: dimension, key, verdict, count."""
     buf = io.StringIO()
@@ -310,6 +367,13 @@ def _render_aggregate_csv(agg: dict) -> str:
     is_flag=True,
     help="Append a closing AuditIntegritySummary record to the trail (locks the chain head + event count).",
 )
+@click.option(
+    "--top-actors",
+    "top_actors",
+    type=int,
+    default=0,
+    help="Render only the top N actors ranked by BLOCK count (and total). Procurement-friendly hot list.",
+)
 @click.pass_context
 def audit_trail_export(
     ctx,
@@ -321,6 +385,7 @@ def audit_trail_export(
     output_path: str | None,
     aggregate: bool,
     finalize: bool,
+    top_actors: int,
 ) -> None:
     """Export the audit trail for procurement / compliance review.
 
@@ -354,7 +419,16 @@ def audit_trail_export(
     filtered = _filter_records(records, since=since, until=until, verdict_filter=verdict_filter)
 
     aggregate_data: dict | None = None
-    if aggregate:
+    top_actors_data: list[dict] | None = None
+    if top_actors > 0:
+        top_actors_data = _build_top_actors(filtered, top_actors)
+        if fmt.lower() == "md":
+            rendered = _render_top_actors_markdown(top_actors_data, path)
+        elif fmt.lower() == "csv":
+            rendered = _render_top_actors_csv(top_actors_data)
+        else:
+            rendered = _json.dumps(top_actors_data, indent=2, default=str)
+    elif aggregate:
         aggregate_data = _aggregate_records(filtered)
         if fmt.lower() == "md":
             rendered = _render_aggregate_markdown(aggregate_data, path)
@@ -370,12 +444,18 @@ def audit_trail_export(
         else:
             rendered = _render_json(filtered)
 
+    if top_actors > 0:
+        verdict_text = f"top {len(top_actors_data or [])} actor(s) by BLOCK count"
+    elif aggregate:
+        verdict_text = f"aggregate over {len(filtered)} record(s)"
+    else:
+        verdict_text = f"{len(filtered)} record(s) exported"
+
     summary = {
-        "verdict": (
-            f"aggregate over {len(filtered)} record(s)" if aggregate else f"{len(filtered)} record(s) exported"
-        ),
+        "verdict": verdict_text,
         "format": fmt.lower(),
         "aggregate": aggregate,
+        "top_actors_limit": top_actors if top_actors > 0 else None,
         "input": str(path),
         "total_records": len(records),
         "filtered_records": len(filtered),
@@ -392,6 +472,8 @@ def audit_trail_export(
         envelope_payload = {"summary": summary, "content": rendered}
         if aggregate_data is not None:
             envelope_payload["aggregate"] = aggregate_data
+        if top_actors_data is not None:
+            envelope_payload["top_actors"] = top_actors_data
         click.echo(to_json(json_envelope("audit-trail-export", **envelope_payload)))
     elif output_path:
         click.echo(f"VERDICT: {summary['verdict']} -> {output_path}")

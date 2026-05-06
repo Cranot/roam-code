@@ -871,6 +871,25 @@ def test_cli_pr_analyze_batch_progress_emits_stderr(tmp_path, tiny_indexed, cli_
     assert "[1/2]" in result.output or "[2/2]" in result.output
 
 
+def test_cli_pr_analyze_batch_stream_jsonl(tmp_path, tiny_indexed, cli_runner):
+    """B4 — --stream-jsonl emits each per-file row as a JSONL line + summary at end."""
+    import json as _json
+
+    batch = tmp_path / "batch"
+    batch.mkdir()
+    (batch / "a.diff").write_text(_TRIVIAL_DIFF)
+    (batch / "b.diff").write_text(_TRIVIAL_DIFF)
+    result = invoke_cli(cli_runner, ["pr-analyze", "--batch", str(batch), "--stream-jsonl"])
+    assert result.exit_code == 0
+    # Output should contain JSON lines, not the table format
+    json_lines = [line for line in result.output.splitlines() if line.startswith("{")]
+    assert len(json_lines) >= 3  # 2 per-file rows + 1 summary
+    # Last line is the summary marker
+    last = _json.loads(json_lines[-1])
+    assert "_summary" in last
+    assert last["_summary"]["files_processed"] == 2
+
+
 def test_emit_batch_helper_processes_single_diff_directly(tmp_path):
     """Smoke-test the standalone _process_single_diff helper used by parallel mode."""
     from roam.commands.cmd_pr_analyze import _process_single_diff

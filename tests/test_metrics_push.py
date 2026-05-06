@@ -369,6 +369,36 @@ def test_load_last_pr_analysis_returns_none_on_corrupt(tmp_path, monkeypatch):
     assert _load_last_pr_analysis() == valid
 
 
+def test_payload_last_pr_block_includes_conformance_when_present():
+    """A7 — When the saved envelope has audit_trail.conformance, fold it in."""
+    from roam.commands.cmd_metrics_push import _build_last_pr_block
+
+    env = {
+        "summary": {"verdict": "REVIEW", "blast_radius": 50, "ai_likelihood": 60, "rule_violations": 1},
+        "ai_likelihood": {"primary_language": "python"},
+        "_meta": {"timestamp": "2026-05-06T12:00:00Z"},
+        "audit_trail": {"conformance": {"score": 83, "checks_passed": 5, "checks_total": 6}},
+    }
+    block = _build_last_pr_block(env)
+    assert block["conformance_score"] == 83
+    assert block["conformance_checks_passed"] == 5
+    assert block["conformance_checks_total"] == 6
+
+
+def test_payload_last_pr_block_omits_conformance_when_absent():
+    """A7 — When no audit_trail.conformance, conformance keys must NOT be present."""
+    from roam.commands.cmd_metrics_push import _build_last_pr_block
+
+    env = {
+        "summary": {"verdict": "SAFE"},
+        "ai_likelihood": {},
+        "_meta": {},
+    }
+    block = _build_last_pr_block(env)
+    assert "conformance_score" not in block
+    assert "conformance_checks_passed" not in block
+
+
 def test_payload_includes_last_pr_analysis_when_present():
     """When --include-pr-analysis is on, _build_payload folds in the summary."""
     from roam.commands.cmd_metrics_push import _build_payload
