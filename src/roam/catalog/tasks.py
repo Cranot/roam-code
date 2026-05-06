@@ -584,6 +584,52 @@ CATALOG: dict[str, dict] = {
             },
         ],
     },
+    "async-fire-and-forget-task": {
+        "name": "asyncio.create_task() whose return value is discarded",
+        "category": "concurrency",
+        "kind": "algorithm",
+        "ways": [
+            {
+                "id": "store-task-reference",
+                "name": "Store the task in a long-lived collection",
+                "time": "n/a",
+                "space": "O(N tasks)",
+                "rank": 1,
+                "tip": "Capture the task: `tasks.append(asyncio.create_task(coro()))` and `await asyncio.gather(*tasks)` later. Or `await asyncio.create_task(coro())` directly for fire-and-await.",
+            },
+            {
+                "id": "leaked-asyncio-task",
+                "name": "Leaked asyncio.create_task — gc may discard before completion",
+                "time": "n/a",
+                "space": "O(1) — task object eligible for gc",
+                "rank": 10,
+                "tip": "",
+            },
+        ],
+    },
+    "async-nested-run": {
+        "name": "asyncio.run() invoked inside an async function",
+        "category": "concurrency",
+        "kind": "algorithm",
+        "ways": [
+            {
+                "id": "await-the-coroutine",
+                "name": "await the coroutine directly",
+                "time": "non-blocking",
+                "space": "O(1)",
+                "rank": 1,
+                "tip": "Replace `asyncio.run(coro())` with `await coro()` — you're already inside an event loop.",
+            },
+            {
+                "id": "asyncio-run-in-async",
+                "name": "asyncio.run inside async — RuntimeError at runtime",
+                "time": "raises immediately",
+                "space": "n/a",
+                "rank": 10,
+                "tip": "",
+            },
+        ],
+    },
     "serial-await-loop": {
         "name": "Serial `await` inside loop (Promise.all opportunity)",
         "category": "concurrency",
