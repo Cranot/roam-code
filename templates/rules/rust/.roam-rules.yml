@@ -1,0 +1,110 @@
+# Rust starter rule pack for `roam pr-analyze`
+#
+# 12 rules covering the most common AI-generated-code anti-patterns in
+# Rust projects. Drop at `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
+# focus on Rust-specific failure modes (unwrap-in-prod, panic-instead-
+# of-error, unsafe blocks, hallucinated crates).
+#
+# Note: tree-sitter Rust treats `use foo::bar;` as an "import_from"
+# pattern; `panic!()` and `eprintln!()` are matched as function_call
+# even though they're macros. Custom rules can refine this.
+#
+# Validate before shipping:
+#   roam rules-validate templates/rules/rust/.roam-rules.yml --explain
+
+rules:
+  # ---- Production-quality enforcement ----
+
+  - id: rs-no-unwrap-in-prod
+    description: ".unwrap() panics on None/Err; use ? operator or expect() with context message instead."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*.unwrap"
+    severity: WARN
+
+  - id: rs-no-expect-without-context
+    description: "Avoid bare expect() in libraries; prefer Result with thiserror / anyhow context."
+    pattern: function_call
+    source_glob: "src/lib.rs"
+    forbidden_target_glob: "*.expect"
+    severity: WARN
+
+  - id: rs-no-panic
+    description: "panic!() in library code propagates badly; return Result<T, E> instead."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "panic"
+    severity: WARN
+
+  - id: rs-no-eprintln-in-prod
+    description: "eprintln!() in production code suggests forgotten debug output; use tracing / log instead."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "eprintln"
+    severity: WARN
+
+  # ---- Unsafe / dangerous APIs ----
+
+  - id: rs-no-mem-transmute
+    description: "std::mem::transmute is the most dangerous unsafe; almost always wrong."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "mem::transmute"
+    severity: BLOCK
+
+  - id: rs-no-process-exit
+    description: "std::process::exit() in library code kills the host process; return Result instead."
+    pattern: function_call
+    source_glob: "src/lib.rs"
+    forbidden_target_glob: "process::exit"
+    severity: BLOCK
+
+  - id: rs-no-std-process-command-untrusted
+    description: "std::process::Command requires careful argv handling; review for shell-injection."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "std::process::Command"
+    severity: WARN
+
+  # ---- Hallucinated crate imports ----
+
+  - id: rs-no-numbered-modules
+    description: "Numbered modules (foo_v2, util1) often signal LLM hallucinations."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*_v[0-9]*"
+    severity: WARN
+
+  - id: rs-no-helpers-helpers
+    description: "helpers::helpers and utils::utils paths are LLM placeholders."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*helpers::helpers*"
+    severity: WARN
+
+  # ---- Stale-code markers ----
+
+  - id: rs-no-deprecated-attribute
+    description: "#[deprecated] on new code is a code smell — remove the function or remove the attribute."
+    pattern: decorator_use
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "deprecated"
+    severity: WARN
+
+  - id: rs-no-allow-everything
+    description: "#[allow(...)] silences lints — keep narrow; never #[allow(warnings)] in shipped code."
+    pattern: decorator_use
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "allow"
+    severity: WARN
+
+  # ---- Architecture / layer violations ----
+
+  - id: rs-no-test-imports-in-prod
+    description: "Production code must not import from #[cfg(test)] modules in other crates."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*::test_fixtures::*"
+    severity: BLOCK

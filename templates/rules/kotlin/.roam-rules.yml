@@ -1,0 +1,107 @@
+# Kotlin starter rule pack for `roam pr-analyze`
+#
+# 12 rules covering the most common AI-generated-code anti-patterns in
+# Kotlin projects (incl. Android + Spring Boot lanes). Drop at
+# `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
+# focus on Kotlin-specific failure modes (runBlocking in suspend code,
+# !! null-bang abuse, GlobalScope leaks, deprecated annotations).
+#
+# Validate before shipping:
+#   roam rules-validate templates/rules/kotlin/.roam-rules.yml --explain
+
+rules:
+  # ---- Coroutine / async anti-patterns ----
+
+  - id: kt-no-runblocking-in-suspend
+    description: "runBlocking inside suspend code defeats cooperative cancellation; restructure with coroutineScope { }."
+    pattern: function_call
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: runBlocking
+    severity: WARN
+
+  - id: kt-no-globalscope
+    description: "GlobalScope leaks — coroutines outlive the originating component. Use a structured scope (lifecycleScope, viewModelScope, CoroutineScope(Job()))."
+    pattern: function_call
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: GlobalScope.launch
+    severity: BLOCK
+
+  # ---- Dangerous APIs ----
+
+  - id: kt-no-system-exit-in-libs
+    description: "System.exit() inside library code kills the host process; throw an exception."
+    pattern: function_call
+    source_glob: "src/main/kotlin/**/*.kt"
+    forbidden_target_glob: "System.exit"
+    severity: BLOCK
+
+  - id: kt-no-runtime-exec
+    description: "Runtime.exec() bypasses argv quoting; use ProcessBuilder with a list."
+    pattern: function_call
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: "Runtime.getRuntime"
+    severity: BLOCK
+
+  - id: kt-no-printstacktrace
+    description: "e.printStackTrace() leaks exceptions to stderr; use a structured logger (slf4j / Timber)."
+    pattern: function_call
+    source_glob: "src/main/kotlin/**/*.kt"
+    forbidden_target_glob: "*.printStackTrace"
+    severity: WARN
+
+  - id: kt-no-md5
+    description: "MessageDigest.getInstance(MD5) is broken for security; use SHA-256+."
+    pattern: function_call
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: "MessageDigest.getInstance"
+    severity: WARN
+
+  # ---- Kotlin idiom enforcement ----
+
+  - id: kt-no-deprecated-annotation
+    description: "@Deprecated on new code is a code smell — remove or rename."
+    pattern: decorator_use
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: "Deprecated"
+    severity: WARN
+
+  - id: kt-no-experimental-api
+    description: "@OptIn(...ExperimentalApi::class) on shipped code locks you to a moving target."
+    pattern: decorator_use
+    source_glob: "src/main/kotlin/**/*.kt"
+    forbidden_target_glob: "OptIn"
+    severity: WARN
+
+  # ---- LLM hallucination patterns ----
+
+  - id: kt-no-numbered-packages
+    description: "Numbered packages (com.foo.v2, com.foo.utils2) signal LLM hallucinations."
+    pattern: import_from
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: "*.v[0-9]*.*"
+    severity: WARN
+
+  - id: kt-no-utils-utils
+    description: "com.x.utils.Utils and com.x.helpers.Helpers are LLM placeholders."
+    pattern: import_from
+    source_glob: "src/**/*.kt"
+    forbidden_target_glob: "*.{utils.Utils,helpers.Helpers}"
+    severity: WARN
+
+  # ---- Architecture / layer violations ----
+
+  - id: kt-no-android-context-in-data-layer
+    description: "Data layer must not hold android.content.Context — leaks Activity / breaks unit tests."
+    pattern: import_from
+    source_glob: "src/main/kotlin/**/data/**/*.kt"
+    forbidden_target_glob: "android.content.Context"
+    severity: BLOCK
+
+  - id: kt-no-test-imports-in-prod
+    description: "Production code must not import from src/test/."
+    pattern: import_from
+    source_glob: "src/main/kotlin/**/*.kt"
+    forbidden_target_glob: "*.test.fixtures.*"
+    severity: BLOCK
