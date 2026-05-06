@@ -236,7 +236,10 @@ First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are i
 
 - **Set up your AI agent:** `roam describe --write` (auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc. — see [integration instructions](#integration-with-ai-coding-tools))
 - **Explore:** `roam health` → `roam weather` → `roam map`
+- **Run the v2 stack on every PR:** `git diff | roam pr-analyze --explain` (gates AI-generated risk; pair with `roam pr-comment-render` for sticky GitHub comments — see [Roam Agent Review](#roam-agent-review-pr-bot-for-ai-generated-risk))
+- **First-touch demo:** `roam dogfood` (audit + pr-analyze + audit-trail + EU AI Act conformance in one envelope)
 - **Add to CI:** `roam init` already generated a GitHub Action
+- **Customer-facing artifacts:** see [`templates/`](templates/) — starter rule packs (Python / TypeScript / Go / Java / Kotlin / Rust at [`templates/rules/`](templates/rules/)), audit-report template ([`templates/audit-report/`](templates/audit-report/)), legal templates ([`templates/legal/`](templates/legal/)), v2 product specs ([`templates/products/`](templates/products/))
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>
@@ -1180,11 +1183,12 @@ Most "AI safety net" tools — CodeRabbit, Greptile, Qodo — review PR **semant
 git diff main..HEAD | roam pr-analyze --explain --with-reviewers --audit-trail
 roam pr-analyze main..HEAD --gate                      # exit 5 on BLOCK (CI gate)
 roam --json pr-analyze --input pr.diff | roam pr-comment-render   # ready-to-post markdown
-roam pr-analyze --batch ./diffs/                       # scan a directory of patches
+roam pr-analyze --batch ./diffs/ --cache --parallel 4  # 24-55x speedup on incremental re-runs
 roam audit-trail-verify                                # check SHA-256 chain integrity
+roam audit-trail-conformance-check --gate              # EU AI Act Article 12 score (CI)
 ```
 
-Six weighted heuristic signals score the diff for AI-likelihood (add/remove ratio, comment density, test coverage, function-size variance, generic naming, orphan imports), with **language-aware weights** for Python / TypeScript / JavaScript / Go / Rust / Java / Kotlin. Custom architecture rules go in `.roam/rules.yml`:
+**Nine weighted heuristic signals** score the diff for AI-likelihood: add/remove ratio, comment density, test coverage, function-size variance, generic naming, orphan imports, **placeholder density** (TODO/FIXME/NotImplementedError stubs), **LLM-phrase density** ("we use this approach because…"), **suspicious imports** (numbered modules, mass typing imports). Each carries **language-aware weights** across Python / TypeScript / JavaScript / Go / Rust / Java / Kotlin. Starter rule packs ship for Python, TypeScript, Go, and Java at [`templates/rules/`](templates/rules/) — drop one at `.roam/rules.yml` to enable. Custom rules look like:
 
 ```yaml
 rules:
