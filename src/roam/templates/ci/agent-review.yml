@@ -1,0 +1,103 @@
+# Roam Agent Review — drop-in GitHub Actions workflow.
+#
+# Place at .github/workflows/agent-review.yml in your repo. Runs roam
+# pr-analyze on every pull-request push, posts a sticky markdown comment,
+# and gates merge on BLOCK verdicts. EU AI Act Article 12 audit-trail is
+# emitted as a workflow artifact for procurement / compliance review.
+#
+# Customise the `--block-threshold`, `--language`, and rules path below
+# to match your team's policy. A starter `.roam/rules.yml` is shipped at
+# templates/examples/.roam-rules.yml.
+
+name: Roam Agent Review
+
+on:
+  pull_request:
+    types: [opened, synchronize, reopened]
+
+jobs:
+  agent-review:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: write   # post + edit the sticky comment
+    steps:
+      - name: Checkout PR
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history so pr-analyze can compute git stats
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install roam-code
+        run: |
+          python -m pip install --upgrade pip
+          pip install "roam-code[mcp]"
+
+      - name: Index repository
+        run: roam init
+
+      - name: Acquire PR diff
+        run: |
+          git fetch origin "${{ github.base_ref }}"
+          git diff "origin/${{ github.base_ref }}...HEAD" > pr.diff
+
+      - name: Run pr-analyze
+        id: analyze
+        run: |
+          mkdir -p .roam-artifacts
+          roam --json pr-analyze \
+            --input pr.diff \
+            --rules .roam/rules.yml \
+            --with-reviewers \
+            --audit-trail \
+            --save-baseline \
+            --intent "${{ github.event.pull_request.title }}" \
+            > .roam-artifacts/pr-analysis.json
+          # Extract verdict + scores for the step output
+          python -c "
+          import json
+          d = json.load(open('.roam-artifacts/pr-analysis.json'))
+          s = d.get('summary', {})
+          print(f'verdict={s.get(\"verdict\")}', file=open('analysis.env', 'w'))
+          " >> $GITHUB_OUTPUT
+        continue-on-error: true   # gate decision is enforced below, not here
+
+      - name: Render PR comment
+        run: |
+          roam pr-comment-render \
+            --input .roam-artifacts/pr-analysis.json \
+            --style github \
+            > .roam-artifacts/comment.md
+
+      - name: Verify audit-trail integrity
+        run: |
+          if [ -f .roam/audit-trail.jsonl ]; then
+            roam audit-trail-verify --gate
+            cp .roam/audit-trail.jsonl .roam-artifacts/
+          fi
+
+      - name: Post sticky PR comment
+        uses: marocchino/sticky-pull-request-comment@v2
+        with:
+          path: .roam-artifacts/comment.md
+          header: roam-agent-review
+
+      - name: Upload analysis artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: roam-agent-review
+          path: .roam-artifacts/
+          retention-days: 30
+
+      - name: Gate merge on BLOCK
+        run: |
+          VERDICT=$(python -c "import json; print(json.load(open('.roam-artifacts/pr-analysis.json'))['summary']['verdict'])")
+          if [ "$VERDICT" = "BLOCK" ]; then
+            echo "::error::Roam Agent Review verdict: BLOCK — see PR comment for findings."
+            exit 1
+          fi
+          echo "Roam Agent Review verdict: $VERDICT"
