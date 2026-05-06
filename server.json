@@ -2,12 +2,12 @@
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "io.github.cranot/roam-code",
     "description": "Architectural sight for AI agents before they edit. Local graph, 27 langs, no API keys.",
-    "version": "12.41",
+    "version": "12.42",
     "packages": [
         {
             "registryType": "pypi",
             "identifier": "roam-code",
-            "version": "12.41",
+            "version": "12.42",
             "runtimeHint": "python",
             "transport": {"type": "stdio"},
             "environmentVariables": [
