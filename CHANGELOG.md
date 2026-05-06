@@ -7,6 +7,122 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.43] - 2026-05-07
+
+### Major: Capability Registry + 4 new commands + landing-page launch
+
+This release lands redacted and bundles a
+substantial overnight push (5 web passes + 12 R-phases). Companion to
+the launch of the new commercial landing page at https://roam-code.com.
+
+### New commands (4)
+
+- **`roam capabilities`** — Decorator-driven introspection. Emits the
+  capability manifest as YAML / JSON / text from any command marked
+  with `@roam_capability`. Drives Roam Review GitHub App routing +
+  MCP filtering. redacted per
+  `build_priorities.md`.
+- **`roam skill-generate`** — Generate an agent-runtime skill manifest
+  from the capability registry. 4 emitter targets: `claude` (SKILL.md),
+  `cursor` (.mdc rule), `continue` (config snippet), `aider`
+  (.aiderrc). Closes GitHub issue #14; supersedes the static SKILL.md
+  approach from PR #15 with dynamic generation. `--ai-safe-only`
+  default filters to capabilities marked safe for autonomous agents.
+- **`roam compare`** — Structural delta between two indices. Symbols
+  added/removed/moved + per-file complexity deltas + IMPROVED /
+  SIDEWAYS / REGRESSED verdict. The "did this refactor actually
+  work?" tool. Useful for sprint-end measurement.
+- **`@roam_capability` decorator** (not a CLI command but a public API)
+  — applied to the 3 Phase 0 commands (permit, postmortem,
+  article-12-check). Mark new commands with this so the registry
+  stays in sync with the codebase.
+
+### New detectors (2)
+
+- **`async-fire-and-forget-task`** — `asyncio.create_task()` whose
+  return value is discarded. Counts total `create_task` calls,
+  subtracts stored ones (assignment, append, add, return, await),
+  reports the net leak. Python 3.11+ explicitly warns about this
+  footgun. High severity.
+- **`async-nested-run`** — `asyncio.run()` invoked inside an async
+  function. Raises RuntimeError at runtime (event loop already
+  running). Fix is to `await` the coroutine directly. High severity.
+
+### SARIF output enrichment
+
+- `automationDetails` block (id + guid + description) on each run for
+  GitHub Code Scanning re-ingest correlation.
+- `versionControlProvenance` populated from `git rev-parse` when
+  available (revisionId, branch, repositoryUri).
+- Driver metadata: `informationUri`, `downloadUri`, `organization`.
+- Suppressions support: reads `.roam/suppressions.json` (list or
+  envelope shape), stamps matching results with the SARIF
+  `suppressions` array — so CI gates can respect documented FPs.
+
+### Rule packs
+
+- Rust pack expanded from 12 → 30 rules (memory + concurrency +
+  error-handling + hygiene categories added).
+- Swift pack created from scratch — 25 rules covering force-unwrap,
+  retain cycles, main-thread blocking, SwiftUI state misuse, etc.
+
+### Documentation
+
+- New `docs/site/cookbook/README.md` — 10 high-value workflow recipes:
+  orient in a new codebase, audit a PR, set up a CI gate, find dead
+  code, generate Article 12 readiness, replay detectors against past
+  commits, wire roam into Claude Code, compare two indices, ship a
+  pre-commit verdict.
+- `(internal memo)` — captured May 2026 competitor
+  state (GitNexus 10K stars, Codebase-Memory 66 langs, Qodo 2.0
+  multi-agent, Greptile v4 82% bug catch, CodeRabbit Autofix). Drives
+  next-session prioritisation.
+
+### Landing page (https://roam-code.com)
+
+Major rework over 5 audit-and-fix passes after the domain went live
+on 2026-05-07:
+
+- 7-page site: home, /pricing, /compare, /docs, /privacy, /terms,
+  /refund. All under 10 KB Brotli per page.
+- Plain-language H1: "Your AI writes the code. Roam tells you what
+  else it broke."
+- "What's in the free CLI" section showing the complete product
+  (190+ commands, 136 MCP tools, 27 languages, real OSS adoption
+  numbers fetched from GitHub + pypistats).
+- "How it works" section with the MCP-server angle (your AI agent
+  talks to Roam, gets back graph-grounded answers).
+- "What Roam looks like in practice" — terminal demo + GitHub PR
+  comment mockup (HTML/CSS, no images).
+- Comparison table vs CodeRabbit / Greptile / Qodo / SonarQube,
+  with verified-against-vendor-pricing-pages methodology.
+- Pain band citing PocketOS / Amazon Treadwell / Faros AI 2026 /
+  Kudelski's CodeRabbit RCE writeup, with "Roam catches this class
+  of bug" tie-back lines.
+- Pre-MRR legal pages: GDPR-compliant Privacy, Terms with
+  limitation-of-liability + Greek governing law, Refund policy with
+  EU consumer-rights notice.
+- Self-hosted fonts (42 KB total, 86% reduction from prior cold-load).
+- Strict CSP with hash-allowlisted JSON-LD, COOP/CORP, HSTS preload.
+- Email contacts (hello@/security@) + .well-known/security.txt.
+
+### Surface counts
+
+- CLI commands: 190 → **193** (+ capabilities, skill-generate, compare)
+- Modules: 180 → 183
+- Detectors: 54 → 56 (+ async-fire-and-forget, async-nested-run)
+- Rule packs: 7 → 8 (+ Swift)
+- Tests added: 32 (capability 11 + sarif 7 + skill 7 + compare 7)
+- Documentation: + cookbook (10 recipes)
+
+### What was deferred to next session
+
+R4 (Dart Tier 1 extractor), R11 (migration-plan CLI), R13 (parallel
+parse for monorepos), R14 (LLM-augmented MCP tool), R15 (why-slow CLI
+via runtime traces), R16 (open-issues sweep), R18 (GraphQL bridge),
+R19 (incremental MCP hot-reload). Each documented in the project task
+list with notes on scope + risk.
+
 ## [12.42] - 2026-05-06
 
 ### CI fix — landscape.json self-row version stamp

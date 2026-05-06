@@ -1,6 +1,6 @@
-# Rust starter rule pack for `roam pr-analyze`
+# Rust rule pack for `roam pr-analyze`
 #
-# 12 rules covering the most common AI-generated-code anti-patterns in
+# 30 rules covering the most common AI-generated-code anti-patterns in
 # Rust projects. Drop at `.roam/rules.yml` in your repo root.
 #
 # Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
@@ -108,3 +108,137 @@ rules:
     source_glob: "src/**/*.rs"
     forbidden_target_glob: "*::test_fixtures::*"
     severity: BLOCK
+
+  # ---- Memory + ownership smells ----
+
+  - id: rs-no-clone-on-copy
+    description: ".clone() on a Copy type (i32, u64, bool, char, etc.) — wastes a function call. Just use the value."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*.clone"
+    severity: NOTE
+
+  - id: rs-no-leak-after-mem-replace
+    description: "std::mem::replace / take without binding the previous value usually drops it; review or use std::mem::swap."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "mem::replace"
+    severity: NOTE
+
+  - id: rs-no-box-leak-without-static
+    description: "Box::leak() returns a 'static reference — only use in lifetime-of-program contexts."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "Box::leak"
+    severity: WARN
+
+  - id: rs-no-arc-clone-misuse
+    description: "Arc::clone(&x) is the idiomatic clone of an Arc; x.clone() works but is less searchable."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "Arc.*clone"
+    severity: NOTE
+
+  # ---- Concurrency + async ----
+
+  - id: rs-no-blocking-in-async
+    description: "std::thread::sleep inside an async fn blocks the runtime; use tokio::time::sleep instead."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "thread::sleep"
+    severity: WARN
+
+  - id: rs-no-block-on-in-async
+    description: "tokio::Runtime::block_on inside an existing async context deadlocks."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "block_on"
+    severity: WARN
+
+  - id: rs-no-mutex-await-in-tokio
+    description: "std::sync::Mutex held across .await blocks the executor thread; use tokio::sync::Mutex."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "std::sync::Mutex"
+    severity: NOTE
+
+  - id: rs-no-spawn-without-name
+    description: "tokio::spawn with no instrumentation is hard to trace; consider spawn_named or tracing::instrument."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "tokio::spawn"
+    severity: NOTE
+
+  # ---- Error-handling discipline ----
+
+  - id: rs-no-todo-in-shipped-code
+    description: "todo!() and unimplemented!() panic at runtime; replace before merging to main."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "todo"
+    severity: BLOCK
+
+  - id: rs-no-unimplemented-in-shipped-code
+    description: "unimplemented!() panics at runtime; replace with concrete impl or return Err."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "unimplemented"
+    severity: BLOCK
+
+  - id: rs-no-unreachable-without-justification
+    description: "unreachable!() panics if reached; either prove invariant in types or return Err."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "unreachable"
+    severity: WARN
+
+  - id: rs-no-bare-string-error
+    description: "String errors lose context; prefer thiserror / anyhow with structured error types."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "Err::from_string"
+    severity: NOTE
+
+  # ---- Hygiene ----
+
+  - id: rs-no-dbg-macro
+    description: "dbg!() leaves debug output in production binaries; remove before shipping."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "dbg"
+    severity: WARN
+
+  - id: rs-no-println-in-lib
+    description: "println!() in library code dirties stdout for any caller; use log/tracing."
+    pattern: function_call
+    source_glob: "src/lib.rs"
+    forbidden_target_glob: "println"
+    severity: WARN
+
+  - id: rs-no-fixme-comments
+    description: "FIXME comments on shipped code mean unfinished work; convert to issues or finish the work."
+    pattern: function_call
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "FIXME"
+    severity: NOTE
+
+  - id: rs-no-test-only-imports-in-bin
+    description: "Binary targets should not import #[cfg(test)] helpers from the lib crate."
+    pattern: import_from
+    source_glob: "src/main.rs"
+    forbidden_target_glob: "*::test::*"
+    severity: WARN
+
+  - id: rs-no-public-internal-modules
+    description: "pub use of crate::internal::* exposes internals; review intent or hide behind a facade."
+    pattern: import_from
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*::internal::*"
+    severity: NOTE
+
+  - id: rs-no-feature-gated-cfg-misuse
+    description: "#[cfg(feature = \"_unstable\")] on shipped code suggests unfinished feature flags."
+    pattern: decorator_use
+    source_glob: "src/**/*.rs"
+    forbidden_target_glob: "*feature*=*_unstable*"
+    severity: NOTE

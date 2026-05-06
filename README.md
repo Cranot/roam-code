@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 185 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 188 specialised commands are advanced surface for specialised workflows.
 
-*190 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
+*193 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -274,7 +274,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 185 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **190 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 188 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **193 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -323,6 +323,9 @@ roam health
 | `roam audit-trail-export [--format md\|json\|csv] [--since T] [--verdict V] [--aggregate]` | Export the audit trail for procurement / compliance review; `--aggregate` rolls up per actor / repo / verdict / month |
 | `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against an EU AI Act Article 12 checklist (chain integrity, timestamps, actors, reproducibility, retention) |
 | `roam article-12-check [--output F] [--pdf F]` | EU AI Act Article 12 readiness assessment; 6-item checklist → 1-page Markdown / PDF report. Captures redacted (Aug 2 2026 deadline). |
+| `roam capabilities [--emit yaml\|json\|text] [--category X] [--ai-safe-only]` | Emit the decorator-driven capability registry — every command's machine-readable shape (inputs, outputs, ai_safe flag, since-version). For Roam Review GitHub App + MCP filtering. |
+| `roam skill-generate [--target claude\|cursor\|continue\|aider] [--output F]` | Generate an agent-runtime skill manifest from the capability registry. SKILL.md / .mdc / config snippets — derived from decorators, never hand-edited. |
+| `roam compare <baseline.db> <target.db> [--top N] [--threshold N]` | Structural delta between two indices: symbols added/removed/moved + per-file complexity deltas + IMPROVED/SIDEWAYS/REGRESSED verdict. The "did this refactor actually work?" tool. |
 | `roam permit [--staged] [--input F] [--symbol N]` | Structural-permission verdict facade for AI agents: ALLOW/REVIEW/BLOCK over critique + preflight + blast-radius. Exit codes 0/5/6 for Cursor rules / Claude Code hooks / pre-commit / CI gates. |
 | `roam postmortem <commit-range> [--limit N] [--show N]` | Replay current detectors against past commits; reports findings that would have surfaced pre-merge. The "would Roam have caught my Q1 incident?" demo. |
 | `roam rules-validate [PATH] [--against DIFF] [--strict] [--gate] [--explain]` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs; optional dry-run against a sample diff |

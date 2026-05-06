@@ -1,0 +1,205 @@
+# Swift rule pack for `roam pr-analyze`
+#
+# 25 rules covering the most common AI-generated-code anti-patterns in
+# Swift / SwiftUI projects. Drop at `.roam/rules.yml` in your repo root.
+#
+# Tuned against Cursor / Claude / Copilot output Q1-Q2 2026, with a
+# focus on Swift-specific failure modes (force-unwrap, retain cycles,
+# main-thread blocking, SwiftUI state misuse).
+#
+# Validate before shipping:
+#   roam rules-validate templates/rules/swift/.roam-rules.yml --explain
+
+rules:
+  # ---- Optionals + nil safety ----
+
+  - id: sw-no-force-unwrap
+    description: "! force-unwrap crashes on nil; use guard let / if let / nil-coalescing instead."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "*!"
+    severity: WARN
+
+  - id: sw-no-implicit-unwrap
+    description: "Implicitly unwrapped optionals (Type!) are nil-unsafe; prefer Type? with explicit unwrapping."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "*!*"
+    severity: NOTE
+
+  - id: sw-no-try-bang
+    description: "try! crashes on throw; use try? or do/catch."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "try!"
+    severity: WARN
+
+  - id: sw-no-as-bang
+    description: "as! crashes on type mismatch; use as? + guard."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "as!"
+    severity: WARN
+
+  # ---- Memory + retain cycles ----
+
+  - id: sw-no-strong-self-in-closure
+    description: "Capturing self strongly in escaping closures causes retain cycles; use [weak self] or [unowned self]."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "*self*"
+    severity: NOTE
+
+  - id: sw-no-unowned-without-justification
+    description: "[unowned self] crashes if self deallocates first; prefer [weak self] unless self lifetime is proven."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "[unowned*"
+    severity: NOTE
+
+  # ---- Concurrency ----
+
+  - id: sw-no-blocking-main-thread
+    description: "Synchronous I/O on main thread blocks the UI; use Task { } or DispatchQueue.global()."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "DispatchQueue.main.sync"
+    severity: BLOCK
+
+  - id: sw-no-task-detached-without-priority
+    description: "Task.detached without explicit priority bypasses parent context; use Task { } unless you really mean detached."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "Task.detached"
+    severity: NOTE
+
+  - id: sw-no-async-let-without-await
+    description: "async let without subsequent await stalls the task tree; await it or remove the binding."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "async let"
+    severity: NOTE
+
+  # ---- SwiftUI state ----
+
+  - id: sw-no-state-from-non-ui-context
+    description: "@State should only be read/written on the main actor; mark methods @MainActor."
+    pattern: decorator_use
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "State"
+    severity: NOTE
+
+  - id: sw-no-published-without-mainactor
+    description: "@Published properties touched off-main can crash; mark the wrapping ObservableObject @MainActor."
+    pattern: decorator_use
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "Published"
+    severity: NOTE
+
+  - id: sw-no-environmentobject-without-injection
+    description: "Reading @EnvironmentObject without an .environmentObject() injection traps at runtime."
+    pattern: decorator_use
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "EnvironmentObject"
+    severity: NOTE
+
+  # ---- Error handling ----
+
+  - id: sw-no-fatal-error-in-prod
+    description: "fatalError() crashes the app; throw or return nil instead."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "fatalError"
+    severity: WARN
+
+  - id: sw-no-precondition-failure
+    description: "preconditionFailure() crashes on invariant violation; consider Result<T, E> instead."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "preconditionFailure"
+    severity: WARN
+
+  - id: sw-no-empty-catch
+    description: "catch { } silently swallows errors; at minimum log them."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "catch{}"
+    severity: WARN
+
+  # ---- Stale-code markers ----
+
+  - id: sw-no-todo-comments-in-shipped
+    description: "// TODO comments on shipped code mean unfinished work."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "TODO"
+    severity: NOTE
+
+  - id: sw-no-fixme-in-shipped
+    description: "// FIXME on shipped code; convert to issue or fix."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "FIXME"
+    severity: NOTE
+
+  - id: sw-no-print-in-prod
+    description: "print() in production code dirties stdout; use OSLog / Logger."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "print"
+    severity: NOTE
+
+  # ---- Dangerous APIs ----
+
+  - id: sw-no-uikit-in-swiftui
+    description: "Importing UIKit in SwiftUI-only files often signals architectural drift."
+    pattern: import_from
+    source_glob: "Sources/**/*View.swift"
+    forbidden_target_glob: "UIKit"
+    severity: NOTE
+
+  - id: sw-no-objc-runtime-misuse
+    description: "objc_msgSend / @objc on Swift-only code paths often signals a bridging issue."
+    pattern: decorator_use
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "objc"
+    severity: NOTE
+
+  - id: sw-no-private-api
+    description: "Private Apple APIs (_UI*, NSPrivate*) cause App Store rejection; use public alternatives."
+    pattern: function_call
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "_UI*"
+    severity: BLOCK
+
+  # ---- Hallucinated framework imports ----
+
+  - id: sw-no-numbered-modules
+    description: "ModuleNameV2, FooKit2 imports often signal LLM hallucinations."
+    pattern: import_from
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "*V[0-9]*"
+    severity: WARN
+
+  - id: sw-no-deprecated-import
+    description: "import of deprecated frameworks (UIWebView, Address Book) — modernize."
+    pattern: import_from
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "UIWebView"
+    severity: BLOCK
+
+  # ---- Architecture / layer violations ----
+
+  - id: sw-no-test-imports-in-prod
+    description: "Production code must not import @testable XCTest helpers."
+    pattern: import_from
+    source_glob: "Sources/**/*.swift"
+    forbidden_target_glob: "@testable*"
+    severity: BLOCK
+
+  - id: sw-no-data-layer-imports-ui
+    description: "Data layer should not import SwiftUI / UIKit; signals leaked UI logic."
+    pattern: import_from
+    source_glob: "Sources/**/Data/**/*.swift"
+    forbidden_target_glob: "SwiftUI"
+    severity: WARN
