@@ -389,16 +389,6 @@ def _ambiguity_signals(conn: sqlite3.Connection, rows: list) -> dict:
     return {"ref": ref_map, "pr": pr_map, "cc": cc_map, "churn": churn_map}
 
 
-def _row_signals(row, signals) -> dict:
-    """Lift a row's importance signals out of the batch lookup."""
-    return {
-        "incoming_edges": signals["ref"].get(row["id"], 0),
-        "pagerank": round(signals["pr"].get(row["id"], 0) or 0, 4),
-        "cognitive_complexity": signals["cc"].get(row["id"], 0) or 0,
-        "file_churn": (signals["churn"].get(row["file_id"], 0) if "file_id" in row.keys() else 0),
-    }
-
-
 def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[dict | None, list[dict]]:
     """Find a symbol with disambiguation, returning the best plus alternatives.
 

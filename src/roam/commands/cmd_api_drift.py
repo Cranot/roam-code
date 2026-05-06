@@ -176,19 +176,6 @@ def _parse_ts_interfaces(source: str) -> dict[str, list[str]]:
     return result
 
 
-def _infer_ts_model_name(file_path: str) -> str:
-    """Get a normalized base name from a TypeScript file path.
-
-    E.g. 'src/types/models/order.ts' → 'Order'
-         'src/types/api/OrderResponse.ts' → 'OrderResponse'
-    """
-    stem = Path(file_path).stem
-    # PascalCase it if it starts lowercase (common for model type files)
-    if stem and stem[0].islower():
-        return stem[0].upper() + stem[1:]
-    return stem
-
-
 # ---------------------------------------------------------------------------
 # Model ↔ Interface matching
 # ---------------------------------------------------------------------------

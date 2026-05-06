@@ -13,7 +13,6 @@ import json
 import re
 import sys
 from pathlib import Path
-from typing import Iterable
 
 # Tools included in the landscape page (code intelligence tools only).
 # Agents, IDEs, context packagers, and structural-grep utilities are excluded.
@@ -1363,8 +1362,8 @@ MAP_METADATA: dict[str, dict[str, object]] = {
         "relationship": "self",
         "peer": True,
         "graph": "PageRank + Tarjan + Louvain + layers",
-        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 128 MCP tools, 178 CLI commands. 19 Python idiom detectors (v12.7+).",
-        "version_evaluated": "12.25",
+        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 187 CLI commands. 19 Python idiom detectors (v12.7+). 51 algo detectors (12.31).",
+        "version_evaluated": "12.31",
         "repo_url": "https://github.com/Cranot/roam-code",
     },
     "CKB/CodeMCP": {
@@ -1665,21 +1664,6 @@ def _parse_table_after_heading(lines: list[str], heading: str) -> tuple[list[str
     return headers, rows
 
 
-def _parse_table_after_any_heading(
-    lines: list[str],
-    headings: list[str],
-) -> tuple[str, list[str], list[dict[str, str]]]:
-    last_error: Exception | None = None
-    for heading in headings:
-        try:
-            headers, rows = _parse_table_after_heading(lines, heading)
-            return heading, headers, rows
-        except Exception as exc:  # pragma: no cover - defensive; exercised by fallback behavior
-            last_error = exc
-            continue
-    raise ValueError(f"None of the expected headings were found: {headings}") from last_error
-
-
 def _parse_yes(value: str) -> bool:
     cleaned = _strip_md(value).lower()
     return cleaned.startswith("yes")
@@ -1702,20 +1686,6 @@ def _normalize_category(raw_category: str, name: str) -> str:
     if "code search" in lowered or "code intel" in lowered:
         return "code_search"
     return "code_search"
-
-
-def _decision_entries(
-    rows: Iterable[dict[str, str]],
-    title_key: str,
-    detail_key: str,
-) -> list[dict[str, str]]:
-    entries: list[dict[str, str]] = []
-    for row in rows:
-        title = _strip_md(row.get(title_key, ""))
-        detail = _strip_md(row.get(detail_key, ""))
-        if title:
-            entries.append({"title": title, "detail": detail})
-    return entries
 
 
 def _parse_matrix_confidence(lines: list[str]) -> dict[str, dict[str, object]]:
