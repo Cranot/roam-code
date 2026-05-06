@@ -7,6 +7,43 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.37] - 2026-05-06
+
+### Bugfix release — `roam rules-validate --fix` write-back works without PyYAML (Python 3.9 CI red, seventh iteration)
+
+12.36 fixed the parser. 12.37 fixes the round-trip: `roam rules-validate
+--fix` rewrites `severity: block` → `severity: BLOCK` in memory, then
+calls `yaml.safe_dump` to write back. On Python 3.9 (no PyYAML) the
+import raised, the write-back was skipped, and the file stayed at
+`block` — failing `test_cli_fix_mode_writes_back_to_file` which
+asserts `'BLOCK' in file_contents`.
+
+### Bugfix
+
+- **`roam.rules.engine._emit_simple_yaml`** — minimal YAML emitter
+  for the `rules:` shape, matching `yaml.safe_dump(doc,
+  sort_keys=False)` output for the documented `{"rules": [{...}]}`
+  structure. Quotes scalars that contain YAML-special chars; emits
+  `null`/`true`/`false` for None/bool; preserves insertion order.
+- **`cmd_rules_validate.py`** — write-back fallback now uses
+  `_emit_simple_yaml` when `import yaml` raises ImportError, so
+  the round-trip works on every Python version.
+
+### Sweep status
+
+- 12.31 → CI red (3 stale assertions)
+- 12.32 → CI red (third stale assertion)
+- 12.33 → CI red (Python 3.9 fallback parser missing list-of-dicts)
+- 12.34 → CI red (Python 3.9 fallback parser too permissive)
+- 12.35 → CI red (Python 3.9 bracket check too aggressive)
+- 12.36 → CI red (Python 3.9 `--fix` write-back needed PyYAML)
+- 12.37 → expected green
+
+The pattern's been: every test that touches the parse OR emit YAML
+path on Python 3.9 surfaces a different missing capability in the
+fallback. Now we have parse + emit fully round-trippable without
+PyYAML for the documented rules.yml shape.
+
 ## [12.36] - 2026-05-06
 
 ### Bugfix release — bracket-balance check ignores quoted strings (Python 3.9 CI red, sixth iteration)
