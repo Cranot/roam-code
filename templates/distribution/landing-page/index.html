@@ -56,7 +56,7 @@
       {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0. Free for individuals, teams, and companies of any size. We charge for the hosted PR bot, the dashboard, and the self-hosted bundle, not the local engine."}},
       {"@type": "Question", "name": "What does 'EU AI Act Article 12 audit-trail support' mean?", "acceptedAnswer": {"@type": "Answer", "text": "Article 12 of the EU AI Act takes effect August 2, 2026 for high-risk AI systems. It requires automatic event logging. Roam writes a tamper-evident log file on every analysis, plus signed records (in-toto v1) you can verify with cosign. We give you the evidence; the conformity assessment for your own system is still on you."}},
       {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs in our cloud (or yours, if you self-host)."}},
-      {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports findings in SARIF 2.1.0 format, which GitHub Code Scanning, GitLab, and most CI platforms understand natively. Ready-to-drop GitHub Actions templates ship with the package. Exit code 5 on roam critique --gate fails the build on high-severity findings."}}
+      {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports findings in SARIF 2.1.0 format, which GitHub Code Scanning, GitLab, and most CI platforms understand natively. Ready-to-drop GitHub Actions templates ship with the package. roam critique returns exit code 5 on any high-severity finding so a CI step can gate on it."}}
     ]
   }
   </script>
@@ -163,7 +163,7 @@
         </li>
       </ol>
       <p class="how-it-works-foot">
-        Tested with Claude Code, Cursor, Windsurf, Codex CLI, Gemini CLI, Continue.
+        Tested with Claude Code, Cursor, Windsurf, VS Code, Codex CLI, Gemini CLI.
         Drops into any MCP-aware editor.
       </p>
     </div>
@@ -200,7 +200,7 @@
         Pipe a diff through <code>roam critique</code> and you get a verdict.
         BLOCK on high severity, REVIEW on medium, APPROVE on low. Plain output, exit codes for CI.
       </p>
-      <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique --gate</span>
+      <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique</span>
 <span class="t-line">VERDICT: BLOCK  (1 high, 3 medium, 0 low)</span>
 <span class="t-line">  reason: clones-not-edited (high)</span>
 <span class="t-line">         AI updated <span class="t-em">src/api/users.py:create_user</span> but left</span>
@@ -385,9 +385,8 @@
           Yes. <code>roam --sarif health</code> exports findings in the SARIF
           2.1.0 format, which GitHub Code Scanning, GitLab, and most CI
           platforms understand natively. Ready-to-drop GitHub Actions
-          templates ship with the package. Exit code 5 on
-          <code>roam critique --gate</code> fails the build on high-severity
-          findings.
+          templates ship with the package. <code>roam critique</code> returns
+          exit code 5 on any high-severity finding so a CI step can gate on it.
         </p>
       </details>
     </div>
