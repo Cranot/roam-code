@@ -10,7 +10,7 @@
       "stars": "286",
       "mcp": "136",
       "local": true,
-      "cli_commands": "187 canonical (+7 alias)",
+      "cli_commands": "190 canonical (+7 alias)",
       "graph": "PageRank + Tarjan + Louvain + layers",
       "arch": 92,
       "agent": 97,
@@ -443,12 +443,12 @@
       "status": "Graph-first code intelligence CLI + MCP server",
       "relationship": "self",
       "peer": true,
-      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 187 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.39).",
+      "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 190 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.40). Phase 0 monetization commands: permit / postmortem / article-12-check.",
       "confidence": "Medium",
       "source_count": 1,
       "last_verified": "2026-02-27",
       "claim_type": "measured",
-      "version_evaluated": "12.39",
+      "version_evaluated": "12.40",
       "repo_url": "https://github.com/Cranot/roam-code"
     },
     {

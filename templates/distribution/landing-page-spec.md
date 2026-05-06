@@ -2,7 +2,8 @@
 
 Implementation-ready copy + structure. Built privately during Phase 1, deployed at Phase 3 launch.
 
-**Target domain**: `roam.consulting` (single umbrella) — products live at `/cloud`, `/review`, `/self-hosted`, audit at `/audit`.
+**Target domain (recommended primary)**: `roam.review` — purpose-signaling TLD, 5 chars before the dot, costs ~$30-100/yr. Products at `/`, `/cloud`, `/audit`, `/self-hosted`.
+**Backup domains** (claim what's available): `roamreview.com`, `roam.cloud`, `roamaudit.com`. The v1 doc had `roam.consulting`; that works as an umbrella but is services-y. The v2 plan repositioned audit as the upsell ladder, not the primary product, so `roam.review` (or `roam.cloud`) is the cleaner umbrella.
 **Target stack**: HTML/CSS following `docs/site/` pattern OR a quick builder (Webflow / Carrd / Astro). Copy is the same either way. Page weight under 200 KB.
 
 ## v2 vs v1 — what changed
