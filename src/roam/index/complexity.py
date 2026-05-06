@@ -28,20 +28,13 @@ _CONTROL_FLOW = {
     "with_statement",
     "match_statement",
     # JS/TS
-    "if_statement",
-    "for_statement",
     "for_in_statement",
-    "while_statement",
     "do_statement",
     "switch_statement",
-    "try_statement",
     "catch_clause",
     # Java/C#/Go/Rust
-    "for_statement",
     "enhanced_for_statement",
     "foreach_statement",
-    "while_statement",
-    "do_statement",
     "if_expression",
     "match_expression",
     # General

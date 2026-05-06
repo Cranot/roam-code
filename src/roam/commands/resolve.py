@@ -414,12 +414,14 @@ def find_symbol_with_alternatives(conn: sqlite3.Connection, name: str) -> tuple[
 
         signals = _ambiguity_signals(conn, rows)
 
-        def _score(r):
+        # Bind `signals` as default so the closure captures THIS iteration's
+        # value (avoids the late-binding-loop closure pitfall flagged by B023).
+        def _score(r, _sig=signals):
             return (
-                signals["ref"].get(r["id"], 0),
-                signals["pr"].get(r["id"], 0),
-                signals["cc"].get(r["id"], 0),
-                signals["churn"].get(r["file_id"], 0) if "file_id" in r.keys() else 0,
+                _sig["ref"].get(r["id"], 0),
+                _sig["pr"].get(r["id"], 0),
+                _sig["cc"].get(r["id"], 0),
+                _sig["churn"].get(r["file_id"], 0) if "file_id" in r.keys() else 0,
                 _path_rank(r["file_path"]),
                 -r["id"],
             )
