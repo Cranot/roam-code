@@ -375,3 +375,108 @@ def test_render_github_markdown_includes_signal_explanations():
     assert "42%" in md
     assert "4 of 6" in md
     assert "3 added import" in md
+
+
+# ---- D6: 5-line context lines surfaced in concerns + violations ----
+
+
+def test_section_concerns_renders_context_lines_as_fenced_code():
+    rationale = {
+        "summary_text": "",
+        "concerns": [
+            {
+                "concern": "rule violation",
+                "evidence": "Triggered: x.",
+                "context_lines": [
+                    "import dangerous_module as dm",
+                    "x = dm.bad_call()",
+                    "    print(x)",
+                ],
+            }
+        ],
+        "next_steps": [],
+    }
+    md = _render_github_markdown(_envelope(rationale=rationale), include_links=False)
+    assert "```" in md
+    assert "x = dm.bad_call()" in md
+
+
+def test_section_concerns_no_context_lines_no_fence():
+    rationale = {
+        "summary_text": "",
+        "concerns": [{"concern": "x", "evidence": "y"}],
+        "next_steps": [],
+    }
+    md = _render_github_markdown(_envelope(rationale=rationale), include_links=False)
+    assert "```" not in md
+
+
+def test_section_rule_violations_renders_context_lines():
+    violations = [
+        {
+            "rule_id": "no-pickle",
+            "severity": "BLOCK",
+            "file": "src/x.py",
+            "matched_import": "pickle",
+            "context_lines": [
+                "import os",
+                "import pickle",
+                "pickle.loads(payload)",
+            ],
+        }
+    ]
+    md = _render_github_markdown(_envelope(rule_violations=violations, violations=1), include_links=False)
+    assert "import pickle" in md
+    assert "pickle.loads(payload)" in md
+    assert "```" in md
+
+
+def test_render_plain_includes_context_lines_indented():
+    rationale = {
+        "summary_text": "",
+        "concerns": [
+            {
+                "concern": "x",
+                "evidence": "y",
+                "context_lines": ["a()", "b()", "c()"],
+            }
+        ],
+        "next_steps": [],
+    }
+    out = _render_plain(_envelope(rationale=rationale))
+    assert "       | a()" in out
+    assert "       | c()" in out
+
+
+def test_check_rules_attaches_context_lines():
+    """Each violation produced by _check_rules carries up to 5 context lines."""
+    from roam.commands.cmd_pr_analyze import _check_rules
+
+    diff_text = "\n".join(
+        [
+            "diff --git a/src/x.py b/src/x.py",
+            "+++ b/src/x.py",
+            "@@ -1,0 +1,6 @@",
+            "+import os",
+            "+import sys",
+            "+import pickle",
+            "+def load(payload):",
+            "+    return pickle.loads(payload)",
+            "+    # done",
+            "",
+        ]
+    )
+    rules = [
+        {
+            "id": "no-pickle",
+            "pattern": "import_from",
+            "forbidden_target_glob": "pickle",
+            "severity": "BLOCK",
+        }
+    ]
+    vios = _check_rules(diff_text, rules)
+    assert len(vios) == 1
+    ctx = vios[0]["context_lines"]
+    # window is matched line +/-2 within added lines
+    assert any("import pickle" in line for line in ctx)
+    assert 2 <= len(ctx) <= 5
