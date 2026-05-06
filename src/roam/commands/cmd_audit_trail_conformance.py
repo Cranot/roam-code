@@ -124,6 +124,56 @@ def _check_retention(records: list[dict], retention_days: int) -> tuple[bool, st
     )
 
 
+def _checks_to_sarif(
+    checks: list[dict],
+    audit_trail_path: Path,
+    score: int,
+) -> dict:
+    """Render the 6-check verdict as a SARIF 2.1.0 envelope.
+
+    Each FAIL becomes a SARIF result; each rule (one per check id) is
+    declared in the run's tool.driver.rules. GitHub Code Scanning ingests
+    this directly, surfacing the failures as triage items in the Security
+    tab — useful for quarterly compliance gates.
+    """
+    from roam.output.sarif import to_sarif
+
+    rules = [
+        {
+            "id": c["id"],
+            "shortDescription": f"EU AI Act Article 12 conformance check: {c['id'].replace('_', ' ')}",
+            "defaultLevel": "warning",
+            "helpUri": "https://artificialintelligenceact.eu/article/12/",
+            "properties": {"category": "compliance", "regulation": "EU AI Act Article 12"},
+        }
+        for c in checks
+    ]
+    results = []
+    for c in checks:
+        if c["passed"]:
+            continue
+        results.append(
+            {
+                "ruleId": c["id"],
+                "level": "error" if score < 67 else "warning",
+                "message": {"text": c["message"]},
+                "locations": [
+                    {
+                        "physicalLocation": {
+                            "artifactLocation": {"uri": str(audit_trail_path)},
+                        }
+                    }
+                ],
+            }
+        )
+    return to_sarif(
+        tool_name="roam-code",
+        version="audit-trail-conformance-check",
+        rules=rules,
+        results=results,
+    )
+
+
 @click.command(name="audit-trail-conformance-check")
 @click.option(
     "--input",
@@ -144,12 +194,19 @@ def _check_retention(records: list[dict], retention_days: int) -> tuple[bool, st
     is_flag=True,
     help="Exit 5 (gate failure) when conformance score < 100; useful for quarterly compliance gates.",
 )
+@click.option(
+    "--sarif-output",
+    type=click.Path(),
+    default=None,
+    help="Write SARIF to this file (default: stdout when global --sarif is set). Requires --sarif.",
+)
 @click.pass_context
 def audit_trail_conformance_check(
     ctx,
     input_path: str | None,
     retention_days: int,
     gate: bool,
+    sarif_output: str | None,
 ) -> None:
     """Score the audit trail against an EU AI Act Article 12 checklist.
 
@@ -168,6 +225,7 @@ def audit_trail_conformance_check(
     triage signal: "would this trail survive a procurement review?".
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
+    sarif = ctx.obj.get("sarif") if ctx.obj else False
 
     path = Path(input_path) if input_path else DEFAULT_AUDIT_TRAIL_PATH
     records = _load_records(path)
@@ -211,7 +269,16 @@ def audit_trail_conformance_check(
         "disclaimer": "Triage signal only — not legal advice.",
     }
 
-    if json_mode:
+    if sarif:
+        from roam.output.sarif import write_sarif
+
+        sarif_doc = _checks_to_sarif(checks, path, score)
+        sarif_text = write_sarif(sarif_doc, sarif_output)
+        if not sarif_output:
+            click.echo(sarif_text)
+        elif not json_mode:
+            click.echo(f"VERDICT: {verdict} — SARIF written to {sarif_output}")
+    elif json_mode:
         click.echo(
             to_json(
                 json_envelope(
@@ -224,7 +291,7 @@ def audit_trail_conformance_check(
                 )
             )
         )
-    else:
+    elif not sarif:
         click.echo(f"VERDICT: {verdict}")
         click.echo(f"  path:    {path}")
         click.echo(f"  records: {len(records)}")

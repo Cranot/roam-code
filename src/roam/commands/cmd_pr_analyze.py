@@ -204,9 +204,18 @@ def _load_baseline(path: Path) -> dict | None:
 
 
 def _save_baseline(path: Path, bundle: dict) -> None:
-    """Write the current envelope to disk for later drift comparison."""
+    """Write the current envelope to disk for later drift comparison.
+
+    Stamps ``_meta.timestamp`` (UTC) at save time so consumers — drift
+    detection + ``pr-comment-render --from-baseline`` age line — can
+    compute baseline age without needing the original CLI envelope.
+    """
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(_json.dumps(bundle, indent=2), encoding="utf-8")
+    out = dict(bundle)
+    meta = dict(out.get("_meta") or {})
+    meta["timestamp"] = utc_timestamp()
+    out["_meta"] = meta
+    path.write_text(_json.dumps(out, indent=2), encoding="utf-8")
 
 
 def _compute_drift(current: dict, baseline: dict | None) -> dict | None:
@@ -1365,6 +1374,135 @@ def _determine_verdict(
     return "SAFE", ["all signals below review thresholds"]
 
 
+# ----------------------------------------------------- pr_analyze sub-helpers ---
+#
+# Extracted from pr_analyze (Phase P24, 2026-05-06) to drop the
+# coordinator's cognitive complexity below the project's 99-cc gate.
+
+
+def _serve_from_cache(
+    diff_text: str,
+    rules_path: Path,
+    block_threshold: int,
+    language_override: str | None,
+    cache_dir_path: Path,
+    *,
+    json_mode: bool,
+    quiet: bool,
+    gate: bool,
+) -> bool:
+    """Try the envelope cache. On hit emit the cached output and return True.
+
+    Returns False on miss so the caller continues with the slow pr-prep
+    pipeline. Top-level ``cache_hit`` + ``cache_key`` keys survive the
+    json_envelope() ``_meta`` rebuild.
+    """
+    key = _cache_key(diff_text, rules_path, block_threshold, language_override)
+    cached = _load_cache(cache_dir_path, key)
+    if cached is None:
+        return False
+    cached["cache_hit"] = True
+    cached["cache_key"] = key
+    s = cached.get("summary") or {}
+    if json_mode:
+        click.echo(to_json(json_envelope("pr-analyze", **cached)))
+    elif quiet:
+        click.echo(
+            f"VERDICT: {s.get('verdict', '?')} (cached, blast {s.get('blast_radius', '?')}, "
+            f"ai {s.get('ai_likelihood', '?')}, rules {s.get('rule_violations', 0)})"
+        )
+    else:
+        click.echo(f"VERDICT: {s.get('verdict', '?')} [cache hit]")
+    if gate and s.get("verdict") == "BLOCK":
+        sys.exit(EXIT_GATE_BLOCK)
+    return True
+
+
+def _apply_drift(
+    bundle: dict,
+    base_path: Path,
+    verdict: str,
+    reasons: list[str],
+) -> tuple[str, list[str]]:
+    """Compute drift vs baseline + auto-escalate verdict on regression.
+
+    Mutates ``bundle`` in place to add the drift block and updated summary.
+    Returns the (possibly escalated) ``(verdict, reasons)``.
+    """
+    baseline_envelope = _load_baseline(base_path)
+    drift = _compute_drift(bundle, baseline_envelope)
+    if not drift:
+        return verdict, reasons
+    bundle["drift"] = drift
+    if drift["regression"] and verdict == "SAFE":
+        verdict = "REVIEW"
+        reasons.append(
+            f"Drift regression vs baseline: blast {drift['blast_radius_delta']:+d}, "
+            f"ai {drift['ai_likelihood_delta']:+d}, +{drift['new_violation_count']} violations"
+        )
+        bundle["summary"]["verdict"] = verdict
+        bundle["summary"]["reasons"] = reasons
+    elif (
+        drift["regression"]
+        and verdict == "REVIEW"
+        and (drift["blast_radius_delta"] >= 20 or drift["new_violation_count"] >= 3)
+    ):
+        verdict = "BLOCK"
+        reasons.append("Drift regression severe enough to escalate REVIEW → BLOCK")
+        bundle["summary"]["verdict"] = verdict
+        bundle["summary"]["reasons"] = reasons
+    return verdict, reasons
+
+
+def _emit_audit_trail(
+    bundle: dict,
+    trail_path: Path,
+    diff_text: str,
+    intent: str | None,
+    reviewers_payload: dict | None,
+    verdict: str,
+    reasons: list[str],
+) -> tuple[str, list[str]]:
+    """Pre-verify chain integrity, append the new record, escalate on tampering.
+
+    Mutates ``bundle`` in place to add the audit_trail block. Returns the
+    (possibly escalated) ``(verdict, reasons)``.
+    """
+    # Lazy import to avoid pulling cmd_audit_trail_verify on every pr-analyze.
+    from roam.commands.cmd_audit_trail_verify import _verify_chain
+
+    _, chain_issues = _verify_chain(trail_path)
+    real_issues = [i for i in chain_issues if "not found" not in i.get("issue", "")]
+    chain_was_valid = not real_issues
+
+    audit_record = _emit_audit_trail_record(
+        audit_trail_path=trail_path,
+        diff_text=diff_text,
+        bundle=bundle,
+        intent=intent,
+        reviewers_payload=reviewers_payload,
+    )
+    bundle["audit_trail"] = {
+        "path": str(trail_path),
+        "record": audit_record,
+        "chain_status": {
+            "pre_emission_chain_valid": chain_was_valid,
+            "pre_emission_issues": real_issues,
+        },
+    }
+    if not chain_was_valid:
+        reasons.append(
+            f"Audit-trail chain broken before append ({len(real_issues)} pre-existing issue(s)) — "
+            "tampering or partial-write corruption detected"
+        )
+        if verdict != "BLOCK":
+            bundle["summary"]["verdict_pre_chain_break"] = verdict
+            verdict = "BLOCK"
+            bundle["summary"]["verdict"] = verdict
+            bundle["summary"]["reasons"] = reasons
+    return verdict, reasons
+
+
 # ----------------------------------------------------------- batch processing ---
 
 
@@ -1788,28 +1926,17 @@ def pr_analyze(
     # Cache lookup — bypasses pr-prep (the slow part) on hit.
     cache_dir_path = Path(cache_dir) if cache_dir else DEFAULT_CACHE_DIR
     rules_path = Path(rules_file) if rules_file else (Path(".roam") / "rules.yml")
-    cached_bundle: dict | None = None
-    if cache:
-        key = _cache_key(diff_text, rules_path, block_threshold, language_override)
-        cached_bundle = _load_cache(cache_dir_path, key)
-        if cached_bundle is not None:
-            # Surface as top-level keys so json_envelope's _meta rebuild doesn't strip them.
-            cached_bundle["cache_hit"] = True
-            cached_bundle["cache_key"] = key
-            if json_mode:
-                click.echo(to_json(json_envelope("pr-analyze", **cached_bundle)))
-            elif quiet:
-                s = cached_bundle.get("summary") or {}
-                click.echo(
-                    f"VERDICT: {s.get('verdict', '?')} (cached, blast {s.get('blast_radius', '?')}, "
-                    f"ai {s.get('ai_likelihood', '?')}, rules {s.get('rule_violations', 0)})"
-                )
-            else:
-                s = cached_bundle.get("summary") or {}
-                click.echo(f"VERDICT: {s.get('verdict', '?')} [cache hit]")
-            if gate and (cached_bundle.get("summary") or {}).get("verdict") == "BLOCK":
-                sys.exit(EXIT_GATE_BLOCK)
-            return
+    if cache and _serve_from_cache(
+        diff_text,
+        rules_path,
+        block_threshold,
+        language_override,
+        cache_dir_path,
+        json_mode=json_mode,
+        quiet=quiet,
+        gate=gate,
+    ):
+        return
 
     prep_payload = _capture_pr_prep(commit_range, high_callers)
     ai = _compute_ai_likelihood(diff_text, language_override=language_override)
@@ -1883,28 +2010,7 @@ def pr_analyze(
 
     # --- Baseline drift detection -----------------------------------------
     base_path = Path(baseline_path) if baseline_path else DEFAULT_BASELINE_PATH
-    baseline_envelope = _load_baseline(base_path)
-    drift = _compute_drift(bundle, baseline_envelope)
-    if drift:
-        bundle["drift"] = drift
-        # Adjust verdict ONE tier upward on regression (SAFE → REVIEW; REVIEW → BLOCK)
-        if drift["regression"] and verdict == "SAFE":
-            verdict = "REVIEW"
-            reasons.append(
-                f"Drift regression vs baseline: blast {drift['blast_radius_delta']:+d}, "
-                f"ai {drift['ai_likelihood_delta']:+d}, +{drift['new_violation_count']} violations"
-            )
-            bundle["summary"]["verdict"] = verdict
-            bundle["summary"]["reasons"] = reasons
-        elif (
-            drift["regression"]
-            and verdict == "REVIEW"
-            and (drift["blast_radius_delta"] >= 20 or drift["new_violation_count"] >= 3)
-        ):
-            verdict = "BLOCK"
-            reasons.append("Drift regression severe enough to escalate REVIEW → BLOCK")
-            bundle["summary"]["verdict"] = verdict
-            bundle["summary"]["reasons"] = reasons
+    verdict, reasons = _apply_drift(bundle, base_path, verdict, reasons)
 
     if save_baseline:
         # Save AFTER drift logic so saved envelope reflects the post-drift verdict
@@ -1922,50 +2028,17 @@ def pr_analyze(
         _save_cache(cache_dir_path, cache_save_key, bundle)
         bundle.setdefault("_meta", {})["cache_saved_to"] = str(_cache_path(cache_dir_path, cache_save_key))
 
-    audit_record: dict | None = None
-    audit_chain_status: dict | None = None
     if audit_trail:
         trail_path = Path(audit_trail_path) if audit_trail_path else DEFAULT_AUDIT_TRAIL_PATH
-
-        # Pre-emission integrity check — if the existing chain is broken,
-        # surface the issue BEFORE appending so we don't compound corruption.
-        # Lazy import to avoid pulling cmd_audit_trail_verify on every pr-analyze.
-        from roam.commands.cmd_audit_trail_verify import _verify_chain
-
-        _, chain_issues = _verify_chain(trail_path)
-        # Filter out the "audit trail not found" issue — that's the genesis case.
-        real_issues = [i for i in chain_issues if "not found" not in i.get("issue", "")]
-        chain_was_valid = not real_issues
-        audit_chain_status = {
-            "pre_emission_chain_valid": chain_was_valid,
-            "pre_emission_issues": real_issues,
-        }
-
-        audit_record = _emit_audit_trail_record(
-            audit_trail_path=trail_path,
-            diff_text=diff_text,
-            bundle=bundle,
-            intent=intent,
-            reviewers_payload=reviewers_payload,
+        verdict, reasons = _emit_audit_trail(
+            bundle,
+            trail_path,
+            diff_text,
+            intent,
+            reviewers_payload,
+            verdict,
+            reasons,
         )
-        bundle["audit_trail"] = {
-            "path": str(trail_path),
-            "record": audit_record,
-            "chain_status": audit_chain_status,
-        }
-
-        # Auto-escalate verdict if the chain was tampered with — a broken
-        # audit trail in CI is a compliance incident, gate must fire.
-        if not chain_was_valid:
-            reasons.append(
-                f"Audit-trail chain broken before append ({len(real_issues)} pre-existing issue(s)) — "
-                "tampering or partial-write corruption detected"
-            )
-            if verdict != "BLOCK":
-                bundle["summary"]["verdict_pre_chain_break"] = verdict
-                verdict = "BLOCK"
-                bundle["summary"]["verdict"] = verdict
-                bundle["summary"]["reasons"] = reasons
 
     if json_mode:
         click.echo(to_json(json_envelope("pr-analyze", **bundle)))

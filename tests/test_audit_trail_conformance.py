@@ -257,6 +257,75 @@ def test_cli_gate_exits_5_on_partial_conformance(tmp_path):
     assert result.exit_code == EXIT_GATE_FAILURE
 
 
+def test_cli_sarif_emits_valid_envelope(tmp_path):
+    """--sarif emits a valid SARIF 2.1.0 doc with a result per failed check."""
+    runner = CliRunner()
+    from roam.cli import cli
+
+    trail = tmp_path / "trail.jsonl"
+    rec = _full_record("SAFE", _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"))
+    _write_chain(trail, [rec])
+
+    # Global --sarif comes BEFORE the subcommand name
+    result = runner.invoke(cli, ["--sarif", "audit-trail-conformance-check", "--input", str(trail)])
+    assert result.exit_code == 0
+    doc = _json.loads(result.output)
+    assert doc["version"] == "2.1.0"
+    assert doc["runs"][0]["tool"]["driver"]["name"] == "roam-code"
+    # Recent-only timestamps fail retention → at least 1 result
+    results = doc["runs"][0]["results"]
+    assert len(results) >= 1
+    rule_ids = {r["ruleId"] for r in results}
+    assert "retention" in rule_ids
+    # Each rule has helpUri pointing at the regulation
+    rules = doc["runs"][0]["tool"]["driver"]["rules"]
+    assert all("artificialintelligenceact.eu" in r.get("helpUri", "") for r in rules)
+
+
+def test_cli_sarif_writes_to_file(tmp_path):
+    """--sarif --sarif-output writes to the file + emits a single VERDICT line."""
+    runner = CliRunner()
+    from roam.cli import cli
+
+    trail = tmp_path / "trail.jsonl"
+    _write_chain(
+        trail,
+        [_full_record("SAFE", _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z"))],
+    )
+    sarif_path = tmp_path / "out.sarif"
+    result = runner.invoke(
+        cli,
+        [
+            "--sarif",
+            "audit-trail-conformance-check",
+            "--input",
+            str(trail),
+            "--sarif-output",
+            str(sarif_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert sarif_path.exists()
+    doc = _json.loads(sarif_path.read_text(encoding="utf-8"))
+    assert doc["version"] == "2.1.0"
+    assert "VERDICT:" in result.output
+
+
+def test_cli_sarif_with_perfect_score_emits_no_results(tmp_path):
+    """A 100/100 trail produces a SARIF with rules but zero findings."""
+    runner = CliRunner()
+    from roam.cli import cli
+
+    trail = tmp_path / "trail.jsonl"
+    old_ts = (_dt.datetime.now(_dt.timezone.utc) - _dt.timedelta(days=200)).isoformat().replace("+00:00", "Z")
+    recent_ts = _dt.datetime.now(_dt.timezone.utc).isoformat().replace("+00:00", "Z")
+    _write_chain(trail, [_full_record("SAFE", old_ts), _full_record("REVIEW", recent_ts)])
+
+    result = runner.invoke(cli, ["--sarif", "audit-trail-conformance-check", "--input", str(trail)])
+    doc = _json.loads(result.output)
+    assert doc["runs"][0]["results"] == []  # all 6 checks passed
+
+
 def test_cli_custom_retention_days(tmp_path):
     runner = CliRunner()
     from roam.cli import cli
