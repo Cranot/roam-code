@@ -348,16 +348,24 @@ def rules_validate(
         # post-fix state. Real errors (typos, missing fields) are still surfaced.
         raw_rules, fixes_applied = _apply_safe_fixes(raw_rules)
         if fixes_applied:
+            doc = parsed if isinstance(parsed, dict) else {}
+            doc["rules"] = raw_rules
             try:
                 # Re-emit YAML; preserve top-level structure beyond `rules:`.
                 import yaml
 
-                doc = parsed if isinstance(parsed, dict) else {}
-                doc["rules"] = raw_rules
                 path.write_text(yaml.safe_dump(doc, sort_keys=False), encoding="utf-8")
+            except ImportError:
+                # 12.37 (2026-05-06) — Python 3.9 / installs without PyYAML
+                # use the in-tree minimal emitter so --fix still works.
+                try:
+                    from roam.rules.engine import _emit_simple_yaml
+
+                    path.write_text(_emit_simple_yaml(doc), encoding="utf-8")
+                except Exception as exc:  # noqa: BLE001
+                    fixes_applied.append(f"WARN — write-back failed (no PyYAML): {exc}")
             except Exception as exc:  # noqa: BLE001 — surfaced as a warning
                 warnings_list_for_fix_failure = f"--fix: could not write back to {path}: {exc}"
-                # Surface at the end via warnings; don't crash.
                 fixes_applied.append(f"WARN — write-back failed: {warnings_list_for_fix_failure}")
 
     errors: list[str] = []
