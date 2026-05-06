@@ -4,6 +4,7 @@ Generates an agent-runtime skill manifest from the capability registry.
 Targets: claude (SKILL.md), cursor (.mdc rule), continue (config snippet),
 aider (.aiderrc).
 """
+
 from __future__ import annotations
 
 import json

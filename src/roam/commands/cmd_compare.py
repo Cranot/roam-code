@@ -70,28 +70,32 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     verdict = _verdict(delta)
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "compare",
-            summary={
-                "verdict": verdict,
-                "baseline": str(base),
-                "target": str(targ),
-                "symbols_added": len(delta["symbols_added"]),
-                "symbols_removed": len(delta["symbols_removed"]),
-                "symbols_moved": len(delta["symbols_moved"]),
-                "complexity_regressions": len(delta["complexity_up"]),
-                "complexity_improvements": len(delta["complexity_down"]),
-            },
-            symbols_added=delta["symbols_added"][:top],
-            symbols_removed=delta["symbols_removed"][:top],
-            symbols_moved=delta["symbols_moved"][:top],
-            complexity_up=delta["complexity_up"][:top],
-            complexity_down=delta["complexity_down"][:top],
-            file_count_baseline=base_state["file_count"],
-            file_count_target=targ_state["file_count"],
-            symbol_count_baseline=base_state["symbol_count"],
-            symbol_count_target=targ_state["symbol_count"],
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "compare",
+                    summary={
+                        "verdict": verdict,
+                        "baseline": str(base),
+                        "target": str(targ),
+                        "symbols_added": len(delta["symbols_added"]),
+                        "symbols_removed": len(delta["symbols_removed"]),
+                        "symbols_moved": len(delta["symbols_moved"]),
+                        "complexity_regressions": len(delta["complexity_up"]),
+                        "complexity_improvements": len(delta["complexity_down"]),
+                    },
+                    symbols_added=delta["symbols_added"][:top],
+                    symbols_removed=delta["symbols_removed"][:top],
+                    symbols_moved=delta["symbols_moved"][:top],
+                    complexity_up=delta["complexity_up"][:top],
+                    complexity_down=delta["complexity_down"][:top],
+                    file_count_baseline=base_state["file_count"],
+                    file_count_target=targ_state["file_count"],
+                    symbol_count_baseline=base_state["symbol_count"],
+                    symbol_count_target=targ_state["symbol_count"],
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
@@ -117,8 +121,16 @@ def compare_cmd(ctx, baseline: str, target: str, top: int, threshold: int) -> No
     _section("Symbols added", delta["symbols_added"], lambda x: f"+ {x['kind']:8} {x['qname']}  in {x['path']}")
     _section("Symbols removed", delta["symbols_removed"], lambda x: f"- {x['kind']:8} {x['qname']}  was in {x['path']}")
     _section("Symbols moved", delta["symbols_moved"], lambda x: f"~ {x['qname']}: {x['old_path']} → {x['new_path']}")
-    _section("Files got more complex", delta["complexity_up"], lambda x: f"↑ {x['path']}  Δ +{x['delta']}  (now {x['target']}, was {x['baseline']})")
-    _section("Files got simpler", delta["complexity_down"], lambda x: f"↓ {x['path']}  Δ -{abs(x['delta'])}  (now {x['target']}, was {x['baseline']})")
+    _section(
+        "Files got more complex",
+        delta["complexity_up"],
+        lambda x: f"↑ {x['path']}  Δ +{x['delta']}  (now {x['target']}, was {x['baseline']})",
+    )
+    _section(
+        "Files got simpler",
+        delta["complexity_down"],
+        lambda x: f"↓ {x['path']}  Δ -{abs(x['delta'])}  (now {x['target']}, was {x['baseline']})",
+    )
 
 
 def _load_index_state(db_path: Path) -> dict:
@@ -177,12 +189,14 @@ def _compute_delta(base: dict, targ: dict, *, threshold: int) -> dict[str, list]
     moved = []
     for name in common_names:
         if base_syms[name]["path"] != targ_syms[name]["path"]:
-            moved.append({
-                "qname": name,
-                "kind": targ_syms[name]["kind"],
-                "old_path": base_syms[name]["path"],
-                "new_path": targ_syms[name]["path"],
-            })
+            moved.append(
+                {
+                    "qname": name,
+                    "kind": targ_syms[name]["kind"],
+                    "old_path": base_syms[name]["path"],
+                    "new_path": targ_syms[name]["path"],
+                }
+            )
 
     base_cx = base["complexities"]
     targ_cx = targ["complexities"]

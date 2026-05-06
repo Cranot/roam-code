@@ -143,16 +143,8 @@ def roam_capability(
         cap_name = name or _derive_name(func)
         # For Click Commands, the original module is on the callback
         callback = getattr(func, "callback", None)
-        module = (
-            getattr(callback, "__module__", "")
-            if callback is not None
-            else getattr(func, "__module__", "")
-        )
-        func_name = (
-            getattr(callback, "__name__", "")
-            if callback is not None
-            else getattr(func, "__name__", "")
-        )
+        module = getattr(callback, "__module__", "") if callback is not None else getattr(func, "__module__", "")
+        func_name = getattr(callback, "__name__", "") if callback is not None else getattr(func, "__name__", "")
         cap = Capability(
             name=cap_name,
             category=category,
@@ -245,6 +237,6 @@ def emit_yaml() -> str:
 
 def _yaml_str(s: str) -> str:
     """Quote a string for YAML if needed."""
-    if any(c in s for c in (':', '#', '\n', '"', "'", '[', ']', '{', '}', ',', '&', '*', '!', '|', '>')):
-        return '"' + s.replace('\\', '\\\\').replace('"', '\\"') + '"'
+    if any(c in s for c in (":", "#", "\n", '"', "'", "[", "]", "{", "}", ",", "&", "*", "!", "|", ">")):
+        return '"' + s.replace("\\", "\\\\").replace('"', '\\"') + '"'
     return s

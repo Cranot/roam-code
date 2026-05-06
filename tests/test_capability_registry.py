@@ -4,6 +4,7 @@ redacted; these tests guard the contract
 that the registry stays consistent across imports and emits stable
 YAML / JSON for downstream consumers.
 """
+
 from __future__ import annotations
 
 import json
@@ -112,6 +113,7 @@ def test_phase0_commands_register() -> None:
     """The 3 Phase 0 commands (permit, postmortem, article-12-check) decorate themselves."""
     # Force-import via the populator
     from roam.commands.cmd_capabilities import _populate_registry
+
     _populate_registry()
     assert REGISTRY.get("permit") is not None
     assert REGISTRY.get("postmortem") is not None

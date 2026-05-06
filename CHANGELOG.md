@@ -7,6 +7,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.45] - 2026-05-07
+
+### CI fix — ruff format on overnight files
+
+Hotfix after 12.44. The 9 net-new files added during the overnight
+push (capability.py, cmd_compare.py, cmd_skill_generate.py,
+sarif.py edits, plus 4 test files) were not run through `ruff format`
+before commit. CI's lint job ran `ruff format --check` and rejected.
+
+Per the project's known-learning ("Ruff format check in CI: Always run
+`ruff format` on new files before committing"), this should have been
+caught locally. The hotfix runs the formatter and lands the
+whitespace-only changes. No behavior change.
+
 ## [12.44] - 2026-05-07
 
 ### CI fix — register R5's two new detectors in the catalog

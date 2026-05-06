@@ -1,4 +1,5 @@
 """Tests for R8 — roam compare (structural index diff)."""
+
 from __future__ import annotations
 
 import sqlite3
@@ -39,6 +40,7 @@ def test_compute_delta_detects_added_and_removed(tmp_path) -> None:
     _make_index(targ_db, files=[(1, "a.py")], symbols=[("bar", "function", 1)])
 
     from roam.commands.cmd_compare import _load_index_state
+
     base = _load_index_state(base_db)
     targ = _load_index_state(targ_db)
     delta = _compute_delta(base, targ, threshold=1)
@@ -54,6 +56,7 @@ def test_compute_delta_detects_moves(tmp_path) -> None:
     _make_index(targ_db, files=[(1, "old.py"), (2, "new.py")], symbols=[("foo", "function", 2)])
 
     from roam.commands.cmd_compare import _load_index_state
+
     base = _load_index_state(base_db)
     targ = _load_index_state(targ_db)
     delta = _compute_delta(base, targ, threshold=1)
@@ -106,6 +109,7 @@ def test_cli_text_output(tmp_path) -> None:
 
 def test_cli_json_output(tmp_path) -> None:
     import json as jsonlib
+
     base_db = tmp_path / "base.db"
     targ_db = tmp_path / "targ.db"
     _make_index(base_db, files=[(1, "a.py")], symbols=[("foo", "function", 1)])

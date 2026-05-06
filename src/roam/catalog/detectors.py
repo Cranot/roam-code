@@ -2549,7 +2549,9 @@ def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
                 ],
             )
         )
-        results[-1]["fix"] = "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
+        results[-1]["fix"] = (
+            "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
+        )
     return results
 
 
