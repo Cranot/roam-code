@@ -287,7 +287,7 @@ def coverage_gaps(
                 )
             else:
                 click.echo(msg)
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     # --- Resolve preset / config gate rules ---
     preset_used = None

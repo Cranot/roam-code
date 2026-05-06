@@ -1642,7 +1642,7 @@ def _handle_timeline(
             since_ts = int(dt.timestamp())
         except ValueError:
             click.echo(f"Invalid date format: {since_date} (use YYYY-MM-DD)")
-            raise SystemExit(1)
+            raise SystemExit(1) from None
 
     with open_db(readonly=True) as conn:
         snaps = get_snapshots(conn, limit=count, since=since_ts)

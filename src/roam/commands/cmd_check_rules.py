@@ -429,8 +429,8 @@ def check_rules(ctx, rule_filter, severity_filter, config_path, profile_name, do
         try:
             profile_overrides = resolve_profile(effective_profile)
         except ValueError as e:
-            click.echo("Error: {}".format(e))
-            raise SystemExit(1)
+            click.echo(f"Error: {e}")
+            raise SystemExit(1) from None
         # Profile overrides are the base; user overrides (from rules: section) layer on top
         merged = {ov.get("id"): ov for ov in profile_overrides}
         for ov in user_overrides:
