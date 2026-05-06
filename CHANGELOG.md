@@ -7,6 +7,52 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.36] - 2026-05-06
+
+### Bugfix release — bracket-balance check ignores quoted strings (Python 3.9 CI red, sixth iteration)
+
+12.35's bracket-balance malformed-YAML check counted brackets inside
+quoted strings. Community rule files (e.g.
+`rules/community/dataflow/DF-005-php-cross-fn-sqli.yaml`) have
+legitimate `sources: ["$_GET[", "$_POST[", "$_REQUEST["]` shapes —
+each string contains a `[` with no matching `]`, but PyYAML happily
+parses them. The fallback's naive `s.count("[")` flagged this as
+malformed and `test_rules_community_pack.py::test_community_pack_has_1000_plus_valid_rules`
+went red on Python 3.9 (PyYAML missing).
+
+### Bugfix
+
+- **`_parse_simple_yaml` strips quoted substrings before bracket
+  counting.** Uses `re.sub(r'"[^"]*"|\'[^\']*\'', '', s)` to remove
+  `"..."` and `'...'` content first, then counts brackets on the
+  remainder. PyYAML-equivalent behaviour: malformed shapes still
+  raise; community rule files parse cleanly.
+
+### Sweep status
+
+- 12.31 → CI red (3 stale assertions)
+- 12.32 → CI red (third stale assertion)
+- 12.33 → CI red (Python 3.9 fallback parser missing list-of-dicts)
+- 12.34 → CI red (Python 3.9 fallback parser too permissive)
+- 12.35 → CI red (Python 3.9 bracket check too aggressive — quoted strings)
+- 12.36 → expected green
+
+Each fix surfaces another edge case in the same `_parse_simple_yaml`
+path — the cost of having a fallback parser that diverges from PyYAML
+on shapes the test suite exercises. Long-term: the right move is to
+either ship PyYAML as a hard dependency for the rules-engine subsystem
+or to import a tiny vendored YAML parser. For now: targeted shape-by-
+shape fixes, validated by CI matrix on Python 3.9.
+
+### Also lands
+
+- **Empty-rules edge case fix** carried from 12.35 dev — when input
+  is `rules:\n` with no items, `_parse_simple_yaml` now returns
+  `{"rules": None}` (matching PyYAML) instead of `{"rules": {}}` so
+  the loader doesn't surface a spurious "must be a list, got dict"
+  warning. Internal `_collapse_empty` walks the parse tree and
+  replaces empty placeholder dicts with `None`.
+
 ## [12.35] - 2026-05-06
 
 ### Bugfix release — `_parse_simple_yaml` malformed-input + top-level-list (Python 3.9 CI red)

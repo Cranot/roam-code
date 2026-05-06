@@ -84,8 +84,12 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     # 12.35 (2026-05-06) — sanity-check obviously malformed YAML so callers
     # don't get a permissive non-empty result that hides the bug. PyYAML
     # raises YAMLError on shapes like `this is not: valid: yaml: at all: [`;
-    # the fallback should mimic that behaviour. Cheap signals: unbalanced
-    # brackets on a single line.
+    # the fallback should mimic that behaviour. Cheap signal: unbalanced
+    # brackets on a single line, but ONLY counting brackets OUTSIDE quoted
+    # strings (12.36 — community rule files like
+    # `sources: ["$_GET[", "$_POST["]` have legitimate brackets-inside-quotes
+    # that aren't balanced if we count naively).
+    _quoted_strip_re = re.compile(r"\"[^\"]*\"|'[^']*'")
     first_real_line = ""
     for line in text.split("\n"):
         s = line.strip()
@@ -93,8 +97,9 @@ def _parse_simple_yaml(path: Path) -> dict | None:
             continue
         if not first_real_line:
             first_real_line = s
-        opens = s.count("[") + s.count("{")
-        closes = s.count("]") + s.count("}")
+        unquoted = _quoted_strip_re.sub("", s)
+        opens = unquoted.count("[") + unquoted.count("{")
+        closes = unquoted.count("]") + unquoted.count("}")
         if opens != closes:
             raise ValueError(f"malformed YAML: unbalanced brackets in {path}")
 
@@ -194,7 +199,23 @@ def _parse_simple_yaml(path: Path) -> dict | None:
         else:
             container[key] = _coerce_scalar(val_raw)
 
-    return result if result else None
+    # 12.36 (2026-05-06) — collapse empty placeholder dicts to None so
+    # `rules:\n` with no items returns `{"rules": None}` (matching
+    # PyYAML behaviour). Without this, the loader downstream sees an
+    # empty dict and emits a spurious "must be a list, got dict" warning.
+    def _collapse_empty(node):
+        if isinstance(node, dict):
+            for k in list(node):
+                node[k] = _collapse_empty(node[k])
+            return node if node else None
+        if isinstance(node, list):
+            return [_collapse_empty(v) for v in node]
+        return node
+
+    cleaned = _collapse_empty(result)
+    if not cleaned:
+        return None
+    return cleaned
 
 
 # ---------------------------------------------------------------------------
