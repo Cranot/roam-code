@@ -2,8 +2,8 @@
 
 Implementation-ready copy + structure. Built privately during Phase 1, deployed at Phase 3 launch.
 
-**Target domain (recommended primary)**: `roam.review` — purpose-signaling TLD, 5 chars before the dot, costs ~$30-100/yr. Products at `/`, `/cloud`, `/audit`, `/self-hosted`.
-**Backup domains** (claim what's available): `roamreview.com`, `roam.cloud`, `roamaudit.com`. The v1 doc had `roam.consulting`; that works as an umbrella but is services-y. The v2 plan repositioned audit as the upsell ladder, not the primary product, so `roam.review` (or `roam.cloud`) is the cleaner umbrella.
+**Target domain (claimed 2026-05-06)**: `roam-code.com` — matches PyPI (`roam-code`) + GitHub (`Cranot/roam-code`) exactly; $10.46/yr. The exact-match `.com` (`roamcode.com`) was taken; the hyphenated form preserves naming consistency across the entire stack. Products at subdomains: `www.`, `review.`, `cloud.`, `audit.`, `docs.`.
+**Defensive registration**: `roam-code.dev` is already hardcoded as the in-toto attestation predicate URL (`https://roam-code.dev/CodeGraph/v1`); register if cheap, otherwise repoint predicates to `roam-code.com/CodeGraph/v1` in a future release.
 **Target stack**: HTML/CSS following `docs/site/` pattern OR a quick builder (Webflow / Carrd / Astro). Copy is the same either way. Page weight under 200 KB.
 
 ## v2 vs v1 — what changed

@@ -1,8 +1,8 @@
 # Roam commercial landing page (starter)
 
-This is the **starting point** for `roam.review` (or whichever
-umbrella domain you claim). Drop into Cloudflare Pages, Vercel, or a
-static GitHub Pages repo.
+This is the **starting point** for `roam-code.com` (claimed
+2026-05-06). Drop into Cloudflare Pages, Vercel, or a static GitHub
+Pages repo.
 
 ## What's here
 
@@ -13,21 +13,23 @@ static GitHub Pages repo.
 * Total page weight: ~12KB HTML + 6KB CSS + Google Fonts CDN call.
   Aim is sub-200KB total transfer per the spec.
 
-## Domain priority (Phase 1.4 of `build_priorities.md`)
+## Domain (claimed 2026-05-06)
 
-Recommended order to claim:
+**Primary:** `roam-code.com` — matches PyPI (`roam-code`) + GitHub
+(`Cranot/roam-code`) exactly. $10.46/yr.
 
-1. **`roam.review`** — primary umbrella; `.review` TLD signals product
-   purpose; ~$30-100/yr.
-2. **`roamreview.com`** — defensive backup if `.review` taken.
-3. **`roam.cloud`** — for the hosted dashboard product (claim early
-   even if you point it at the same site initially).
-4. **`roamaudit.com`** — for the EU AI Act audit-trail product
-   (Aug 2 2026 launch).
-5. (Optional) **`roam.app`**, **`roamhq.com`**, **`roam.tools`**.
+**Subdomains** (all CNAME → Pages project, free under same zone):
 
-Avoid `roam.consulting` (services-y; conflicts with v2 pivot
-positioning).
+* `www.roam-code.com` — landing page (this site)
+* `review.roam-code.com` — Roam Review GitHub App marketing + waitlist
+* `cloud.roam-code.com` — Roam Cloud Lite dashboard
+* `audit.roam-code.com` — EU AI Act audit-trail product
+* `docs.roam-code.com` — alias of cranot.github.io/roam-code
+
+**Defensive (recommended to register if cheap):**
+`roam-code.dev` — already hardcoded as the in-toto attestation
+predicate URL (`https://roam-code.dev/CodeGraph/v1`). If unavailable,
+predicates can be repointed to `roam-code.com/CodeGraph/v1`.
 
 ## Deploy in 10 minutes
 
@@ -36,7 +38,7 @@ positioning).
 ```bash
 # 1. Push this directory to a new GitHub repo (e.g. roam-website)
 cd templates/distribution/landing-page
-git init && git add . && git commit -m "feat: initial roam.review landing page"
+git init && git add . && git commit -m "feat: initial roam-code.com landing page"
 gh repo create roam-website --public --source=. --push
 
 # 2. Connect to Cloudflare Pages
@@ -44,10 +46,13 @@ gh repo create roam-website --public --source=. --push
 #    Build command: (none — static)
 #    Output directory: /
 
-# 3. Wire roam.review DNS
-#    Add CNAME: @ → <project>.pages.dev
-#    Add CNAME: www → <project>.pages.dev
-#    (or use Cloudflare Registrar — both nameservers + DNS in one)
+# 3. Wire roam-code.com DNS (after adding zone to Cloudflare)
+#    Add CNAME: @    → <project>.pages.dev
+#    Add CNAME: www  → <project>.pages.dev
+#    Add CNAME: review → <project>.pages.dev  (or separate project)
+#    Add CNAME: cloud  → <project>.pages.dev  (or separate project)
+#    Add CNAME: audit  → <project>.pages.dev  (or separate project)
+#    (Or use Cloudflare Registrar transfer — DNS auto-managed)
 ```
 
 ### Option B — Vercel
@@ -57,7 +62,7 @@ Same as above, but Vercel's "Other / static" framework preset.
 ### Option C — GitHub Pages (cheapest)
 
 Just push to a `gh-pages` branch on a public repo. No build needed.
-DNS: CNAME `roam.review` → `cranot.github.io`.
+DNS: CNAME `roam-code.com` → `cranot.github.io`.
 
 ## Content TODOs before going live
 
