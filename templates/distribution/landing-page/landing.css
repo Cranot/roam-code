@@ -412,6 +412,252 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   margin: 0;
 }
 
+/* ─── Numbers date caption ─── */
+.numbers-date {
+  font-size: 11px;
+  color: var(--muted);
+  font-style: italic;
+  margin: -24px 0 28px;
+  text-align: center;
+  letter-spacing: 0.3px;
+}
+
+/* ─── First 5 minutes block ─── */
+.first-5-min {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px 28px;
+  max-width: 720px;
+  margin: 28px auto 0;
+  text-align: left;
+}
+.first-5-min h3 {
+  font-size: 16px;
+  font-weight: 600;
+  margin: 0 0 12px;
+  color: var(--accent);
+}
+.first-5-min ol {
+  margin: 0;
+  padding-left: 22px;
+  font-size: 14.5px;
+  line-height: 1.7;
+}
+.first-5-min ol li { margin-bottom: 4px; color: var(--text); }
+.first-5-min code {
+  background: var(--bg);
+  padding: 1px 6px;
+  border-radius: 3px;
+  font-size: 13px;
+  border: 1px solid var(--border);
+}
+
+/* ─── How-it-works subheading ─── */
+.how-it-works-sub {
+  font-size: 17px;
+  font-weight: 600;
+  margin: 32px 0 14px;
+  color: var(--text);
+  text-align: center;
+}
+
+/* ─── Pain band individual cell ─── */
+.pain-cell {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.tie-back {
+  margin: 0;
+  font-size: 13px;
+  color: var(--pop);
+  font-weight: 500;
+  padding-left: 14px;
+}
+.tie-back code {
+  background: rgba(0, 122, 61, 0.08);
+  padding: 1px 5px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  color: var(--pop);
+}
+
+/* ─── Demo grid (terminal + GitHub PR mockup) ─── */
+.demo-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 24px;
+  margin-top: 8px;
+}
+@media (max-width: 900px) { .demo-grid { grid-template-columns: 1fr; } }
+.demo-col { display: flex; flex-direction: column; }
+.demo-label {
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 12px;
+  text-transform: uppercase;
+  letter-spacing: 1.2px;
+  color: var(--muted);
+  margin: 0 0 10px;
+}
+
+/* ─── Fake GitHub PR comment ─── */
+.gh-pr {
+  background: #fff;
+  border: 1px solid #d1d9e0;
+  border-radius: 8px;
+  text-align: left;
+  font-size: 14px;
+  overflow: hidden;
+  box-shadow: 0 8px 32px rgba(0,0,0,.06);
+}
+.gh-pr-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 16px;
+  border-bottom: 1px solid #d1d9e0;
+  background: #f6f8fa;
+}
+.gh-avatar {
+  width: 32px; height: 32px;
+  background: var(--accent);
+  color: #fff;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-family: 'IBM Plex Mono', monospace;
+  font-weight: 600;
+  font-size: 16px;
+}
+.gh-pr-meta strong { color: #1f2328; font-size: 14px; }
+.gh-time { color: #59636e; font-size: 12px; margin-left: 4px; }
+.gh-pr-body { padding: 16px; }
+.gh-verdict {
+  display: inline-block;
+  padding: 6px 12px;
+  border-radius: 4px;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 13px;
+  font-weight: 600;
+  margin-bottom: 14px;
+}
+.gh-verdict-block {
+  background: #ffebe9;
+  color: #cf222e;
+  border: 1px solid #ffcecb;
+}
+.gh-finding {
+  border-left: 3px solid #d1d9e0;
+  padding: 10px 12px;
+  margin-bottom: 10px;
+  font-size: 13.5px;
+  line-height: 1.5;
+  color: #1f2328;
+  background: #f6f8fa;
+  border-radius: 0 4px 4px 0;
+}
+.gh-sev {
+  display: inline-block;
+  font-family: 'IBM Plex Mono', monospace;
+  font-size: 11px;
+  font-weight: 600;
+  padding: 2px 6px;
+  border-radius: 3px;
+  margin-right: 8px;
+  vertical-align: middle;
+}
+.gh-sev-high { background: #ffebe9; color: #cf222e; }
+.gh-sev-med  { background: #fff8c5; color: #9a6700; }
+.gh-conf {
+  font-size: 11px;
+  color: #59636e;
+  font-family: 'IBM Plex Mono', monospace;
+}
+.gh-meta { color: #59636e; font-size: 12.5px; font-family: 'IBM Plex Mono', monospace; }
+.gh-finding code {
+  background: #eaeef2;
+  padding: 1px 4px;
+  border-radius: 3px;
+  font-size: 12.5px;
+  color: #1f2328;
+}
+.gh-fix {
+  display: block;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px dashed #d1d9e0;
+  font-size: 12.5px;
+  color: var(--pop);
+}
+.gh-actions {
+  margin-top: 12px;
+  padding-top: 12px;
+  border-top: 1px solid #d1d9e0;
+  font-size: 12.5px;
+  color: #59636e;
+}
+.gh-actions code {
+  background: #eaeef2;
+  padding: 2px 6px;
+  border-radius: 3px;
+  color: var(--accent);
+}
+
+/* ─── Comparison table ─── */
+.compare {
+  padding: 64px 0;
+  background: var(--bg);
+  border-top: 1px solid var(--border);
+}
+.compare-inner {
+  max-width: 1080px;
+  margin: 0 auto;
+  padding: 0 24px;
+  text-align: center;
+}
+.compare h2 { font-size: 28px; margin: 0 0 12px; }
+.compare .lede {
+  font-size: 16px;
+  color: var(--muted);
+  max-width: 720px;
+  margin: 0 auto 32px;
+}
+.compare-table-wrap { overflow-x: auto; margin: 0 -24px; padding: 0 24px; }
+.compare-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13.5px;
+  text-align: left;
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  min-width: 760px;
+}
+.compare-table thead th {
+  background: var(--bg-alt);
+  padding: 14px 12px;
+  font-weight: 600;
+  border-bottom: 2px solid var(--border);
+  text-align: center;
+}
+.compare-table thead th:first-child { text-align: left; padding-left: 18px; min-width: 240px; }
+.compare-table thead th strong { color: var(--accent); }
+.compare-table tbody tr:not(:last-child) td { border-bottom: 1px solid var(--bg-alt); }
+.compare-table tbody td { padding: 12px 12px; text-align: center; vertical-align: middle; }
+.compare-table tbody td:first-child { text-align: left; padding-left: 18px; color: var(--text); font-weight: 500; }
+.compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
+.compare-table .no  { color: #999; font-size: 13px; }
+.compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
+.compare-foot {
+  margin: 18px 0 0;
+  font-size: 12px;
+  color: var(--muted);
+  font-style: italic;
+}
+
 /* ─── Footer meta line ─── */
 .footer-meta {
   color: #888 !important;
