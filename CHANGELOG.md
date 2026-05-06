@@ -7,6 +7,46 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.39] - 2026-05-06
+
+### Polish — exhaustive bugbear sweep + B904 cleanup
+
+After the 12.38 PyYAML pin landed CI green for the first time in 8
+iterations, ran an exhaustive bug-hunt sweep across 8 categories
+(fallback parsers, hardcoded counts, B033/B023, future-annotations,
+test-side YAML deps, module-level state survival, lazy-import
+asserts, B904 missing-`from`-clauses).
+
+### Findings + fixes
+
+- **B904 missing `from err` / `from None` in re-raises** — 4 sites
+  caught by `ruff check --select B904`. All `raise SystemExit(1)`
+  after explicit error-handling — added `from None` to mark intent
+  explicit:
+  - `cmd_check_rules.py:433` (profile-resolution failure)
+  - `cmd_coverage_gaps.py:290` (config-load failure)
+  - `cmd_trends.py:1645` (date-format error)
+  - `cmd_report.py:105` — added `from exc` (preserves chain since
+    the original parse error is informative)
+
+### Findings without fixes (low risk, future-watch)
+
+- **Hardcoded counts in tests** — 5 spots verified live-state-matching
+  as of v12.39: `BUILTIN_RULES==10`, `RECIPES==24`, `CATALOG==32`,
+  `_CORE_TOOLS==49`, `_PRESETS={7 keys}`. Will drift on next
+  feature add; release-checklist already has the grep sweep
+  (added in 12.33).
+- **3 narrow YAML fallback parsers** — `cmd_alerts._parse_alerts_yaml`
+  (alerts.yaml schema), `cmd_budget` + `cmd_check_rules` both use
+  the now-PyYAML-equivalent `_parse_simple_yaml` from 12.36/37.
+  Verified `_parse_simple_yaml` correctly handles their schemas
+  (`rules: [- id: ..., threshold: ...]`).
+- **Module-level caches** — `_FILE_LINES_CACHE`,
+  `_IN_MEMORY_CALL_CACHE`, `_FRAMEWORK_PACK_CACHE`,
+  `_ACTIVE_FRAMEWORK_PROFILE`, `_INCLUDE_TESTS_OVERRIDE` all
+  properly cleared/restored in `run_detectors`. `_GRAPH_CACHE`
+  cleared via conftest autouse fixture.
+
 ## [12.38] - 2026-05-06
 
 ### Clean fix — PyYAML pinned in `[dev]` extras (kills the recurring Python 3.9 CI red)
