@@ -673,6 +673,20 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                 _walk(child, new_depth, new_loop_vars)
             return
 
+        # redacted — nested function bodies establish a fresh scope:
+        # an arrow function in a parameter default, a callback passed to map(),
+        # or a local function declared inside a loop should NOT inherit the
+        # enclosing function's loop_depth. Without this isolation, a default
+        # parameter like `(item) => item.name || item.id` was getting flagged
+        # as I/O in loop because its calls were attributed to whatever loop
+        # depth the enclosing function had reached. We still walk the inner
+        # function so its own `_record_self_call` opportunities aren't lost,
+        # but we reset loop_depth to 0 and clear loop_vars at the boundary.
+        if ntype in _FUNCTION_NODES and node is not func_node:
+            for child in node.children:
+                _walk(child, 0, set())
+            return
+
         if loop_depth > 0:
             _record_loop_node(node, source, loop_vars, string_vars, state)
         if loop_depth == 0 and ntype in ("call_expression", "call"):

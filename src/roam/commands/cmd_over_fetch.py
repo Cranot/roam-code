@@ -70,6 +70,32 @@ _RESOURCE_PATTERNS = [
     re.compile(r"\bJsonResource\b"),
 ]
 
+# redacted — body-level signals that the method shapes its output
+# before returning. When ANY of these appears anywhere in the method body,
+# treat the method as field-shape-protected: don't flag direct returns of
+# the model object itself, because the bytes that hit the wire have been
+# filtered. Patterns cover Laravel API Resources, DTO objects, Eloquent
+# field filters (`makeHidden` / `makeVisible` / `only` / `except`), the
+# paginate->through() transform, and project-specific shapers like
+# DynamicResourceController's `inheritModelFields()`.
+_BODY_SHAPING_PATTERNS = [
+    re.compile(r"\binheritModelFields\s*\("),
+    re.compile(r"->\s*through\s*\(\s*(?:fn|function)"),
+    re.compile(r"->\s*makeHidden\s*\("),
+    re.compile(r"->\s*makeVisible\s*\("),
+    re.compile(r"->\s*only\s*\(\s*\["),
+    re.compile(r"->\s*except\s*\(\s*\["),
+    re.compile(r"\bnew\s+\w*(?:Dto|DTO|Resource|Collection)\s*\("),
+    # Match `EmployeeDto::fromModel(`, `OrderDTO::createFrom(`, etc. — the
+    # method-name suffix is allowed to extend (`fromModel`, `fromArray`).
+    re.compile(r"\b\w*(?:Dto|DTO)\s*::\s*(?:from|create|make|build)\w*\s*\("),
+    re.compile(r"->\s*toArray\s*\(\s*\)"),
+    re.compile(r"\$this\s*->\s*(?:shape|transform|format|present|serialize)\s*\("),
+    # Method that just delegates to a parent (`return parent::index();`) —
+    # trust the parent to shape, since we can't easily reach it here.
+    re.compile(r"\breturn\s+parent\s*::\s*\w+\s*\("),
+]
+
 # select() call detection — indicates developer is intentionally limiting columns
 _SELECT_CALL_RE = re.compile(r"->\s*select\s*\(")
 
@@ -262,6 +288,11 @@ def _check_controller_direct_returns(
             body = method["body"]
             # Skip method bodies that don't actually use the model
             if not model_use_re.search(body):
+                continue
+            # E5 — if the body shapes its output (Resource wrap, DTO,
+            # makeHidden, inheritModelFields, parent:: delegation, etc.),
+            # the bytes on the wire are already filtered; don't flag.
+            if any(p.search(body) for p in _BODY_SHAPING_PATTERNS):
                 continue
             body_lines = body.splitlines()
             for offset, line in enumerate(body_lines):
@@ -485,13 +516,26 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
             reasons.append(f"Serializes {fillable_count} fields per item in list APIs")
             if not has_resource:
                 reasons.append("No API Resource found to control output")
-            suggestions.append(
-                f"Add $hidden for unused fields, or use ->select() in queries,\n"
-                f"               or create a {model_info['class_name']}Resource "
-                f"to control output\n"
-                f"               Note: $hidden/$visible also hides fields from edit endpoints.\n"
-                f"               For CRUD apps, prefer API Resources for response shaping."
-            )
+            # redacted — when the model is *huge* (>=50 fields) and
+            # has no shaping at all, lead with a concrete artefact suggestion
+            # because the right fix is unambiguous: scaffold a Resource.
+            if fillable_count >= 50:
+                resource_class = f"{model_info['class_name']}Resource"
+                suggestions.append(
+                    f"BIG MODEL ({fillable_count} fields) — create app/Http/Resources/{resource_class}.php\n"
+                    f"               with `public function toArray() {{ return [...]; }}` listing only\n"
+                    f"               the fields the API needs. Then return\n"
+                    f"               `{resource_class}::collection({model_info['class_name']}::query()->paginate())`\n"
+                    f"               from the controller. ~80% bandwidth savings on list endpoints."
+                )
+            else:
+                suggestions.append(
+                    f"Add $hidden for unused fields, or use ->select() in queries,\n"
+                    f"               or create a {model_info['class_name']}Resource "
+                    f"to control output\n"
+                    f"               Note: $hidden/$visible also hides fields from edit endpoints.\n"
+                    f"               For CRUD apps, prefer API Resources for response shaping."
+                )
         elif fillable_count >= 20 and hidden_count < 3:
             confidence = "medium"
             reasons.append(
@@ -534,6 +578,22 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
                 # No bad query patterns — downgrade / skip low-confidence
                 continue
 
+        # redacted — `matched_patterns` mirrors what _io_emit_finding
+        # does for math: a structured list of the signals that fired so
+        # downstream surfaces (pr-comment-render, dashboards) can render
+        # WHY without parsing prose `reasons`. Stays additive — the
+        # `reasons` field keeps its human-readable shape.
+        matched_patterns = []
+        if exposed_count > 0:
+            matched_patterns.append(f"exposed_fields={exposed_count}")
+        if not has_resource:
+            matched_patterns.append("no API Resource wrapper")
+        if direct_returns:
+            matched_patterns.append(f"direct model return ({len(direct_returns)} site(s))")
+        if missing_selects:
+            matched_patterns.append(f"unselected query ({len(missing_selects)} site(s))")
+        if has_visible:
+            matched_patterns.append("$visible whitelist (signal: bounded)")
         findings.append(
             {
                 "model_name": model_info["class_name"],
@@ -547,6 +607,7 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
                 "resource_path": resource_path,
                 "confidence": confidence,
                 "reasons": reasons,
+                "matched_patterns": matched_patterns,
                 "suggestions": suggestions,
                 "direct_returns": direct_returns[:5],  # Cap to avoid noise
                 "missing_selects": missing_selects[:5],
@@ -682,6 +743,11 @@ def over_fetch_cmd(ctx, threshold, limit):
         # Reason lines
         for reason in f["reasons"]:
             click.echo(f"          {reason}")
+        # redacted — surface matched_patterns when present so the text
+        # surface mirrors the JSON shape and reviewers see WHY in one line.
+        patterns = f.get("matched_patterns") or []
+        if patterns:
+            click.echo(f"          Matched: {', '.join(str(p) for p in patterns[:5])}")
 
         # API Resource status
         if f["has_resource"]:

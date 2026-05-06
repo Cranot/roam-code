@@ -220,6 +220,24 @@ def _compute_file_debt(conn):
         )
 
     results.sort(key=lambda x: -x["debt_score"])
+
+    # redacted — annotate every result with a roi_band so JSON
+    # consumers (CI dashboards, agent triage flows) can filter on
+    # tier without re-deriving thresholds. The cutoffs are percentile-
+    # adaptive: top 10% = high, next 25% = medium, rest = low. A
+    # constant pass guarantees the bands are stable across re-runs of
+    # the same index.
+    if results:
+        n = len(results)
+        high_cutoff_idx = max(1, n // 10)
+        med_cutoff_idx = max(high_cutoff_idx, n // 4)
+        for i, r in enumerate(results):
+            if i < high_cutoff_idx:
+                r["roi_band"] = "high"
+            elif i < med_cutoff_idx:
+                r["roi_band"] = "medium"
+            else:
+                r["roi_band"] = "low"
     return results
 
 

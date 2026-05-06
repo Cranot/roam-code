@@ -975,20 +975,27 @@ def algo_to_sarif(
         if fpath:
             locations.append(_location(fpath, line))
 
+        # redacted — surface matched_patterns in SARIF properties
+        # so CI dashboards (GitHub Code Scanning) can show WHY a finding
+        # fired without an extra round-trip to the JSON envelope.
+        properties = {
+            "task_id": task_id,
+            "detected_way": f.get("detected_way", ""),
+            "suggested_way": f.get("suggested_way", ""),
+            "confidence": f.get("confidence", ""),
+            "precision": precision,
+            "impact_band": f.get("impact_band", ""),
+            "impact_score": f.get("impact_score", 0.0),
+        }
+        matched_patterns = (f.get("evidence") or {}).get("matched_patterns") or []
+        if matched_patterns:
+            properties["matched_patterns"] = matched_patterns
         result = {
             "ruleId": rule_id,
             "level": _algo_level(f.get("confidence", "medium")),
             "message": {"text": _algo_message(f)},
             "locations": locations,
-            "properties": {
-                "task_id": task_id,
-                "detected_way": f.get("detected_way", ""),
-                "suggested_way": f.get("suggested_way", ""),
-                "confidence": f.get("confidence", ""),
-                "precision": precision,
-                "impact_band": f.get("impact_band", ""),
-                "impact_score": f.get("impact_score", 0.0),
-            },
+            "properties": properties,
             "partialFingerprints": {
                 "primaryLocationLineHash": _primary_location_line_hash(f),
                 "roamFindingFingerprint/v1": _finding_fingerprint(f),

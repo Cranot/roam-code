@@ -123,15 +123,21 @@ def _evaluate_gate_rules(conn, rules):
         if any(matches_gitignore(basename, tp) for tp in test_patterns):
             test_files.add(fp)
 
-    # Count test functions per file
-    test_fn_count = {}
-    for fp in test_files:
-        row = conn.execute(
-            "SELECT COUNT(*) as cnt FROM symbols s JOIN files f ON s.file_id = f.id "
-            "WHERE f.path = ? AND s.kind = 'function' AND s.name LIKE 'test%'",
-            (fp,),
-        ).fetchone()
-        test_fn_count[fp] = row["cnt"] if row else 0
+    # redacted — was N+1 (one query per test file). Single grouped
+    # query is O(test_files) data on the wire and one round trip.
+    test_fn_count: dict[str, int] = dict.fromkeys(test_files, 0)
+    if test_files:
+        from roam.db.connection import batched_in
+
+        rows = batched_in(
+            conn,
+            "SELECT f.path, COUNT(*) as cnt FROM symbols s JOIN files f ON s.file_id = f.id "
+            "WHERE f.path IN ({ph}) AND s.kind = 'function' AND s.name LIKE 'test%' "
+            "GROUP BY f.path",
+            list(test_files),
+        )
+        for r in rows:
+            test_fn_count[r["path"]] = int(r["cnt"] or 0)
 
     violations = []
     for rule in rules:

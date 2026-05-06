@@ -10,6 +10,40 @@ import networkx as nx
 from roam.db.connection import batched_in
 
 
+# redacted — algebraic connectivity is the most expensive step in
+# `roam health` (~0.8s on roam-code, dominated by `nx.to_undirected()` plus
+# the spectral solve). For repos that haven't changed, the answer is the
+# same; cache it on disk keyed by graph fingerprint (node-count + edge-count
+# + sorted edge sample). Cache lives in `.roam/cache/algconn.json` so it
+# follows the index, not the user's home dir.
+def _graph_fingerprint(G: nx.DiGraph) -> str:
+    import hashlib
+
+    n = G.number_of_nodes()
+    m = G.number_of_edges()
+    h = hashlib.sha1()
+    h.update(f"n={n};m={m};".encode())
+    # Sample 256 edges (deterministic-by-sort) for the fingerprint so the
+    # hash changes when topology changes but stays stable across re-runs.
+    edges = sorted(G.edges())
+    sample = edges[:: max(1, len(edges) // 256)][:256]
+    for u, v in sample:
+        h.update(f"{u}->{v};".encode())
+    return h.hexdigest()
+
+
+def _algconn_cache_path():
+    """Best-effort .roam/cache/algconn.json path; None when filesystem isn't writable."""
+    from pathlib import Path
+
+    try:
+        cache_dir = Path(".roam") / "cache"
+        cache_dir.mkdir(parents=True, exist_ok=True)
+        return cache_dir / "algconn.json"
+    except OSError:
+        return None
+
+
 def algebraic_connectivity(G: nx.DiGraph) -> float:
     """Compute the algebraic connectivity (Fiedler value) of the graph.
 
@@ -26,6 +60,20 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
     """
     if len(G) < 3:
         return 0.0
+    # X10 — disk cache lookup.
+    fp = None
+    cache_path = _algconn_cache_path()
+    if cache_path is not None:
+        try:
+            fp = _graph_fingerprint(G)
+            if cache_path.exists():
+                import json as _json
+
+                cached = _json.loads(cache_path.read_text(encoding="utf-8"))
+                if cached.get("fingerprint") == fp:
+                    return float(cached.get("value", 0.0))
+        except (OSError, ValueError):
+            pass
     try:
         undirected = G.to_undirected()
         # Only compute on the largest connected component
@@ -34,9 +82,18 @@ def algebraic_connectivity(G: nx.DiGraph) -> float:
             undirected = undirected.subgraph(largest_cc).copy()
         if len(undirected) < 3:
             return 0.0
-        return round(nx.algebraic_connectivity(undirected, method="tracemin_lu", tol=1e-3), 6)
+        value = round(nx.algebraic_connectivity(undirected, method="tracemin_lu", tol=1e-3), 6)
     except Exception:
         return 0.0
+    # X10 — persist for next run.
+    if cache_path is not None and fp is not None:
+        try:
+            import json as _json
+
+            cache_path.write_text(_json.dumps({"fingerprint": fp, "value": value}), encoding="utf-8")
+        except OSError:
+            pass
+    return value
 
 
 def find_cycles(G: nx.DiGraph, min_size: int = 2) -> list[list[int]]:

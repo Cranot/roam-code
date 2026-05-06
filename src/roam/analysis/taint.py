@@ -181,40 +181,6 @@ def _parse_param_names(signature: str | None) -> list[str]:
     return names
 
 
-def _read_body_lines(conn, symbol_id: int, project_root: Path) -> tuple[list[str], str | None, int]:
-    """Read body lines for a symbol from disk.
-
-    Returns ``(body_lines, signature, line_start)`` where *body_lines*
-    excludes the declaration line itself.
-    """
-    row = conn.execute(
-        """
-        SELECT s.line_start, s.line_end, s.signature,
-               f.path AS file_path
-        FROM symbols s
-        JOIN files f ON s.file_id = f.id
-        WHERE s.id = ?
-        """,
-        (symbol_id,),
-    ).fetchone()
-    if row is None:
-        return [], None, 0
-
-    ls = row["line_start"] or 1
-    le = row["line_end"] or ls
-    rel_path = row["file_path"] or ""
-    full_path = project_root / rel_path
-    try:
-        text = full_path.read_text(encoding="utf-8", errors="replace")
-    except Exception:
-        return [], row["signature"], ls
-
-    all_lines = text.splitlines()
-    # body_lines: everything after declaration line
-    body = all_lines[ls : min(le, len(all_lines))]
-    return body, row["signature"], ls
-
-
 # ---------------------------------------------------------------------------
 # Intra-procedural variable taint tracking
 # ---------------------------------------------------------------------------

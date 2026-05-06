@@ -7,6 +7,327 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.31] - 2026-05-06
+
+### Major release — 90-phase polish + smarter pass
+
+This release lands a multi-session polish run touching almost every
+detector and command in the codebase. Headline gains: **2.7× faster
+`roam math`** (5.5s → 2.07s on roam-code itself), **3.2× faster
+`roam --help`** (1.24s → 0.39s warm), **2.3× faster `roam health`**
+(3.3s → 1.45s warm), **+6 new algorithm detectors**, **+3 framework
+profiles**, **69% of findings now carry structured `matched_patterns`
+explainability blocks**, and a **40-entry regression-FP corpus** so
+the wins can't quietly come back.
+
+### New detectors (6)
+
+- **`async-blocking-sleep`** — Python `time.sleep()` / `requests.*` /
+  `subprocess.run()` inside `async def`. Blocks the event loop;
+  fix is `await asyncio.sleep` / `httpx.AsyncClient` / asyncpg.
+- **`broad-except-swallow`** — Python `except Exception:` without a
+  re-raise. Catches `KeyboardInterrupt`, `MemoryError`, `SystemExit`
+  silently. Suppressed for functions named `safe_*` / `_try_*` /
+  `with_default_*` / `silent_*` (recovery wrappers are intentional).
+- **`spread-accumulator`** — JS/TS `acc = [...acc, x]` and
+  `.reduce((a, x) => [...a, x])` patterns are O(n²); fix is `.push()`.
+- **`defer-in-loop`** — Go `defer` inside `for`/`range` accumulates
+  deferred calls until the FUNCTION returns, not per iteration.
+  Common fd-exhaustion bug.
+- **`chained-collection-walk`** — JS/TS `.filter().find()` /
+  `.map().find()` / `.filter().length` are 2-pass when 1-pass
+  equivalents (`.find(x => predA(x) && predB(x))`, `.some()`) exist.
+- **`serial-await-loop`** — JS/TS `for (... of ...) { await fn(x) }`
+  serial pattern. Each iteration waits for the previous; fix is
+  `await Promise.all(items.map(fn))`. Caught a real case in roam's
+  own `.github/scripts/pr-comment.js`.
+
+### New framework profiles (3) + auto-detection
+
+`roam math --framework FRAMEWORK` now bundles five profiles. New ones:
+
+- **`django`** — recognises `queryset.iterator/values_list/values/
+  annotate/prefetch_related/select_related/only/defer/exists/count`
+  as not-IO when the receiver is `queryset`/`qs`/`manager`/`objects`/`cache`.
+- **`rails`** — ActiveRecord `includes/joins/preload/eager_load/pluck/
+  find_each/in_batches/scope` plus `Rails.cache.*`.
+- **`nestjs`** — TypeORM `createQueryBuilder/leftJoinAndSelect/etc.`,
+  `CacheManager.*`, `ConfigService.get`.
+
+Auto-detection (`autodetect_framework_profile`) sniffs:
+`requirements.txt` / `pyproject.toml` for django, `Gemfile` for rails,
+`package.json @nestjs/core` for nestjs (alongside the existing vue3 +
+laravel cases). The `(auto)` tag in the verdict line surfaces when a
+profile was auto-selected so it isn't invisible.
+
+### Performance
+
+- **`_FILE_LINES_CACHE` + `_IN_MEMORY_CALL_CACHE` + `_FRAMEWORK_PACK_CACHE`**
+  in detectors.py. Combined: 4989 file reads + 12,226 cache classifier
+  calls per `roam math` run collapsed to one read per (path, mtime)
+  and one classification per (call, framework_id). Cache reset at
+  `run_detectors` entry so test isolation holds. **5.5s → 2.07s.**
+- **`_short_help_via_ast` disk cache** in cli.py keyed by file mtime.
+  126 cmd_*.py AST parses per `roam --help` collapse to one cache
+  read. **1.24s → 0.39s warm.**
+- **`algebraic_connectivity` disk cache** in `graph/cycles.py` keyed
+  by graph fingerprint (node+edge count + sorted edge sample). The
+  spectral solve dominates `roam health`; warm runs skip it entirely.
+  **3.3s → 1.45s.**
+- **CLI plugin discovery** short-circuits when the requested command
+  is in the built-in `_COMMANDS` map — saves the 100ms `entry_points()`
+  scan for the 99% case of users with no third-party plugins. The
+  `_entry_points_for_group()` lookup is also process-cached.
+
+### Smarter outputs / explainability
+
+- **`evidence.matched_patterns`** on every detector finding (math,
+  over-fetch, auth-gaps). Lists the named sub-patterns that fired
+  (e.g. `["high-confidence I/O leaves (3)", "framework pack: django",
+  "DEV-only gate (confidence demoted)"]`). 69% of findings carry
+  this block now (was 0%).
+- **`roam math` text output** surfaces `matched_patterns` on a
+  one-line `Matched: ...` row per finding.
+- **`pr-comment-render`** renders `matched_patterns` as `_matched: ..._`
+  italic line under each concern in the markdown surface; plain
+  renderer mirrors it. `pr-analyze`'s critique concern now also
+  attaches top-3 finding pointers (check + title) as
+  `matched_patterns`, replacing the opaque "see `pr_prep.critique`"
+  evidence line.
+- **`roam math` VERDICT** appends "; mostly: io-in-loop" hint when
+  >=5 findings cluster on one detector.
+- **`roam math --since BASELINE.json`** flag — show only NEW findings
+  vs a baseline snapshot. Workflow: `roam --json math > .roam/baseline.json`
+  then `roam math --since .roam/baseline.json` shows only regressions.
+- **`roam math --include-tests`** flag — opt-in scan of test files
+  (default still excludes them).
+- **`roam math --json` summary** carries `framework`,
+  `framework_autodetected`, `framework_unknown` for CI/dashboard
+  consumers.
+- **`roam over-fetch`** — when `fillable_count >= 50` and no API
+  Resource exists, the suggestion now leads with a concrete artefact
+  scaffold (`app/Http/Resources/<Model>Resource.php` skeleton + the
+  `Resource::collection(Model::query()->paginate())` controller call).
+- **`roam auth-gaps`** — top-by-controller rollup when ≥10 findings
+  cluster on a few controllers. Triage is radically faster on the
+  ~115-finding redacted case.
+- **`roam debt --json`** — every result carries a `roi_band` field
+  (high/medium/low) using percentile-adaptive cutoffs (top 10% / next
+  25% / rest). CI dashboards can filter on band without re-deriving.
+- **`roam diff` text** — top-3 affected symbols by PageRank surfaced
+  inline. Tells reviewers "central abstraction" vs "leaf module" at
+  a glance.
+- **`roam health`** — verdict says "all flagged as utility / non-actionable"
+  when `actionable_count == 0` and critical issues exist (was misleading).
+- **SARIF output** includes `matched_patterns` as a SARIF `properties`
+  field for GitHub Code Scanning.
+
+### Smarter classification (FP fixes)
+
+- **`_BATCH_ITERATION_PATTERNS`** in detectors.py recognises chunked
+  iteration (`for chunk in _chunked(ids):`, `for batch in _batched()`,
+  `WHERE IN ({ph})` interpolation) and skips N+1 flagging on those
+  bodies. Caught roam's own `_symbol_context` self-FP.
+- **`busy-wait` detector** — sleeps ≥ 1 second are operator-paced
+  polling, not busy-wait. Function-name suppression list expanded
+  with `_loop`, `watch_*`, `watcher`. Eliminated `_run_watch_loop` FP.
+- **Walker fix in `complexity._extract_math_signals`** — nested
+  function bodies (arrow-function default params, callbacks, lambdas)
+  now reset `loop_depth` to 0 at the boundary. Eliminated FPs where
+  arrow defaults like `(item) => item.name` were flagged as I/O in loop.
+
+### Cleaner
+
+- **9 unused private helpers removed** across 8 files
+  (`_is_query_source_path`, `_row_signals`, `_to_test_function_name`,
+  `_read_body_lines`, `_files_for_commit`, `_find_callers`,
+  `_infer_ts_model_name`, `_search_with_git_grep_regex`,
+  `_decision_entries`, `_parse_table_after_any_heading`).
+- Pre-compiled depth-guard / memo-collection / batch-iteration regexes
+  in detectors.py (no per-call recompile, hits cache hot).
+- `cmd_pr_analyze.py` split — three pure-helper modules extracted
+  to `roam.commands.pr_analyze.*`: `cache.py` / `audit_trail.py` /
+  `rules.py`. All imports re-exported for back-compat. Coordinator
+  shrunk from 2340 → 2098 lines.
+
+### Tests + corpus
+
+- **40-entry regression-FP corpus** under `tests/regression_fp_fixtures/`.
+  JSON-based; one entry per FP pattern; harness at
+  `tests/test_regression_fp_corpus.py` parametrises one test per
+  entry. Adding a new fixture is a one-file edit (no Python).
+- **9 new corpus helpers** mapping onto detector internals:
+  `in_memory_call`, `depth_guard_regex`, `dev_only_block`, `call_awaited`,
+  `extract_arg_after`, `try_catch_idempotency`, `ancestor_constructor_auth`,
+  `body_shaping`, `batch_iteration`.
+- **+15 unit tests** for the new detectors (`detect_async_blocking_sleep`,
+  `detect_broad_except_swallow`, `detect_serial_await_loop`,
+  `_has_batch_iteration`).
+- **2 N+1 self-bugs fixed** while dogfooding: `_evaluate_gate_rules`
+  in `cmd_coverage_gaps.py` (one query per test file → batched
+  `WHERE IN`); `_symbol_context` correctly recognised as batch.
+
+### Schema
+
+- **Envelope `schema_version` 1.0.0 → 1.1.0** signals additive
+  enhancements: `matched_patterns`, `framework`/`framework_autodetected`/
+  `framework_unknown`, `roi_band`, `context_lines`. Pre-1.1 consumers
+  continue to work; new consumers can opt in to the richer fields.
+
+## [12.30] - 2026-05-06
+
+### Detector quality round 3 — redacted v12.28 audit follow-ups (E1-E5)
+
+A second dogfood pass of `roam math` / `weather` / `auth-gaps` /
+`migration-safety` / `over-fetch` against the redacted Vue 3 + Laravel
+multi-tenant codebase surfaced five fresh false-positive classes that
+the 12.28/12.29 rounds didn't catch. All five are fixed here, each with
+regression-corpus fixtures so they can't quietly come back. Web search
+confirmed the patterns we're recognising are the canonical Laravel +
+TypeScript idioms (parent-controller `$this->middleware('auth')` is the
+pre-Laravel-11 base-class auth pattern; PostgreSQL SQLSTATE `42P07` /
+MySQL `1050` are the standard "table already exists" idempotency codes
+in stancl/tenancy multi-tenant migrations).
+
+#### `roam weather` / hotspot ranking (E1)
+
+- **Skip non-source files in churn x complexity ranking.** Legacy text
+  dumps (`docs/legacy/reports/extracted/*.txt` from FoxPro extraction),
+  build/generated artefacts, and `data` / `docs` files were ranking
+  highest in `roam weather` simply because they had high churn. Now the
+  shared `TOP_CHURN_FILES` query filters on
+  `COALESCE(file_role, 'source') = 'source'` — same filter
+  `cmd_hotspots.py` already applied for security hotspots. Source files
+  with no role classification are still kept (the COALESCE preserves
+  the conservative default).
+
+#### `roam math` / I/O-in-loop walker (E3)
+
+- **Nested function bodies establish a fresh loop scope.** A walker bug
+  in `complexity._extract_math_signals` recursed through arrow-function
+  default parameters (and any nested function/lambda/closure) while
+  inheriting the enclosing function's `loop_depth`. So a default arg
+  like `(item: T) => item.name || item.id` had its property access
+  recorded as "I/O in loop" whenever the outer function contained a loop
+  elsewhere. The `_walk` recursion now resets depth to 0 and clears
+  `loop_vars` at every nested-function boundary (matching how
+  `_walk_complexity` already handles callback depth).
+
+#### `roam auth-gaps` / base-class inheritance (E2)
+
+- **Walk the `extends` chain when looking for `$this->middleware('auth')`.**
+  The detector previously regex-scanned only the IMMEDIATE controller
+  class. Every `EmployeeController extends DynamicResourceController`
+  pattern (where the parent class wires `$this->middleware('auth')` once
+  in its constructor) was generating ~115 false positives on redacted.
+  New `_build_class_source_map` indexes every controller-file class once
+  per `auth-gaps` invocation; `_ancestor_has_constructor_auth` walks up
+  to 3 ancestors looking for the auth-middleware registration.
+
+#### `roam migration-safety` / Schema::create messaging (E4)
+
+- **Anchor table-name extraction after the `create(` token.** The chained
+  form `Schema::connection('payroll')->create('payroll_entity_report_presets', ...)`
+  was parsed correctly by `_RE_SCHEMA_CREATE` but the table-name
+  extractor grabbed the FIRST quoted string (`'payroll'` — the
+  connection name), so the warning message said the wrong table.
+  `_extract_arg(line, after_token="create(")` now starts the search
+  after the `create(` literal. Same fix applied to `Schema::drop` /
+  `Schema::dropIfExists` chains.
+- **Recognise try/catch idempotency idioms.** Multi-tenant migrations
+  often wrap `Schema::create(...)` in `try { ... } catch { if
+  ($e->getMessage() contains 'already exists') ... }` instead of
+  `if (!Schema::hasTable(...))`. The new `_has_try_catch_idempotency`
+  helper recognises the `'already exists'` branch plus PostgreSQL
+  SQLSTATE `42P07` and MySQL error code `1050`.
+
+#### `roam over-fetch` / config-shaping wrappers (E5)
+
+- **Body-level shape signals demote raw-return findings.** Controllers
+  whose `index()` looks like
+  `return $this->inheritModelFields(Employee::query()->paginate());`
+  (or `paginate()->through(fn $x => …)`, `makeHidden`, `makeVisible`,
+  `only`, `except`, DTO assembly via `\w+Dto::fromXxx`, `parent::index()`
+  delegation) are now treated as shape-protected: the bytes that hit
+  the wire are filtered, so the raw-fields warning would just create
+  noise. New `_BODY_SHAPING_PATTERNS` list captures all 11 idioms.
+
+#### Tests
+
+- 14 new entries in `tests/regression_fp_fixtures/second_repo_2026_05_06_round2.json`
+  drive 4 new corpus helpers (`extract_arg_after`, `try_catch_idempotency`,
+  `ancestor_constructor_auth`, `body_shaping`). 34 corpus entries total
+  now form the regression tripwire net.
+
+### Deferred
+
+- **E6 (multi-tenant per-schema index detection)** — the user's audit
+  marked this "no action" on their side; without seeing the actual
+  per-office migration files we can't tell whether the indexes live in
+  a non-standard migration path, in raw `CREATE INDEX` SQL, or are
+  applied via an artisan command outside the migration corpus. Will
+  revisit once we have a concrete failing fixture.
+
+## [12.29] - 2026-05-06
+
+### Detector quality round 2 — deferred items D1-D7
+
+The 12.28 round shipped 14 FP fixes plus a suppression mechanism. Customer
+feedback flagged seven gaps the rushed round didn't cover; this release
+ships them as a coherent batch.
+
+#### Math / IO / N+1 detector
+
+- **D1 — 5-line context snippet on every finding.** Each detector finding
+  now carries `evidence.context_lines` (5 lines centred on the matched
+  AST node), so reviewers see the surrounding code without an extra git
+  fetch. Wired through `over-fetch`, `missing-index`, `auth-gaps` too.
+- **D2 — `await` heuristic refines cache-vs-IO.** Without full type
+  resolution, the cheap proxy is "did the call get awaited?". When a
+  cache-allowlisted name (`getQueryData`, `cache.read`) appears with a
+  preceding `await` in the snippet, escalate to medium I/O instead of
+  silencing as cache. Catches "I overloaded a cache name with a real
+  fetch" without forcing project annotations.
+- **D3 — `--framework FRAMEWORK` flag (math).** Bundled profiles
+  `vue3-tanstack` and `laravel-multitenant` layer extra cache
+  allowlists on top of the safe defaults. `roam math --list-frameworks`
+  enumerates available profiles. Unknown names tolerated (defaults
+  apply, surfaced in `meta.framework_unknown`).
+
+#### Tests / regression discipline
+
+- **D4 — Regression-FP fixture corpus.** New `tests/regression_fp_fixtures/`
+  directory holds JSON fixtures keyed by detector helper. Adding a new
+  fixture is a one-file edit (no Python). Currently covers 19 patterns
+  drawn from the 2026-05-06 redacted FP batch — each is a tripwire
+  that fails by name if the fix regresses.
+
+#### PR comment renderer
+
+- **D6 — 5-line context surfaced in markdown.** `pr-comment-render`
+  now renders any concern or rule-violation that carries a
+  `context_lines` block as a fenced code snippet. Plain renderer shows
+  it indented. Each `_check_rules` violation now carries a 5-line
+  window from the diff so the GitHub App comment shows reviewers the
+  matched line in context.
+
+#### Suppression workflow
+
+- **D7 — `roam suppress --from-finding PATH_OR_-`.** Batch ingest from
+  a `roam --json math` envelope (or stdin). Adds `--filter key=value`
+  for narrowing intake by `task_id`/etc., and `--dry-run` to preview
+  without writing. Findings without a `finding_id` are skipped and
+  surfaced in JSON output for over-suppression auditing.
+
+#### Refactor
+
+- **D5 — `cmd_pr_analyze.py` split.** Three pure-helper modules
+  extracted into `roam.commands.pr_analyze.*`:
+  `cache.py` (envelope cache), `audit_trail.py` (Article 12 JSONL
+  emit), `rules.py` (pattern matchers + diff parser). All previous
+  imports remain valid via re-exports — no test or external caller
+  needs to change. cmd_pr_analyze.py shrunk from 2340 → 2098 lines.
+
 ## [12.28] - 2026-05-06
 
 ### Detector quality round (M1-M14) — false-positive fixes

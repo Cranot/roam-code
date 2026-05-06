@@ -32,7 +32,6 @@ Pipeline
 
 from __future__ import annotations
 
-import fnmatch
 import hashlib
 import json as _json
 import re
@@ -43,11 +42,7 @@ from pathlib import Path
 import click
 from click.testing import CliRunner
 
-from roam.commands.audit_trail_helpers import (
-    AUDIT_TRAIL_SCHEMA,
-    DEFAULT_AUDIT_TRAIL_PATH,
-    next_sequence_number,
-)
+from roam.commands.audit_trail_helpers import DEFAULT_AUDIT_TRAIL_PATH
 from roam.commands.git_helpers import (
     detect_roam_version,
     git_actor,
@@ -55,60 +50,27 @@ from roam.commands.git_helpers import (
     git_origin_url,
     utc_timestamp,
 )
+
+# D5 — helpers extracted to roam.commands.pr_analyze.* and re-exported here
+# for back-compat. Tests and any out-of-tree consumer that imports private
+# symbols from cmd_pr_analyze keeps working unchanged.
+from roam.commands.pr_analyze.audit_trail import (
+    _emit_audit_trail_record,
+    _last_record_hash,  # noqa: F401 — re-export
+)
+from roam.commands.pr_analyze.cache import (
+    CACHE_VERSION,  # noqa: F401 — re-export
+    DEFAULT_CACHE_DIR,
+    _cache_key,
+    _cache_path,
+    _load_cache,
+    _save_cache,
+)
 from roam.commands.resolve import ensure_index
 from roam.output.formatter import json_envelope, to_json
 
 EXIT_GATE_BLOCK = 5  # mirrors EXIT_GATE_FAILURE used by cmd_rules / cmd_critique
 DEFAULT_BASELINE_PATH = Path(".roam") / "last-pr-analysis.json"
-DEFAULT_CACHE_DIR = Path(".roam") / "pr-analyze-cache"
-CACHE_VERSION = 1  # bump when the envelope shape changes
-
-
-def _cache_key(diff_text: str, rules_path: Path, block_threshold: int, language_override: str | None) -> str:
-    """Derive a stable cache key from inputs that affect the analysis.
-
-    Inputs hashed: diff text, rules file content (mtime-independent), block
-    threshold, language override, cache version. Repeating the same call
-    with the same inputs returns the cached envelope; any change invalidates.
-    """
-    h = hashlib.sha256()
-    h.update(f"v={CACHE_VERSION}\n".encode())
-    h.update(b"diff=")
-    h.update((diff_text or "").encode("utf-8"))
-    h.update(b"\nrules=")
-    if rules_path.exists():
-        try:
-            h.update(rules_path.read_bytes())
-        except OSError:
-            h.update(b"<unreadable>")
-    h.update(f"\nthreshold={block_threshold}\n".encode())
-    h.update(f"lang={language_override or ''}".encode())
-    return h.hexdigest()
-
-
-def _cache_path(cache_dir: Path, key: str) -> Path:
-    return cache_dir / f"{key}.json"
-
-
-def _load_cache(cache_dir: Path, key: str) -> dict | None:
-    """Return cached envelope or None on miss / read error."""
-    p = _cache_path(cache_dir, key)
-    if not p.exists():
-        return None
-    try:
-        return _json.loads(p.read_text(encoding="utf-8"))
-    except (OSError, _json.JSONDecodeError):
-        return None
-
-
-def _save_cache(cache_dir: Path, key: str, bundle: dict) -> None:
-    """Persist envelope to the cache. Best-effort; failures are silent."""
-    try:
-        cache_dir.mkdir(parents=True, exist_ok=True)
-        _cache_path(cache_dir, key).write_text(_json.dumps(bundle, indent=2), encoding="utf-8")
-    except OSError:
-        pass
-
 
 # Backward-compatible aliases — kept so any out-of-tree consumer of the
 # private helpers (tests, ad-hoc scripts) continues to import successfully.
@@ -116,78 +78,6 @@ _git_actor = git_actor
 _git_origin_short = git_origin_url
 _git_head_sha = git_head_sha
 _detect_roam_version = detect_roam_version
-
-
-def _last_record_hash(path: Path) -> str:
-    """Return SHA-256 of the last line in the audit-trail JSONL, or '' if none."""
-    if not path.exists():
-        return ""
-    try:
-        # Read tail efficiently — last 8 KB is plenty for a single JSON line
-        with path.open("rb") as f:
-            f.seek(0, 2)
-            size = f.tell()
-            f.seek(max(0, size - 8192))
-            tail = f.read().decode("utf-8", errors="replace")
-        last_line = ""
-        for line in tail.strip().split("\n"):
-            if line.strip():
-                last_line = line.strip()
-        if not last_line:
-            return ""
-        return hashlib.sha256(last_line.encode("utf-8")).hexdigest()
-    except OSError:
-        return ""
-
-
-def _emit_audit_trail_record(
-    *,
-    audit_trail_path: Path,
-    diff_text: str,
-    bundle: dict,
-    intent: str | None,
-    reviewers_payload: dict | None,
-) -> dict:
-    """Append a tamper-evident Article 12-shaped record to the audit trail.
-
-    The record includes: invoking actor (from git config), repo + git SHA,
-    diff hash (SHA-256), the verdict + structural metrics, the rationale
-    summary, the previous record's hash for chain integrity, and the
-    full reviewer payload when supplied.
-
-    Designed for local emission first (no signing, no network) — pair
-    with cosign / sigstore later via the existing ``roam.attest.cga``
-    module when a cryptographic guarantee is required.
-    """
-    audit_trail_path.parent.mkdir(parents=True, exist_ok=True)
-    summary = bundle.get("summary") or {}
-    rationale = bundle.get("rationale") or {}
-
-    record = {
-        "schema": AUDIT_TRAIL_SCHEMA,
-        "sequence_number": next_sequence_number(audit_trail_path),
-        "timestamp": utc_timestamp(),
-        "tool": "roam-code",
-        "tool_version": detect_roam_version(),
-        "actor": git_actor(),
-        "repo": git_origin_url(),
-        "git_sha": git_head_sha(),
-        "diff_sha256": hashlib.sha256((diff_text or "").encode("utf-8")).hexdigest(),
-        "verdict": summary.get("verdict"),
-        "blast_radius": summary.get("blast_radius"),
-        "ai_likelihood": summary.get("ai_likelihood"),
-        "rule_violations_count": summary.get("rule_violations", 0),
-        "high_severity_critique": summary.get("high_severity_critique", 0),
-        "intent_marker": intent or None,
-        "rationale_summary": rationale.get("summary_text"),
-        "suggested_reviewers": [r.get("name") for r in (rationale.get("suggested_reviewers") or [])],
-        "previous_record_hash": _last_record_hash(audit_trail_path),
-    }
-    # Stable JSON encoding so the chain hash is reproducible
-    line = _json.dumps(record, separators=(",", ":"), sort_keys=True)
-    with audit_trail_path.open("a", encoding="utf-8") as f:
-        f.write(line + "\n")
-    return record
 
 
 # --- Baseline / drift detection ---------------------------------------------
@@ -460,8 +350,11 @@ _GENERIC_FN_NAME_RE = re.compile(
 )
 
 _COMMENT_LINE_RE = re.compile(r"^(\s*)(#|//|\*\s|/\*|--\s)")
-_PYTHON_IMPORT_RE = re.compile(r"^\s*(?:from\s+(\S+)\s+import|\s*import\s+(\S+))")
-_JS_IMPORT_RE = re.compile(r"""import\s+.*?from\s+['"]([^'"]+)['"]""")
+# Re-imported above from roam.commands.pr_analyze.rules — single source of
+# truth for the import regex shapes shared between rule matching and the
+# AI-scoring orphan-imports signal.
+from roam.commands.pr_analyze.rules import _JS_IMPORT_RE, _PYTHON_IMPORT_RE  # noqa: E402,F811
+
 _FN_DEF_RE = re.compile(
     r"^\s*(?:def\s+\w+|function\s+\w+|func\s+\w+|"
     r"public\s+\w+\s+\w+\s*\(|private\s+\w+\s+\w+\s*\()"
@@ -1084,151 +977,21 @@ def _load_rules_yaml(rules_path: Path, *, strict: bool = False) -> tuple[list[di
     return cleaned, warnings
 
 
-def _added_lines_by_file(diff_text: str) -> dict[str, list[str]]:
-    """Parse a unified diff and return per-file added-line lists."""
-    out: dict[str, list[str]] = {}
-    cur_file: str | None = None
-    in_hunk = False
-    for line in diff_text.splitlines():
-        if line.startswith("+++ "):
-            path = line[4:].strip()
-            if path.startswith("b/"):
-                path = path[2:]
-            cur_file = path if path != "/dev/null" else None
-            in_hunk = False
-            continue
-        if line.startswith("@@"):
-            in_hunk = True
-            continue
-        if cur_file is None or not in_hunk:
-            continue
-        if line.startswith("+") and not line.startswith("+++"):
-            out.setdefault(cur_file, []).append(line[1:])
-    return out
-
-
-# --- Per-pattern matchers ----------------------------------------------------
-
-_CLASS_INHERIT_RE = re.compile(r"^\s*class\s+\w+\s*\(([^)]+)\)")
-_DECORATOR_RE = re.compile(r"^\s*@([\w.]+)")
-# Function-call detection — names plus optional dotted attribute path. Skips
-# definition lines (def/class) by checking the line doesn't start with them.
-_FUNCTION_CALL_RE = re.compile(r"(?<!def\s)(?<!class\s)\b([\w.]+)\s*\(")
-
-
-def _match_import_from(line: str, forbidden_glob: str) -> str | None:
-    py = _PYTHON_IMPORT_RE.match(line)
-    js = _JS_IMPORT_RE.search(line)
-    target = ""
-    if py:
-        target = (py.group(1) or py.group(2) or "").strip()
-    elif js:
-        target = js.group(1).strip()
-    if target and fnmatch.fnmatch(target, forbidden_glob):
-        return target
-    return None
-
-
-def _match_function_call(line: str, forbidden_glob: str) -> str | None:
-    stripped = line.lstrip()
-    # Definitions aren't calls — skip ``def foo(`` and ``class Foo(``.
-    if stripped.startswith(("def ", "class ", "function ", "func ", "async def ")):
-        return None
-    for m in _FUNCTION_CALL_RE.finditer(line):
-        target = m.group(1)
-        if fnmatch.fnmatch(target, forbidden_glob):
-            return target
-    return None
-
-
-def _match_class_inherit(line: str, forbidden_glob: str) -> str | None:
-    m = _CLASS_INHERIT_RE.match(line)
-    if not m:
-        return None
-    for raw_base in m.group(1).split(","):
-        base = raw_base.strip().split("=", 1)[0].strip()  # strip kwargs like metaclass=X
-        if not base:
-            continue
-        if fnmatch.fnmatch(base, forbidden_glob):
-            return base
-    return None
-
-
-def _match_decorator_use(line: str, forbidden_glob: str) -> str | None:
-    m = _DECORATOR_RE.match(line)
-    if not m:
-        return None
-    name = m.group(1)
-    if fnmatch.fnmatch(name, forbidden_glob):
-        return name
-    return None
-
-
-_PATTERN_MATCHERS = {
-    "import_from": _match_import_from,
-    "function_call": _match_function_call,
-    "class_inherit": _match_class_inherit,
-    "decorator_use": _match_decorator_use,
-}
-
-
-def _check_rules(diff_text: str, rules: list[dict]) -> list[dict]:
-    """Match each rule against the diff.
-
-    v1.1 supports four pattern types via ``_PATTERN_MATCHERS``:
-
-    * ``import_from`` — Python ``from X import`` / ``import X`` and
-      JS/TS ``import ... from "X"`` whose target matches the forbidden glob.
-    * ``function_call`` — any call ``name(`` or ``ns.name(`` whose
-      qualified name matches (e.g. ``os.system``, ``eval``, ``pickle.loads``).
-    * ``class_inherit`` — a class declaration whose base list contains a
-      forbidden base (e.g. ``class Foo(DangerousMixin)``).
-    * ``decorator_use`` — a decorator line ``@name`` or ``@ns.name``
-      matching the forbidden glob (e.g. ``@deprecated``, ``@unsafe.*``).
-
-    Unknown pattern names are skipped silently so future rule files
-    don't crash older Roam clients.
-    """
-    if not diff_text or not rules:
-        return []
-
-    added_by_file = _added_lines_by_file(diff_text)
-    violations: list[dict] = []
-
-    for rule in rules:
-        rule_id = rule.get("id", "<unnamed>")
-        pattern = rule.get("pattern", "")
-        matcher = _PATTERN_MATCHERS.get(pattern)
-        if matcher is None:
-            continue
-        source_glob = rule.get("source_glob", "*")
-        forbidden_glob = rule.get("forbidden_target_glob", "")
-        severity = (rule.get("severity") or "WARN").upper()
-        description = rule.get("description", "")
-        if not forbidden_glob:
-            continue
-
-        for path, added_lines in added_by_file.items():
-            if not fnmatch.fnmatch(path, source_glob):
-                continue
-            for line in added_lines:
-                target = matcher(line, forbidden_glob)
-                if target is None:
-                    continue
-                violations.append(
-                    {
-                        "rule_id": rule_id,
-                        "severity": severity,
-                        "description": description,
-                        "pattern": pattern,
-                        "file": path,
-                        "matched_import": target,  # legacy name kept for stability
-                        "matched_target": target,
-                        "line_excerpt": line.strip()[:120],
-                    }
-                )
-    return violations
-
+# D5 — pattern matchers + diff parser extracted to roam.commands.pr_analyze.rules.
+# Re-exported here so existing tests (and any out-of-tree consumer) keep
+# importing ``_check_rules`` / ``_PATTERN_MATCHERS`` / etc. from this module.
+from roam.commands.pr_analyze.rules import (  # noqa: E402
+    _CLASS_INHERIT_RE,  # noqa: F401 — re-export
+    _DECORATOR_RE,  # noqa: F401 — re-export
+    _FUNCTION_CALL_RE,  # noqa: F401 — re-export
+    _PATTERN_MATCHERS,  # noqa: F401 — re-export
+    _added_lines_by_file,
+    _check_rules,
+    _match_class_inherit,  # noqa: F401 — re-export
+    _match_decorator_use,  # noqa: F401 — re-export
+    _match_function_call,  # noqa: F401 — re-export
+    _match_import_from,  # noqa: F401 — re-export
+)
 
 # --------------------------------------------------------------- verdict logic ---
 
@@ -1286,13 +1049,45 @@ def _concerns_rule_violations(rule_violations: list[dict]) -> list[dict]:
     return out
 
 
-def _concern_high_severity_critique(count: int) -> dict | None:
+def _concern_high_severity_critique(count: int, prep_payload: dict | None = None) -> dict | None:
+    """Build the critique concern.
+
+    redacted — when ``prep_payload`` is supplied, fish the top-3
+    high-severity finding pointers (check + location + title) out of the
+    nested critique block and surface them as ``matched_patterns``. The
+    renderer already turns matched_patterns into a one-line "matched: ..."
+    surface so the concern stops being opaque.
+    """
     if count <= 0:
         return None
-    return {
+    concern: dict = {
         "concern": f"{count} high-severity critique finding(s)",
         "evidence": "See the `pr_prep.critique` section for clones-not-edited, blast-radius, intent-mismatch findings.",
     }
+    if prep_payload:
+        critique = prep_payload.get("critique") or {}
+        per_diff = critique.get("per_diff") or critique.get("findings") or []
+        # Findings can live under per_diff[*]["findings"] or directly.
+        flat: list[dict] = []
+        for entry in per_diff:
+            if isinstance(entry, dict):
+                if entry.get("severity") == "high":
+                    flat.append(entry)
+                else:
+                    for fi in entry.get("findings") or []:
+                        if isinstance(fi, dict) and fi.get("severity") == "high":
+                            flat.append(fi)
+        pointers = []
+        for fi in flat[:3]:
+            check = fi.get("check") or fi.get("kind") or "?"
+            title = (fi.get("title") or fi.get("name") or "").strip()
+            if title:
+                pointers.append(f"{check}: {title[:60]}")
+            else:
+                pointers.append(check)
+        if pointers:
+            concern["matched_patterns"] = pointers
+    return concern
 
 
 _NEXT_STEP_BY_VERDICT = {
@@ -1350,6 +1145,7 @@ def _build_rationale(
     reasons: list[str],
     intent: str,
     reviewers_payload: dict | None = None,
+    prep_payload: dict | None = None,
 ) -> dict:
     """Compose a human-readable rationale block for the verdict.
 
@@ -1369,7 +1165,7 @@ def _build_rationale(
         if builder is not None:
             concerns.append(builder)
     concerns.extend(_concerns_rule_violations(rule_violations))
-    crit_concern = _concern_high_severity_critique(high_severity_findings)
+    crit_concern = _concern_high_severity_critique(high_severity_findings, prep_payload=prep_payload)
     if crit_concern is not None:
         concerns.append(crit_concern)
 
@@ -2192,6 +1988,7 @@ def pr_analyze(
         reasons=reasons,
         intent=intent or "",
         reviewers_payload=reviewers_payload,
+        prep_payload=prep_payload,
     )
 
     bundle = {

@@ -15,6 +15,7 @@ Design principles (informed by research):
 
 from __future__ import annotations
 
+import functools
 import json
 import os
 import re
@@ -24,6 +25,10 @@ from roam.catalog.tasks import best_way
 
 
 def _is_test_path(path: str) -> bool:
+    # redacted — when --include-tests was set on the CLI, force
+    # this to return False so every detector stops filtering test paths.
+    if _INCLUDE_TESTS_OVERRIDE:
+        return False
     p = path.replace("\\", "/").lower()
     base = os.path.basename(p)
     if base.startswith("test_") or base.endswith("_test.py"):
@@ -49,6 +54,8 @@ def _finding(
     evidence=None,
     fix=None,
     match_line=None,
+    snippet=None,
+    matched_patterns=None,
 ):
     """Build a finding dict.
 
@@ -57,6 +64,16 @@ def _finding(
     matched (e.g. the line containing the .sort() call) — not the
     enclosing function declaration. The function-start line is
     preserved as ``symbol_line`` so callers needing both have access.
+
+    redacted: when ``snippet`` is also supplied alongside
+    ``match_line``, evidence gets a ``context_lines`` block — ±2 lines
+    around the match site, with the matching line flagged. Cuts FP
+    triage time from "open the file" to "skim the JSON".
+
+    redacted: ``matched_patterns`` lists the named sub-patterns
+    that contributed to the verdict (e.g. ``["nested-loop", "sort+slice"]``
+    for sort-to-select). Surfaces in evidence so users can see WHY a
+    finding fired without grepping the detector source.
     """
     bw = best_way(task_id)
     sym_line = sym["line_start"]
@@ -73,11 +90,69 @@ def _finding(
         "confidence": confidence,
         "reason": reason,
     }
+    # D1 — context lines (cheap to compute, optional based on snippet availability)
+    context_lines: list[dict] = []
+    if snippet is not None and match_line is not None:
+        context_lines = _extract_context_lines(snippet, match_line, sym_line)
+
+    if evidence is None:
+        evidence = {}
+    elif not isinstance(evidence, dict):
+        evidence = {"raw_evidence": evidence}
+    if context_lines:
+        evidence = dict(evidence)
+        evidence["context_lines"] = context_lines
+    # T6 — matched_patterns is the explainability hook. Always copy the
+    # input list so detector mutations don't leak into shared state.
+    if matched_patterns:
+        evidence = dict(evidence) if not context_lines else evidence
+        evidence["matched_patterns"] = list(matched_patterns)
+
     if evidence:
         finding["evidence"] = evidence
     if fix:
         finding["fix"] = fix
     return finding
+
+
+def _extract_context_lines(
+    snippet: str,
+    match_line: int | None,
+    sym_line_start: int | None,
+    *,
+    radius: int = 2,
+) -> list[dict]:
+    """D1 — Pull ±radius lines around the match site as evidence.
+
+    User feedback (3.b): "Each finding should show the exact lines that
+    triggered the detector (5-line context, not just the function name).
+    Makes 'is this a FP?' a 10-second skim instead of a 5-minute investigation."
+
+    Returns a list of {"line": absolute_line_no, "text": line} dicts.
+    Empty list when snippet/lines unavailable. Truncates to 80 chars per
+    line so big function bodies don't bloat the JSON envelope.
+    """
+    if not snippet or sym_line_start is None or match_line is None:
+        return []
+    lines = snippet.splitlines()
+    if not lines:
+        return []
+    # Convert match_line back to a 0-based offset within the snippet.
+    match_offset = match_line - sym_line_start
+    if match_offset < 0 or match_offset >= len(lines):
+        return []
+    start = max(0, match_offset - radius)
+    end = min(len(lines), match_offset + radius + 1)
+    out: list[dict] = []
+    for i in range(start, end):
+        out.append(
+            {
+                "line": sym_line_start + i,
+                "text": lines[i].rstrip()[:80],
+                "is_match": i == match_offset,
+            }
+        )
+    return out
 
 
 def _find_match_line(snippet: str, pattern, sym_line_start: int | None) -> int | None:
@@ -177,6 +252,7 @@ def _json_list(value) -> list[str]:
     return out
 
 
+@functools.lru_cache(maxsize=4096)
 def _call_leaf(name: str) -> str:
     """Return the final method/function token from a qualified call name."""
     if not name:
@@ -194,12 +270,58 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
-def _read_symbol_source(path: str, line_start: int | None, line_end: int | None) -> str:
-    """Best-effort source slice for a symbol location."""
+# redacted — single-process file-line cache. The 23 algorithm
+# detectors each call `_read_symbol_source` for every loop-bearing
+# symbol. On roam-code itself that's 4989 reads and ~1.7s of wall
+# time; many are exact-duplicate (path, line_start, line_end) tuples
+# from sibling detectors over the same row. Caching the file content
+# once per path (not per slice) lets repeat slices hit memory.
+#
+# redacted — bounded with FIFO eviction. Without a cap a single
+# `roam math` on a 50K-file monorepo would hold every loop-bearing file's
+# full source in memory simultaneously. Eviction by insertion order
+# (Python dict invariant) keeps the cap honest with O(1) overhead.
+_FILE_LINES_CACHE: dict[tuple[str, float], list[str]] = {}
+_FILE_LINES_CACHE_MAX = 4096  # entries; ~10MB at a typical 2.5KB/file avg
+
+
+def _file_lines_cached(path: str) -> list[str]:
+    # redacted — key by (path, mtime). Without the mtime guard,
+    # a relative path like "svc.py" could collide across test fixtures
+    # that monkeypatch.chdir into different temp dirs but write the same
+    # filename. Cache survives within one process but never returns stale
+    # bytes after the file has been rewritten.
     try:
-        with open(path, "r", encoding="utf-8", errors="replace") as f:
+        mtime = os.path.getmtime(path)
+    except OSError:
+        mtime = 0.0
+    cache_key = (path, mtime)
+    cached = _FILE_LINES_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+    try:
+        with open(path, encoding="utf-8", errors="replace") as f:
             lines = f.read().splitlines()
     except OSError:
+        lines = []
+    if len(_FILE_LINES_CACHE) >= _FILE_LINES_CACHE_MAX:
+        # Evict oldest insertion — Python 3.7+ dicts preserve insertion
+        # order, so popitem(last=False)-equivalent is `del first key`.
+        first_key = next(iter(_FILE_LINES_CACHE))
+        del _FILE_LINES_CACHE[first_key]
+    _FILE_LINES_CACHE[cache_key] = lines
+    return lines
+
+
+def _read_symbol_source(path: str, line_start: int | None, line_end: int | None) -> str:
+    """Best-effort source slice for a symbol location.
+
+    Reuses an in-memory line cache so sibling detectors don't re-read
+    the same file. Cache lives for the duration of the process; safe
+    because `roam math` runs detectors against a snapshotted index.
+    """
+    lines = _file_lines_cached(path)
+    if not lines:
         return ""
     if line_start is None or line_end is None:
         return "\n".join(lines)
@@ -1068,7 +1190,40 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         "heartbeat",
         "keepalive",
         "backoff",
+        # redacted: also suppress *_loop and watch_* — found
+        # `_run_watch_loop` flagged on roam itself; the loop is a CLI
+        # poll loop with seconds-scale sleep, not a tight spin.
+        "_loop",
+        "watch_",
+        "watcher",
     }
+
+    # T2 — sleep arg less than this many seconds counts as a "spin" in spirit;
+    # >= 1 second sleeps are operator-paced poll loops, not busy waits.
+    _SPIN_THRESHOLD_SECONDS = 1.0
+    _RE_SLEEP_ARG = re.compile(
+        r"\b(?:time\.sleep|asyncio\.sleep|Thread\.sleep|usleep|Sleep)\s*\(\s*"
+        r"(?:[A-Z][A-Z_]*|(?P<num>\d+(?:\.\d+)?))",
+    )
+
+    def _max_sleep_arg_seconds(snippet: str) -> float | None:
+        """Return the LARGEST literal sleep argument in seconds, or None.
+
+        Snippet sleeps with named-constant args (POLL_INTERVAL etc.) yield
+        None — we can't tell. usleep/Sleep are millisecond/microsecond on
+        their respective platforms, but for our threshold check we treat
+        the literal as seconds since a literal `usleep(1)` is unambiguous.
+        """
+        max_seen: float | None = None
+        for m in _RE_SLEEP_ARG.finditer(snippet or ""):
+            num = m.group("num")
+            if num is None:
+                # Named constant — bail. Can't classify safely.
+                return None
+            val = float(num)
+            if max_seen is None or val > max_seen:
+                max_seen = val
+        return max_seen
 
     results = []
     for r in rows:
@@ -1077,9 +1232,19 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         calls = _iter_loop_calls(r)
         if not _call_in(calls, {"sleep", "time.sleep", "Thread.sleep", "usleep", "nanosleep", "Sleep"}):
             continue
-        # Suppress intentional polling
+        # Suppress intentional polling by name.
         name_lower = (r["name"] or "").lower()
         if any(kw in name_lower for kw in _POLL_NAMES):
+            continue
+        # T2 — peek at the snippet: if every literal sleep argument is
+        # >= 1 second, this is operator-paced polling, not a busy wait.
+        snippet = _read_symbol_source(
+            r["file_path"],
+            _row_value(r, "line_start", None),
+            _row_value(r, "line_end", None),
+        )
+        max_sleep = _max_sleep_arg_seconds(snippet)
+        if max_sleep is not None and max_sleep >= _SPIN_THRESHOLD_SECONDS:
             continue
         results.append(
             _finding(
@@ -1189,9 +1354,35 @@ _IO_HIGH_EXACT = {
     "cursor.execute",
     "http.Get",
     "http.Post",
+    # redacted: Node.js sync FS calls — these block the event loop
+    # AND are dramatically slower than the async equivalents when iterated
+    # in a loop. Each one is a syscall round-trip per iteration.
+    "fs.readFileSync",
+    "fs.writeFileSync",
+    "fs.appendFileSync",
+    "fs.existsSync",
+    "fs.statSync",
+    "fs.lstatSync",
+    "fs.readdirSync",
+    "fs.unlinkSync",
+    "fs.mkdirSync",
+    "fs.rmSync",
+    "fs.copyFileSync",
 }
 _IO_HIGH_EXACT_LOWER = {c.lower() for c in _IO_HIGH_EXACT}
-_IO_HIGH_LEAF = {"execute", "executemany", "query", "urlopen"}
+_IO_HIGH_LEAF = {
+    "execute",
+    "executemany",
+    "query",
+    "urlopen",
+    # U3 — leaf-only matching catches `readFileSync(...)` even when the
+    # `fs.` receiver is aliased (`const { readFileSync } = require('fs')`).
+    "readfilesync",
+    "writefilesync",
+    "existssync",
+    "statsync",
+    "readdirsync",
+}
 _IO_AMBIGUOUS_BARE = {"query", "find", "get"}
 _IO_MEDIUM_LEAF = {"fetchone", "fetchall", "fetchmany", "fetch", "find", "get", "open"}
 _IO_RECEIVER_HINTS = {
@@ -1208,6 +1399,12 @@ _IO_RECEIVER_HINTS = {
     "http",
     "requests",
     "urllib",
+    # redacted: Node.js fs receivers + popular wrappers.
+    "fs",
+    "fspromises",
+    "fsasync",
+    "fsextra",
+    "fileutil",
 }
 # M3 expansion: when a call is IN this set OR matches one of the IN_MEMORY_LEAVES
 # attached to a recognised receiver, treat as an in-memory cache read NOT I/O.
@@ -1297,7 +1494,26 @@ _IO_WRAPPER_NAMES = {
     "backfill",
 }
 
+# redacted — body-level signals that the loop iterates CHUNKS, not
+# individual items. When any of these patterns appear in the function body,
+# the inner I/O calls operate on a batch (WHERE IN (...) form), not per-item,
+# so it's not N+1. Caught a self-FP on roam's own `_symbol_context` which
+# uses `for chunk in _chunked(symbol_ids):` then `WHERE symbol_id IN (...)`.
+_BATCH_ITERATION_PATTERNS = re.compile(
+    r"\bfor\s+\w+\s+in\s+(?:_?chunked|_?batched|chunks_of|batched_in|batch_iter|grouper)\b"
+    r"|\bfor\s+\w+\s+in\s+range\s*\(\s*\d*\s*,\s*[^,]+,\s*(?:chunk|batch|page)_?size\b"
+    r"|\bIN\s*\(\s*\{[^}]*\}\s*\)"  # f"WHERE id IN ({ph})" style
+)
 
+
+def _has_batch_iteration(snippet: str) -> bool:
+    """Return True if the loop iterates chunks/batches rather than items."""
+    if not snippet:
+        return False
+    return bool(_BATCH_ITERATION_PATTERNS.search(snippet))
+
+
+@functools.lru_cache(maxsize=4096)
 def _io_receiver_hint(call: str) -> str:
     if "." not in call:
         return ""
@@ -1311,43 +1527,360 @@ def _io_receiver_is_ioish(call: str) -> bool:
     return any(h in recv for h in _IO_RECEIVER_HINTS)
 
 
+# ---- D3: Framework profiles -----------------------------------------------
+# Opt-in extras layered on top of the built-in cache allowlists when the user
+# passes ``--framework FRAMEWORK`` to a detector command. Keeps defaults safe
+# for arbitrary repos while letting users self-classify framework-specific
+# helpers without forking the codebase.
+_FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
+    # redacted — Django ORM-aware allowlist. `prefetch_related`,
+    # `select_related`, `annotate`, `values_list`, `iterator` all belong
+    # to QuerySet but are CHEAP cache/dispatch operations, not new I/O
+    # per call. Without this, naive scans flag idiomatic Django code
+    # (e.g. `for q in QuerySet.iterator(): ...`) as N+1.
+    "django": {
+        "in_memory_exact": {
+            "queryset.iterator",
+            "queryset.values_list",
+            "queryset.values",
+            "queryset.annotate",
+            "queryset.prefetch_related",
+            "queryset.select_related",
+            "manager.iterator",
+            "cache.get",
+            "cache.set",
+            "cache.delete",
+        },
+        "in_memory_leaves": {
+            "iterator",
+            "values_list",
+            "annotate",
+            "prefetch_related",
+            "select_related",
+            "only",
+            "defer",
+            "exists",
+            "count",  # count is ONE query, not per-item
+        },
+        "in_memory_receivers": {
+            "queryset",
+            "qs",
+            "manager",
+            "cache",
+            "objects",
+        },
+    },
+    # redacted — Rails / ActiveRecord allowlist. Same shape:
+    # `includes`, `joins`, `pluck`, `find_each`, `scope` are framework
+    # primitives that don't trigger per-call I/O.
+    "rails": {
+        "in_memory_exact": {
+            "rails.cache.read",
+            "rails.cache.write",
+            "rails.cache.delete",
+        },
+        "in_memory_leaves": {
+            "includes",
+            "joins",
+            "preload",
+            "eager_load",
+            "pluck",
+            "find_each",
+            "in_batches",
+            "scope",
+            "where_values_hash",
+        },
+        "in_memory_receivers": {
+            "scope",
+            "relation",
+            "association",
+            "rails.cache",
+            "active_support",
+        },
+    },
+    # redacted — NestJS DI cache helpers (CacheModule, ConfigService
+    # decorators) and TypeORM repository helpers that are not per-item I/O.
+    "nestjs": {
+        "in_memory_exact": {
+            "configservice.get",
+            "cachemanager.get",
+            "cachemanager.set",
+            "cachemanager.del",
+        },
+        "in_memory_leaves": {
+            "createquerybuilder",
+            "leftjoinandselect",
+            "innerjoinandselect",
+            "addselect",
+            "addorderby",
+            "addgroupby",
+        },
+        "in_memory_receivers": {
+            "configservice",
+            "cachemanager",
+            "querybuilder",
+            "qb",
+            "repository",
+        },
+    },
+    "vue3-tanstack": {
+        # Vue 3 + TanStack Vue Query patterns observed in redacted FP batch.
+        "in_memory_exact": {
+            "queryclient.fetchquery",
+            "queryclient.ensurequerydata",
+            "queryclient.prefetchquery",
+        },
+        "in_memory_leaves": {
+            "fetchquery",
+            "ensurequerydata",
+            "prefetchquery",
+            "$reset",
+            "$patch",
+        },
+        "in_memory_receivers": {
+            "$query",
+            "usequery",
+            "usemutation",
+            "useinfinitequery",
+            "vuequery",
+        },
+    },
+    "laravel-multitenant": {
+        # stancl/tenancy + Laravel multi-DB patterns.
+        "in_memory_exact": {
+            "tenant.context",
+            "tenancy.initialize",
+        },
+        "in_memory_leaves": {
+            "throughtenant",
+            "scopetenant",
+            "viausertenant",
+            "fortenant",
+        },
+        "in_memory_receivers": {
+            "tenantmanager",
+            "tenantservice",
+            "tenantscoped",
+            "tenancy",
+        },
+    },
+}
+
+_ACTIVE_FRAMEWORK_PROFILE: dict[str, set[str]] | None = None
+
+# redacted — module-level flag for --include-tests. When True,
+# `_is_test_path` returns False so detectors stop filtering out tests.
+# Reset alongside the framework profile in run_detectors finally-block.
+_INCLUDE_TESTS_OVERRIDE: bool = False
+
+
+def list_framework_profiles() -> list[str]:
+    """Return the names of bundled framework profiles."""
+    return sorted(_FRAMEWORK_PROFILES.keys())
+
+
+def autodetect_framework_profile() -> str | None:
+    """redacted — sniff package.json / composer.json for known stacks.
+
+    Inspects ``package.json`` and ``composer.json`` from the project root
+    (current working directory) for the dependency signals that map onto
+    a bundled profile:
+
+    * ``vue3-tanstack`` — package.json depends on ``vue@3.x`` AND on
+      ``@tanstack/vue-query`` (or ``@tanstack/query-core``).
+    * ``laravel-multitenant`` — composer.json depends on ``laravel/framework``
+      AND on ``stancl/tenancy`` or ``spatie/laravel-multitenancy``.
+
+    Returns the profile name or None when no signal matches. Designed so
+    a missing/unreadable manifest is silently None — never raises.
+    """
+    import json as _json
+    import os as _os
+
+    cwd = _os.getcwd()
+
+    def _read_json(path):
+        try:
+            with open(path, encoding="utf-8") as f:
+                return _json.load(f)
+        except (OSError, _json.JSONDecodeError):
+            return None
+
+    def _read_text(path):
+        try:
+            with open(path, encoding="utf-8", errors="replace") as f:
+                return f.read()
+        except OSError:
+            return ""
+
+    pkg = _read_json(_os.path.join(cwd, "package.json"))
+    if pkg:
+        deps = {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
+        # redacted — NestJS check before generic vue3.
+        if "@nestjs/core" in deps or "@nestjs/common" in deps:
+            return "nestjs"
+        vue_ver = str(deps.get("vue", ""))
+        tanstack = "@tanstack/vue-query" in deps or "@tanstack/query-core" in deps
+        if tanstack and (vue_ver.startswith("^3") or vue_ver.startswith("3") or vue_ver.startswith("~3")):
+            return "vue3-tanstack"
+
+    composer = _read_json(_os.path.join(cwd, "composer.json"))
+    if composer:
+        require = composer.get("require") or {}
+        if "laravel/framework" in require and ("stancl/tenancy" in require or "spatie/laravel-multitenancy" in require):
+            return "laravel-multitenant"
+
+    # X9 — Python/Django: check requirements.txt OR pyproject.toml.
+    req_text = _read_text(_os.path.join(cwd, "requirements.txt")).lower()
+    pyp_text = _read_text(_os.path.join(cwd, "pyproject.toml")).lower()
+    if "django" in req_text or '"django' in pyp_text or "'django" in pyp_text:
+        return "django"
+
+    # X9 — Ruby/Rails: Gemfile lists `gem 'rails'`.
+    gemfile = _read_text(_os.path.join(cwd, "Gemfile"))
+    if "gem 'rails'" in gemfile or 'gem "rails"' in gemfile:
+        return "rails"
+
+    return None
+
+
+def set_active_framework_profile(name: str | None) -> dict[str, set[str]] | None:
+    """Activate a framework profile for the current process.
+
+    Returns the resolved profile dict, or ``None`` if the name is unknown.
+    Callers wrap in try/finally to restore the previous profile.
+    """
+    global _ACTIVE_FRAMEWORK_PROFILE
+    if not name:
+        _ACTIVE_FRAMEWORK_PROFILE = None
+        return None
+    profile = _FRAMEWORK_PROFILES.get(name.lower())
+    _ACTIVE_FRAMEWORK_PROFILE = profile
+    return profile
+
+
+def _framework_extras(key: str) -> set[str]:
+    if not _ACTIVE_FRAMEWORK_PROFILE:
+        return set()
+    return _ACTIVE_FRAMEWORK_PROFILE.get(key) or set()
+
+
+# redacted — `_io_is_known_in_memory_call` is hot: 12,226 calls
+# during a single `roam math` on roam-code. The merged-set construction
+# (`_IN_MEMORY_EXACT | _framework_extras(...)`) was running per-call.
+# Cache results per (call, framework_id) so repeat call names short-
+# circuit. The framework_id changes when the active profile changes,
+# so cache keys naturally invalidate via the profile-state tuple.
+_IN_MEMORY_CALL_CACHE: dict[tuple[str, int], bool] = {}
+
+
+def _active_framework_id() -> int:
+    return id(_ACTIVE_FRAMEWORK_PROFILE)
+
+
 def _io_is_known_in_memory_call(call: str) -> bool:
+    cache_key = (call, _active_framework_id())
+    cached = _IN_MEMORY_CALL_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
     lower_c = call.lower()
     leaf = _call_leaf(lower_c)
     recv = _io_receiver_hint(lower_c)
-    if lower_c in _IN_MEMORY_EXACT:
-        return True
-    if leaf in _IN_MEMORY_LEAVES and any(h in recv for h in _IN_MEMORY_RECEIVER_HINTS):
-        return True
-    return False
+    exact = _IN_MEMORY_EXACT | _framework_extras("in_memory_exact")
+    leaves = _IN_MEMORY_LEAVES | _framework_extras("in_memory_leaves")
+    receivers = _IN_MEMORY_RECEIVER_HINTS | _framework_extras("in_memory_receivers")
+    if lower_c in exact:
+        result = True
+    elif leaf in leaves and any(h in recv for h in receivers):
+        result = True
+    else:
+        result = False
+    _IN_MEMORY_CALL_CACHE[cache_key] = result
+    return result
+
+
+def _is_call_awaited_in_snippet(call: str, snippet: str) -> bool:
+    """D2 — cheap proxy for "Promise<T> vs T" return type.
+
+    User suggested checking the call's actual return type to distinguish
+    cache reads (sync, T) from I/O (async, Promise<T>). Without full type
+    resolution, the next-best signal is: is the call preceded by ``await``
+    in the function body? If yes, the call returns a Promise — meaningful
+    I/O. If no, it's likely a sync cache read even when the leaf name
+    overlaps a cache library identifier.
+
+    Conservative match: looks for ``await <maybe-receiver>.leaf(`` on
+    any snippet line. Misses cases where the awaited call is named via
+    a variable; catches the common ``await fetchUser(id)`` pattern.
+    """
+    if not snippet or not call:
+        return False
+    leaf = _call_leaf(call) or call
+    if not leaf:
+        return False
+    pattern = re.compile(rf"\bawait\s+(?:[\w$.]+\.)?{re.escape(leaf)}\s*\(")
+    return bool(pattern.search(snippet))
+
+
+# redacted — `_io_match_framework_pack` is invoked per-call inside
+# `detect_io_in_loop` (12,226× on roam-code). The pack-set lookup is
+# deterministic in (call, language) so cache by that tuple. The cache
+# is reset alongside the file/in-memory caches at run_detectors entry.
+_FRAMEWORK_PACK_CACHE: dict[tuple[str, str], dict | None] = {}
 
 
 def _io_match_framework_pack(call: str, language: str | None) -> dict | None:
+    cache_key = (call, language or "")
+    if cache_key in _FRAMEWORK_PACK_CACHE:
+        return _FRAMEWORK_PACK_CACHE[cache_key]
     leaf = _call_leaf(call).lower()
     recv = _io_receiver_hint(call)
     lower_c = call.lower()
+    result: dict | None = None
     for pack in _framework_packs(language):
         leaves = {str(v).lower() for v in pack.get("leaves", set())}
         recv_hints = {str(v).lower() for v in pack.get("receiver_hints", set())}
         if lower_c in {c.lower() for c in pack.get("exact", set())}:
-            return pack
+            result = pack
+            break
         if leaf not in leaves:
             continue
         if not recv_hints:
-            return pack
+            result = pack
+            break
         if any(h in recv for h in recv_hints):
-            return pack
-    return None
+            result = pack
+            break
+    _FRAMEWORK_PACK_CACHE[cache_key] = result
+    return result
 
 
-def _io_classify_call(c: str, language: str | None, conn, r) -> tuple[str | None, dict | None]:
+def _io_classify_call(
+    c: str,
+    language: str | None,
+    conn,
+    r,
+    *,
+    snippet: str | None = None,
+) -> tuple[str | None, dict | None]:
     """Classify a single call inside a loop.
 
     Returns ``(level, framework_pack)`` where level is ``"high"``,
     ``"medium"``, ``"ambiguous"``, or None for in-memory / local-helper /
     non-I/O calls.
+
+    redacted: when ``snippet`` is supplied, the cache allowlist
+    is OVERRIDDEN if the call appears with ``await`` in the snippet.
+    Reason: ``await cache.fetch(k)`` is a real I/O round trip even
+    though the leaf matches a cache identifier; user feedback called
+    out the Promise<T> vs T distinction explicitly.
     """
-    if _io_is_known_in_memory_call(c):
+    # D2: if call name matches cache allowlist BUT is awaited in the body,
+    # the await says it really IS asynchronous I/O — escalate to medium.
+    in_memory = _io_is_known_in_memory_call(c)
+    if in_memory:
+        if snippet and _is_call_awaited_in_snippet(c, snippet):
+            return "medium", None  # await proves it's async I/O, not cache
         return None, None
     pack = _io_match_framework_pack(c, language)
     if pack:
@@ -1431,6 +1964,24 @@ def _io_emit_finding(
         "wrap the loop in a batch/eager guard (e.g. `with()` or `map()`+`Promise.all`), OR "
         "add `# roam: ignore-math[io-in-loop]` on the function line if the call is intentional"
     )
+    # redacted — assemble matched_patterns once for all branches.
+    # Surfaces in `evidence.matched_patterns` so users see which classifier
+    # branches contributed (high-leaf / framework-pack / ambiguous-bare /
+    # dev-gated / batch-iteration). Quiet (empty list) when no signal.
+    matched_patterns: list[str] = []
+    if high_calls:
+        matched_patterns.append(f"high-confidence I/O leaves ({len(high_calls)})")
+    if medium_calls:
+        matched_patterns.append(f"medium-confidence I/O leaves ({len(medium_calls)})")
+    if ambiguous_calls:
+        matched_patterns.append(f"ambiguous bare calls ({len(ambiguous_calls)})")
+    if frameworks:
+        matched_patterns.append(f"framework pack: {', '.join(sorted(frameworks))}")
+    if guard_applies:
+        matched_patterns.append("eager/batch guard nearby (confidence demoted)")
+    if dev_gated:
+        matched_patterns.append("DEV-only gate (confidence demoted)")
+
     if level == "high":
         reason_calls = _dedupe(high_calls)[:2]
         reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
@@ -1453,6 +2004,8 @@ def _io_emit_finding(
             },
             fix=fix_text,
             match_line=derived_match_line,
+            snippet=snippet,
+            matched_patterns=matched_patterns,
         )
     if level == "medium":
         reason_calls = _dedupe(medium_calls)[:2]
@@ -1476,6 +2029,8 @@ def _io_emit_finding(
             },
             fix=fix_text,
             match_line=derived_match_line,
+            snippet=snippet,
+            matched_patterns=matched_patterns,
         )
     # Ambiguous bare calls (get/find/query) — weak evidence, low confidence.
     reason_calls = _dedupe(ambiguous_calls)[:2]
@@ -1496,6 +2051,8 @@ def _io_emit_finding(
         },
         fix=fix_text,
         match_line=derived_match_line,
+        snippet=snippet,
+        matched_patterns=matched_patterns,
     )
     finding["precision"] = "low"
     return finding
@@ -1551,7 +2108,7 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         frameworks: set[str] = set()
         fixes: set[str] = set()
         for c in calls:
-            level, pack = _io_classify_call(c, language, conn, r)
+            level, pack = _io_classify_call(c, language, conn, r, snippet=snippet)
             if pack:
                 frameworks.add(pack["framework"])
                 if pack.get("fix"):
@@ -1568,6 +2125,12 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
 
         name_lower = (r["name"] or "").lower()
         if any(kw in name_lower for kw in _IO_WRAPPER_NAMES):
+            continue
+
+        # redacted — body-level: skip if the loop iterates chunks
+        # / batches rather than items. Catches the canonical `for chunk in
+        # _chunked(ids):` pattern where the inner query is WHERE IN (...).
+        if _has_batch_iteration(snippet):
             continue
 
         # M4: skip DEV-gated bodies — production stripped, so loop overhead
@@ -1737,6 +2300,7 @@ def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
                     reason,
                     confidence,
                     match_line=match_line,
+                    snippet=snippet,
                 )
             )
             continue
@@ -1755,8 +2319,450 @@ def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
                     reason,
                     confidence,
                     match_line=match_line,
+                    snippet=snippet,
                 )
             )
+    return results
+
+
+# redacted — JS/TS-specific: serial-await inside a for-of loop is a
+# Promise.all opportunity. Each `await` round-trips before the next call
+# starts, so 100 awaits = 100x the latency of one. The fix is
+# `await Promise.all(items.map(item => fetch(item)))`. Distinct from
+# io-in-loop because the per-item call may not match a known I/O leaf
+# (custom async helpers); the `await` itself is the signal.
+_RE_FOR_OF = re.compile(
+    r"\bfor\s*(?:await\s*)?\s*\(\s*(?:const|let|var)\s+\w+\s+of\s+",
+)
+_RE_AWAIT_IN_BODY = re.compile(r"\bawait\s+[\w$.]+\s*\(")
+
+
+def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
+    """`for (... of ...) { await x() }` — serial-await N+1 (Promise.all opportunity).
+
+    Only fires for JS/TS. Two signals:
+    1. The function body contains a `for ... of ...` (or `for await ... of`) header.
+    2. The body has at least one `await call()` line.
+    Skips when body uses `Promise.all`/`Promise.allSettled` (already batched).
+    """
+    rows = conn.execute(
+        "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+        "f.language AS language, s.line_start, s.line_end, ms.loop_depth "
+        "FROM symbols s "
+        "JOIN files f ON s.file_id = f.id "
+        "JOIN math_signals ms ON ms.symbol_id = s.id "
+        "WHERE s.kind IN ('function', 'method') "
+        "AND ms.loop_depth >= 1 "
+        "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+    ).fetchall()
+
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(
+            r["file_path"],
+            _row_value(r, "line_start", None),
+            _row_value(r, "line_end", None),
+        )
+        if not snippet:
+            continue
+        if not _RE_FOR_OF.search(snippet):
+            continue
+        if not _RE_AWAIT_IN_BODY.search(snippet):
+            continue
+        # Already-batched: Promise.all / Promise.allSettled in the body.
+        if "Promise.all" in snippet:
+            continue
+        # Skip benign awaited identifiers that aren't I/O (await timeout(0),
+        # await Promise.resolve, await new Promise(...)). Conservative: only
+        # fire when the awaited callee is a method/function name on a value,
+        # not a literal Promise constructor call.
+        if not re.search(r"\bawait\s+(?!new\s+Promise|Promise\.|setTimeout|setImmediate)[\w$.]+\s*\(", snippet):
+            continue
+        results.append(
+            _finding(
+                "serial-await-loop",
+                "for-of-await",
+                r,
+                "for-of loop with serial `await` — each iteration waits for the previous "
+                "(use Promise.all for parallel I/O)",
+                "high",
+                snippet=snippet,
+                matched_patterns=["for-of header", "await-call in body", "no Promise.all batch"],
+            )
+        )
+    return results
+
+
+# redacted — Python-specific: `time.sleep()` inside an async function
+# blocks the event loop. The async cousin is `asyncio.sleep` (or trio.sleep).
+# This is one of the most common asyncio bugs and dramatically degrades
+# request throughput in async web servers (FastAPI, aiohttp, Sanic).
+def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
+    """`time.sleep()` (or other blocking calls) inside an async function.
+
+    Async functions must use ``await asyncio.sleep(n)`` instead — otherwise
+    the entire event loop stalls. Same applies to other blocking I/O calls
+    (``requests.get``, ``urllib.urlopen``, sync DB drivers).
+
+    Conservative: only fires for Python (the bug shape is language-specific)
+    and only when ``is_async`` is set on the symbol row.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end, ms.calls_in_loops, ms.calls_in_loops_qualified "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "JOIN math_signals ms ON ms.symbol_id = s.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND s.is_async = 1 "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except Exception:
+        return []
+
+    _BLOCKING_CALLS = {
+        "time.sleep",
+        "sleep",
+        "requests.get",
+        "requests.post",
+        "requests.put",
+        "requests.delete",
+        "requests.patch",
+        "urllib.request.urlopen",
+        "urlopen",
+        "subprocess.run",
+        "subprocess.call",
+        "subprocess.check_output",
+    }
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        # Combine loop calls with body scan: blocking calls anywhere in the
+        # async body (not just inside loops) are still bugs.
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
+        loop_calls = _iter_loop_calls(r)
+        body_blocking: list[str] = []
+        for call in loop_calls:
+            if call.lower() in _BLOCKING_CALLS or _call_leaf(call).lower() in {"sleep", "urlopen"}:
+                body_blocking.append(call)
+        # Cheap snippet sweep to catch out-of-loop occurrences.
+        if not body_blocking:
+            for needle in ("time.sleep(", "requests.get(", "requests.post(", "urlopen(", "subprocess.run("):
+                if needle in snippet:
+                    body_blocking.append(needle.rstrip("("))
+                    break
+        if not body_blocking:
+            continue
+        # The await heuristic — if the snippet already awaits the same leaf,
+        # it's the async cousin (await asyncio.sleep), so skip.
+        if "await asyncio.sleep" in snippet or "await trio.sleep" in snippet:
+            # Could still have a stray `time.sleep` on another line; only
+            # skip when no blocking-call needles remained after that filter.
+            if not any(c.startswith("time.sleep") or c == "time.sleep" for c in body_blocking):
+                continue
+        results.append(
+            _finding(
+                "async-blocking-sleep",
+                "blocking-call-in-async",
+                r,
+                f"Blocking call ({', '.join(body_blocking[:2])}) inside async function — blocks the event loop",
+                "high",
+                snippet=snippet,
+                matched_patterns=[
+                    "is_async = 1",
+                    f"blocking calls: {', '.join(body_blocking[:3])}",
+                ],
+            )
+        )
+    return results
+
+
+# redacted — Python: `except Exception:` / `except BaseException:`
+# without `raise` is the canonical "swallowing bug" pattern. Catches
+# KeyboardInterrupt, MemoryError, SystemExit silently. The fix is to
+# narrow the exception type or always re-raise after logging.
+_RE_BROAD_EXCEPT = re.compile(
+    r"^\s*except\s+(?:Exception|BaseException)\s*(?:as\s+\w+\s*)?:",
+    re.MULTILINE,
+)
+_RE_RERAISE = re.compile(r"^\s*raise(?:\s|$)", re.MULTILINE)
+
+
+def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
+    """Python: `except Exception:` block that silently swallows the error.
+
+    Fires when the body has NO `raise` statement — meaning the error is
+    caught, possibly logged, and the program continues as if nothing
+    happened. That hides real bugs and masks operational failures.
+
+    Skip cases:
+    - Re-raise present (intentional log-and-rethrow)
+    - Function name suggests it's an error-recovery wrapper
+      (`safe_*`, `_try_*`, `with_default`, `silent_*`).
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except Exception:
+        return []
+
+    _RECOVERY_PREFIXES = (
+        "safe_",
+        "_safe_",
+        "try_",
+        "_try_",
+        "with_default_",
+        "silent_",
+        "_silent_",
+        "noexcept_",
+    )
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        name_lower = (r["name"] or "").lower()
+        if any(name_lower.startswith(p) for p in _RECOVERY_PREFIXES):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        broad_match = _RE_BROAD_EXCEPT.search(snippet)
+        if not broad_match:
+            continue
+        # If the function body re-raises somewhere AFTER the broad except,
+        # treat it as intentional log-and-rethrow.
+        post = snippet[broad_match.end() :]
+        if _RE_RERAISE.search(post):
+            continue
+        # Find the matched line number for precise location reporting.
+        line_offset = snippet[: broad_match.start()].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "broad-except-swallow",
+                "swallow-exception",
+                r,
+                "`except Exception:` without re-raise — silently swallows bugs",
+                "medium",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=[
+                    "broad except clause",
+                    "no re-raise in body",
+                    "function name not in recovery prefix list",
+                ],
+            )
+        )
+    return results
+
+
+# redacted — JS/TS: `acc = [...acc, x]` (or `.reduce((acc, x) => [...acc, x])`)
+# allocates a fresh O(n) array per iteration → O(n²) total. The fix is
+# `acc.push(x)` (or `flat()` for nested arrays). Same shape applies to
+# `obj = {...obj, k: v}` in loops, and to `acc + [x]`.
+_RE_SPREAD_ACC = re.compile(
+    r"\b(\w+)\s*=\s*\[\s*\.\.\.\s*\1\s*,",  # name = [...name,
+)
+_RE_SPREAD_OBJ_ACC = re.compile(
+    r"\b(\w+)\s*=\s*\{\s*\.\.\.\s*\1\s*[,}]",  # name = {...name,
+)
+_RE_REDUCE_SPREAD = re.compile(
+    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\[\s*\.\.\.\s*\1\s*,",
+)
+_RE_REDUCE_SPREAD_OBJ = re.compile(
+    r"\.\s*reduce\s*\(\s*\(\s*(\w+)[^)]*\)\s*=>\s*\{\s*\.\.\.\s*\1\s*[,}]",
+)
+
+
+def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
+    """JS/TS: `acc = [...acc, x]` or `.reduce((acc, x) => [...acc, x])` is O(n²)."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "f.language AS language, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        matched: list[str] = []
+        first_pos: int | None = None
+        for pat, label in (
+            (_RE_REDUCE_SPREAD, "reduce array spread accumulator"),
+            (_RE_REDUCE_SPREAD_OBJ, "reduce object spread accumulator"),
+            (_RE_SPREAD_ACC, "in-place array spread re-bind"),
+            (_RE_SPREAD_OBJ_ACC, "in-place object spread re-bind"),
+        ):
+            m = pat.search(snippet)
+            if m is None:
+                continue
+            matched.append(label)
+            if first_pos is None or m.start() < first_pos:
+                first_pos = m.start()
+        if not matched:
+            continue
+        if first_pos is None:
+            first_pos = 0
+        line_offset = snippet[:first_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "spread-accumulator",
+                "spread-rebind",
+                r,
+                f"Spread accumulator ({matched[0]}) is O(n^2) — use .push() / Object.assign()",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=matched,
+            )
+        )
+    return results
+
+
+# redacted — Go: `defer` inside a loop accumulates the deferred
+# call stack until the FUNCTION returns, not the loop iteration. Common
+# bug: `for _, f := range files { fh, _ := os.Open(f); defer fh.Close() }`
+# — none of the file handles close until the function returns, exhausting
+# fds on big input. Fix: extract the loop body to a helper function so
+# defer fires per call, OR use an explicit `fh.Close()` at the end.
+_RE_DEFER_IN_LOOP_BODY = re.compile(
+    r"\b(?:for|range)\b[^{]*\{[^}]*\bdefer\b\s+[\w$.]+",
+    re.DOTALL,
+)
+
+
+def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
+    """Go: `defer` inside a `for`/`range` loop accumulates instead of firing per-iteration."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "f.language AS language, s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language = 'go'"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        m = _RE_DEFER_IN_LOOP_BODY.search(snippet)
+        if not m:
+            continue
+        # Find the line of the defer keyword (not the for keyword) for precise location.
+        defer_pos = snippet.find("defer ", m.start())
+        if defer_pos == -1:
+            defer_pos = m.start()
+        line_offset = snippet[:defer_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "defer-in-loop",
+                "loop-defer",
+                r,
+                "`defer` inside loop — fires when function returns, not when iteration ends "
+                "(extract loop body to a helper, or close explicitly)",
+                "high",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=["for/range loop", "defer inside loop body"],
+            )
+        )
+    return results
+
+
+# redacted — JS/TS: `.filter(predA).find(predB)` walks the array
+# fully then searches the filtered subset. Equivalent to a single pass
+# `.find(x => predA(x) && predB(x))`. Other equivalent patterns:
+# `.map().find()` (could be `.find()` then `.map()`), `.filter().length`
+# (use `.some()` or `.every()`), `.reduce()` to a boolean (use `.some()`).
+_RE_FILTER_FIND = re.compile(
+    r"\.\s*filter\s*\([^)]*\)\s*\.\s*find\s*\(",
+)
+_RE_FILTER_LENGTH_BOOL = re.compile(
+    r"\.\s*filter\s*\([^)]*\)\s*\.\s*length\s*(?:>\s*0|>=\s*1|!==?\s*0)",
+)
+_RE_MAP_FIND = re.compile(
+    r"\.\s*map\s*\([^)]*\)\s*\.\s*find\s*\(",
+)
+
+
+def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
+    """JS/TS: `.filter().find()` and friends are 2-pass; one-pass equivalents exist."""
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language IN ('javascript', 'typescript', 'tsx', 'jsx')"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"])
+        if not snippet:
+            continue
+        matched: list[str] = []
+        first_pos: int | None = None
+        for pat, label, fix_hint in (
+            (_RE_FILTER_FIND, "filter().find() — two passes", ".find(x => predA(x) && predB(x))"),
+            (_RE_FILTER_LENGTH_BOOL, "filter().length — full walk for boolean", ".some(x => predA(x))"),
+            (_RE_MAP_FIND, "map().find() — full transform before search", ".find() then .map() of one item"),
+        ):
+            m = pat.search(snippet)
+            if m is None:
+                continue
+            matched.append(f"{label} → {fix_hint}")
+            if first_pos is None or m.start() < first_pos:
+                first_pos = m.start()
+        if not matched:
+            continue
+        if first_pos is None:
+            first_pos = 0
+        line_offset = snippet[:first_pos].count("\n")
+        match_line = (r["line_start"] or 1) + line_offset
+        results.append(
+            _finding(
+                "chained-collection-walk",
+                "two-pass-walk",
+                r,
+                f"Chained collection walk ({matched[0].split(' →')[0]}) — single-pass form available",
+                "medium",
+                match_line=match_line,
+                snippet=snippet,
+                matched_patterns=matched,
+            )
+        )
     return results
 
 
@@ -1863,51 +2869,50 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     # recognised "depth < limit ⇒ continue" patterns; the negation form was
     # silently mis-flagged as O(2^n). Real-world FP: deepEqual flagged
     # despite line+2 having `if (depth > 10) return false`.
+    # redacted — pre-compile the depth-guard / memo-collection
+    # regexes once. Previously each `re.search(literal, snippet)` call
+    # rebuilt the pattern object via the implicit re._cache (capped at
+    # 512 entries), which can evict on a busy run. Hoisting them keeps
+    # the patterns hot.
+    _SPLIT_LENGTH_GUARD = re.compile(r"\.split\s*\([^)]*\)\s*\.\s*length\s*(?:<|<=)\s*\d+")
+    _LEN_SPLIT_GUARD = re.compile(r"len\s*\(\s*[^)]*\.split\s*\([^)]*\)\s*\)\s*(?:<|<=)\s*\d+")
+    _DEPTH_BELOW_GUARD = re.compile(
+        r"\b(?:depth|level|budget|remaining|hops|currentDepth|current_depth|max_depth|maxDepth)\b"
+        r"\s*(?:<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION)",
+    )
+    _DEPTH_EXCEEDS_GUARD = re.compile(
+        r"\b(?:depth|level|budget|remaining|hops|recursion_count|recursionDepth)\b"
+        r"\s*(?:>|>=|<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION|0)\s*\)?\s*"
+        r"\s*[:{]?\s*(?:return|raise|throw|break)",
+    )
+    _DEC_THEN_CHECK_GUARD = re.compile(
+        r"--?\s*\b(?:depth|budget|remaining|hops)\b\s*[<>]=?\s*\d+\s*\)?\s*[:{]?\s*"
+        r"(?:return|raise|throw|break)",
+    )
+    _MAXDEPTH_VAR_GUARD = re.compile(
+        r"\b(?:maxDepth|max_depth)\b\s*(?:>|>=)\s*\b(?:depth|level|currentDepth|current_depth)\b",
+    )
+    _MEMO_COLLECTION_GENERIC = re.compile(r"\b(?:Set|Map|WeakSet|WeakMap)\s*<")
+    _MEMO_COLLECTION_LITERAL = re.compile(r"\bnew\s+(?:Set|Map|WeakSet|WeakMap)\b")
+    _MEMO_VAR_NAME = re.compile(r"\b(?:visited|seen|memo|cache|memoised|memoized)\b\s*[:=]")
+    _MEMO_DECORATOR = re.compile(r"@(?:lru_cache|cache|memoize|memoise|functools\.lru_cache)\b")
+
     def _has_explicit_depth_guard(language: str | None, snippet: str) -> bool:
         """Return True for bounded-recursion guards that cap traversal depth."""
         if not snippet:
             return False
-        # JS/TS: path.split('.').length < 5
-        if re.search(r"\.split\s*\([^)]*\)\s*\.\s*length\s*(?:<|<=)\s*\d+", snippet):
+        if _SPLIT_LENGTH_GUARD.search(snippet):  # JS/TS: path.split('.').length < 5
             return True
-        # Python: len(path.split(".")) < 5
-        if re.search(r"len\s*\(\s*[^)]*\.split\s*\([^)]*\)\s*\)\s*(?:<|<=)\s*\d+", snippet):
+        if _LEN_SPLIT_GUARD.search(snippet):  # Python: len(path.split(".")) < 5
             return True
-        # Form 1: continue if depth/level/budget BELOW limit.
-        # Common explicit counters: depth < maxDepth, level <= 4, etc.
-        if re.search(
-            r"\b(?:depth|level|budget|remaining|hops|currentDepth|current_depth|max_depth|maxDepth)\b"
-            r"\s*(?:<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION)",
-            snippet,
-        ):
+        if _DEPTH_BELOW_GUARD.search(snippet):  # Form 1: depth < limit
             return True
         # M2 — Form 2: early-return if depth/level/budget EXCEEDS limit.
-        # Matches `if (depth > 10) return ...`, `if (level >= MAX_DEPTH) raise`,
-        # `if (budget < 1) return`, `if (--budget <= 0) return`.
-        # Generous on the "return / raise / throw / break" side since
-        # short-circuit-and-bail is the universal early-exit shape.
-        if re.search(
-            r"\b(?:depth|level|budget|remaining|hops|recursion_count|recursionDepth)\b"
-            r"\s*(?:>|>=|<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION|0)\s*\)?\s*"
-            r"\s*[:{]?\s*(?:return|raise|throw|break)",
-            snippet,
-        ):
+        if _DEPTH_EXCEEDS_GUARD.search(snippet):
             return True
-        # Decrement-then-check: `if (--budget <= 0) return`
-        if re.search(
-            r"--?\s*\b(?:depth|budget|remaining|hops)\b\s*[<>]=?\s*\d+\s*\)?\s*[:{]?\s*"
-            r"(?:return|raise|throw|break)",
-            snippet,
-        ):
+        if _DEC_THEN_CHECK_GUARD.search(snippet):  # `if (--budget <= 0) return`
             return True
-        if (
-            language
-            and language.lower() in {"javascript", "typescript"}
-            and re.search(
-                r"\b(?:maxDepth|max_depth)\b\s*(?:>|>=)\s*\b(?:depth|level|currentDepth|current_depth)\b",
-                snippet,
-            )
-        ):
+        if language and language.lower() in {"javascript", "typescript"} and _MAXDEPTH_VAR_GUARD.search(snippet):
             return True
         return False
 
@@ -1917,13 +2922,13 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     def _has_memo_collection(snippet: str) -> bool:
         if not snippet:
             return False
-        if re.search(r"\b(?:Set|Map|WeakSet|WeakMap)\s*<", snippet):  # TS generic
+        if _MEMO_COLLECTION_GENERIC.search(snippet):  # TS generic
             return True
-        if re.search(r"\bnew\s+(?:Set|Map|WeakSet|WeakMap)\b", snippet):  # JS literal
+        if _MEMO_COLLECTION_LITERAL.search(snippet):  # JS literal
             return True
-        if re.search(r"\b(?:visited|seen|memo|cache|memoised|memoized)\b\s*[:=]", snippet):
+        if _MEMO_VAR_NAME.search(snippet):
             return True
-        if re.search(r"@(?:lru_cache|cache|memoize|memoise|functools\.lru_cache)\b", snippet):
+        if _MEMO_DECORATOR.search(snippet):
             return True
         return False
 
@@ -1994,6 +2999,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
                     ),
                 },
                 match_line=match_line,
+                snippet=snippet,
             )
         )
     return results
@@ -2145,6 +3151,31 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         "yield",
     }
 
+    # redacted — heavyweight calls that are especially worth
+    # hoisting (parsing serialised data is O(n^2) over loop iterations
+    # when the input doesn't change). When ANY of these fire, escalate
+    # confidence to "high".
+    _HEAVYWEIGHT_PARSE_LEAVES = {
+        "loads",  # json.loads, yaml.load (sometimes), pickle.loads
+        "load",  # yaml.load, pickle.load
+        "parse",  # JSON.parse, dateutil.parser.parse
+        "parsestring",  # JSON.parseString
+        "fromstring",  # ET.fromstring (XML)
+        "deserialize",
+        "decode",
+        "compile",  # re.compile inside loop
+    }
+    _HEAVYWEIGHT_PARSE_RECEIVERS = {
+        "json",
+        "yaml",
+        "pickle",
+        "toml",
+        "xml",
+        "msgpack",
+        "cbor",
+        "dateutil",
+    }
+
     results = []
     for r in rows:
         if _is_test_path(r["file_path"]):
@@ -2152,22 +3183,34 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         inv_calls = json.loads(r["loop_invariant_calls"]) if r["loop_invariant_calls"] else []
         # Filter out intentional per-iteration calls
         flagged = []
+        heavyweight_hits = []
         for c in inv_calls:
             call_full = (c or "").lower()
             call_leaf = _call_leaf(c).lower()
             if call_full in _INTENTIONAL_CALLS or call_leaf in _INTENTIONAL_CALLS:
                 continue
             flagged.append(c)
+            # V3 — escalate when the call is a parse/deserialize on a
+            # known serialisation receiver (json.loads, JSON.parse, etc.).
+            recv = _io_receiver_hint(c)
+            if call_leaf in _HEAVYWEIGHT_PARSE_LEAVES and any(h in recv for h in _HEAVYWEIGHT_PARSE_RECEIVERS):
+                heavyweight_hits.append(c)
         flagged = _dedupe(flagged)
         if not flagged:
             continue
+        confidence = "high" if heavyweight_hits else "medium"
+        matched_patterns = ["hoistable call(s) detected"]
+        if heavyweight_hits:
+            matched_patterns.append(f"heavyweight parse: {', '.join(heavyweight_hits[:2])}")
         results.append(
             _finding(
                 "loop-invariant-call",
                 "repeated-call",
                 r,
-                f"Loop-invariant call ({', '.join(flagged[:3])}) can be hoisted before loop",
-                "medium",
+                f"Loop-invariant call ({', '.join(flagged[:3])}) can be hoisted before loop"
+                + (f" — heavyweight parse ({', '.join(heavyweight_hits[:2])})" if heavyweight_hits else ""),
+                confidence,
+                matched_patterns=matched_patterns,
             )
         )
     return results
@@ -2687,6 +3730,12 @@ _MATH_DETECTORS = [
     ("busy-wait", "sleep-loop", detect_busy_wait),
     ("regex-in-loop", "compile-per-iter", detect_regex_in_loop),
     ("io-in-loop", "loop-query", detect_io_in_loop),
+    ("serial-await-loop", "for-of-await", detect_serial_await_loop),
+    ("async-blocking-sleep", "blocking-call-in-async", detect_async_blocking_sleep),
+    ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
+    ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
+    ("defer-in-loop", "loop-defer", detect_defer_in_loop),
+    ("chained-collection-walk", "two-pass-walk", detect_chained_collection_walks),
     ("list-prepend", "insert-front", detect_list_prepend),
     ("sort-to-select", "full-sort", detect_sort_to_select),
     ("loop-lookup", "method-scan", detect_loop_lookup),
@@ -2730,6 +3779,8 @@ def run_detectors(
     *,
     profile="balanced",
     return_meta=False,
+    framework=None,
+    include_tests=False,
 ):
     """Run all detectors and return combined findings.
 
@@ -2745,71 +3796,105 @@ def run_detectors(
     return_meta : bool
         When True, returns ``(findings, meta)`` where ``meta`` contains
         detector execution diagnostics (totals + failures).
+    framework : str or None
+        D3 — opt-in framework profile name (e.g. ``vue3-tanstack``,
+        ``laravel-multitenant``). Layers extra cache-allowlist entries on
+        top of the defaults for the duration of this call. Unknown names
+        are tolerated (defaults apply, and ``meta['framework_unknown']``
+        flags the miss).
 
     Returns list of finding dicts, or ``(findings, meta)`` when
     ``return_meta=True``.
     """
-    findings = []
-    failed_detectors = []
-    executed = 0
-    executed_tasks: list[str] = []
-    for task_id, _way_id, detect_fn in _iter_registered_detectors():
-        if task_filter and task_id != task_filter:
-            continue
-        executed += 1
-        executed_tasks.append(task_id)
-        try:
-            hits = detect_fn(conn)
-        except Exception as exc:
-            failed_detectors.append(
-                {
-                    "task_id": task_id,
-                    "detector": detect_fn.__name__,
-                    "error": str(exc),
-                }
-            )
-            continue
-        dmeta = _detector_meta(task_id)
-        for h in hits:
-            h.setdefault("precision", dmeta["precision"])
-            h.setdefault("impact", dmeta["impact"])
-            h.setdefault("tags", list(dmeta["tags"]))
-        findings.extend(hits)
+    global _ACTIVE_FRAMEWORK_PROFILE, _INCLUDE_TESTS_OVERRIDE
+    # S2/S3/redacted — caches scoped to a single `run_detectors`
+    # invocation. Without this reset, fixture tests that rewrite the
+    # same path between runs would see stale content.
+    _FILE_LINES_CACHE.clear()
+    _IN_MEMORY_CALL_CACHE.clear()
+    _FRAMEWORK_PACK_CACHE.clear()
+    # X14 — toggle test-path inclusion for the duration of this call.
+    previous_include_tests = _INCLUDE_TESTS_OVERRIDE
+    _INCLUDE_TESTS_OVERRIDE = bool(include_tests)
+    framework_unknown: str | None = None
+    previous_profile = _ACTIVE_FRAMEWORK_PROFILE
+    framework_active: str | None = None
+    if framework:
+        resolved = set_active_framework_profile(framework)
+        if resolved is None:
+            framework_unknown = framework
+            set_active_framework_profile(None)
+        else:
+            framework_active = framework.lower()
+    try:
+        findings = []
+        failed_detectors = []
+        executed = 0
+        executed_tasks: list[str] = []
+        for task_id, _way_id, detect_fn in _iter_registered_detectors():
+            if task_filter and task_id != task_filter:
+                continue
+            executed += 1
+            executed_tasks.append(task_id)
+            try:
+                hits = detect_fn(conn)
+            except Exception as exc:
+                failed_detectors.append(
+                    {
+                        "task_id": task_id,
+                        "detector": detect_fn.__name__,
+                        "error": str(exc),
+                    }
+                )
+                continue
+            dmeta = _detector_meta(task_id)
+            for h in hits:
+                h.setdefault("precision", dmeta["precision"])
+                h.setdefault("impact", dmeta["impact"])
+                h.setdefault("tags", list(dmeta["tags"]))
+            findings.extend(hits)
 
-    profile_key = (profile or _PROFILE_BALANCED).lower()
-    if profile_key not in _VALID_PROFILES:
-        profile_key = _PROFILE_BALANCED
+        profile_key = (profile or _PROFILE_BALANCED).lower()
+        if profile_key not in _VALID_PROFILES:
+            profile_key = _PROFILE_BALANCED
 
-    symbol_ids = _dedupe([f["symbol_id"] for f in findings if f.get("symbol_id")])
-    context_map = _symbol_context(conn, symbol_ids)
+        symbol_ids = _dedupe([f["symbol_id"] for f in findings if f.get("symbol_id")])
+        context_map = _symbol_context(conn, symbol_ids)
 
-    # Apply calibration and enrich findings with semantic evidence.
-    for f in findings:
-        ctx = context_map.get(f["symbol_id"], {})
-        _calibrate_finding(f, ctx)
-        enriched_evidence = _build_evidence(ctx)
-        f["evidence"] = _merge_evidence(f.get("evidence"), enriched_evidence)
-        f["evidence_path"] = _build_evidence_path(f, ctx)
-        score = _impact_score(f, ctx)
-        f["impact_score"] = score
-        f["impact_band"] = _impact_band(score)
+        # Apply calibration and enrich findings with semantic evidence.
+        for f in findings:
+            ctx = context_map.get(f["symbol_id"], {})
+            _calibrate_finding(f, ctx)
+            enriched_evidence = _build_evidence(ctx)
+            f["evidence"] = _merge_evidence(f.get("evidence"), enriched_evidence)
+            f["evidence_path"] = _build_evidence_path(f, ctx)
+            score = _impact_score(f, ctx)
+            f["impact_score"] = score
+            f["impact_band"] = _impact_band(score)
 
-    pre_profile_count = len(findings)
-    findings = _apply_profile(findings, profile_key)
-    profile_filtered = pre_profile_count - len(findings)
+        pre_profile_count = len(findings)
+        findings = _apply_profile(findings, profile_key)
+        profile_filtered = pre_profile_count - len(findings)
 
-    if confidence_filter:
-        findings = [f for f in findings if f["confidence"] == confidence_filter]
+        if confidence_filter:
+            findings = [f for f in findings if f["confidence"] == confidence_filter]
 
-    if return_meta:
-        meta = {
-            "detectors_executed": executed,
-            "detectors_failed": len(failed_detectors),
-            "failed_detectors": failed_detectors,
-            "profile": profile_key,
-            "profile_filtered": profile_filtered,
-            "detector_metadata": {task_id: _detector_meta(task_id) for task_id in executed_tasks},
-        }
-        return findings, meta
+        if return_meta:
+            meta = {
+                "detectors_executed": executed,
+                "detectors_failed": len(failed_detectors),
+                "failed_detectors": failed_detectors,
+                "profile": profile_key,
+                "profile_filtered": profile_filtered,
+                "detector_metadata": {task_id: _detector_meta(task_id) for task_id in executed_tasks},
+                "framework": framework_active,
+                "framework_unknown": framework_unknown,
+            }
+            return findings, meta
 
-    return findings
+        return findings
+    finally:
+        # Always restore the prior active profile so a single run can't leak
+        # into subsequent invocations or other commands sharing the process.
+        _ACTIVE_FRAMEWORK_PROFILE = previous_profile
+        _INCLUDE_TESTS_OVERRIDE = previous_include_tests

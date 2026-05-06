@@ -141,26 +141,6 @@ def mine_ai_commits(repo_root: Path, *, since: str | None = None, limit: int = 1
     return out
 
 
-def _files_for_commit(repo_root: Path, sha: str) -> list[str]:
-    """Return paths touched by a single commit."""
-    try:
-        r = subprocess.run(
-            ["git", "show", "--name-only", "--format=", sha],
-            cwd=str(repo_root),
-            capture_output=True,
-            text=True,
-            timeout=10,
-            encoding="utf-8",
-            errors="replace",
-            env=worktree_git_env(repo_root),
-        )
-    except (FileNotFoundError, subprocess.TimeoutExpired):
-        return []
-    if r.returncode != 0:
-        return []
-    return [p.strip() for p in r.stdout.strip().splitlines() if p.strip()]
-
-
 def _files_for_commits_batch(repo_root: Path, shas: list[str]) -> dict[str, list[str]]:
     """Return ``{sha: [paths]}`` for many commits in one git invocation.
 

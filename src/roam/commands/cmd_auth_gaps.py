@@ -50,6 +50,17 @@ _CONSTRUCTOR_MIDDLEWARE_RE = re.compile(
     re.IGNORECASE,
 )
 
+# redacted — `class Foo extends Bar` → Bar is the parent class.
+# Used to walk the inheritance chain so a child controller inherits the
+# auth middleware its parent's __construct adds. Without this, every
+# subclass of a base controller (DynamicResourceController, ApiController,
+# etc.) gets falsely flagged as missing auth even when the base wires
+# `$this->middleware('auth')` once.
+_RE_CLASS_EXTENDS = re.compile(
+    r"""\bclass\s+(\w+)\s+extends\s+(\\?[\w\\]+)""",
+    re.IGNORECASE,
+)
+
 # Route-level middleware in routes files
 _ROUTE_AUTH_MIDDLEWARE_RE = re.compile(
     r"""(?:->middleware\s*\(\s*['"]auth(?::sanctum)?['"]|
@@ -452,10 +463,60 @@ def _extract_method_bodies(source: str) -> list[dict]:
     return methods
 
 
+# E2 — class-source map: short-class-name -> source. Built once per
+# `auth-gaps` invocation by walking every controller file in the project
+# so the inheritance walker has O(1) lookup instead of re-reading files.
+
+
+def _build_class_source_map(file_paths: list[str], project_root) -> dict[str, str]:
+    """Index ``class X`` declarations across PHP files for inheritance lookup."""
+    out: dict[str, str] = {}
+    for db_path in file_paths:
+        abs_path = _resolve_path(project_root, db_path)
+        source = _read_source(abs_path)
+        if source is None:
+            continue
+        # A file may declare multiple classes; index each. Strip leading
+        # backslash for fully-qualified-name forms (`\App\Foo`).
+        for match in re.finditer(r"\bclass\s+(\w+)\s*[\{\s(]", source):
+            cls = match.group(1)
+            out.setdefault(cls, source)
+    return out
+
+
+def _ancestor_has_constructor_auth(
+    source: str,
+    class_source_map: dict[str, str],
+    depth: int = 3,
+) -> bool:
+    """E2 — walk the `extends` chain looking for `$this->middleware('auth')`.
+
+    Caps at ``depth`` ancestors to avoid pathological cycles or framework
+    base classes (Illuminate\\Routing\\Controller, etc.) that aren't in the
+    project source map. Returns True at the first ancestor that wires auth.
+    """
+    if not class_source_map or depth <= 0:
+        return False
+    extends_match = _RE_CLASS_EXTENDS.search(source)
+    if not extends_match:
+        return False
+    parent_fqn = extends_match.group(2)
+    # Strip leading backslash + namespace prefix; we keyed the map by short name.
+    parent_short = parent_fqn.replace("\\", "/").rsplit("/", 1)[-1]
+    parent_source = class_source_map.get(parent_short)
+    if parent_source is None:
+        return False
+    if _CONSTRUCTOR_MIDDLEWARE_RE.search(parent_source):
+        return True
+    # Recurse — handle 2+ level inheritance (BaseController extends ApiController).
+    return _ancestor_has_constructor_auth(parent_source, class_source_map, depth - 1)
+
+
 def _analyze_controller_file(
     file_path: str,
     source: str,
     route_protected_controllers: set[str] | None = None,
+    class_source_map: dict[str, str] | None = None,
 ) -> list[dict]:
     """Analyze a PHP controller for missing authorization checks.
 
@@ -482,8 +543,13 @@ def _analyze_controller_file(
 
     findings = []
 
-    # Check for class-level auth middleware in constructor
+    # Check for class-level auth middleware in constructor.
+    # redacted — also walk the extends chain so a controller that
+    # inherits from DynamicResourceController / ApiController / etc. picks
+    # up the parent's `$this->middleware('auth')` registration.
     has_constructor_auth = bool(_CONSTRUCTOR_MIDDLEWARE_RE.search(source))
+    if not has_constructor_auth and class_source_map:
+        has_constructor_auth = _ancestor_has_constructor_auth(source, class_source_map)
 
     methods = _extract_method_bodies(source)
     for method in methods:
@@ -550,6 +616,19 @@ def _analyze_controller_file(
             reason = "Read method without authorization (may be intentionally public)"
             fix = "Add $this->authorize('view', $model) if access should be restricted"
 
+        # redacted — `matched_patterns` lists the structural signals
+        # that contributed to this finding's confidence. Mirrors the math
+        # detector's evidence shape so consumers can render WHY uniformly.
+        matched_patterns: list[str] = []
+        matched_patterns.append("CRUD action" if is_crud else "read action")
+        if has_constructor_auth:
+            matched_patterns.append("auth middleware in constructor (or ancestor)")
+        if is_route_protected:
+            matched_patterns.append("auth middleware at route level")
+        if has_tenant_scope:
+            matched_patterns.append("tenant-scoped query (officeScoped / multiTenant / Resource::for)")
+        if not has_auth_check:
+            matched_patterns.append("no $this->authorize() / Gate / Policy call in method body")
         findings.append(
             {
                 "type": "controller",
@@ -560,6 +639,7 @@ def _analyze_controller_file(
                 "line": line,
                 "reason": reason,
                 "fix": fix,
+                "matched_patterns": matched_patterns,
             }
         )
 
@@ -762,12 +842,20 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
         # --- Controller file analysis ---
         if not routes_only:
             controller_files = _find_controller_files(conn)
+            # E2 — build the project-wide class-source map once so the
+            # inheritance walker can resolve `extends` parents in O(1).
+            class_source_map = _build_class_source_map(controller_files, project_root)
             for db_path in controller_files:
                 abs_path = _resolve_path(project_root, db_path)
                 source = _read_source(abs_path)
                 if source is None:
                     continue
-                findings = _analyze_controller_file(abs_path, source, route_protected_controllers)
+                findings = _analyze_controller_file(
+                    abs_path,
+                    source,
+                    route_protected_controllers,
+                    class_source_map=class_source_map,
+                )
                 all_findings.extend(findings)
 
     # Apply confidence filter
@@ -856,6 +944,22 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
     # --- Controllers section ---
     if ctrl_findings:
         click.echo(f"Controllers without authorization ({len(ctrl_findings)}):")
+        # redacted — when many findings cluster on a few controllers
+        # (e.g. ~115 methods of DynamicResourceController-derived classes),
+        # a per-controller rollup makes triage radically faster than skimming
+        # 100+ detail rows. Threshold: only show rollup when >= 10 findings.
+        if len(ctrl_findings) >= 10:
+            from collections import Counter
+
+            by_ctrl = Counter(f.get("controller", "?") for f in ctrl_findings)
+            top = by_ctrl.most_common(5)
+            click.echo("  Top by controller:")
+            for ctrl, n in top:
+                click.echo(f"    {ctrl:<40s} {n} method(s)")
+            tail = len(by_ctrl) - 5
+            if tail > 0:
+                click.echo(f"    ...and {tail} more controller(s)")
+            click.echo()
         rows = []
         for f in ctrl_findings[:limit]:
             rows.append(

@@ -27,7 +27,10 @@ class TestCatalog:
     def test_catalog_has_entries(self):
         from roam.catalog.tasks import CATALOG
 
-        assert len(CATALOG) == 23, f"Expected 23 tasks, got {len(CATALOG)}"
+        # T3 added serial-await-loop; X1-X5 added async-blocking-sleep,
+        # broad-except-swallow, spread-accumulator, defer-in-loop;
+        # X13 added chained-collection-walk → 29.
+        assert len(CATALOG) == 29, f"Expected 29 tasks, got {len(CATALOG)}"
 
     def test_detector_registry_covers_catalog(self):
         from roam.catalog.detectors import _MATH_DETECTORS
@@ -63,7 +66,8 @@ class TestCatalog:
     def test_categories_are_valid(self):
         from roam.catalog.tasks import CATALOG
 
-        valid = {"searching", "ordering", "collections", "string", "math", "concurrency"}
+        # X2 added "error-handling" category (broad-except-swallow).
+        valid = {"searching", "ordering", "collections", "string", "math", "concurrency", "error-handling"}
         for task_id, task in CATALOG.items():
             assert task["category"] in valid, f"{task_id} has invalid category: {task['category']}"
 
@@ -495,9 +499,14 @@ class TestDetectors:
             {
                 "waiter.py": (
                     "import time\n"
-                    "def check_flag_loop(flag):\n"
+                    # redacted: keep the function name free of poll
+                    # keywords (poll, wait, watch, _loop, retry, etc.) so the
+                    # busy-wait detector isn't suppressed by the name guard.
+                    # Sub-second sleep is the actual busy-wait pattern;
+                    # `sleep(1)` is now treated as operator-paced polling.
+                    "def consume_flag(flag):\n"
                     "    while not flag.value:\n"
-                    "        sleep(1)\n"
+                    "        time.sleep(0.01)\n"
                     "    return True\n"
                 ),
             }
@@ -984,6 +993,205 @@ class TestDetectors:
             assert len(findings) >= 1
             assert meta["detectors_executed"] >= 1
             assert "detectors_failed" in meta
+
+
+# ============================================================================
+# T3 / DF2 / U3 — newer detectors and FP guards
+# ============================================================================
+
+
+class TestSerialAwaitLoop:
+    """redacted — serial-await-loop detector for JS/TS Promise.all opportunities."""
+
+    def test_detects_for_of_with_await(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "fetcher.ts": (
+                    "async function fetchAll(ids: string[]): Promise<User[]> {\n"
+                    "  const out: User[] = [];\n"
+                    "  for (const id of ids) {\n"
+                    "    const u = await getUser(id);\n"
+                    "    out.push(u);\n"
+                    "  }\n"
+                    "  return out;\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_serial_await_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_serial_await_loop(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "serial-await-loop"
+            mp = (hits[0].get("evidence") or {}).get("matched_patterns") or []
+            assert "for-of header" in mp
+
+    def test_skipped_when_promise_all_used(self, project_factory, monkeypatch):
+        """Body that already uses Promise.all is correctly batched — no finding."""
+        proj = project_factory(
+            {
+                "fetcher.ts": (
+                    "async function fetchAll(ids: string[]) {\n"
+                    "  return await Promise.all(ids.map(id => getUser(id)));\n"
+                    "}\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_serial_await_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_serial_await_loop(conn)
+            assert hits == []
+
+    def test_pure_python_files_not_scanned(self, project_factory, monkeypatch):
+        """Detector is JS/TS-only — Python for-loops with await must not trigger."""
+        proj = project_factory(
+            {
+                "loop.py": "async def f(ids):\n    for i in ids:\n        await get_one(i)\n",
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_serial_await_loop
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_serial_await_loop(conn)
+            assert hits == []
+
+
+class TestAsyncBlockingSleep:
+    """redacted — blocking calls inside async function (event-loop stall)."""
+
+    def test_detects_time_sleep_in_async(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": ("import time\nasync def do_work():\n    time.sleep(0.5)\n    return 42\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_async_blocking_sleep
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_async_blocking_sleep(conn)
+            assert len(hits) >= 1
+            assert hits[0]["task_id"] == "async-blocking-sleep"
+
+    def test_skips_when_using_asyncio_sleep(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": ("import asyncio\nasync def do_work():\n    await asyncio.sleep(0.5)\n    return 42\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_async_blocking_sleep
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_async_blocking_sleep(conn)
+            assert hits == []
+
+    def test_pure_sync_function_not_flagged(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": ("import time\ndef do_work():\n    time.sleep(0.5)\n    return 42\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_async_blocking_sleep
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_async_blocking_sleep(conn)
+            assert hits == []
+
+
+class TestBroadExceptSwallow:
+    """redacted — bare `except Exception:` without re-raise is a swallow."""
+
+    def test_detects_swallow(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": ("def fragile():\n    try:\n        do_thing()\n    except Exception:\n        pass\n"),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_broad_except_swallow
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_broad_except_swallow(conn)
+            assert len(hits) >= 1
+
+    def test_skips_when_reraises(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": (
+                    "def thoughtful():\n"
+                    "    try:\n"
+                    "        do_thing()\n"
+                    "    except Exception:\n"
+                    "        log_it()\n"
+                    "        raise\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_broad_except_swallow
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_broad_except_swallow(conn)
+            assert hits == []
+
+    def test_skips_when_function_name_signals_recovery(self, project_factory, monkeypatch):
+        proj = project_factory(
+            {
+                "svc.py": (
+                    "def safe_int(x):\n    try:\n        return int(x)\n    except Exception:\n        return 0\n"
+                ),
+            }
+        )
+        monkeypatch.chdir(proj)
+        from roam.catalog.detectors import detect_broad_except_swallow
+        from roam.db.connection import open_db
+
+        with open_db(readonly=True, project_root=proj) as conn:
+            hits = detect_broad_except_swallow(conn)
+            assert hits == []
+
+
+class TestBatchIterationGuard:
+    """redacted — `for chunk in _chunked(ids):` is not N+1."""
+
+    def test_has_batch_iteration_recognises_chunked(self):
+        from roam.catalog.detectors import _has_batch_iteration
+
+        snippet = (
+            "for chunk in _chunked(symbol_ids):\n"
+            "    ph = ','.join('?' for _ in chunk)\n"
+            "    rows = conn.execute(f'SELECT * FROM x WHERE id IN ({ph})', chunk)\n"
+        )
+        assert _has_batch_iteration(snippet) is True
+
+    def test_has_batch_iteration_recognises_where_in_placeholder(self):
+        from roam.catalog.detectors import _has_batch_iteration
+
+        snippet = "rows = conn.execute(f'SELECT * FROM symbols WHERE id IN ({ph})', ids).fetchall()\n"
+        assert _has_batch_iteration(snippet) is True
+
+    def test_has_batch_iteration_negative_per_item_loop(self):
+        from roam.catalog.detectors import _has_batch_iteration
+
+        snippet = (
+            "for fp in test_files:\n    row = conn.execute('SELECT COUNT(*) FROM x WHERE f = ?', (fp,)).fetchone()\n"
+        )
+        assert _has_batch_iteration(snippet) is False
 
 
 # ============================================================================

@@ -35,22 +35,6 @@ def _default_framework(language: str) -> str:
     return fws[0] if fws else "generic"
 
 
-def _to_test_function_name(name: str, kind: str, language: str) -> str:
-    """Derive a test function/method name from a source symbol name."""
-    if language == "go":
-        # Go: TestFuncName
-        return f"Test{name[0].upper()}{name[1:]}" if name else "TestUnnamed"
-    if language in ("javascript", "typescript"):
-        return name  # used inside describe/it blocks as description text
-    if language == "java":
-        # JUnit: testMethodName or test_MethodName
-        return f"test{name[0].upper()}{name[1:]}" if name else "testUnnamed"
-    if language == "ruby":
-        return name  # used inside describe/it blocks as description text
-    # Python default
-    return f"test_{name}"
-
-
 def _normalise_path(p: str) -> str:
     """Normalise backslashes to forward slashes."""
     return p.replace("\\", "/")

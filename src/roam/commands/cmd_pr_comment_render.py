@@ -241,8 +241,28 @@ def _section_concerns(concerns: list[dict]) -> list[str]:
         evidence = (c.get("evidence", "") or "").strip()
         if evidence:
             out.append(f"   {evidence}")
+        # redacted — surface matched_patterns when present so reviewers
+        # see WHY the concern fired, not just THAT it fired. Quiet when absent.
+        patterns = c.get("matched_patterns") or []
+        if patterns:
+            out.append(f"   _matched: {', '.join(str(p) for p in patterns)}_")
+        out.extend(_render_context_lines(c.get("context_lines"), indent="   "))
     out.append("")
     return out
+
+
+def _render_context_lines(context_lines, *, indent: str = "") -> list[str]:
+    """D6: render an optional context_lines block as a fenced code snippet.
+
+    Used by both the concerns section and the rule-violation section so any
+    upstream that attaches `context_lines: list[str]` gets uniform rendering.
+    """
+    if not context_lines:
+        return []
+    cleaned = [str(ln).rstrip() for ln in context_lines if str(ln).strip()]
+    if not cleaned:
+        return []
+    return [f"{indent}```", *(f"{indent}{ln}" for ln in cleaned), f"{indent}```"]
 
 
 def _section_reviewers(suggested: list[dict]) -> list[str]:
@@ -271,10 +291,24 @@ def _section_rule_violations(rule_violations: list[dict]) -> list[str]:
         out.append(f"- **BLOCK** `{v['rule_id']}`: `{v['file']}` -> `{v['matched_import']}`")
         if v.get("description"):
             out.append(f"  *{v['description']}*")
+        out.extend(_render_context_lines(v.get("context_lines"), indent="  "))
     for v in warn_v[:5]:
         out.append(f"- WARN `{v['rule_id']}`: `{v['file']}` -> `{v['matched_import']}`")
-    if len(rule_violations) > 10:
-        out.append(f"- _...and {len(rule_violations) - 10} more violation(s) (`roam pr-analyze --json` for full list)_")
+        out.extend(_render_context_lines(v.get("context_lines"), indent="  "))
+    # redacted — when more than the first-5 limit of either tier
+    # was truncated, summarise BY RULE so reviewers see the long tail at
+    # a glance instead of guessing which rules dominate. The previous
+    # "...and N more" line was truthful but uninformative.
+    extra_block = max(0, len(block_v) - 5)
+    extra_warn = max(0, len(warn_v) - 5)
+    if extra_block or extra_warn:
+        from collections import Counter
+
+        tail = block_v[5:] + warn_v[5:]
+        counts = Counter((v.get("severity") or "WARN", v.get("rule_id") or "?") for v in tail)
+        chunks = [f"`{rid}` x{n} ({sev})" for (sev, rid), n in counts.most_common(5)]
+        more_total = extra_block + extra_warn
+        out.append(f"- _...{more_total} more violation(s): " + ", ".join(chunks) + "._")
     out.append("")
     return out
 
@@ -382,6 +416,17 @@ def _render_plain(envelope: dict) -> str:
             lines.append(f"  {i}. {label}")
             if c.get("evidence"):
                 lines.append(f"     {c['evidence']}")
+            # redacted — plain renderer also surfaces matched_patterns
+            # so Slack/email threads get the same explainability as the
+            # markdown surface.
+            patterns = c.get("matched_patterns") or []
+            if patterns:
+                lines.append(f"     matched: {', '.join(str(p) for p in patterns)}")
+            ctx = c.get("context_lines") or []
+            for ln in ctx:
+                snippet = str(ln).rstrip()
+                if snippet:
+                    lines.append(f"       | {snippet}")
     next_steps = rationale.get("next_steps") or []
     if next_steps:
         lines.append("")

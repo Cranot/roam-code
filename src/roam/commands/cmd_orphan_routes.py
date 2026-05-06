@@ -289,26 +289,6 @@ def _search_with_git_grep(pattern: str, project_root: Path, extra_args: list[str
     return []
 
 
-def _search_with_git_grep_regex(pattern: str, project_root: Path) -> list[str]:
-    """Run git grep with regex and return matching file paths (unique)."""
-    cmd = ["git", "grep", "-l", "-I", "--no-color", "-E", pattern]
-    try:
-        result = subprocess.run(
-            cmd,
-            cwd=str(project_root),
-            capture_output=True,
-            text=True,
-            timeout=15,
-            encoding="utf-8",
-            errors="replace",
-        )
-        if result.returncode <= 1:
-            return [line.strip() for line in result.stdout.splitlines() if line.strip()]
-    except (FileNotFoundError, subprocess.TimeoutExpired, OSError):
-        pass
-    return []
-
-
 def _search_in_files(segment: str, project_root: Path, file_paths: list[str]) -> list[str]:
     """Fallback: search for segment in a list of files by reading them."""
     matches = []

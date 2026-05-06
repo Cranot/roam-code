@@ -539,6 +539,33 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         click.echo(f"=== Blast Radius ({label} changes) ===\n")
         click.echo(f"Changed files: {len(file_map)}  Symbols defined: {total_syms}")
         click.echo(f"Affected symbols: {len(all_affected_syms)}  Affected files: {len(all_affected_files)}")
+
+        # redacted — surface the top-3 affected symbols by PageRank
+        # so reviewers see "this change ripples into central abstractions"
+        # vs "this change is in a leaf module" without scrolling. Quiet
+        # when no PageRank data is available.
+        if all_affected_syms:
+            try:
+                from roam.db.connection import batched_in
+
+                aff_ids = list(all_affected_syms)[:512]  # cap for DB
+                rows = batched_in(
+                    conn,
+                    "SELECT s.id, s.name, sm.pagerank, f.path "
+                    "FROM symbols s JOIN symbol_metrics sm ON sm.symbol_id = s.id "
+                    "JOIN files f ON s.file_id = f.id "
+                    "WHERE s.id IN ({ph}) AND sm.pagerank IS NOT NULL "
+                    "ORDER BY sm.pagerank DESC LIMIT 3",
+                    aff_ids,
+                )
+                top_pr = list(rows)[:3]
+                if top_pr:
+                    click.echo("Top affected by PageRank:")
+                    for r in top_pr:
+                        pr = float(r["pagerank"] or 0.0)
+                        click.echo(f"  {r['name']:<40s} pr={pr:.4f}  {r['path']}")
+            except Exception:
+                pass  # Best-effort — never break `roam diff` over an enrichment fail.
         click.echo()
 
         # Per-file breakdown

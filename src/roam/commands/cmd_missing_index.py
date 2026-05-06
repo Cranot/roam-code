@@ -173,15 +173,6 @@ def _is_migration_path(path: str) -> bool:
     return "migration" in p and p.endswith(".php")
 
 
-def _is_query_source_path(path: str) -> bool:
-    """Return True if this path is a model/service/controller/repository."""
-    p = path.replace("\\", "/").lower()
-    if "migration" in p or "test" in p or "vendor" in p:
-        return False
-    keywords = ("model", "service", "controller", "repository", "scope", "query")
-    return (p.endswith(".php") and any(k in p for k in keywords)) or p.endswith(".php")
-
-
 def _extract_string_list(raw: str) -> list[str]:
     """Extract all quoted strings from an array-like raw fragment."""
     return [m.group(1) for m in re.finditer(r"['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]", raw)]

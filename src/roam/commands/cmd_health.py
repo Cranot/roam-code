@@ -511,6 +511,12 @@ def health(ctx, no_framework, gate, explain):
         }
         _top_category, _top_count = max(_cat_counts.items(), key=lambda x: x[1])
         _focus_hint = f", focus: {_top_category}" if _top_count > 0 else ""
+        # redacted — when 0 actionable items remain (everything was
+        # ignored by category or framework filter), the verdict should say
+        # so explicitly. Otherwise users see "29 critical issues" but the
+        # next line says "0 actionable" — confusing.
+        if actionable_count == 0 and sev_counts["CRITICAL"] > 0:
+            _focus_hint = " (all flagged as utility / non-actionable)"
 
         # --- Verdict ---
         if health_score >= 80:

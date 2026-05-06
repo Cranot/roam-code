@@ -7,7 +7,13 @@ import time
 from datetime import datetime, timezone
 
 # Envelope schema versioning (semver: major.minor.patch)
-ENVELOPE_SCHEMA_VERSION = "1.0.0"
+# redacted — bumped to 1.1.0 to signal additive enhancements:
+# `evidence.matched_patterns` on detector findings (T6/T9),
+# `framework`/`framework_autodetected`/`framework_unknown` in math summary
+# (T7/W8), `roi_band` on debt items (W4), `context_lines` on rule
+# violations + concerns (D6). All optional — pre-1.1 consumers continue
+# to work; new consumers can opt in to the richer fields.
+ENVELOPE_SCHEMA_VERSION = "1.1.0"
 ENVELOPE_SCHEMA_NAME = "roam-envelope-v1"
 
 _NON_CACHEABLE_COMMANDS = {

@@ -26,19 +26,6 @@ def _write_file(path: str, lines: list[str]) -> None:
             f.write(line + "\n")
 
 
-def _find_callers(conn, symbol_id: int) -> list[dict]:
-    """Find all symbols that call or import the given symbol."""
-    rows = conn.execute(
-        "SELECT DISTINCT s.*, f.path as file_path, e.kind as edge_kind "
-        "FROM edges e "
-        "JOIN symbols s ON e.source_id = s.id "
-        "JOIN files f ON s.file_id = f.id "
-        "WHERE e.target_id = ?",
-        (symbol_id,),
-    ).fetchall()
-    return [dict(r) for r in rows]
-
-
 def _find_files_referencing(conn, symbol_id: int) -> list[str]:
     """Find all unique file paths that reference a symbol."""
     rows = conn.execute(

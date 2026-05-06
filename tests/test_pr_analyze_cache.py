@@ -2,9 +2,6 @@
 
 from __future__ import annotations
 
-import json as _json
-from pathlib import Path
-
 from roam.commands.cmd_pr_analyze import (
     _cache_key,
     _cache_path,

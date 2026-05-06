@@ -537,10 +537,18 @@ class LazyGroup(click.Group):
         return sorted(_COMMANDS.keys())
 
     def get_command(self, ctx, cmd_name):
-        _ensure_plugin_commands_loaded()
-        if cmd_name not in _COMMANDS:
-            return None
-        module_path, attr_name = _COMMANDS[cmd_name]
+        # redacted — built-ins resolve without paying the
+        # ~100ms entry-point-discovery cost. Only when the requested
+        # command isn't in the static map do we fall back to plugin
+        # discovery. Saves 100ms per CLI invocation for the 99% case
+        # of users with no third-party roam plugins installed.
+        if cmd_name in _COMMANDS:
+            module_path, attr_name = _COMMANDS[cmd_name]
+        else:
+            _ensure_plugin_commands_loaded()
+            if cmd_name not in _COMMANDS:
+                return None
+            module_path, attr_name = _COMMANDS[cmd_name]
         import importlib
 
         mod = importlib.import_module(module_path)
@@ -676,6 +684,45 @@ class LazyGroup(click.Group):
             formatter.write(f"    {', '.join(remaining)}\n\n")
 
         formatter.write("  Run `roam <command> --help` for details on any command.\n")
+        # V6 — persist any newly-cached short-help entries.
+        _save_short_help_cache_if_dirty()
+
+
+# redacted — `_short_help_via_ast` is called 126x by `roam --help`,
+# each call AST-parses the cmd_*.py file. ~640ms total. Disk cache keyed
+# by source-file mtime collapses repeat invocations to a single dict lookup.
+_SHORT_HELP_CACHE_PATH = os.path.expanduser("~/.roam-cli-cache/short-help.json")
+_short_help_disk_cache: dict | None = None
+_short_help_disk_cache_dirty = False
+
+
+def _load_short_help_cache() -> dict:
+    global _short_help_disk_cache
+    if _short_help_disk_cache is not None:
+        return _short_help_disk_cache
+    try:
+        import json as _json
+
+        with open(_SHORT_HELP_CACHE_PATH, encoding="utf-8") as fh:
+            _short_help_disk_cache = _json.load(fh)
+    except (OSError, ValueError):
+        _short_help_disk_cache = {}
+    return _short_help_disk_cache
+
+
+def _save_short_help_cache_if_dirty() -> None:
+    global _short_help_disk_cache_dirty
+    if not _short_help_disk_cache_dirty or _short_help_disk_cache is None:
+        return
+    try:
+        import json as _json
+
+        os.makedirs(os.path.dirname(_SHORT_HELP_CACHE_PATH), exist_ok=True)
+        with open(_SHORT_HELP_CACHE_PATH, "w", encoding="utf-8") as fh:
+            _json.dump(_short_help_disk_cache, fh)
+        _short_help_disk_cache_dirty = False
+    except OSError:
+        pass
 
 
 def _short_help_via_ast(cmd_name: str) -> str | None:
@@ -689,6 +736,7 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
     Returns ``None`` when the cmd file or expected attribute is absent;
     the caller falls back to the live ``self.get_command()`` path.
     """
+    global _short_help_disk_cache_dirty
     target = _COMMANDS.get(cmd_name)
     if not target:
         return None
@@ -701,6 +749,18 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
     src_path = os.path.join(pkg_root, rel)
     if not os.path.isfile(src_path):
         return None
+
+    # V6 — cache check (key includes mtime so source edits invalidate).
+    try:
+        mtime = os.path.getmtime(src_path)
+    except OSError:
+        mtime = 0.0
+    cache = _load_short_help_cache()
+    cache_key = f"{module_path}:{attr_name}"
+    cached = cache.get(cache_key)
+    if cached and cached.get("mtime") == mtime:
+        return cached.get("text") or None
+
     try:
         import ast as _ast
 
@@ -719,6 +779,8 @@ def _short_help_via_ast(cmd_name: str) -> str | None:
             first_line = " ".join(first_para.split())
             if len(first_line) > 60:
                 first_line = first_line[:57] + "..."
+            cache[cache_key] = {"mtime": mtime, "text": first_line}
+            _short_help_disk_cache_dirty = True
             return first_line
     return None
 

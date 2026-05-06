@@ -218,3 +218,190 @@ def test_cli_suppress_json_mode(tmp_path):
     env = _json.loads(result.output)
     assert env["summary"]["verdict"].startswith("suppressed")
     assert env["entry"]["reason"] == "test"
+
+
+# ---- D7: --from-finding batch ingest ---------------------------------------
+
+
+def _write_envelope(path, findings):
+    payload = {
+        "command": "math",
+        "summary": {"verdict": "ok"},
+        "findings": findings,
+    }
+    path.write_text(_json.dumps(payload), encoding="utf-8")
+
+
+def test_cli_suppress_from_finding_ingests_envelope(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    sup_path = tmp_path / "sup.json"
+    env_path = tmp_path / "findings.json"
+    _write_envelope(
+        env_path,
+        [
+            {"finding_id": "aaaa1111bbbb2222", "task_id": "membership"},
+            {"finding_id": "cccc3333dddd4444", "task_id": "sort-to-select"},
+            {"task_id": "no-id-here"},  # skipped
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "suppress",
+            "_",
+            "--from-finding",
+            str(env_path),
+            "--reason",
+            "vetted batch",
+            "--input",
+            str(sup_path),
+        ],
+    )
+    assert result.exit_code == 0, result.output
+    data = _json.loads(sup_path.read_text())
+    assert "aaaa1111bbbb2222" in data
+    assert "cccc3333dddd4444" in data
+    assert data["aaaa1111bbbb2222"]["reason"] == "vetted batch"
+    assert data["aaaa1111bbbb2222"]["source"] == "from-finding"
+    assert "skipped (no finding_id): 1" in result.output
+
+
+def test_cli_suppress_from_finding_filter_narrows_intake(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    sup_path = tmp_path / "sup.json"
+    env_path = tmp_path / "findings.json"
+    _write_envelope(
+        env_path,
+        [
+            {"finding_id": "aaaa1111bbbb2222", "task_id": "membership"},
+            {"finding_id": "cccc3333dddd4444", "task_id": "sort-to-select"},
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "suppress",
+            "_",
+            "--from-finding",
+            str(env_path),
+            "--reason",
+            "membership only",
+            "--filter",
+            "task_id=membership",
+            "--input",
+            str(sup_path),
+        ],
+    )
+    assert result.exit_code == 0
+    data = _json.loads(sup_path.read_text())
+    assert "aaaa1111bbbb2222" in data
+    assert "cccc3333dddd4444" not in data
+
+
+def test_cli_suppress_from_finding_dry_run_does_not_write(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    sup_path = tmp_path / "sup.json"
+    env_path = tmp_path / "findings.json"
+    _write_envelope(env_path, [{"finding_id": "aaaa1111bbbb2222", "task_id": "x"}])
+    result = runner.invoke(
+        cli,
+        [
+            "suppress",
+            "_",
+            "--from-finding",
+            str(env_path),
+            "--reason",
+            "test",
+            "--dry-run",
+            "--input",
+            str(sup_path),
+        ],
+    )
+    assert result.exit_code == 0
+    assert "DRY-RUN" in result.output
+    assert not sup_path.exists()
+
+
+def test_cli_suppress_from_finding_requires_reason(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    env_path = tmp_path / "findings.json"
+    _write_envelope(env_path, [{"finding_id": "aaaa1111bbbb2222"}])
+    result = runner.invoke(
+        cli,
+        ["suppress", "_", "--from-finding", str(env_path), "--input", str(tmp_path / "sup.json")],
+    )
+    assert result.exit_code != 0
+    assert "--reason" in result.output
+
+
+def test_cli_suppress_from_finding_json_mode(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    sup_path = tmp_path / "sup.json"
+    env_path = tmp_path / "findings.json"
+    _write_envelope(
+        env_path,
+        [
+            {"finding_id": "aaaa1111bbbb2222", "task_id": "x"},
+            {"task_id": "no-id"},
+        ],
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "suppress",
+            "_",
+            "--from-finding",
+            str(env_path),
+            "--reason",
+            "test",
+            "--input",
+            str(sup_path),
+        ],
+    )
+    assert result.exit_code == 0
+    env = _json.loads(result.output)
+    assert env["summary"]["added"] == 1
+    assert env["summary"]["skipped_no_finding_id"] == 1
+    assert "aaaa1111bbbb2222" in env["added_ids"]
+
+
+def test_cli_suppress_from_finding_already_suppressed_counted(tmp_path):
+    from roam.cli import cli
+
+    runner = CliRunner()
+    sup_path = tmp_path / "sup.json"
+    env_path = tmp_path / "findings.json"
+    _write_envelope(env_path, [{"finding_id": "aaaa1111bbbb2222", "task_id": "x"}])
+    runner.invoke(
+        cli,
+        ["suppress", "aaaa1111bbbb2222", "--reason", "first", "--input", str(sup_path)],
+    )
+    result = runner.invoke(
+        cli,
+        [
+            "--json",
+            "suppress",
+            "_",
+            "--from-finding",
+            str(env_path),
+            "--reason",
+            "second time",
+            "--input",
+            str(sup_path),
+        ],
+    )
+    assert result.exit_code == 0
+    env = _json.loads(result.output)
+    assert env["summary"]["added"] == 0
+    assert env["summary"]["already_suppressed"] == 1

@@ -109,9 +109,16 @@ ALL_CLUSTERS = """
 
 # Git queries
 FILE_STATS_BY_ID = "SELECT * FROM file_stats WHERE file_id = ?"
+# redacted — `WHERE COALESCE(file_role, 'source') = 'source'` keeps
+# legacy text dumps (FoxPro extracts under docs/legacy/, build/generated
+# artefacts, README/CHANGELOG churn) out of the hot list. Without this
+# filter `roam weather` can rank `mhn_kin1_props.txt` highest in churn
+# x complexity even though it's static reference data, not code. Mirrors
+# the filter cmd_hotspots.py already applies for security hotspots.
 TOP_CHURN_FILES = """
     SELECT fs.*, f.path, f.language
     FROM file_stats fs JOIN files f ON fs.file_id = f.id
+    WHERE COALESCE(f.file_role, 'source') = 'source'
     ORDER BY fs.total_churn DESC LIMIT ?
 """
 COCHANGE_FOR_FILE = """

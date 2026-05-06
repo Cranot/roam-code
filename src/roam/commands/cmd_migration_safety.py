@@ -208,16 +208,24 @@ def _check_schema_create(lines: list[str], up_start: int, up_end: int) -> list[d
 
         abs_line = up_start + rel_i  # 1-indexed
 
-        # Look backwards within the up() block for a hasTable guard.
-        # We look up to 30 lines back (covers wrapping if/function calls).
+        # Look at a wider window for guards: 30 lines back AND 30 lines
+        # forward. The forward direction is needed for the try/catch
+        # idempotency pattern where the catch branch with `already exists`
+        # follows the create() call.
         context_start = max(0, rel_i - 30)
-        context_snippet = "".join(up_lines[context_start : rel_i + 1])
+        context_end = min(len(up_lines), rel_i + 30)
+        context_snippet = "".join(up_lines[context_start:context_end])
 
         if _RE_HAS_TABLE.search(context_snippet):
             continue  # guarded — OK
+        # E4 — recognised Laravel multi-tenant idempotency idiom.
+        if _has_try_catch_idempotency(context_snippet):
+            continue
 
-        # Extract table name for better messaging
-        table_name = _extract_arg(line)
+        # E4 — anchor table-name extraction after the literal `create(`
+        # so chained Schema::connection('X')->create('Y', ...) reports Y
+        # (the table) rather than X (the connection arg).
+        table_name = _extract_arg(line, after_token="create(")
 
         findings.append(
             {
@@ -252,7 +260,9 @@ def _check_schema_drop(lines: list[str], up_start: int, up_end: int) -> list[dic
             continue
 
         abs_line = up_start + rel_i
-        table_name = _extract_arg(line)
+        # E4 — anchor after `drop(` so chained Schema::connection(X)->drop(Y)
+        # reports Y, not the connection arg.
+        table_name = _extract_arg(line, after_token="drop(")
 
         findings.append(
             {
@@ -476,15 +486,43 @@ def _check_missing_down(lines: list[str]) -> list[dict]:
 # ---------------------------------------------------------------------------
 
 
-def _extract_arg(line: str) -> str:
+def _extract_arg(line: str, *, after_token: str | None = None) -> str:
     """Extract the first string argument from a PHP call on this line.
 
-    Handles single and double quotes.  Returns empty string if not found.
+    Handles single and double quotes. Returns empty string if not found.
+
+    redacted — when ``after_token`` is supplied, only consider
+    quoted strings that appear *after* that substring on the line. This
+    is the canonical fix for the chained form
+    ``Schema::connection('payroll')->create('payroll_entity_report_presets', ...)``
+    where the bare regex would otherwise grab ``'payroll'`` (the
+    connection name) and report the wrong table.
     """
-    m = re.search(r"""['"]([\w.${}/_-]+)['"]""", line)
+    haystack = line
+    if after_token:
+        idx = line.find(after_token)
+        if idx != -1:
+            haystack = line[idx + len(after_token) :]
+    m = re.search(r"""['"]([\w.${}/_-]+)['"]""", haystack)
     if m:
         return m.group(1)
     return ""
+
+
+# redacted — try/catch with `already exists` (or PostgreSQL SQLSTATE
+# 42P07 / MySQL 1050) is the standard Laravel multi-tenant idempotency
+# pattern when re-running a tenant migration. Treat it as a guard.
+_RE_TRY_CATCH_IDEMPOTENT = re.compile(
+    r"\btry\b.*?\bcatch\b.*?(?:already\s+exists|errorInfo|42P07|1050|getCode\s*\(\s*\)\s*==?\s*['\"]?(?:42P07|1050))",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+def _has_try_catch_idempotency(snippet: str) -> bool:
+    """Return True if the snippet wraps a schema op in try/catch with an
+    'already exists' branch — a recognised idempotency idiom.
+    """
+    return bool(_RE_TRY_CATCH_IDEMPOTENT.search(snippet))
 
 
 # ---------------------------------------------------------------------------

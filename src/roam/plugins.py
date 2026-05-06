@@ -129,13 +129,26 @@ def _discover_env_modules(api: PluginAPI) -> None:
         _register_target(module, f"module:{module_name}", api)
 
 
+# redacted — `importlib_metadata.entry_points()` walks every
+# installed package's metadata; ~100ms cold. We call it once per group
+# at most. Cache results for the process lifetime so subsequent helpers
+# (`get_plugin_commands`, `get_plugin_detectors`, etc.) reuse the scan.
+_ENTRY_POINT_CACHE: dict[str, list] = {}
+
+
 def _entry_points_for_group(group: str):
+    cached = _ENTRY_POINT_CACHE.get(group)
+    if cached is not None:
+        return cached
     eps = importlib_metadata.entry_points()
     if hasattr(eps, "select"):
-        return list(eps.select(group=group))
-    if isinstance(eps, dict):
-        return list(eps.get(group, []))
-    return []
+        result = list(eps.select(group=group))
+    elif isinstance(eps, dict):
+        result = list(eps.get(group, []))
+    else:
+        result = []
+    _ENTRY_POINT_CACHE[group] = result
+    return result
 
 
 def _discover_entry_points(api: PluginAPI) -> None:
