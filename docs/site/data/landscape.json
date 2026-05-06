@@ -10,7 +10,7 @@
       "stars": "286",
       "mcp": "136",
       "local": true,
-      "cli_commands": "190 canonical (+7 alias)",
+      "cli_commands": "193 canonical (+7 alias)",
       "graph": "PageRank + Tarjan + Louvain + layers",
       "arch": 92,
       "agent": 97,
@@ -448,7 +448,7 @@
       "source_count": 1,
       "last_verified": "2026-02-27",
       "claim_type": "measured",
-      "version_evaluated": "12.42",
+      "version_evaluated": "12.43",
       "repo_url": "https://github.com/Cranot/roam-code"
     },
     {
