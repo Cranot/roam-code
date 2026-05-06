@@ -41,11 +41,39 @@ from roam.output.formatter import json_envelope, loc, to_json
 # Regex patterns for PHP migration and query parsing
 # ---------------------------------------------------------------------------
 
-# Match table name from Schema::create('table_name', ...) or
-# Schema::table('table_name', ...)
+# Match table name from any of:
+#   Schema::create('table_name', ...)
+#   Schema::table('table_name', ...)
+#   Schema::connection('payroll')->create('table_name', ...)
+#   Schema::connection('payroll')->table('table_name', ...)
+# redacted: the connection-chain form is the canonical Laravel
+# multi-tenant migration pattern; without matching it, every per-schema
+# index was invisible to the analyser.
 _RE_SCHEMA_TABLE = re.compile(
-    r"Schema\s*::\s*(?:create|table)\s*\(\s*['\"]([^'\"]+)['\"]",
+    r"Schema\s*::\s*(?:connection\s*\([^)]*\)\s*->\s*)?(?:create|table)\s*\(\s*['\"]([^'\"]+)['\"]",
 )
+
+# M9 / M13 — normalise Laravel multi-tenant table prefixes.
+# In tenant-per-schema setups the migration writes:
+#   Schema::create("{$schema}.payroll_advances", ...)
+# The captured "table" string is "{$schema}.payroll_advances" — but the
+# downstream query asks for just "payroll_advances". Without normalisation
+# the index map lookup misses every tenant table.
+_RE_SCHEMA_PREFIX = re.compile(r"^\{?\$\w+\}?\.")
+
+
+def _normalise_table_name(raw: str | None) -> str | None:
+    """Strip Laravel `{$schema}.` / `$schema.` prefixes from a captured table name.
+
+    Tenant-per-schema migrations interpolate the schema name into the
+    table identifier; the analyser should compare on the bare table name
+    so multi-tenant indexes don't appear as missing.
+    """
+    if raw is None:
+        return None
+    cleaned = _RE_SCHEMA_PREFIX.sub("", raw)
+    return cleaned or None
+
 
 # Match inline chained ->index() on a column definition, e.g.:
 #   $table->string('email')->index()
@@ -159,8 +187,51 @@ def _extract_string_list(raw: str) -> list[str]:
     return [m.group(1) for m in re.finditer(r"['\"]([a-zA-Z_][a-zA-Z0-9_]*)['\"]", raw)]
 
 
+# M9 — project-wide override index. Populated once per `roam missing-index`
+# run by walking all model files and parsing `protected $table = '...'`.
+# `_class_to_table` consults this BEFORE applying the snake_case fallback.
+# Module-level so the parsing pass can populate it without changing every
+# call site's signature.
+_MODEL_TABLE_OVERRIDES: dict[str, str] = {}
+
+
+def _build_model_table_overrides(root, model_paths: list[str]) -> dict[str, str]:
+    """Walk model files; build {ClassName: explicit_table_name}.
+
+    redacted: on redacted, models like ``PayrollAdvance`` set
+    ``$table = 'payroll_advances'`` (not the Eloquent default
+    ``payroll_advances`` from the class name). Without this index, queries
+    against ``PayrollAdvance::where(...)`` were attributed to the table
+    ``payroll_advances`` (correct accidentally) — but for models named
+    ``Advance`` with ``$table = 'payroll_advances'`` the inference was wrong.
+    """
+    overrides: dict[str, str] = {}
+    for rel in model_paths:
+        try:
+            content = (root / rel).read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        # Find each class declaration in the file + the nearest $table.
+        for class_match in _RE_CLASS_DECL.finditer(content):
+            class_name = class_match.group(1)
+            # Look forward in the class body for a $table = '...' definition.
+            class_body_start = class_match.end()
+            # Stop at the next class declaration (multi-class files are rare in PHP)
+            next_cls = _RE_CLASS_DECL.search(content, class_body_start)
+            class_body_end = next_cls.start() if next_cls else len(content)
+            class_body = content[class_body_start:class_body_end]
+            tbl_match = _RE_TABLE_PROP.search(class_body)
+            if tbl_match:
+                overrides[class_name] = tbl_match.group(1)
+    return overrides
+
+
 def _class_to_table(class_name: str) -> str:
     """Convert a StudlyCase class name to a snake_case plural table name.
+
+    M9: consults the cross-file `_MODEL_TABLE_OVERRIDES` index first; falls
+    back to snake_case-plural derivation when the model has no explicit
+    ``$table`` property.
 
     Strips common suffixes (Controller, Service, Repository) before converting,
     since these are not model names.
@@ -172,6 +243,9 @@ def _class_to_table(class_name: str) -> str:
       OrderItem         -> order_items
       ProductController -> products  (strips Controller suffix)
     """
+    # M9: explicit override wins.
+    if class_name in _MODEL_TABLE_OVERRIDES:
+        return _MODEL_TABLE_OVERRIDES[class_name]
     # Strip non-model suffixes before converting
     for suffix in ("Controller", "Service", "Repository", "Scope", "Factory"):
         if class_name.endswith(suffix) and len(class_name) > len(suffix):
@@ -761,6 +835,11 @@ def missing_index_cmd(ctx, limit, confidence_filter, table_filter):
         source_paths = [
             p for p in all_php_paths if not _is_migration_path(p) and ("vendor" not in p.replace("\\", "/").lower())
         ]
+
+        # M9 — Step 0: build cross-file model→$table override index BEFORE
+        # parsing queries, so _class_to_table consults it.
+        global _MODEL_TABLE_OVERRIDES
+        _MODEL_TABLE_OVERRIDES = _build_model_table_overrides(root, source_paths)
 
         # Step 2: Parse index definitions
         table_indexes = _parse_migration_indexes(root, migration_paths)

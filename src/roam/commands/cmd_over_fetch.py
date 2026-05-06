@@ -203,13 +203,32 @@ def _check_controller_direct_returns(
 ) -> list[dict]:
     """Check controller files for direct model returns (without API Resources).
 
-    Returns list of locations where the model is returned directly.
+    redacted: scope the check to method bodies that actually use the
+    model. Real-world FP from redacted: `MyDataController` was flagged for
+    over-fetching `LedgerAccount` because `LedgerAccount` was imported at
+    the top of the file — but the controller actually returns AADE service
+    DTOs (`return $aadeService->getDocs()`). Without method-body scoping
+    every direct-return pattern in the file got attributed to every
+    imported model.
+
+    The fix: per controller method body, only flag direct returns when the
+    body literally references the model name in a way that suggests it's
+    being returned (Model::, new Model(, or Model used in select()/with()).
+    Just having the import at the top isn't enough.
     """
     direct_returns = []
 
     controller_files = conn.execute(
         "SELECT path FROM files WHERE (path LIKE '%Controller%' OR path LIKE '%controller%') AND path LIKE '%.php'",
     ).fetchall()
+
+    # M12 — match the model when used in a way that suggests it'll flow to the response.
+    # Skip pure imports / type hints alone; they don't tell us what's returned.
+    model_use_re = re.compile(
+        rf"\b{re.escape(model_name)}\s*::"  # Model::find / Model::all / Model::query / Model::factory
+        rf"|\bnew\s+{re.escape(model_name)}\s*\("  # new Model(
+        rf"|->\s*{model_name.lower()}\s*(?:\(|->)"  # ->model() / ->modelRel
+    )
 
     for row in controller_files:
         if _is_test_path(row["path"]):
@@ -237,25 +256,75 @@ def _check_controller_direct_returns(
         if model_name not in content:
             continue
 
-        lines = content.splitlines()
-        for line_no, line in enumerate(lines, start=1):
-            # Skip if the line uses a Resource (safe pattern)
-            if any(p.search(line) for p in _RESOURCE_PATTERNS):
+        # M12 — scope to method bodies that USE the model (not just import it).
+        method_bodies = _extract_method_bodies_with_lines(content)
+        for method in method_bodies:
+            body = method["body"]
+            # Skip method bodies that don't actually use the model
+            if not model_use_re.search(body):
                 continue
-            # Flag direct returns
-            for pattern in _DIRECT_RETURN_PATTERNS:
-                if pattern.search(line):
-                    direct_returns.append(
-                        {
-                            "file": row["path"],
-                            "line": line_no,
-                            "location": loc(row["path"], line_no),
-                            "snippet": line.strip()[:100],
-                        }
-                    )
-                    break  # one match per line is enough
+            body_lines = body.splitlines()
+            for offset, line in enumerate(body_lines):
+                line_no = method["start_line"] + offset
+                # Skip if the line uses a Resource (safe pattern)
+                if any(p.search(line) for p in _RESOURCE_PATTERNS):
+                    continue
+                # Flag direct returns
+                for pattern in _DIRECT_RETURN_PATTERNS:
+                    if pattern.search(line):
+                        direct_returns.append(
+                            {
+                                "file": row["path"],
+                                "line": line_no,
+                                "location": loc(row["path"], line_no),
+                                "snippet": line.strip()[:100],
+                                "method": method["name"],
+                            }
+                        )
+                        break  # one match per line is enough
 
     return direct_returns
+
+
+# M12 helper — extract method bodies with line numbers for scoped scans.
+def _extract_method_bodies_with_lines(source: str) -> list[dict]:
+    """Pull out PHP class method bodies with start_line + name.
+
+    Returns list of {name, start_line, body}. Mirrors the more elaborate
+    helper used by auth-gaps; intentionally local so the over-fetch fix
+    doesn't depend on a cross-module import.
+    """
+    out: list[dict] = []
+    method_re = re.compile(r"(?:public|protected|private)\s+function\s+(\w+)\s*\(")
+    lines = source.splitlines()
+    i = 0
+    while i < len(lines):
+        m = method_re.search(lines[i])
+        if not m:
+            i += 1
+            continue
+        method_name = m.group(1)
+        start_line = i + 1  # 1-based
+        # Walk to the closing brace
+        brace_depth = 0
+        body_lines: list[str] = []
+        j = i
+        found_open = False
+        while j < len(lines):
+            seg = lines[j]
+            for ch in seg:
+                if ch == "{":
+                    brace_depth += 1
+                    found_open = True
+                elif ch == "}":
+                    brace_depth -= 1
+            body_lines.append(seg)
+            if found_open and brace_depth == 0:
+                break
+            j += 1
+        out.append({"name": method_name, "start_line": start_line, "body": "\n".join(body_lines)})
+        i = j + 1
+    return out
 
 
 def _check_missing_select(

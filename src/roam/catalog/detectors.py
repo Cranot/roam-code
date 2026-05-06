@@ -48,8 +48,19 @@ def _finding(
     *,
     evidence=None,
     fix=None,
+    match_line=None,
 ):
+    """Build a finding dict.
+
+    redacted: when ``match_line`` is supplied, the finding's
+    ``location`` field points at the exact AST node where the pattern
+    matched (e.g. the line containing the .sort() call) — not the
+    enclosing function declaration. The function-start line is
+    preserved as ``symbol_line`` so callers needing both have access.
+    """
     bw = best_way(task_id)
+    sym_line = sym["line_start"]
+    actual_line = match_line if match_line is not None else sym_line
     finding = {
         "task_id": task_id,
         "detected_way": detected_way,
@@ -57,7 +68,8 @@ def _finding(
         "symbol_id": sym["id"],
         "symbol_name": sym["qualified_name"] or sym["name"],
         "kind": sym["kind"],
-        "location": _loc(sym["file_path"], sym["line_start"]),
+        "location": _loc(sym["file_path"], actual_line),
+        "symbol_line": sym_line,
         "confidence": confidence,
         "reason": reason,
     }
@@ -66,6 +78,78 @@ def _finding(
     if fix:
         finding["fix"] = fix
     return finding
+
+
+def _find_match_line(snippet: str, pattern, sym_line_start: int | None) -> int | None:
+    """Walk the snippet line by line to find the first line matching ``pattern``.
+
+    Returns the absolute line number (sym_line_start + offset). When
+    snippet doesn't contain the match, returns sym_line_start unchanged
+    so callers can blindly substitute.
+
+    Used by sort-to-select / IO-in-loop / regex-in-loop detectors to
+    pin findings at the exact match site.
+    """
+    if not snippet or sym_line_start is None:
+        return sym_line_start
+    for offset, line in enumerate(snippet.splitlines()):
+        if pattern.search(line):
+            return sym_line_start + offset
+    return sym_line_start
+
+
+# M4 — recognise DEV-only / DEBUG-only gates so production-impact
+# detectors don't fire on code that's stripped from production builds.
+# Real-world examples (from the prior round of FPs):
+#   - if (import.meta.env.DEV) { ... heavy diagnostics ... }
+#   - if (process.env.NODE_ENV !== 'production') { ... }
+#   - if (__DEV__) { ... }
+#   - if (DEBUG) { ... }
+#   - console.assert(...)  — short-circuits in production
+_DEV_GATE_RE = re.compile(
+    # No trailing \b — alternatives ending in `'production'` or `__DEV__` have
+    # non-word chars after them, so the global `\b` would never fire there.
+    r"\bif\s*\([^)]*?\b(?:"
+    r"import\.meta\.env\.(?:DEV\b|MODE\s*[!=]==?\s*['\"]production['\"])|"
+    r"process\.env\.NODE_ENV\s*[!=]==?\s*['\"]production['\"]|"
+    r"__DEV__|"
+    r"DEBUG\b"
+    r")",
+    re.IGNORECASE,
+)
+_CONSOLE_ASSERT_RE = re.compile(r"\bconsole\.assert\s*\(")
+
+
+def _is_dev_only_block(snippet: str, match_line_offset: int | None = None) -> bool:
+    """Heuristic: does the snippet (or the lines around the match) sit inside
+    a DEV-only conditional?
+
+    Conservative matcher: returns True only when an obvious DEV gate is
+    visible *before* the match line in the snippet. Won't catch every
+    case (e.g. a flag set in a parent function), but catches the common
+    Vue 3 / React / Next.js / Vite patterns where heavy diagnostics live
+    behind import.meta.env.DEV.
+    """
+    if not snippet:
+        return False
+    if _DEV_GATE_RE.search(snippet) or _CONSOLE_ASSERT_RE.search(snippet):
+        return True
+    return False
+
+
+def _find_first_keyword_line(snippet: str, keywords: tuple[str, ...], sym_line_start: int | None) -> int | None:
+    """First line containing any of the keywords (case-insensitive substring).
+
+    Cheaper than regex; used for self-call detection in branching recursion.
+    """
+    if not snippet or sym_line_start is None:
+        return sym_line_start
+    lows = [k.lower() for k in keywords]
+    for offset, line in enumerate(snippet.splitlines()):
+        ll = line.lower()
+        if any(k in ll for k in lows):
+            return sym_line_start + offset
+    return sym_line_start
 
 
 def _row_value(row, key, default=None):
@@ -1125,25 +1209,62 @@ _IO_RECEIVER_HINTS = {
     "requests",
     "urllib",
 }
+# M3 expansion: when a call is IN this set OR matches one of the IN_MEMORY_LEAVES
+# attached to a recognised receiver, treat as an in-memory cache read NOT I/O.
+# Real-world FP that drove the expansion: roam math flagged
+# `queryClient.getQueryData` inside a TanStack Query factory as N+1
+# round-trips when those are sync cache reads.
 _IN_MEMORY_EXACT = {
     "queryclient.setquerydata",
     "queryclient.getquerydata",
     "queryclient.getqueriesdata",
     "queryclient.setqueriesdata",
+    "queryclient.invalidatequeries",
+    "queryclient.removequeries",
+    "queryclient.cancelqueries",
+    "queryclient.refetchqueries",
     "qc.setquerydata",
     "qc.getquerydata",
     "qc.getqueriesdata",
     "qc.setqueriesdata",
+    "qc.invalidatequeries",
     "redux.dispatch",
     "store.dispatch",
+    # SWR + RTK Query + Apollo cache equivalents
+    "mutate",  # SWR's mutate() (cache-only)
+    "cache.read",
+    "cache.write",
+    "cache.evict",
+    "cache.modify",  # Apollo
+    "client.readquery",  # Apollo
+    "client.writequery",  # Apollo
+    "client.cache.evict",  # Apollo
 }
 _IN_MEMORY_LEAVES = {
     "setquerydata",
     "getquerydata",
     "setqueriesdata",
     "getqueriesdata",
+    "invalidatequeries",
+    "removequeries",
+    "cancelqueries",
+    "refetchqueries",
     "dispatch",
     "setstate",
+    # M3 — generic Map/Set/WeakMap operations are NOT I/O even in loops.
+    # Without these, `mapInst.get(k)` inside a loop falsely fires as N+1.
+    "has",
+    "set",
+    "delete",
+    "clear",
+    "peek",
+    # SWR + Apollo
+    "readquery",
+    "writequery",
+    "writefragment",
+    "readfragment",
+    "evict",
+    "modify",
 }
 _IN_MEMORY_RECEIVER_HINTS = {
     "queryclient",
@@ -1153,6 +1274,17 @@ _IN_MEMORY_RECEIVER_HINTS = {
     "cache",
     "state",
     "router",
+    # M3 expansion: more cache-library + native-collection receivers
+    "map",
+    "set",
+    "weakmap",
+    "weakset",
+    "dict",
+    "lookup",
+    "registry",
+    "client",  # Apollo client.cache.evict
+    "session",
+    "pinia",  # Vue 3 store
 }
 _IO_WRAPPER_NAMES = {
     "batch",
@@ -1264,9 +1396,41 @@ def _io_emit_finding(
     guard_applies: bool,
     evidence_io_calls: list[str],
     r,
+    *,
+    dev_gated: bool = False,
+    match_line: int | None = None,
+    snippet: str | None = None,
 ) -> dict:
-    """Build the finding dict for one of high/medium/ambiguous result branches."""
+    """Build the finding dict for one of high/medium/ambiguous result branches.
+
+    M1 (match_line): pin location at the first I/O call site in the snippet
+    rather than the function declaration.
+    M4 (dev_gated): note when the body sits inside a DEV gate.
+    M6 (suppress hint): every emitted finding carries `to_suppress` evidence.
+    """
     fix_text = "; ".join(sorted(fixes)) if fixes else None
+    # M1: try to find the line of the first I/O call inside the snippet.
+    derived_match_line = match_line
+    if derived_match_line is None and snippet and (high_calls or medium_calls or ambiguous_calls):
+        first_call = (high_calls + medium_calls + ambiguous_calls)[0]
+        leaf = _call_leaf(first_call) or first_call
+        # Use a loose substring match — call shapes vary across extractors.
+        if leaf:
+            for offset, line in enumerate(snippet.splitlines()):
+                if leaf in line:
+                    derived_match_line = (r["line_start"] or 0) + offset
+                    break
+    common_evidence_extras = {}
+    if dev_gated:
+        common_evidence_extras["dev_gated"] = True
+        common_evidence_extras["dev_gated_note"] = (
+            "loop body sits inside a DEV-only conditional (import.meta.env.DEV / __DEV__ / "
+            "process.env.NODE_ENV); production-stripped, so the N+1 cost is not paid in prod"
+        )
+    suppress_hint = (
+        "wrap the loop in a batch/eager guard (e.g. `with()` or `map()`+`Promise.all`), OR "
+        "add `# roam: ignore-math[io-in-loop]` on the function line if the call is intentional"
+    )
     if level == "high":
         reason_calls = _dedupe(high_calls)[:2]
         reason_suffix = f"; frameworks: {', '.join(sorted(frameworks))}" if frameworks else ""
@@ -1284,8 +1448,11 @@ def _io_emit_finding(
                 "io_calls": evidence_io_calls,
                 "frameworks": sorted(frameworks),
                 "guard_hints": guard_hints,
+                "to_suppress": suppress_hint,
+                **common_evidence_extras,
             },
             fix=fix_text,
+            match_line=derived_match_line,
         )
     if level == "medium":
         reason_calls = _dedupe(medium_calls)[:2]
@@ -1304,8 +1471,11 @@ def _io_emit_finding(
                 "io_calls": evidence_io_calls,
                 "frameworks": sorted(frameworks),
                 "guard_hints": guard_hints,
+                "to_suppress": suppress_hint,
+                **common_evidence_extras,
             },
             fix=fix_text,
+            match_line=derived_match_line,
         )
     # Ambiguous bare calls (get/find/query) — weak evidence, low confidence.
     reason_calls = _dedupe(ambiguous_calls)[:2]
@@ -1321,8 +1491,11 @@ def _io_emit_finding(
             "ambiguous_io_only": True,
             "frameworks": sorted(frameworks),
             "guard_hints": guard_hints,
+            "to_suppress": suppress_hint,
+            **common_evidence_extras,
         },
         fix=fix_text,
+        match_line=derived_match_line,
     )
     finding["precision"] = "low"
     return finding
@@ -1397,6 +1570,10 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         if any(kw in name_lower for kw in _IO_WRAPPER_NAMES):
             continue
 
+        # M4: skip DEV-gated bodies — production stripped, so loop overhead
+        # is irrelevant. (Conservative: only skip when the gate is *literally*
+        # in this function's body.)
+        dev_gated = _is_dev_only_block(snippet)
         guard_applies = bool(frameworks and guard_hints)
         evidence_io_calls = _dedupe(high_calls + medium_calls + ambiguous_calls)[:6]
         if high_calls:
@@ -1405,6 +1582,14 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
             level = "medium"
         else:
             level = "ambiguous"
+        if dev_gated:
+            # Don't drop entirely — a real production-bound issue could still
+            # exist outside the gate. But demote two tiers so it sinks to the
+            # bottom of the verdict list.
+            if level == "high":
+                level = "medium"
+            elif level == "medium":
+                level = "ambiguous"
         results.append(
             _io_emit_finding(
                 level,
@@ -1417,6 +1602,8 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
                 guard_applies,
                 evidence_io_calls,
                 r,
+                dev_gated=dev_gated,
+                snippet=snippet,
             )
         )
     return results
@@ -1512,6 +1699,15 @@ def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
         r"\bsort(?:ed)?\s*\([^)]*\).*?\[\s*(?:-?\d+|:\s*[^]\n]+)\s*\]",
         re.DOTALL,
     )
+    # M1: per-line sort detector for pinpointing the match line
+    sort_call_line_re = re.compile(r"\bsort(?:ed)?\s*\(")
+
+    # M5 — fallback false-positive guard. Skip when the sort result is also
+    # iterated/returned in full (sorted then map/forEach/return — display order,
+    # not a min/max selection).
+    # The check is conservative: if we see ANY iteration of the sort target
+    # alongside the index access, demote the finding rather than skip outright.
+    iteration_after_sort_re = re.compile(r"\bsort(?:ed)?\s*\(.*?\b(map|forEach|filter|reduce|return)\b", re.DOTALL)
 
     results = []
     for r in rows:
@@ -1521,28 +1717,44 @@ def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
         if not snippet:
             continue
 
+        match_line = _find_match_line(snippet, sort_call_line_re, r["line_start"])
+        sort_iterated = bool(iteration_after_sort_re.search(snippet))
+
         # Strong patterns: sorted(...)[0], sorted(... )[:k], arr.sort(); arr[0]
         if sorted_index_re.search(snippet) or inplace_sort_index_re.search(snippet):
+            # M5: when the sort result is also iterated, downgrade — the
+            # subscript may be incidental (e.g. logging the first item of a
+            # display-ordered list).
+            confidence = "medium" if sort_iterated else "high"
+            reason = "Sort used only for first/last/top-k selection"
+            if sort_iterated:
+                reason += " (note: result is also iterated — may be incidental subscript)"
             results.append(
                 _finding(
                     "sort-to-select",
                     "full-sort",
                     r,
-                    "Sort used only for first/last/top-k selection",
-                    "high",
+                    reason,
+                    confidence,
+                    match_line=match_line,
                 )
             )
             continue
 
         # Fallback pattern for other languages (sort(...) then index/slice).
         if generic_sort_index_re.search(snippet):
+            confidence = "low" if sort_iterated else "medium"
+            reason = "Potential full sort followed by index/slice selection"
+            if sort_iterated:
+                reason += " (note: result is also iterated — may be incidental subscript)"
             results.append(
                 _finding(
                     "sort-to-select",
                     "full-sort",
                     r,
-                    "Potential full sort followed by index/slice selection",
-                    "medium",
+                    reason,
+                    confidence,
+                    match_line=match_line,
                 )
             )
     return results
@@ -1646,6 +1858,11 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
 
     results = []
 
+    # M2 fix: detect the SECOND form of depth guard — early-return when
+    # depth EXCEEDS limit ("if depth > 10 return"). The original regex only
+    # recognised "depth < limit ⇒ continue" patterns; the negation form was
+    # silently mis-flagged as O(2^n). Real-world FP: deepEqual flagged
+    # despite line+2 having `if (depth > 10) return false`.
     def _has_explicit_depth_guard(language: str | None, snippet: str) -> bool:
         """Return True for bounded-recursion guards that cap traversal depth."""
         if not snippet:
@@ -1656,9 +1873,30 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
         # Python: len(path.split(".")) < 5
         if re.search(r"len\s*\(\s*[^)]*\.split\s*\([^)]*\)\s*\)\s*(?:<|<=)\s*\d+", snippet):
             return True
+        # Form 1: continue if depth/level/budget BELOW limit.
         # Common explicit counters: depth < maxDepth, level <= 4, etc.
         if re.search(
-            r"\b(?:depth|level|currentDepth|current_depth)\b\s*(?:<|<=)\s*(?:\d+|maxDepth|max_depth)",
+            r"\b(?:depth|level|budget|remaining|hops|currentDepth|current_depth|max_depth|maxDepth)\b"
+            r"\s*(?:<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION)",
+            snippet,
+        ):
+            return True
+        # M2 — Form 2: early-return if depth/level/budget EXCEEDS limit.
+        # Matches `if (depth > 10) return ...`, `if (level >= MAX_DEPTH) raise`,
+        # `if (budget < 1) return`, `if (--budget <= 0) return`.
+        # Generous on the "return / raise / throw / break" side since
+        # short-circuit-and-bail is the universal early-exit shape.
+        if re.search(
+            r"\b(?:depth|level|budget|remaining|hops|recursion_count|recursionDepth)\b"
+            r"\s*(?:>|>=|<|<=)\s*(?:\d+|maxDepth|max_depth|MAX_DEPTH|max_recursion|MAX_RECURSION|0)\s*\)?\s*"
+            r"\s*[:{]?\s*(?:return|raise|throw|break)",
+            snippet,
+        ):
+            return True
+        # Decrement-then-check: `if (--budget <= 0) return`
+        if re.search(
+            r"--?\s*\b(?:depth|budget|remaining|hops)\b\s*[<>]=?\s*\d+\s*\)?\s*[:{]?\s*"
+            r"(?:return|raise|throw|break)",
             snippet,
         ):
             return True
@@ -1670,6 +1908,22 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
                 snippet,
             )
         ):
+            return True
+        return False
+
+    # M2 — Set/Map/WeakSet/WeakMap parameter or local: signals the function
+    # already implements its own memoization / cycle-tracking, so the
+    # branching-recursion warning would be a FP.
+    def _has_memo_collection(snippet: str) -> bool:
+        if not snippet:
+            return False
+        if re.search(r"\b(?:Set|Map|WeakSet|WeakMap)\s*<", snippet):  # TS generic
+            return True
+        if re.search(r"\bnew\s+(?:Set|Map|WeakSet|WeakMap)\b", snippet):  # JS literal
+            return True
+        if re.search(r"\b(?:visited|seen|memo|cache|memoised|memoized)\b\s*[:=]", snippet):
+            return True
+        if re.search(r"@(?:lru_cache|cache|memoize|memoise|functools\.lru_cache)\b", snippet):
             return True
         return False
 
@@ -1715,6 +1969,14 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
         )
         if _has_explicit_depth_guard(_row_value(r, "language", ""), snippet):
             continue
+        if _has_memo_collection(snippet):
+            # M2: function carries its own Set/Map/WeakSet — already memoised.
+            continue
+        # M1: pin the location at the first self-call line if we can find it,
+        # not the function declaration. The detector flagged because
+        # self_call_count >= 2; the first occurrence of `name(` (or shorthand
+        # `name(`) inside the body is the most informative anchor.
+        match_line = _find_first_keyword_line(snippet, (r["name"] + "(",), r["line_start"])
         results.append(
             _finding(
                 "branching-recursion",
@@ -1722,6 +1984,16 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
                 r,
                 f"Branching recursion ({r['self_call_count']} self-calls) without memoization",
                 "high",
+                evidence={
+                    "self_call_count": r["self_call_count"],
+                    "guard_check": "no depth/budget guard found in body, no memo Set/Map detected",
+                    "to_suppress": (
+                        "add `if (depth > N) return` early-return guard, OR pass a "
+                        "Set/Map/WeakSet for memoisation/cycle-tracking, OR add "
+                        "`# roam: ignore-math[branching-recursion]` to the function line"
+                    ),
+                },
+                match_line=match_line,
             )
         )
     return results
@@ -2331,6 +2603,25 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     if loop_bound_small:
         finding["confidence"] = _lower_confidence(finding["confidence"])
         finding["reason"] += " (bounded loop)"
+
+    # M8 — confidence calibration floor.
+    # Categories where the FP-fix is heuristic-only (no AST-level proof)
+    # cap at 'medium' regardless of caller-count or runtime boost. Real-world
+    # calibration on redacted showed "high confidence" branching-recursion
+    # was 0/1 true positive; same pattern likely on sort-then-subscript when
+    # the result is also iterated.
+    _MEDIUM_FLOOR_TASKS = {"branching-recursion", "sort-to-select"}
+    if finding.get("task_id") in _MEDIUM_FLOOR_TASKS and finding.get("confidence") == "high":
+        # Only floor when there's no strong runtime signal — runtime-hot code
+        # earns the high-confidence boost.
+        if not runtime_hot:
+            finding["confidence"] = "medium"
+            evidence_dict = finding.setdefault("evidence", {}) if isinstance(finding.get("evidence"), dict) else {}
+            if isinstance(evidence_dict, dict):
+                evidence_dict["calibration_floor"] = (
+                    "category capped at 'medium' — heuristic-only detection has high FP rate; "
+                    "use --confidence high to skip these"
+                )
 
     return finding
 

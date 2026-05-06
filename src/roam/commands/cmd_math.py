@@ -125,6 +125,15 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit, max_per_task):
             if not f.get("fix"):
                 f["fix"] = get_fix(f["task_id"], lang)
 
+        # M7 — suppression: annotate findings (don't drop). Three sources
+        # checked in order: per-finding suppressions.json, .roamignore-findings
+        # globs, inline `roam: ignore-math[task-id]` annotations.
+        from roam.commands.finding_suppress import annotate_with_suppression, filter_suppressed
+
+        findings, suppressed_count = annotate_with_suppression(findings, command="math")
+        # Default: hide suppressed findings from text output, keep in JSON.
+        # JSON consumers (CI, dashboards) need them visible to detect over-suppression.
+
         # Sort by impact score first, then confidence.
         _conf_order = {"high": 0, "medium": 1, "low": 2}
         findings.sort(
@@ -157,11 +166,20 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit, max_per_task):
                 conf_parts.append(f"{by_confidence[c]} {c}")
         conf_str = ", ".join(conf_parts) if conf_parts else "none"
 
-        verdict = (
-            f"{total} algorithmic improvement{'s' if total != 1 else ''} found ({conf_str})"
-            if total
-            else "No algorithmic issues detected"
-        )
+        # M14: honest verdict — distinguish raw counts from verified status.
+        # Suppressed findings stay in `findings` so they appear in JSON; we
+        # subtract from `total` for the verdict line (unsuppressed candidates).
+        unsuppressed_total = total - suppressed_count
+        if total == 0:
+            verdict = "No algorithmic issues detected"
+        elif suppressed_count > 0:
+            verdict = (
+                f"{unsuppressed_total} unsuppressed candidate{'s' if unsuppressed_total != 1 else ''} "
+                f"surfaced ({conf_str}); {suppressed_count} suppressed via "
+                ".roamignore-findings / inline annotation / suppressions.json"
+            )
+        else:
+            verdict = f"{total} algorithmic improvement{'s' if total != 1 else ''} found ({conf_str})"
 
         if sarif_mode:
             from roam.output.sarif import algo_to_sarif, write_sarif
@@ -182,6 +200,8 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit, max_per_task):
                         summary={
                             "verdict": verdict,
                             "total": total,
+                            "unsuppressed_total": unsuppressed_total,
+                            "suppressed_count": suppressed_count,
                             "by_category": dict((k, len(v)) for k, v in by_category.items()),
                             "by_confidence": dict(by_confidence),
                             "truncated": truncated,
@@ -219,11 +239,19 @@ def math_cmd(ctx, task_filter, confidence_filter, profile, limit, max_per_task):
         if not findings:
             return
 
+        # M7 — text output hides suppressed findings (JSON keeps them).
+        # Use the unfiltered list for the JSON envelope above; here we filter.
+        text_findings = filter_suppressed(findings)
+        if not text_findings:
+            click.echo()
+            click.echo("(all findings suppressed; pass --json to see them)")
+            return
+
         click.echo()
 
         # Group by task_id for display
         by_task = defaultdict(list)
-        for f in findings:
+        for f in text_findings:
             by_task[f["task_id"]].append(f)
 
         for task_id, task_findings in by_task.items():

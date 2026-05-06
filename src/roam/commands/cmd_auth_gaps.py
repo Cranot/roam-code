@@ -57,6 +57,23 @@ _ROUTE_AUTH_MIDDLEWARE_RE = re.compile(
     re.IGNORECASE | re.VERBOSE,
 )
 
+# M10 — non-auth route guards. When a route has throttle/signed/verified/
+# can/web middleware but no `auth:*`, the user's intent is "public but
+# rate-limited" or "public but signed-URL-protected", not "missing auth".
+# Detector should distinguish "no middleware AT ALL" (real gap) from
+# "no auth-middleware but other guards present" (intentional public).
+_NON_AUTH_GUARD_RE = re.compile(
+    r"""->middleware\s*\(\s*\[?['"](?:
+        throttle(?::[\w,]+)?|       # throttle:60,1
+        signed|                       # signed-URL routes
+        verified|                     # email-verified gate
+        cache\.headers|               # response cache
+        can:[\w.]+|                   # ACL-only (no auth)
+        scope:[\w,]+                  # OAuth scope only
+    )['"]""",
+    re.IGNORECASE | re.VERBOSE,
+)
+
 # Authorization calls inside a method body
 _AUTHORIZATION_RE = re.compile(
     r"""
@@ -69,6 +86,27 @@ _AUTHORIZATION_RE = re.compile(
     | Policy\s*::\s*authorize\s*\(                                 # Policy::authorize(
     | can\s*\(\s*['"]                                              # can('...')
     | cannot\s*\(\s*['"]                                           # cannot('...')
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# M11 — tenant-scoped query patterns. When a controller method scopes its
+# resource to the current tenant / office / user (Laravel multi-tenant
+# pattern), the route-level auth + tenant scope IS the authorization.
+# Real-world FP from redacted: ~115 controller methods flagged because
+# none called $this->authorize() — but every one used officeScoped() /
+# multiTenant() / Resource::for(...) which implicitly enforce auth.
+_TENANT_SCOPE_RE = re.compile(
+    r"""
+    ->\s*officeScoped\s*\(            # ->officeScoped()
+    | ->\s*multiTenant\s*\(           # ->multiTenant()
+    | ->\s*tenantScoped\s*\(          # ->tenantScoped()
+    | ->\s*forTenant\s*\(             # ->forTenant(
+    | ->\s*forUser\s*\(               # ->forUser(  (Laravel Spatie pattern)
+    | ::\s*for\s*\(\s*\$               # Resource::for($user, ...) / Spatie pattern
+    | ->\s*scopeOwnedBy\s*\(          # ->scopeOwnedBy(
+    | ->\s*belongsToCurrentUser\s*\(  # custom Eloquent scope
+    | ->\s*currentTeam\s*\(           # team-scoped
     """,
     re.IGNORECASE | re.VERBOSE,
 )
@@ -326,17 +364,37 @@ def _analyze_route_file(file_path: str, source: str) -> tuple[list[dict], set[st
         if _ROUTE_AUTH_MIDDLEWARE_RE.search(line):
             continue
 
-        findings.append(
-            {
-                "type": "route",
-                "confidence": "high",
-                "verb": verb,
-                "path": path_str,
-                "file": file_path,
-                "line": lineno,
-                "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
-            }
-        )
+        # M10 — non-auth guards (throttle / signed / verified / can / scope).
+        # When present, the route is intentionally public-but-protected.
+        # Demote confidence + add evidence note rather than reporting as
+        # a high-confidence "missing auth" finding.
+        non_auth_guard = bool(_NON_AUTH_GUARD_RE.search(line))
+
+        if non_auth_guard:
+            findings.append(
+                {
+                    "type": "route",
+                    "confidence": "low",
+                    "verb": verb,
+                    "path": path_str,
+                    "file": file_path,
+                    "line": lineno,
+                    "fix": "Verify intent: this route has non-auth guards (throttle / signed / verified / can / scope) but no auth:* — looks like an intentional public-but-protected endpoint",
+                    "non_auth_guard_present": True,
+                }
+            )
+        else:
+            findings.append(
+                {
+                    "type": "route",
+                    "confidence": "high",
+                    "verb": verb,
+                    "path": path_str,
+                    "file": file_path,
+                    "line": lineno,
+                    "fix": "Add ->middleware('auth:sanctum') or move inside auth group",
+                }
+            )
 
     return findings, protected_controllers
 
@@ -448,6 +506,14 @@ def _analyze_controller_file(
         # Check for explicit authorization call in the method body
         has_auth_check = bool(_AUTHORIZATION_RE.search(body))
 
+        # M11 — tenant-scoped query patterns count as authorization-equivalent.
+        # When a method is route-auth-protected AND scopes its query to the
+        # current tenant/user (officeScoped / multiTenant / Resource::for(...)),
+        # the route auth + tenant scope is the authorization layer. Demote
+        # what would have been a high/medium "missing $this->authorize()"
+        # finding to a "review" rather than dropping silently.
+        has_tenant_scope = bool(_TENANT_SCOPE_RE.search(body))
+
         if has_auth_check:
             continue
 
@@ -463,9 +529,22 @@ def _analyze_controller_file(
                 else:
                     reason = "CRUD method without explicit authorization (has constructor middleware)"
                 fix = "Add $this->authorize('action', $model) for object-level authorization"
+                # M11 — tenant-scoped CRUD = route auth + tenant scope = layered
+                # authorization. Downgrade and explain.
+                if has_tenant_scope:
+                    confidence = "low"
+                    reason = (
+                        "CRUD method has route auth + tenant-scope (officeScoped / multiTenant / "
+                        "Resource::for) — likely already authorized at the right layer; "
+                        "verify policy intent for object-level guards"
+                    )
         else:
             # Read method behind route or constructor auth — skip
             if is_route_protected or has_constructor_auth:
+                continue
+            # M11 — even without route auth, tenant-scope is a meaningful guard
+            # for read methods. Drop confidence to "low" with a note.
+            if has_tenant_scope:
                 continue
             confidence = "low"
             reason = "Read method without authorization (may be intentionally public)"
