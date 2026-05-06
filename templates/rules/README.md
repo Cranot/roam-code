@@ -12,6 +12,8 @@ rule has a `description` so the PR comment surfaces *why* it fired.
 | `typescript/.roam-rules.yml` | TS / JS / JSX / Vue | 14 | 5 BLOCK, 9 WARN |
 | `go/.roam-rules.yml` | Go | 12 | 3 BLOCK, 9 WARN |
 | `java/.roam-rules.yml` | Java | 12 | 5 BLOCK, 7 WARN |
+| `kotlin/.roam-rules.yml` | Kotlin (Android + Spring) | 12 | 4 BLOCK, 8 WARN |
+| `rust/.roam-rules.yml` | Rust | 12 | 3 BLOCK, 9 WARN |
 
 ## Usage
 

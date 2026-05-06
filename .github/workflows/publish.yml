@@ -1,15 +1,24 @@
 # Publish roam-code to PyPI using Trusted Publishing (OIDC).
-# Triggers on GitHub Release creation.
+#
+# Triggers:
+#   - push of any v* tag (the canonical path; wheel ships before release notes)
+#   - GitHub Release creation (legacy compatibility — kept so manual draft-then-
+#     publish still works; skip-existing makes the second invocation a no-op)
+#   - manual workflow_dispatch (for re-runs after a failure)
 #
 # Setup: configure a "trusted publisher" on PyPI for this repo
 # (https://docs.pypi.org/trusted-publishers/creating-a-project-through-oidc/)
-# before the first publish.  No API tokens needed.
+# before the first publish. No API tokens needed.
 
 name: Publish to PyPI
 
 on:
+  push:
+    tags:
+      - "v*"
   release:
     types: [published]
+  workflow_dispatch: {}
 
 permissions:
   id-token: write   # OIDC token for Trusted Publishing
@@ -30,6 +39,18 @@ jobs:
 
       - name: Build sdist and wheel
         run: python -m build
+
+      - name: Verify wheel contains v2 commands
+        # Belt-and-suspenders: if the wheel is missing a v2 command file
+        # (because pyproject package-data drifted), fail before PyPI sees it.
+        run: |
+          set -e
+          unzip -l dist/*.whl | grep -E "(pr_analyze|metrics_push|audit_trail|rules_validate|dogfood)" | wc -l > .v2_count
+          count=$(cat .v2_count)
+          if [ "$count" -lt "8" ]; then
+            echo "::error::Expected at least 8 v2 command files in wheel, got $count"
+            exit 1
+          fi
 
       - name: Upload build artifacts
         uses: actions/upload-artifact@v4
@@ -52,3 +73,7 @@ jobs:
 
       - name: Publish to PyPI
         uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          # Idempotency: when a manual twine upload already shipped the wheel,
+          # the workflow should no-op cleanly instead of erroring on file collision.
+          skip-existing: true
