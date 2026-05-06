@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 173 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 181 specialised commands are advanced surface for specialised workflows.
 
-*178 commands · 128 MCP tools · 27 languages · 100% local · zero API keys*
+*186 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -21,6 +21,8 @@ A local code graph (SQLite + tree-sitter + git history) that gives any agent —
 ## What is Roam?
 
 Roam is a structural intelligence engine for software. It pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture layers, git history, and runtime traces -- stored in a local SQLite DB. Agents query it via CLI or MCP instead of repeatedly grepping files and guessing structure.
+
+> **For teams running AI coding agents:** Roam ships two paid layers on top of the free CLI — **[Roam Agent Review](#roam-agent-review-pr-bot-for-ai-generated-changes)** (PR bot scoring AI-generated changes for structural risk) and **[Roam Cloud Lite](#roam-cloud-lite-metrics-history-no-source-upload)** (metrics-history dashboard, no source code upload). Both run on the OSS engine and are licenced separately.
 
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
@@ -269,7 +271,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 173 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **178 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining 181 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **186 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -311,6 +313,14 @@ roam health
 | `roam stats` | Aggregate metrics over the index: count by language, file role, kind, plus recent commit activity |
 | `roam timeline <symbol>` | Chronological commits that touched the file owning the symbol — author, date, lines added/removed |
 | `roam pr-prep [<range>]` | One-shot pre-PR fitness check that bundles diff + critique + pr-risk into one envelope |
+| `roam pr-analyze [<range>] [--input F] [--rules F] [--gate]` | Agent-aware PR risk verdict: aggregates `pr-prep` with AI-likelihood scoring, `.roam/rules.yml` enforcement, and INTENTIONAL/SAFE/REVIEW/BLOCK mapping; CI gate via `--gate` (exit 5 on BLOCK); EU AI Act Article 12 audit trail via `--audit-trail` |
+| `roam pr-comment-render --input F` | Render a markdown PR comment from a `pr-analyze` JSON envelope; styles: `github`, `gitlab`, `plain` |
+| `roam metrics-push [--token T] [--anonymize] [--dry-run]` | Push metrics-only summary (no source code) from `roam audit` to a Roam Cloud Lite endpoint; `--dry-run` prints the payload locally |
+| `roam audit-trail-verify [--input F] [--gate]` | Walk the EU AI Act audit-trail JSONL and verify SHA-256 chain integrity; exit 5 on broken chain |
+| `roam audit-trail-export [--format md\|json\|csv] [--since T] [--verdict V] [--aggregate]` | Export the audit trail for procurement / compliance review; `--aggregate` rolls up per actor / repo / verdict / month |
+| `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against an EU AI Act Article 12 checklist (chain integrity, timestamps, actors, reproducibility, retention) |
+| `roam rules-validate [PATH] [--against DIFF] [--strict] [--gate] [--explain]` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs; optional dry-run against a sample diff |
+| `roam dogfood [--no-audit] [--no-pr-analyze] [--no-audit-trail]` | One-shot v2 stack runner: audit + pr-analyze + audit-trail + Article 12 conformance — first-touch demo for any repo |
 | `roam why-fail <test>` | Find recently-changed symbols transitively reachable from a failing test |
 | `roam recommend <symbol>` | Surface related symbols using call-graph + co-change + clone signals |
 | `roam graph-stats` | Graph-level invariants: density, weak components, non-trivial cycles, top inbound symbols |
@@ -935,7 +945,9 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 128)</strong></summary>
+<summary><strong>MCP tool list (all 136)</strong></summary>
+
+*New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Agent Review + Cloud Lite engines + EU AI Act audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
 
 | Tool | Description |
 |------|-------------|
@@ -966,6 +978,14 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_impact` | Blast radius of changing a symbol |
 | `roam_file_info` | File skeleton with all definitions |
 | `roam_pr_risk` | Risk score for pending changes |
+| `roam_pr_analyze` | Agent-aware PR verdict: pr-prep + AI-likelihood + `.roam/rules.yml` + INTENTIONAL/SAFE/REVIEW/BLOCK |
+| `roam_pr_comment_render` | Render a markdown PR comment from a `roam_pr_analyze` envelope |
+| `roam_metrics_push` | Push metrics-only summary (no source code) to Roam Cloud Lite; default dry-run |
+| `roam_audit_trail_verify` | Verify SHA-256 chain integrity of an EU AI Act audit-trail JSONL |
+| `roam_audit_trail_export` | Export the audit trail as markdown / json / csv (with date / verdict filters) for procurement |
+| `roam_audit_trail_conformance_check` | Score the audit trail against an EU AI Act Article 12 checklist (chain / timestamps / actors / reproducibility / retention) |
+| `roam_rules_validate` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs |
+| `roam_dogfood` | One-shot v2 stack runner — audit + pr-analyze + audit-trail + conformance in one envelope |
 | `roam_breaking_changes` | Detect breaking changes between refs |
 | `roam_affected_tests` | Find tests affected by a change |
 | `roam_dead_code` | List unreferenced exports |
@@ -1149,6 +1169,57 @@ Add to `.vscode/mcp.json`:
 ```
 
 </details>
+
+## Roam Agent Review (PR bot for AI-generated changes)
+
+Most "AI safety net" tools — CodeRabbit, Greptile, Qodo — review PR **semantics** (does the diff *look* right?). They don't read your **graph**: who calls the changed symbol, which layer it belongs to, whether the AI just touched a god-component with 47 callers. Roam Agent Review fills that gap.
+
+`roam pr-analyze` is the CLI engine: pipe a unified diff in, get back a verdict (`INTENTIONAL` / `SAFE` / `REVIEW` / `BLOCK`) plus AI-likelihood score, blast radius, rule violations, suggested reviewers, and an EU AI Act Article 12 audit-trail record.
+
+```bash
+git diff main..HEAD | roam pr-analyze --explain --with-reviewers --audit-trail
+roam pr-analyze main..HEAD --gate                      # exit 5 on BLOCK (CI gate)
+roam --json pr-analyze --input pr.diff | roam pr-comment-render   # ready-to-post markdown
+roam pr-analyze --batch ./diffs/                       # scan a directory of patches
+roam audit-trail-verify                                # check SHA-256 chain integrity
+```
+
+Six weighted heuristic signals score the diff for AI-likelihood (add/remove ratio, comment density, test coverage, function-size variance, generic naming, orphan imports), with **language-aware weights** for Python / TypeScript / JavaScript / Go / Rust / Java / Kotlin. Custom architecture rules go in `.roam/rules.yml`:
+
+```yaml
+rules:
+  - id: no-frontend-db-import
+    description: Frontend modules must not import from db/ directly
+    pattern: import_from              # supported: import_from, function_call, class_inherit, decorator_use
+    source_glob: "frontend/**/*.{ts,tsx}"
+    forbidden_target_glob: "lib/db/**"
+    severity: BLOCK
+  - id: no-eval
+    pattern: function_call
+    source_glob: "src/**/*.py"
+    forbidden_target_glob: "eval"
+    severity: BLOCK
+```
+
+A **drift baseline** (`--save-baseline` / `--baseline FILE`) compares the current PR's signals against the previous analysis and auto-escalates the verdict on regression — the GitHub App reads this to render `(+5 vs prev)` / `(-22 vs prev)` arrows on every push.
+
+The **`pr-analyze --audit-trail`** flag appends a SHA-256-chained record to `.roam/audit-trail.jsonl` for each analysis (actor, repo, git SHA, diff hash, verdict, blast radius, AI-likelihood, intent marker). `roam audit-trail-verify` walks the chain and surfaces tampered records; `roam audit-trail-export --format md|csv|json` produces procurement-friendly reports. Built for **EU AI Act Article 12** compliance ahead of the August 2 2026 enforcement deadline.
+
+A hosted GitHub App is in development on top of this CLI engine. Until it ships, the CLI is usable today as a free CI gate (`roam pr-analyze --gate` exits 5 on BLOCK).
+
+## Roam Cloud Lite (metrics history, no source upload)
+
+`roam metrics-push` sends a *summary-only* payload from `roam audit --json` to a Roam Cloud Lite endpoint — numerical metrics, file paths (or SHA-256 hashes when `--anonymize`), and identifier names only. **No source-code bodies are transmitted**, ever. Inspect the exact payload locally with `--dry-run` before any token is set.
+
+```bash
+roam metrics-push --dry-run                            # local-only inspection
+roam metrics-push --token $ROAM_CLOUD_TOKEN --anonymize
+roam metrics-push --no-hotspots --json                 # minimal payload
+```
+
+The hosted dashboard at `roam.cloud` (in development) renders trend charts of health-score, debt, dead-code count, danger-zone count, and bus-factor concentration over time. The schema (`roam-metrics-v1`) is allow-listed: any payload key outside the allow-list is rejected by the receiving API.
+
+Both products are paid layers on top of the free CLI; the CLI itself stays Apache 2.0, zero-API-key, fully local, forever.
 
 ## CI/CD Integration
 
