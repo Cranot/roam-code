@@ -159,6 +159,24 @@ def _exit_for_verdict(verdict: str) -> int:
     }.get(verdict, EXIT_SUCCESS)
 
 
+from roam.capability import roam_capability
+
+
+@roam_capability(
+    category="review",
+    summary="Verdict facade for AI agents — ALLOW/REVIEW/BLOCK over a diff or symbol.",
+    inputs=["staged_diff", "diff_text", "symbol_name"],
+    outputs=["verdict", "reason", "allowed_actions", "blocked_actions"],
+    examples=[
+        "git diff --cached | roam permit",
+        "roam permit --symbol AuthService",
+        "roam permit --input my-patch.diff",
+    ],
+    tags=["agent", "ci", "gate", "phase0"],
+    ai_safe=True,
+    requires_index=True,
+    since="12.40",
+)
 @click.command(name="permit")
 @click.option(
     "--staged",
