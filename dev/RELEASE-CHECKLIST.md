@@ -17,6 +17,19 @@ The CHANGELOG.md `[Unreleased]` entry is already written; promoting it to
 
 ## Pre-release verification (already done, but re-run if you want to be sure)
 
+> **Lesson from 12.31-12.33**: `_CORE_TOOLS` count appears in **three**
+> assertions across **two** test files. Always sweep before tagging:
+>
+> ```bash
+> grep -rn "tool_count\|_CORE_TOOLS" tests/ | grep -E "== [0-9]+"
+> grep -rn "len(_CORE_TOOLS) == " tests/
+> ```
+>
+> Same applies to surface counts in CLAUDE.md, README.md, and the
+> docs site. `tests/test_surface_counts.py` covers some of these but
+> not all (the test asserts source matches docs; not all assertions
+> live in there).
+
 ```bash
 # 1. Surface tests pass (verifies all hardcoded counts agree with source)
 pytest tests/test_surface_counts.py tests/test_readme_surface_consistency.py -q

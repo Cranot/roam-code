@@ -450,9 +450,10 @@ class TestExpandToolset:
         from roam.mcp_server import expand_toolset
 
         result = expand_toolset(preset="core")
-        # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35 (+py-pivot 2),
-        # v12.16=36 (+roam_catalog).
-        assert result["tool_count"] == 41
+        # v12.0=27, v12.1=33 (+5 oracles +taint_classify), v12.6=35
+        # (+py-pivot 2), v12.16=36 (+roam_catalog), v12.19=41
+        # (+5 agent wrappers), v12.28=49 (+8 Agent Review v2 tools).
+        assert result["tool_count"] == 49
 
     def test_invalid_preset(self):
         from roam.mcp_server import expand_toolset

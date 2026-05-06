@@ -39,13 +39,11 @@ from roam.output.formatter import json_envelope, loc, to_json
 
 # Patterns that identify ORM model classes by parent class or trait
 _MODEL_PARENTS = {
-    # Laravel / Eloquent
+    # Laravel / Eloquent / Django (both use bare "Model" — single membership)
     "Model",
     "Eloquent",
     "Authenticatable",
-    # Django
     "models.Model",
-    "Model",
     # Rails / ActiveRecord
     "ApplicationRecord",
     "ActiveRecord::Base",
@@ -129,7 +127,6 @@ _RELATIONSHIP_CALLS = {
     "load",
     "fetch",
     "findOrFail",
-    "find",
 }
 
 # I/O operations that indicate a DB query or network call
@@ -154,7 +151,6 @@ _IO_INDICATORS = {
     # HTTP
     "fetch",
     "request",
-    "get",
     "post",
     "put",
     # File

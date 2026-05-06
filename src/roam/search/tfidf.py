@@ -71,7 +71,6 @@ _STOPWORDS = frozenset(
         "self",
         "return",
         "import",
-        "from",
         "def",
         "class",
         "function",
