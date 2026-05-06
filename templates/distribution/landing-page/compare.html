@@ -1,0 +1,236 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Roam vs CodeRabbit, Greptile, Qodo, SonarQube — Comparison</title>
+  <meta name="description" content="How Roam compares to CodeRabbit, Greptile, Qodo, and SonarQube on structural review, semantics, EU AI Act audit-trail, MCP support, OSS license, and pricing. With methodology + verified sources.">
+  <link rel="canonical" href="https://roam-code.com/compare">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Roam vs CodeRabbit, Greptile, Qodo, SonarQube">
+  <meta property="og:description" content="Comparison across 9 axes with verified vendor sources.">
+  <meta property="og:url" content="https://roam-code.com/compare">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/docs">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Comparison</p>
+      <h1 class="hero-headline">
+        <strong>Roam isn't competing with your reviewer.</strong>
+      </h1>
+      <p class="hero-subhead">
+        Semantic reviewers (CodeRabbit, Greptile, Qodo) read what the code <em>does</em>.
+        Roam reads what it <em>touches</em>. Most teams keep their semantic
+        reviewer and add Roam alongside.
+      </p>
+    </div>
+  </header>
+
+  <section class="compare" style="padding-top: 32px; border-top: none;">
+    <div class="compare-inner">
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <caption class="visually-hidden">Roam compared with CodeRabbit, Greptile, Qodo, and SonarQube on nine product axes.</caption>
+          <thead>
+            <tr>
+              <th scope="col"></th>
+              <th scope="col"><strong>Roam</strong></th>
+              <th scope="col">CodeRabbit</th>
+              <th scope="col">Greptile</th>
+              <th scope="col">Qodo</th>
+              <th scope="col">SonarQube</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Reviews what the code <em>touches</em> (callers, layers, cycles)</th>
+              <td class="yes">Yes</td>
+              <td class="ltd">Limited</td>
+              <td class="ltd">Limited</td>
+              <td class="ltd">Limited</td>
+              <td class="yes">Yes</td>
+            </tr>
+            <tr>
+              <th scope="row">Reviews what the code <em>does</em> (semantics)</th>
+              <td class="ltd">Limited</td>
+              <td class="yes">Yes</td>
+              <td class="yes">Yes</td>
+              <td class="yes">Yes</td>
+              <td class="ltd">Limited</td>
+            </tr>
+            <tr>
+              <th scope="row">Catches the clone-not-edited bug AI keeps shipping</th>
+              <td class="yes">Yes</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+            </tr>
+            <tr>
+              <th scope="row">Runs locally — source never uploaded</th>
+              <td class="yes">Yes</td>
+              <td class="no">Cloud<sup>*</sup></td>
+              <td class="no">Cloud<sup>*</sup></td>
+              <td class="no">Cloud<sup>*</sup></td>
+              <td class="yes">Yes (paid)</td>
+            </tr>
+            <tr>
+              <th scope="row">Publishes EU AI Act Article 12 evidence pack</th>
+              <td class="yes">Yes</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+            </tr>
+            <tr>
+              <th scope="row">MCP server for AI agents</th>
+              <td class="yes">Yes (136 tools)</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+              <td class="no">Not advertised</td>
+            </tr>
+            <tr>
+              <th scope="row">Open source</th>
+              <td class="yes">Apache 2.0</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="no">No</td>
+              <td class="ltd">Community ed.</td>
+            </tr>
+            <tr>
+              <th scope="row">Free tier for individuals</th>
+              <td class="yes">Yes, forever</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Trial</td>
+              <td class="ltd">Community ed.</td>
+            </tr>
+            <tr>
+              <th scope="row">Starting price (team tier)</th>
+              <td>$25/dev/mo</td>
+              <td>$24/dev/mo<sup>**</sup></td>
+              <td>$30/seat/mo + usage</td>
+              <td>$30/user/mo</td>
+              <td>from $32/mo (LOC-based)</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <p class="compare-foot">
+        <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing.
+      </p>
+    </div>
+  </section>
+
+  <section class="whats-in" id="methodology" style="padding-top: 56px;">
+    <div class="whats-in-inner">
+      <h2>Methodology</h2>
+      <p class="lede">
+        Every cell in this table is a verifiable claim. Where we say
+        "Limited" or "Not advertised", we mean we could not find the
+        capability documented on the vendor's public pages as of the
+        verification date below. If you're a vendor and we got something
+        wrong, email <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>
+        and we'll update.
+      </p>
+    </div>
+  </section>
+
+  <section class="whats-in" style="padding-top: 0;">
+    <div class="whats-in-inner" style="max-width: 760px; text-align: left;">
+      <h3 style="text-align: center;">Sources verified 2026-05-07</h3>
+      <ul style="line-height: 1.8;">
+        <li><strong>CodeRabbit:</strong> pricing — <a href="https://www.coderabbit.ai/pricing">coderabbit.ai/pricing</a>; product capabilities — <a href="https://www.coderabbit.ai/">coderabbit.ai</a>. Pro tier: $24/dev/mo annual.</li>
+        <li><strong>Greptile:</strong> pricing — <a href="https://www.greptile.com/pricing">greptile.com/pricing</a>; product — <a href="https://www.greptile.com/">greptile.com</a>. Team tier: $30/seat/mo + $1 per review beyond 50.</li>
+        <li><strong>Qodo (formerly Codium):</strong> pricing — <a href="https://www.qodo.ai/pricing/">qodo.ai/pricing</a>; product — <a href="https://www.qodo.ai/">qodo.ai</a>. Teams tier: $30/user/mo annual, $38 monthly.</li>
+        <li><strong>SonarQube:</strong> pricing — <a href="https://www.sonarsource.com/plans-and-pricing/">sonarsource.com/plans-and-pricing</a>; product — <a href="https://www.sonarsource.com/products/sonarqube/">sonarsource.com/products/sonarqube</a>. Cloud Team: from $32/mo (LOC-based, not per-developer).</li>
+        <li><strong>Roam:</strong> pricing — <a href="/pricing">/pricing</a>; product — <a href="/">homepage</a>; source — <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a>.</li>
+      </ul>
+
+      <h3 style="text-align: center; margin-top: 36px;">How we mark each cell</h3>
+      <ul style="line-height: 1.8;">
+        <li><strong class="yes" style="color: var(--pop);">Yes</strong> — capability documented on the vendor's marketing or docs page</li>
+        <li><strong class="ltd" style="color: var(--warn);">Limited</strong> — partial capability documented, or the capability appears on enterprise-only or undocumented surfaces</li>
+        <li><strong class="no" style="color: #6b6b6b;">Not advertised</strong> — we could not find the capability documented; this is verifiable via vendor pages above</li>
+      </ul>
+
+      <h3 style="text-align: center; margin-top: 36px;">Why "alongside", not "instead of"</h3>
+      <p>
+        Semantic and structural review answer different questions.
+        Semantic review (CodeRabbit, Greptile, Qodo) reads the diff as text
+        and asks: <em>does this change make sense semantically? Are there
+        bugs in the logic?</em>. Structural review (Roam) reads the diff as
+        a graph mutation and asks: <em>what else does this touch? What's
+        the blast radius? Are there clones we should also update?</em>.
+        Most production-quality engineering teams want both signals.
+      </p>
+      <p>
+        That's why our pricing assumes you keep your existing reviewer:
+        $25/dev/mo for Roam Review is additive to $24-30 for the semantic
+        reviewer, not a replacement.
+      </p>
+    </div>
+  </section>
+
+  <section class="audit-upsell">
+    <div class="audit-upsell-inner">
+      <h2>Want to evaluate Roam alongside your current reviewer?</h2>
+      <p>
+        We'll set up a free 30-day pilot in your repo, run the existing reviewer
+        and Roam in parallel, and quantify which findings each one caught that
+        the other missed. Email <a href="mailto:hello@roam-code.com?subject=Pilot%20enquiry">hello@roam-code.com</a>.
+      </p>
+    </div>
+  </section>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
