@@ -4,7 +4,7 @@
   X-Content-Type-Options: nosniff
   Referrer-Policy: strict-origin-when-cross-origin
   Permissions-Policy: camera=(), microphone=(), geolocation=(), interest-cohort=(), browsing-topics=(), payment=()
-  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self'; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
+  Content-Security-Policy: default-src 'self'; style-src 'self' 'unsafe-inline'; font-src 'self'; img-src 'self' data:; script-src 'self' 'sha256-Gy5m41tTCY/HtrdMG94FbWbLRRmvnOu1bv4IfsBuEvw=' 'sha256-rJ/XuojMVCQwIQWKPHQ5IpLEicwM99fViqnQqWEWHyE='; base-uri 'self'; form-action 'self'; frame-ancestors 'none'; upgrade-insecure-requests
 
 /landing.css
   Cache-Control: public, max-age=86400

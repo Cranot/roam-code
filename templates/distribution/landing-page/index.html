@@ -23,7 +23,6 @@
   <link rel="canonical" href="https://roam-code.com/">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 
-  <!-- Self-hosted fonts: see /fonts/ directory; falls back to system fonts if not yet present -->
   <link rel="stylesheet" href="./landing.css">
 
   <script type="application/ld+json">
@@ -55,8 +54,9 @@
     "mainEntity": [
       {"@type": "Question", "name": "How is Roam different from CodeRabbit, Greptile, and Qodo?", "acceptedAnswer": {"@type": "Answer", "text": "They review what the code does. Roam reviews what the code touches. Different layer, different findings. Most teams keep their existing reviewer and add Roam alongside it. Two extras: the CLI runs entirely on your machine, and every analysis emits an EU AI Act Article 12 audit-trail entry."}},
       {"@type": "Question", "name": "Will the CLI stay free?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. Forever. Apache 2.0. Free for individuals, teams, and companies of any size. We charge for the hosted PR bot, the dashboard, and the self-hosted bundle, not the local engine."}},
-      {"@type": "Question", "name": "What does 'EU AI Act Article 12 audit-trail support' mean?", "acceptedAnswer": {"@type": "Answer", "text": "Article 12 of the EU AI Act takes effect August 2, 2026 for high-risk AI systems. It requires automatic event logging. Roam emits in-toto attestations and a chained audit-trail JSONL on every analysis. We give you the evidence; the conformity assessment for your own system is still on you."}},
-      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs in our cloud (or yours, if you self-host)."}}
+      {"@type": "Question", "name": "What does 'EU AI Act Article 12 audit-trail support' mean?", "acceptedAnswer": {"@type": "Answer", "text": "Article 12 of the EU AI Act takes effect August 2, 2026 for high-risk AI systems. It requires automatic event logging. Roam writes a tamper-evident log file on every analysis, plus signed records (in-toto v1) you can verify with cosign. We give you the evidence; the conformity assessment for your own system is still on you."}},
+      {"@type": "Question", "name": "Does any of my source code leave my machine?", "acceptedAnswer": {"@type": "Answer", "text": "Not from the CLI. The CLI runs locally and only writes a SQLite file in your repo. Roam Cloud receives metrics only — never source code. Roam Review processes PR diffs in our cloud (or yours, if you self-host)."}},
+      {"@type": "Question", "name": "Does Roam fit into my CI?", "acceptedAnswer": {"@type": "Answer", "text": "Yes. roam --sarif health exports findings in SARIF 2.1.0 format, which GitHub Code Scanning, GitLab, and most CI platforms understand natively. Ready-to-drop GitHub Actions templates ship with the package. Exit code 5 on roam critique --gate fails the build on high-severity findings."}}
     ]
   }
   </script>
@@ -70,6 +70,7 @@
       <a href="./" class="site-logo">roam<span class="logo-dot">.</span></a>
       <ul class="nav-links">
         <li><a href="#install">Free CLI</a></li>
+        <li><a href="#how-it-works">How it works</a></li>
         <li><a href="#review">Review</a></li>
         <li><a href="#cloud">Cloud</a></li>
         <li><a href="#self-hosted">Self-Hosted</a></li>
@@ -88,15 +89,15 @@
         <strong>Roam tells you what else it broke.</strong>
       </h1>
       <p class="hero-subhead">
-        Free open-source CLI that maps every function, file, and dependency in your codebase.
-        Plus a PR bot, a dashboard, and a self-hosted option for teams that need them.
+        Free open-source command-line tool that maps every function, file, and dependency in your codebase.
+        Plus a pull-request bot, a dashboard, and a self-hosted option for teams that need them.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
         <a class="btn-secondary" href="#what-you-get">See what's in it</a>
       </div>
       <p class="hero-trust-strip">
-        Apache 2.0 · Runs entirely on your machine · 27 languages · No telemetry, no API keys
+        Apache 2.0 · Runs entirely on your machine · 27 languages · 459 stars · 6k+ installs/month
       </p>
     </div>
   </header>
@@ -106,24 +107,64 @@
     <div class="whats-in-inner">
       <h2>What's in the free CLI</h2>
       <p class="lede">
-        Install once. Works on any Git repo. Indexes 100k LOC in seconds.
+        Install once. Works on any Git repo. Indexes 100,000 lines of code in seconds.
         Asks the same questions a senior engineer would, before you merge.
       </p>
       <div class="numbers-grid">
         <div class="num-cell"><strong>190</strong><span>CLI commands</span></div>
-        <div class="num-cell"><strong>136</strong><span>MCP tools for AI agents</span></div>
+        <div class="num-cell"><strong>136</strong><span>tools your AI agent can call</span></div>
         <div class="num-cell"><strong>27</strong><span>languages</span></div>
         <div class="num-cell"><strong>2,489+</strong><span>community rules</span></div>
         <div class="num-cell"><strong>54</strong><span>code-quality checks</span></div>
-        <div class="num-cell"><strong>0 KB</strong><span>data sent anywhere</span></div>
+        <div class="num-cell"><strong>5</strong><span>cross-language bridges</span></div>
+        <div class="num-cell"><strong>54</strong><span>releases shipped</span></div>
+        <div class="num-cell"><strong>0</strong><span>data sent back to us</span></div>
       </div>
       <p class="install-cmd" id="install">
         <code>pip install roam-code &amp;&amp; roam init</code>
       </p>
       <p class="install-note">
-        Five verbs cover most of what you'll do day-to-day:
-        <code>understand</code>, <code>retrieve</code>, <code>context</code>, <code>preflight</code>, <code>critique</code>.
-        The other 185 commands are there when you need them.
+        Five commands cover most of what you'll do day-to-day. The other 185 are there when you need them.
+      </p>
+      <div class="verbs-grid">
+        <div class="verb-cell"><code>roam understand</code><span>Get a guided tour of an unfamiliar codebase.</span></div>
+        <div class="verb-cell"><code>roam retrieve</code><span>Pull the right code spans for a task description.</span></div>
+        <div class="verb-cell"><code>roam context</code><span>List the exact files and line ranges to read.</span></div>
+        <div class="verb-cell"><code>roam preflight</code><span>Check what changing a function will affect.</span></div>
+        <div class="verb-cell"><code>roam critique</code><span>Verify a patch against the dependency graph.</span></div>
+      </div>
+    </div>
+  </section>
+
+  <!-- How AI agents use Roam — MCP story -->
+  <section class="how-it-works" id="how-it-works">
+    <div class="how-it-works-inner">
+      <h2>Your AI agent talks to Roam</h2>
+      <p class="lede">
+        Roam is also a Model Context Protocol server. Your coding agent —
+        Claude Code, Cursor, Codex, Continue, anything that speaks MCP —
+        can call Roam's 136 tools to understand your codebase before it edits it.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">1</span>
+          <strong>You install Roam locally.</strong>
+          One command. The agent starts up alongside your editor or terminal.
+        </li>
+        <li>
+          <span class="flow-num">2</span>
+          <strong>Your AI agent asks structural questions.</strong>
+          <em>What else does this function affect? Where are the tests for this? Is this a clone of another implementation?</em>
+        </li>
+        <li>
+          <span class="flow-num">3</span>
+          <strong>The agent writes better code.</strong>
+          With the answers, the agent edits with the same blast-radius awareness a senior engineer would have.
+        </li>
+      </ol>
+      <p class="how-it-works-foot">
+        Tested with Claude Code, Cursor, Windsurf, Codex CLI, Gemini CLI, Continue.
+        Drops into any MCP-aware editor.
       </p>
     </div>
   </section>
@@ -151,6 +192,37 @@
     </div>
   </section>
 
+  <!-- A look at the actual output -->
+  <section class="demo-block">
+    <div class="demo-block-inner">
+      <h2>What a Roam review looks like</h2>
+      <p class="lede">
+        Pipe a diff through <code>roam critique</code> and you get a verdict.
+        BLOCK on high severity, REVIEW on medium, APPROVE on low. Plain output, exit codes for CI.
+      </p>
+      <pre class="terminal" aria-label="Sample roam critique output"><span class="t-prompt">$</span> <span class="t-cmd">git diff main..HEAD | roam critique --gate</span>
+<span class="t-line">VERDICT: BLOCK  (1 high, 3 medium, 0 low)</span>
+<span class="t-line">  reason: clones-not-edited (high)</span>
+<span class="t-line">         AI updated <span class="t-em">src/api/users.py:create_user</span> but left</span>
+<span class="t-line">         <span class="t-em">src/admin/users.py:create_user</span> (95% similar) untouched.</span>
+<span class="t-line">         Both call <span class="t-em">db.commit()</span>; behavior will diverge.</span>
+<span class="t-line"></span>
+<span class="t-line">  reason: blast-radius (medium)</span>
+<span class="t-line">         <span class="t-em">UserService.authenticate</span> has 47 callers across</span>
+<span class="t-line">         12 files. Add tests covering the new error path.</span>
+<span class="t-line"></span>
+<span class="t-line">  reason: layer-violation (medium)</span>
+<span class="t-line">         Domain layer now imports HTTP layer (<span class="t-em">requests.post</span>).</span>
+<span class="t-line">         Move side-effect to controller.</span>
+<span class="t-line"></span>
+<span class="t-prompt">$</span> <span class="t-cmd">echo $?</span>
+<span class="t-line">5</span></pre>
+      <p class="demo-foot">
+        Exit code 5 fails CI. Same engine powers Roam Review on every pull request.
+      </p>
+    </div>
+  </section>
+
   <!-- Paid product cards -->
   <section class="products-intro">
     <div class="products-intro-inner">
@@ -173,13 +245,14 @@
         <li>Catches when AI copied a function and only updated one of the copies</li>
         <li>Inline severity, confidence score, and a one-click suggested fix</li>
         <li><code>/roam re-review</code> and <code>/roam explain &lt;file&gt;</code> slash commands</li>
+        <li>Exports SARIF for GitHub Code Scanning and any compatible CI</li>
         <li>Two-click install from GitHub Marketplace</li>
       </ul>
       <div class="price">
         <span class="price-amount">$25<span class="price-unit">/dev/mo</span></span>
         <span class="price-note">Annual · Free for open-source forever · 14-day Pro+ trial</span>
       </div>
-      <a class="btn-primary" href="#waitlist-review">Get early access</a>
+      <a class="btn-primary" href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access">Get early access</a>
     </div>
 
     <div class="product-card" id="cloud">
@@ -189,14 +262,14 @@
         <li>Health, debt, and complexity tracked across every commit</li>
         <li>Per-team and per-repo trend charts</li>
         <li>One audit log across Cursor, Copilot, Claude Code, and Codex</li>
-        <li>Article 12 audit-trail browser (paid tiers)</li>
+        <li>Browse the EU AI Act Article 12 audit trail (paid tiers)</li>
         <li>Stripe self-serve, no sales call</li>
       </ul>
       <div class="price">
         <span class="price-amount">$19<span class="price-unit">/repo/mo</span></span>
         <span class="price-note">$99/mo Team (10 repos) · $299/mo Growth · 30-day money back</span>
       </div>
-      <a class="btn-secondary" href="#waitlist-cloud">Get early access</a>
+      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Cloud%20early%20access">Get early access</a>
     </div>
 
     <div class="product-card" id="self-hosted">
@@ -206,14 +279,14 @@
         <li>The full Roam stack — Review, Cloud, Audit Trail — in your cluster</li>
         <li>SSO/SAML, audit logs, custom rules</li>
         <li>Maps cleanly to ISO 42001 and SOC 2 controls</li>
-        <li>EU AI Act Article 12 conformity pack included</li>
-        <li>SLA, dedicated support, conformity-assessment-ready</li>
+        <li>EU AI Act Article 12 evidence pack ready out of the box</li>
+        <li>SLA, dedicated support, ready for a conformity assessment</li>
       </ul>
       <div class="price">
         <span class="price-amount">from $15K<span class="price-unit">/yr</span></span>
         <span class="price-note">$25K Business · $50K-$100K Enterprise · for regulated buyers</span>
       </div>
-      <a class="btn-secondary" href="#contact-self-hosted">Book a 30-min call</a>
+      <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">Book a 30-min call</a>
     </div>
   </section>
 
@@ -225,16 +298,16 @@
         <span>Free forever. <a href="https://github.com/Cranot/roam-code">GitHub</a> · <a href="https://pypi.org/project/roam-code/">PyPI</a></span>
       </div>
       <div class="trust-cell">
-        <strong>The CLI never phones home</strong>
-        <span>No telemetry, no analytics, no API keys. After the August 2025 <a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">CodeRabbit RCE</a>, that's not a feature — it's the floor.</span>
+        <strong>The CLI sends nothing back to us</strong>
+        <span>No telemetry. No analytics. No API keys. After the August 2025 <a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">CodeRabbit security breach</a> (write access to ~1M repos), this isn't a feature — it's the minimum bar.</span>
       </div>
       <div class="trust-cell">
-        <strong>27 languages</strong>
-        <span>Python · TypeScript · PHP · Go · Rust · Java · C# · Kotlin · Scala · SQL · 17 more</span>
+        <strong>27 languages, 5 cross-language bridges</strong>
+        <span>Python · TypeScript · PHP · Go · Rust · Java · C# · Kotlin · Scala · SQL · 17 more. Bridges resolve Salesforce Apex → Aura, REST front-end → back-end routes, Django ORM, .proto stubs, env var → config.</span>
       </div>
       <div class="trust-cell">
-        <strong>54 code-quality checks</strong>
-        <span>Every finding shows you exactly the patterns it matched.</span>
+        <strong>Compliance evidence built in</strong>
+        <span>Every analysis writes a tamper-evident log file plus signed records (in-toto v1, verifiable with cosign). Wired for the EU AI Act Article 12 deadline (Aug 2, 2026).</span>
       </div>
     </div>
   </section>
@@ -271,16 +344,20 @@
         <p>
           Article 12 of the EU AI Act
           (<a href="https://artificialintelligenceact.eu/article/12/">text here</a>)
-          takes effect August 2, 2026 for high-risk AI systems. It requires
-          automatic event logging built into the system, with penalties up to
+          takes effect on August 2, 2026 for high-risk AI systems. It requires
+          automatic event logging built into the system. Penalties go up to
           €15M or 3% of global turnover.
         </p>
         <p>
-          Roam emits in-toto attestations and a chained audit-trail JSONL
-          file on every analysis. We give you the evidence a conformity
-          assessment will ask for. Your own conformity assessment is still on
-          you. Run <code>roam article-12-check</code> on your repo for a
-          one-page readiness assessment.
+          On every analysis, Roam writes two things: a tamper-evident log file
+          (each entry chained with a SHA-256 hash to the previous one) and
+          signed records you can verify with cosign. That's the kind of
+          evidence a conformity assessment will ask for.
+        </p>
+        <p>
+          Your own conformity assessment is still on you. Run
+          <code>roam article-12-check</code> on your repo for a one-page
+          readiness score.
         </p>
       </details>
       <details>
@@ -296,10 +373,21 @@
         <p>
           From <strong>Roam Review</strong>: the PR diff is processed in our
           cloud (or yours, if you self-host). Same scope as any other PR-bot
-          product. The CodeRabbit August 2025 RCE
+          product. The CodeRabbit August 2025 breach
           (<a href="https://research.kudelskisecurity.com/2025/08/19/how-we-exploited-coderabbit-from-a-simple-pr-to-rce-and-write-access-on-1m-repositories/">Kudelski writeup</a>)
           is a useful reminder: ask any PR-bot vendor what's in their threat
           model.
+        </p>
+      </details>
+      <details>
+        <summary>Does Roam fit into my CI?</summary>
+        <p>
+          Yes. <code>roam --sarif health</code> exports findings in the SARIF
+          2.1.0 format, which GitHub Code Scanning, GitLab, and most CI
+          platforms understand natively. Ready-to-drop GitHub Actions
+          templates ship with the package. Exit code 5 on
+          <code>roam critique --gate</code> fails the build on high-severity
+          findings.
         </p>
       </details>
     </div>
@@ -308,7 +396,7 @@
   <!-- Audit upsell — moved to end, after FAQ, as the soft on-ramp -->
   <section class="audit-upsell" id="audit">
     <div class="audit-upsell-inner">
-      <h2>Want us to roll this out for you?</h2>
+      <h2>Want help getting started?</h2>
       <p>
         Our <strong>AI Agent Readiness Audit</strong> walks your team through
         Roam adoption, threat-modelling for AI-assisted changes, and EU AI Act
@@ -326,14 +414,15 @@
       <div class="footer-col">
         <strong>Roam</strong>
         <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Made in the EU.</span>
       </div>
       <div class="footer-col">
-        <a href="https://github.com/Cranot/roam-code">GitHub</a> ·
-        <a href="https://pypi.org/project/roam-code/">PyPI</a> ·
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
         <a href="redacted">Docs</a>
       </div>
       <div class="footer-col">
-        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a> ·
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
         <a href="mailto:security@roam-code.com">security@roam-code.com</a>
       </div>
     </div>
