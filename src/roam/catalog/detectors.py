@@ -2485,6 +2485,135 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
+# redacted — `asyncio.create_task(coro())` whose return value is
+# discarded. The task is gc-collected before it runs to completion. The
+# fix is to either store the task in a long-lived collection or `await`
+# it. PEP 649 / Python 3.11+ docs explicitly call this a footgun.
+_RE_FIRE_AND_FORGET_TASK = re.compile(
+    r"^\s*(?:asyncio\.)?create_task\s*\(",
+    re.MULTILINE,
+)
+_RE_STORED_TASK = re.compile(
+    r"^\s*(?:\w+\s*[+\-*/]?=\s*|\w+\s*\.\s*append\s*\(\s*|\w+\s*\.\s*add\s*\(\s*|return\s+|await\s+)"
+    r"(?:asyncio\.)?create_task\s*\(",
+    re.MULTILINE,
+)
+
+
+def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
+    """``asyncio.create_task(...)`` whose return value is discarded.
+
+    Background tasks that aren't held in a long-lived reference get
+    garbage-collected before they finish. Python 3.11+ explicitly warns
+    about this footgun. The fix is to store the task somewhere that
+    survives until ``await`` time, or just ``await`` it directly.
+
+    Conservative: Python only, only fires when the line clearly creates
+    a task without storing it.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
+        if "create_task" not in snippet:
+            continue
+        # Subtract stored-task lines from total create_task occurrences
+        total = len(_RE_FIRE_AND_FORGET_TASK.findall(snippet))
+        stored = len(_RE_STORED_TASK.findall(snippet))
+        leaked = total - stored
+        if leaked <= 0:
+            continue
+        results.append(
+            _finding(
+                "async-fire-and-forget-task",
+                "leaked-asyncio-task",
+                r,
+                f"{leaked} asyncio.create_task call(s) whose return value isn't stored — gc may discard the task before it completes",
+                "high",
+                snippet=snippet,
+                matched_patterns=[
+                    f"create_task occurrences: {total}",
+                    f"stored: {stored}, leaked: {leaked}",
+                ],
+            )
+        )
+        results[-1]["fix"] = "Store the task: `tasks.append(asyncio.create_task(coro()))` and await it later, or `await asyncio.create_task(coro())` directly."
+    return results
+
+
+# redacted — `asyncio.run(...)` inside an async function. This
+# raises RuntimeError because the event loop is already running. The
+# fix is to call the coroutine directly with `await` instead.
+_RE_NESTED_ASYNCIO_RUN = re.compile(
+    r"^\s*(?:asyncio\.)?run\s*\(",
+    re.MULTILINE,
+)
+
+
+def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
+    """``asyncio.run()`` invoked inside another async function.
+
+    ``asyncio.run`` creates a new event loop. If one is already running
+    (which it is, inside an async function), this raises ``RuntimeError:
+    asyncio.run() cannot be called from a running event loop``. The fix
+    is to ``await`` the coroutine directly.
+
+    Python only, fires only when the host is async.
+    """
+    try:
+        rows = conn.execute(
+            "SELECT s.id, s.name, s.qualified_name, s.kind, f.path AS file_path, "
+            "s.line_start, s.line_end "
+            "FROM symbols s "
+            "JOIN files f ON s.file_id = f.id "
+            "WHERE s.kind IN ('function', 'method') "
+            "AND s.is_async = 1 "
+            "AND f.language = 'python'"
+        ).fetchall()
+    except Exception:
+        return []
+    results = []
+    for r in rows:
+        if _is_test_path(r["file_path"]):
+            continue
+        snippet = _read_symbol_source(r["file_path"], r["line_start"], r["line_end"]) or ""
+        if "asyncio.run(" not in snippet:
+            continue
+        # Heuristic: must be `asyncio.run(` (not `await asyncio.run(`); the
+        # latter is also wrong but caught by other linters more reliably.
+        match_count = snippet.count("asyncio.run(")
+        if match_count == 0:
+            continue
+        results.append(
+            _finding(
+                "async-nested-run",
+                "asyncio-run-in-async",
+                r,
+                "asyncio.run() invoked inside an async function — raises RuntimeError at runtime (loop already running)",
+                "high",
+                snippet=snippet,
+                matched_patterns=[
+                    "is_async = 1",
+                    f"asyncio.run( occurrences: {match_count}",
+                ],
+            )
+        )
+        results[-1]["fix"] = "Replace `asyncio.run(coro())` with `await coro()` — you're already inside an event loop."
+    return results
+
+
 # redacted — Python: `except Exception:` / `except BaseException:`
 # without `raise` is the canonical "swallowing bug" pattern. Catches
 # KeyboardInterrupt, MemoryError, SystemExit silently. The fix is to
@@ -3927,6 +4056,8 @@ _MATH_DETECTORS = [
     ("io-in-loop", "loop-query", detect_io_in_loop),
     ("serial-await-loop", "for-of-await", detect_serial_await_loop),
     ("async-blocking-sleep", "blocking-call-in-async", detect_async_blocking_sleep),
+    ("async-fire-and-forget-task", "leaked-asyncio-task", detect_async_fire_and_forget),
+    ("async-nested-run", "asyncio-run-in-async", detect_async_nested_run),
     ("broad-except-swallow", "swallow-exception", detect_broad_except_swallow),
     ("spread-accumulator", "spread-rebind", detect_spread_accumulator),
     ("defer-in-loop", "loop-defer", detect_defer_in_loop),

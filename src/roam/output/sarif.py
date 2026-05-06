@@ -128,19 +128,150 @@ def to_sarif(
     driver: dict = {
         "name": tool_name,
         "version": version,
+        "informationUri": "https://roam-code.com/",
+        "downloadUri": "https://pypi.org/project/roam-code/",
+        "organization": "Cranot",
         "rules": [_build_rule(r) for r in rules],
     }
+
+    # Apply suppressions (R7) — load .roam/suppressions.json if present and stamp
+    # matching results with the SARIF "suppressions" array.
+    suppressions = _load_suppressions()
+    if suppressions:
+        results = _apply_suppressions(results, suppressions)
+
+    run: dict = {
+        "tool": {"driver": driver},
+        "automationDetails": _automation_details(tool_name, version),
+        "results": results,
+    }
+
+    vcs = _version_control_provenance()
+    if vcs:
+        run["versionControlProvenance"] = vcs
 
     return {
         "$schema": _SARIF_SCHEMA,
         "version": _SARIF_VERSION,
-        "runs": [
-            {
-                "tool": {"driver": driver},
-                "results": results,
-            }
-        ],
+        "runs": [run],
     }
+
+
+def _automation_details(tool_name: str, version: str) -> dict:
+    """Build a SARIF automationDetails block — stable run identifier.
+
+    Lets GitHub Code Scanning correlate re-ingests of the same logical
+    run (e.g. nightly scans) instead of treating each as new findings.
+    """
+    import os
+    from datetime import datetime, timezone
+    run_guid = f"{tool_name}/{version}/{datetime.now(timezone.utc).strftime('%Y%m%d')}"
+    branch = os.environ.get("GITHUB_REF_NAME") or os.environ.get("CI_COMMIT_BRANCH") or "main"
+    return {
+        "id": f"roam-{tool_name}/{branch}",
+        "guid": run_guid,
+        "description": {"text": f"{tool_name} v{version} analysis run on {branch}"},
+    }
+
+
+def _version_control_provenance() -> list[dict]:
+    """Probe git for the current commit SHA + branch, attach to the run.
+
+    Returns an empty list when git is unavailable so SARIF stays valid.
+    """
+    import subprocess
+    try:
+        sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            capture_output=True, text=True, timeout=2,
+        ).stdout.strip()
+        if not sha:
+            return []
+        try:
+            branch = subprocess.run(
+                ["git", "rev-parse", "--abbrev-ref", "HEAD"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.strip() or "main"
+        except Exception:
+            branch = "main"
+        try:
+            remote = subprocess.run(
+                ["git", "config", "--get", "remote.origin.url"],
+                capture_output=True, text=True, timeout=2,
+            ).stdout.strip()
+        except Exception:
+            remote = ""
+        entry = {
+            "revisionId": sha,
+            "branch": branch,
+        }
+        if remote:
+            entry["repositoryUri"] = remote
+        return [entry]
+    except Exception:
+        return []
+
+
+def _load_suppressions() -> list[dict]:
+    """Load .roam/suppressions.json if present.
+
+    Schema: list of objects with at least ``rule_id`` (str) and ``location``
+    (str like "path:line"). Optional ``reason`` (str), ``status`` (active/expired/rejected),
+    ``kind`` (inSource/external).
+    """
+    import json
+    from pathlib import Path
+    candidate = Path.cwd() / ".roam" / "suppressions.json"
+    if not candidate.exists():
+        return []
+    try:
+        data = json.loads(candidate.read_text(encoding="utf-8"))
+        if isinstance(data, dict):
+            return data.get("suppressions") or []
+        if isinstance(data, list):
+            return data
+        return []
+    except Exception:
+        return []
+
+
+def _apply_suppressions(results: list[dict], suppressions: list[dict]) -> list[dict]:
+    """Stamp each matching result with the SARIF suppressions array.
+
+    A result matches when (rule_id, primary location) equals an entry in
+    the suppressions list.
+    """
+    suppression_map: dict[tuple[str, str], dict] = {}
+    for s in suppressions:
+        rule_id = s.get("rule_id") or s.get("ruleId") or ""
+        loc = s.get("location") or ""
+        if rule_id:
+            suppression_map[(rule_id, loc)] = s
+
+    if not suppression_map:
+        return results
+
+    for r in results:
+        rule_id = r.get("ruleId") or ""
+        # Pull the primary location's file:line
+        loc_key = ""
+        try:
+            phys = r["locations"][0]["physicalLocation"]
+            uri = phys["artifactLocation"]["uri"]
+            line = phys.get("region", {}).get("startLine")
+            loc_key = f"{uri}:{line}" if line else uri
+        except Exception:
+            pass
+        match = suppression_map.get((rule_id, loc_key))
+        if match:
+            r["suppressions"] = [
+                {
+                    "kind": match.get("kind", "external"),
+                    "status": match.get("status", "accepted"),
+                    "justification": match.get("reason", ""),
+                }
+            ]
+    return results
 
 
 def _build_rule(rule: dict) -> dict:
