@@ -91,6 +91,52 @@ def _inline_match(line_text: str, command: str, task_id: str) -> bool:
     return False
 
 
+def _parse_simple_ignore_findings_yaml(text: str) -> dict:
+    """Minimal YAML parser for .roamignore-findings — no PyYAML required.
+
+    Handles the documented shape only:
+
+        rules:
+          - task_id: io-in-loop
+            path_glob: "src/composables/**/*.ts"
+            reason: "..."
+          - task_id: branching-recursion
+            path_glob: "src/utils/object-diff.ts"
+
+    Anything more complex (anchors, multi-line strings, nested lists)
+    needs real PyYAML. Returns ``{}`` on shapes we can't recognise so
+    callers fall through to a clean empty-rules state.
+    """
+    rules: list[dict] = []
+    current: dict | None = None
+    in_rules_block = False
+    for raw in text.splitlines():
+        line = raw.rstrip()
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == "rules:" or stripped.startswith("rules:"):
+            in_rules_block = True
+            continue
+        if not in_rules_block:
+            continue
+        if stripped.startswith("- "):
+            if current:
+                rules.append(current)
+            current = {}
+            stripped = stripped[2:].strip()
+            # First key on the same line as `-` is the common shape.
+            if ":" in stripped:
+                k, _, v = stripped.partition(":")
+                current[k.strip()] = v.strip().strip('"').strip("'")
+        elif current is not None and ":" in stripped:
+            k, _, v = stripped.partition(":")
+            current[k.strip()] = v.strip().strip('"').strip("'")
+    if current:
+        rules.append(current)
+    return {"rules": rules} if rules else {}
+
+
 def _load_ignore_findings_file(path: Path) -> list[dict]:
     """Load `.roamignore-findings` from ``path``. Returns ``[]`` on any error.
 
@@ -116,11 +162,15 @@ def _load_ignore_findings_file(path: Path) -> list[dict]:
 
         data = yaml.safe_load(text) or {}
     except ImportError:
-        # No PyYAML: assume strict JSON
+        # No PyYAML: try strict JSON first, then a minimal-YAML fallback so
+        # the .roamignore-findings format works on Python 3.9 / installs
+        # without PyYAML (PyYAML is not a project dependency).
         try:
             data = _json.loads(text)
         except _json.JSONDecodeError:
-            return []
+            data = _parse_simple_ignore_findings_yaml(text)
+            if not data:
+                return []
     except Exception:  # noqa: BLE001 — malformed YAML never crashes the analyser
         return []
     rules = data.get("rules") if isinstance(data, dict) else []
