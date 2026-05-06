@@ -7,6 +7,67 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.40] - 2026-05-06
+
+### Pivot to monetization — Phase 0 free-OSS funnel artifacts + commercial landing page
+
+After 8 CI iterations restoring the matrix to green (12.31 → 12.39),
+this release pivots from polish to monetization-aligned shipping.
+Lands the Phase 0 commands from `build_priorities.md` plus a
+starter landing-page implementation for the `roam.review` umbrella.
+
+### New commands (3 — redacted)
+
+- **`roam permit`** — structural-permission verdict facade for AI
+  agents. Returns `{verdict, reason, allowed_actions, blocked_actions}`
+  over staged changes (`--staged`), an arbitrary diff (`--input`), or
+  a target symbol (`--symbol`). Wraps `roam critique` + `roam preflight`.
+  Exit codes: 0=ALLOW, 5=BLOCK, 6=REVIEW. Drops into Cursor rules,
+  Claude Code permission hooks, pre-commit, GitHub Actions branch
+  protection. **Engine reused by the Roam Review GitHub App at PR
+  time.**
+- **`roam postmortem <commit-range>`** — replays current detectors
+  against past commits. Walks `HEAD~30..HEAD` (or any range), runs
+  `roam critique` against each commit's diff, reports findings that
+  would have surfaced pre-merge. The single highest-conversion buyer-
+  meeting demo per the v2 plan: *"if it retroactively catches my Q1
+  incidents, redacted."*
+- **`roam article-12-check`** — EU AI Act Article 12 readiness
+  assessment. 6-item checklist (audit-trail dir, trail records,
+  retention policy, technical docs, attestation surface, high-risk
+  classification heuristic) → 1-page Markdown report (or PDF with
+  `--pdf out.pdf` if reportlab installed). Captures Article-12-curious
+  leads before they pick another vendor.
+
+### Commercial landing page (starter)
+
+New directory `templates/distribution/landing-page/` with:
+
+- `index.html` — hero + 3 product cards + buyer-pain band citing
+  PocketOS / Amazon Treadwell / DORA 2025 + audit upsell + trust
+  strip + FAQ + footer
+- `landing.css` — single 6KB stylesheet, IBM Plex Mono + Space
+  Grotesk fonts (matches docs/site visual language)
+- `README.md` — domain priority list (`roam.review` recommended
+  primary, with `roamreview.com` / `roam.cloud` / `roamaudit.com`
+  as backups), 3 deploy paths (Cloudflare Pages / Vercel / GitHub
+  Pages), content TODOs before going live
+
+`templates/distribution/landing-page-spec.md` updated to reflect
+the new domain recommendation.
+
+### Surface counts
+
+- 187 → **190 commands** (+permit, +postmortem, +article-12-check)
+- README + llms-install + landscape.json updated
+
+### Tests
+
+- `tests/test_pivot_phase0_commands.py` — 7 tests covering happy-
+  path + verdict-decision-tree for `permit`, no-commits-found path
+  for `postmortem`, JSON envelope shape + markdown render + file-
+  output for `article-12-check`. All pass on Python 3.9-3.13.
+
 ## [12.39] - 2026-05-06
 
 ### Polish — exhaustive bugbear sweep + B904 cleanup
