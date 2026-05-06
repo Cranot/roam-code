@@ -81,6 +81,43 @@ def _parse_simple_yaml(path: Path) -> dict | None:
     except Exception:
         return None
 
+    # 12.35 (2026-05-06) — sanity-check obviously malformed YAML so callers
+    # don't get a permissive non-empty result that hides the bug. PyYAML
+    # raises YAMLError on shapes like `this is not: valid: yaml: at all: [`;
+    # the fallback should mimic that behaviour. Cheap signals: unbalanced
+    # brackets on a single line.
+    first_real_line = ""
+    for line in text.split("\n"):
+        s = line.strip()
+        if not s or s.startswith("#"):
+            continue
+        if not first_real_line:
+            first_real_line = s
+        opens = s.count("[") + s.count("{")
+        closes = s.count("]") + s.count("}")
+        if opens != closes:
+            raise ValueError(f"malformed YAML: unbalanced brackets in {path}")
+
+    # 12.35 — top-level-is-a-list detection. PyYAML returns a Python list
+    # for input that starts with `- `; the loader downstream surfaces a
+    # "must be a mapping" warning because rules.yml requires a dict at
+    # the root. Without this, a top-level-list file silently returns {}
+    # and no warning ever surfaces.
+    if first_real_line.startswith("- "):
+        items: list[object] = []
+        for line in text.split("\n"):
+            s = line.strip()
+            if not s or s.startswith("#"):
+                continue
+            if s.startswith("- "):
+                items.append(_coerce_scalar(s[2:].strip()))
+        # Cast to dict-shaped return is wrong — return list explicitly so
+        # callers can detect "not a dict at top level". Using a list-typed
+        # return requires a typing-loose return; the function annotation is
+        # `dict | None` but Python is dynamic — return the list. Callers
+        # downstream check `isinstance(data, dict)`.
+        return items  # type: ignore[return-value]
+
     result: dict = {}
     # Frame: (indent, container, kind, parent_dict, parent_key)
     # The root frame has parent_dict=None / parent_key=None.
