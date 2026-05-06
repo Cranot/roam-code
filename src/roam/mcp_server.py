@@ -117,6 +117,15 @@ _CORE_TOOLS = {
     "roam_test_impact",
     "roam_disambiguate",
     "roam_why_fail",
+    # v12.26 — Roam Agent Review + Cloud Lite engines (8)
+    "roam_pr_analyze",
+    "roam_pr_comment_render",
+    "roam_metrics_push",
+    "roam_audit_trail_verify",
+    "roam_audit_trail_export",
+    "roam_audit_trail_conformance_check",
+    "roam_rules_validate",
+    "roam_dogfood",
 }
 
 _PRESETS: dict[str, set[str]] = {
@@ -3253,6 +3262,329 @@ def pr_risk(staged: bool = False, root: str = ".") -> dict:
     args = ["pr-risk"]
     if staged:
         args.append("--staged")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_pr_analyze")
+def pr_analyze(
+    diff_path: str = "",
+    commit_range: str = "",
+    staged: bool = False,
+    rules_path: str = "",
+    intent: str = "",
+    block_threshold: int = 85,
+    with_reviewers: bool = False,
+    audit_trail: bool = False,
+    language: str = "",
+    explain: bool = False,
+    root: str = ".",
+) -> dict:
+    """Agent-aware PR risk verdict — INTENTIONAL / SAFE / REVIEW / BLOCK.
+
+    WHEN TO USE: Call this on a PR diff (path, commit range, or staged) to
+    aggregate pr-prep (diff + critique + pr-risk) with AI-likelihood
+    heuristics, ``.roam/rules.yml`` enforcement, and a verdict mapping
+    suitable for posting as a single GitHub PR comment. The CLI engine
+    behind Roam Agent Review.
+
+    Parameters
+    ----------
+    diff_path:
+        Optional path to a unified-diff file. If omitted, ``commit_range`` /
+        ``staged`` / unstaged ``git diff`` is used.
+    commit_range:
+        Git range (e.g. ``"main..HEAD"``).
+    staged:
+        Analyse staged changes.
+    rules_path:
+        Path to ``.roam/rules.yml`` (default: auto-detect).
+    intent:
+        PR title or commit message — checked for the ``[intentional]`` marker.
+    block_threshold:
+        Blast-radius score at or above which the verdict becomes BLOCK.
+    with_reviewers:
+        Suggest reviewers for the touched files (calls suggest-reviewers).
+    audit_trail:
+        Append an EU AI Act Article 12 record to ``.roam/audit-trail.jsonl``.
+    language:
+        Override auto-detected primary language for AI-likelihood weighting.
+    explain:
+        Include the verbose human-readable rationale block.
+
+    Returns: verdict envelope with summary, rationale, ai-likelihood signals,
+    rule violations, optional reviewer suggestions, optional audit-trail record.
+    """
+    args = ["pr-analyze"]
+    if commit_range:
+        args.append(commit_range)
+    if diff_path:
+        args.extend(["--input", diff_path])
+    if staged:
+        args.append("--staged")
+    if rules_path:
+        args.extend(["--rules", rules_path])
+    if intent:
+        args.extend(["--intent", intent])
+    if block_threshold != 85:
+        args.extend(["--block-threshold", str(block_threshold)])
+    if with_reviewers:
+        args.append("--with-reviewers")
+    if audit_trail:
+        args.append("--audit-trail")
+    if language:
+        args.extend(["--language", language])
+    if explain:
+        args.append("--explain")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_pr_comment_render")
+def pr_comment_render(envelope_path: str, style: str = "github", include_links: bool = True, root: str = ".") -> dict:
+    """Render a markdown PR comment from a pr-analyze JSON envelope.
+
+    WHEN TO USE: After ``roam_pr_analyze``, render the verdict as a sticky
+    GitHub / GitLab PR comment. Used by the Roam Agent Review GitHub App
+    worker; useful locally to dogfood the comment shape before the bot
+    posts it.
+
+    Parameters
+    ----------
+    envelope_path:
+        Path to a saved ``roam pr-analyze --json`` envelope on disk.
+    style:
+        ``github`` / ``gitlab`` / ``plain`` (default: ``github``).
+    include_links:
+        Append the small attribution + docs footer.
+
+    Returns: ``{summary: {...}, markdown: "..."}`` — the rendered comment
+    in the ``markdown`` field plus a small summary block.
+    """
+    args = ["pr-comment-render", "--input", envelope_path, "--style", style]
+    if not include_links:
+        args.append("--no-links")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_audit_trail_verify")
+def audit_trail_verify(input_path: str = "", root: str = ".") -> dict:
+    """Verify SHA-256 chain integrity of a roam audit trail.
+
+    WHEN TO USE: After ``roam_pr_analyze`` with ``audit_trail=True`` has
+    written records, call this to confirm the EU AI Act Article 12 audit
+    log hasn't been tampered with. Returns a verdict block with
+    ``chain_valid`` boolean plus per-issue line numbers for any breaks.
+
+    Parameters
+    ----------
+    input_path:
+        Path to audit-trail JSONL (default: ``.roam/audit-trail.jsonl``).
+
+    Returns: ``{summary: {chain_valid, total_records, issues_count, ...},
+    issues: [...]}``.
+    """
+    args = ["audit-trail-verify"]
+    if input_path:
+        args.extend(["--input", input_path])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_audit_trail_export")
+def audit_trail_export(
+    input_path: str = "",
+    fmt: str = "md",
+    since: str = "",
+    until: str = "",
+    verdict_filter: str = "",
+    root: str = ".",
+) -> dict:
+    """Export the audit trail as markdown / json / csv for procurement review.
+
+    WHEN TO USE: After ``roam_audit_trail_verify`` confirms integrity,
+    export the records in a procurement-friendly format. Supports
+    date-range and verdict filtering.
+
+    Parameters
+    ----------
+    input_path:
+        Audit-trail JSONL path (default: ``.roam/audit-trail.jsonl``).
+    fmt:
+        ``md`` / ``json`` / ``csv`` (default ``md``).
+    since:
+        ISO-8601 timestamp lower bound.
+    until:
+        ISO-8601 timestamp upper bound.
+    verdict_filter:
+        Comma-separated verdicts to keep (e.g. ``"REVIEW,BLOCK"``).
+
+    Returns: ``{summary: {total_records, filtered_records, ...}, content: "..."}``.
+    """
+    args = ["audit-trail-export", "--format", fmt]
+    if input_path:
+        args.extend(["--input", input_path])
+    if since:
+        args.extend(["--since", since])
+    if until:
+        args.extend(["--until", until])
+    if verdict_filter:
+        args.extend(["--verdict", verdict_filter])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_metrics_push")
+def metrics_push(
+    token: str = "",
+    repo: str = "",
+    endpoint: str = "",
+    anonymize: bool = False,
+    include_hotspots: bool = True,
+    dry_run: bool = True,
+    root: str = ".",
+) -> dict:
+    """Push metrics-only summary to Roam Cloud Lite. **Default is dry-run.**
+
+    WHEN TO USE: After ``roam_audit``, push the numerical summary (no source
+    code) to Roam Cloud Lite for trend storage. Defaults to ``dry_run=True``
+    so the agent never sends anything outside the local machine without
+    explicit opt-in. The CLI engine behind Roam Cloud Lite.
+
+    Parameters
+    ----------
+    token:
+        Auth token. Required when ``dry_run=False``.
+    repo:
+        Override repo identifier (default: derived from git origin).
+    endpoint:
+        Override the Cloud Lite endpoint URL.
+    anonymize:
+        Replace file paths with SHA-256 hash prefixes.
+    include_hotspots:
+        Include top 10 danger-zone hotspot rows in the payload.
+    dry_run:
+        Print the payload without POSTing. **Default True** for safety.
+
+    Returns: ``{summary: {...}, payload: {...}}`` showing the exact JSON
+    that would be transmitted.
+    """
+    args = ["metrics-push"]
+    if dry_run:
+        args.append("--dry-run")
+    if token:
+        args.extend(["--token", token])
+    if repo:
+        args.extend(["--repo", repo])
+    if endpoint:
+        args.extend(["--endpoint", endpoint])
+    if anonymize:
+        args.append("--anonymize")
+    if not include_hotspots:
+        args.append("--no-hotspots")
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_audit_trail_conformance_check")
+def audit_trail_conformance_check(
+    input_path: str = "",
+    retention_days: int = 180,
+    root: str = ".",
+) -> dict:
+    """Score the audit trail against an EU AI Act Article 12 checklist.
+
+    WHEN TO USE: Quarterly compliance gate, or before a procurement review.
+    Six checks: chain integrity, timestamp completeness, actor attribution,
+    reproducibility metadata, verdict + rationale present, and retention
+    (≥ ``retention_days`` days of history).
+
+    Parameters
+    ----------
+    input_path:
+        Audit-trail JSONL path (default: ``.roam/audit-trail.jsonl``).
+    retention_days:
+        Minimum retention requirement (Article 12 floor: 180 days).
+
+    Returns: ``{summary: {score, checks_passed, checks_total, ...}, checks: [...]}``.
+    NOT legal advice — triage signal for procurement readiness.
+    """
+    args = ["audit-trail-conformance-check", "--retention-days", str(retention_days)]
+    if input_path:
+        args.extend(["--input", input_path])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_dogfood")
+def dogfood(
+    audit: bool = True,
+    pr_analyze_on: bool = True,
+    audit_trail_on: bool = True,
+    rules_file: str = "",
+    root: str = ".",
+) -> dict:
+    """One-shot full v2 stack run: audit + pr-analyze + audit-trail + conformance.
+
+    WHEN TO USE: First-touch demo for a new repo, or as a quick local
+    self-check. Bundles the entire v2 product surface (Cloud Lite metrics,
+    Agent Review verdict, EU AI Act audit-trail, conformance score) into
+    one envelope so the agent / user sees everything in one call.
+
+    Parameters
+    ----------
+    audit:
+        Include the audit envelope (health + debt + dead + danger).
+    pr_analyze_on:
+        Run pr-analyze on uncommitted diff.
+    audit_trail_on:
+        Append an audit-trail record + run conformance check.
+    rules_file:
+        Pass-through to pr-analyze (default: auto-detect ``.roam/rules.yml``).
+
+    Returns: ``{summary: {verdict, health_score, pr_verdict, conformance_score},
+    sections: {audit, pr_analyze, conformance}}``.
+    """
+    args = ["dogfood"]
+    if not audit:
+        args.append("--no-audit")
+    if not pr_analyze_on:
+        args.append("--no-pr-analyze")
+    if not audit_trail_on:
+        args.append("--no-audit-trail")
+    if rules_file:
+        args.extend(["--rules", rules_file])
+    return _run_roam(args, root)
+
+
+@_tool(name="roam_rules_validate")
+def rules_validate(
+    rules_path: str = ".roam/rules.yml",
+    against: str = "",
+    strict: bool = False,
+    root: str = ".",
+) -> dict:
+    """Lint a `.roam/rules.yml` for shippability before customers see it.
+
+    WHEN TO USE: Before committing a new rule pack, or in CI on every push
+    that touches rules.yml. Catches typos like ``severity: BLOK``, missing
+    required fields, unknown pattern names, duplicate rule IDs, and
+    unbalanced glob brackets — all silent failures in the pr-analyze
+    consumer if not caught here.
+
+    Parameters
+    ----------
+    rules_path:
+        Path to the rules YAML to validate (default: ``.roam/rules.yml``).
+    against:
+        Optional sample diff path; the rules will be dry-run against it
+        and matching violations reported.
+    strict:
+        Treat warnings (missing severity, missing description, unknown
+        keys) as failures.
+
+    Returns: ``{summary: {verdict, errors_count, warnings_count, ...},
+    errors: [...], warnings: [...], dry_run_violations: [...]}``.
+    """
+    args = ["rules-validate", rules_path]
+    if against:
+        args.extend(["--against", against])
+    if strict:
+        args.append("--strict")
     return _run_roam(args, root)
 
 
