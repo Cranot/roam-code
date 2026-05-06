@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.42] - 2026-05-06
+
+### CI fix — landscape.json self-row version stamp
+
+Hotfix after 12.41. The 12.41 release bumped pyproject + MCP cards
++ competitor_site_data but missed `docs/site/data/landscape.json`'s
+self-row, which `tests/test_doc_consistency.py::test_landscape_json_self_row_version_matches`
+guards (major.minor must match pyproject). Bumped 12.40 → 12.42 in
+that file. No behavior change.
+
 ## [12.41] - 2026-05-06
 
 ### CI fix — README surface consistency for Phase 0 commands
