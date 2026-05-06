@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.41] - 2026-05-06
+
+### CI fix — README surface consistency for Phase 0 commands
+
+Hotfix release after 12.40. The README's command listing did not yet
+include `permit`, `postmortem`, and `article-12-check`, which broke
+`tests/test_readme_surface_consistency.py::test_readme_covers_all_canonical_cli_commands`
+on all 5 Python versions in the matrix. Added one-line entries for
+each of the three new commands in the canonical command table. No
+behavior change; documentation-only fix to restore CI green.
+
 ## [12.40] - 2026-05-06
 
 ### Pivot to monetization — Phase 0 free-OSS funnel artifacts + commercial landing page
