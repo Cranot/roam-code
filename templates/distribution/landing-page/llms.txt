@@ -4,7 +4,7 @@
 
 roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
 symbols, call graphs, dependencies, architectural layers, and git history into
-a SQLite database in your repo's `.roam/` directory. The CLI exposes 190
+a SQLite database in your repo's `.roam/` directory. The CLI exposes 194
 commands and 136 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
 can call to answer questions like "what else does this PR break", "what tests
 exercise this function", "is this clone of another implementation".
@@ -16,7 +16,7 @@ exercise this function", "is this clone of another implementation".
 - [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever.
 - [Roam Review](https://roam-code.com/#review) — $25/dev/mo. PR bot that posts a structural-risk verdict on every pull request.
 - [Roam Cloud](https://roam-code.com/#cloud) — $19/repo/mo. Hosted dashboard for code-health metrics over time. Source code never uploaded.
-- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — from $15K/yr. The full Roam stack inside your own network.
+- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network.
 
 ## Key links
 
