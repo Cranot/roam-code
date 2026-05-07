@@ -1118,7 +1118,7 @@ def algo_to_sarif(
         if fpath:
             locations.append(_location(fpath, line))
 
-        # redacted — surface matched_patterns in SARIF properties
+        # surface matched_patterns in SARIF properties
         # so CI dashboards (GitHub Code Scanning) can show WHY a finding
         # fired without an extra round-trip to the JSON envelope.
         properties = {

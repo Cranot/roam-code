@@ -1,0 +1,149 @@
+{
+  "source": "Vue 3 + Laravel codebase false-positive corpus.",
+  "entries": [
+    {
+      "name": "tanstack-getQueryData-is-cache",
+      "description": "M3: TanStack Query getQueryData is in-memory; loop usage must not flag as N+1.",
+      "helper": "in_memory_call",
+      "input": "queryClient.getQueryData",
+      "expect": true
+    },
+    {
+      "name": "tanstack-invalidateQueries-is-cache",
+      "description": "M3: queryClient.invalidateQueries is in-memory.",
+      "helper": "in_memory_call",
+      "input": "queryClient.invalidateQueries",
+      "expect": true
+    },
+    {
+      "name": "apollo-readQuery-is-cache",
+      "description": "M3: Apollo client.readQuery is in-memory.",
+      "helper": "in_memory_call",
+      "input": "client.readQuery",
+      "expect": true
+    },
+    {
+      "name": "apollo-cache-modify-is-cache",
+      "description": "M3: Apollo cache.modify is in-memory.",
+      "helper": "in_memory_call",
+      "input": "cache.modify",
+      "expect": true
+    },
+    {
+      "name": "pinia-store-is-cache",
+      "description": "M3: Pinia store.set is in-memory cache (receiver hint).",
+      "helper": "in_memory_call",
+      "input": "piniaStore.set",
+      "expect": true
+    },
+    {
+      "name": "map-has-is-cache",
+      "description": "M3: native Map.has() is in-memory; loop usage must not flag as N+1.",
+      "helper": "in_memory_call",
+      "input": "myMap.has",
+      "expect": true
+    },
+    {
+      "name": "user-service-fetchAll-is-NOT-cache",
+      "description": "Negative: M3 must not over-allowlist; userService.fetchAll is real I/O.",
+      "helper": "in_memory_call",
+      "input": "userService.fetchAll",
+      "expect": false
+    },
+    {
+      "name": "vue3-fetchquery-only-with-profile",
+      "description": "D3: vue3-tanstack profile escalates queryClient.fetchQuery to cache.",
+      "helper": "in_memory_call",
+      "input": "queryClient.fetchQuery",
+      "framework": "vue3-tanstack",
+      "expect": true
+    },
+    {
+      "name": "vue3-fetchquery-is-io-without-profile",
+      "description": "D3: without the profile, fetchQuery is treated as I/O (default safe).",
+      "helper": "in_memory_call",
+      "input": "queryClient.fetchQuery",
+      "expect": false
+    },
+    {
+      "name": "laravel-tenant-scope-with-profile",
+      "description": "D3: laravel-multitenant profile recognises tenantManager.scopeTenant.",
+      "helper": "in_memory_call",
+      "input": "tenantManager.scopeTenant",
+      "framework": "laravel-multitenant",
+      "expect": true
+    },
+    {
+      "name": "depth-greater-than-early-return",
+      "description": "M2: deepEqual-style `if (depth > 10) return false` registers as a guard.",
+      "helper": "depth_guard_regex",
+      "input": "function deepEqual(a, b, depth = 0) {\n  if (depth > 10) return false;\n  return a == b;\n}\n",
+      "expect": true
+    },
+    {
+      "name": "depth-decrement-then-check",
+      "description": "M2: `if (--budget <= 0) return null` is a recursion budget pattern.",
+      "helper": "depth_guard_regex",
+      "input": "function recurse(node, budget) {\n  if (--budget <= 0) return null;\n  return recurse(node.left, budget) + recurse(node.right, budget);\n}\n",
+      "expect": true
+    },
+    {
+      "name": "unrelated-compare-not-a-guard",
+      "description": "Negative: `if (n > 0)` is not a depth guard.",
+      "helper": "depth_guard_regex",
+      "input": "if (n > 0) doStuff();\n",
+      "expect": false
+    },
+    {
+      "name": "dev-block-NODE_ENV-development-skipped",
+      "description": "M4: `if (process.env.NODE_ENV !== 'production')` body is DEV-gated.",
+      "helper": "dev_only_block",
+      "input": "if (process.env.NODE_ENV !== 'production') {\n  console.log('debug', payload);\n}\n",
+      "expect": true
+    },
+    {
+      "name": "dev-block-import.meta.env.DEV-skipped",
+      "description": "M4: Vite-style `if (import.meta.env.DEV)` body is DEV-gated.",
+      "helper": "dev_only_block",
+      "input": "if (import.meta.env.DEV) {\n  console.warn('hot', x);\n}\n",
+      "expect": true
+    },
+    {
+      "name": "production-code-not-dev-gated",
+      "description": "Negative: plain top-level call is not DEV-gated.",
+      "helper": "dev_only_block",
+      "input": "doRealThing(x);\n",
+      "expect": false
+    },
+    {
+      "name": "await-call-detected",
+      "description": "D2: `await fetchUser(id)` proves the call is async I/O.",
+      "helper": "call_awaited",
+      "input": {
+        "call": "fetchUser",
+        "snippet": "for (const id of ids) {\n  const u = await fetchUser(id);\n}\n"
+      },
+      "expect": true
+    },
+    {
+      "name": "await-qualified-call-detected",
+      "description": "D2: `await api.fetchUser(id)` matches the leaf in qualified form.",
+      "helper": "call_awaited",
+      "input": {
+        "call": "api.fetchUser",
+        "snippet": "for (const id of ids) {\n  const u = await api.fetchUser(id);\n}\n"
+      },
+      "expect": true
+    },
+    {
+      "name": "non-awaited-call-not-detected",
+      "description": "D2: bare `fetchUser(id)` (no await) returns false.",
+      "helper": "call_awaited",
+      "input": {
+        "call": "fetchUser",
+        "snippet": "for (const id of ids) {\n  fetchUser(id);\n}\n"
+      },
+      "expect": false
+    }
+  ]
+}

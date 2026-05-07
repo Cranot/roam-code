@@ -70,7 +70,7 @@ _RESOURCE_PATTERNS = [
     re.compile(r"\bJsonResource\b"),
 ]
 
-# redacted — body-level signals that the method shapes its output
+# body-level signals that the method shapes its output
 # before returning. When ANY of these appears anywhere in the method body,
 # treat the method as field-shape-protected: don't flag direct returns of
 # the model object itself, because the bytes that hit the wire have been
@@ -578,7 +578,7 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
                 # No bad query patterns — downgrade / skip low-confidence
                 continue
 
-        # redacted — `matched_patterns` mirrors what _io_emit_finding
+        # `matched_patterns` mirrors what _io_emit_finding
         # does for math: a structured list of the signals that fired so
         # downstream surfaces (pr-comment-render, dashboards) can render
         # WHY without parsing prose `reasons`. Stays additive — the
@@ -743,7 +743,7 @@ def over_fetch_cmd(ctx, threshold, limit):
         # Reason lines
         for reason in f["reasons"]:
             click.echo(f"          {reason}")
-        # redacted — surface matched_patterns when present so the text
+        # surface matched_patterns when present so the text
         # surface mirrors the JSON shape and reviewers see WHY in one line.
         patterns = f.get("matched_patterns") or []
         if patterns:

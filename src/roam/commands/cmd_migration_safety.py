@@ -489,9 +489,7 @@ def _check_missing_down(lines: list[str]) -> list[dict]:
 def _extract_arg(line: str, *, after_token: str | None = None) -> str:
     """Extract the first string argument from a PHP call on this line.
 
-    Handles single and double quotes. Returns empty string if not found.
-
-    redacted — when ``after_token`` is supplied, only consider
+    Handles single and double quotes. Returns empty string if not found. when ``after_token`` is supplied, only consider
     quoted strings that appear *after* that substring on the line. This
     is the canonical fix for the chained form
     ``Schema::connection('payroll')->create('payroll_entity_report_presets', ...)``
@@ -509,7 +507,7 @@ def _extract_arg(line: str, *, after_token: str | None = None) -> str:
     return ""
 
 
-# redacted — try/catch with `already exists` (or PostgreSQL SQLSTATE
+# try/catch with `already exists` (or PostgreSQL SQLSTATE
 # 42P07 / MySQL 1050) is the standard Laravel multi-tenant idempotency
 # pattern when re-running a tenant migration. Treat it as a guard.
 _RE_TRY_CATCH_IDEMPOTENT = re.compile(

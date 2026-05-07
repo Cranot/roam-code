@@ -7,7 +7,7 @@ import time
 from datetime import datetime, timezone
 
 # Envelope schema versioning (semver: major.minor.patch)
-# redacted — bumped to 1.1.0 to signal additive enhancements:
+# bumped to 1.1.0 to signal additive enhancements:
 # `evidence.matched_patterns` on detector findings,
 # `framework`/`framework_autodetected`/`framework_unknown` in math summary
 #, `roi_band` on debt items, `context_lines` on rule

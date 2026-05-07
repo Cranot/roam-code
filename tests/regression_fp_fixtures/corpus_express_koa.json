@@ -1,0 +1,36 @@
+{
+  "source": "Regression-FP corpus.",
+  "entries": [
+    {
+      "name": "in-memory-django-iterator-via-profile",
+      "description": "queryset.iterator stays in-memory under django profile.",
+      "helper": "in_memory_call",
+      "framework": "django",
+      "input": "queryset.iterator",
+      "expect": true
+    },
+    {
+      "name": "in-memory-rails-pluck-via-profile",
+      "description": "scope.pluck stays in-memory under rails profile.",
+      "helper": "in_memory_call",
+      "framework": "rails",
+      "input": "scope.pluck",
+      "expect": true
+    },
+    {
+      "name": "in-memory-nestjs-querybuilder-via-profile",
+      "description": "repository.createQueryBuilder stays in-memory under nestjs profile.",
+      "helper": "in_memory_call",
+      "framework": "nestjs",
+      "input": "repository.createQueryBuilder",
+      "expect": true
+    },
+    {
+      "name": "no-profile-fallback-yields-default-classification",
+      "description": "Without a framework profile, an unknown call (vue3-tanstack-only) is NOT in-memory.",
+      "helper": "in_memory_call",
+      "input": "queryClient.fetchQuery",
+      "expect": false
+    }
+  ]
+}

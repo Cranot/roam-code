@@ -577,7 +577,7 @@ def pr_risk(ctx, commit_range, staged, author):
 
         label = commit_range or ("staged" if staged else "unstaged")
 
-        # Phase-3 — name the risk driver. The bare verdict said
+        # — name the risk driver. The bare verdict said
         # "High risk (60/100) — careful review needed" without
         # telling the user *why*. The largest single factor
         # is the most useful pointer: maps directly to a fix
@@ -739,7 +739,7 @@ def pr_risk(ctx, commit_range, staged, author):
             for rev_author, lines in top_authors:
                 click.echo(f"  {rev_author:<30s} ({lines} lines contributed)")
 
-        # Phase-4 synergy — point at the natural next command.
+        # — point at the natural next command.
         from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 
         _ns = suggest_next_steps(

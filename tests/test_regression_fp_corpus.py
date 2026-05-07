@@ -1,4 +1,4 @@
-"""Regression-FP corpus harness (D4).
+"""Regression-FP corpus harness.
 
 Loads every ``*.json`` file from ``tests/regression_fp_fixtures/`` and
 parametrises one test per entry. Each fixture entry asserts that a
@@ -10,12 +10,12 @@ classifier functions inside ``roam.catalog.detectors``:
 
 * ``in_memory_call`` — verify a call name resolves the same way the
   N+1/I/O detector resolves it. Optional ``framework`` field activates
-  one of the bundled framework profiles (D3) for the assertion only.
+  one of the bundled framework profiles for the assertion only.
 * ``depth_guard_regex`` — verify the bounded-recursion regex matches
-  (or doesn't) for a given snippet (M2).
+  (or doesn't) for a given snippet.
 * ``dev_only_block`` — verify the DEV-gate detector classifies a body
-  as dev-stripped (or not) (M4).
-* ``call_awaited`` — verify the await heuristic catches a call (D2).
+  as dev-stripped (or not).
+* ``call_awaited`` — verify the await heuristic catches a call.
 
 If you need to assert on something the existing helpers can't express
 yet, add the helper to ``_DISPATCH`` rather than special-casing in

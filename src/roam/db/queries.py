@@ -109,7 +109,7 @@ ALL_CLUSTERS = """
 
 # Git queries
 FILE_STATS_BY_ID = "SELECT * FROM file_stats WHERE file_id = ?"
-# redacted — `WHERE COALESCE(file_role, 'source') = 'source'` keeps
+# `WHERE COALESCE(file_role, 'source') = 'source'` keeps
 # legacy text dumps (FoxPro extracts under docs/legacy/, build/generated
 # artefacts, README/CHANGELOG churn) out of the hot list. Without this
 # filter `roam weather` can rank `mhn_kin1_props.txt` highest in churn

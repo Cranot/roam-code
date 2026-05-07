@@ -562,7 +562,7 @@ def debt(ctx, limit, by_kind, threshold, roi):
         _debt_label = (
             "low debt" if stats["mean_debt"] < 0.1 else "moderate debt" if stats["mean_debt"] < 0.3 else "high debt"
         )
-        # redacted — append top-1 hotspot to the verdict so the
+        # append top-1 hotspot to the verdict so the
         # one-line summary tells you WHERE to look first, not just IF
         # there's debt.
         top_hint = ""

@@ -1050,9 +1050,7 @@ def _concerns_rule_violations(rule_violations: list[dict]) -> list[dict]:
 
 
 def _concern_high_severity_critique(count: int, prep_payload: dict | None = None) -> dict | None:
-    """Build the critique concern.
-
-    redacted — when ``prep_payload`` is supplied, fish the top-3
+    """Build the critique concern. when ``prep_payload`` is supplied, fish the top-3
     high-severity finding pointers (check + location + title) out of the
     nested critique block and surface them as ``matched_patterns``. The
     renderer already turns matched_patterns into a one-line "matched: ..."

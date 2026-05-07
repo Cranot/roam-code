@@ -216,7 +216,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     token_budget = ctx.obj.get("budget", 0) if ctx.obj else 0
-    # Phase-2 polish: empty pattern matches every symbol, which is
+    # empty pattern matches every symbol, which is
     # expensive (LIMIT 50 across the entire FTS table) and never
     # what a user meant. Reject early with a structured error
     # rather than returning the first 50 random symbols.

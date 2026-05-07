@@ -10,7 +10,7 @@ import networkx as nx
 from roam.db.connection import batched_in
 
 
-# redacted — algebraic connectivity is the most expensive step in
+# algebraic connectivity is the most expensive step in
 # `roam health` (~0.8s on roam-code, dominated by `nx.to_undirected()` plus
 # the spectral solve). For repos that haven't changed, the answer is the
 # same; cache it on disk keyed by graph fingerprint (node-count + edge-count

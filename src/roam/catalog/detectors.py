@@ -25,7 +25,7 @@ from roam.catalog.tasks import best_way
 
 
 def _is_test_path(path: str) -> bool:
-    # redacted — when --include-tests was set on the CLI, force
+    # when --include-tests was set on the CLI, force
     # this to return False so every detector stops filtering test paths.
     if _INCLUDE_TESTS_OVERRIDE:
         return False
@@ -65,12 +65,12 @@ def _finding(
     enclosing function declaration. The function-start line is
     preserved as ``symbol_line`` so callers needing both have access.
 
-    redacted: when ``snippet`` is also supplied alongside
+    when ``snippet`` is also supplied alongside
     ``match_line``, evidence gets a ``context_lines`` block — ±2 lines
     around the match site, with the matching line flagged. Cuts FP
     triage time from "open the file" to "skim the JSON".
 
-    redacted: ``matched_patterns`` lists the named sub-patterns
+    ``matched_patterns`` lists the named sub-patterns
     that contributed to the verdict (e.g. ``["nested-loop", "sort+slice"]``
     for sort-to-select). Surfaces in evidence so users can see WHY a
     finding fired without grepping the detector source.
@@ -270,7 +270,7 @@ def _dedupe(seq: list[str]) -> list[str]:
     return out
 
 
-# redacted — single-process file-line cache. The 23 algorithm
+# single-process file-line cache. The 23 algorithm
 # detectors each call `_read_symbol_source` for every loop-bearing
 # symbol. On roam-code itself that's 4989 reads and ~1.7s of wall
 # time; many are exact-duplicate (path, line_start, line_end) tuples
@@ -286,7 +286,7 @@ _FILE_LINES_CACHE_MAX = 4096  # entries; ~10MB at a typical 2.5KB/file avg
 
 
 def _file_lines_cached(path: str) -> list[str]:
-    # redacted — key by (path, mtime). Without the mtime guard,
+    # key by (path, mtime). Without the mtime guard,
     # a relative path like "svc.py" could collide across test fixtures
     # that monkeypatch.chdir into different temp dirs but write the same
     # filename. Cache survives within one process but never returns stale
@@ -1190,7 +1190,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         "heartbeat",
         "keepalive",
         "backoff",
-        # redacted: also suppress *_loop and watch_* — found
+        # also suppress *_loop and watch_* — found
         # `_run_watch_loop` flagged on roam itself; the loop is a CLI
         # poll loop with seconds-scale sleep, not a tight spin.
         "_loop",
@@ -1354,7 +1354,7 @@ _IO_HIGH_EXACT = {
     "cursor.execute",
     "http.Get",
     "http.Post",
-    # redacted: Node.js sync FS calls — these block the event loop
+    # Node.js sync FS calls — these block the event loop
     # AND are dramatically slower than the async equivalents when iterated
     # in a loop. Each one is a syscall round-trip per iteration.
     "fs.readFileSync",
@@ -1399,7 +1399,7 @@ _IO_RECEIVER_HINTS = {
     "http",
     "requests",
     "urllib",
-    # redacted: Node.js fs receivers + popular wrappers.
+    # Node.js fs receivers + popular wrappers.
     "fs",
     "fspromises",
     "fsasync",
@@ -1494,7 +1494,7 @@ _IO_WRAPPER_NAMES = {
     "backfill",
 }
 
-# redacted — body-level signals that the loop iterates CHUNKS, not
+# D body-level signals that the loop iterates CHUNKS, not
 # individual items. When any of these patterns appear in the function body,
 # the inner I/O calls operate on a batch (WHERE IN (...) form), not per-item,
 # so it's not N+1. Caught a self-FP on roam's own `_symbol_context` which
@@ -1533,7 +1533,7 @@ def _io_receiver_is_ioish(call: str) -> bool:
 # for arbitrary repos while letting users self-classify framework-specific
 # helpers without forking the codebase.
 _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
-    # redacted — Django ORM-aware allowlist. `prefetch_related`,
+    # Django ORM-aware allowlist. `prefetch_related`,
     # `select_related`, `annotate`, `values_list`, `iterator` all belong
     # to QuerySet but are CHEAP cache/dispatch operations, not new I/O
     # per call. Without this, naive scans flag idiomatic Django code
@@ -1570,7 +1570,7 @@ _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
             "objects",
         },
     },
-    # redacted — Rails / ActiveRecord allowlist. Same shape:
+    # Rails / ActiveRecord allowlist. Same shape:
     # `includes`, `joins`, `pluck`, `find_each`, `scope` are framework
     # primitives that don't trigger per-call I/O.
     "rails": {
@@ -1598,7 +1598,7 @@ _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
             "active_support",
         },
     },
-    # redacted — NestJS DI cache helpers (CacheModule, ConfigService
+    # NestJS DI cache helpers (CacheModule, ConfigService
     # decorators) and TypeORM repository helpers that are not per-item I/O.
     "nestjs": {
         "in_memory_exact": {
@@ -1668,7 +1668,7 @@ _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
 
 _ACTIVE_FRAMEWORK_PROFILE: dict[str, set[str]] | None = None
 
-# redacted — module-level flag for --include-tests. When True,
+# module-level flag for --include-tests. When True,
 # `_is_test_path` returns False so detectors stop filtering out tests.
 # Reset alongside the framework profile in run_detectors finally-block.
 _INCLUDE_TESTS_OVERRIDE: bool = False
@@ -1716,14 +1716,14 @@ def autodetect_framework_profile() -> str | None:
     pkg = _read_json(_os.path.join(cwd, "package.json"))
     if pkg:
         deps = {**(pkg.get("dependencies") or {}), **(pkg.get("devDependencies") or {})}
-        # redacted — NestJS check before generic vue3.
+        # NestJS check before generic vue3.
         if "@nestjs/core" in deps or "@nestjs/common" in deps:
             return "nestjs"
         vue_ver = str(deps.get("vue", ""))
         tanstack = "@tanstack/vue-query" in deps or "@tanstack/query-core" in deps
         if tanstack and (vue_ver.startswith("^3") or vue_ver.startswith("3") or vue_ver.startswith("~3")):
             return "vue3-tanstack"
-        # redacted — Express/Koa/Fastify don't have framework
+        # Express/Koa/Fastify don't have framework
         # profiles yet (they're light frameworks; the I/O patterns are
         # generic Node fs / http). Return None for now but flag in meta
         # so future versions can add a profile when one becomes useful.
@@ -1769,7 +1769,7 @@ def _framework_extras(key: str) -> set[str]:
     return _ACTIVE_FRAMEWORK_PROFILE.get(key) or set()
 
 
-# redacted — `_io_is_known_in_memory_call` is hot: 12,226 calls
+# `_io_is_known_in_memory_call` is hot: 12,226 calls
 # during a single `roam math` on roam-code. The merged-set construction
 # (`_IN_MEMORY_EXACT | _framework_extras(...)`) was running per-call.
 # Cache results per (call, framework_id) so repeat call names short-
@@ -1826,7 +1826,7 @@ def _is_call_awaited_in_snippet(call: str, snippet: str) -> bool:
     return bool(pattern.search(snippet))
 
 
-# redacted — `_io_match_framework_pack` is invoked per-call inside
+# `_io_match_framework_pack` is invoked per-call inside
 # `detect_io_in_loop` (12,226× on roam-code). The pack-set lookup is
 # deterministic in (call, language) so cache by that tuple. The cache
 # is reset alongside the file/in-memory caches at run_detectors entry.
@@ -1873,7 +1873,7 @@ def _io_classify_call(
     ``"medium"``, ``"ambiguous"``, or None for in-memory / local-helper /
     non-I/O calls.
 
-    redacted: when ``snippet`` is supplied, the cache allowlist
+    when ``snippet`` is supplied, the cache allowlist
     is OVERRIDDEN if the call appears with ``await`` in the snippet.
     Reason: ``await cache.fetch(k)`` is a real I/O round trip even
     though the leaf matches a cache identifier; user feedback called
@@ -2131,7 +2131,7 @@ def detect_io_in_loop(conn: sqlite3.Connection) -> list[dict]:
         if any(kw in name_lower for kw in _IO_WRAPPER_NAMES):
             continue
 
-        # redacted — body-level: skip if the loop iterates chunks
+        # D body-level: skip if the loop iterates chunks
         # / batches rather than items. Catches the canonical `for chunk in
         # _chunked(ids):` pattern where the inner query is WHERE IN (...).
         if _has_batch_iteration(snippet):
@@ -2399,7 +2399,7 @@ def detect_serial_await_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — Python-specific: `time.sleep()` inside an async function
+# Python-specific: `time.sleep()` inside an async function
 # blocks the event loop. The async cousin is `asyncio.sleep` (or trio.sleep).
 # This is one of the most common asyncio bugs and dramatically degrades
 # request throughput in async web servers (FastAPI, aiohttp, Sanic).
@@ -2616,7 +2616,7 @@ def detect_async_nested_run(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — Python: `except Exception:` / `except BaseException:`
+# Python: `except Exception:` / `except BaseException:`
 # without `raise` is the canonical "swallowing bug" pattern. Catches
 # KeyboardInterrupt, MemoryError, SystemExit silently. The fix is to
 # narrow the exception type or always re-raise after logging.
@@ -2701,7 +2701,7 @@ def detect_broad_except_swallow(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — JS/TS: `acc = [...acc, x]` (or `.reduce((acc, x) => [...acc, x])`)
+# JS/TS: `acc = [...acc, x]` (or `.reduce((acc, x) => [...acc, x])`)
 # allocates a fresh O(n) array per iteration → O(n²) total. The fix is
 # `acc.push(x)` (or `flat()` for nested arrays). Same shape applies to
 # `obj = {...obj, k: v}` in loops, and to `acc + [x]`.
@@ -2774,7 +2774,7 @@ def detect_spread_accumulator(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — Go: `defer` inside a loop accumulates the deferred
+# Go: `defer` inside a loop accumulates the deferred
 # call stack until the FUNCTION returns, not the loop iteration. Common
 # bug: `for _, f := range files { fh, _ := os.Open(f); defer fh.Close() }`
 # — none of the file handles close until the function returns, exhausting
@@ -2831,7 +2831,7 @@ def detect_defer_in_loop(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — JS/TS: `.filter(predA).find(predB)` walks the array
+# JS/TS: `.filter(predA).find(predB)` walks the array
 # fully then searches the filtered subset. Equivalent to a single pass
 # `.find(x => predA(x) && predB(x))`. Other equivalent patterns:
 # `.map().find()` (could be `.find()` then `.map()`), `.filter().length`
@@ -2901,7 +2901,7 @@ def detect_chained_collection_walks(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — React: `useEffect(() => { ... })` without a dependency
+# React: `useEffect(() => { ... })` without a dependency
 # array runs on EVERY render. Almost always a bug — the dev forgot the
 # second argument. The fix is `useEffect(() => { ... }, [deps])` or
 # `useEffect(() => { ... }, [])` for mount-only.
@@ -2962,7 +2962,7 @@ def detect_useeffect_missing_deps(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — `eval()` / `exec()` / `new Function()` / `setTimeout(string)`
+# `eval()` / `exec()` / `new Function()` / `setTimeout(string)`
 # in production source. These are arbitrary code execution sinks if the
 # input is user-derived. Even when "safe" (literal string), they trip
 # CSP rules and bundler optimisations. Suppress when test path.
@@ -3026,7 +3026,7 @@ def detect_dangerous_eval(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — JS/TS DOM listener leak: `addEventListener` without
+# JS/TS DOM listener leak: `addEventListener` without
 # a paired `removeEventListener` keeps references alive after the
 # component unmounts. Detect ONLY when the function looks like a
 # component lifecycle (useEffect / componentDidMount / connectedCallback /
@@ -3195,7 +3195,7 @@ def detect_branching_recursion(conn: sqlite3.Connection) -> list[dict]:
     # recognised "depth < limit ⇒ continue" patterns; the negation form was
     # silently mis-flagged as O(2^n). Real-world FP: deepEqual flagged
     # despite line+2 having `if (depth > 10) return false`.
-    # redacted — pre-compile the depth-guard / memo-collection
+    # pre-compile the depth-guard / memo-collection
     # regexes once. Previously each `re.search(literal, snippet)` call
     # rebuilt the pattern object via the implicit re._cache (capped at
     # 512 entries), which can evict on a busy run. Hoisting them keeps
@@ -3477,7 +3477,7 @@ def detect_loop_invariant_call(conn: sqlite3.Connection) -> list[dict]:
         "yield",
     }
 
-    # redacted — heavyweight calls that are especially worth
+    # heavyweight calls that are especially worth
     # hoisting (parsing serialised data is O(n^2) over loop iterations
     # when the input doesn't change). When ANY of these fire, escalate
     # confidence to "high".
@@ -4138,7 +4138,7 @@ def run_detectors(
     ``return_meta=True``.
     """
     global _ACTIVE_FRAMEWORK_PROFILE, _INCLUDE_TESTS_OVERRIDE
-    # S2/S3/redacted — caches scoped to a single `run_detectors`
+    # S2/S3/ caches scoped to a single `run_detectors`
     # invocation. Without this reset, fixture tests that rewrite the
     # same path between runs would see stale content.
     _FILE_LINES_CACHE.clear()

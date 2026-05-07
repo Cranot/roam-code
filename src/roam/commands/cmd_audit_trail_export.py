@@ -99,7 +99,7 @@ def _render_json(records: list[dict]) -> str:
 def _aggregate_records(records: list[dict]) -> dict:
     """Bucket records by actor, repo, verdict, and year-month.
 
-    Procurement reviewers love these tables — "Q1 2026: 15 BLOCK, 3
+    Procurement reviewers love these tables — "Q1: 15 BLOCK, 3
     INTENTIONAL bypass" — without having to scan the JSONL by hand.
     Returns a nested dict suitable for both markdown and JSON rendering.
     """
@@ -400,7 +400,7 @@ def audit_trail_export(
 
     Use after ``roam audit-trail-verify`` confirms chain integrity.
     The ``--aggregate`` flag is the procurement-friendly summary path:
-    rather than the per-record list, it emits "Q1 2026: 15 BLOCK,
+    rather than the per-record list, it emits "Q1: 15 BLOCK,
     3 INTENTIONAL bypass" tables per month / actor / repo.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False

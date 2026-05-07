@@ -497,7 +497,7 @@ def health(ctx, no_framework, gate, explain):
             )
         score_breakdown.sort(key=lambda b: b["loss_pp"], reverse=True)
 
-        # Phase-3 — name the dominant issue category. The four
+        # — name the dominant issue category. The four
         # category counts (cycles, god_components, bottlenecks,
         # layer_violations) lead the user at a fix; the largest is
         # the highest-leverage next action. Without this hint a user
@@ -511,7 +511,7 @@ def health(ctx, no_framework, gate, explain):
         }
         _top_category, _top_count = max(_cat_counts.items(), key=lambda x: x[1])
         _focus_hint = f", focus: {_top_category}" if _top_count > 0 else ""
-        # redacted — when 0 actionable items remain (everything was
+        # when 0 actionable items remain (everything was
         # ignored by category or framework filter), the verdict should say
         # so explicitly. Otherwise users see "29 critical issues" but the
         # next line says "0 actionable" — confusing.

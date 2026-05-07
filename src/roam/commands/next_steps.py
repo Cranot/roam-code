@@ -82,7 +82,7 @@ def suggest_next_steps(command: str, context: dict) -> list[str]:
             steps.append("Run `roam dead --by-directory` to group dead code by directory for batch cleanup")
         steps.append("Run `roam dead --extinction <symbol>` to predict the cascade before deleting a symbol")
 
-    # Phase-4 synergize — these commands previously had no follow-up
+    # synergize — these commands previously had no follow-up
     # suggestions. Adding them turns each result into a launchpad
     # for the natural next action.
 

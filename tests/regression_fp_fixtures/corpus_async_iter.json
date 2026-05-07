@@ -1,0 +1,47 @@
+{
+  "source": "Regression-FP corpus.",
+  "entries": [
+    {
+      "name": "batch-iter-_chunked-recognised",
+      "description": "`for chunk in _chunked(symbol_ids):` is batch iteration, not N+1.",
+      "helper": "batch_iteration",
+      "input": "rows = []\nfor chunk in _chunked(symbol_ids):\n    rows.extend(conn.execute(f'SELECT * FROM x WHERE id IN ({\",\".join(\"?\" for _ in chunk)})', chunk))\n",
+      "expect": true
+    },
+    {
+      "name": "batch-iter-batched-recognised",
+      "description": "bare `for x in _batched(items):` shape also recognised.",
+      "helper": "batch_iteration",
+      "input": "for batch in _batched(items, 100):\n    process_batch(batch)\n",
+      "expect": true
+    },
+    {
+      "name": "batch-iter-where-in-placeholder-recognised",
+      "description": "f-string `WHERE id IN ({ph})` interpolation hints at batched IN-clause.",
+      "helper": "batch_iteration",
+      "input": "ph = ','.join('?' for _ in ids)\nrows = conn.execute(f'SELECT * FROM x WHERE id IN ({ph})', ids).fetchall()\n",
+      "expect": true
+    },
+    {
+      "name": "batch-iter-naive-loop-not-recognised",
+      "description": "Negative: bare per-item loop must NOT trigger batch suppression.",
+      "helper": "batch_iteration",
+      "input": "for fp in test_files:\n    row = conn.execute('SELECT COUNT(*) FROM symbols WHERE file = ?', (fp,)).fetchone()\n    counts[fp] = row[0]\n",
+      "expect": false
+    },
+    {
+      "name": "depth-guard-still-fires-with-bigint-bound",
+      "description": "M2 / regression: depth-guard regex must match `if (depth > 10000) return`.",
+      "helper": "depth_guard_regex",
+      "input": "if (depth > 10000) return null;\n",
+      "expect": true
+    },
+    {
+      "name": "in-memory-pinia-state-receiver",
+      "description": "M3 + framework: `pinia.state.x.set(k, v)` \u2014 pinia receiver allowlisted.",
+      "helper": "in_memory_call",
+      "input": "pinia.set",
+      "expect": true
+    }
+  ]
+}

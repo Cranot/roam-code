@@ -1766,7 +1766,7 @@ def dead(
 
         # --- Text: summary-only mode (also used by --detail-less default) ---
         if summary_only or not detail:
-            # Phase-2 polish — verdict-first so the bottom line is on
+            # — verdict-first so the bottom line is on
             # the first line. Severity proxy: any "safe" finding is a
             # delete-now candidate; "review" requires triage; pure
             # "intentional" is a clean signal.

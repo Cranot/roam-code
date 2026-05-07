@@ -38,7 +38,7 @@ _COMMANDS = {
     "search": ("roam.commands.cmd_search", "search"),
     "grep": ("roam.commands.cmd_grep", "grep_cmd"),
     "uses": ("roam.commands.cmd_uses", "uses"),
-    # Phase-1.5 — ``refs`` is a grep-familiar alias for ``uses``. Agents
+    # — ``refs`` is a grep-familiar alias for ``uses``. Agents
     # reaching for "find references to X" hit this name first; the real
     # work happens in cmd_uses through the indexed call/import graph
     # (no string-literal / comment false positives).
@@ -553,7 +553,7 @@ class LazyGroup(click.Group):
         return sorted(_COMMANDS.keys())
 
     def get_command(self, ctx, cmd_name):
-        # redacted — built-ins resolve without paying the
+        # built-ins resolve without paying the
         # ~100ms entry-point-discovery cost. Only when the requested
         # command isn't in the static map do we fall back to plugin
         # discovery. Saves 100ms per CLI invocation for the 99% case
@@ -657,9 +657,7 @@ class LazyGroup(click.Group):
             ctx.exit(EXIT_ERROR)
 
     def format_help(self, ctx, formatter):
-        """Categorized help display instead of flat alphabetical list.
-
-        Phase-1.5 / 12.13 — performance: previously this method called
+        """Categorized help display instead of flat alphabetical list. / 12.13 — performance: previously this method called
         ``self.get_command()`` for each priority-category command,
         which triggered ``importlib.import_module()`` on every cmd_*.py
         in the priority list. That added ~3.5 seconds of Python
@@ -704,7 +702,7 @@ class LazyGroup(click.Group):
         _save_short_help_cache_if_dirty()
 
 
-# redacted — `_short_help_via_ast` is called 126x by `roam --help`,
+# `_short_help_via_ast` is called 126x by `roam --help`,
 # each call AST-parses the cmd_*.py file. ~640ms total. Disk cache keyed
 # by source-file mtime collapses repeat invocations to a single dict lookup.
 _SHORT_HELP_CACHE_PATH = os.path.expanduser("~/.roam-cli-cache/short-help.json")

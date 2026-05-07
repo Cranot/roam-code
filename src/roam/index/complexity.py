@@ -666,7 +666,7 @@ def _extract_math_signals(func_node, source: bytes, symbol_name: str) -> dict:
                 _walk(child, new_depth, new_loop_vars)
             return
 
-        # redacted — nested function bodies establish a fresh scope:
+        # nested function bodies establish a fresh scope:
         # an arrow function in a parameter default, a callback passed to map(),
         # or a local function declared inside a loop should NOT inherit the
         # enclosing function's loop_depth. Without this isolation, a default

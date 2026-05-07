@@ -129,7 +129,7 @@ def _discover_env_modules(api: PluginAPI) -> None:
         _register_target(module, f"module:{module_name}", api)
 
 
-# redacted — `importlib_metadata.entry_points()` walks every
+# `importlib_metadata.entry_points()` walks every
 # installed package's metadata; ~100ms cold. We call it once per group
 # at most. Cache results for the process lifetime so subsequent helpers
 # (`get_plugin_commands`, `get_plugin_detectors`, etc.) reuse the scan.

@@ -830,7 +830,7 @@ in stancl/tenancy multi-tenant migrations).
 
 #### Tests
 
-- 14 new entries in `tests/regression_fp_fixtures/vue3_laravel_2026_05_06_round2.json`
+- 14 new entries in `tests/regression_fp_fixtures/corpus_vue3_laravel_round2.json`
   drive 4 new corpus helpers (`extract_arg_after`, `try_catch_idempotency`,
   `ancestor_constructor_auth`, `body_shaping`). 34 corpus entries total
   now form the regression tripwire net.

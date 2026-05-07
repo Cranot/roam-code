@@ -46,7 +46,7 @@ from roam.output.formatter import json_envelope, loc, to_json
 #   Schema::table('table_name', ...)
 #   Schema::connection('payroll')->create('table_name', ...)
 #   Schema::connection('payroll')->table('table_name', ...)
-# redacted: the connection-chain form is the canonical Laravel
+# the connection-chain form is the canonical Laravel
 # multi-tenant migration pattern; without matching it, every per-schema
 # index was invisible to the analyser.
 _RE_SCHEMA_TABLE = re.compile(

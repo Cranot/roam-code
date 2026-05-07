@@ -502,7 +502,7 @@ class TestDetectors:
             {
                 "waiter.py": (
                     "import time\n"
-                    # redacted: keep the function name free of poll
+                    # keep the function name free of poll
                     # keywords (poll, wait, watch, _loop, retry, etc.) so the
                     # busy-wait detector isn't suppressed by the name guard.
                     # Sub-second sleep is the actual busy-wait pattern;
@@ -1068,7 +1068,7 @@ class TestSerialAwaitLoop:
 
 
 class TestAsyncBlockingSleep:
-    """redacted — blocking calls inside async function (event-loop stall)."""
+    """ blocking calls inside async function (event-loop stall)."""
 
     def test_detects_time_sleep_in_async(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1115,7 +1115,7 @@ class TestAsyncBlockingSleep:
 
 
 class TestBroadExceptSwallow:
-    """redacted — bare `except Exception:` without re-raise is a swallow."""
+    """ bare `except Exception:` without re-raise is a swallow."""
 
     def test_detects_swallow(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1170,7 +1170,7 @@ class TestBroadExceptSwallow:
 
 
 class TestUseEffectMissingDeps:
-    """redacted — React useEffect without deps array."""
+    """ React useEffect without deps array."""
 
     def test_detects_missing_deps(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1214,7 +1214,7 @@ class TestUseEffectMissingDeps:
 
 
 class TestDangerousEval:
-    """redacted — eval / exec / new Function in production source."""
+    """ eval / exec / new Function in production source."""
 
     def test_detects_eval(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1246,7 +1246,7 @@ class TestDangerousEval:
 
 
 class TestBatchIterationGuard:
-    """redacted — `for chunk in _chunked(ids):` is not N+1."""
+    """D `for chunk in _chunked(ids):` is not N+1."""
 
     def test_has_batch_iteration_recognises_chunked(self):
         from roam.catalog.detectors import _has_batch_iteration

@@ -1,6 +1,4 @@
-"""roam Code Graph Attestation (CGA).
-
-Phase-3/E.1 chain partner for ``roam taint`` (already shipped E.2).
+"""roam Code Graph Attestation (CGA)./E.1 chain partner for ``roam taint`` (already shipped E.2).
 Per the v12 brainstorm 05_security_enterprise.md and the senior review,
 this primitive becomes the moat for CRA Sep-2026 / EO 14028 / OSPS
 Baseline conformance: every PR ships a signed in-toto attestation

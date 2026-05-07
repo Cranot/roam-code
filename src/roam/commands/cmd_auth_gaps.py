@@ -50,7 +50,7 @@ _CONSTRUCTOR_MIDDLEWARE_RE = re.compile(
     re.IGNORECASE,
 )
 
-# redacted — `class Foo extends Bar` → Bar is the parent class.
+# `class Foo extends Bar` → Bar is the parent class.
 # Used to walk the inheritance chain so a child controller inherits the
 # auth middleware its parent's __construct adds. Without this, every
 # subclass of a base controller (DynamicResourceController, ApiController,
@@ -544,7 +544,7 @@ def _analyze_controller_file(
     findings = []
 
     # Check for class-level auth middleware in constructor.
-    # redacted — also walk the extends chain so a controller that
+    # also walk the extends chain so a controller that
     # inherits from DynamicResourceController / ApiController / etc. picks
     # up the parent's `$this->middleware('auth')` registration.
     has_constructor_auth = bool(_CONSTRUCTOR_MIDDLEWARE_RE.search(source))
@@ -616,7 +616,7 @@ def _analyze_controller_file(
             reason = "Read method without authorization (may be intentionally public)"
             fix = "Add $this->authorize('view', $model) if access should be restricted"
 
-        # redacted — `matched_patterns` lists the structural signals
+        # `matched_patterns` lists the structural signals
         # that contributed to this finding's confidence. Mirrors the math
         # detector's evidence shape so consumers can render WHY uniformly.
         matched_patterns: list[str] = []

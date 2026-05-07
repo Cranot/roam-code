@@ -439,7 +439,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text):
             click.echo()
             click.echo(f"BENCH HINT: {bench_hint}")
 
-        # Phase-4 synergy — point at the natural next command.
+        # — point at the natural next command.
         from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 
         _ns = suggest_next_steps(

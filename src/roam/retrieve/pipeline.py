@@ -338,7 +338,7 @@ def _expand_via_file_neighbors(
       utility imports are not the answer to "where is X" queries, so
       reject neighbour files that exceed ``hub_threshold`` themselves.
       Symmetric to the seed-side filter; closes the residual hub-seed
-      leak flagged in v12.3 dogfood notes (#8).
+      leak flagged in.
 
     Returns the original ``first_stage`` plus expansion symbols.
     """

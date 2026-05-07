@@ -1,0 +1,125 @@
+{
+  "source": "Vue 3 + Laravel codebase false-positive corpus (round 2).",
+  "entries": [
+    {
+      "name": "schema-create-after-connection-grabs-table-not-connection",
+      "description": "E4: Schema::connection('payroll')->create('payroll_entity_report_presets', ...) must report the TABLE name, not the connection arg.",
+      "helper": "extract_arg_after",
+      "input": {
+        "line": "Schema::connection('payroll')->create('payroll_entity_report_presets', function (Blueprint $table) {",
+        "after_token": "create("
+      },
+      "expect": "payroll_entity_report_presets"
+    },
+    {
+      "name": "schema-create-direct-form-still-works",
+      "description": "E4: bare Schema::create('users', ...) keeps reporting 'users' when after_token used.",
+      "helper": "extract_arg_after",
+      "input": {
+        "line": "Schema::create('users', function (Blueprint $table) {",
+        "after_token": "create("
+      },
+      "expect": "users"
+    },
+    {
+      "name": "try-catch-already-exists-counts-as-idempotent",
+      "description": "E4: Laravel multi-tenant try { Schema::create(...) } catch with 'already exists' branch is a recognised idempotency idiom.",
+      "helper": "try_catch_idempotency",
+      "input": "try {\n  Schema::create('foo', function ($t) { $t->id(); });\n} catch (\\Throwable $e) {\n  if (str_contains($e->getMessage(), 'already exists')) { /* tenant has it */ }\n  else { throw $e; }\n}\n",
+      "expect": true
+    },
+    {
+      "name": "try-catch-pgsql-42P07-counts-as-idempotent",
+      "description": "E4: PostgreSQL SQLSTATE 42P07 (table already exists) check is a guard.",
+      "helper": "try_catch_idempotency",
+      "input": "try {\n  Schema::create('bar', function ($t) {});\n} catch (\\PDOException $e) {\n  if ($e->getCode() == '42P07') { return; }\n  throw $e;\n}\n",
+      "expect": true
+    },
+    {
+      "name": "plain-try-without-already-exists-is-not-idempotent",
+      "description": "E4: try/catch alone (no 'already exists' branch) is NOT a guard \u2014 could still be a real missing-guard bug.",
+      "helper": "try_catch_idempotency",
+      "input": "try { Schema::create('x', fn ($t) => null); } catch (\\Throwable $e) { Log::error($e); }\n",
+      "expect": false
+    },
+    {
+      "name": "ancestor-constructor-auth-found-via-extends",
+      "description": "E2: EmployeeController extends DynamicResourceController; parent's __construct adds $this->middleware('auth'). Inheritance walker must find it.",
+      "helper": "ancestor_constructor_auth",
+      "input": {
+        "source": "<?php\nnamespace App\\Http\\Controllers;\nclass EmployeeController extends DynamicResourceController {\n  public function index() { return Employee::paginate(); }\n}\n",
+        "class_source_map": {
+          "DynamicResourceController": "<?php\nclass DynamicResourceController extends Controller {\n  public function __construct() { $this->middleware('auth'); }\n}\n"
+        }
+      },
+      "expect": true
+    },
+    {
+      "name": "ancestor-without-auth-is-not-protected",
+      "description": "E2: parent class exists but its __construct does NOT add auth \u2014 child should not be treated as protected via inheritance.",
+      "helper": "ancestor_constructor_auth",
+      "input": {
+        "source": "<?php\nclass Foo extends Bar { public function index() {} }\n",
+        "class_source_map": {
+          "Bar": "<?php\nclass Bar { public function __construct() { Log::info('hi'); } }\n"
+        }
+      },
+      "expect": false
+    },
+    {
+      "name": "ancestor-two-levels-deep",
+      "description": "E2: Foo extends Bar extends Baz, Baz adds auth. Walker must recurse past 1 level.",
+      "helper": "ancestor_constructor_auth",
+      "input": {
+        "source": "<?php\nclass Foo extends Bar { public function index() {} }\n",
+        "class_source_map": {
+          "Bar": "<?php\nclass Bar extends Baz { }\n",
+          "Baz": "<?php\nclass Baz { public function __construct() { $this->middleware('auth:sanctum'); } }\n"
+        }
+      },
+      "expect": true
+    },
+    {
+      "name": "over-fetch-inheritModelFields-is-shape-protected",
+      "description": "E5: body that calls inheritModelFields() (DynamicResourceController shaper) should not be flagged as raw model return.",
+      "helper": "body_shaping",
+      "input": "public function index() {\n  $items = Employee::query()->paginate();\n  return $this->inheritModelFields($items);\n}\n",
+      "expect": true
+    },
+    {
+      "name": "over-fetch-paginate-through-callback-is-shape-protected",
+      "description": "E5: paginate()->through(fn ($x) => ...) is the canonical Laravel-paginate transform. Body is shape-protected.",
+      "helper": "body_shaping",
+      "input": "return Employee::query()->paginate()->through(fn ($e) => ['name' => $e->name]);\n",
+      "expect": true
+    },
+    {
+      "name": "over-fetch-makeHidden-is-shape-protected",
+      "description": "E5: ->makeHidden(['password']) explicitly filters fields.",
+      "helper": "body_shaping",
+      "input": "return Employee::all()->makeHidden(['password', 'remember_token']);\n",
+      "expect": true
+    },
+    {
+      "name": "over-fetch-DTO-build-is-shape-protected",
+      "description": "E5: EmployeeDto::fromModel(...) is a DTO assembly \u2014 shape-protected.",
+      "helper": "body_shaping",
+      "input": "return EmployeeDto::fromModel($employee);\n",
+      "expect": true
+    },
+    {
+      "name": "over-fetch-parent-delegate-is-shape-protected",
+      "description": "E5: `return parent::index();` trusts the parent class shaping.",
+      "helper": "body_shaping",
+      "input": "public function index(Request $r) { return parent::index($r); }\n",
+      "expect": true
+    },
+    {
+      "name": "over-fetch-bare-return-of-model-is-NOT-shape-protected",
+      "description": "Negative: a body that just returns the model with no shape signal must still be flaggable.",
+      "helper": "body_shaping",
+      "input": "public function index() { return Employee::all(); }\n",
+      "expect": false
+    }
+  ]
+}

@@ -52,7 +52,7 @@ _CAMEL_RE = re.compile(r"\b([a-z][a-z0-9]+(?:[A-Z][A-Za-z0-9]+)+)\b")
 # extended stopword filter below before it becomes a seed.
 _LOWERCASE_NOUN_RE = re.compile(r"\b([a-z][a-z0-9]{4,})\b")
 
-# Phase-1 dogfood 2026-05-04: 4-letter programming-domain nouns the
+# dogfood 2026-05-04: 4-letter programming-domain nouns the
 # fallback regex misses. "where is dead code detection" had only
 # ["detection"] as tokens because "dead" / "code" are 4 chars and
 # below the noun-fallback floor. Adding a curated allow-list keeps
@@ -343,7 +343,7 @@ def extract_tokens(query: str) -> list[str]:
     for match in _SNAKE_RE.findall(query):
         _add(match)
 
-    # Phase-1 dogfood 2026-05-04: programming-domain shorthand that
+    # dogfood 2026-05-04: programming-domain shorthand that
     # falls outside the identifier-shape regexes. ``n+1``, ``n-tier``,
     # ``2fa``, ``i18n``, ``l10n`` etc. are real concepts a user types
     # in a query but the standard tokenizer drops them because they

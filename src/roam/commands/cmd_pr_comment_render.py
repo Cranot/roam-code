@@ -287,7 +287,7 @@ def _section_rule_violations(rule_violations: list[dict]) -> list[str]:
     out = ["### Architecture rule violations", ""]
     block_v = [v for v in rule_violations if v.get("severity") == "BLOCK"]
     warn_v = [v for v in rule_violations if v.get("severity") in ("WARN", "WARNING")]
-    # redacted — when total violations is huge, wrap the per-item
+    # when total violations is huge, wrap the per-item
     # detail in a collapsible <details> block so the comment doesn't
     # dominate the PR thread on noisy diffs.
     use_details = len(rule_violations) >= 12
@@ -302,7 +302,7 @@ def _section_rule_violations(rule_violations: list[dict]) -> list[str]:
     for v in warn_v[:5]:
         out.append(f"- WARN `{v['rule_id']}`: `{v['file']}` -> `{v['matched_import']}`")
         out.extend(_render_context_lines(v.get("context_lines"), indent="  "))
-    # redacted — when more than the first-5 limit of either tier
+    # when more than the first-5 limit of either tier
     # was truncated, summarise BY RULE so reviewers see the long tail at
     # a glance instead of guessing which rules dominate. The previous
     # "...and N more" line was truthful but uninformative.
@@ -427,7 +427,7 @@ def _render_plain(envelope: dict) -> str:
             lines.append(f"  {i}. {label}")
             if c.get("evidence"):
                 lines.append(f"     {c['evidence']}")
-            # redacted — plain renderer also surfaces matched_patterns
+            # plain renderer also surfaces matched_patterns
             # so Slack/email threads get the same explainability as the
             # markdown surface.
             patterns = c.get("matched_patterns") or []

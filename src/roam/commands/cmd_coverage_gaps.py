@@ -123,7 +123,7 @@ def _evaluate_gate_rules(conn, rules):
         if any(matches_gitignore(basename, tp) for tp in test_patterns):
             test_files.add(fp)
 
-    # redacted — was N+1 (one query per test file). Single grouped
+    # D was N+1 (one query per test file). Single grouped
     # query is O(test_files) data on the wire and one round trip.
     test_fn_count: dict[str, int] = dict.fromkeys(test_files, 0)
     if test_files:
