@@ -6,7 +6,7 @@
 
 A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 196 specialised commands are advanced surface for specialised workflows.
 
-*201 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
+*202 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -22,7 +22,7 @@ A local code graph (SQLite + tree-sitter + git history) that gives any agent —
 
 Roam is a structural intelligence engine for software. It pre-indexes your codebase into a semantic graph -- symbols, dependencies, call graphs, architecture layers, git history, and runtime traces -- stored in a local SQLite DB. Agents query it via CLI or MCP instead of repeatedly grepping files and guessing structure.
 
-> **For teams running AI coding agents:** Roam ships two paid layers on top of the free CLI — **[Roam Agent Review](#roam-agent-review-pr-bot-for-ai-generated-changes)** (PR bot scoring AI-generated changes for structural risk) and **[Roam Cloud Lite](#roam-cloud-lite-metrics-history-no-source-upload)** (metrics-history dashboard, no source code upload). Both run on the OSS engine and are licenced separately.
+> **For teams running AI coding agents:** Roam ships two paid layers on top of the free CLI — **[Roam Review](#roam-review-pr-bot-for-ai-generated-changes)** (PR bot scoring AI-generated changes for structural risk) and **[Roam Cloud](#roam-cloud-metrics-history-no-source-upload)** (metrics-history dashboard, no source-code bodies uploaded). Both run on the OSS engine and are licensed separately.
 
 Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Roam provides architecture-level graph queries -- offline, cross-language, and compact. It goes beyond comprehension: Roam governs architecture through budget gates, simulates refactoring outcomes, orchestrates multi-agent swarms with zero-conflict guarantees, maps vulnerability reachability paths, and enables graph-level code editing without syntax errors.
 
@@ -236,10 +236,10 @@ First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are i
 
 - **Set up your AI agent:** `roam describe --write` (auto-detects CLAUDE.md, AGENTS.md, .cursor/rules, etc. — see [integration instructions](#integration-with-ai-coding-tools))
 - **Explore:** `roam health` → `roam weather` → `roam map`
-- **Run the v2 stack on every PR:** `git diff | roam pr-analyze --explain` (gates AI-generated risk; pair with `roam pr-comment-render` for sticky GitHub comments — see [Roam Agent Review](#roam-agent-review-pr-bot-for-ai-generated-risk))
-- **First-touch demo:** `roam dogfood` (audit + pr-analyze + audit-trail + EU AI Act conformance in one envelope)
+- **Run the v2 stack on every PR:** `git diff | roam pr-analyze --explain` (gates AI-generated risk; pair with `roam pr-comment-render` for sticky GitHub comments — see [Roam Review](#roam-review-pr-bot-for-ai-generated-changes))
+- **First-touch demo:** `roam dogfood` (audit + pr-analyze + audit-trail + governance checks in one envelope)
 - **Add to CI:** `roam init` already generated a GitHub Action
-- **Customer-facing artifacts:** see [`templates/`](templates/) — starter rule packs (Python / TypeScript / Go / Java / Kotlin / Rust at [`templates/rules/`](templates/rules/)), audit-report template ([`templates/audit-report/`](templates/audit-report/)), legal templates ([`templates/legal/`](templates/legal/)), v2 product specs ([`templates/products/`](templates/products/))
+- **Customer-facing artifacts:** see starter rule packs at [`templates/rules/`](templates/rules/), audit-report templates at [`templates/audit-report/`](templates/audit-report/), legal templates at [`templates/legal/`](templates/legal/), and product docs at [`docs/products/`](docs/products/).
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>
@@ -316,13 +316,13 @@ roam health
 | `roam stats` | Aggregate metrics over the index: count by language, file role, kind, plus recent commit activity |
 | `roam timeline <symbol>` | Chronological commits that touched the file owning the symbol — author, date, lines added/removed |
 | `roam pr-prep [<range>]` | One-shot pre-PR fitness check that bundles diff + critique + pr-risk into one envelope |
-| `roam pr-analyze [<range>] [--input F] [--rules F] [--gate]` | Agent-aware PR risk verdict: aggregates `pr-prep` with AI-likelihood scoring, `.roam/rules.yml` enforcement, and INTENTIONAL/SAFE/REVIEW/BLOCK mapping; CI gate via `--gate` (exit 5 on BLOCK); EU AI Act Article 12 audit trail via `--audit-trail` |
+| `roam pr-analyze [<range>] [--input F] [--rules F] [--gate]` | Agent-aware PR risk verdict: aggregates `pr-prep` with AI-likelihood scoring, `.roam/rules.yml` enforcement, and INTENTIONAL/SAFE/REVIEW/BLOCK mapping; CI gate via `--gate` (exit 5 on BLOCK); governance audit trail via `--audit-trail` |
 | `roam pr-comment-render --input F` | Render a markdown PR comment from a `pr-analyze` JSON envelope; styles: `github`, `gitlab`, `plain` |
-| `roam metrics-push [--token T] [--anonymize] [--dry-run]` | Push metrics-only summary (no source code) from `roam audit` to a Roam Cloud Lite endpoint; `--dry-run` prints the payload locally |
+| `roam metrics-push [--token T] [--anonymize] [--dry-run]` | Push metrics-only summary (no source-code bodies) from `roam audit` to a Roam Cloud endpoint; `--dry-run` prints the payload locally |
 | `roam audit-trail-verify [--input F] [--gate]` | Walk the EU AI Act audit-trail JSONL and verify SHA-256 chain integrity; exit 5 on broken chain |
 | `roam audit-trail-export [--format md\|json\|csv] [--since T] [--verdict V] [--aggregate]` | Export the audit trail for procurement / compliance review; `--aggregate` rolls up per actor / repo / verdict / month |
-| `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against an EU AI Act Article 12 checklist (chain integrity, timestamps, actors, reproducibility, retention) |
-| `roam article-12-check [--output F] [--pdf F]` | EU AI Act Article 12 readiness assessment; 6-item checklist → 1-page Markdown / PDF report. Captures redacted (Aug 2 2026 deadline). |
+| `roam audit-trail-conformance-check [--retention-days N] [--gate]` | Score the audit trail against governance-evidence checks (chain integrity, timestamps, actors, reproducibility, retention) |
+| `roam article-12-check [--output F] [--pdf F]` | Article 12 scope/readiness assessment for actual Annex III high-risk AI-system buyers; produces a 1-page Markdown / PDF report. |
 | `roam capabilities [--emit yaml\|json\|text] [--category X] [--ai-safe-only]` | Emit the decorator-driven capability registry — every command's machine-readable shape (inputs, outputs, ai_safe flag, since-version). For Roam Review GitHub App + MCP filtering. |
 | `roam skill-generate [--target claude\|cursor\|continue\|aider] [--output F]` | Generate an agent-runtime skill manifest from the capability registry. SKILL.md / .mdc / config snippets — derived from decorators, never hand-edited. |
 | `roam compare <baseline.db> <target.db> [--top N] [--threshold N]` | Structural delta between two indices: symbols added/removed/moved + per-file complexity deltas + IMPROVED/SIDEWAYS/REGRESSED verdict. The "did this refactor actually work?" tool. |
@@ -330,7 +330,7 @@ roam health
 | `roam permit [--staged] [--input F] [--symbol N]` | Structural-permission verdict facade for AI agents: ALLOW/REVIEW/BLOCK over critique + preflight + blast-radius. Exit codes 0/5/6 for Cursor rules / Claude Code hooks / pre-commit / CI gates. |
 | `roam postmortem <commit-range> [--limit N] [--show N]` | Replay current detectors against past commits; reports findings that would have surfaced pre-merge. The "would Roam have caught my Q1 incident?" demo. |
 | `roam rules-validate [PATH] [--against DIFF] [--strict] [--gate] [--explain]` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs; optional dry-run against a sample diff |
-| `roam dogfood [--no-audit] [--no-pr-analyze] [--no-audit-trail]` | One-shot v2 stack runner: audit + pr-analyze + audit-trail + Article 12 conformance — first-touch demo for any repo |
+| `roam dogfood [--no-audit] [--no-pr-analyze] [--no-audit-trail]` | One-shot v2 stack runner: audit + pr-analyze + audit-trail + governance checks — first-touch demo for any repo |
 | `roam suppress <finding-id> --reason "…"` | Suppress a math / over-fetch / missing-index / auth-gaps false positive with audit-trail-friendly record (`.roam/suppressions.json`); `--list` / `--remove` complete the workflow |
 | `roam why-fail <test>` | Find recently-changed symbols transitively reachable from a failing test |
 | `roam recommend <symbol>` | Surface related symbols using call-graph + co-change + clone signals |
@@ -958,7 +958,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 <details>
 <summary><strong>MCP tool list (all 136)</strong></summary>
 
-*New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Agent Review + Cloud Lite engines + EU AI Act audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
+*New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Review + Cloud engines + governance audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
 
 | Tool | Description |
 |------|-------------|
@@ -991,10 +991,10 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_pr_risk` | Risk score for pending changes |
 | `roam_pr_analyze` | Agent-aware PR verdict: pr-prep + AI-likelihood + `.roam/rules.yml` + INTENTIONAL/SAFE/REVIEW/BLOCK |
 | `roam_pr_comment_render` | Render a markdown PR comment from a `roam_pr_analyze` envelope |
-| `roam_metrics_push` | Push metrics-only summary (no source code) to Roam Cloud Lite; default dry-run |
+| `roam_metrics_push` | Push metrics-only summary (no source-code bodies) to Roam Cloud; default dry-run |
 | `roam_audit_trail_verify` | Verify SHA-256 chain integrity of an EU AI Act audit-trail JSONL |
 | `roam_audit_trail_export` | Export the audit trail as markdown / json / csv (with date / verdict filters) for procurement |
-| `roam_audit_trail_conformance_check` | Score the audit trail against an EU AI Act Article 12 checklist (chain / timestamps / actors / reproducibility / retention) |
+| `roam_audit_trail_conformance_check` | Score the audit trail against governance-evidence checks (chain / timestamps / actors / reproducibility / retention) |
 | `roam_rules_validate` | Lint a `.roam/rules.yml` for typos, schema mistakes, unknown patterns, duplicate IDs |
 | `roam_dogfood` | One-shot v2 stack runner — audit + pr-analyze + audit-trail + conformance in one envelope |
 | `roam_breaking_changes` | Detect breaking changes between refs |
@@ -1181,11 +1181,11 @@ Add to `.vscode/mcp.json`:
 
 </details>
 
-## Roam Agent Review (PR bot for AI-generated changes)
+## Roam Review (PR bot for AI-generated changes)
 
-Most "AI safety net" tools — CodeRabbit, Greptile, Qodo — review PR **semantics** (does the diff *look* right?). They don't read your **graph**: who calls the changed symbol, which layer it belongs to, whether the AI just touched a god-component with 47 callers. Roam Agent Review fills that gap.
+Most "AI safety net" tools — CodeRabbit, Greptile, Qodo — review PR **semantics** (does the diff *look* right?). They don't read your **graph**: who calls the changed symbol, which layer it belongs to, whether the AI just touched a god-component with 47 callers. Roam Review fills that gap.
 
-`roam pr-analyze` is the CLI engine: pipe a unified diff in, get back a verdict (`INTENTIONAL` / `SAFE` / `REVIEW` / `BLOCK`) plus AI-likelihood score, blast radius, rule violations, suggested reviewers, and an EU AI Act Article 12 audit-trail record.
+`roam pr-analyze` is the CLI engine: pipe a unified diff in, get back a verdict (`INTENTIONAL` / `SAFE` / `REVIEW` / `BLOCK`) plus AI-likelihood score, blast radius, rule violations, suggested reviewers, and a governance audit-trail record.
 
 ```bash
 git diff main..HEAD | roam pr-analyze --explain --with-reviewers --audit-trail
@@ -1193,7 +1193,7 @@ roam pr-analyze main..HEAD --gate                      # exit 5 on BLOCK (CI gat
 roam --json pr-analyze --input pr.diff | roam pr-comment-render   # ready-to-post markdown
 roam pr-analyze --batch ./diffs/ --cache --parallel 4  # 24-55x speedup on incremental re-runs
 roam audit-trail-verify                                # check SHA-256 chain integrity
-roam audit-trail-conformance-check --gate              # EU AI Act Article 12 score (CI)
+roam audit-trail-conformance-check --gate              # governance-evidence score (CI)
 ```
 
 **Nine weighted heuristic signals** score the diff for AI-likelihood: add/remove ratio, comment density, test coverage, function-size variance, generic naming, orphan imports, **placeholder density** (TODO/FIXME/NotImplementedError stubs), **LLM-phrase density** ("we use this approach because…"), **suspicious imports** (numbered modules, mass typing imports). Each carries **language-aware weights** across Python / TypeScript / JavaScript / Go / Rust / Java / Kotlin. Starter rule packs ship for Python, TypeScript, Go, and Java at [`templates/rules/`](templates/rules/) — drop one at `.roam/rules.yml` to enable. Custom rules look like:
@@ -1215,13 +1215,13 @@ rules:
 
 A **drift baseline** (`--save-baseline` / `--baseline FILE`) compares the current PR's signals against the previous analysis and auto-escalates the verdict on regression — the GitHub App reads this to render `(+5 vs prev)` / `(-22 vs prev)` arrows on every push.
 
-The **`pr-analyze --audit-trail`** flag appends a SHA-256-chained record to `.roam/audit-trail.jsonl` for each analysis (actor, repo, git SHA, diff hash, verdict, blast radius, AI-likelihood, intent marker). `roam audit-trail-verify` walks the chain and surfaces tampered records; `roam audit-trail-export --format md|csv|json` produces procurement-friendly reports. Built for **EU AI Act Article 12** compliance ahead of the August 2 2026 enforcement deadline.
+The **`pr-analyze --audit-trail`** flag appends a SHA-256-chained record to `.roam/audit-trail.jsonl` for each analysis (actor, repo, git SHA, diff hash, verdict, blast radius, AI-likelihood, intent marker). `roam audit-trail-verify` walks the chain and surfaces tampered records; `roam audit-trail-export --format md|csv|json` produces procurement-friendly reports. This is best framed as SOC 2 CC8.1, ISO 42001, and internal AI-governance evidence. Article 12 is only relevant for actual Annex III high-risk AI-system buyers, and Roam's records are supporting evidence rather than complete runtime inference logs.
 
 A hosted GitHub App is in development on top of this CLI engine. Until it ships, the CLI is usable today as a free CI gate (`roam pr-analyze --gate` exits 5 on BLOCK).
 
-## Roam Cloud Lite (metrics history, no source upload)
+## Roam Cloud (metrics history, no source upload)
 
-`roam metrics-push` sends a *summary-only* payload from `roam audit --json` to a Roam Cloud Lite endpoint — numerical metrics, file paths (or SHA-256 hashes when `--anonymize`), and identifier names only. **No source-code bodies are transmitted**, ever. Inspect the exact payload locally with `--dry-run` before any token is set.
+`roam metrics-push` sends a *summary-only* payload from `roam audit --json` to a Roam Cloud endpoint — numerical metrics, file paths (or SHA-256 hashes when `--anonymize`), and identifier names only. **No source-code bodies are transmitted**, ever. Inspect the exact payload locally with `--dry-run` before any token is set.
 
 ```bash
 roam metrics-push --dry-run                            # local-only inspection
