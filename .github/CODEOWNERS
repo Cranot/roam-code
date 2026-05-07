@@ -1,0 +1,29 @@
+# CODEOWNERS — auto-request reviews for matching paths.
+# Syntax: <pattern> <owner> [<owner> ...]
+# Reference: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# Default owner for the entire repo
+* @Cranot
+
+# Workflows / CI / release pipeline — explicit owner
+/.github/workflows/         @Cranot
+/.github/                   @Cranot
+
+# Source code — owner reviews all
+/src/                       @Cranot
+
+# Public-facing documentation
+/docs/                      @Cranot
+/templates/distribution/    @Cranot
+/CHANGELOG.md               @Cranot
+/README.md                  @Cranot
+
+# Security-sensitive surface
+/src/roam/output/sarif.py   @Cranot
+/src/roam/attest/           @Cranot
+/src/roam/security/         @Cranot
+/src/roam/audit/            @Cranot
+
+# Build + packaging
+/pyproject.toml             @Cranot
+/.github/workflows/publish.yml  @Cranot
