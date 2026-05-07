@@ -171,10 +171,25 @@
 
       <h2>PGP / encrypted reports</h2>
       <p>
-        We're standing up a PGP key for <code>security@roam-code.com</code>.
-        Until it's published here, send unencrypted; or use the
-        <a href="/.well-known/security.txt">security.txt</a> for the most
-        current contact info.
+        Both <code>hello@roam-code.com</code> and <code>security@roam-code.com</code>
+        have OpenPGP keys auto-published by Proton. Look them up via:
+      </p>
+      <ul>
+        <li>Proton public key server:
+          <code>https://api.protonmail.ch/pks/lookup?op=get&amp;search=security@roam-code.com</code>
+        </li>
+        <li>Or send any email and Proton attaches the public key in headers
+          (<code>Autocrypt</code> standard).</li>
+      </ul>
+      <p>
+        Once you have the key, encrypt your report with PGP and send to
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>.
+        We'll decrypt and respond from the same address with the same key.
+      </p>
+      <p>
+        For the most current contact info, see our
+        <a href="/.well-known/security.txt">security.txt</a> — it lists
+        the encryption-key URL too.
       </p>
 
       <h2>Compliance posture</h2>
