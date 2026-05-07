@@ -1,0 +1,157 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Documentation — Roam · Get started, command reference, architecture</title>
+  <meta name="description" content="Roam documentation: getting started, integration tutorials for Claude Code, Cursor, Codex, Gemini, Amp, full command reference, and architecture guide.">
+  <link rel="canonical" href="https://roam-code.com/docs/">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Documentation — Roam">
+  <meta property="og:description" content="Get started, integration tutorials, command reference, architecture guide.">
+  <meta property="og:url" content="https://roam-code.com/docs/">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Documentation", "item": "https://roam-code.com/docs/"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main">
+
+  <header class="hero">
+    <div class="hero-inner">
+      <p class="eyebrow">Documentation</p>
+      <h1 class="hero-headline">
+        Everything you need to <strong>install Roam, wire it in, and ship.</strong>
+      </h1>
+      <p class="hero-subhead">
+        Four guides. Read them in order if you're new, or jump to the one you need.
+      </p>
+      <div class="hero-ctas">
+        <a class="btn-primary" href="/docs/getting-started">Start the tutorial</a>
+        <a class="btn-secondary" href="/docs/command-reference">Command reference</a>
+      </div>
+      <p class="hero-trust-strip">
+        Apache 2.0 · 28 languages · 201 commands · 136 MCP tools · Runs entirely on your machine
+      </p>
+    </div>
+  </header>
+
+  <section class="whats-in" id="docs-grid">
+    <div class="whats-in-inner">
+      <h2>Four guides</h2>
+      <p class="lede">
+        Pick where you are. Each guide stands alone; together they take you from <code>pip install</code> to a CI pipeline that gates on structural review.
+      </p>
+      <div class="numbers-grid" style="grid-template-columns: repeat(2, 1fr);">
+
+        <a class="num-cell" href="/docs/getting-started" style="text-decoration: none; color: inherit;">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">1. Getting Started</strong>
+          <span>Install, index your repo, ask the first structural question, run a pre-merge check, plan parallel agent work, sign a Code Graph Attestation. ~10 minutes start to finish.</span>
+        </a>
+
+        <a class="num-cell" href="/docs/integration-tutorials" style="text-decoration: none; color: inherit;">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">2. Integration Tutorials</strong>
+          <span>End-to-end MCP setup for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Per-platform commands and the cross-platform validation checklist.</span>
+        </a>
+
+        <a class="num-cell" href="/docs/command-reference" style="text-decoration: none; color: inherit;">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">3. Command Reference</strong>
+          <span>All 201 commands, grouped by intent: exploration, health, refactoring, security, governance. Each entry has flags, output, and a concrete usage example.</span>
+        </a>
+
+        <a class="num-cell" href="/docs/architecture" style="text-decoration: none; color: inherit;">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">4. Architecture</strong>
+          <span>How the index pipeline, storage, graph engines, retrieval, and patch verifier fit together. The system diagram + subsystem responsibilities + command-to-data flow.</span>
+        </a>
+
+      </div>
+    </div>
+  </section>
+
+  <section class="audit-upsell">
+    <div class="audit-upsell-inner">
+      <h2>Need help getting started?</h2>
+      <p>
+        If your team would rather have a walkthrough than read four guides, email
+        <a href="mailto:hello@roam-code.com?subject=Getting%20started%20call">hello@roam-code.com</a>
+        and we'll set up a 30-min call. Free for the first 5 teams.
+      </p>
+    </div>
+  </section>
+
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
