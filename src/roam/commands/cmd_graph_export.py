@@ -1,6 +1,6 @@
 """``roam graph-export`` — write the symbol graph as GraphML / DOT / JSONL.
 
-Pass 49 — handy for plugging the in-memory NetworkX graph into external
+handy for plugging the in-memory NetworkX graph into external
 tooling (Gephi, Cytoscape, igraph, custom analyses). Stays read-only;
 no network egress.
 """

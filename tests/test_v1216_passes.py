@@ -69,7 +69,7 @@ def test_pass31_test_pyramid_verdict_categories():
 
 
 def test_pass32_dirty_files_field_in_index_status():
-    """index_status() now exposes dirty_files (Pass 32)."""
+    """index_status() now exposes dirty_files."""
     from roam.commands.resolve import index_status
 
     status = index_status()
@@ -102,7 +102,7 @@ def test_pass34_health_explain_emits_breakdown(tmp_path, monkeypatch):
 
 
 def test_pass35_doctor_runs_new_checks():
-    """Doctor surfaces 13 checks now (Pass 35 added 2)."""
+    """Doctor surfaces 13 checks now."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "doctor"])
     # exit 0 (all pass) or 1 (some fail) — not crash

@@ -158,7 +158,7 @@ Client agrees to indemnify Provider for third-party claims arising from Client's
 
 ## 11. Refund and re-do guarantee
 
-Per Provider's published guarantee: if the audit does not surface 5 or more actionable findings, Client may request a full refund within 30 days of delivery, no questions asked. "Actionable finding" means a specific, file-or-symbol-level recommendation that Client could implement. See `templates/legal/refund-guarantee.md` for the operational SOP.
+Per Provider's published guarantee: if the audit does not surface 5 or more actionable findings, Client may request a full refund within 30 days of delivery, no questions asked. "Actionable finding" means a specific, file-or-symbol-level recommendation that Client could implement.
 
 ---
 

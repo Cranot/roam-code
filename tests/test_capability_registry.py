@@ -1,6 +1,6 @@
 """Tests for roam.capability — decorator-driven introspection.
 
-Phase 1 of the v2 monetization plan; these tests guard the contract
+Capability Registry — declarative manifest of public surface.; these tests guard the contract
 that the registry stays consistent across imports and emits stable
 YAML / JSON for downstream consumers.
 """

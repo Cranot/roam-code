@@ -31,7 +31,7 @@ class TestCatalog:
         # broad-except-swallow, spread-accumulator, defer-in-loop;
         # X13 added chained-collection-walk; Z1/Z2/Z5 added useeffect-
         # missing-deps, dangerous-eval, unremoved-event-listener → 32.
-        # R5 (v12.43) added async-fire-and-forget-task,
+        # added async-fire-and-forget-task,
         # async-nested-run → 34.
         assert len(CATALOG) == 34, f"Expected 34 tasks, got {len(CATALOG)}"
 

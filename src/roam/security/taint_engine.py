@@ -1,11 +1,9 @@
-"""roam taint — graph-reach taint with OpenVEX justifications (E.2).
+"""roam taint — graph-reach taint with OpenVEX justifications.
 
-This is the v12 simpler-by-design engine called for in
-``reports/brainstorm_2026-04-29/05_security_enterprise.md`` — a YAML-rule
-driven graph-reach BFS over the existing edges table with sanitizer-stop
-nodes. Designed to ship in 2 weeks and produce SARIF + OpenVEX-grade
-attestation evidence, **not** to compete with the year-long CodeQL
-abstract-interpretation approach.
+A YAML-rule-driven graph-reach BFS over the existing edges table with
+sanitizer-stop nodes. Produces SARIF + OpenVEX-grade attestation
+evidence; deliberately simpler than year-long abstract-interpretation
+approaches like CodeQL.
 
 Public API:
 

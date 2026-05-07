@@ -27,7 +27,7 @@ Exit codes:
 * 5 — verdict BLOCK (`EXIT_GATE_FAILURE`)
 * 6 — verdict REVIEW (`EXIT_PARTIAL`) — reviewer should look but not blocked
 
-Phase 0.2 of the v2 monetization plan: stand-alone OSS verdict facade
+Hosted-product Phase 0 helper.: stand-alone OSS verdict facade
 that becomes the engine reused by the Roam Review GitHub App at PR
 time. Doing the work here once means the App's PR-comment renderer
 can call the same helper.
@@ -239,7 +239,7 @@ def permit_cmd(
 
     Exit codes: 0=ALLOW, 5=BLOCK, 6=REVIEW.
 
-    Phase 0.2 of the v2 monetization plan — stand-alone OSS engine that
+    Hosted-product Phase 0 helper. — stand-alone OSS engine that
     the Roam Review GitHub App reuses at PR time.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False

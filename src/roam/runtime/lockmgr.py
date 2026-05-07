@@ -1,7 +1,6 @@
 """Read-write lock manager for the v12.2 daemon scaffold.
 
-Per the daemon design (``reports/daemon_design_2026-05-01.md``), we
-trust SQLite WAL for the page-lock layer and add a Python-side RWLock
+We trust SQLite WAL for the page-lock layer and add a Python-side RWLock
 at the daemon process boundary. Three modes:
 
 * ``read``       — shared, N concurrent readers (default for queries).

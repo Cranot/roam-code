@@ -135,8 +135,7 @@ at 10× fewer tokens.
 hooks, architecture-specific commands, patch verifier.
 
 **Codebase-Memory wins** on benchmark rigour. We owe the community
-the same kind of public, reproducible eval. Tracked as
-``REV3: Accuracy & Benchmarks page`` in our action log.
+the same kind of public, reproducible eval.
 
 ## Roam vs Claude Context / vector-codebase tools
 

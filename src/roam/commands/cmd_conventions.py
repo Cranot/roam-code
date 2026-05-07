@@ -546,7 +546,7 @@ def _analyze_naming(conn) -> tuple[list, dict, list, dict]:
                          'constant', 'property', 'field', 'type_alias')
     """).fetchall()
 
-    # Group by (language_family, kind_group) — round 3 #2 noted that
+    # Group by (language_family, kind_group) — noted that
     # imposing the codebase-wide dominant style on SQL files (which
     # legitimately use snake_case for tables/views) produced 5384
     # false-positive outliers. Each family has its own community

@@ -1,4 +1,4 @@
-"""Tests for R7 — SARIF enrichment (automationDetails + provenance + suppressions).
+"""Tests for SARIF enrichment (automationDetails + provenance + suppressions).
 
 The enrichment lets GitHub Code Scanning correlate runs across re-ingests,
 maps findings to a specific git commit, and respects user-defined

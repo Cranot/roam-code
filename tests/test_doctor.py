@@ -111,7 +111,7 @@ class TestDoctorCheckCoverage:
 
     def test_check_count(self):
         result, data = invoke_doctor_json()
-        # Round 4 added three checks (CLI registry + MCP registry +
+        # three checks (CLI registry + MCP registry +
         # MCP backpressure), bringing the total from 8 to 11.
         # v12.16 / Pass 35 added two more (Plugin discovery + Required
         # tables) for a total of 13.

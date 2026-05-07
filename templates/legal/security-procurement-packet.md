@@ -228,4 +228,4 @@ Where this packet is bundled with `roam audit-evidence-pack` output for a specif
 - Terms: `roam-code.com/terms`
 - Public security policy: `roam-code.com/security`
 - Status page: `roam-code.com/status` (planned)
-- Live pricing: [`../../docs/strategy/pricing-v4-launch-2026-05-07.md`](../../docs/strategy/pricing-v4-launch-2026-05-07.md)
+- Live pricing: <https://roam-code.com/pricing>

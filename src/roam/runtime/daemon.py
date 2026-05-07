@@ -9,8 +9,6 @@ Daemon **optional** in v12.2 — running ``roam <cmd>`` without
 ``acquire_lock_for_command`` context manager falls back to a
 process-local ``LockMgr`` so the lock-mode contract still holds within
 one process.
-
-Spec: ``reports/daemon_design_2026-05-01.md``.
 """
 
 from __future__ import annotations

@@ -230,7 +230,7 @@ def _check_controller_direct_returns(
     """Check controller files for direct model returns (without API Resources).
 
     M12 (2026-05-06): scope the check to method bodies that actually use the
-    model. Real-world FP from union-web: `MyDataController` was flagged for
+    model. Real-world FP from a Vue 3 + Laravel codebase: `MyDataController` was flagged for
     over-fetching `LedgerAccount` because `LedgerAccount` was imported at
     the top of the file — but the controller actually returns AADE service
     DTOs (`return $aadeService->getDocs()`). Without method-body scoping

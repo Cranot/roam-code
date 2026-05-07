@@ -50,7 +50,7 @@ def _compute_health_score(
     # score on healthy codebases). Normalised per 1k symbols so a 14k-
     # symbol repo with 23 actionable god components (0.16%) doesn't
     # score the same as a 100-symbol repo with 23 (23%). Mirrors the
-    # fix in cmd_health.py from the dogfood sprint 2026-05-01.
+    # fix in cmd_health.py.
     god_actionable = [g for g in god_items if not is_utility_path_fn(g["file"])]
     bn_actionable = [b for b in bn_items if not is_utility_path_fn(b["file"])]
     god_critical = sum(1 for g in god_actionable if g["degree"] > 50)

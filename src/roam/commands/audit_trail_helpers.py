@@ -1,7 +1,6 @@
 """Shared helpers for audit-trail commands.
 
-Extracted from cmd_audit_trail_export.py + cmd_audit_trail_conformance.py
-in the Phase 14 fresh-eyes sweep — both implemented identical
+Extracted from cmd_audit_trail_export.py + cmd_audit_trail_conformance.py — both implemented identical
 ``_load_records`` functions for reading EU AI Act audit-trail JSONL.
 
 Also exposes the canonical default path constant + schema name so

@@ -1,12 +1,8 @@
-# Legacy audit report template
+# Audit report template
 
-> Superseded for launch. The current paid offer is **PR Replay**, with pricing
-> and scope in `docs/strategy/pricing-v4-launch-2026-05-07.md`. Treat the
-> material below as report infrastructure only; do not publish the old audit
-> naming, tiers, or prices without rewriting them.
-
-This directory holds the template plus render script for the legacy audit
-deliverable.
+This directory holds the markdown template plus render script for a
+codebase-architecture report. Reuse it as the basis for a paid audit
+deliverable, a customer-onboarding handover, or an OSS case study.
 
 ## Files
 

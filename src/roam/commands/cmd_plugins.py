@@ -1,4 +1,4 @@
-"""``roam plugins`` — list discovered plugins (Pass 30, plugin SDK surfacing).
+"""``roam plugins`` — list discovered plugins.
 
 Surfaces the existing plugin system (commands, detectors, language
 extractors, extension/grammar aliases) so authors can verify their

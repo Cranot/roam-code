@@ -1,6 +1,6 @@
 """``roam mcp-status`` — health check for the MCP server.
 
-Pass 83 — companion to ``roam doctor``. Reports:
+companion to ``roam doctor``. Reports:
 
   * preset (core / review / refactor / debug / architecture / full)
   * registered tool count + core tool count

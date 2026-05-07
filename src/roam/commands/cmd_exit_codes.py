@@ -1,6 +1,6 @@
 """``roam exit-codes`` — list every exit code roam may return.
 
-Pass 77 — replaces grepping the docs. Reads ``roam.exit_codes`` and
+replaces grepping the docs. Reads ``roam.exit_codes`` and
 emits a table that CI scripts and agents can use to branch.
 """
 
