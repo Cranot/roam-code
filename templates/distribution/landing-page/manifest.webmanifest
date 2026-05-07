@@ -1,0 +1,21 @@
+{
+  "name": "Roam — A second opinion on AI-generated code",
+  "short_name": "Roam",
+  "description": "Free open-source CLI that maps your codebase. Plus a PR bot, dashboard, and self-hosted option for teams.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "browser",
+  "background_color": "#fdfdfd",
+  "theme_color": "#0049b7",
+  "icons": [
+    {
+      "src": "/favicon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    }
+  ],
+  "lang": "en",
+  "dir": "ltr",
+  "categories": ["developer", "productivity", "utilities"]
+}
