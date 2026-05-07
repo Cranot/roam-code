@@ -8,10 +8,6 @@ suppressions from .roam/suppressions.json.
 from __future__ import annotations
 
 import json
-import os
-from pathlib import Path
-
-import pytest
 
 from roam.output.sarif import to_sarif
 

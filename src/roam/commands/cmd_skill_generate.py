@@ -61,13 +61,13 @@ def skill_generate_cmd(ctx, target: str, output_path: str | None, ai_safe_only: 
         caps = [c for c in caps if c.ai_safe]
 
     if target == "claude":
-        text, default_path = _emit_claude_skill(caps), "skills/roam/SKILL.md"
+        text, _default_path = _emit_claude_skill(caps), "skills/roam/SKILL.md"
     elif target == "cursor":
-        text, default_path = _emit_cursor_rule(caps), ".cursor/rules/roam.mdc"
+        text, _default_path = _emit_cursor_rule(caps), ".cursor/rules/roam.mdc"
     elif target == "continue":
-        text, default_path = _emit_continue_snippet(caps), "continue-roam-snippet.json"
+        text, _default_path = _emit_continue_snippet(caps), "continue-roam-snippet.json"
     elif target == "aider":
-        text, default_path = _emit_aider_snippet(caps), ".aiderrc"
+        text, _default_path = _emit_aider_snippet(caps), ".aiderrc"
     else:
         raise click.ClickException(f"unknown target: {target}")
 
