@@ -1,6 +1,9 @@
 # Statement of Work — Master Template
 
 > ⚠️ **REVIEW BEFORE USE.** v1 draft, 2026-05-05. Run past a qualified attorney before binding execution. Bracketed placeholders `[LIKE_THIS]` must be filled in per engagement.
+> Superseded for launch until rewritten. This SOW describes the old audit
+> service and old prices; do not use for PR Replay, Roam Review, Roam Cloud,
+> or Self-Hosted deals as written.
 
 ---
 
