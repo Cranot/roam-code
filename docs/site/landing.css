@@ -94,6 +94,20 @@ main section {
   font-weight: 500;
 }
 
+.nav-links a.home-link {
+  color: var(--accent);
+  font-weight: 600;
+  border-right: 1px solid #e5e5e0;
+  padding-right: 14px;
+  margin-right: 4px;
+}
+@media (max-width: 720px) {
+  .nav-links a.home-link {
+    border-right: none;
+    padding-right: 0;
+  }
+}
+
 .nav-cta {
   display: inline-block;
   padding: 0.4rem 0.9rem;
