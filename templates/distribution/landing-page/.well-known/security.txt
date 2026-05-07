@@ -2,4 +2,5 @@ Contact: mailto:security@roam-code.com
 Expires: 2027-05-07T00:00:00.000Z
 Preferred-Languages: en
 Canonical: https://roam-code.com/.well-known/security.txt
-Policy: https://github.com/Cranot/roam-code/security/policy
+Policy: https://roam-code.com/security
+Acknowledgments: https://roam-code.com/security#hall-of-thanks
