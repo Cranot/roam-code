@@ -16,7 +16,7 @@ from roam.commands.cmd_capabilities import capabilities_cmd
 
 
 def test_decorator_registers_capability() -> None:
-    reg = CapabilityRegistry()
+    CapabilityRegistry()
 
     @roam_capability(category="test", summary="A test cap")
     def my_cmd():  # noqa: ANN202

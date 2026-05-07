@@ -9,8 +9,6 @@ documentation generators).
 
 from __future__ import annotations
 
-import json
-
 import click
 
 from roam.capability import REGISTRY, emit_yaml
