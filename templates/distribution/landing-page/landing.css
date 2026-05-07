@@ -993,6 +993,204 @@ a.verb-cell:hover {
   .scenarios-grid { grid-template-columns: 1fr; }
 }
 
+/* ─── Docs pages ─── */
+.docs-subnav {
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: var(--s-3) 0;
+  font-size: var(--t-sm);
+  position: sticky;
+  top: 56px;
+  z-index: 9;
+}
+.docs-subnav-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 var(--s-5);
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-5);
+}
+.docs-subnav a {
+  color: var(--muted);
+  text-decoration: none;
+  font-weight: 500;
+  padding: 4px 0;
+}
+.docs-subnav a:hover {
+  color: var(--accent);
+}
+.docs-subnav a[aria-current="page"] {
+  color: var(--accent);
+  border-bottom: 2px solid var(--accent);
+}
+
+.docs-page {
+  max-width: 800px;
+  margin: 0 auto;
+  padding: var(--s-7) var(--s-5);
+}
+.docs-page h1 {
+  font-size: var(--t-2xl);
+  font-weight: 700;
+  margin: 0 0 var(--s-3);
+  line-height: var(--lh-tight);
+}
+.docs-page > .eyebrow {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-sm);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: var(--muted);
+}
+.docs-page .subtitle {
+  font-size: var(--t-md);
+  color: var(--muted);
+  line-height: var(--lh-snug);
+  margin: 0 0 var(--s-7);
+}
+.docs-page section {
+  margin-bottom: var(--s-7);
+}
+.docs-page h2 {
+  font-size: var(--t-xl);
+  font-weight: 600;
+  color: var(--text);
+  margin: var(--s-7) 0 var(--s-3);
+  padding-bottom: var(--s-2);
+  border-bottom: 1px solid var(--border);
+}
+.docs-page h3 {
+  font-size: var(--t-lg);
+  font-weight: 600;
+  color: var(--text);
+  margin: var(--s-5) 0 var(--s-3);
+}
+.docs-page p {
+  font-size: var(--t-base);
+  line-height: var(--lh-base);
+  margin: 0 0 var(--s-4);
+}
+.docs-page ul, .docs-page ol {
+  font-size: var(--t-base);
+  line-height: var(--lh-base);
+  margin: 0 0 var(--s-4);
+  padding-left: var(--s-5);
+}
+.docs-page li {
+  margin-bottom: var(--s-2);
+}
+.docs-page pre {
+  background: var(--text);
+  color: #e8e8e8;
+  padding: var(--s-4);
+  border-radius: var(--radius);
+  overflow-x: auto;
+  margin: var(--s-3) 0 var(--s-4);
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+  font-size: var(--t-sm);
+  line-height: 1.55;
+}
+.docs-page pre code {
+  background: transparent;
+  color: inherit;
+  padding: 0;
+  font-size: inherit;
+}
+.docs-page code {
+  background: var(--bg-alt);
+  padding: 2px 6px;
+  border-radius: var(--radius-sm);
+  font-size: 0.92em;
+  font-family: 'IBM Plex Mono', ui-monospace, monospace;
+}
+.docs-page table {
+  width: 100%;
+  border-collapse: collapse;
+  margin: var(--s-3) 0 var(--s-4);
+  font-size: var(--t-sm);
+}
+.docs-page th, .docs-page td {
+  text-align: left;
+  padding: var(--s-3);
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.docs-page th {
+  background: var(--bg-alt);
+  font-weight: 600;
+}
+.docs-page .callout {
+  background: var(--accent-soft);
+  border-left: 3px solid var(--accent);
+  padding: var(--s-3) var(--s-4);
+  margin: 0 0 var(--s-4);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  font-size: var(--t-sm);
+  color: var(--text);
+}
+.docs-page .step-grid {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: var(--s-4);
+  margin: var(--s-4) 0;
+}
+.docs-page .step {
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-4);
+}
+.docs-page .step h3 {
+  margin-top: 0;
+  font-size: var(--t-md);
+  color: var(--accent);
+}
+.docs-page .step p {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  margin-bottom: 0;
+}
+.docs-page .step pre {
+  margin-bottom: var(--s-3);
+}
+.docs-footer-nav {
+  margin-top: var(--s-7);
+  padding-top: var(--s-5);
+  border-top: 1px solid var(--border);
+  display: flex;
+  justify-content: space-between;
+  gap: var(--s-4);
+}
+.docs-footer-nav a {
+  flex: 1;
+  background: var(--bg-alt);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-3) var(--s-4);
+  text-decoration: none;
+  color: var(--text);
+}
+.docs-footer-nav a:hover {
+  border-color: var(--accent);
+}
+.docs-footer-nav .label {
+  display: block;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  margin-bottom: 4px;
+}
+.docs-footer-nav .next {
+  text-align: right;
+}
+@media (max-width: 700px) {
+  .docs-page .step-grid { grid-template-columns: 1fr; }
+  .docs-footer-nav { flex-direction: column; }
+}
+
 /* ─── Dogfood band ─── */
 .dogfood-band {
   padding: var(--s-7) 0;

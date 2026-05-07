@@ -1,4 +1,10 @@
 # Cloudflare Pages redirects
-# Old /docs link → external reference docs (the real ones)
-/docs    https://cranot.github.io/roam-code/    301
-/docs/*  https://cranot.github.io/roam-code/:splat    301
+
+# Docs are now hosted on roam-code.com directly. /docs (no slash) -> /docs/.
+/docs                                /docs/                    301
+
+# Legacy .html paths -> clean URLs
+/docs/getting-started.html           /docs/getting-started     301
+/docs/command-reference.html         /docs/command-reference   301
+/docs/integration-tutorials.html     /docs/integration-tutorials  301
+/docs/architecture.html              /docs/architecture        301
