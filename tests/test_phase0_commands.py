@@ -1,11 +1,10 @@
-"""Tests for the redacted Phase 0 commands.
+"""Tests for three hosted-product helper commands.
 
-Phase 0 ships three free-OSS funnel artifacts that wrap engines
-already in roam-code:
+These commands wrap engines already in roam-code:
 
 * ``roam permit`` — verdict facade over critique + preflight
 * ``roam postmortem`` — retroactive detector replay over a commit range
-* ``roam article-12-check`` — EU AI Act readiness assessment
+* ``roam article-12-check`` — EU AI Act Article 12 readiness assessment
 
 Tests are minimal-but-real: each exercises the command's happy path
 in-process via CliRunner, asserts the verdict shape, and verifies

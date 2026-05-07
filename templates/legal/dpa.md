@@ -12,7 +12,7 @@ This Data Processing Agreement ("**DPA**") forms part of and is subject to the S
 - **`[CONTROLLER_LEGAL_NAME]`** ("**Controller**" / "Client"); and
 - **`[PROCESSOR_LEGAL_NAME]`** ("**Processor**" / "Provider").
 
-This DPA applies to the Processor's processing of Personal Data on the Controller's behalf in connection with the AI Agent Readiness Audit and any related services described in the SOW.
+This DPA applies to the Processor's processing of Personal Data on the Controller's behalf in connection with the services described in the SOW.
 
 ---
 

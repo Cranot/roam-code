@@ -1,4 +1,4 @@
-"""Render an AI Agent Readiness Audit report from roam-code outputs.
+"""Render a codebase-architecture audit report from roam-code outputs.
 
 Usage:
 

@@ -1,10 +1,9 @@
-"""``roam audit`` — AI Agent Readiness Audit.
+"""``roam audit`` — Codebase architecture audit.
 
-Priority 1 strategic blocker. Chains
-``index → describe → health → risk → dead → owner → test-map → pr-risk``
-into a single structured-JSON envelope. The artifact paying customers
-buy: a one-shot audit that calibrates how ready a codebase is for
-agent-driven work.
+Chains ``index → describe → health → risk → dead → owner → test-map → pr-risk``
+into a single structured-JSON envelope. A one-shot audit that calibrates
+how ready a codebase is for agent-driven work; same data layer powers the
+"PR Replay" deliverable when paired with ``roam postmortem``.
 
 Sections:
 
@@ -71,11 +70,11 @@ def _summary_field(payload: dict, *keys: str, default=None):
 )
 @click.pass_context
 def audit(ctx, brief) -> None:
-    """One-shot AI Agent Readiness Audit.
+    """One-shot codebase architecture audit.
 
     Bundles health, debt, dead-code, risk, test-pyramid, coverage, and
     API-surface signals into a single envelope. Designed as the
-    structured artifact a paid audit attaches to its report.
+    structured artifact a written audit report attaches.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

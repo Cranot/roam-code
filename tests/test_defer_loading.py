@@ -177,10 +177,10 @@ class TestDeferLoading:
             "roam_test_impact",
             "roam_disambiguate",
             "roam_why_fail",
-            # v12.27 / v12.28 — Roam Agent Review (redacted):
-            # PR-analyze pipeline + audit-trail tooling + dogfood loop +
-            # metrics push. All registered into the core preset because
-            # the GitHub App + CI pipelines need them present at startup.
+            # Roam Review hosted-product surface: PR-analyze pipeline +
+            # audit-trail tooling + dogfood loop + metrics push. All
+            # registered into the core preset because the GitHub App + CI
+            # pipelines need them present at startup.
             "roam_pr_analyze",
             "roam_pr_comment_render",
             "roam_rules_validate",

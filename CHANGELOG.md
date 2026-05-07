@@ -524,7 +524,6 @@ The `_CORE_TOOLS` count appears in **three** assertions across two
 test files. 12.30 updated one. 12.32 caught the second on CI red.
 12.33 caught the third on CI red. Lesson: a `grep -rn "tool_count"`
 sweep at every surface bump would have caught all three at once.
-Added that as a release-checklist note in `dev/redacted`.
 
 ## [12.32] - 2026-05-06
 
