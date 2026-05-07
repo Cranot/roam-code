@@ -490,7 +490,7 @@ runs:
     # ---- 9. Upload SARIF to GitHub Code Scanning ----------------------------
     - name: Upload SARIF
       if: inputs.sarif == 'true' && steps.generate-sarif.outputs.sarif-file != ''
-      uses: github/codeql-action/upload-sarif@v3
+      uses: github/codeql-action/upload-sarif@v4
       with:
         sarif_file: ${{ steps.generate-sarif.outputs.sarif-file }}
         category: ${{ steps.generate-sarif.outputs.sarif-category }}
