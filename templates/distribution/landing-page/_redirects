@@ -1,0 +1,4 @@
+# Cloudflare Pages redirects
+# Old /docs link → external reference docs (the real ones)
+/docs    https://cranot.github.io/roam-code/    301
+/docs/*  https://cranot.github.io/roam-code/:splat    301
