@@ -46,7 +46,7 @@ Auto-DQ message for vague/generic answers (no specific tool, no specific pain):
 >
 > Talk tomorrow.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 6. Discovery call closer — in-call script
 
@@ -80,7 +80,7 @@ the deal forward.
 > Questions? Reply or [Calendly link] for a quick call. Proposal expires
 > [date + 7 days].
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 8. Kickoff email — sent on payment confirmation
 
@@ -104,7 +104,7 @@ the deal forward.
 >
 > Excited to dig in.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 9. Daily status email
 
@@ -139,7 +139,7 @@ Keep it that short. Daily presence > daily essay.
 >
 > Thanks for the trust on this one.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 11. Day-7 follow-up
 
@@ -151,7 +151,7 @@ Keep it that short. Daily presence > daily essay.
 > Also — saw [recent development at their company]. Worth flagging that the
 > [specific audit finding X] connects to that. Happy to talk through it.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 12. Retainer pitch — paragraph version (or 3-slide deck)
 
@@ -182,11 +182,11 @@ For audit clients 30+ days post-delivery.
 > P.S. did the [specific recommendation from audit] get implemented? Always
 > curious how recommendations land.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ## 14. Crisis communication — delayed delivery
 
-When you have to extend a delivery date (per appendix Phase 1 §1.7).
+When you have to extend a delivery date.
 
 > **Subject**: Heads-up on [audit project name] — new delivery date
 >
@@ -200,7 +200,7 @@ When you have to extend a delivery date (per appendix Phase 1 §1.7).
 > Either way, no charge for the delay itself. I'll send daily updates from now
 > to delivery. Sorry for the change.
 >
-> — Dimitris
+> — `[YOUR_NAME]`
 
 ---
 

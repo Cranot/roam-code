@@ -1,6 +1,6 @@
 """Python-specific anti-pattern detectors.
 
-Surfaced in v12.4 from the Python-pivot dogfood (2026-05-02). The
+The
 existing ``catalog/detectors.py`` covers language-agnostic algorithm
 patterns (O(n²) string concat, sort-to-take, IO-in-loop). This module
 adds Python-canonical anti-patterns that don't generalise to other

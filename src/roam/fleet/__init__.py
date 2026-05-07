@@ -1,6 +1,4 @@
-"""roam fleet — graph-aware planner for multi-agent code work (C.1).
-
-Phase-6 research finding: the agent-fleet *orchestration* layer was
+"""roam fleet — graph-aware planner for multi-agent code work (C.1). the agent-fleet *orchestration* layer was
 fully claimed in April 2026 (Copilot ``/fleet``, Cursor multitask,
 AI agent harnesses) — but
 none of those runtimes compute a *graph-aware partition* with conflict

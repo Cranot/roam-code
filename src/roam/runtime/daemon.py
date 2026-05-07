@@ -2,7 +2,7 @@
 
 This file ships the **shape** of the daemon: PID file, socket path,
 lifecycle helpers, and a public ``acquire_lock_for_command`` entry
-point. The full Phase-2 cmd-by-cmd migration lands in v13.0.
+point. The full cmd-by-cmd migration lands in v13.0.
 
 Daemon **optional** in v12.2 — running ``roam <cmd>`` without
 ``roam daemon start`` works exactly as before. Without a daemon, the

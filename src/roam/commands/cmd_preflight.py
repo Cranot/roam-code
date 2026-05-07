@@ -851,7 +851,7 @@ def preflight(ctx, target, staged):
         if tests["pytest_command"]:
             click.echo(f"  Suggested tests: {tests['pytest_command']}")
 
-        # Phase-4 — synergy with the rest of the surface. After a
+        # — synergy with the rest of the surface. After a
         # preflight verdict the natural follow-ups depend on the risk
         # level: HIGH/CRITICAL → impact + diagnose; MEDIUM → affected-
         # tests; LOW → roam diff after editing. Centralised in

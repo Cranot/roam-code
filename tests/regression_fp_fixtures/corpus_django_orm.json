@@ -1,0 +1,52 @@
+{
+  "source": "Regression-FP corpus.",
+  "entries": [
+    {
+      "name": "django-queryset-iterator-is-cache-with-profile",
+      "description": "django profile recognises queryset.iterator() as not-IO.",
+      "helper": "in_memory_call",
+      "framework": "django",
+      "input": "queryset.iterator",
+      "expect": true
+    },
+    {
+      "name": "django-prefetch_related-with-profile",
+      "description": "django profile recognises queryset.prefetch_related() as not-IO.",
+      "helper": "in_memory_call",
+      "framework": "django",
+      "input": "qs.prefetch_related",
+      "expect": true
+    },
+    {
+      "name": "django-queryset-iterator-is-IO-without-profile",
+      "description": "without django profile, generic .iterator() falls through to default classification (no false-positive guard).",
+      "helper": "in_memory_call",
+      "input": "queryset.iterator",
+      "expect": false
+    },
+    {
+      "name": "rails-includes-with-profile",
+      "description": "rails profile recognises ActiveRecord includes() as not-IO.",
+      "helper": "in_memory_call",
+      "framework": "rails",
+      "input": "scope.includes",
+      "expect": true
+    },
+    {
+      "name": "nestjs-querybuilder-with-profile",
+      "description": "nestjs profile recognises TypeORM createQueryBuilder() as not-IO.",
+      "helper": "in_memory_call",
+      "framework": "nestjs",
+      "input": "repository.createQueryBuilder",
+      "expect": true
+    },
+    {
+      "name": "in-memory-cachemanager-set",
+      "description": "nestjs CacheManager.set is in-memory.",
+      "helper": "in_memory_call",
+      "framework": "nestjs",
+      "input": "cacheManager.set",
+      "expect": true
+    }
+  ]
+}

@@ -4,8 +4,8 @@ Several commands (``smells``, ``fan``, ``dead``, etc.) default-exclude
 tooling/generated/example/vendor files from their headline output so
 the user isn't dominated by code they can't or don't want to refactor.
 This module centralises the path-hint set so all those commands stay
-in sync — extracted in v12.4 from per-command duplicates after the
-Python-pivot dogfood notes flagged ``workspaces/`` (agent-generated
+in sync — extracted in v12.4 from per-command duplicates.
+``workspaces/`` (agent-generated
 benchmark artifacts) as another category that polluted the headlines
 on ``an agent-eval workspace``.
 

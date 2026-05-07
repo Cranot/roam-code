@@ -100,7 +100,7 @@ def structural_score(
     # in rule-corpus paths *unless* the query is rule-shaped.
     rule_yaml_penalty = _rule_yaml_penalty(candidates, task)
 
-    # Phase-1 dogfood 2026-05-04 — test-file demotion. Same family
+    # dogfood 2026-05-04 — test-file demotion. Same family
     # of false positive: implementation-style queries surfaced
     # ``test_verify_patch_match`` above the actual
     # ``check_clones_not_edited`` because the test had higher
@@ -159,7 +159,7 @@ def structural_score(
         cfg = get_retrieve_config(config_root)
         lexical_baseline = float(cfg.get("lexical_baseline", DEFAULT_LEXICAL_BASELINE))
 
-    # Phase-1 dogfood 2026-05-04 — implementation-style queries shift
+    # dogfood 2026-05-04 — implementation-style queries shift
     # weight from structural (alpha) toward lexical (lexical_baseline).
     # The query "where is the symbol resolver" had ``_resolve_file``
     # (PR=0.99, fts=0.65) ranking #1 over ``find_symbol`` (PR=0.16,
@@ -329,9 +329,7 @@ def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
 
 
 def _test_file_penalty(candidates: list[dict], task: str) -> dict[int, float]:
-    """Demote test-file candidates for implementation-style queries.
-
-    Phase-1 dogfood, 2026-05-04: a query like *"where is the patch
+    """Demote test-file candidates for implementation-style queries. dogfood, 2026-05-04: a query like *"where is the patch
     verifier with clones-not-edited check"* surfaced
     ``test_verify_patch_match`` (a test) as the top result and the
     actual ``check_clones_not_edited`` implementation at #4. The

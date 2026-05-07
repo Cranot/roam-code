@@ -1,8 +1,8 @@
 # Roam architecture rule packs
 
 Starter `.roam-rules.yml` packs tuned for the most common AI-generated-code
-anti-patterns Q1-Q2 2026. Each pack is opinionated but conservative — every
-rule has a `description` so the PR comment surfaces *why* it fired.
+anti-patterns. Each pack is opinionated but conservative — every rule has a
+`description` so the PR comment surfaces *why* it fired.
 
 ## Packs
 

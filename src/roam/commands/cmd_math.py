@@ -147,7 +147,7 @@ def math_cmd(
             click.echo(name)
         return
 
-    # Z7 (2026-05-06) — validate --task against the catalog; on typo, show
+    # validate --task against the catalog; on typo, show
     # the closest matches by edit distance instead of running 49 detectors
     # silently to find zero results.
     if task_filter:
@@ -306,7 +306,7 @@ def math_cmd(
             if top_n >= max(3, total // 2):
                 category_hint = f"; mostly: {top_cat}"
         if total == 0:
-            # Z3 (2026-05-06) — informative zero-state. When 0 findings,
+            # informative zero-state. When 0 findings,
             # tell the user (a) which profile filter was active, (b) how
             # many detectors ran, (c) what to try next.
             profile_note = ""
@@ -369,7 +369,7 @@ def math_cmd(
                                 [float(f.get("impact_score", 0.0) or 0.0) for f in findings],
                                 default=0.0,
                             ),
-                            # Z13 (2026-05-06) — top_tasks_by_count helps CI
+                            # top_tasks_by_count helps CI
                             # dashboards / agents prioritise without iterating
                             # every finding. Format: [{task_id, count}, ...].
                             "top_tasks_by_count": [
@@ -395,7 +395,7 @@ def math_cmd(
             f"Profile: {detector_meta.get('profile', profile)} "
             f"(filtered {detector_meta.get('profile_filtered', 0)} low-signal findings)"
         )
-        # S7 (2026-05-06) — surface the active framework profile inline so
+        # surface the active framework profile inline so
         # users see the cache allowlist that's been layered on. when
         # we auto-detected, mark it so the user knows the profile wasn't
         # silently chosen.
@@ -456,7 +456,7 @@ def math_cmd(
                     fix_text = f.get("fix", "")
                     if fix_text:
                         click.echo(f"        Fix: {fix_text.splitlines()[0]}")
-                # U6 (2026-05-06) — surface matched_patterns on a single line
+                # surface matched_patterns on a single line
                 # so users see WHY this fired without --json. Quiet (line
                 # omitted) when the detector didn't populate the field.
                 patterns = (f.get("evidence") or {}).get("matched_patterns") or []
