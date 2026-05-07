@@ -1000,3 +1000,96 @@ footer a { color: #fff; }
     transition: none;
   }
 }
+
+/* ─── Archive backup link (Wayback) — small, de-emphasized ─── */
+.archive-link {
+  font-size: 0.78em;
+  color: var(--muted);
+  text-decoration: none;
+  margin-left: 2px;
+  opacity: 0.7;
+}
+.archive-link:hover {
+  opacity: 1;
+  text-decoration: underline;
+}
+
+/* ─── Touch targets — WCAG 2.5.5 / Apple HIG: 44x44 minimum on mobile ─── */
+@media (max-width: 800px) and (pointer: coarse) {
+  .nav-links a,
+  .footer-col a,
+  .verb-cell,
+  .num-cell,
+  .faq summary {
+    min-height: 44px;
+    display: inline-flex;
+    align-items: center;
+    padding-block: 8px;
+  }
+  .num-cell {
+    min-height: 88px;
+  }
+  .footer-col a {
+    padding-block: 10px;
+  }
+}
+
+/* ─── Print: legal/info pages should print clean ─── */
+@media print {
+  /* Hide non-essential UI */
+  .site-nav,
+  footer,
+  .skip-link,
+  .page-cta-strip,
+  .audit-upsell,
+  .hero-ctas,
+  .btn-primary,
+  .btn-secondary,
+  .nav-cta {
+    display: none !important;
+  }
+  /* Reset to print-friendly defaults */
+  body {
+    background: #fff !important;
+    color: #000 !important;
+    font-size: 11pt;
+    line-height: 1.45;
+  }
+  .legal-page,
+  .hero-inner,
+  .whats-in-inner,
+  .compare-inner,
+  .faq-inner,
+  main {
+    max-width: none;
+    padding: 0 1cm;
+  }
+  /* Show full URLs after links */
+  a[href^="http"]:after,
+  a[href^="/"]:after {
+    content: " (" attr(href) ")";
+    font-size: 0.85em;
+    color: #555;
+    word-break: break-all;
+  }
+  a[href^="mailto:"]:after,
+  a[href^="#"]:after {
+    content: "";
+  }
+  h1, h2, h3 {
+    page-break-after: avoid;
+  }
+  h2, h3 {
+    page-break-before: auto;
+  }
+  pre, code, table {
+    page-break-inside: avoid;
+  }
+  /* Header/footer-style at top of every printed page (page meta) */
+  .legal-header,
+  .hero-inner > .eyebrow {
+    border-bottom: 1pt solid #000;
+    padding-bottom: 0.5cm;
+    margin-bottom: 0.5cm;
+  }
+}
