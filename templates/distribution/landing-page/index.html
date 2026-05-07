@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Roam — Catches the AI-generated PRs that break production</title>
+  <title>Roam — Structural Code Review for AI-Generated PRs</title>
   <meta name="description" content="Free open-source CLI that maps your codebase. Plus a PR bot, dashboard, and self-hosted option that catch what AI-generated changes break — before merge.">
 
   <meta property="og:title" content="Roam — Catches the AI-generated PRs that break production">
@@ -61,7 +61,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "190+ CLI commands; 136 MCP tools; 27 languages; clones-not-edited detector; blast-radius analysis; in-toto v1 attestations; SARIF 2.1.0 export; EU AI Act Article 12 audit-trail support"
+    "featureList": "201 CLI commands; 136 MCP tools; 27 languages; clones-not-edited detector; blast-radius analysis; in-toto v1 attestations; SARIF 2.1.0 export; structural-review records for SOC 2 / ISO 42001 / internal AI-governance evidence"
   }
   </script>
 
@@ -108,15 +108,14 @@
         <strong>Roam tells you what else it broke.</strong>
       </h1>
       <p class="hero-subhead">
-        A free CLI that maps every function, file, and dependency.
-        A PR bot, dashboard, and self-hosted bundle when teams need them.
+        CodeRabbit and Greptile review the code AI wrote. Roam reviews everything that <em>touches</em> it — the callers two layers up, the test that no longer asserts, the clone that wasn't edited, the runtime path that just got slower.
       </p>
       <div class="hero-ctas">
         <a class="btn-primary" href="#install">Install the free CLI</a>
         <a class="btn-secondary" href="#how-it-works">See how it works</a>
       </div>
       <p class="hero-trust-strip">
-        Apache 2.0 · 27 languages · Runs entirely on your machine · 459 GitHub stars · 7,731 PyPI installs/month
+        Free CLI · Apache 2.0 · 27 languages · 7,731 PyPI installs/month · Runs entirely on your machine
       </p>
     </div>
   </header>
@@ -371,7 +370,7 @@
               <td class="yes">Yes (paid)</td>
             </tr>
             <tr>
-              <th scope="row">Publishes EU AI Act Article 12 evidence pack</th>
+              <th scope="row">Tamper-evident review attestations (in-toto v1, cosign-verifiable)</th>
               <td class="yes">Yes</td>
               <td class="no">Not advertised</td>
               <td class="no">Not advertised</td>
