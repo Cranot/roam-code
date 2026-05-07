@@ -76,7 +76,7 @@
 
 <h2>[12.46] - 2026-05-07</h2>
 
-<h3>CI fix — ruff lint cleanup on overnight files</h3>
+<h3>CI fix — ruff lint cleanup</h3>
 
 <p>Hotfix after 12.45. The ruff format-check passed in 12.45 but the</p>
 <p>ruff LINT pass (separate) flagged 7 errors across the new files:</p>
@@ -100,11 +100,11 @@
 
 <h2>[12.45] - 2026-05-07</h2>
 
-<h3>CI fix — ruff format on overnight files</h3>
+<h3>CI fix — ruff format on newly-added files</h3>
 
-<p>Hotfix after 12.44. The 9 net-new files added during the overnight</p>
-<p>push (capability.py, cmd_compare.py, cmd_skill_generate.py,</p>
-<p>sarif.py edits, plus 4 test files) were not run through <code>ruff format</code></p>
+<p>Hotfix after 12.44. The 9 net-new files added in 12.43-12.44</p>
+<p>(capability.py, cmd_compare.py, cmd_skill_generate.py, sarif.py edits,</p>
+<p>plus 4 test files) were not run through <code>ruff format</code></p>
 <p>before commit. CI's lint job ran <code>ruff format --check</code> and rejected.</p>
 
 <p>Per the project's known-learning ("Ruff format check in CI: Always run</p>
@@ -114,7 +114,7 @@
 
 <h2>[12.44] - 2026-05-07</h2>
 
-<h3>CI fix — register R5's two new detectors in the catalog</h3>
+<h3>CI fix — register the two new detectors in the catalog</h3>
 
 <p>Hotfix after 12.43. The two new async detectors added in R5</p>
 <p>(async-fire-and-forget-task, async-nested-run) were registered in</p>
@@ -131,8 +131,8 @@
 
 <h3>Major: Capability Registry + 4 new commands + landing-page launch</h3>
 
-<p>This release lands redacted and bundles a</p>
-<p>substantial overnight push (5 web passes + 12 R-phases). Companion to</p>
+<p>This release lands Capability Registry and bundles a</p>
+<p>substantial polish round. Companion to</p>
 <p>the launch of the new commercial landing page at https://roam-code.com.</p>
 
 <h3>New commands (4)</h3>
@@ -142,8 +142,8 @@
 </ul>
 <p>  capability manifest as YAML / JSON / text from any command marked</p>
 <p>  with <code>@roam_capability</code>. Drives Roam Review GitHub App routing +</p>
-<p>  MCP filtering. redacted per</p>
-<p>  <code>build_priorities.md</code>.</p>
+<p>  MCP filtering. Capability Registry per</p>
+<p>  <code>the build plan</code>.</p>
 <ul>
 <li><strong><code>roam skill-generate</code></strong> — Generate an agent-runtime skill manifest</li>
 </ul>
@@ -157,7 +157,7 @@
 </ul>
 <p>  added/removed/moved + per-file complexity deltas + IMPROVED /</p>
 <p>  SIDEWAYS / REGRESSED verdict. The "did this refactor actually</p>
-<p>  work?" tool. Useful for sprint-end measurement.</p>
+<p>  work?" tool. Useful for periodic measurement.</p>
 <ul>
 <li><strong><code>@roam_capability</code> decorator</strong> (not a CLI command but a public API)</li>
 </ul>
@@ -316,10 +316,10 @@
 
 <p>After 8 CI iterations restoring the matrix to green (12.31 → 12.39),</p>
 <p>this release pivots from polish to monetization-aligned shipping.</p>
-<p>Lands the Phase 0 commands from <code>build_priorities.md</code> plus a</p>
+<p>Lands the Phase 0 commands from <code>the build plan</code> plus a</p>
 <p>starter landing-page implementation for the <code>roam.review</code> umbrella.</p>
 
-<h3>New commands (3 — redacted)</h3>
+<h3>New commands (3 — hosted-product groundwork)</h3>
 
 <ul>
 <li><strong><code>roam permit</code></strong> — structural-permission verdict facade for AI</li>

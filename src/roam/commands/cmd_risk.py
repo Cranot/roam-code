@@ -283,7 +283,7 @@ def _callee_chain_domain(conn, symbol_id, domains, max_depth=3):
     help=(
         "Include test files in the ranking. Off by default — test fixtures "
         "co-change with their src files by design and dominate the headline "
-        "redacted, M). The 'risk' framing is for production code."
+        ". The 'risk' framing is for production code."
     ),
 )
 @click.option(

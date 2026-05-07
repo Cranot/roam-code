@@ -113,7 +113,7 @@ def _default_task_path() -> Path:
     "--quick",
     is_flag=True,
     help=(
-        "redactedrun the first 5 tasks only for fast local iteration "
+        "run the first 5 tasks only for fast local iteration "
         "while tweaking rerank weights. The full 30-task bench takes too "
         "long for tight loops."
     ),

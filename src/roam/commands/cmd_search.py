@@ -134,7 +134,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     bm25 = expl.get("bm25_score")
     pagerank = expl.get("pagerank")
     if bm25 is not None and pagerank is not None:
-        # redactedsurface the structural boost so the user can see
+        # surface the structural boost so the user can see
         # whether ordering is BM25-driven or rerank-driven.
         lines.append(f"  score:  BM25={bm25:.4f}  PageRank={pagerank:.6f}")
     elif bm25 is not None:
@@ -193,7 +193,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     default="substring",
     show_default=True,
     help=(
-        "redactedmatch style: ``substring`` (default, LIKE %p%), "
+        "match style: ``substring`` (default, LIKE %p%), "
         "``regex`` (SQLite REGEXP via stdlib re), or ``exact`` "
         "(name = pattern)."
     ),
@@ -204,7 +204,7 @@ def _format_explanation_text(expl: dict) -> list[str]:
     type=int,
     default=0,
     show_default=True,
-    help="redactedboost results in files modified within N days (0 = no boost).",
+    help="boost results in files modified within N days (0 = no boost).",
 )
 @click.pass_context
 def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtures_only, explain, mode, recent_days):
@@ -231,7 +231,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
     like_pattern = f"%{pattern}%"
     mode_lower = (mode or "substring").lower()
     with open_db(readonly=True) as conn:
-        # redactedregister a REGEXP function so SQLite can route
+        # register a REGEXP function so SQLite can route
         # ``WHERE name REGEXP ?`` through Python's ``re`` module. Exact
         # mode bypasses LIKE entirely. Substring mode (default) keeps
         # the existing ``%p%`` semantics.
@@ -278,7 +278,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
             params.append(full_kind)
         where_sql = " AND ".join(where_parts)
         params.append(9999 if full else 50)
-        # redactedrecency boost: when --recent N is set, add a
+        # recency boost: when --recent N is set, add a
         # synthetic ``recency_boost`` column (1 for files modified in the
         # last N days, 0 otherwise) and add it to ORDER BY in front of
         # PageRank. ``files.mtime`` is set during indexing.
@@ -347,7 +347,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         if explain:
             for r in rows:
                 expl = _get_explain_data(conn, r["id"], pattern)
-                # redactedaugment with the per-result PageRank so the
+                # augment with the per-result PageRank so the
                 # user can see structural boost contribution alongside
                 # BM25.
                 expl["pagerank"] = round(r["pagerank"], 6) if r["pagerank"] else 0
@@ -405,7 +405,7 @@ def search(ctx, pattern, full, kind_filter, async_only, decorator_filter, fixtur
         for r in rows:
             refs = ref_counts.get(r["id"], 0)
             pr = r["pagerank"] or 0
-            # Per redacted: 4-decimal PR rounded all
+            #  4-decimal PR rounded all
             # niche/test symbols to 0.0001 — the column lost
             # discrimination. Use significant-figures formatting so
             # 0.000123 → "0.000123" stays distinct from 0.0001.

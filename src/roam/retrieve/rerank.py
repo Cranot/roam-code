@@ -298,8 +298,7 @@ def _rule_yaml_penalty(candidates: list[dict], task: str) -> dict[int, float]:
     Rule files like ``rules/community/correctness/COR-*.yaml`` match
     tokens like "clone", "match", "implement" because they are static-
     analysis rules *about* those concepts — but they are never the
-    answer to "where is X implemented". The redacted
-    showed 6/20 top-K slots eaten by rule YAMLs for a single query.
+    answer to "where is X implemented". The showed 6/20 top-K slots eaten by rule YAMLs for a single query.
 
     Heuristic: only demote when the query looks like an
     implementation question (starts with "where", "how", or

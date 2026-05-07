@@ -1058,7 +1058,7 @@ def _extended_summary(extended_data):
 
 
 def _table_exists(conn, name: str) -> bool:
-    """redactedsmall probe used by the dataflow analyzer.
+    """small probe used by the dataflow analyzer.
 
     Replaces the ``try: SELECT ... LIMIT 0; except: pass`` pattern
     repeated 3 times in the original ``_analyze_dataflow_dead``.
@@ -1071,7 +1071,7 @@ def _table_exists(conn, name: str) -> bool:
 
 
 def _read_caller_line(project_root, file_cache: dict, file_path: str, line_no: int) -> str | None:
-    """redactedreturn the caller's source line text or ``None`` on miss."""
+    """return the caller's source line text or ``None`` on miss."""
     if file_path not in file_cache:
         try:
             file_cache[file_path] = (
@@ -1086,7 +1086,7 @@ def _read_caller_line(project_root, file_cache: dict, file_path: str, line_no: i
 
 
 def _is_return_captured(line_text: str, func_name: str) -> bool:
-    """redacted`<var> = func(...)` captures, but `== func()` does not."""
+    """`<var> = func(...)` captures, but `== func()` does not."""
     if func_name not in line_text:
         return False
     prefix = line_text.split(func_name)[0]
@@ -1094,7 +1094,7 @@ def _is_return_captured(line_text: str, func_name: str) -> bool:
 
 
 def _detect_unused_returns(conn, project_root) -> list[dict]:
-    """redactedA. functions whose return value every caller discards."""
+    """A. functions whose return value every caller discards."""
     findings: list[dict] = []
     funcs_with_return = conn.execute(
         "SELECT s.id, s.name, COALESCE(s.qualified_name, s.name) AS qname, "
@@ -1160,7 +1160,7 @@ def _detect_unused_returns(conn, project_root) -> list[dict]:
 
 
 def _parse_param_names(sig: str) -> list[str]:
-    """redactedextract concrete parameter names from a signature string."""
+    """extract concrete parameter names from a signature string."""
     m = re.search(r"\(([^)]*)\)", sig or "")
     if not m:
         return []
@@ -1178,7 +1178,7 @@ def _parse_param_names(sig: str) -> list[str]:
 
 
 def _detect_dead_param_chains(conn) -> list[dict]:
-    """redactedB. parameters with no return / sink dataflow effect."""
+    """B. parameters with no return / sink dataflow effect."""
     findings: list[dict] = []
     rows = conn.execute(
         "SELECT ts.symbol_id, ts.param_taints_return, ts.param_to_sink, "
@@ -1219,7 +1219,7 @@ def _detect_dead_param_chains(conn) -> list[dict]:
 
 
 def _detect_side_effect_only(conn, unused_return_findings: list[dict]) -> list[dict]:
-    """redactedC. discard-return funcs whose only effects are pure/logging."""
+    """C. discard-return funcs whose only effects are pure/logging."""
     findings: list[dict] = []
     benign = {"pure", "logging"}
     for f in unused_return_findings:
@@ -1261,7 +1261,7 @@ def _analyze_dataflow_dead(conn):
     Returns list of findings: ``[{type, symbol, file, line, reason,
     confidence, call_sites}]``.
 
-    redactedorchestrator only; per-pattern logic moved into
+    orchestrator only; per-pattern logic moved into
     ``_detect_unused_returns`` / ``_detect_dead_param_chains`` /
     ``_detect_side_effect_only``. Cognitive complexity dropped from
     160 to ~10.
@@ -1341,7 +1341,7 @@ def _analyze_dataflow_dead(conn):
     help=(
         "Only show dead exports that ALSO fail roam oracle is-reachable-from-entry. "
         "The really-really-dead set — safe to delete without further investigation. "
-        "Filters out scaffolding redacted) automatically since the oracle marks "
+        "Filters out scaffolding automatically since the oracle marks "
         "those as reason_class=unreachable_scaffolding. Round 4 feature A."
     ),
 )

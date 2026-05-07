@@ -617,7 +617,7 @@ class Indexer:
         try:
             self._do_run(force, verbose=verbose, include_excluded=include_excluded)
         except KeyboardInterrupt:
-            # redactedgraceful Ctrl-C: drop the lock so the user can
+            # graceful Ctrl-C: drop the lock so the user can
             # rerun without manual cleanup. Periodic commits in
             # _advance_processing_progress mean we keep what's been
             # processed; the indexer is incremental and resumes safely.
@@ -708,7 +708,7 @@ class Indexer:
             pass
 
     def _read_index_source(self, full_path: Path, rel_path: str, verbose: bool) -> bytes | None:
-        # Prefetched cache hit (redactedparallel I/O prefetch).
+        # Prefetched cache hit (parallel I/O prefetch).
         cache = getattr(self, "_source_cache", None)
         if cache is not None and rel_path in cache:
             return cache.pop(rel_path)
@@ -723,7 +723,7 @@ class Indexer:
     def _prefetch_sources(self, files_to_process, verbose: bool) -> None:
         """Pre-read source bytes into memory in parallel.
 
-        redactedopt-in via ``ROAM_PARALLEL_INDEX=1``. File I/O dominates
+        opt-in via ``ROAM_PARALLEL_INDEX=1``. File I/O dominates
         on cold caches (network drives, OneDrive, etc.). A thread pool
         eliminates that wait without touching the (serial) DB write path.
         Bytes are stored on ``self._source_cache`` and consumed by

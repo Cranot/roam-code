@@ -86,7 +86,7 @@ def index_in_process(project_path, *extra_args):
 
 @pytest.fixture(autouse=True)
 def _clear_graph_cache_between_tests():
-    """redactedPass 69 introduced a process-wide graph cache keyed on
+    """Pass 69 introduced a process-wide graph cache keyed on
     ``id(conn)``. When tests share a Python process, ``id`` reuse can
     return a stale graph from a previously-closed connection. Clear the
     cache between every test so partition / orchestrate tests don't

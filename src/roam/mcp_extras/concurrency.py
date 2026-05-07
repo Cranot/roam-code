@@ -1,9 +1,9 @@
-"""MCP capacity backpressure — round 4 #14, P.
+"""MCP capacity backpressure —.
 
 The MCP server runs every roam tool as either a thread-pool subprocess
 invocation or an async tool. Without a guard, a parallel batch of 10+
 tool calls overwhelms the executor and FastMCP drops connections
-mid-batch redacted dogfood).
+mid-batch.
 
 This module wraps every tool with a bounded semaphore so:
 

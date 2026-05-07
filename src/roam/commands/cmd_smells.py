@@ -94,18 +94,8 @@ def smells(ctx, file_path, min_severity, include_tooling):
         findings = run_all_detectors(conn)
 
         # Default: exclude tooling, generated, examples, vendor, workspaces,
-        # docs. Per redacted + 2026-05-02 (Python pivot),
-        # the top-N critical smells were dominated by paths the user
-        # didn't write or doesn't want to refactor (``dev/``,
-        # ``.github/scripts/``, ``examples/``, ``workspaces/`` agent
-        # artifacts, vendored packages, codegen output). The shared
-        # path-hint set lives in ``roam.output.file_role_hints`` so all
-        # headline commands stay in sync. ``--include-tooling`` opts
-        # back into the full set.
-        from roam.output.file_role_hints import is_excluded_path
-
-        excluded_tooling = 0
-        if not include_tooling:
+        # docs.
+        if not _show_all:
             tooling_roles = {"ci", "scripts", "build", "generated"}
             tooling_roles_per_file = _file_role_lookup(conn)
             kept: list[dict] = []
@@ -213,7 +203,7 @@ def smells(ctx, file_path, min_severity, include_tooling):
 
         if not detail:
             # Show top 5 with truncated location so the user can jump
-            # straight to the offender. Per redacted:
+            # straight to the offender. 
             # bare symbol names ("main", "buildComment") were
             # ambiguous when the same name lived in multiple files.
             top = findings[:5]

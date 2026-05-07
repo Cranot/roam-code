@@ -1,6 +1,6 @@
 """``roam why-fail <test>`` — triage helper for failing tests.
 
-redactedgiven a failing test path or symbol, find recently-changed
+given a failing test path or symbol, find recently-changed
 symbols that the test transitively reaches via the call graph. The
 top suspects are the ones that:
 

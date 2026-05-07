@@ -3,12 +3,12 @@
 Several commands have made bad assumptions:
 
 * ``roam describe`` / ``roam preflight`` hardcode ``pytest tests/`` as the
-  test command even on Vue/Vitest projects redacted).
+  test command even on Vue/Vitest projects.
 * ``roam bus-factor`` warns about bus-factor=1 on every directory of a
   single-author project, drowning the actually-interesting STALE
-  modules redacted).
+  modules.
 * ``roam alerts`` thresholds are absolute and never adapt to project size
-  or shape redacted).
+  or shape.
 
 Rather than each command re-inventing detection, they consult
 :func:`detect_project_shape` and adapt their behaviour.

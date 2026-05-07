@@ -19,7 +19,7 @@ def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
     """Collect affected files, direct callers by kind, and SF test files.
 
     When ``max_hops`` is set, the BFS is bounded to that many hops instead
-    of expanding to the full transitive descendants set (Pass 57).
+    of expanding to the full transitive descendants set.
     """
     import networkx as nx
 
@@ -69,7 +69,7 @@ def _collect_dependents(G, RG, sym_id, conn, max_hops: int | None = None):
 def _find_indirect_refs(conn, sym, already_affected_files: set, *, limit: int = 50) -> list[dict]:
     """Scan source files for string-literal references to a symbol.
 
-    redactedpicks up registry-dispatch consumers (e.g. cli's
+    picks up registry-dispatch consumers (e.g. cli's
     ``_COMMANDS = {"foo": ("module.path", "attr_name")}``) that the
     static call graph misses. Excludes the symbol's own file and any
     file already in the directly-affected set so we surface NEW edges,
@@ -151,7 +151,7 @@ def _impact_verdict(dependents, affected_files, total_syms):
     type=int,
     default=None,
     help=(
-        "redactedbound the BFS at N hops (default: full transitive). "
+        "bound the BFS at N hops (default: full transitive). "
         "``--hops 1`` mirrors ``roam uses``; ``--hops 2`` shows callers "
         "of callers; useful to scope a refactor to a controlled radius."
     ),
@@ -252,7 +252,7 @@ def impact(ctx, name, hops):
 
         weighted_impact = sum(ppr.get(d, 0) for d in dependents)
 
-        # redacteddispatch-via-registry detection. roam's call graph
+        # dispatch-via-registry detection. roam's call graph
         # only sees direct calls; consumers that route through string
         # lookup tables (cli ``_COMMANDS``, ask recipe registry, plugin
         # entry points) are invisible. Scan source files for string

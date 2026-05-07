@@ -245,7 +245,7 @@ def _retrieve_confidence(candidates: list[dict], task: str = "") -> str:
     type=str,
     default=None,
     help=(
-        "redactedrestrict candidates to files under this directory "
+        "restrict candidates to files under this directory "
         "(repeat-friendly for monorepos, e.g. ``--scope src/api`` or "
         "``--scope packages/web/src``)."
     ),
@@ -340,7 +340,7 @@ def retrieve(ctx, task, budget, k, rerank, seed_files, dry_run, scope_path):
 
     candidates = result["candidates"]
     if scope_path:
-        # redactedpost-filter candidates by path prefix. Normalising
+        # post-filter candidates by path prefix. Normalising
         # to forward slashes keeps Windows happy.
         normalised_scope = scope_path.replace("\\", "/").rstrip("/")
         candidates = [

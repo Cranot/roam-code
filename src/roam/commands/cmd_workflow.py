@@ -118,7 +118,7 @@ _NEXT_HINTS: dict[str, list[str]] = {
     "next_after",
     type=str,
     default=None,
-    help="redactedgiven the previously-run command, suggest what to run next.",
+    help="given the previously-run command, suggest what to run next.",
 )
 @click.pass_context
 def workflow(ctx, recipe_name, list_recipes, query, next_after):
@@ -126,7 +126,7 @@ def workflow(ctx, recipe_name, list_recipes, query, next_after):
     json_mode = ctx.obj.get("json") if ctx.obj else False
 
     if next_after:
-        # redactedsuggest what to run next given the prior command.
+        # suggest what to run next given the prior command.
         from roam.output.formatter import json_envelope, to_json
 
         suggestions = _NEXT_HINTS.get(next_after.lower(), [])

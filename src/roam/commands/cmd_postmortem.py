@@ -13,7 +13,7 @@ current detector set; the detection rules are usually stable
 enough across the time-window of interest (last 30-90 days) that
 this gives an honest answer.
 
-redacted: stand-alone OSS artifact
+redacted.: stand-alone OSS artifact
 that becomes the redacted demo. The pull
 quote we want is:
 
@@ -186,9 +186,9 @@ def postmortem_cmd(ctx, commit_range: str, limit: int, show_n: int):
       roam postmortem main..feature/new-thing
       roam --json postmortem HEAD~50..HEAD > postmortem.json
 
-    The single redacted demo per the
-    v2 monetization plan: "if it retroactively catches my Q1
-    incidents, redacted."
+    A retrospective replay: would today's detector set have caught the
+    incidents already in your git history? Useful pre-purchase signal —
+    "if it retroactively flags my Q1 incidents, the gate is worth wiring."
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

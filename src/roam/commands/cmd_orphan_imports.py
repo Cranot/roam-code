@@ -1,13 +1,13 @@
 """``roam orphan-imports`` — imports that don't resolve to a known module.
 
-redactedquick lint that catches:
+quick lint that catches:
 
 * ``import x.y`` / ``from x.y import z`` where ``x.y`` is neither in the
   indexed source tree nor a stdlib / installed package.
 * Typo'd local imports (e.g. ``from roam.cmds.foo import bar`` when the
   module is ``roam.commands.cmd_foo``).
 
-redactedextended to JS / TS (``import 'x'``) and Go (``import "x"``).
+extended to JS / TS (``import 'x'``) and Go (``import "x"``).
 Each language gets its own ``_indexed_modules`` accumulator and import
 regex; the resolution rules differ per language.
 """
@@ -126,7 +126,7 @@ def _modules_from_path(rel_path: str, out: set[str]) -> None:
 def _indexed_python_modules(conn) -> set[str]:
     """Return dotted-module names derivable from indexed Python files.
 
-    redactedalso walks ``src/`` directly (filesystem) so modules
+    also walks ``src/`` directly (filesystem) so modules
     added since the last index don't get falsely flagged as
     internal-typo orphans. The DB query catches the bulk; the filesystem
     walk fills in any new files the index hasn't seen yet.
@@ -145,7 +145,7 @@ def _indexed_python_modules(conn) -> set[str]:
     for r in rows:
         _modules_from_path(r[0], out)
 
-    # redactedfilesystem fallback for newly-added files.
+    # filesystem fallback for newly-added files.
     src_root = Path("src")
     if src_root.is_dir():
         for py in src_root.rglob("*.py"):

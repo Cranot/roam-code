@@ -115,7 +115,7 @@ def weather(ctx, count):
         # Score is geometric mean of churn_norm × cmplx_norm. Empirically
         # the top-N rows fall in 1.0-3.0 — formatting with ``.0f`` rounded
         # everything to 1, killing the discrimination the column is
-        # supposed to provide (redacted). Two decimals
+        # supposed to provide. Two decimals
         # restore signal.
         table_rows = []
         for score, churn, complexity, commits, authors, reason, path in scored[:count]:

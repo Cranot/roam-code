@@ -1,4 +1,4 @@
-"""redactedbehavioural tests for previously-untested commands.
+"""behavioural tests for previously-untested commands.
 
 The audit found ``py-modern``, ``graph-stats``, ``mcp-status``,
 ``pre-commit``, and ``exit-codes`` had 0–1 references in the test

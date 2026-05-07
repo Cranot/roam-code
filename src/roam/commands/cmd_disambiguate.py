@@ -1,6 +1,6 @@
 """``roam disambiguate <name>`` — list every symbol matching this name.
 
-redactedagents calling ``roam search`` then picking the first result
+agents calling ``roam search`` then picking the first result
 sometimes pick the wrong one when several functions share a name.
 This command shows all matches with the disambiguators (file, line,
 kind, signature, first docstring line) plus PageRank as a tiebreaker.

@@ -1,6 +1,6 @@
 """``roam stats`` — aggregate metrics over the index.
 
-redactedsingle overview number for "where am I". Counts files by
+single overview number for "where am I". Counts files by
 language, file role, and symbol kind; reports recent commit activity.
 Useful as the first thing an agent runs after ``roam init`` to size
 the codebase.

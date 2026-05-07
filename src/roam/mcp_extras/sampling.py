@@ -86,7 +86,7 @@ async def compress_with_sampling(
     ``ctx.sample`` method, transport failure). Callers should treat
     ``None`` as "fall back to the raw payload".
 
-    redactedsending payloads through the client's LLM is OFF by
+    sending payloads through the client's LLM is OFF by
     default for GDPR / EU AI Act credibility. Set
     ``ROAM_AI_ENABLED=1`` (or ``=true``) to opt in. Without the env
     var, this function returns ``None`` even if the client offers

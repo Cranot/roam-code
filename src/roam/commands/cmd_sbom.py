@@ -48,7 +48,7 @@ def _normalize_dep_name(name: str) -> str:
 
 
 def _node_match_keys(data) -> tuple[str, str, str]:
-    """redactedpre-normalise the three node fields used for dep matching."""
+    """pre-normalise the three node fields used for dep matching."""
     qname = (data.get("qualified_name") or "").lower().replace("-", "_").replace(".", "_")
     name_lower = (data.get("name") or "").lower().replace("-", "_").replace(".", "_")
     file_path = (data.get("file_path") or "").lower().replace("-", "_").replace(".", "_")
@@ -56,7 +56,7 @@ def _node_match_keys(data) -> tuple[str, str, str]:
 
 
 def _matches_dep(qname: str, name_lower: str, file_path: str, norm: str) -> bool:
-    """redactedpredicate version of the inner dep-match check."""
+    """predicate version of the inner dep-match check."""
     if qname and (qname.startswith(norm + "_") or qname.startswith(norm + "/") or qname == norm):
         return True
     if norm in file_path:
@@ -67,7 +67,7 @@ def _matches_dep(qname: str, name_lower: str, file_path: str, norm: str) -> bool
 
 
 def _trace_entry_reach(G, entries, nid):
-    """redactedreturn the entry-point node IDs that can reach ``nid``."""
+    """return the entry-point node IDs that can reach ``nid``."""
     import networkx as nx
 
     reach: list = []
@@ -81,7 +81,7 @@ def _trace_entry_reach(G, entries, nid):
 
 
 def _build_norm_lookup(dep_names: list[str]) -> dict[str, list[str]]:
-    """redactedgroup orig dep names by their normalised key."""
+    """group orig dep names by their normalised key."""
     norm_to_dep: dict[str, list[str]] = {}
     for dep in dep_names:
         norm = _normalize_dep_name(dep)
@@ -91,7 +91,7 @@ def _build_norm_lookup(dep_names: list[str]) -> dict[str, list[str]]:
 
 
 def _record_match(info: dict, display_name: str, G, entries, nid) -> None:
-    """redactedupdate a single dep's reachability record."""
+    """update a single dep's reachability record."""
     if display_name not in info["matched_symbols"]:
         info["matched_symbols"].append(display_name)
     if info["reachable"]:
@@ -114,7 +114,7 @@ def _compute_reachability(conn, dep_names: list[str]) -> dict[str, dict]:
     Returns ``{dep_name: {"reachable": bool, "entry_points": [...],
     "matched_symbols": [...]}}``.
 
-    redactedorchestrator only. Pre-Pass 114 this function had cc=150
+    orchestrator only. this function had cc=150
     and nesting depth 8 (the deepest in the repo). Per-symbol logic now
     lives in ``_node_match_keys``, ``_matches_dep``,
     ``_trace_entry_reach``, ``_build_norm_lookup``, ``_record_match``.

@@ -1,4 +1,4 @@
-"""Tests for R2 — roam skill-generate.
+"""Tests for roam skill-generate.
 
 Generates an agent-runtime skill manifest from the capability registry.
 Targets: claude (SKILL.md), cursor (.mdc rule), continue (config snippet),

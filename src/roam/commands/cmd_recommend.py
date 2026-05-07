@@ -1,6 +1,6 @@
 """``roam recommend <symbol>`` — surface symbols related to a given one.
 
-redactedthree signal sources combined:
+three signal sources combined:
 
   * call-graph neighbours (inbound + outbound, 1 hop)
   * git co-change (other symbols whose files changed in the same commits)

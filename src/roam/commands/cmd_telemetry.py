@@ -1,6 +1,6 @@
 """``roam telemetry`` — surface the opt-in local telemetry ring buffer.
 
-redactedlist slowest and most recent commands recorded under
+list slowest and most recent commands recorded under
 ``ROAM_TELEMETRY_LOCAL=1``. Strictly local; no network egress.
 """
 

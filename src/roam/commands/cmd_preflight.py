@@ -220,7 +220,7 @@ def _check_affected_tests(conn, sym_ids, file_paths):
             test_files.append(r["file"])
 
     # Pick the actual test runner from package.json / pyproject when
-    # possible — round 4 #18 noted preflight suggesting `pytest tests/`
+    # possible — noted preflight suggesting `pytest tests/`
     # for Vitest projects.
     try:
         from roam.db.connection import find_project_root
@@ -814,7 +814,7 @@ def preflight(ctx, target, staged):
         click.echo(f"  Conventions:      {conv_desc:<40s} {_severity_tag(convs['severity'])}")
 
         # Fitness — distinguish target-attributed vs sibling failures
-        # redacted). The same rule can fail because of OTHER code in
+        #. The same rule can fail because of OTHER code in
         # the same file ("Max function complexity 50" tripped by a
         # 700-cc neighbour); blaming the changing symbol for that is
         # misleading. We surface both buckets explicitly.
@@ -839,7 +839,7 @@ def preflight(ctx, target, staged):
         click.echo(f"\n  Overall risk: {risk}")
 
         # Risk driver — name the row that's pushing the verdict so an
-        # agent doesn't have to deduce it (redacted).
+        # agent doesn't have to deduce it.
         # Pick the highest-severity row, breaking ties by category
         # priority (complexity > fitness > tests > coupling > blast >
         # conventions — most actionable first).

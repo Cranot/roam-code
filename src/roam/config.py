@@ -121,7 +121,7 @@ def load_config(project_root: Path | None = None) -> dict[str, dict[str, Any]]:
 def get_retrieve_weights(project_root: Path | None = None) -> dict[str, float]:
     """Convenience accessor — return the five reranker weights as floats.
 
-    redactedenv vars override config.toml so quick weight-tuning loops
+    env vars override config.toml so quick weight-tuning loops
     don't need to mutate the project file. Recognised vars:
     ``ROAM_RERANK_ALPHA`` ``ROAM_RERANK_BETA`` ``ROAM_RERANK_GAMMA``
     ``ROAM_RERANK_DELTA`` ``ROAM_RERANK_EPSILON`` ``ROAM_RERANK_ZETA``.

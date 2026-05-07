@@ -1,7 +1,6 @@
 """Generate site data for the competitive landscape page.
 
 Source of truth:
-- internal/competitor_tracker.md (matrix + decision tables)
 - SCORING_RUBRIC (7 categories, 45 binary/tiered criteria, 100 pts total)
 - CRITERIA_DATA (per-competitor criterion values)
 """
@@ -2132,7 +2131,7 @@ def main() -> int:
         "--tracker",
         type=Path,
         default=default_tracker_path(),
-        help="Path to internal/competitor_tracker.md",
+        help="Path to a competitor tracker markdown file (optional)",
     )
     parser.add_argument(
         "--out",

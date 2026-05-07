@@ -23,7 +23,7 @@ def extract_symbols(tree, source: bytes, file_path: str, extractor) -> list[dict
     # Ensure every symbol dict has all required keys with defaults.
     # Python pivot v12.4 added ``is_async`` and ``decorators`` — they
     # must pass through this normalisation or the indexer never sees
-    # them (caught by redacted R3).
+    # them (caught by ).
     normalised = []
     for sym in symbols:
         normalised.append(

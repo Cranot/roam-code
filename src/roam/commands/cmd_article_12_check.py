@@ -15,7 +15,7 @@ This command runs a checklist over the indexed repo and emits a
 is installed). Each item references the specific Article (12, 18, 19)
 or Annex (III) it maps to.
 
-redacted: stand-alone OSS funnel artifact
+redacted.: stand-alone OSS funnel artifact
 that captures redacted before they pick another
 vendor. The pull quote is:
 
@@ -342,7 +342,7 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
       roam article-12-check --pdf assessment.pdf
       roam --json article-12-check > envelope.json
 
-    redacted — captures Article-12-curious
+    redacted. — captures Article-12-curious
     leads before they pick another vendor.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False

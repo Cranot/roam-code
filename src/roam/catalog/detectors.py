@@ -1624,7 +1624,7 @@ _FRAMEWORK_PROFILES: dict[str, dict[str, set[str]]] = {
         },
     },
     "vue3-tanstack": {
-        # Vue 3 + TanStack Vue Query patterns observed in redacted FP batch.
+        # Vue 3 + TanStack Vue Query patterns observed in a Vue 3 + Laravel codebase FP batch.
         "in_memory_exact": {
             "queryclient.fetchquery",
             "queryclient.ensurequerydata",
@@ -3976,7 +3976,7 @@ def _calibrate_finding(finding: dict, context: dict | None) -> dict:
     # M8 — confidence calibration floor.
     # Categories where the FP-fix is heuristic-only (no AST-level proof)
     # cap at 'medium' regardless of caller-count or runtime boost. Real-world
-    # calibration on redacted showed "high confidence" branching-recursion
+    # calibration on a Vue 3 + Laravel codebase showed "high confidence" branching-recursion
     # was 0/1 true positive; same pattern likely on sort-then-subscript when
     # the result is also iterated.
     _MEDIUM_FLOOR_TASKS = {"branching-recursion", "sort-to-select"}

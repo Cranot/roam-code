@@ -1,6 +1,6 @@
 """``roam graph-stats`` — graph-level invariants for the symbol graph.
 
-redactedsingle overview number for "how dense / connected / cyclic
+single overview number for "how dense / connected / cyclic
 is this codebase". Reports density, connected components, average
 in/out degree, top in-degree symbols. Diameter is approximated on a
 sample of nodes to stay fast.

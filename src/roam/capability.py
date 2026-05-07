@@ -1,6 +1,6 @@
 """Capability Registry — decorator-driven introspection for roam commands.
 
-redacted redacted. The
+Capability Registry — declarative manifest of public surface. The
 architect's correction: the per-command capability YAML must be derived
 from decorators, not hand-edited. This module implements the decorator
 plus an emitter that walks all registered commands and produces a

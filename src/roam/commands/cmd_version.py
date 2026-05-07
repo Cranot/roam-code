@@ -1,6 +1,6 @@
 """``roam version`` — print the installed roam-code version.
 
-redactedwith ``--check``, also queries PyPI (with a tight timeout) to
+with ``--check``, also queries PyPI (with a tight timeout) to
 report whether a newer version is available. Offline-friendly: when
 PyPI is unreachable, just prints the local version. No nag.
 """
@@ -46,7 +46,7 @@ def _pypi_latest() -> str | None:
 
 
 @click.command()
-@click.option("--check", "do_check", is_flag=True, help="redactedalso query PyPI for the latest version.")
+@click.option("--check", "do_check", is_flag=True, help="also query PyPI for the latest version.")
 @click.pass_context
 def version(ctx, do_check) -> None:
     """Print the installed roam-code version (and check PyPI with --check)."""

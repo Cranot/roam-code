@@ -1,6 +1,6 @@
 """``roam pre-commit`` — install or print a git pre-commit hook.
 
-redactedgenerates a hook that runs ``git diff --cached | roam critique``
+generates a hook that runs ``git diff --cached | roam critique``
 on staged changes, exiting non-zero on high-severity findings. Idempotent:
 installing twice is a no-op (rewrites the same content).
 """

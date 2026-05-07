@@ -109,9 +109,9 @@ _CORE_TOOLS = {
     "roam_oracle_is_clone_of",
     # v12.1 — LLM-augmented taint classification (1)
     "roam_taint_classify",
-    # v12.16 / redactedmachine-readable tool catalog (1)
+    # v12.16 / machine-readable tool catalog (1)
     "roam_catalog",
-    # v12.19 / redactedagent-actionable wrappers for previously CLI-only signals (5)
+    # v12.19 / agent-actionable wrappers for previously CLI-only signals (5)
     "roam_alerts",
     "roam_timeline",
     "roam_test_impact",
@@ -270,7 +270,7 @@ else:
 
 
 _REGISTERED_TOOLS: list[str] = []
-# redactedparallel registry of tool metadata so ``roam_catalog`` can
+# parallel registry of tool metadata so ``roam_catalog`` can
 # enumerate every tool in one call without re-introspecting FastMCP.
 _TOOL_METADATA: dict[str, dict] = {}
 
@@ -783,7 +783,7 @@ def _tool(name: str, description: str = "", output_schema: dict | None = None):
 
         fn = wrap_with_guard(name, fn)
         _REGISTERED_TOOLS.append(name)
-        # redactedextract richer metadata from the tool's docstring so
+        # extract richer metadata from the tool's docstring so
         # ``roam_catalog`` consumers don't need to fetch each tool's
         # full description to pick the right one.
         when_to_use = ""
@@ -951,7 +951,7 @@ def _classify_error(stderr: str, exit_code: int) -> tuple[str, str, bool]:
     return ("UNKNOWN", "check the error message for details.", False)
 
 
-# redactedseverity bucket per error code. Lets agents branch on
+# severity bucket per error code. Lets agents branch on
 # "warning vs error vs fatal" without parsing the message.
 _SEVERITY_MAP: dict[str, str] = {
     "INDEX_NOT_FOUND": "error",
@@ -969,7 +969,7 @@ _SEVERITY_MAP: dict[str, str] = {
 }
 
 
-# redactederror storm rate-limit. When the same error_code fires N
+# error storm rate-limit. When the same error_code fires N
 # times in a row, the verbose envelope (hint, suggested_action,
 # doc_link, severity) is dropped on subsequent fires and replaced with
 # a tight ``{error_code, repeat_count}`` shape. The full envelope
@@ -981,11 +981,11 @@ _ERROR_STORM_STATE: dict[str, int] = {"_last_code": 0, "_count": 0}
 def _structured_error(error_dict: dict) -> dict:
     """Wrap error dict with MCP-compliant structured error fields (#116, #117).
 
-    redactedalso fills the ``doc_link`` field so agents have a stable
+    also fills the ``doc_link`` field so agents have a stable
     URL for self-service troubleshooting per error code.
-    redactedadds a ``severity`` field (info | warning | error | fatal)
+    adds a ``severity`` field (info | warning | error | fatal)
     so agents can branch on severity without parsing the message.
-    redactedwhen the same ``error_code`` fires ≥
+    when the same ``error_code`` fires ≥
     ``_ERROR_STORM_THRESHOLD`` times in a row, drop the verbose fields
     on subsequent fires to save tokens in agent loops.
     """
@@ -1450,9 +1450,7 @@ def _score_prepare_change_recipe(sub_results: list[tuple[str, dict]]) -> str:
         "find-bug": 0.0,
     }
 
-    # High complexity + high fan-out = orchestrator redacted dogfood:
-    # useTableData with cc=694, fan-out=13, churn=3244 should NOT score
-    # safe-delete-check).
+    # High complexity + high fan-out = orchestrator.
     if complexity >= 50:
         scores["refactor-orchestrator"] += 1.5
     if fan_out >= 8:
@@ -2334,7 +2332,7 @@ async def health(
         back to the raw envelope when sampling is unavailable.
     """
     result = _run_roam(["health"], root)
-    # redactedwhen the issue count is huge, drop the verbose lists
+    # when the issue count is huge, drop the verbose lists
     # and keep only the score + per-category counts. The full payload is
     # always fetched on disk (cache hit on the next call would still
     # have it); this just trims the per-call MCP transport. Caller can
@@ -2857,7 +2855,7 @@ def oracle_is_clone_of(name: str, root: str = ".") -> dict:
     ),
 )
 def oracle_batch(items: list, root: str = ".") -> dict:
-    """Batch multiple oracle queries (round 4 feature E).
+    """Batch multiple oracle queries.
 
     WHEN TO USE: replaces N round-trips when verifying multiple symbols.
     Each item declares which oracle to invoke and the symbol/path to query.
@@ -6434,7 +6432,7 @@ def roam_clean(root: str = ".") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# redactedroam_catalog: machine-readable list of all registered tools
+# roam_catalog: machine-readable list of all registered tools
 # ---------------------------------------------------------------------------
 
 
@@ -6499,7 +6497,7 @@ def roam_catalog(root: str = ".") -> dict:
 
 
 # ---------------------------------------------------------------------------
-# redactedfive MCP wrappers for previously CLI-only agent signals
+# five MCP wrappers for previously CLI-only agent signals
 # ---------------------------------------------------------------------------
 
 
@@ -6707,7 +6705,7 @@ def mcp_cmd(transport, host, port, no_auto_index, list_tools, list_tools_json, c
             # Include the inputSchema (parameters) so this output is a
             # complete proxy for the MCP ``tools/list`` response.
             # Conformance checkers and registry validators expect
-            # inputSchema to be present (redacted).
+            # inputSchema to be present ( ).
             try:
                 input_schema = tool.parameters
             except AttributeError:

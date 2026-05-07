@@ -139,7 +139,7 @@ def get_connection(db_path: Path | None = None, readonly: bool = False) -> sqlit
     conn.execute("PRAGMA temp_store=MEMORY")
     conn.execute("PRAGMA mmap_size=268435456")  # 256MB memory-mapped I/O
 
-    # redactedopt-in query timeout. ``ROAM_QUERY_TIMEOUT_S=N``
+    # opt-in query timeout. ``ROAM_QUERY_TIMEOUT_S=N``
     # installs a progress handler that interrupts queries running
     # past N seconds. SQLite raises ``OperationalError: interrupted``
     # so callers can either retry with a tighter scope or surface a

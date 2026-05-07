@@ -47,7 +47,7 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
     "seed_path",
     type=str,
     default=None,
-    help="redactedrestrict the top-symbols list to symbols reachable from this file.",
+    help="restrict the top-symbols list to symbols reachable from this file.",
 )
 @click.option(
     "--depth",
@@ -55,7 +55,7 @@ def _build_symbol_entry_text(s, *, for_budget: bool = False) -> str:
     type=int,
     default=2,
     show_default=True,
-    help="redactedBFS hop limit when --seed is given.",
+    help="BFS hop limit when --seed is given.",
 )
 @click.pass_context
 def map_cmd(ctx, count, full, budget, seed_path, seed_depth):
@@ -111,7 +111,7 @@ def map_cmd(ctx, count, full, budget, seed_path, seed_depth):
         fetch_limit = count if budget is None else 10_000
         all_ranked = conn.execute(TOP_SYMBOLS_BY_PAGERANK, (fetch_limit,)).fetchall()
 
-        # redactedif a seed file is given, narrow ``all_ranked`` to
+        # if a seed file is given, narrow ``all_ranked`` to
         # symbols reachable from that file within ``seed_depth`` hops.
         if seed_path:
             try:

@@ -6,7 +6,7 @@ import sqlite3
 
 import networkx as nx
 
-# redactedprocess-wide cache. Keyed by (id(conn), 'symbol'/'file').
+# process-wide cache. Keyed by (id(conn), 'symbol'/'file').
 # Compound commands like ``pr-prep`` (and any command that calls a
 # helper that itself calls ``build_*_graph``) used to rebuild the
 # graph multiple times per invocation. Caching by connection identity
@@ -34,7 +34,7 @@ def build_symbol_graph(conn: sqlite3.Connection) -> nx.DiGraph:
     Nodes are symbol IDs with attributes: name, kind, file_path, qualified_name.
     Edges carry a ``kind`` attribute (calls, imports, inherits, etc.).
 
-    redactedmemoised by ``id(conn)``.
+    memoised by ``id(conn)``.
     """
     cached = _cache_get(conn, "symbol")
     if cached is not None:
@@ -71,7 +71,7 @@ def build_file_graph(conn: sqlite3.Connection) -> nx.DiGraph:
     Nodes are file IDs with attributes: path, language.
     Edges carry ``kind`` and ``symbol_count`` attributes.
 
-    redactedmemoised by ``id(conn)``.
+    memoised by ``id(conn)``.
     """
     cached = _cache_get(conn, "file")
     if cached is not None:

@@ -300,9 +300,9 @@ class TestToolDecorator:
             # v12.6 — Python pivot tools (2)
             "roam_py_types",
             "roam_py_modern",
-            # v12.16 / redactedmachine-readable tool catalog (1)
+            # v12.16 / machine-readable tool catalog (1)
             "roam_catalog",
-            # v12.19 / redactedagent-actionable wrappers (5)
+            # v12.19 / agent-actionable wrappers (5)
             "roam_alerts",
             "roam_timeline",
             "roam_test_impact",

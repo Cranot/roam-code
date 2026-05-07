@@ -21,7 +21,7 @@ def test_pass101_query_engine_split_helpers_callable():
 
 
 def test_pass102_render_helpers_extracted():
-    """redactedcontext helpers exist."""
+    """context helpers exist."""
     from roam.commands import cmd_context as m
 
     assert callable(m._render_async_badge)
@@ -35,7 +35,7 @@ def test_pass102_render_helpers_extracted():
 
 
 def test_pass104_doctor_command_registry_loads():
-    """redacteddoctor still validates the command registry after the cycle break."""
+    """doctor still validates the command registry after the cycle break."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "doctor"])
     assert result.exit_code in (0, 1)
@@ -45,7 +45,7 @@ def test_pass104_doctor_command_registry_loads():
 
 
 def test_pass105_health_classifies_infrastructure_as_utility():
-    """redactedcli.py / mcp_server.py / graph/ counted as utilities."""
+    """cli.py / mcp_server.py / graph/ counted as utilities."""
     from roam.commands.cmd_health import _is_utility_path
 
     assert _is_utility_path("src/roam/cli.py")
@@ -57,7 +57,7 @@ def test_pass105_health_classifies_infrastructure_as_utility():
 
 
 def test_pass106_dataflow_dead_helpers_extracted():
-    """redacteddataflow analyzer split into per-pattern helpers."""
+    """dataflow analyzer split into per-pattern helpers."""
     from roam.commands import cmd_dead as m
 
     assert callable(m._table_exists)
@@ -70,7 +70,7 @@ def test_pass106_dataflow_dead_helpers_extracted():
 
 
 def test_pass108_test_map_unknown_symbol_emits_json():
-    """redactedtest-map for a missing symbol returns a JSON envelope."""
+    """test-map for a missing symbol returns a JSON envelope."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "test-map", "TotallyNotASymbolXYZ123"])
     assert result.exit_code == 1
@@ -80,7 +80,7 @@ def test_pass108_test_map_unknown_symbol_emits_json():
 
 
 def test_pass110_orphan_imports_no_false_internal_typos():
-    """redactednewly-added modules don't get flagged as internal_typo."""
+    """newly-added modules don't get flagged as internal_typo."""
     runner = CliRunner()
     result = runner.invoke(cli, ["--json", "orphan-imports", "--lang", "python"])
     assert result.exit_code == 0
@@ -93,7 +93,7 @@ def test_pass110_orphan_imports_no_false_internal_typos():
 
 
 def test_pass110_modules_from_path_helper():
-    """redacted_modules_from_path adds every dotted prefix."""
+    """_modules_from_path adds every dotted prefix."""
     from roam.commands.cmd_orphan_imports import _modules_from_path
 
     out: set[str] = set()

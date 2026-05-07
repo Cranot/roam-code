@@ -703,7 +703,7 @@ def _write_with_preserve(filepath, content):
     "--brief",
     "brief_mode",
     is_flag=True,
-    help="redactedemit a compact summary (top-level fields only) instead of the full agent doc.",
+    help="emit a compact summary (top-level fields only) instead of the full agent doc.",
 )
 @click.pass_context
 def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
@@ -795,7 +795,7 @@ def agent_export(ctx, output, fmt, profile, bundle, write_flag, brief_mode):
             project_name=project_name,
         )
         if not brief_mode:
-            # redactedfull payload only when --brief is OFF.
+            # full payload only when --brief is OFF.
             envelope_kwargs.update(
                 languages=languages,
                 stats=stats,

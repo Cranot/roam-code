@@ -321,7 +321,7 @@ def _expand_via_file_neighbors(
     letting expansion dominate the lexical hits. We cap the expansion
     so a single hub file can't drag in hundreds of unrelated symbols.
 
-    R.8 (redacted): three precision filters layered on top
+    R.8: three precision filters layered on top
     of the original implementation —
 
     * ``seed_top_n`` — only the top-N first-stage hits by fts_score

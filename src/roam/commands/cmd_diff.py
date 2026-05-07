@@ -301,7 +301,7 @@ def _check_naming_rule_scoped(rule, conn, changed_fids):
 @click.option(
     "--since-tag",
     is_flag=True,
-    help="redactedanalyze commits since the most recent tag (auto-detected via git describe).",
+    help="analyze commits since the most recent tag (auto-detected via git describe).",
 )
 @click.pass_context
 def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_tag):
@@ -322,7 +322,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
     ensure_index()
     root = find_project_root()
 
-    # redacted--since-tag auto-fills commit_range with <last-tag>..HEAD.
+    # --since-tag auto-fills commit_range with <last-tag>..HEAD.
     if since_tag and not commit_range:
         import subprocess as _sub
 

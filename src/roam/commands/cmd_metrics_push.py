@@ -11,8 +11,6 @@ the user configures); the dashboard at ``roam.cloud`` reads from the
 same store. ``--dry-run`` prints the payload without posting so users
 and CI pipelines can inspect what would leave their machine before
 opting in.
-
-Pass — Priority C.2.a per internal backlog.
 """
 
 from __future__ import annotations

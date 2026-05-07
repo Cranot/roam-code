@@ -33,7 +33,7 @@ class TestHealthGate:
     def test_gate_fail_high_threshold(self, cli_runner, indexed_project, monkeypatch):
         """Gate should fail when threshold is unreachably high.
 
-        redacteda tiny fixture project can score exactly 100, and the
+        a tiny fixture project can score exactly 100, and the
         comparison is ``score >= h_min`` so ``health_min: 100`` is
         reachable on Linux CI (score 100 ≥ 100 passes). Use 999 instead
         to make the threshold genuinely unreachable.

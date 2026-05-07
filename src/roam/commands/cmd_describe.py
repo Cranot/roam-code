@@ -785,7 +785,7 @@ def _agent_prompt_data(conn):
 
         log_swallowed("cmd_describe:section", _exc)
 
-    # ── Test command guess redacted — read package.json/etc. first) ──
+    # ── Test command guess ──
     from roam.output.project_shape import detect_project_shape
 
     try:

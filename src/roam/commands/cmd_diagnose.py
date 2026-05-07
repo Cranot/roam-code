@@ -190,7 +190,7 @@ def _recent_changes(conn, file_id, limit=5):
     "batch_input",
     type=str,
     default=None,
-    help='redactedread newline-separated symbol names from this file ("-" for stdin) and run diagnose on each.',
+    help='read newline-separated symbol names from this file ("-" for stdin) and run diagnose on each.',
 )
 @click.pass_context
 def diagnose(ctx, name, depth, batch_input):
@@ -215,7 +215,7 @@ def diagnose(ctx, name, depth, batch_input):
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
 
-    # redactedbatch mode runs diagnose on N symbols. Stream output as
+    # batch mode runs diagnose on N symbols. Stream output as
     # one envelope per symbol so the consumer can newline-split the JSON.
     if batch_input:
         import sys as _sys

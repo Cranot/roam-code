@@ -1,6 +1,6 @@
 """``roam test-pyramid`` — count tests per kind, flag inverted pyramids.
 
-Surfaces the Pass 23 ``classify_test_kind`` helper at the CLI level.
+Surfaces the ``classify_test_kind`` helper at the CLI level.
 A healthy pyramid has many unit tests, fewer integration tests, and a
 small e2e cap. When ``e2e + integration > unit``, you're paying for
 slow CI. We surface that via VERDICT.

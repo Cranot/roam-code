@@ -310,7 +310,7 @@ def _check_cross_cluster(conn, changed_sym_ids):
 def _check_orphaned_symbols(conn, changed_sym_ids):
     """Check for symbols in changed files with zero incoming edges.
 
-    redactedsingle batched query for in-degree + symbol metadata
+    single batched query for in-degree + symbol metadata
     instead of two queries per changed symbol.
     """
     challenges = []
@@ -373,7 +373,7 @@ def _check_high_fan_out(conn, changed_sym_ids):
 
     _FAN_OUT_THRESHOLD = 10
 
-    # redactedsingle batched query for fan-out + metadata.
+    # single batched query for fan-out + metadata.
     sid_list = list(changed_sym_ids)
     rows = batched_in(
         conn,

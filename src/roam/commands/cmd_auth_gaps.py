@@ -104,7 +104,7 @@ _AUTHORIZATION_RE = re.compile(
 # M11 — tenant-scoped query patterns. When a controller method scopes its
 # resource to the current tenant / office / user (Laravel multi-tenant
 # pattern), the route-level auth + tenant scope IS the authorization.
-# Real-world FP from redacted: ~115 controller methods flagged because
+# Real-world FP from a Vue 3 + Laravel codebase: ~115 controller methods flagged because
 # none called $this->authorize() — but every one used officeScoped() /
 # multiTenant() / Resource::for(...) which implicitly enforce auth.
 _TENANT_SCOPE_RE = re.compile(

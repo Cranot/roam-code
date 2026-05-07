@@ -1,6 +1,6 @@
 """``roam audit`` — AI Agent Readiness Audit.
 
-redactedPriority 1 strategic blocker per build_priorities.md. Chains
+Priority 1 strategic blocker. Chains
 ``index → describe → health → risk → dead → owner → test-map → pr-risk``
 into a single structured-JSON envelope. The artifact paying customers
 buy: a one-shot audit that calibrates how ready a codebase is for

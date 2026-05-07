@@ -3,7 +3,7 @@
 Compute symbol / file / metric / cycle deltas between a baseline index
 (usually the merge-base or a previous release) and the current one.
 Useful for: "did this refactor actually reduce coupling?", "which files
-got significantly more complex this sprint?", "did we add or remove
+got significantly more complex?", "did we add or remove
 dependency cycles?".
 
 Usage:

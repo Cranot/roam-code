@@ -1,4 +1,4 @@
-"""Tests for R11 — roam migration-plan."""
+"""Tests for roam migration-plan."""
 
 from __future__ import annotations
 

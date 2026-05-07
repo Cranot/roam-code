@@ -1,4 +1,4 @@
-"""redactedcoverage for the ``ROAM_QUERY_TIMEOUT_S`` interrupt path.
+"""coverage for the ``ROAM_QUERY_TIMEOUT_S`` interrupt path.
 
 Pass 58 added an opt-in SQLite progress handler that aborts queries
 running past N seconds. The path was untested. These tests pin both
@@ -78,7 +78,7 @@ def test_zero_or_negative_disabled(monkeypatch, tmp_path):
 
 
 def test_tiny_timeout_aborts_long_query(monkeypatch, tmp_path):
-    """redacteda 0.001s budget should interrupt a heavy CTE query."""
+    """a 0.001s budget should interrupt a heavy CTE query."""
     db_path = tmp_path / "x.db"
     sqlite3.connect(str(db_path)).close()
     monkeypatch.setenv("ROAM_QUERY_TIMEOUT_S", "0.001")

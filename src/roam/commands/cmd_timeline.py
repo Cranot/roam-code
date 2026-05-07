@@ -1,6 +1,6 @@
 """``roam timeline <symbol>`` — chronological commit history that touched a symbol.
 
-redactedjoins ``symbols`` (for the file id of a symbol) with
+joins ``symbols`` (for the file id of a symbol) with
 ``git_file_changes`` (for commits touching that file) and ``git_commits``
 (for author + timestamp + message) to give one tight view of "who has
 worked on this and when". Useful before refactoring a symbol — you see

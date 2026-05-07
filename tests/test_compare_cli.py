@@ -1,4 +1,4 @@
-"""Tests for R8 — roam compare (structural index diff)."""
+"""Tests for roam compare (structural index diff)."""
 
 from __future__ import annotations
 

@@ -37,7 +37,7 @@ import sqlite3
 _FILE_RE = re.compile(r"([A-Za-z0-9_./-]+\.[A-Za-z]{1,8})\b")
 _DOTTED_RE = re.compile(r"\b([A-Za-z_][A-Za-z0-9_]*(?:\.[A-Za-z_][A-Za-z0-9_]+)+)\b")
 _SNAKE_RE = re.compile(r"\b([a-z][a-z0-9]+(?:_[a-z0-9]+)+)\b")
-# UPPER_SNAKE / CONSTANT_NAME — added 2026-05-01 dogfood R13: queries
+# UPPER_SNAKE / CONSTANT_NAME —queries
 # like ``PERSONALIZED_PAGERANK`` previously extracted zero tokens
 # because every regex required at least one lowercase character.
 # Captured tokens are lowercased before downstream FTS so the

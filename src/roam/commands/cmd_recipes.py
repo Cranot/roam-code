@@ -1,6 +1,6 @@
 """``roam recipes`` — list every ask recipe with intent + examples.
 
-redactedsugar over ``roam ask --list`` for discoverability. Useful as
+sugar over ``roam ask --list`` for discoverability. Useful as
 the first thing an agent runs to see what natural-language tasks
 ``roam ask`` handles.
 """

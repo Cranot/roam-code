@@ -15,7 +15,7 @@ def test_pass41_unknown_command_routes_via_classifier():
     result = runner.invoke(cli, ["trace login flow through middleware"])
     assert result.exit_code != 0
     out = (result.output + (str(result.exception) if result.exception else "")).lower()
-    # redactedshould suggest `roam ask "..."` (matches recipe: ...)
+    # should suggest `roam ask "..."` (matches recipe: ...)
     assert "ask" in out or "matches recipe" in out
 
 
@@ -81,7 +81,7 @@ def test_pass44_orphan_imports_command_runs():
 def test_pass44_classify_internal_typo_vs_missing():
     """The detector distinguishes internal-typo from missing-package classes.
 
-    v12.19 / redactedfunction renamed to ``_is_external_python_package``
+    v12.19 / function renamed to ``_is_external_python_package``
     when JS/TS/Go scanners landed.
     """
     from roam.commands.cmd_orphan_imports import _is_external_python_package

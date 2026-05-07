@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [12.46] - 2026-05-07
 
-### CI fix — ruff lint cleanup on overnight files
+### CI fix — ruff lint cleanup
 
 Hotfix after 12.45. The ruff format-check passed in 12.45 but the
 ruff LINT pass (separate) flagged 7 errors across the new files:
@@ -27,11 +27,11 @@ removal only; all tests still green.
 
 ## [12.45] - 2026-05-07
 
-### CI fix — ruff format on overnight files
+### CI fix — ruff format on newly-added files
 
-Hotfix after 12.44. The 9 net-new files added during the overnight
-push (capability.py, cmd_compare.py, cmd_skill_generate.py,
-sarif.py edits, plus 4 test files) were not run through `ruff format`
+Hotfix after 12.44. The 9 net-new files added in 12.43-12.44
+(capability.py, cmd_compare.py, cmd_skill_generate.py, sarif.py edits,
+plus 4 test files) were not run through `ruff format`
 before commit. CI's lint job ran `ruff format --check` and rejected.
 
 Per the project's known-learning ("Ruff format check in CI: Always run
@@ -41,7 +41,7 @@ whitespace-only changes. No behavior change.
 
 ## [12.44] - 2026-05-07
 
-### CI fix — register R5's two new detectors in the catalog
+### CI fix — register the two new detectors in the catalog
 
 Hotfix after 12.43. The two new async detectors added in R5
 (async-fire-and-forget-task, async-nested-run) were registered in
@@ -58,8 +58,8 @@ infrastructure expects. Bumps test_math.py's expected-task count
 
 ### Major: Capability Registry + 4 new commands + landing-page launch
 
-This release lands redacted and bundles a
-substantial overnight push (5 web passes + 12 R-phases). Companion to
+This release lands Capability Registry and bundles a
+substantial polish round. Companion to
 the launch of the new commercial landing page at https://roam-code.com.
 
 ### New commands (4)
@@ -67,8 +67,8 @@ the launch of the new commercial landing page at https://roam-code.com.
 - **`roam capabilities`** — Decorator-driven introspection. Emits the
   capability manifest as YAML / JSON / text from any command marked
   with `@roam_capability`. Drives Roam Review GitHub App routing +
-  MCP filtering. redacted per
-  `build_priorities.md`.
+  MCP filtering. Capability Registry per
+  `the build plan`.
 - **`roam skill-generate`** — Generate an agent-runtime skill manifest
   from the capability registry. 4 emitter targets: `claude` (SKILL.md),
   `cursor` (.mdc rule), `continue` (config snippet), `aider`
@@ -78,7 +78,7 @@ the launch of the new commercial landing page at https://roam-code.com.
 - **`roam compare`** — Structural delta between two indices. Symbols
   added/removed/moved + per-file complexity deltas + IMPROVED /
   SIDEWAYS / REGRESSED verdict. The "did this refactor actually
-  work?" tool. Useful for sprint-end measurement.
+  work?" tool. Useful for periodic measurement.
 - **`@roam_capability` decorator** (not a CLI command but a public API)
   — applied to the 3 Phase 0 commands (permit, postmortem,
   article-12-check). Mark new commands with this so the registry
@@ -162,7 +162,6 @@ on 2026-05-07:
 - Tests added: 32 (capability 11 + sarif 7 + skill 7 + compare 7)
 - Documentation: + cookbook (10 recipes)
 
-### What was deferred to next session
 
 R4 (Dart Tier 1 extractor), R11 (migration-plan CLI), R13 (parallel
 parse for monorepos), R14 (LLM-augmented MCP tool), R15 (why-slow CLI
@@ -197,10 +196,10 @@ behavior change; documentation-only fix to restore CI green.
 
 After 8 CI iterations restoring the matrix to green (12.31 → 12.39),
 this release pivots from polish to monetization-aligned shipping.
-Lands the Phase 0 commands from `build_priorities.md` plus a
+Lands the Phase 0 commands from `the build plan` plus a
 starter landing-page implementation for the `roam.review` umbrella.
 
-### New commands (3 — redacted)
+### New commands (3 — hosted-product groundwork)
 
 - **`roam permit`** — structural-permission verdict facade for AI
   agents. Returns `{verdict, reason, allowed_actions, blocked_actions}`
@@ -543,7 +542,7 @@ Added that as a release-checklist note in `dev/redacted`.
 
 ### Bugfix release — CI green-bar restore + Z-phase polish
 
-12.31 went out with two stale tests (drift from the redacted
+12.31 went out with two stale tests (drift from the hosted-product
 core-tools list landed in 12.27/12.28) plus a Python-3.9 environment
 gap. Both fixed here.
 
@@ -699,7 +698,7 @@ profile was auto-selected so it isn't invisible.
   `Resource::collection(Model::query()->paginate())` controller call).
 - **`roam auth-gaps`** — top-by-controller rollup when ≥10 findings
   cluster on a few controllers. Triage is radically faster on the
-  ~115-finding redacted case.
+  ~115-finding a Vue 3 + Laravel app case.
 - **`roam debt --json`** — every result carries a `roi_band` field
   (high/medium/low) using percentile-adaptive cutoffs (top 10% / next
   25% / rest). CI dashboards can filter on band without re-deriving.
@@ -765,16 +764,16 @@ profile was auto-selected so it isn't invisible.
 
 ## [12.30] - 2026-05-06
 
-### Detector quality round 3 — redacted v12.28 audit follow-ups (E1-E5)
+### Detector quality audit follow-ups
 
 A second dogfood pass of `roam math` / `weather` / `auth-gaps` /
-`migration-safety` / `over-fetch` against the redacted Vue 3 + Laravel
+`migration-safety` / `over-fetch` against the a Vue 3 + Laravel app Vue 3 + Laravel
 multi-tenant codebase surfaced five fresh false-positive classes that
 the 12.28/12.29 rounds didn't catch. All five are fixed here, each with
 regression-corpus fixtures so they can't quietly come back. Web search
 confirmed the patterns we're recognising are the canonical Laravel +
 TypeScript idioms (parent-controller `$this->middleware('auth')` is the
-pre-Laravel-11 base-class auth pattern; PostgreSQL SQLSTATE `42P07` /
+pre-Laravel base-class auth pattern; PostgreSQL SQLSTATE `42P07` /
 MySQL `1050` are the standard "table already exists" idempotency codes
 in stancl/tenancy multi-tenant migrations).
 
@@ -808,7 +807,7 @@ in stancl/tenancy multi-tenant migrations).
   The detector previously regex-scanned only the IMMEDIATE controller
   class. Every `EmployeeController extends DynamicResourceController`
   pattern (where the parent class wires `$this->middleware('auth')` once
-  in its constructor) was generating ~115 false positives on redacted.
+  in its constructor) was generating ~115 false positives on a Vue 3 + Laravel app.
   New `_build_class_source_map` indexes every controller-file class once
   per `auth-gaps` invocation; `_ancestor_has_constructor_auth` walks up
   to 3 ancestors looking for the auth-middleware registration.
@@ -843,7 +842,7 @@ in stancl/tenancy multi-tenant migrations).
 
 #### Tests
 
-- 14 new entries in `tests/regression_fp_fixtures/second_repo_2026_05_06_round2.json`
+- 14 new entries in `tests/regression_fp_fixtures/vue3_laravel_2026_05_06_round2.json`
   drive 4 new corpus helpers (`extract_arg_after`, `try_catch_idempotency`,
   `ancestor_constructor_auth`, `body_shaping`). 34 corpus entries total
   now form the regression tripwire net.
@@ -859,7 +858,7 @@ in stancl/tenancy multi-tenant migrations).
 
 ## [12.29] - 2026-05-06
 
-### Detector quality round 2 — deferred items D1-D7
+### Detector quality deferred items
 
 The 12.28 round shipped 14 FP fixes plus a suppression mechanism. Customer
 feedback flagged seven gaps the rushed round didn't cover; this release
@@ -888,7 +887,7 @@ ships them as a coherent batch.
 - **D4 — Regression-FP fixture corpus.** New `tests/regression_fp_fixtures/`
   directory holds JSON fixtures keyed by detector helper. Adding a new
   fixture is a one-file edit (no Python). Currently covers 19 patterns
-  drawn from the 2026-05-06 redacted FP batch — each is a tripwire
+  drawn from the 2026-05-06 a Vue 3 + Laravel app FP batch — each is a tripwire
   that fails by name if the fix regresses.
 
 #### PR comment renderer
@@ -919,7 +918,7 @@ ships them as a coherent batch.
 
 ## [12.28] - 2026-05-06
 
-### Detector quality round (M1-M14) — false-positive fixes
+### Detector quality round () — false-positive fixes
 
 User feedback after running `roam math` / `over-fetch` / `missing-index` /
 `auth-gaps` on a multi-tenant Laravel + Vue 3 codebase surfaced systematic
@@ -936,7 +935,7 @@ FP patterns. This release ships fixes for all of them.
   `if (depth < limit)` continue form). Plus new `Set/Map/WeakSet`
   parameter detection — functions that carry their own memoisation
   collection no longer flagged as O(2^n). Real-world FP eliminated:
-  `deepEqual` flagged on redacted with `if (depth > 10) return false`
+  `deepEqual` flagged on a Vue 3 + Laravel app with `if (depth > 10) return false`
   on the next line.
 - **M3 — cache-vs-IO distinction expanded.** In-memory call allowlist
   now covers Apollo (`client.readQuery`, `cache.modify`), SWR (`mutate`),
@@ -960,7 +959,7 @@ FP patterns. This release ships fixes for all of them.
 - **M8 — confidence calibration floor.** Categories where the FP-fix is
   heuristic-only (`branching-recursion`, `sort-to-select`) cap at
   "medium" unless there's strong runtime signal. Real-world calibration
-  on redacted showed "high confidence" for these was 0/1 true positive.
+  on a Vue 3 + Laravel app showed "high confidence" for these was 0/1 true positive.
 
 #### Missing-index (`roam missing-index`)
 
@@ -992,7 +991,7 @@ FP patterns. This release ships fixes for all of them.
   the route auth + tenant scope counts as the authorization layer.
   CRUD methods downgraded from "medium" to "low"; read methods skipped
   entirely. Real-world FP eliminated: ~115 controller methods on
-  redacted flagged for missing `$this->authorize()` despite being
+  a Vue 3 + Laravel app flagged for missing `$this->authorize()` despite being
   protected by route Sanctum + officeScoped queries.
 
 #### Over-fetch (`roam over-fetch`)
@@ -1179,7 +1178,7 @@ No new top-level commands; all flags + helpers + content additions.
 
 ## [12.26] - 2026-05-06
 
-### Added — Roam Agent Review + Cloud Lite engines (redacted)
+### Added — Roam Agent Review + Cloud Lite engines (hosted-product layer)
 
 8 new commands ship the Roam Agent Review and Roam Cloud Lite product
 engines plus the EU AI Act Article 12 audit-trail toolkit.
@@ -1405,7 +1404,7 @@ Indexer pipeline ordering fix + two CI test-isolation fixes.
 
 ### Indexer ordering — late-edge resolvers now run BEFORE graph metrics
 
-Pass 69 cached ``build_symbol_graph(conn)`` keyed on ``id(conn)``. The
+cached ``build_symbol_graph(conn)`` keyed on ``id(conn)``. The
 indexer pipeline ran graph metrics first, then the django-post,
 pytest-fixture, and registry-dispatch resolvers — which add edges to
 the DB AFTER the graph was already cached. When a follow-up command
@@ -1445,9 +1444,9 @@ Fix:
 Ten quality + reliability passes (rounds 111-120). Three real CI bugs
 fixed (CI has been red since 12.17), three more cognitive-complexity
 splits, a new audit-report template, and a latent graph-cache leak
-fix from Pass 69.
+fix from .
 
-### redactedcmd_impact JSON contract
+### cmd_impact JSON contract
 
 CI failure at 3.9 + 3.12. When ``roam impact`` finds the symbol in
 the index but NOT in the dependency graph, the path emitted plain
@@ -1455,7 +1454,7 @@ text on stdout, breaking ``--json`` consumers. Wrapped in a proper
 envelope (``summary.in_graph: False``) with the same hint surfaced
 in the ``tip`` field.
 
-### redactedhealth --gate exit code
+### health --gate exit code
 
 CI failure at 3.13. The test asserted ``health_min: 100`` is
 unreachably high but a tiny fixture project scores exactly 100, and
@@ -1463,21 +1462,21 @@ the comparison is ``score >= h_min`` so 100 ≥ 100 passes. Switched
 the test to ``health_min: 999`` to make the threshold genuinely
 unreachable.
 
-### redactedMCP sampling test
+### MCP sampling test
 
-CI failure at 3.11. Pass 98 added the ``ROAM_AI_ENABLED`` opt-in
+CI failure at 3.11. added the ``ROAM_AI_ENABLED`` opt-in
 gate; the existing test never set the env var, so sampling
 returned None on CI. Updated the success-path test to set
 ``ROAM_AI_ENABLED=1`` and added a default-OFF assertion test.
 
-### redacted_compute_reachability split
+### _compute_reachability split
 
 cc 150 (deepest nesting in repo at depth 8) → ~10. Decomposed
 into ``_node_match_keys``, ``_matches_dep``,
 ``_trace_entry_reach``, ``_build_norm_lookup``, ``_record_match``.
 Orchestrator stays under 10 LOC of branching.
 
-### redactedpoll_loop split
+### poll_loop split
 
 cc 154 with 17 params at ``cmd_watch.py:457``. Pulled per-event
 helpers (``_need_force``, ``_scan_disk_changes``,
@@ -1485,34 +1484,34 @@ helpers (``_need_force``, ``_scan_disk_changes``,
 ``_run_guardian_step``) keeping the public signature stable so
 callers and tests are unaffected.
 
-### redactedtests for 5 untested commands
+### tests for 5 untested commands
 
 Added behavioural tests for ``py-modern`` (had 0 references),
 ``graph-stats``, ``mcp-status``, ``pre-commit``, ``exit-codes``
 (each had 1 registration-only reference). 9 new tests.
 
-### redactedROAM_QUERY_TIMEOUT_S coverage
+### ROAM_QUERY_TIMEOUT_S coverage
 
-Pass 58 shipped an opt-in SQLite progress handler. Zero test
+shipped an opt-in SQLite progress handler. Zero test
 coverage existed. Added 4 tests exercising no-env / invalid /
 zero / and a tiny-budget interrupt that should fire OperationalError.
 
-### redactedformat_table budget threading (cmd_context)
+### format_table budget threading (cmd_context)
 
 20 ``format_table()`` calls across 5 files lacked ``budget=``.
 Added ``_table_budget(data)`` helper and threaded the global
 ``--budget`` through cmd_context's ``data`` dict. Wired into the
 two highest-volume call sites (callers + callees lists).
 
-### redactedaudit-report Markdown template
+### audit-report Markdown template
 
-P1.2 strategic blocker per build_priorities.md. Built a 9-section,
+P1.2 strategic blocker. Built a 9-section,
 185-line template at ``docs/audit_report_template.md`` with
 placeholders for every ``roam audit --json`` field. Bridges the
-gap between the engine (Pass 97 ``roam audit``) and the deliverable
+gap between the engine and the deliverable
 artifact paying customers see.
 
-### redacted_build_agent_descriptors split + graph-cache fix
+### _build_agent_descriptors split + graph-cache fix
 
 Top remaining complexity offender: ``_build_agent_descriptors``
 cc=161 in ``graph/partition.py``. Decomposed into 6 small helpers
@@ -1520,7 +1519,7 @@ cc=161 in ``graph/partition.py``. Decomposed into 6 small helpers
 ``_file_majority_owners``, ``_read_only_files_for``,
 ``_boundary_contracts``, ``_cluster_label_for``).
 
-Also fixed a latent state-leak bug from Pass 69's graph-builder
+Also fixed a latent state-leak bug from 's graph-builder
 memoization: the cache was keyed on ``id(conn)`` and Python reuses
 ``id`` values across short-lived objects, so partition tests
 running after orchestrate tests in the same process saw a stale
@@ -1536,7 +1535,7 @@ round is pure cleanup and hardening based on what `roam debt`,
 `roam health`, and `roam complexity` reported about the codebase
 itself.
 
-### redacted`QueryEngine._extract_symbols_from_pattern` cc 198 → ~10
+### `QueryEngine._extract_symbols_from_pattern` cc 198 → ~10
 
 Single most-complex function in the codebase. Decomposed into four
 small helpers (``_find_name_node``, ``_decode_capture``,
@@ -1544,7 +1543,7 @@ small helpers (``_find_name_node``, ``_decode_capture``,
 the orchestrator at ~10 cognitive complexity. All 194 extractor
 tests pass.
 
-### redacted`_render_single_text` cc 189 → smaller orchestrator
+### `_render_single_text` cc 189 → smaller orchestrator
 
 Pulled the per-symbol header rendering (async badge, idiom badge,
 paren-aware decorators block) out of ``cmd_context._render_single_text``
@@ -1553,7 +1552,7 @@ into ``_render_async_badge`` / ``_render_idiom_badge`` /
 handles `parametrize("a,b", [...])` decorators that previously got
 mangled by naive comma-splitting.
 
-### redacteddelete 4 truly-dead exports
+### delete 4 truly-dead exports
 
 `roam dead` aggregated 78 SAFE entries but most are decorator-
 registered MCP tools (false positives the analyzer can't see
@@ -1564,7 +1563,7 @@ references and were genuinely dead: removed
 ``return findings`` on first iteration),
 ``structured_click_exception`` (output/errors).
 
-### redactedbreak the cli ↔ cmd_doctor cycle
+### break the cli ↔ cmd_doctor cycle
 
 `roam health` flagged exactly one actionable cycle: cmd_doctor
 imported `_COMMANDS` from cli, while cli's command registry
@@ -1574,7 +1573,7 @@ Replaced ``from roam.cli import _COMMANDS`` with
 runtime-only — cycle eliminated, doctor still validates every
 registered command.
 
-### redactedhealth 80 → 88 via utility-path classifier fix
+### health 80 → 88 via utility-path classifier fix
 
 The god-component classifier was labeling architectural hubs
 (``cli`` Click root, ``_run_roam`` MCP dispatch, ``build_symbol_graph``)
@@ -1583,7 +1582,7 @@ as actionable when they're SUPPOSED to have high fan-in. Added
 and ``cli.py`` ``mcp_server.py`` ``file_roles.py`` to
 ``_UTILITY_FILE_PATTERNS``. Health score jumped 80 → 88 (+8 pts).
 
-### redacted`_analyze_dataflow_dead` cc 160 → ~10
+### `_analyze_dataflow_dead` cc 160 → ~10
 
 Top of the danger-zone list (cmd_dead.py: 3362 churn × cc=24.6
 × fan-in=8 = score 1.68). The 200-line ``_analyze_dataflow_dead``
@@ -1593,31 +1592,31 @@ mega-function split into ``_table_exists``, ``_read_caller_line``,
 ``_detect_side_effect_only``. Orchestrator stays under 10. All 48
 dead-code tests pass.
 
-### redactedobservability hook extended
+### observability hook extended
 
-Pass 92 covered cmd_metrics + cmd_describe (20 sites). Pass 107
+covered cmd_metrics + cmd_describe (20 sites). 
 adds cmd_understand (4 sites), metrics_history (9 sites), and the
 remaining nested patterns. ``ROAM_VERBOSE=1`` now surfaces 31
 swallow points; remaining ~40 are in less-touched commands and
 will land incrementally.
 
-### redactedsecond `--json` bypass sweep
+### second `--json` bypass sweep
 
 Probed every command with an unknown-symbol input. Caught one new
 bypass: ``roam test-map UnknownXYZ`` printed plain text "Not
 found: ..." instead of a JSON envelope. Fixed.
 
-### redactedTODO/FIXME audit (no real debt)
+### TODO/FIXME audit (no real debt)
 
 22 markers in source; all 22 are intentional —
 ``cmd_test_scaffold.py`` writes "TODO" strings as scaffold output
 (17 sites) and ``cmd_vibe_check.py`` detects TODO patterns in user
 code (5 sites). No actual debt. Decision logged here.
 
-### redactedorphan-imports false-positive sweep
+### orphan-imports false-positive sweep
 
-`orphan-imports` was flagging ``roam.telemetry`` (Pass 42) and
-``roam.observability`` (Pass 92) as ``internal_typo`` because the
+`orphan-imports` was flagging ``roam.telemetry`` and
+``roam.observability`` as ``internal_typo`` because the
 indexed file table was older than these modules.
 ``_indexed_python_modules`` now also walks ``src/`` directly so
 modules added between index runs aren't false-flagged. 30 false
@@ -1634,7 +1633,7 @@ appendix in the docs site, MCP error-storm rate-limiter,
 agent-export `--brief` mode, observability hook for swallowed
 exceptions, and registry-dispatch detection in `roam impact`.
 
-### redacted`--json` empty-state sweep
+### `--json` empty-state sweep
 
 Same class of bug as the 12.18.1 safe-zones hotfix. Fixed three
 real bypasses uncovered by JSON-parse probes:
@@ -1643,7 +1642,7 @@ roads), ``cmd_coverage_gaps`` (missing-filter usage error),
 and ``cmd_config`` where a flag-default mismatch made
 ``roam --json config`` silently produce empty output.
 
-### redactedsilent `except: pass` observability hook
+### silent `except: pass` observability hook
 
 84 ``except Exception: pass`` blocks across 40 files masked
 real failures (missing schema columns, optional dependencies,
@@ -1653,14 +1652,14 @@ which is a no-op unless ``ROAM_VERBOSE=1`` (or
 offenders: ``cmd_metrics`` (12 sites) and ``cmd_describe`` (8
 sites). Rate-limited to 5 reports per scope per process.
 
-### redactedfive MCP wrappers
+### five MCP wrappers
 
 Wired up agent-actionable signals that were CLI-only:
 ``roam_alerts``, ``roam_timeline``, ``roam_test_impact``,
 ``roam_disambiguate``, ``roam_why_fail``. All five added to
 the core preset (35 → 41 core tools).
 
-### redactedN+1 SQL batching
+### N+1 SQL batching
 
 Replaced per-symbol ``conn.execute`` loops in
 ``cmd_adversarial`` (orphaned-symbols + high-fan-out checks)
@@ -1669,7 +1668,7 @@ with a single ``batched_in()`` query. On a 14k-symbol repo,
 now one batch per check. Same pattern for ``cmd_affected``
 (start-symbol collection).
 
-### redactedauto-regenerated command reference
+### auto-regenerated command reference
 
 Hand-curated workflow sections in
 ``docs/site/command-reference.html`` now have a complete
@@ -1679,14 +1678,14 @@ organised by category, between
 ``python dev/build_command_reference.py``. Coverage went from
 73 to 185 commands documented.
 
-### redactedcross-language `orphan-imports`
+### cross-language `orphan-imports`
 
-Pass 44 was Python-only. Extended to JS/TS (path-rewrite
+was Python-only. Extended to JS/TS (path-rewrite
 resolution + bare-specifier detection) and Go (stdlib +
 hostname-shaped import path heuristic). New ``--lang`` flag
 (``all`` / ``python`` / ``javascript`` / ``go``).
 
-### redacted`roam audit`
+### `roam audit`
 
 Build-priorities P1: revenue-blocker meta-command. Chains
 ``health → debt → dead → test-pyramid → api → stats →
@@ -1695,7 +1694,7 @@ top-level summary (verdict, health_score, debt_total,
 danger_zone_count, api_surface, etc.). Pass ``--brief`` to drop
 per-section detail.
 
-### redactedAI-on-client-code default OFF
+### AI-on-client-code default OFF
 
 Sampling/LLM hook in ``mcp_extras/sampling.py`` now requires
 ``ROAM_AI_ENABLED=1`` (or ``=true``) to dispatch payloads to
@@ -1703,7 +1702,7 @@ the client's LLM. Without the env var, the hook returns
 ``None`` and callers fall back to the raw envelope. GDPR / EU
 AI Act credibility blocker for the first paid audit.
 
-### redacted`roam impact` dispatch-via-registry
+### `roam impact` dispatch-via-registry
 
 Dogfood #189 — the call graph misses consumers that route
 through string-lookup tables (cli ``_COMMANDS``, ask recipes,
@@ -1712,7 +1711,7 @@ plugin entry points). New ``indirect_refs`` field in the
 matching the symbol's name/qname. Surfaces ``43 sites`` for
 ``health`` that the static graph misses.
 
-### redactedagent-export `--brief`
+### agent-export `--brief`
 
 ``roam --json agent-export`` previously emitted ~6 KB of
 nested JSON (directory layout, key files, hotspots, layers,
@@ -1746,44 +1745,44 @@ that drops verbose envelope on repeated failures, and a
 recheck-driven shipping pipeline that caught residual stale
 counts left over from the 12.17 ship.
 
-### redacted`roam disambiguate <name>`
+### `roam disambiguate <name>`
 
 Lists every symbol matching the name with file/line/kind/
 signature/docstring snippet + PageRank tiebreaker. Saves
 agents from picking the wrong overload when names collide.
 
-### redacted`roam pre-commit`
+### `roam pre-commit`
 
 Generates a git pre-commit hook that runs `git diff --cached |
 roam critique` on staged changes. Idempotent installer
 (``--install``); preview-only by default (``--print``).
 ``ROAM_PRECOMMIT_SKIP=1`` to bypass.
 
-### redacted`roam mcp-status`
+### `roam mcp-status`
 
 Companion to `roam doctor` for the MCP transport: preset,
 registered tool count, backpressure limits (max_concurrent,
 in_flight, busy_responses_total), result-cache size, watcher
 state.
 
-### redacted`roam test-impact <range>`
+### `roam test-impact <range>`
 
 Sharper than `affected-tests`. Walks BFS over the reverse call
 graph from each changed symbol; ranks tests by the number of
 changed symbols that reach them.
 
-### redactedrerank weights via env vars
+### rerank weights via env vars
 
 `ROAM_RERANK_ALPHA` / `BETA` / `GAMMA` / `DELTA` / `EPSILON` /
 `ZETA` override `[retrieve]` config without touching
 config.toml. Useful for quick weight-tuning loops.
 
-### redacted`roam fitness --explain`
+### `roam fitness --explain`
 
 Confirmed already shipped. Verified the existing flag covers
 the per-violation rule citation requirement.
 
-### redactedMCP error storm rate-limit
+### MCP error storm rate-limit
 
 When the same `error_code` fires ≥ 3× in a row, the MCP error
 envelope drops the verbose fields (`hint`, `suggested_action`,
@@ -1792,20 +1791,20 @@ envelope drops the verbose fields (`hint`, `suggested_action`,
 token bloat in agent retry loops. Counter resets when a
 different error_code fires.
 
-### redacted`roam recipes`
+### `roam recipes`
 
 Sugar over `roam ask --list` for discoverability. Lists every
 recipe with intent + example queries + commands. JSON envelope
 includes the full recipe metadata.
 
-### redacted`roam why --json` audit
+### `roam why --json` audit
 
 Verified that the existing `why --json` payload already returns
 structured per-symbol fields (`role`, `fan_in`, `fan_out`,
 `pagerank`, `reach`, `cluster`). No work needed — the
 explanation is already structured.
 
-### redacted`roam map --seed --depth`
+### `roam map --seed --depth`
 
 Restricts the project map's top-symbols list to symbols
 reachable from a seed file within N hops. For monorepo
@@ -1830,202 +1829,202 @@ richer `roam_catalog` metadata (when_to_use + examples), graceful
 Ctrl-C handling, MCP `roam_health` payload trimming when noisy,
 graph-builder memoization, and a deprecation registry hook.
 
-### redacted`roam why-fail <test>`
+### `roam why-fail <test>`
 
 Triage helper: traces from a failing test (or symbol) back to
 recently-changed symbols it transitively reaches. Sorted by
 recency × hop distance × PageRank.
 
-### redacted`roam graph-stats`
+### `roam graph-stats`
 
 Graph-level invariants: density, weak components, non-trivial
 cycles, average degree, top-inbound symbols. Single overview
 number for "how dense / connected is this codebase".
 
-### redacted`roam recommend <symbol>`
+### `roam recommend <symbol>`
 
 Surfaces related symbols using three signals — call-graph
 neighbours, git co-change, persisted clone siblings —
 combined with normalised contribution scoring.
 
-### redacted`roam diff --since-tag`
+### `roam diff --since-tag`
 
 Auto-fills the commit range with `<last-tag>..HEAD` via
 ``git describe --tags --abbrev=0``.
 
-### redacted`roam tour --focus <module>`
+### `roam tour --focus <module>`
 
 Constrains the tour (top symbols, reading order, entry points)
 to files under the given path prefix.
 
-### redactedtaint risk score
+### taint risk score
 
 `roam taint` summary now includes a 0-100 ``risk_score``
 weighting errors 5×, warnings 1×, and discounting sanitized
 findings.
 
-### redacted`roam context --inline`
+### `roam context --inline`
 
 Concatenates the recommended files into one paste-ready block
 with line numbers — for chat agents that prefer one big string
 over multi-file output.
 
-### redacted`roam clones --by-file`
+### `roam clones --by-file`
 
 Aggregates clone pairs into (file, file) coupling. Shows which
 file pairs are most clone-coupled.
 
-### redactedgraph-builder memoization
+### graph-builder memoization
 
 `build_symbol_graph` and `build_file_graph` cache by
 ``id(conn)`` so compound commands like ``pr-prep`` (which
 internally call multiple subcommands) don't rebuild the graph
 multiple times.
 
-### redacted`roam api`
+### `roam api`
 
 Lists the public API surface (exported public symbols + their
 signatures). Useful for changelog generation and breaking-
 change detection.
 
-### redactederror envelope `severity`
+### error envelope `severity`
 
 MCP error envelopes now include a ``severity`` field
 (`info | warning | error | fatal`) per error code. Lets agents
 branch on severity without parsing the message.
 
-### redacted`roam search --recent`
+### `roam search --recent`
 
 Boost results in files modified within N days. Useful when
 retracing very recent changes.
 
-### redacted`roam config --weights`
+### `roam config --weights`
 
 Surfaces the active rerank weights (alpha/beta/gamma/delta/
 epsilon/zeta) merged with defaults. Replaces grepping the
 source.
 
-### redacted`roam diagnose --batch`
+### `roam diagnose --batch`
 
 Run diagnose on N symbols from a newline-separated list (file
 or stdin). Mirrors the oracle batch pattern.
 
-### redactedMCP `roam_health` payload trimming
+### MCP `roam_health` payload trimming
 
 When the issue count is ≥ 50, the MCP envelope drops the verbose
 issue list and keeps the score, category counts, and
 breakdown. Set ``ROAM_MCP_HEALTH_FULL=1`` for the unfiltered
 shape.
 
-### redacted`roam reset --dry-run`
+### `roam reset --dry-run`
 
 Preview the destructive reset (DB path + size) without deleting.
 No --force required for the preview.
 
-### redacted`roam exit-codes`
+### `roam exit-codes`
 
 Lists every roam exit code with its meaning. Replaces grepping
 the docs or source.
 
-### redacted`roam workflow --next`
+### `roam workflow --next`
 
 Given a previously-run command name, suggest what to run next
 (e.g. after `preflight`: `context`, `impact`, `diff`).
 
-### redacteddeprecation registry
+### deprecation registry
 
 Adds the ``_DEPRECATED_COMMANDS`` map in ``cli.py``. When a
 deprecated command is invoked, the LazyGroup resolver prints a
 "use X instead" note on stderr without breaking the call.
 
-### redacted`roam version --check`
+### `roam version --check`
 
 Prints the installed version and (with ``--check``) queries
 PyPI for the latest version. Offline-friendly: falls back
 silently when PyPI is unreachable.
 
-### redacted`roam timeline <symbol>`
+### `roam timeline <symbol>`
 
 Chronological commit history for the file owning a symbol:
 SHA, date, author, lines added/removed, subject. Joins
 ``symbols`` × ``git_file_changes`` × ``git_commits`` with a
 GROUP BY commit_id to dedupe duplicate change rows.
 
-### redacted`roam pr-prep`
+### `roam pr-prep`
 
 One-shot pre-PR fitness check that bundles ``diff`` +
 ``critique`` + ``pr-risk`` into a single envelope with a
 top-level ``ready_to_open`` boolean. Replaces calling four
 commands sequentially before opening a PR.
 
-### redacted`roam eval-retrieve --quick`
+### `roam eval-retrieve --quick`
 
 Runs the first 5 tasks of the bench harness for fast local
 iteration. The full 30-task bench takes too long for tight
 weight-tuning loops.
 
-### redacted`roam config --check`
+### `roam config --check`
 
 Validates ``.roam/config.json`` against the known-keys schema.
 Flags unknown keys (typo guard) and type mismatches. Lists the
 canonical key set with one-line descriptions when no issues are
 found.
 
-### redactedricher `roam_catalog` metadata
+### richer `roam_catalog` metadata
 
 Tool catalog now includes ``when_to_use`` (extracted from each
 docstring's "WHEN TO USE:" line) and up to three doctest-style
 ``>>> roam ...`` examples per tool. Lets agents pick the right
 tool without fetching each individual description.
 
-### redacted`roam impact --hops N`
+### `roam impact --hops N`
 
 Bound the BFS at N hops instead of full transitive descendants.
 ``--hops 1`` mirrors ``roam uses``; ``--hops 3`` shows callers
 of callers of callers. Lets agents scope a refactor to a
 controlled radius.
 
-### redacted`ROAM_QUERY_TIMEOUT_S` query timeout
+### `ROAM_QUERY_TIMEOUT_S` query timeout
 
 Opt-in SQLite progress handler that interrupts long queries
 past N seconds. Prevents hangs on huge codebases. Default
 behaviour unchanged when env var is absent.
 
-### redacted`roam search --mode regex|exact|substring`
+### `roam search --mode regex|exact|substring`
 
 Three matching modes. Default is ``substring`` (LIKE %p%, the
 existing behaviour). ``regex`` registers a Python ``re``-backed
 SQLite REGEXP function. ``exact`` matches name = pattern only.
 
-### redacted`roam stats`
+### `roam stats`
 
 Aggregate metrics over the index: file count, symbol count,
 total lines, recent commit activity (last N days), broken down
 by language / file role / symbol kind. Useful as the first
 thing an agent runs after ``roam init``.
 
-### redacted`roam test-pyramid`
+### `roam test-pyramid`
 
 Counts test files by sub-kind (unit / integration / e2e / smoke /
-unknown) using ``classify_test_kind`` from Pass 23. Verdict flags
+unknown) using ``classify_test_kind`` from . Verdict flags
 inverted pyramids (``e2e+integration > unit``) and unstructured
 test layouts (``unknown >= 4× classified``).
 
-### redactedworking-tree drift in `index_status`
+### working-tree drift in `index_status`
 
 Adds a ``dirty_files`` field to the staleness envelope. Even when
 ``HEAD`` matches the indexed commit, an outstanding working-tree edit
 makes the symbol/edge data stale; we count modified files via
 ``git status --porcelain`` and surface a refresh hint.
 
-### redacted`roam_catalog` MCP tool
+### `roam_catalog` MCP tool
 
 Machine-readable list of every registered MCP tool with capability
 flags (``core`` / ``read_only`` / ``destructive``). Replaces having to
 enumerate ``list_tools`` and parse each one — the catalog is one
 round-trip and is part of the core preset.
 
-### redacted`roam health --explain`
+### `roam health --explain`
 
 The 0-100 health score is a weighted geometric mean of five factors;
 ``--explain`` shows each factor's "loss" in points so the user can
@@ -2033,7 +2032,7 @@ see which dimension is dragging the score down. Surfaced in both
 text mode (sorted breakdown table) and JSON envelope
 (``score_breakdown`` array).
 
-### redacteddoctor adds plugin + table checks
+### doctor adds plugin + table checks
 
 ``roam doctor`` now runs 13 checks (was 11). New entries: plugin
 discovery error count via ``get_plugin_errors()``, and required-table
@@ -2041,21 +2040,21 @@ presence (``files``, ``symbols``, ``edges``, ``git_commits``,
 ``file_stats``) — surfaces a half-migrated DB before a downstream
 "no such table" error.
 
-### redacted`roam config --env`
+### `roam config --env`
 
 Walks ``src/roam/`` for ``ROAM_*`` references and prints a sorted,
 deduped inventory of every env var the codebase reads, with the
 file/line of the first read and whether it's currently set.
 Replaces grepping the source manually.
 
-### redacted`roam hotspots --danger`
+### `roam hotspots --danger`
 
 Files in the top quartile of churn × file complexity × max
 fan-in. Score is the geometric mean of the metric ratios so a
 moderate-everywhere file ranks above one that's extreme in only
 one dimension.
 
-### redacted`roam index-stats`
+### `roam index-stats`
 
 Surface the ``.roam/index.db`` size, table row counts, and SQLite
 fragmentation (``freelist_count / page_count``). Verdict suggests
@@ -2063,14 +2062,14 @@ fragmentation (``freelist_count / page_count``). Verdict suggests
 fragmented and oversized (default 200 MB threshold, override via
 ``ROAM_INDEX_SIZE_WARN_MB``).
 
-### redacted`roam critique --batch <dir>`
+### `roam critique --batch <dir>`
 
 Reviews every ``*.diff`` and ``*.patch`` in the directory in a single
 pass. Handy for reviewing a stack of PRs or a series of
 ``git format-patch`` output. Per-diff verdict + aggregate gate fail
 when any diff has a high-severity finding.
 
-### redactedgraceful Ctrl-C
+### graceful Ctrl-C
 
 ``python -m roam`` now catches ``KeyboardInterrupt`` at the top level
 and exits with the conventional 130 instead of dumping a traceback.
@@ -2078,7 +2077,7 @@ The indexer also catches the interrupt to release its lock cleanly,
 so a rerun resumes from the last committed checkpoint instead of
 stumbling on a stale ``.roam/index.lock``.
 
-### redactedauto-route unknown commands
+### auto-route unknown commands
 
 When ``roam <unknown>`` doesn't have a close edit-distance neighbour in
 ``_COMMANDS``, the LazyGroup's resolver now consults the ``ask``
@@ -2087,7 +2086,7 @@ TF-IDF classifier. If a recipe matches with confidence ≥ 0.5, the
 attempt ("trace login flow through middleware") still leads
 somewhere useful in one turn.
 
-### redactedopt-in local telemetry
+### opt-in local telemetry
 
 ``ROAM_TELEMETRY_LOCAL=1`` enables a tiny SQLite ring buffer
 (`.roam/telemetry.db`, 500-row cap, prune-on-write) that records
@@ -2096,7 +2095,7 @@ Surface via ``roam telemetry`` (slowest + recent calls). Strictly
 local — no network. No-op when env var is absent so the hot path
 stays unaffected.
 
-### redacted`roam oracle batch`
+### `roam oracle batch`
 
 The five boolean oracles (``symbol-exists``, ``route-exists``,
 ``is-test-only``, ``is-reachable-from-entry``, ``is-clone-of``)
@@ -2105,7 +2104,7 @@ Each line is one ``{oracle, args}`` object; output is a single
 JSON envelope with all results. Useful for fleet-style pre-flight
 checks (50 symbols at once instead of 50 round-trips).
 
-### redacted`roam orphan-imports`
+### `roam orphan-imports`
 
 Quick Python-only lint that flags imports the indexer couldn't
 resolve. Distinguishes ``internal_typo`` (top-level package
@@ -2114,7 +2113,7 @@ of ``roam.commands.cmd_foo``) from ``missing_package`` (genuinely
 absent). JS/TS/Go versions deferred — per-language scaffolding
 overhead is too much for one pass.
 
-### redacted`roam docs-coverage --quality`
+### `roam docs-coverage --quality`
 
 Buckets every public symbol's docstring into ``ABSENT / SHALLOW
 / RICH``. Heuristic: a docstring is ``RICH`` when its length ≥ 80
@@ -2122,50 +2121,50 @@ chars AND it mentions params/returns or has an example block;
 ``SHALLOW`` otherwise. Surfaces in both text and JSON output, with
 sample symbols per bucket so the user can see the gap concretely.
 
-### redacted`roam search --explain` shows PageRank
+### `roam search --explain` shows PageRank
 
 The ``--explain`` flag already showed BM25 + matched fields +
-highlights + term counts. Pass 46 adds the per-result PageRank to
+highlights + term counts. adds the per-result PageRank to
 the explanation so users can see when ordering is structural-rerank-
 driven vs. lexical.
 
-### redacted`roam retrieve --scope <dir>`
+### `roam retrieve --scope <dir>`
 
 Restrict candidates to files under a given path prefix —
 useful for monorepos and large codebases where the user knows
 the relevant subtree. Post-filter on the ranked candidate list,
 so no rerun of the heavy retrieval pipeline.
 
-### redacted`roam changelog --suggest`
+### `roam changelog --suggest`
 
 Read commits since the last tag, classify them via Conventional
 Commits prefixes (feat / fix / perf / refactor / docs / test / chore /
 build / ci), emit a draft ``## [Unreleased]`` markdown section grouped
 by bucket. ``--since <ref>`` overrides the tag autodetect.
 
-### redacted`roam graph-export`
+### `roam graph-export`
 
 Write the symbol or file dependency graph as ``GraphML / DOT /
 JSONL`` for plugging into external graph tooling (Gephi, Cytoscape,
 igraph, or custom analyses). ``--scope file`` switches from the
 symbol-level graph to the file-level graph.
 
-### redacted`roam help-search <query>`
+### `roam help-search <query>`
 
 Fuzzy match across every command's name + short docstring.
 Replaces grepping ``--help-all`` output of 158 commands. Score
 weights name matches above docstring matches and rewards shorter
 matching names.
 
-### redactedMCP-level result caching
+### MCP-level result caching
 
 The MCP server already had per-cell caching for a handful of hot paths
-(`understand`, `tour`); Pass 21 promotes ~30 read-only commands into a
+(`understand`, `tour`); promotes ~30 read-only commands into a
 shared, index-mtime-keyed result cache. Cache hit drops the round-trip
 from 153ms to 1ms (153× speedup) without changing tool semantics.
 Auto-invalidates on reindex (mtime bump on `.roam/index.db`).
 
-### redacted`roam ask` recipe expansion (13 → 24)
+### `roam ask` recipe expansion (13 → 24)
 
 Eleven new TF-IDF-classifiable recipes covering common agent
 workflows: `trace-bug`, `who-owns`, `what-changed`, `audit-security`,
@@ -2174,25 +2173,25 @@ workflows: `trace-bug`, `who-owns`, `what-changed`, `audit-security`,
 maps to an existing roam command pipeline so the dispatcher stays a
 thin classifier-and-route — no new analysis logic.
 
-### redactedtest sub-classification
+### test sub-classification
 
 `file_roles.py` now exports ``classify_test_kind(path)`` returning
 ``unit | integration | e2e | smoke | unknown``. Path-pattern first
 (``e2e/``, ``integration/``, ``cypress/``, ``playwright/``), then
 filename-pattern fallback (``*_e2e.py``, ``*_smoke.py``). Lays the
-groundwork for "test pyramid" reports (Pass 31+) without changing
+groundwork for "test pyramid" reports without changing
 the existing ``is_test`` boolean contract.
 
-### redactederror envelope `doc_link` field
+### error envelope `doc_link` field
 
 The MCP error path already emitted ``error_code``, ``hint``, and
-``retryable``. Pass 28 fills the fourth field of the structured-
+``retryable``. fills the fourth field of the structured-
 error contract: every classified ``error_code`` now carries a
 stable ``doc_link`` pointing at an anchor in the public
 troubleshooting page. Agents get one URL to fetch when self-
 serving an error, instead of grep-the-docs-and-pray.
 
-### redactedopt-in parallel source prefetch
+### opt-in parallel source prefetch
 
 ``ROAM_PARALLEL_INDEX=1`` enables a thread-pool source prefetcher
 in the indexer. Disk reads run in parallel up to ``min(32,
@@ -2204,7 +2203,7 @@ I/O-dominated indexes (cold cache, OneDrive-mirrored repos,
 network drives) see the biggest wins; CPU-bound indexes see no
 regression because the cache is consumed in-order.
 
-### redacted`roam plugins`
+### `roam plugins`
 
 The plugin discovery system has shipped since v11 (entry points
 + ``ROAM_PLUGIN_MODULES``) but had no introspection surface.
@@ -2215,14 +2214,14 @@ registered, prints the activation hint instead.
 
 ### Decisions logged (no shipped change)
 
-- Pass 24 (``--markdown`` global flag) — deferred. Rendering layer
+- (``--markdown`` global flag) — deferred. Rendering layer
   would touch every command. Adding the flag without a working
   renderer is dead code; revisit when there's a concrete agent
   surface that benefits from it.
-- Pass 25 (``roam impact-commit <hash>``) — already covered by
+- (``roam impact-commit <hash>``) — already covered by
   ``roam diff <commit-range>`` (e.g. ``roam diff HEAD~1``).
-- Pass 26 (compound ``roam_explore`` MCP tool) — already shipped.
-- Pass 27 (stale-command audit) — all 162 CLI command names appear
+- (compound ``roam_explore`` MCP tool) — already shipped.
+- (stale-command audit) — all 162 CLI command names appear
   in at least one test. No cleanup needed.
 
 ## [12.14] - 2026-05-05
@@ -2231,7 +2230,7 @@ Ten more research passes building on v12.13's speed wins. Three
 land as concrete features; the rest were research-decided
 (existing surface adequate or out of scope).
 
-### Did-you-mean for command typos (Pass 14)
+### Did-you-mean for command typos
 
 ``LazyGroup.resolve_command`` now catches Click's "No such command"
 and surfaces the closest names by edit distance. Previous behaviour:
@@ -2251,7 +2250,7 @@ Error: No such command: 'contxt'. Did you mean `roam context`, `roam agent-conte
 Up to 3 suggestions at edit-distance ≤ 0.6, picked from the live
 ``_COMMANDS`` table so plugin commands also surface.
 
-### Auto-refine on low-confidence retrieve (Pass 13)
+### Auto-refine on low-confidence retrieve
 
 When ``roam retrieve`` confidence drops below 0.40, the verdict now
 appends a ``REFINE:`` block with 2-3 alternative queries:
@@ -2267,7 +2266,7 @@ appends a ``REFINE:`` block with 2-3 alternative queries:
 Surfaced in both text mode (``REFINE:`` block) and JSON
 (``summary.refinements``), so MCP clients can branch on it.
 
-### ``--help-all`` global option (Pass 19)
+### ``--help-all`` global option
 
 ``roam --help`` shows priority categories + 66 names from "More
 Commands" without descriptions. Agents mapping the surface want
@@ -2283,24 +2282,24 @@ The flat list is alphabetical, deterministic, and pipeable.
 
 ### Research findings (decided not to ship)
 
-- **Pass 11 (indexing speed)** — incremental index is ~2.8s warm.
+- **(indexing speed)** — incremental index is ~2.8s warm.
   ``compute_file_stats`` and friends already early-exit on no-change.
   Further wins would require a daemon mode.
-- **Pass 12 (symbol disambiguation)** — ``pick_best`` already uses a
+- **(symbol disambiguation)** — ``pick_best`` already uses a
   6-level tiebreak (edge count → PageRank → cc → churn → path
   priority → id). Live tests confirm canonical paths win
   consistently.
-- **Pass 15 (cold-start of common commands)** — ``cmd_search``
+- **(cold-start of common commands)** — ``cmd_search``
   subprocess at 320ms is mostly Python interpreter (~90ms) + Click
   parse + execute. Hot path already tight; further wins need a
   daemon or in-process MCP path (already free for MCP clients).
-- **Pass 16 (empty / edge-case repos)** — most commands handle empty
+- **(empty / edge-case repos)** — most commands handle empty
   repos correctly; one cosmetic dead-empty fix landed.
-- **Pass 17 (mermaid quality)** — ``visualize`` output is
+- **(mermaid quality)** — ``visualize`` output is
   well-structured (color-coded by kind, named clusters).
-- **Pass 18 (schema export)** — ``roam schema`` already validates
+- **(schema export)** — ``roam schema`` already validates
   envelopes. Per-command schema introspection is a bigger feature.
-- **Pass 20 (cross-command consistency)** — verdict-first compliance
+- **(cross-command consistency)** — verdict-first compliance
   surveyed across 33 commands; previously-flagged outliers all
   resolved in v12.12.8 polish round.
 
@@ -2381,16 +2380,16 @@ recall@5=0.708, recall@10=0.778, recall@20=0.878 across the
 
 Some passes researched-and-decided rather than shipped:
 
-- **Pass 5 (N+1 detection)** — existing detector catalog already
+- **(N+1 detection)** — existing detector catalog already
   covers the SOTA static-analysis space. Runtime profilers like
   ``nplusone`` are complementary, not replacement.
-- **Pass 6 (clone detection)** — current AST-hash-bag + Jaccard
+- **(clone detection)** — current AST-hash-bag + Jaccard
   approach is SOTA-comparable. Neural alternatives (CCDetect,
   ASTNN) need training data and don't pay back the integration cost.
-- **Pass 8 (anomaly detection)** — Modified Z-Score (MAD-based) +
+- **(anomaly detection)** — Modified Z-Score (MAD-based) +
   Theil-Sen + Mann-Kendall + Western Electric + CUSUM cover the
   statistical anomaly-detection space without sklearn as a hard dep.
-- **Pass 10 (semantic retrieve)** — graceful zeta redistribution
+- **(semantic retrieve)** — graceful zeta redistribution
   regressed bench (-1.9 pp recall@5). Reverted; semantic stays
   inert until the ``[semantic]`` extras are installed and
   embeddings are populated. Keeping the wheel under 5 MB matters.
@@ -3718,7 +3717,7 @@ adding new commands — existing commands give better Python answers.
 
 ## [12.3.1] - 2026-05-02
 
-A polish patch from 10 more rounds of dogfooding. No surface changes,
+A polish patch from additional dogfooding rounds. No surface changes,
 five papercut bugs fixed.
 
 ### Fixed

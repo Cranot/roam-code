@@ -17,7 +17,7 @@ from roam.output.formatter import json_envelope, loc, to_json
 
 
 # Defaults tuned for the round-3 dogfood report which produced 2.26M pairs
-# on the redacted project — every commit that touched two large Vue SFCs
+# on the a Vue 3 + Laravel codebase project — every commit that touched two large Vue SFCs
 # created `len(syms_i) * len(syms_j)` pairs, dominated by the long tail of
 # auto-generated props/types. The new caps keep the signal intact while
 # trimming the noise floor by ~3 orders of magnitude.
@@ -189,7 +189,7 @@ def _load_symbol_info(conn, sym_ids):
     default=False,
     help=(
         "Include test files in the co-change matrix. Off by default — "
-        "test fixtures co-change with src files by design redacted, M); "
+        "test fixtures co-change with src files by design; "
         "including them inflates pair counts by orders of magnitude."
     ),
 )

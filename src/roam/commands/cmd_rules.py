@@ -140,8 +140,7 @@ def rules(ctx, do_init, ci_mode, rules_dir_opt, top_n):
 
     # Determine rules directory. Project-local ``.roam/rules`` wins;
     # otherwise the empty state mentions the bundled community corpus
-    # so first-time users can opt in (redacted —
-    # auto-evaluating 2489+ community rules silently was too slow).
+    # so first-time users can opt in.
     if rules_dir_opt:
         rules_dir = Path(rules_dir_opt)
     else:

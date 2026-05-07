@@ -344,14 +344,14 @@ class QueryEngine:
         )
 
     def _find_name_node(self, name_nodes, def_node):
-        """Pick the name node that is a child of ``def_node`` (Pass 101)."""
+        """Pick the name node that is a child of ``def_node``."""
         for n in name_nodes:
             if self._is_child_of(n, def_node):
                 return n
         return None
 
     def _decode_capture(self, source: bytes, captures_dict: dict, capture_name, def_node):
-        """Decode the first child-of-def_node capture as utf-8 (Pass 101)."""
+        """Decode the first child-of-def_node capture as utf-8."""
         if not capture_name:
             return None
         nodes = captures_dict.get(capture_name, [])
@@ -363,7 +363,7 @@ class QueryEngine:
     def _resolve_kotlin_class_kind(self, def_node, kind: str) -> str:
         """Disambiguate Kotlin ``class_declaration`` into class/interface/enum.
 
-        redactedextracted from the original mega-function. Tree-sitter
+        extracted from the original mega-function. Tree-sitter
         emits ``class_declaration`` for both ``class``, ``interface`` and
         ``enum class`` in Kotlin; the first child distinguishes them.
         """
@@ -398,7 +398,7 @@ class QueryEngine:
         file_path: str,
         seen_positions: set,
     ):
-        """Build a single ExtractedSymbol from a captured def-node (Pass 101).
+        """Build a single ExtractedSymbol from a captured def-node.
 
         Returns ``None`` when the capture should be skipped (no name,
         invalid name, duplicate position).
@@ -449,7 +449,7 @@ class QueryEngine:
     ) -> list[ExtractedSymbol]:
         """Extract symbols using a single SymbolPattern.
 
-        redactedorchestrator only. Per-symbol logic moved into
+        orchestrator only. Per-symbol logic moved into
         ``_build_symbol_from_def`` and three new helpers, dropping
         cognitive complexity from 198 to ~10.
         """

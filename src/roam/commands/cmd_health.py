@@ -49,7 +49,7 @@ _UTILITY_PATH_PATTERNS = (
     "common/",
     "internal/",
     "infra/",
-    # redactedinfrastructure hubs that are EXPECTED to have high
+    # infrastructure hubs that are EXPECTED to have high
     # fan-in. Without these patterns the health-score classifier
     # mislabels architectural roots (Click root group, MCP dispatch,
     # graph builder, file-role classifier) as actionable refactor
@@ -64,7 +64,7 @@ _UTILITY_FILE_PATTERNS = (
     "helpers.py",
     "common.py",
     "base.py",
-    # redactedsingle-file architectural hubs. Same reasoning as
+    # single-file architectural hubs. Same reasoning as
     # ``_UTILITY_PATH_PATTERNS`` additions above.
     "cli.py",
     "mcp_server.py",
@@ -201,7 +201,7 @@ def _load_gate_config() -> dict:
 @click.option(
     "--explain",
     is_flag=True,
-    help="Show how the 0-100 score decomposes into category contributions (Pass 34).",
+    help="Show how the 0-100 score decomposes into category contributions.",
 )
 @click.pass_context
 def health(ctx, no_framework, gate, explain):
@@ -478,7 +478,7 @@ def health(ctx, no_framework, gate, explain):
         log_score = sum(w * math.log(max(h, 1e-9)) for h, w in _health_factors)
         health_score = max(0, min(100, int(100 * math.exp(log_score))))
 
-        # redactedrecord per-factor contributions so --explain can show
+        # record per-factor contributions so --explain can show
         # WHY the score is what it is. Each factor's "loss" (1 - h) is
         # what's pulling the score down; the weight scales the impact.
         _factor_names = ["tangle_ratio", "god_components", "bottlenecks", "layer_violations", "file_health"]
@@ -809,7 +809,7 @@ def health(ctx, no_framework, gate, explain):
         if _idx_status and not _idx_status.get("fresh"):
             click.echo(f"NOTE: {_idx_status['hint']}\n")
         click.echo(f"VERDICT: {verdict}\n")
-        # redactedwhen --explain, decompose the score before everything
+        # when --explain, decompose the score before everything
         # else so the user understands which factor is dragging it down.
         if explain:
             click.echo("=== Score Breakdown (sorted by impact) ===")

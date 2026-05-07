@@ -16,7 +16,7 @@ import click
 # This avoids importing networkx (~500ms) on every CLI call.
 # Total: 158 invokable command names (155 canonical commands + 3 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
-# redacteddeprecated commands map to their replacement.  When a user
+# deprecated commands map to their replacement.  When a user
 # invokes a deprecated name, we still resolve it (no breaking change)
 # but print a note on stderr suggesting the replacement.
 _DEPRECATED_COMMANDS: dict[str, str] = {}
@@ -197,7 +197,7 @@ _COMMANDS = {
     "affected": ("roam.commands.cmd_affected", "affected"),
     "semantic-diff": ("roam.commands.cmd_semantic_diff", "semantic_diff"),
     "trends": ("roam.commands.cmd_trends", "trends"),
-    # Aliases for the consolidated trends command redacted). Older
+    # Aliases for the consolidated trends command. Older
     # docs and agent recipes still mention `roam trend` / `roam digest`;
     # we keep them as discoverable aliases instead of breaking the
     # documented surface.
@@ -579,11 +579,11 @@ class LazyGroup(click.Group):
         by edit distance and surface them in the UsageError so the
         agent can retry with the right command in one turn.
 
-        redactedalso surface a deprecation note on stderr when the
+        also surface a deprecation note on stderr when the
         invoked command is in ``_DEPRECATED_COMMANDS`` so users know
         about a planned rename / replacement.
         """
-        # redactedpre-resolve deprecation hint.
+        # pre-resolve deprecation hint.
         if args:
             cmd_name = args[0]
             replacement = _DEPRECATED_COMMANDS.get(cmd_name)
@@ -608,7 +608,7 @@ class LazyGroup(click.Group):
 
             _ensure_plugin_commands_loaded()
             close = difflib.get_close_matches(bad, list(_COMMANDS.keys()), n=3, cutoff=0.6)
-            # redactedwhen no edit-distance match lands but the user
+            # when no edit-distance match lands but the user
             # typed a phrase, route them through the ``ask`` classifier
             # so a natural-language attempt ("trace login flow") still
             # gets a useful suggestion.
@@ -972,7 +972,7 @@ def cli(ctx, json_mode, compact, agent, sarif_mode, budget, include_excluded, de
     ctx.obj["include_excluded"] = include_excluded
     ctx.obj["detail"] = detail
 
-    # redactedopt-in local telemetry. Records (cmd, duration_ms,
+    # opt-in local telemetry. Records (cmd, duration_ms,
     # exit_code) when ROAM_TELEMETRY_LOCAL=1. Strictly local; no
     # network. Recording itself is no-op when disabled, so the
     # uninstrumented hot path stays unaffected.

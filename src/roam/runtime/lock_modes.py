@@ -17,7 +17,6 @@ remaining ~145 commands incrementally; the audit env var
 match the registered mode.
 
 Companion: ``runtime/lockmgr.py`` (RWLock + drain semantics).
-Spec design: ``reports/daemon_design_2026-05-01.md``.
 """
 
 from __future__ import annotations

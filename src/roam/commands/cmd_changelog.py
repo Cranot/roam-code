@@ -1,6 +1,6 @@
 """``roam changelog`` — surface or auto-suggest CHANGELOG entries.
 
-redactedread git commits since the last tag, classify them via prefix
+read git commits since the last tag, classify them via prefix
 heuristics (feat / fix / docs / chore / refactor / test), emit a draft
 ``## [Unreleased]`` markdown section. Reduces release-time toil for
 projects that follow Conventional Commits but don't have a CI helper.

@@ -1,6 +1,6 @@
 """roam capabilities — emit the capability registry as YAML / JSON.
 
-redacted. Reads the in-process
+Capability Registry — declarative manifest of public surface. Reads the in-process
 ``roam.capability.REGISTRY`` (populated by ``@roam_capability``
 decorators on commands as they're imported) and writes a manifest
 suitable for downstream consumers (Roam Review GitHub App, MCP server,

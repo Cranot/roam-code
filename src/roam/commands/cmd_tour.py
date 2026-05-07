@@ -355,7 +355,7 @@ def _tour_mermaid(conn, G, top, order):
     "focus_path",
     type=str,
     default=None,
-    help="redactedlimit tour items (top symbols, reading order, entries) to files under this path prefix.",
+    help="limit tour items (top symbols, reading order, entries) to files under this path prefix.",
 )
 @click.pass_context
 def tour(ctx, write_file, mermaid_mode, focus_path):
@@ -385,7 +385,7 @@ def tour(ctx, write_file, mermaid_mode, focus_path):
         order = _reading_order(conn, G)
         entries = _entry_points(conn)
 
-        # redactedfocus filter. Apply after the heavy queries so we
+        # focus filter. Apply after the heavy queries so we
         # benefit from the cache / index, then drop anything outside
         # the prefix. Normalise slashes to keep Windows happy.
         if focus_path:

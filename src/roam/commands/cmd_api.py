@@ -1,6 +1,6 @@
 """``roam api`` — list the public API surface (exported symbols + signatures).
 
-redacteduseful for changelog generation and breaking-change detection.
+useful for changelog generation and breaking-change detection.
 A symbol is "public" when:
 
   * its name doesn't start with ``_`` (Python convention)

@@ -169,9 +169,9 @@ class TestDeferLoading:
             # v12.6 — Python-pivot tools
             "roam_py_types",
             "roam_py_modern",
-            # v12.16 / redactedmachine-readable tool catalog
+            # v12.16 / machine-readable tool catalog
             "roam_catalog",
-            # v12.19 / redactedagent-actionable wrappers
+            # v12.19 / agent-actionable wrappers
             "roam_alerts",
             "roam_timeline",
             "roam_test_impact",

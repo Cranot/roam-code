@@ -1,6 +1,6 @@
 """``roam pr-prep`` — pre-PR fitness gate that bundles diff + critique + pr-risk.
 
-redactedreplaces calling four commands sequentially before opening a PR
+replaces calling four commands sequentially before opening a PR
 with a single envelope. Designed for agents and CI: returns a clear
 ``ready_to_open`` boolean plus a per-section summary of findings.
 """

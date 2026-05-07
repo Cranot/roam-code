@@ -1,6 +1,6 @@
 """Regression tests for the Laravel-specific FP fixes (M9-M12).
 
-Each test reproduces a user-reported FP from the redacted feedback.
+Each test reproduces a user-reported FP from the a Vue 3 + Laravel codebase feedback.
 """
 
 from __future__ import annotations

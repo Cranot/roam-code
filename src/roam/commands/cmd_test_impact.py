@@ -1,6 +1,6 @@
 """``roam test-impact <range>`` — tests transitively reachable from changed symbols.
 
-redactedsharper scope than `roam affected-tests`. Walks BFS over the
+sharper scope than `roam affected-tests`. Walks BFS over the
 reverse call graph from each changed symbol, collects every test file
 reached, and ranks by the number of changed symbols that reach each
 test (so a test reachable from 5 changes ranks above one reachable

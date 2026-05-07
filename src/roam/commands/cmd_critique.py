@@ -188,7 +188,7 @@ def _critique_one(diff_text: str, high_callers: int, intent_text: str | None) ->
 
 
 def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_mode: bool, token_budget: int) -> None:
-    """redactedreview every *.diff / *.patch in ``batch_dir``."""
+    """review every *.diff / *.patch in ``batch_dir``."""
     from pathlib import Path as _Path
 
     base = _Path(batch_dir)
@@ -271,7 +271,7 @@ def _run_batch(batch_dir: str, high_callers: int, intent_text: str | None, json_
     "batch_dir",
     type=click.Path(exists=True, file_okay=False, dir_okay=True),
     default=None,
-    help="redactedreview every *.diff/*.patch in this directory in one pass.",
+    help="review every *.diff/*.patch in this directory in one pass.",
 )
 @click.option(
     "--high-callers",
@@ -375,7 +375,7 @@ def critique(ctx, input_path, batch_dir, high_callers, intent_text):
 
     result = aggregate(findings)
 
-    # Bench-relevance hint (redacted, completed v12.12):
+    # Bench-relevance hint:
     # when the diff touches files in the retrieve / graph / catalog hot
     # path, the default rule set ("clones not edited", "blast radius")
     # can legitimately say "no concerns" while the change quietly

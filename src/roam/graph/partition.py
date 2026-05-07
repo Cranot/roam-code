@@ -256,7 +256,7 @@ def _adjust_cluster_count(
 
 
 def _node_partition_index(partitions: list[dict[str, set[int]]]) -> dict[int, int]:
-    """redactedflatten partitions into ``{node_id: partition_index}``."""
+    """flatten partitions into ``{node_id: partition_index}``."""
     node_part: dict[int, int] = {}
     for idx, p in enumerate(partitions):
         for n in p["nodes"]:
@@ -265,7 +265,7 @@ def _node_partition_index(partitions: list[dict[str, set[int]]]) -> dict[int, in
 
 
 def _fetch_node_metadata(conn: sqlite3.Connection, node_ids: list[int]):
-    """redactedload (file, name, signature) for every node in one batch."""
+    """load (file, name, signature) for every node in one batch."""
     node_to_file: dict[int, str] = {}
     node_to_name: dict[int, str] = {}
     node_to_sig: dict[int, str] = {}
@@ -284,7 +284,7 @@ def _fetch_node_metadata(conn: sqlite3.Connection, node_ids: list[int]):
 
 
 def _file_majority_owners(node_part: dict[int, int], node_to_file: dict[int, str]) -> dict[int, set[str]]:
-    """redactedassign each file exclusively to its majority-vote partition."""
+    """assign each file exclusively to its majority-vote partition."""
     file_partition_counts: dict[str, Counter] = defaultdict(Counter)
     for n, pidx in node_part.items():
         fp = node_to_file.get(n)
@@ -300,7 +300,7 @@ def _file_majority_owners(node_part: dict[int, int], node_to_file: dict[int, str
 def _read_only_files_for(
     G, nodes: set[int], node_part: dict[int, int], node_to_file: dict[int, str], write_files: set[str]
 ) -> set[str]:
-    """redactedfiles with cross-partition edges but not owned by this agent."""
+    """files with cross-partition edges but not owned by this agent."""
     read_only: set[str] = set()
     for n in nodes:
         for neighbour in (*G.predecessors(n), *G.successors(n)):
@@ -315,7 +315,7 @@ def _read_only_files_for(
 def _boundary_contracts(
     G, nodes: set[int], node_part: dict[int, int], node_to_name: dict[int, str], node_to_sig: dict[int, str]
 ) -> list[str]:
-    """redactedlist cross-partition symbols this agent must not change."""
+    """list cross-partition symbols this agent must not change."""
     contracts: list[str] = []
     seen: set[str] = set()
     for n in nodes:
@@ -334,7 +334,7 @@ def _boundary_contracts(
 
 
 def _cluster_label_for(nodes: set[int], node_to_file: dict[int, str], idx: int) -> str:
-    """redacteddirectory-majority label, with sensible fallbacks."""
+    """directory-majority label, with sensible fallbacks."""
     dirs = [os.path.dirname(node_to_file.get(n, "")).replace("\\", "/") for n in nodes if n in node_to_file]
     counts = Counter(dirs) if dirs else Counter()
     if not counts:
@@ -352,7 +352,7 @@ def _build_agent_descriptors(
 ) -> list[dict]:
     """Build per-agent descriptor dicts.
 
-    redactedorchestrator only. Per-step logic lives in
+    orchestrator only. Per-step logic lives in
     ``_node_partition_index``, ``_fetch_node_metadata``,
     ``_file_majority_owners``, ``_read_only_files_for``,
     ``_boundary_contracts``, ``_cluster_label_for``.

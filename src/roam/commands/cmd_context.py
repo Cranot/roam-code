@@ -477,13 +477,13 @@ def _gather_batch(conn, resolved, task, session_hint, recent_symbols, use_propag
 
 
 def _render_async_badge(sym, row_keys) -> None:
-    """redactedsingle-line async badge above the signature."""
+    """single-line async badge above the signature."""
     if "is_async" in row_keys and sym["is_async"]:
         click.echo("  [async coroutine]")
 
 
 def _render_idiom_badge(sym, sym_kind: str, decorators_str: str, row_keys) -> None:
-    """redactedsurface model-class / fixture / param-test badges."""
+    """surface model-class / fixture / param-test badges."""
     try:
         from roam.catalog.python_idioms import fixture_kind, is_model_class
     except Exception:
@@ -506,7 +506,7 @@ def _render_idiom_badge(sym, sym_kind: str, decorators_str: str, row_keys) -> No
 
 
 def _split_decorators_paren_aware(decorators_str: str) -> list[str]:
-    """redactedparen-aware split.
+    """paren-aware split.
 
     ``@parametrize("a,b", [...])`` has commas inside its argument; the
     naive ``str.split(",")`` would break it into fragments. Track
@@ -532,7 +532,7 @@ def _split_decorators_paren_aware(decorators_str: str) -> list[str]:
 
 
 def _render_decorators_block(decorators_str: str) -> None:
-    """redactedprint up to 5 decorator first-lines for the symbol."""
+    """print up to 5 decorator first-lines for the symbol."""
     if not decorators_str:
         return
     for d in _split_decorators_paren_aware(decorators_str)[:5]:
@@ -559,7 +559,7 @@ def _render_text(data):
 
 
 def _render_inline_text(data) -> None:
-    """redactedconcatenate the recommended files into one paste-ready block.
+    """concatenate the recommended files into one paste-ready block.
 
     Each file is preceded by a header line ``=== <path> ===`` and each
     line is prefixed with a 1-based line number for reference. Files
@@ -602,7 +602,7 @@ def _render_json(data, budget=0):
 
 
 def _table_budget(data) -> int:
-    """redactedread the threaded ``--budget`` so format_table honors it."""
+    """read the threaded ``--budget`` so format_table honors it."""
     try:
         return int(data.get("token_budget") or 0)
     except (TypeError, ValueError):
@@ -1204,7 +1204,7 @@ def _resolve_file(conn, path):
     is_flag=True,
     default=False,
     help=(
-        "redactedemit the recommended file content as one concatenated "
+        "emit the recommended file content as one concatenated "
         "string with line markers, ready to paste into a chat agent."
     ),
 )
@@ -1296,10 +1296,10 @@ def context(ctx, names, task, for_file, session_hint, recent_symbols, no_propaga
             # Single symbol mode — always gather everything
             data = _gather_single(conn, resolved[0], task, session_hint, recent_symbols, use_propagation)
 
-    # redactedpass inline-mode flag through to the renderer.
+    # pass inline-mode flag through to the renderer.
     if inline_mode:
         data["inline_mode"] = True
-    # redactedthread the global --budget through to renderers so
+    # thread the global --budget through to renderers so
     # format_table calls in cmd_context can honor it.
     data["token_budget"] = token_budget
     _render_json(data, budget=token_budget) if json_mode else _render_text(data)

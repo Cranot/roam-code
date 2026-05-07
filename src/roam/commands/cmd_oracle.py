@@ -14,8 +14,7 @@ Text output is ``VERDICT: true|false|indeterminate — <reason>``. JSON
 output uses ``json_envelope`` with ``summary.value`` (``true|false|null``),
 ``summary.reason``, ``summary.reason_class``, and ``summary.confidence``.
 The tri-state shape lets agents distinguish "we proved no" from "we
-can't tell" — a distinction that flat booleans were collapsing
-redacted, #7, J).
+can't tell" — a distinction that flat booleans were collapsing.
 """
 
 from __future__ import annotations
@@ -70,7 +69,7 @@ class OracleResult:
 
 def _scaffolding_evidence(conn: sqlite3.Connection, name: str) -> str | None:
     """Return a human-readable evidence string when the symbol's docstring
-    matches the scaffolding heuristic from round 2 #4. Used by the
+    matches the scaffolding heuristic from. Used by the
     reachability oracle to distinguish dead code from preserved
     reference code.
     """
@@ -333,7 +332,7 @@ def oracle_is_reachable_from_entry(conn: sqlite3.Connection, name: str, *, max_h
         return OracleResult(False, f"no symbol named '{name}'", "definitive_no", "high")
     target_ids = {int(r[0]) for r in target_rows}
 
-    # Entry-point definition (redacted, two iterations):
+    # Entry-point definition:
     #
     # First attempt — files with no incoming ``file_edges``. Caught the
     # previous bug (``no entry-point symbols indexed`` on every query)
@@ -564,7 +563,7 @@ def is_clone_of_cmd(ctx, name: str) -> None:
 )
 @click.pass_context
 def oracle_batch_cmd(ctx, input_path: str) -> None:
-    """redactedrun a stream of oracle queries from JSONL.
+    """run a stream of oracle queries from JSONL.
 
     \b
     Each input line is a JSON object with:

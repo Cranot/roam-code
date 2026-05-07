@@ -50,7 +50,7 @@ from roam.output.formatter import (
     "by_file",
     is_flag=True,
     default=False,
-    help="redactedaggregate clone pairs into file-pair coupling, surface the top-coupled file pairs.",
+    help="aggregate clone pairs into file-pair coupling, surface the top-coupled file pairs.",
 )
 @click.pass_context
 def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
@@ -102,7 +102,7 @@ def clones(ctx, threshold, min_lines, scope, top, persist, by_file):
             else "No structural clones detected"
         )
 
-        # redactedaggregate clone pairs into (file_a, file_b) coupling.
+        # aggregate clone pairs into (file_a, file_b) coupling.
         if by_file:
             file_pair_counts: dict[tuple[str, str], int] = {}
             for p in pairs:

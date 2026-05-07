@@ -1,4 +1,4 @@
-"""redactedobservability hook for swallowed exceptions.
+"""observability hook for swallowed exceptions.
 
 The codebase has ~84 ``except Exception: pass`` blocks that hide real
 failures (missing schema columns, optional dependencies absent, sqlite

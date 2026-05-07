@@ -17,7 +17,7 @@ from roam.output.formatter import json_envelope, to_json
     "dry_run",
     is_flag=True,
     default=False,
-    help="redactedpreview the reset (db path + size) without deleting.",
+    help="preview the reset (db path + size) without deleting.",
 )
 @click.pass_context
 def reset(ctx, force, root, dry_run):
@@ -33,7 +33,7 @@ def reset(ctx, force, root, dry_run):
     project_root = find_project_root(root)
     db_path_preview = get_db_path(project_root)
     if dry_run:
-        # redactedpreview shouldn't require --force.
+        # preview shouldn't require --force.
         size_bytes = 0
         if db_path_preview.exists():
             try:

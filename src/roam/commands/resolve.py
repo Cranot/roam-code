@@ -55,7 +55,7 @@ def _git_dirty_count() -> int | None:
 
     Uses ``git status --porcelain`` so it's fast (metadata-only). Counts
     every entry: modified, added, deleted, untracked. Returns ``None`` if
-    git is unavailable. redactedsurfaces working-tree drift that the
+    git is unavailable. surfaces working-tree drift that the
     HEAD-vs-indexed check misses (you can be at the same commit but have
     edits the index hasn't seen).
     """
@@ -90,7 +90,7 @@ def index_status() -> dict | None:
           "fresh": bool,
           "indexed_commit": "...",
           "head_commit": "...",
-          "dirty_files": int | None,   # redactedworking-tree drift count
+          "dirty_files": int | None,   # working-tree drift count
           "hint": "...",
         }
 
@@ -114,7 +114,7 @@ def index_status() -> dict | None:
     if not indexed_short:
         return None
     dirty = _git_dirty_count()
-    # redactedeven when HEAD matches, working-tree edits make the
+    # even when HEAD matches, working-tree edits make the
     # index stale for symbol-resolution purposes. Surface that.
     if indexed_short == head:
         if dirty and dirty > 0:

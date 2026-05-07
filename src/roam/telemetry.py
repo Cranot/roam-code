@@ -1,4 +1,4 @@
-"""redactedopt-in local telemetry.
+"""opt-in local telemetry.
 
 A tiny SQLite ring buffer that records `(timestamp, command, duration_ms,
 exit_code)` rows when ``ROAM_TELEMETRY_LOCAL=1``. Surfaced via

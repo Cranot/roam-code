@@ -1,6 +1,6 @@
 """Shared low-confidence verdict helpers for ranked-result commands.
 
-Background — redacted finding #7:
+Background — finding #7:
 
     `roam ask` correctly says "VERDICT: no confident recipe match" when
     the top recipe scores below ~0.15. `roam retrieve` had no equivalent

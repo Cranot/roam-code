@@ -148,7 +148,7 @@ def taint(ctx, rules_dir, max_hops, ci_mode, rule_filter, rules_pack):
     medium_count = sum(1 for f in findings if f.severity == "warning")
     sanitized_count = sum(1 for f in findings if f.sanitizer_in_path)
 
-    # redactedsingle 0-100 risk score. ``error`` weighs 5×; ``warning``
+    # single 0-100 risk score. ``error`` weighs 5×; ``warning``
     # 1×; sanitized findings count for half (mitigated, not eliminated).
     # The score saturates at 100 for >20 effective points so a clean
     # repo lands at 0 and any non-trivial risk is visible.

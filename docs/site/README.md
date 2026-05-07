@@ -36,7 +36,7 @@ Keep command examples aligned with the current CLI surface in `README.md`.
 
 ### Competitive landscape data
 
-1. Update source tracker first: `internal/competitor_tracker.md`
+1. Edit `CRITERIA_DATA` in `src/roam/competitor_site_data.py`.
 2. Regenerate JSON: `python src/roam/competitor_site_data.py --out docs/site/data/landscape.json`
 3. Verify sync: `python src/roam/competitor_site_data.py --check --out docs/site/data/landscape.json`
-4. Commit tracker + generated JSON together (tests enforce this)
+4. Commit source + generated JSON together (tests enforce this).

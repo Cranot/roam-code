@@ -358,7 +358,7 @@ _KNOWN_CONFIG_KEYS: dict[str, str] = {
 
 
 def _validate_config(root: Path, current: dict, json_mode: bool) -> None:
-    """redactedflag unknown keys / type mismatches in .roam/config.json."""
+    """flag unknown keys / type mismatches in .roam/config.json."""
     issues: list[dict] = []
     for key in current.keys():
         if key not in _KNOWN_CONFIG_KEYS:
@@ -428,7 +428,7 @@ def _validate_config(root: Path, current: dict, json_mode: bool) -> None:
 
 
 def _show_rerank_weights(root: Path, json_mode: bool) -> None:
-    """redactedprint the active rerank weights merged with defaults."""
+    """print the active rerank weights merged with defaults."""
     from roam.config import get_retrieve_weights
 
     weights = get_retrieve_weights(root)
@@ -451,7 +451,7 @@ def _show_rerank_weights(root: Path, json_mode: bool) -> None:
 
 
 def _show_env_inventory(json_mode: bool) -> None:
-    """redactedenumerate ROAM_* environment variables read by the codebase.
+    """enumerate ROAM_* environment variables read by the codebase.
 
     Walks ``src/roam/`` looking for ``os.environ.get("ROAM_...")`` and
     ``os.environ["ROAM_..."]`` references. Result is sorted, deduped,
@@ -543,7 +543,7 @@ def _no_mutating_options(
     exclude_pattern,
     remove_pattern,
 ) -> bool:
-    # redacted``use_local_cache`` is a ``is_flag=True`` Click option,
+    # ``use_local_cache`` is a ``is_flag=True`` Click option,
     # so its default is ``False`` not ``None``. The previous all(... is
     # None) check returned False even when nothing was passed, leaving
     # ``roam config`` (no flags, no --show) silent in --json mode.
@@ -610,15 +610,15 @@ def _no_mutating_options(
 )
 @click.option("--show", is_flag=True, help="Print current configuration.")
 @click.option("--semantic-status", is_flag=True, help="Show semantic backend readiness and embedding coverage.")
-@click.option("--env", "env_inventory", is_flag=True, help="List every ROAM_* env var read by the codebase (Pass 36).")
+@click.option("--env", "env_inventory", is_flag=True, help="List every ROAM_* env var read by the codebase.")
 @click.option(
-    "--check", "validate_check", is_flag=True, help="Validate .roam/config.json keys against known schema (Pass 55)."
+    "--check", "validate_check", is_flag=True, help="Validate .roam/config.json keys against known schema."
 )
 @click.option(
     "--weights",
     "show_weights",
     is_flag=True,
-    help="redactedprint the active rerank weights (alpha/beta/gamma/delta/epsilon/zeta).",
+    help="print the active rerank weights (alpha/beta/gamma/delta/epsilon/zeta).",
 )
 @click.pass_context
 def config(

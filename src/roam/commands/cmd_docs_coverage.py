@@ -54,7 +54,7 @@ def _has_docs(symbol: dict) -> bool:
 
 
 def _docstring_quality(text: str) -> tuple[str, dict]:
-    """redactedbucket a docstring into PRESENT / SHALLOW / RICH.
+    """bucket a docstring into PRESENT / SHALLOW / RICH.
 
     PRESENT: any non-empty docstring.
     SHALLOW: present, < 80 chars, no examples block, no parameter mentions.
@@ -155,7 +155,7 @@ def _stale_docs(symbols: list[dict], threshold_days: int) -> list[dict]:
 @click.option(
     "--quality",
     is_flag=True,
-    help="redactedbucket each documented symbol into ABSENT/SHALLOW/RICH.",
+    help="bucket each documented symbol into ABSENT/SHALLOW/RICH.",
 )
 @click.pass_context
 def docs_coverage(ctx, limit, days, threshold, quality):

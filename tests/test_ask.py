@@ -24,7 +24,7 @@ from tests.conftest import make_src_project as _make_project
 class TestRecipes:
     def test_v12_recipe_set(self):
         names = {r.name for r in RECIPES}
-        # The v12.0 expanded set + v12.8 fixture-impact + v12.15 (Pass 22)
+        # The v12.0 expanded set + v12.8 fixture-impact + v12.15
         assert names == {
             # First batch
             "safe-delete-check",
@@ -42,7 +42,7 @@ class TestRecipes:
             "architecture-debt",
             # v12.8 — pytest fixture impact
             "fixture-impact",
-            # v12.15 / redactedagent workflow recipes
+            # v12.15 / agent workflow recipes
             "trace-bug",
             "who-owns",
             "what-changed",

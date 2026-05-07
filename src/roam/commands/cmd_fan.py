@@ -132,7 +132,7 @@ def _scope_flag(meta_entry, in_deg, out_deg):
     help=(
         "Include CI scripts, dev tooling, build, and generated files. "
         "Excluded by default — high fan-in in dev/.github/benchmarks "
-        "is expected and dominates the headline (redacted)."
+        "is expected and dominates the headline."
     ),
 )
 @click.pass_context

@@ -40,8 +40,7 @@ JSONL into CodeRAG-Bench / BEIR / trec_eval directly.
 - **CodeRAG-Bench public submission** — JSONL is generated; not yet
   uploaded.
 - **Baseline-vs-roam table** — grep, ripgrep, aider repo map, CKB,
-  Codebase-Memory, Cursor (where measurable). Tracked as
-  ``REV3-followup`` in `internal/review_actions_external_2026-05-02.md`.
+  Codebase-Memory, Cursor (where measurable).
 - **20-30 external repos cross-section** — 5-10 today on synthetic +
   agi-in-md / supernode / roam-agent-eval / deep-research. Need
   larger repo sweep with hand-validated answers.

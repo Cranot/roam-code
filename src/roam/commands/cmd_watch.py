@@ -455,13 +455,13 @@ class DebounceAccumulator:
 
 
 def _need_force(webhook_events: list, webhook_force: bool) -> bool:
-    """redacteddoes the current event batch require a forced re-index?"""
+    """does the current event batch require a forced re-index?"""
     has_explicit = any(bool(evt.get("force")) for evt in webhook_events if isinstance(evt, dict))
     return has_explicit or (webhook_force and bool(webhook_events))
 
 
 def _scan_disk_changes(_discover, project_root: Path, tracked: dict, quiet: bool):
-    """redacteddiscover + diff disk state, optionally print per-file lines."""
+    """discover + diff disk state, optionally print per-file lines."""
     current_paths = _discover()
     current_disk = scan_disk_mtimes(current_paths, project_root)
     added, modified, removed = detect_changes(tracked, current_disk)
@@ -477,7 +477,7 @@ def _scan_disk_changes(_discover, project_root: Path, tracked: dict, quiet: bool
 
 
 def _label_webhook_events(webhook_events: list, quiet: bool) -> list[str]:
-    """redactedturn webhook event dicts into ``<webhook:name>`` labels."""
+    """turn webhook event dicts into ``<webhook:name>`` labels."""
     if not webhook_events:
         return []
     labels = [
@@ -492,7 +492,7 @@ def _label_webhook_events(webhook_events: list, quiet: bool) -> list[str]:
 
 
 def _refresh_tracked_after_reindex(project_root: Path, prev_file_count: int, quiet: bool):
-    """redactedreload tracked-files state and emit a status line."""
+    """reload tracked-files state and emit a status line."""
     tracked = load_tracked_files(project_root)
     new_count = len(tracked)
     if not quiet:
@@ -503,7 +503,7 @@ def _refresh_tracked_after_reindex(project_root: Path, prev_file_count: int, qui
 
 
 def _run_guardian_step(_guardian_collect, _guardian_write, guardian_report: str, quiet: bool) -> None:
-    """redactedcollect + write a guardian snapshot, log the verdict."""
+    """collect + write a guardian snapshot, log the verdict."""
     try:
         payload = _guardian_collect()
         if guardian_report:

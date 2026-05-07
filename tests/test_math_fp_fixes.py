@@ -1,7 +1,7 @@
 """Regression tests for the math-detector false-positive fixes (M1-M6).
 
 Each test reproduces a user-reported FP from the 2026-05-06 feedback batch
-on redacted. If a future detector regression brings the FP back, the test
+on a Vue 3 + Laravel codebase. If a future detector regression brings the FP back, the test
 fires. Each fixture is the smallest possible reproduction of the pattern.
 """
 
@@ -72,7 +72,7 @@ def test_find_match_line_returns_sym_start_on_no_match():
 def test_depth_guard_recognises_greater_than_early_return():
     """deepEqual-style: `if (depth > 10) return false` must register as a guard.
 
-    Real-world FP from redacted: src/utils/core/object-diff.ts:66 deepEqual
+    Real-world FP from a Vue 3 + Laravel codebase: src/utils/core/object-diff.ts:66 deepEqual
     flagged O(2^n) despite line 68 having `if (depth > 10) return false`.
     """
     # The helper _has_explicit_depth_guard lives inline inside

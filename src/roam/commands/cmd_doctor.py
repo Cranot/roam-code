@@ -263,7 +263,7 @@ def _check_command_registry() -> dict:
     removed or renamed leaves the registry mismatch undetected until an
     agent calls it. Doctor runs the lazy-import for every entry up front.
     """
-    # redactedbreak the static cycle (cli ↔ cmd_doctor) by loading
+    # break the static cycle (cli ↔ cmd_doctor) by loading
     # ``roam.cli`` via importlib at runtime. This is the only static
     # edge that connected back to cli; the doctor's safety check still
     # verifies every registered command imports.
@@ -362,7 +362,7 @@ def _check_mcp_registry() -> dict:
 
 
 def _check_plugin_discovery() -> dict:
-    """Plugin discovery completed without errors (Pass 35).
+    """Plugin discovery completed without errors.
 
     A user-installed plugin that fails to import would silently disappear
     from the surface; this check surfaces ``get_plugin_errors`` so the
@@ -401,7 +401,7 @@ def _check_plugin_discovery() -> dict:
 
 
 def _check_required_tables() -> dict:
-    """Required tables are present in the index (Pass 35).
+    """Required tables are present in the index.
 
     A failed mid-migration would leave the DB without expected tables.
     Surfacing it here is faster than discovering it via a downstream

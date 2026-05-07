@@ -1,6 +1,6 @@
 """``roam index-stats`` — index size, row counts, fragmentation.
 
-redactedsurfaces the size of the on-disk index plus a SQLite
+surfaces the size of the on-disk index plus a SQLite
 fragmentation heuristic (free_pages / page_count). When fragmentation
 exceeds ~25%, suggest ``VACUUM`` (or ``roam reset`` for a full
 rebuild). Useful when an index has grown after a long-lived dev

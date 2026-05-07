@@ -354,7 +354,7 @@ def _compute_security_hotspots(conn) -> dict:
 
 
 def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
-    """redactedfiles in the intersection of high churn × complexity × fan-in.
+    """files in the intersection of high churn × complexity × fan-in.
 
     Computes the 75th-percentile threshold for each metric, then lists
     files above all three thresholds. The score is the geometric mean
@@ -459,7 +459,7 @@ def _run_danger_mode(json_mode: bool, token_budget: int) -> None:
     "--danger",
     "danger_mode",
     is_flag=True,
-    help="Files in top quartile of churn × complexity × max-fan-in (redacted'danger zone')",
+    help="Files in top quartile of churn × complexity × max-fan-in ('danger zone')",
 )
 @click.pass_context
 def hotspots(ctx, sort_runtime, discrepancy, security_mode, danger_mode):

@@ -243,7 +243,7 @@ def affected(ctx, base_ref, max_depth, use_changed):
 
         changed_paths = set(file_map.keys())
 
-        # Collect all symbol IDs in changed files. redactedsingle
+        # Collect all symbol IDs in changed files. single
         # batched IN-clause replaces N round-trips (was one query per
         # changed file; now one query for the whole set).
         start_sym_ids = set()

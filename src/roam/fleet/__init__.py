@@ -2,7 +2,7 @@
 
 Phase-6 research finding: the agent-fleet *orchestration* layer was
 fully claimed in April 2026 (Copilot ``/fleet``, Cursor multitask,
-Windsurf Wave 13, Gemini CLI subagents, Claude Agent Teams) — but
+AI agent harnesses) — but
 none of those runtimes compute a *graph-aware partition* with conflict
 prediction. They all rely on an LLM scoping or human file-list
 curation. roam-code already has Louvain partitioning, dark-matter
