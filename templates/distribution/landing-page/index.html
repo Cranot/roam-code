@@ -421,6 +421,134 @@
   </section>
 
   <!-- ──────────────────────────────────────────────────────────
+       SECTION 5b — How Roam fits with your existing stack
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="stack-fit" style="padding-top: 56px;">
+    <div class="whats-in-inner">
+      <h2>How Roam fits with your existing stack</h2>
+      <p class="lede">
+        Roam runs <em>alongside</em> the tools you already pay for. Different layer, different findings, no overlap with your reviewer or your editor.
+      </p>
+      <div class="numbers-grid" style="grid-template-columns: repeat(2, 1fr);">
+        <div class="num-cell">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">+ CodeRabbit / Greptile / Qodo</strong>
+          <span>They review what the code does. Roam reviews what it touches. No overlapping findings; both write comments on the same PR.</span>
+        </div>
+        <div class="num-cell">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">+ SonarQube / Semgrep</strong>
+          <span>They find single-file static-analysis violations. Roam finds cross-file structural risk (clones, layers, blast radius). Different SARIF output, different gates.</span>
+        </div>
+        <div class="num-cell">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">+ Cursor / Claude Code / Copilot</strong>
+          <span>They write code. Roam exposes the code graph as an MCP server (136 tools) so the agent can ask <code>roam preflight &lt;name&gt;</code> before editing.</span>
+        </div>
+        <div class="num-cell">
+          <strong style="font-size: 17px; color: var(--accent); font-family: 'Space Grotesk';">+ GitHub / GitLab CI</strong>
+          <span>SARIF 2.1.0 export drops into GitHub Code Scanning natively. Critique exits with code 5 on high-severity findings — gate any PR step on it.</span>
+        </div>
+      </div>
+      <p class="how-it-works-foot" style="margin-top: 24px; text-align: center;">
+        Roam is a layer in your review pipeline, not a replacement for any of these tools.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 5c — Three scenarios: what Roam catches in practice
+       ────────────────────────────────────────────────────────── -->
+  <section class="whats-in" id="scenarios" style="padding-top: 56px; background: var(--bg-alt);">
+    <div class="whats-in-inner">
+      <h2>Three scenarios — what Roam catches in practice</h2>
+      <p class="lede">
+        Each of these is shaped after a real publicly-reported incident. The output below is the kind of CLI text and PR-bot comment Roam emits today.
+      </p>
+
+      <div class="scenarios-grid">
+
+        <article class="scenario">
+          <h3>The Cursor agent that deleted production</h3>
+          <p class="scenario-cite">Riffing on PocketOS, April 2026 — production database and three months of backups gone in nine seconds.</p>
+          <p>
+            An AI agent rewrites a <code>cleanup_old_records()</code> job. The diff looks fine. What it actually changed: the <code>WHERE</code> clause now matches every row.
+          </p>
+<pre class="terminal" aria-label="Sample Roam blast-radius output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+<span class="t-line">VERDICT: BLOCK  (1 high)</span>
+<span class="t-line">  cleanup_old_records  db/maintenance.py:84</span>
+<span class="t-line">  reaches: 3 entry points, 1 destructive op</span>
+<span class="t-line">  runtime: 1,247 calls/day in trace_ingest</span>
+<span class="t-line">  flag: DELETE without LIMIT</span></pre>
+          <p class="tie-back">→ Nine seconds vs nine months of backups.</p>
+        </article>
+
+        <article class="scenario">
+          <h3>The clone-not-edited bug Amazon would have caught</h3>
+          <p class="scenario-cite">Riffing on the Treadwell memo, March 2026 — 6.3M orders lost, senior signoff now required on every AI-generated change.</p>
+          <p>
+            AI agents fix bugs by pattern-matching, then forget the other places the same pattern lives. Diff looks clean. Roam flags the unchanged copies:
+          </p>
+<pre class="terminal" aria-label="Sample Roam clones-not-edited output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique</span>
+<span class="t-line">VERDICT: REVIEW  (clones-not-edited)</span>
+<span class="t-line">  order_service.py:142  [edited]</span>
+<span class="t-line">  billing/refunds.py:89  [UNCHANGED]</span>
+<span class="t-line">  admin/bulk_ops.py:201  [UNCHANGED]</span>
+<span class="t-line">  confidence: 0.94 (AST exact + identifier rename)</span></pre>
+          <p class="tie-back">→ Senior signoff plus a structural diff is better than senior signoff alone.</p>
+        </article>
+
+        <article class="scenario">
+          <h3>The +54% bug rate, in one PR</h3>
+          <p class="scenario-cite">Riffing on the DORA / Faros 2025 study — AI-adopting teams saw bugs/dev rise 54%, incidents/PR rise 242.7%.</p>
+          <p>
+            The Faros finding isn't that AI-written code is bad. It's that it touches more places than reviewers realize. Roam weights blast-radius by production traffic:
+          </p>
+<pre class="terminal" aria-label="Sample Roam runtime-hot output"><span class="t-prompt">$</span> <span class="t-cmd">git diff | roam critique --runtime</span>
+<span class="t-line">VERDICT: REVIEW  (runtime-hot path)</span>
+<span class="t-line">  serialize_user  api/v2/users.py:34</span>
+<span class="t-line">  trace ingest: 3.2M calls/day (top 0.1%)</span>
+<span class="t-line">  diff: response shape changed</span>
+<span class="t-line">  downstream: 4 mobile clients, 2 webhooks</span></pre>
+          <p class="tie-back">→ The rate isn't fixed by fewer AI commits — by reviewing structural impact at machine speed.</p>
+        </article>
+
+      </div>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
+       SECTION 5d — Roam on Roam (dogfooding evidence)
+       ────────────────────────────────────────────────────────── -->
+  <section class="dogfood-band">
+    <div class="dogfood-band-inner">
+      <p class="eyebrow" style="text-align: center;">Roam on Roam</p>
+      <h2 style="text-align: center;">We use what we sell.</h2>
+      <p class="lede" style="text-align: center; max-width: 720px; margin: 0 auto var(--s-5);">
+        Roam runs against its own codebase. Recent commits where Roam flagged something we missed, with the verifiable git hash:
+      </p>
+      <ul class="dogfood-list">
+        <li>
+          <a href="https://github.com/Cranot/roam-code/commit/f1101fb"><code>f1101fb</code></a>
+          — split <code>collect_symbol_metrics</code>, cyclomatic complexity 99 → ~10
+        </li>
+        <li>
+          <a href="https://github.com/Cranot/roam-code/commit/bc6d3ac"><code>bc6d3ac</code></a>
+          — split <code>alerts</code> command, complexity 99 → ~10
+        </li>
+        <li>
+          <a href="https://github.com/Cranot/roam-code/commit/2fe3854"><code>2fe3854</code></a>
+          — split <code>_parse_query_patterns</code>, complexity 106 → ~5
+        </li>
+        <li>
+          <a href="https://github.com/Cranot/roam-code/commit/19064b3"><code>19064b3</code></a>
+          — split <code>_collect_inter_findings</code>, complexity 107 → ~5
+        </li>
+      </ul>
+      <p class="dogfood-foot">
+        Browse <a href="https://github.com/Cranot/roam-code/commits/main">the full history</a> for the rest. If a tool can't pass its own gates, we shouldn't sell it.
+      </p>
+    </div>
+  </section>
+
+  <!-- ──────────────────────────────────────────────────────────
        SECTION 6 — Paid product cards
        ────────────────────────────────────────────────────────── -->
   <section class="products-intro">
@@ -584,6 +712,73 @@
           platforms understand natively. Ready-to-drop GitHub Actions
           templates ship with the package. <code>roam critique</code> returns
           exit code 5 on any high-severity finding so a CI step can gate on it.
+        </p>
+      </details>
+      <details>
+        <summary>How long does it take to index a typical repo?</summary>
+        <p>
+          A 100k-line monorepo indexes in roughly 20-40 seconds on a modern
+          laptop. Incremental rebuilds after a single PR's worth of changes
+          are sub-second. The DB lives in <code>.roam/index.sqlite</code> in
+          your repo; agents and CI both read from the same artefact.
+        </p>
+      </details>
+      <details>
+        <summary>What languages does Roam support?</summary>
+        <p>
+          27 languages with tree-sitter grammars: Python, JavaScript,
+          TypeScript, Go, Rust, Java, Kotlin, Scala, C, C#, C++, PHP, Ruby,
+          Swift, Apex, SQL DDL, FoxPro, plus YAML, HCL, JSON, XML configs and
+          framework-specific bridges (Django, Salesforce, GraphQL templates).
+          16 of the 27 have dedicated extractors with first-class symbol
+          extraction; the rest use generic tree-sitter walks.
+        </p>
+      </details>
+      <details>
+        <summary>Does Roam replace my existing reviewer?</summary>
+        <p>
+          No, and we recommend against it. CodeRabbit, Greptile, Qodo, and
+          SonarQube each catch a class of bug Roam doesn't (semantic correctness,
+          code-style violations, security smells inside a single function).
+          Roam catches the bugs <em>between</em> the code: callers two layers
+          up, tests that no longer assert, clones modified inconsistently,
+          runtime hot paths that just got slower. Most teams keep their
+          existing reviewer and add Roam alongside it for ~$25/dev/mo.
+        </p>
+      </details>
+      <details>
+        <summary>What data does Roam Cloud send back?</summary>
+        <p>
+          Metrics only. Health scores, complexity numbers, dependency counts,
+          architectural-layer counts, churn aggregates, test-coverage ratios.
+          Never function bodies, identifier names, file paths, or commit
+          messages. The shipping payload is a JSON envelope with numeric
+          fields and bucket aggregates only — auditable per push at
+          <code>.roam/cloud-payload.json</code> before it leaves your machine.
+        </p>
+      </details>
+      <details>
+        <summary>How does Roam Self-Hosted differ from running the CLI offline?</summary>
+        <p>
+          The CLI is already 100% local — that's the free path. Self-Hosted
+          adds (1) a long-lived service that watches your repos and indexes
+          on every push, (2) the Roam Review PR-bot logic running inside your
+          network instead of ours, (3) a Roam Cloud-equivalent dashboard
+          served from your own domain, and (4) signed audit-trail evidence
+          collected centrally for SOC 2 / ISO 42001 / internal review. All
+          contained inside your network perimeter.
+        </p>
+      </details>
+      <details>
+        <summary>Why no analytics or telemetry on this site?</summary>
+        <p>
+          Two reasons. First, we'd rather not be a vector — the August 2025
+          CodeRabbit RCE that leaked write access to ~1M repos started from
+          a dependency we wouldn't have noticed. Less surface area means
+          fewer surprises. Second, we sell to teams that read Privacy
+          policies. Asking them to read ours and seeing zero cookies, zero
+          trackers, zero "anonymous usage data" is a stronger signal than
+          any logo wall. See the <a href="/no-cookies">receipt</a>.
         </p>
       </details>
     </div>
