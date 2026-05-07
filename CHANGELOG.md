@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.46] - 2026-05-07
+
+### CI fix — ruff lint cleanup on overnight files
+
+Hotfix after 12.45. The ruff format-check passed in 12.45 but the
+ruff LINT pass (separate) flagged 7 errors across the new files:
+- `json` imported but unused in cmd_capabilities.py
+- `default_path` assigned but never used in cmd_skill_generate.py
+  (the dead variable was a refactor leftover; the actual default-path
+  logic lives in the `out = Path(output_path) if output_path else None`
+  branch where the user-supplied path wins)
+- `reg` assigned but never used in test_capability_registry.py (left
+  over from a refactor of the smoke test)
+- 3 unused imports (`os`, `Path`, `pytest`) in test_sarif_enrichment.py
+
+Applied `ruff check --fix --unsafe-fixes`. Whitespace + dead-code
+removal only; all tests still green.
+
 ## [12.45] - 2026-05-07
 
 ### CI fix — ruff format on overnight files
