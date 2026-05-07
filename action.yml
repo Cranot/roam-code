@@ -499,7 +499,7 @@ runs:
     # ---- 10. Post PR comment ------------------------------------------------
     - name: Post PR comment
       if: inputs.comment == 'true' && github.event_name == 'pull_request'
-      uses: actions/github-script@v7
+      uses: actions/github-script@v9
       env:
         RESULTS_DIR: ${{ steps.run-analysis.outputs.results-dir }}
         HEALTH_SCORE: ${{ steps.run-analysis.outputs.health-score }}
