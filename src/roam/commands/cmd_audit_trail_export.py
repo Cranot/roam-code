@@ -58,7 +58,7 @@ def _render_markdown(records: list[dict], path: Path) -> str:
     if not records:
         return f"_No audit-trail records in `{path}`._\n"
     lines = [
-        f"# AI Agent Readiness Audit Trail — {path}",
+        f"# Roam Audit Trail — {path}",
         "",
         f"**Records:** {len(records)} · "
         f"**First:** {records[0].get('timestamp', '?')} · "

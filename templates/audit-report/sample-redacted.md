@@ -1,7 +1,7 @@
 ---
-title: "AI Agent Readiness Audit"
+title: "Codebase Architecture Audit"
 subtitle: "Prepared for Sample Open-Source Codebase Inc"
-author: "roam-code · Cranot"
+author: "roam-code"
 date: "2026-05-05"
 toc: true
 toc-own-page: true
