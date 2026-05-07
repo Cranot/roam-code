@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Status — Roam</title>
+  <meta name="description" content="Operational status for roam-code.com and Roam services.">
+  <link rel="canonical" href="https://roam-code.com/status">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Status — Roam">
+  <meta property="og:description" content="Operational status for Roam.">
+  <meta property="og:url" content="https://roam-code.com/status">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="redacted">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>Status</h1>
+      <p class="legal-meta">Last reviewed: <time datetime="2026-05-07">2026-05-07</time></p>
+    </header>
+
+    <article>
+      <h2>Current status</h2>
+
+      <div class="status-grid">
+        <div class="status-row">
+          <span class="status-dot status-up"></span>
+          <strong>roam-code.com</strong>
+          <span class="status-text">Operational — served from Cloudflare's global edge</span>
+        </div>
+        <div class="status-row">
+          <span class="status-dot status-up"></span>
+          <strong>cranot.github.io/roam-code (docs)</strong>
+          <span class="status-text">Operational — GitHub Pages</span>
+        </div>
+        <div class="status-row">
+          <span class="status-dot status-up"></span>
+          <strong>PyPI package (roam-code)</strong>
+          <span class="status-text">Operational — see <a href="https://status.python.org/">PyPI status</a></span>
+        </div>
+        <div class="status-row">
+          <span class="status-dot status-up"></span>
+          <strong>GitHub repository (Cranot/roam-code)</strong>
+          <span class="status-text">Operational — see <a href="https://www.githubstatus.com/">GitHub status</a></span>
+        </div>
+        <div class="status-row">
+          <span class="status-dot status-pending"></span>
+          <strong>Roam Cloud + Roam Review</strong>
+          <span class="status-text">Pre-launch — early-access list open at <a href="mailto:hello@roam-code.com?subject=Early%20access">hello@roam-code.com</a></span>
+        </div>
+      </div>
+
+      <h2>Live monitoring</h2>
+      <p>
+        Continuous monitoring is provided by external uptime checks
+        (planned: BetterStack / UptimeRobot). When that's wired up, this
+        page will surface the live data feed at <code>status.roam-code.com</code>.
+      </p>
+      <p>
+        For now, this page is reviewed and updated manually with each
+        material change. If you observe a real outage, email
+        <a href="mailto:hello@roam-code.com?subject=Outage%20report">hello@roam-code.com</a>.
+      </p>
+
+      <h2>Past incidents</h2>
+      <p><em>None to date.</em> When we have any, they'll be listed here with timeline, root cause, and what changed to prevent recurrence.</p>
+
+      <h2>Maintenance windows</h2>
+      <p>
+        Static-site changes are deployed continuously via Cloudflare Pages with
+        zero downtime. Future paid services (Roam Cloud, Roam Review) will
+        document their maintenance windows in the per-service SLA, with at
+        least 48-hour advance notice for non-emergency work.
+      </p>
+
+      <h2>Service-level commitments</h2>
+      <p>
+        Roam's marketing site (this domain) is best-effort, no SLA. Paid
+        services target 99.5% monthly uptime per the
+        <a href="/terms">Terms of Service</a>. Self-Hosted SLAs are
+        documented in individual order forms.
+      </p>
+
+      <p class="legal-foot">
+        Questions? <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,143 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Accessibility — Roam</title>
+  <meta name="description" content="Roam targets WCAG 2.2 AA. Here's what we do, what we know is broken, and how to report issues.">
+  <link rel="canonical" href="https://roam-code.com/accessibility">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Accessibility — Roam">
+  <meta property="og:description" content="WCAG 2.2 AA commitment + how to report issues.">
+  <meta property="og:url" content="https://roam-code.com/accessibility">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/security">Security</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>Accessibility</h1>
+      <p class="legal-meta">Last reviewed: <time datetime="2026-05-07">2026-05-07</time></p>
+    </header>
+
+    <article>
+      <p>
+        We build <code>roam-code.com</code> to be usable by everyone,
+        including users with disabilities. Our target is
+        <strong>WCAG 2.2 Level AA</strong> conformance.
+      </p>
+
+      <h2>Current conformance</h2>
+      <p>
+        Self-assessed against WCAG 2.2 AA criteria as of the date above.
+        We pass on the audited surface (all 7 marketing pages):
+      </p>
+      <ul>
+        <li><strong>Contrast</strong> — every text/background pair meets or exceeds 4.5:1 (AA), most exceed 7:1 (AAA)</li>
+        <li><strong>Keyboard navigation</strong> — every interactive element is reachable and operable via keyboard; visible focus indicator on every focusable element</li>
+        <li><strong>Skip-to-content link</strong> — present on every page; visible on focus</li>
+        <li><strong>Semantic HTML</strong> — <code>&lt;nav&gt;</code>, <code>&lt;main&gt;</code>, <code>&lt;footer&gt;</code> landmarks used correctly; one <code>&lt;h1&gt;</code> per page</li>
+        <li><strong>Reduced motion</strong> — <code>@media (prefers-reduced-motion: reduce)</code> disables hover transforms</li>
+        <li><strong>Forms</strong> — none on the marketing site (CTAs are <code>mailto:</code> links). When forms launch with paid services, every input will be labelled and announce errors clearly.</li>
+        <li><strong>Images</strong> — all decorative; no missing alt-text</li>
+        <li><strong>Tables</strong> — comparison/pricing tables use <code>&lt;caption&gt;</code> + <code>scope=&quot;col&quot;/&quot;row&quot;</code>; screen readers announce them correctly</li>
+      </ul>
+
+      <h2>Known gaps</h2>
+      <ul>
+        <li>The "Made in the EU" footer line + numeric stats are decorative, not announced separately by screen readers — they integrate into the surrounding text. Acceptable.</li>
+        <li>The terminal-output demo block uses a monospace font for visual fidelity; a screen-reader user gets the literal text content, which may be verbose. Acceptable trade-off.</li>
+        <li>The comparison-table on mobile scrolls horizontally inside a wrapper; screen-reader users get the full table linearly. Acceptable.</li>
+      </ul>
+
+      <h2>Tested with</h2>
+      <ul>
+        <li>Programmatic contrast computation (every CSS color pair against its background)</li>
+        <li>Manual keyboard-only navigation</li>
+        <li>HTML semantic landmark presence checks</li>
+      </ul>
+      <p>
+        Not yet tested with: real screen-reader sessions (VoiceOver, NVDA,
+        JAWS) or assistive-tech users. We commit to a real
+        screen-reader-driven audit before enabling any paid product.
+      </p>
+
+      <h2>EU Accessibility Act</h2>
+      <p>
+        The European Accessibility Act (EAA, Directive 2019/882) takes
+        effect 28 June 2025 for many digital services. Marketing /
+        information sites are largely exempt; e-commerce and SaaS
+        delivery surfaces are not. We aim to meet the EAA scope before
+        any paid service launches.
+      </p>
+
+      <h2>Report an issue</h2>
+      <p>
+        If anything on roam-code.com is hard or impossible to use with
+        your assistive technology, email
+        <a href="mailto:hello@roam-code.com?subject=Accessibility%20issue">hello@roam-code.com</a>
+        with what you tried and what happened. We respond within 72 hours
+        on business days and prioritise accessibility fixes ahead of
+        feature work.
+      </p>
+
+      <p class="legal-foot">
+        Last verified by self-assessment on the date above.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

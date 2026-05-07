@@ -1,0 +1,408 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Changelog — Roam</title>
+  <meta name="description" content="Recent releases of roam-code: new features, fixes, surface counts. Mirrored from CHANGELOG.md.">
+  <link rel="canonical" href="https://roam-code.com/changelog">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Changelog — Roam">
+  <meta property="og:description" content="Recent roam-code releases.">
+  <meta property="og:url" content="https://roam-code.com/changelog">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/about">About</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="redacted">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>Changelog</h1>
+      <p class="legal-meta">Recent roam-code releases. Full history at <a href="https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md">CHANGELOG.md</a> on GitHub.</p>
+    </header>
+
+    <article>
+<h1>Changelog</h1>
+
+<p>All notable changes to <a href="https://github.com/Cranot/roam-code">roam-code</a> will be documented in this file.</p>
+
+<p>The format is based on <a href="https://keepachangelog.com/">Keep a Changelog</a>,</p>
+<p>and this project adheres to <a href="https://semver.org/">Semantic Versioning</a>.</p>
+
+<h2>[Unreleased]</h2>
+
+<h2>[12.46] - 2026-05-07</h2>
+
+<h3>CI fix — ruff lint cleanup on overnight files</h3>
+
+<p>Hotfix after 12.45. The ruff format-check passed in 12.45 but the</p>
+<p>ruff LINT pass (separate) flagged 7 errors across the new files:</p>
+<ul>
+<li><code>json</code> imported but unused in cmd_capabilities.py</li>
+<li><code>default_path</code> assigned but never used in cmd_skill_generate.py</li>
+</ul>
+<p>  (the dead variable was a refactor leftover; the actual default-path</p>
+<p>  logic lives in the <code>out = Path(output_path) if output_path else None</code></p>
+<p>  branch where the user-supplied path wins)</p>
+<ul>
+<li><code>reg</code> assigned but never used in test_capability_registry.py (left</li>
+</ul>
+<p>  over from a refactor of the smoke test)</p>
+<ul>
+<li>3 unused imports (<code>os</code>, <code>Path</code>, <code>pytest</code>) in test_sarif_enrichment.py</li>
+</ul>
+
+<p>Applied <code>ruff check --fix --unsafe-fixes</code>. Whitespace + dead-code</p>
+<p>removal only; all tests still green.</p>
+
+<h2>[12.45] - 2026-05-07</h2>
+
+<h3>CI fix — ruff format on overnight files</h3>
+
+<p>Hotfix after 12.44. The 9 net-new files added during the overnight</p>
+<p>push (capability.py, cmd_compare.py, cmd_skill_generate.py,</p>
+<p>sarif.py edits, plus 4 test files) were not run through <code>ruff format</code></p>
+<p>before commit. CI's lint job ran <code>ruff format --check</code> and rejected.</p>
+
+<p>Per the project's known-learning ("Ruff format check in CI: Always run</p>
+<p><code>ruff format</code> on new files before committing"), this should have been</p>
+<p>caught locally. The hotfix runs the formatter and lands the</p>
+<p>whitespace-only changes. No behavior change.</p>
+
+<h2>[12.44] - 2026-05-07</h2>
+
+<h3>CI fix — register R5's two new detectors in the catalog</h3>
+
+<p>Hotfix after 12.43. The two new async detectors added in R5</p>
+<p>(async-fire-and-forget-task, async-nested-run) were registered in</p>
+<p>the detector dispatch table but missing from the catalog/tasks.py</p>
+<p>CATALOG dict. test_math.py::test_detector_registry_covers_catalog</p>
+<p>caught the mismatch on all 5 Python versions.</p>
+
+<p>Adds full catalog entries for both new tasks: name, category, kind,</p>
+<p>and the two-way ranked-solutions list that the rest of the algo</p>
+<p>infrastructure expects. Bumps test_math.py's expected-task count</p>
+<p>32 -> 34. No behavior change to the detectors themselves.</p>
+
+<h2>[12.43] - 2026-05-07</h2>
+
+<h3>Major: Capability Registry + 4 new commands + landing-page launch</h3>
+
+<p>This release lands redacted and bundles a</p>
+<p>substantial overnight push (5 web passes + 12 R-phases). Companion to</p>
+<p>the launch of the new commercial landing page at https://roam-code.com.</p>
+
+<h3>New commands (4)</h3>
+
+<ul>
+<li><strong><code>roam capabilities</code></strong> — Decorator-driven introspection. Emits the</li>
+</ul>
+<p>  capability manifest as YAML / JSON / text from any command marked</p>
+<p>  with <code>@roam_capability</code>. Drives Roam Review GitHub App routing +</p>
+<p>  MCP filtering. redacted per</p>
+<p>  <code>build_priorities.md</code>.</p>
+<ul>
+<li><strong><code>roam skill-generate</code></strong> — Generate an agent-runtime skill manifest</li>
+</ul>
+<p>  from the capability registry. 4 emitter targets: <code>claude</code> (SKILL.md),</p>
+<p>  <code>cursor</code> (.mdc rule), <code>continue</code> (config snippet), <code>aider</code></p>
+<p>  (.aiderrc). Closes GitHub issue #14; supersedes the static SKILL.md</p>
+<p>  approach from PR #15 with dynamic generation. <code>--ai-safe-only</code></p>
+<p>  default filters to capabilities marked safe for autonomous agents.</p>
+<ul>
+<li><strong><code>roam compare</code></strong> — Structural delta between two indices. Symbols</li>
+</ul>
+<p>  added/removed/moved + per-file complexity deltas + IMPROVED /</p>
+<p>  SIDEWAYS / REGRESSED verdict. The "did this refactor actually</p>
+<p>  work?" tool. Useful for sprint-end measurement.</p>
+<ul>
+<li><strong><code>@roam_capability</code> decorator</strong> (not a CLI command but a public API)</li>
+</ul>
+<p>  — applied to the 3 Phase 0 commands (permit, postmortem,</p>
+<p>  article-12-check). Mark new commands with this so the registry</p>
+<p>  stays in sync with the codebase.</p>
+
+<h3>New detectors (2)</h3>
+
+<ul>
+<li><strong><code>async-fire-and-forget-task</code></strong> — <code>asyncio.create_task()</code> whose</li>
+</ul>
+<p>  return value is discarded. Counts total <code>create_task</code> calls,</p>
+<p>  subtracts stored ones (assignment, append, add, return, await),</p>
+<p>  reports the net leak. Python 3.11+ explicitly warns about this</p>
+<p>  footgun. High severity.</p>
+<ul>
+<li><strong><code>async-nested-run</code></strong> — <code>asyncio.run()</code> invoked inside an async</li>
+</ul>
+<p>  function. Raises RuntimeError at runtime (event loop already</p>
+<p>  running). Fix is to <code>await</code> the coroutine directly. High severity.</p>
+
+<h3>SARIF output enrichment</h3>
+
+<ul>
+<li><code>automationDetails</code> block (id + guid + description) on each run for</li>
+</ul>
+<p>  GitHub Code Scanning re-ingest correlation.</p>
+<ul>
+<li><code>versionControlProvenance</code> populated from <code>git rev-parse</code> when</li>
+</ul>
+<p>  available (revisionId, branch, repositoryUri).</p>
+<ul>
+<li>Driver metadata: <code>informationUri</code>, <code>downloadUri</code>, <code>organization</code>.</li>
+<li>Suppressions support: reads <code>.roam/suppressions.json</code> (list or</li>
+</ul>
+<p>  envelope shape), stamps matching results with the SARIF</p>
+<p>  <code>suppressions</code> array — so CI gates can respect documented FPs.</p>
+
+<h3>Rule packs</h3>
+
+<ul>
+<li>Rust pack expanded from 12 → 30 rules (memory + concurrency +</li>
+</ul>
+<p>  error-handling + hygiene categories added).</p>
+<ul>
+<li>Swift pack created from scratch — 25 rules covering force-unwrap,</li>
+</ul>
+<p>  retain cycles, main-thread blocking, SwiftUI state misuse, etc.</p>
+
+<h3>Documentation</h3>
+
+<ul>
+<li>New <code>docs/site/cookbook/README.md</code> — 10 high-value workflow recipes:</li>
+</ul>
+<p>  orient in a new codebase, audit a PR, set up a CI gate, find dead</p>
+<p>  code, generate Article 12 readiness, replay detectors against past</p>
+<p>  commits, wire roam into Claude Code, compare two indices, ship a</p>
+<p>  pre-commit verdict.</p>
+<ul>
+<li><code>(internal memo)</code> — captured May 2026 competitor</li>
+</ul>
+<p>  state (GitNexus 10K stars, Codebase-Memory 66 langs, Qodo 2.0</p>
+<p>  multi-agent, Greptile v4 82% bug catch, CodeRabbit Autofix). Drives</p>
+<p>  next-session prioritisation.</p>
+
+<h3>Landing page (https://roam-code.com)</h3>
+
+<p>Major rework over 5 audit-and-fix passes after the domain went live</p>
+<p>on 2026-05-07:</p>
+
+<ul>
+<li>7-page site: home, /pricing, /compare, /docs, /privacy, /terms,</li>
+</ul>
+<p>  /refund. All under 10 KB Brotli per page.</p>
+<ul>
+<li>Plain-language H1: "Your AI writes the code. Roam tells you what</li>
+</ul>
+<p>  else it broke."</p>
+<ul>
+<li>"What's in the free CLI" section showing the complete product</li>
+</ul>
+<p>  (190+ commands, 136 MCP tools, 27 languages, real OSS adoption</p>
+<p>  numbers fetched from GitHub + pypistats).</p>
+<ul>
+<li>"How it works" section with the MCP-server angle (your AI agent</li>
+</ul>
+<p>  talks to Roam, gets back graph-grounded answers).</p>
+<ul>
+<li>"What Roam looks like in practice" — terminal demo + GitHub PR</li>
+</ul>
+<p>  comment mockup (HTML/CSS, no images).</p>
+<ul>
+<li>Comparison table vs CodeRabbit / Greptile / Qodo / SonarQube,</li>
+</ul>
+<p>  with verified-against-vendor-pricing-pages methodology.</p>
+<ul>
+<li>Pain band citing PocketOS / Amazon Treadwell / Faros AI 2026 /</li>
+</ul>
+<p>  Kudelski's CodeRabbit RCE writeup, with "Roam catches this class</p>
+<p>  of bug" tie-back lines.</p>
+<ul>
+<li>Pre-MRR legal pages: GDPR-compliant Privacy, Terms with</li>
+</ul>
+<p>  limitation-of-liability + Greek governing law, Refund policy with</p>
+<p>  EU consumer-rights notice.</p>
+<ul>
+<li>Self-hosted fonts (42 KB total, 86% reduction from prior cold-load).</li>
+<li>Strict CSP with hash-allowlisted JSON-LD, COOP/CORP, HSTS preload.</li>
+<li>Email contacts (hello@/security@) + .well-known/security.txt.</li>
+</ul>
+
+<h3>Surface counts</h3>
+
+<ul>
+<li>CLI commands: 190 → <strong>193</strong> (+ capabilities, skill-generate, compare)</li>
+<li>Modules: 180 → 183</li>
+<li>Detectors: 54 → 56 (+ async-fire-and-forget, async-nested-run)</li>
+<li>Rule packs: 7 → 8 (+ Swift)</li>
+<li>Tests added: 32 (capability 11 + sarif 7 + skill 7 + compare 7)</li>
+<li>Documentation: + cookbook (10 recipes)</li>
+</ul>
+
+<h3>What was deferred to next session</h3>
+
+<p>R4 (Dart Tier 1 extractor), R11 (migration-plan CLI), R13 (parallel</p>
+<p>parse for monorepos), R14 (LLM-augmented MCP tool), R15 (why-slow CLI</p>
+<p>via runtime traces), R16 (open-issues sweep), R18 (GraphQL bridge),</p>
+<p>R19 (incremental MCP hot-reload). Each documented in the project task</p>
+<p>list with notes on scope + risk.</p>
+
+<h2>[12.42] - 2026-05-06</h2>
+
+<h3>CI fix — landscape.json self-row version stamp</h3>
+
+<p>Hotfix after 12.41. The 12.41 release bumped pyproject + MCP cards</p>
+<p>+ competitor_site_data but missed <code>docs/site/data/landscape.json</code>'s</p>
+<p>self-row, which <code>tests/test_doc_consistency.py::test_landscape_json_self_row_version_matches</code></p>
+<p>guards (major.minor must match pyproject). Bumped 12.40 → 12.42 in</p>
+<p>that file. No behavior change.</p>
+
+<h2>[12.41] - 2026-05-06</h2>
+
+<h3>CI fix — README surface consistency for Phase 0 commands</h3>
+
+<p>Hotfix release after 12.40. The README's command listing did not yet</p>
+<p>include <code>permit</code>, <code>postmortem</code>, and <code>article-12-check</code>, which broke</p>
+<p><code>tests/test_readme_surface_consistency.py::test_readme_covers_all_canonical_cli_commands</code></p>
+<p>on all 5 Python versions in the matrix. Added one-line entries for</p>
+<p>each of the three new commands in the canonical command table. No</p>
+<p>behavior change; documentation-only fix to restore CI green.</p>
+
+<h2>[12.40] - 2026-05-06</h2>
+
+<h3>Pivot to monetization — Phase 0 free-OSS funnel artifacts + commercial landing page</h3>
+
+<p>After 8 CI iterations restoring the matrix to green (12.31 → 12.39),</p>
+<p>this release pivots from polish to monetization-aligned shipping.</p>
+<p>Lands the Phase 0 commands from <code>build_priorities.md</code> plus a</p>
+<p>starter landing-page implementation for the <code>roam.review</code> umbrella.</p>
+
+<h3>New commands (3 — redacted)</h3>
+
+<ul>
+<li><strong><code>roam permit</code></strong> — structural-permission verdict facade for AI</li>
+</ul>
+<p>  agents. Returns <code>{verdict, reason, allowed_actions, blocked_actions}</code></p>
+<p>  over staged changes (<code>--staged</code>), an arbitrary diff (<code>--input</code>), or</p>
+<p>  a target symbol (<code>--symbol</code>). Wraps <code>roam critique</code> + <code>roam preflight</code>.</p>
+<p>  Exit codes: 0=ALLOW, 5=BLOCK, 6=REVIEW. Drops into Cursor rules,</p>
+<p>  Claude Code permission hooks, pre-commit, GitHub Actions branch</p>
+<p>  protection. **Engine reused by the Roam Review GitHub App at PR</p>
+<p>  time.**</p>
+<ul>
+<li><strong><code>roam postmortem <commit-range></code></strong> — replays current detectors</li>
+</ul>
+<p>  against past commits. Walks <code>HEAD~30..HEAD</code> (or any range), runs</p>
+<p>  <code>roam critique</code> against each commit's diff, reports findings that</p>
+<p>  would have surfaced pre-merge. The single highest-conversion buyer-</p>
+<p>  meeting demo per the v2 plan: *"if it retroactively catches my Q1</p>
+<p>  incidents, redacted."*</p>
+<ul>
+<li><strong><code>roam article-12-check</code></strong> — EU AI Act Article 12 readiness</li>
+</ul>
+<p>  assessment. 6-item checklist (audit-trail dir, trail records,</p>
+<p>  retention policy, technical docs, attestation surface, high-risk</p>
+<p>  classification heuristic) → 1-page Markdown report (or PDF with</p>
+<p>  <code>--pdf out.pdf</code> if reportlab installed). Captures Article-12-curious</p>
+<p>  leads before they pick another vendor.</p>
+
+<h3>Commercial landing page (starter)</h3>
+
+<p>New directory <code>templates/distribution/landing-page/</code> with:</p>
+
+<ul>
+<li><code>index.html</code> — hero + 3 product cards + buyer-pain band citing</li>
+</ul>
+<p>  PocketOS / Amazon Treadwell / DORA 2025 + audit upsell + trust</p>
+<p>  strip + FAQ + footer</p>
+<ul>
+<li><code>landing.css</code> — single 6KB stylesheet, IBM Plex Mono + Space</li>
+</ul>
+<p>  Grotesk fonts (matches docs/site visual language)</p>
+<ul>
+<li><code>README.md</code> — domain priority list (<code>roam.review</code> recommended</li>
+</ul>
+<p>  primary, with <code>roamreview.com</code> / <code>roam.cloud</code> / <code>roamaudit.com</code></p>
+<p>  as backups), 3 deploy paths (Cloudflare Pages / Vercel / GitHub</p>
+<p>  Pages), content TODOs before going live</p>
+
+<p><code>templates/distribution/landing-page-spec.md</code> updated to reflect</p>
+<p>the new domain recommendation.</p>
+
+<h3>Surface counts</h3>
+
+<ul>
+<li>187 → <strong>190 commands</strong> (+permit, +postmortem, +article-12-check)</li>
+<li>README + llms-install + landscape.json updated</li>
+</ul>
+
+<h3>Tests</h3>
+
+<ul>
+<li><code>tests/test_pivot_phase0_commands.py</code> — 7 tests covering happy-</li>
+</ul>
+<p>  path + verdict-decision-tree for <code>permit</code>, no-commits-found path</p>
+<p>  for <code>postmortem</code>, JSON envelope shape + markdown render + file-</p>
+<p>  output for <code>article-12-check</code>. All pass on Python 3.9-3.13.</p>
+
+      <p class="legal-foot">
+        For older releases, see the
+        <a href="https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md">complete CHANGELOG on GitHub</a>
+        or browse <a href="https://github.com/Cranot/roam-code/releases">release tags</a>.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>No Cookies — Roam</title>
+  <meta name="description" content="We don't set cookies. We don't track you. Here's what we do — and don't — collect.">
+  <link rel="canonical" href="https://roam-code.com/no-cookies">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="No Cookies — Roam">
+  <meta property="og:description" content="We don't set cookies. We don't track. Here's the receipt.">
+  <meta property="og:url" content="https://roam-code.com/no-cookies">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/privacy">Privacy</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>No cookies. No tracking. No analytics.</h1>
+      <p class="legal-meta">Last reviewed: <time datetime="2026-05-07">2026-05-07</time></p>
+    </header>
+
+    <article>
+      <p>
+        This page is the receipt for the footer claim on every page of
+        roam-code.com.
+      </p>
+
+      <h2>What we don't do</h2>
+      <ul>
+        <li><strong>No cookies.</strong> The site sets zero first-party cookies. Inspect with browser dev tools — you'll find none.</li>
+        <li><strong>No tracking pixels.</strong> No Facebook, Twitter, LinkedIn, or any other tracking pixel.</li>
+        <li><strong>No analytics scripts.</strong> No Google Analytics, no Plausible, no Fathom, no PostHog, no Hotjar, no anything.</li>
+        <li><strong>No third-party fonts.</strong> Self-hosted Latin-subset Space Grotesk + IBM Plex Mono. No call to fonts.googleapis.com.</li>
+        <li><strong>No third-party scripts.</strong> Inspect <code>view-source:https://roam-code.com/</code> — only inline JSON-LD (data, not code) and Cloudflare's email-obfuscation helper.</li>
+        <li><strong>No fingerprinting.</strong> No canvas, no WebGL, no audio, no font-list probing.</li>
+      </ul>
+
+      <h2>What we do collect (server logs only)</h2>
+      <ul>
+        <li>HTTP request logs via Cloudflare: IP address, User-Agent, requested path, response code, timestamp</li>
+        <li>Retained 30 days for security / abuse prevention (legal basis: legitimate interest, GDPR Art. 6(1)(f))</li>
+        <li>Not joined to any other dataset; not sold; not shared</li>
+      </ul>
+      <p>See the full <a href="/privacy">Privacy Policy</a> for the details.</p>
+
+      <h2>How to verify</h2>
+      <p>Open browser dev tools and load this page. Check:</p>
+      <ul>
+        <li><strong>Application → Cookies</strong> — empty</li>
+        <li><strong>Application → Local Storage / Session Storage</strong> — empty</li>
+        <li><strong>Network</strong> — only roam-code.com hosts. The single Cloudflare email-decode script is loaded from the same origin via <code>/cdn-cgi/scripts/...</code></li>
+      </ul>
+
+      <h2>What about the email-obfuscation script?</h2>
+      <p>
+        Cloudflare auto-injects a tiny script
+        (<code>email-decode.min.js</code>, ~1 KB) when it rewrites
+        <code>mailto:</code> links to defeat email scrapers. It runs on
+        click, sets no cookies, and reports nothing back. We could
+        disable it but the spam-prevention is genuinely useful. If you
+        prefer to block it, your tracker-blocker probably already does.
+      </p>
+
+      <h2>What about CDN edge caching?</h2>
+      <p>
+        Cloudflare caches the static page bytes at edge POPs worldwide.
+        That improves your latency. Cache nodes log the same fields as
+        above (IP / UA / path / code / timestamp). No personal data is
+        stored or processed by the static page itself.
+      </p>
+
+      <h2>What changes when paid services launch?</h2>
+      <p>
+        <strong>Roam Cloud</strong> and <strong>Roam Review</strong> are
+        authenticated apps — they will set a session cookie for sign-in.
+        That's a strictly-necessary cookie and exempt from cookie consent
+        under the EU ePrivacy Directive Art. 5(3). They still won't run
+        analytics or tracking scripts.
+      </p>
+      <p>
+        Source code never leaves your machine from the open-source CLI.
+        Roam Cloud receives metrics only. Roam Review processes PR diffs
+        in our cloud (or yours, if self-hosted) and discards them after
+        analysis. See <a href="/privacy">Privacy Policy</a> for the
+        complete list of what's transmitted.
+      </p>
+
+      <p class="legal-foot">
+        Questions? <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

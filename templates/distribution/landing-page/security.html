@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Security — Roam</title>
+  <meta name="description" content="Vulnerability disclosure policy, security posture, and how to report issues responsibly.">
+  <link rel="canonical" href="https://roam-code.com/security">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Security — Roam">
+  <meta property="og:description" content="Vulnerability disclosure policy + security posture for roam-code.">
+  <meta property="og:url" content="https://roam-code.com/security">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="redacted">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>Security</h1>
+      <p class="legal-meta">Last updated: <time datetime="2026-05-07">2026-05-07</time></p>
+    </header>
+
+    <article>
+      <p>
+        We take security seriously. This page documents how to report
+        vulnerabilities, what's in scope, our response commitment, and the
+        security posture of the products we ship.
+      </p>
+
+      <h2>Reporting a vulnerability</h2>
+      <p>
+        Email <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        with details. Please include:
+      </p>
+      <ul>
+        <li>A clear description of the issue and how to reproduce it</li>
+        <li>The affected URL, command, or code path</li>
+        <li>Your assessment of impact (data exposure, availability, etc.)</li>
+        <li>Optional: a proof-of-concept</li>
+      </ul>
+      <p>
+        We respond within <strong>72 hours</strong> on business days
+        (Athens, Greece time). For high-severity issues we'll engage
+        immediately on receipt.
+      </p>
+
+      <h2>Safe-harbour commitment</h2>
+      <p>
+        We will not pursue legal action against good-faith security
+        research that:
+      </p>
+      <ul>
+        <li>Avoids accessing, modifying, or destroying customer data</li>
+        <li>Doesn't degrade service availability for other users</li>
+        <li>Stops at proof-of-concept (no exfiltration, no ransom, no public disclosure before fix)</li>
+        <li>Gives us a reasonable window to remediate (default 90 days; extendable on request)</li>
+      </ul>
+
+      <h2>In scope</h2>
+      <ul>
+        <li><code>roam-code.com</code> and all sub-paths/sub-domains we control</li>
+        <li>The <code>roam-code</code> Python package on PyPI and any binary releases</li>
+        <li>The <code>Cranot/roam-code</code> GitHub repository (source + workflows)</li>
+        <li>The MCP server (<code>roam mcp</code>) and its tool surface</li>
+        <li>Anything reachable from <code>redacted</code></li>
+      </ul>
+
+      <h2>Out of scope</h2>
+      <ul>
+        <li>Findings on third-party services (Cloudflare, GitHub, PyPI) — please report to those vendors directly</li>
+        <li>Self-hosted installations of customer code that include Roam — those are the customer's responsibility</li>
+        <li>Non-security bugs (e.g. UI glitches, broken links) — open a regular GitHub issue instead</li>
+      </ul>
+
+      <h2>Hall of thanks</h2>
+      <p>
+        We acknowledge security researchers who report responsibly.
+        Once we have a name to credit, it goes here. Send us how you'd
+        like to be credited (full name, handle, or anonymous).
+      </p>
+      <p><em>No reports yet — be the first.</em></p>
+
+      <h2>Security posture</h2>
+
+      <h3>The CLI runs locally</h3>
+      <p>
+        The <code>roam-code</code> open-source CLI runs entirely on your
+        machine. It writes a SQLite file in your repo's <code>.roam/</code>
+        directory. No network calls. No telemetry. No phone-home.
+        Audit the source on
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>.
+      </p>
+
+      <h3>Supply-chain integrity</h3>
+      <ul>
+        <li>PyPI releases use OIDC <strong>Trusted Publishing</strong> (no long-lived API tokens) — see <code>.github/workflows/publish.yml</code></li>
+        <li>Each release is built reproducibly from a tagged commit</li>
+        <li>Sigstore attestations are produced by the publish workflow (verifiable provenance)</li>
+        <li>The repo enables Dependabot security updates + secret scanning + push-protection</li>
+      </ul>
+
+      <h3>Audit-trail evidence</h3>
+      <p>
+        Roam itself emits in-toto v1 attestations and a SHA-256-chained
+        audit-trail JSONL on every analysis. Run <code>roam cga verify</code>
+        on a statement to verify its signature with cosign.
+      </p>
+
+      <h3>Hosted services posture</h3>
+      <ul>
+        <li><strong>roam-code.com</strong> — static site on Cloudflare Pages. Strict CSP, HSTS preload, COOP+CORP, Permissions-Policy, X-Frame-Options DENY. No JavaScript except Cloudflare's email-obfuscation helper. No third-party analytics.</li>
+        <li><strong>Roam Cloud</strong> (when launched) — metrics-only ingestion. Source code is never uploaded.</li>
+        <li><strong>Roam Review</strong> (when launched) — PR diffs are processed in our cloud or yours (self-host option). Diffs discarded after analysis. Audit-trail metadata retained per the Privacy Policy.</li>
+      </ul>
+
+      <h2>Disclosure timing</h2>
+      <p>
+        We aim to remediate high-severity issues within 30 days, medium
+        within 90 days, low at our next scheduled release. We'll
+        coordinate any public disclosure with the reporter. Default
+        public-disclosure window is 90 days from initial report; we may
+        extend on request when more time is genuinely needed.
+      </p>
+
+      <h2>PGP / encrypted reports</h2>
+      <p>
+        We're standing up a PGP key for <code>security@roam-code.com</code>.
+        Until it's published here, send unencrypted; or use the
+        <a href="/.well-known/security.txt">security.txt</a> for the most
+        current contact info.
+      </p>
+
+      <h2>Compliance posture</h2>
+      <ul>
+        <li><strong>EU AI Act Article 12</strong> — Roam emits the kind of audit-trail evidence Article 12 requires. Customers run their own conformity assessment; Roam supplies the data.</li>
+        <li><strong>GDPR</strong> — see <a href="/privacy">Privacy Policy</a> for data-processing details + sub-processors</li>
+        <li><strong>SOC 2 / ISO 42001 / ISO 27001</strong> — control mappings shipped with Roam Self-Hosted; standalone certification roadmapped (no current independent attestation)</li>
+      </ul>
+
+      <p class="legal-foot">
+        Questions about this policy? <a href="mailto:security@roam-code.com">security@roam-code.com</a>.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

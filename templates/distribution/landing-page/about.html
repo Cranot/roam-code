@@ -1,0 +1,192 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>About — Roam</title>
+  <meta name="description" content="Why roam-code exists, who built it, and what we believe about software, AI, and structural review.">
+  <link rel="canonical" href="https://roam-code.com/about">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="./landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="About — Roam">
+  <meta property="og:description" content="Why roam-code exists, who built it, what we believe.">
+  <meta property="og:url" content="https://roam-code.com/about">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "AboutPage",
+    "name": "About Roam",
+    "url": "https://roam-code.com/about",
+    "inLanguage": "en",
+    "isPartOf": {"@type": "WebSite", "name": "Roam", "url": "https://roam-code.com/"},
+    "publisher": {
+      "@type": "Organization",
+      "name": "Cranot",
+      "url": "https://github.com/Cranot",
+      "founder": {"@type": "Person", "name": "Dimitris", "jobTitle": "Founder"}
+    }
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="redacted">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <main id="main" class="legal-page">
+    <header class="legal-header">
+      <h1>About</h1>
+      <p class="legal-meta">Founded in Athens · Apache 2.0 · sole-trader, customer-funded</p>
+    </header>
+
+    <article>
+      <h2>What Roam is for</h2>
+      <p>
+        AI coding agents — Claude Code, Cursor, Codex, Copilot — write
+        code that compiles and passes the tests, but breaks something
+        else. The "something else" is what we built Roam to surface
+        before a human sees the PR. Roam reads what your code
+        <em>touches</em> — callers, dependency cycles, layer violations,
+        copy-paste duplicates, blast radius — not just what it
+        <em>does</em>.
+      </p>
+      <p>
+        Existing reviewers (CodeRabbit, Greptile, Qodo) operate on the
+        diff as text. Roam operates on the diff as a graph mutation.
+        Different layer, different bugs. Most teams want both signals.
+      </p>
+
+      <h2>Why now</h2>
+      <p>
+        2025–2026 changed how teams ship code. Senior engineers stopped
+        being the only people writing PRs; agents started shipping
+        them too. The tooling kept up on the
+        <em>generate</em> side and not on the <em>verify</em> side.
+        We saw the bills come in:
+      </p>
+      <ul>
+        <li>PocketOS — production database + 3 months of backups gone in 9 seconds. The agent was confident.</li>
+        <li>Amazon — 6.3M lost orders in a single AI-related outage; SVP Treadwell now requires senior signoff on every agent change.</li>
+        <li>Faros AI 2026 telemetry — bugs/dev up 54%, incidents/PR up 242.7% on AI-adopting teams.</li>
+      </ul>
+      <p>
+        Roam is the missing audit layer. It runs locally (the engine is
+        Apache 2.0, free forever) and ships paid layers — Review (PR
+        bot), Cloud (dashboard), Self-Hosted (your network) — on top
+        when teams need them.
+      </p>
+
+      <h2>Who built it</h2>
+      <p>
+        Roam is built by Dimitris (handle: Cranot), a sole-trader operating
+        from Athens, Greece. Solo founder; the company structure is a Greek
+        atomiki epicheirisi (sole proprietorship). Customer-funded, no
+        external investors. No exit plan beyond "build something useful
+        and stay independent."
+      </p>
+      <p>
+        Find me on
+        <a href="https://github.com/Cranot">GitHub</a>,
+        or email <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>.
+      </p>
+
+      <h2>What we believe</h2>
+      <ul>
+        <li><strong>Code stays on your machine by default.</strong> The CLI does not phone home. No telemetry, no analytics, no "anonymous usage data." If you want a dashboard or PR bot, you opt in by paying — and we still don't take your source code.</li>
+        <li><strong>Verifiable claims beat marketing copy.</strong> Every analysis Roam runs writes a tamper-evident audit-trail file plus signed records (in-toto v1, verifiable with cosign). When the EU AI Act Article 12 deadline hits in August 2026, you'll have the evidence. We don't ask you to trust us; we give you the receipts.</li>
+        <li><strong>Open source is the default for the engine.</strong> Apache 2.0. Fork it, audit it, ship a competitor. The CLI will stay free forever — we make money from the hosted layers, not from gatekeeping the engine.</li>
+        <li><strong>Privacy isn't a feature; it's the floor.</strong> Zero cookies, zero tracking, zero analytics on this site (see the <a href="/no-cookies">receipt</a>). After the August 2025 CodeRabbit RCE that leaked write access to ~1M repos, "we don't store your code" stopped being a differentiator and became the minimum bar.</li>
+        <li><strong>EU is home, not a market.</strong> Built in Athens. Made in the EU. GDPR-native. The EU AI Act is the regulation we'll feel first; we'd rather build for it than retrofit later.</li>
+      </ul>
+
+      <h2>Funding model</h2>
+      <p>
+        Roam is customer-funded. The free CLI exists because it earns
+        the right to charge for the hosted layers — once teams trust the
+        engine, they pay to run it on every PR (Review), in a shared
+        dashboard (Cloud), or inside their network (Self-Hosted). No
+        VC, no acquisition track. The company stays small enough to
+        answer email personally.
+      </p>
+
+      <h2>Roadmap</h2>
+      <p>
+        See the <a href="/changelog">changelog</a> for what's shipped.
+        Near-term: GitHub App MVP for Roam Review, Cloud dashboard
+        scaffold, expanded language support (Dart for Flutter,
+        cross-language bridges for GraphQL). Each ships when it ships.
+        We don't pre-announce roadmap items because plans are guesses
+        until they're code.
+      </p>
+
+      <h2>Where to find us</h2>
+      <ul>
+        <li>Site: <a href="/">roam-code.com</a></li>
+        <li>Docs: <a href="redacted">cranot.github.io/roam-code</a></li>
+        <li>GitHub: <a href="https://github.com/Cranot/roam-code">github.com/Cranot/roam-code</a></li>
+        <li>PyPI: <a href="https://pypi.org/project/roam-code/">pypi.org/project/roam-code</a></li>
+        <li>Email: <a href="mailto:hello@roam-code.com">hello@roam-code.com</a></li>
+        <li>Security disclosures: <a href="mailto:security@roam-code.com">security@roam-code.com</a> (see <a href="/security">policy</a>)</li>
+      </ul>
+
+      <p class="legal-foot">
+        Want to write about Roam? See the <a href="/press">press kit</a> for logos and screenshots.
+      </p>
+    </article>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="redacted">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
