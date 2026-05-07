@@ -51,6 +51,8 @@ EXTENSION_MAP = {
     # Scala
     ".scala": "scala",
     ".sc": "scala",
+    # Dart (Tier 1, dedicated extractor in dart_lang.py)
+    ".dart": "dart",
     # Tier-2 / tree-sitter-only languages (no dedicated roam extractor)
     ".lua": "lua",
     ".zig": "zig",
@@ -64,7 +66,6 @@ EXTENSION_MAP = {
     ".r": "r",
     ".R": "r",
     ".jl": "julia",
-    ".dart": "dart",
     ".sh": "bash",
     ".bash": "bash",
     ".zsh": "bash",

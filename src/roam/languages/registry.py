@@ -35,6 +35,7 @@ _DEDICATED_EXTRACTORS = frozenset(
         "swift",
         "scala",
         "sql",
+        "dart",
     }
 )
 
@@ -57,6 +58,7 @@ _SUPPORTED_LANGUAGES = frozenset(
         "swift",
         "scala",
         "sql",
+        "dart",
         "vue",
         "svelte",
         # Aliased languages (parsed via grammar aliases)
@@ -214,6 +216,10 @@ def _create_extractor(language: str) -> "LanguageExtractor":
         from .sql_lang import SqlExtractor
 
         return SqlExtractor()
+    elif language == "dart":
+        from .dart_lang import DartExtractor
+
+        return DartExtractor()
     # Salesforce extractors
     elif language == "apex":
         from .apex_lang import ApexExtractor

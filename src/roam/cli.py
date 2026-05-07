@@ -169,6 +169,7 @@ _COMMANDS = {
     "vuln-reach": ("roam.commands.cmd_vuln_reach", "vuln_reach"),
     "ingest-trace": ("roam.commands.cmd_ingest_trace", "ingest_trace"),
     "hotspots": ("roam.commands.cmd_hotspots", "hotspots"),
+    "why-slow": ("roam.commands.cmd_why_slow", "why_slow"),
     "schema": ("roam.commands.cmd_schema", "schema_cmd"),
     "search-semantic": ("roam.commands.cmd_search_semantic", "search_semantic"),
     "relate": ("roam.commands.cmd_relate", "relate"),
@@ -355,6 +356,7 @@ _CATEGORIES = {
         "bisect",
         "ingest-trace",
         "hotspots",
+        "why-slow",
         "eval-retrieve",
     ],
     "Architecture": [
