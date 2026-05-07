@@ -1,0 +1,11 @@
+blank_issues_enabled: false
+contact_links:
+  - name: Security vulnerability
+    url: https://roam-code.com/security
+    about: Report a security issue privately. Do NOT use public issues.
+  - name: Question or general feedback
+    url: mailto:hello@roam-code.com
+    about: For non-bug, non-feature questions, email us.
+  - name: Documentation
+    url: redacted
+    about: Check the docs site before filing.
