@@ -49,8 +49,8 @@ metrics. Then a calibrated calculator becomes a closing tool for Sales.
 
 Until then: a static "Cost of one outage" callout would be honest:
 "One Cursor-agent incident at PocketOS = 30 hours of downtime + $X in
-restoration. Roam Review at $25/dev/mo is the cheapest insurance against
-that class of bug." Drop into the pricing page audit-upsell area when
+restoration. Roam Review launch packages start at $99/mo with review caps
+and no surprise overage." Drop into the pricing page PR Replay area when
 the messaging needs reinforcing.
 
 ## 4. Industry-vertical pages (M16)

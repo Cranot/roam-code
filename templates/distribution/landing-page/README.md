@@ -22,8 +22,8 @@ Pages repo.
 
 * `www.roam-code.com` — landing page (this site)
 * `review.roam-code.com` — Roam Review GitHub App marketing + waitlist
-* `cloud.roam-code.com` — Roam Cloud Lite dashboard
-* `audit.roam-code.com` — EU AI Act audit-trail product
+* `cloud.roam-code.com` — Roam Cloud dashboard
+* `audit.roam-code.com` — AI-governance audit evidence product
 * `docs.roam-code.com` — alias of cranot.github.io/roam-code
 
 **Defensive (recommended to register if cheap):**
