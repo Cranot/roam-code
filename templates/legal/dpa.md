@@ -1,6 +1,9 @@
 # Data Processing Agreement
 
 > ⚠️ **REVIEW BEFORE USE.** v1 draft, 2026-05-05. Based on the GDPR Article 28 framework. Have a qualified attorney review before binding execution. EU-based clients should require this signed before repo access.
+> Superseded for launch until rewritten. This DPA was drafted for the old audit
+> service; update the service description, subprocessors, retention, and
+> product-specific processing details before using it for PR Replay or Review.
 
 ---
 

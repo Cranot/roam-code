@@ -239,7 +239,7 @@ First index takes ~5s for 200 files, ~15s for 1,000 files. Subsequent runs are i
 - **Run the v2 stack on every PR:** `git diff | roam pr-analyze --explain` (gates AI-generated risk; pair with `roam pr-comment-render` for sticky GitHub comments — see [Roam Review](#roam-review-pr-bot-for-ai-generated-changes))
 - **First-touch demo:** `roam dogfood` (audit + pr-analyze + audit-trail + governance checks in one envelope)
 - **Add to CI:** `roam init` already generated a GitHub Action
-- **Customer-facing artifacts:** see starter rule packs at [`templates/rules/`](templates/rules/), audit-report templates at [`templates/audit-report/`](templates/audit-report/), legal templates at [`templates/legal/`](templates/legal/), and product docs at [`docs/products/`](docs/products/).
+- **Customer-facing artifacts:** see starter rule packs at [`templates/rules/`](templates/rules/), template guidance at [`templates/README.md`](templates/README.md), and current product docs at [`docs/products/`](docs/products/). Legacy audit/legal/email templates are marked before use.
 
 <details>
 <summary><strong>Try it on Roam itself</strong></summary>

@@ -1,4 +1,8 @@
-# Customer-journey email templates
+# Legacy customer-journey email templates
+
+> Superseded for launch. These emails reference the old audit tiers and prices.
+> Do not send them as written; rebuild the journey around **PR Replay** and
+> **Roam Review** using `docs/strategy/pricing-v4-launch-2026-05-07.md`.
 
 11 templates covering qualification → sale → delivery → retention → crisis.
 Companion to `templates/distribution/cold-outreach.md` (which holds the

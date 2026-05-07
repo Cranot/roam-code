@@ -1,4 +1,7 @@
-# AI Agent Readiness Audit — `{PROJECT_NAME}`
+# Legacy audit report template — `{PROJECT_NAME}`
+
+> Superseded for launch. The current paid offer is PR Replay. Use this only as
+> source material for a rewritten PR Replay deliverable.
 
 > Prepared by **{AUDITOR_NAME}**, {AUDIT_DATE}.
 > Methodology: roam-code v{ROAM_VERSION}. Local SQLite + tree-sitter graph + git history.
@@ -170,7 +173,7 @@ test-hardening here yields disproportionate ROI.
 
 ---
 
-## 6 · Agent Readiness Specifically
+## 6 · Agent workflow readiness
 
 This section addresses the question paying customers actually have:
 **"Is this codebase ready for AI agents to safely modify it?"**

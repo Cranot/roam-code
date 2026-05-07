@@ -1,7 +1,12 @@
-# Audit report template
+# Legacy audit report template
 
-This directory holds the template plus render script for the **AI Agent Readiness Audit**
-deliverable — the artifact paying customers receive.
+> Superseded for launch. The current paid offer is **PR Replay**, with pricing
+> and scope in `docs/strategy/pricing-v4-launch-2026-05-07.md`. Treat the
+> material below as report infrastructure only; do not publish the old audit
+> naming, tiers, or prices without rewriting them.
+
+This directory holds the template plus render script for the legacy audit
+deliverable.
 
 ## Files
 
@@ -9,6 +14,10 @@ deliverable — the artifact paying customers receive.
   auto-generated content and `<!-- TODO[narrative]: ... -->` slots for the auditor's prose.
 - `render.py` — Chains `roam audit --json` plus supporting commands, fills the
   auto-generated slots, and emits a partial markdown file ready for narrative completion.
+- `sample-redacted.md` / `sample-redacted.pdf` — Redacted, narrative-complete
+  example output (~12 pages). Useful as a reference for the prose in the
+  `<!-- TODO[narrative]: ... -->` slots; share with prospects who ask
+  "what does the deliverable look like?"
 
 ## Workflow
 
@@ -30,7 +39,8 @@ deliverable — the artifact paying customers receive.
 
 3. **Fill the narrative slots** by hand. Open `acme-audit.md` and replace each
    `<!-- TODO[narrative]: ... -->` block with the prose for that section. Roughly
-   60-90 minutes of writing for a Standard ($4,500) audit; longer for Enterprise.
+   60-90 minutes of writing for the old Standard audit; update scope, pricing,
+   and names before using this for PR Replay.
 
 4. **Render to PDF** with Pandoc (eisvogel template recommended):
 
