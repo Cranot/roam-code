@@ -25,6 +25,7 @@
 }
 
 :root {
+  /* ─── Color tokens ─── */
   --text: #1a1a1a;
   --muted: #595959;
   --bg: #fdfdfd;
@@ -34,7 +35,38 @@
   --warn: #b04800;
   --pop: #007a3d;
   --border: #d6d6d0;
+  --pain-bg: #fff8ed;
+  --footer-bg: #1a1a1a;
+  --footer-text: #fff;
+  --footer-meta: #aaa;
+
+  /* ─── Type scale (modular, ratio 1.25) ─── */
+  --t-xs: 12px;
+  --t-sm: 13px;
+  --t-base: 17px;
+  --t-md: 19px;
+  --t-lg: 22px;
+  --t-xl: 28px;
+  --t-2xl: 34px;
+  --t-hero: clamp(28px, 5vw, 48px);
+  --lh-tight: 1.2;
+  --lh-snug: 1.4;
+  --lh-base: 1.6;
+
+  /* ─── Spacing scale (4px base) ─── */
+  --s-1: 4px;
+  --s-2: 8px;
+  --s-3: 12px;
+  --s-4: 16px;
+  --s-5: 24px;
+  --s-6: 32px;
+  --s-7: 48px;
+  --s-8: 64px;
+  --s-9: 96px;
+
+  /* ─── Layout ─── */
   --radius: 8px;
+  --radius-sm: 4px;
   --max-w: 1100px;
 }
 
@@ -758,10 +790,10 @@ a.verb-cell:hover {
 
 /* ─── Buyer-pain band ─── */
 .pain-band {
-  background: #fff8ed;
+  background: var(--pain-bg);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  padding: 44px 0;
+  padding: var(--s-7) 0;
 }
 .pain-band-inner {
   max-width: var(--max-w);
@@ -992,7 +1024,7 @@ footer {
 @media (max-width: 800px) { .footer-inner { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 480px) { .footer-inner { grid-template-columns: 1fr; } }
 .footer-col { display: flex; flex-direction: column; gap: 4px; }
-.footer-col span { color: #aaa; font-size: 13px; }
+.footer-col span { color: var(--footer-meta); font-size: var(--t-sm); }
 footer a { color: #fff; }
 
 /* ─── Reduced motion ─── */
