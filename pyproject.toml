@@ -41,11 +41,13 @@ dependencies = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/Cranot/roam-code"
+Homepage = "https://roam-code.com/"
 Documentation = "https://cranot.github.io/roam-code/"
 Repository = "https://github.com/Cranot/roam-code"
 Issues = "https://github.com/Cranot/roam-code/issues"
 Changelog = "https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md"
+Pricing = "https://roam-code.com/pricing"
+Security = "https://roam-code.com/security"
 
 [project.scripts]
 roam = "roam.cli:cli"
