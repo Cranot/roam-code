@@ -8,12 +8,12 @@
     "name": "Cranot",
     "url": "https://github.com/Cranot"
   },
-  "homepage": "https://cranot.github.io/roam-code/",
+  "homepage": "https://roam-code.com/",
   "repository": {
     "type": "git",
     "url": "https://github.com/Cranot/roam-code"
   },
-  "documentation": "https://cranot.github.io/roam-code/getting-started.html",
+  "documentation": "https://roam-code.com/docs/getting-started",
   "license": "Apache-2.0",
   "spdx_license_id": "Apache-2.0",
   "categories": [
@@ -150,7 +150,7 @@
       "smithery.ai",
       "mcp.so"
     ],
-    "card_url": "https://cranot.github.io/roam-code/.well-known/mcp-server-card.json"
+    "card_url": "https://roam-code.com/.well-known/mcp-server-card.json"
   },
   "schema_version": 1
 }

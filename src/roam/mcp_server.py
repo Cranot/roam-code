@@ -898,18 +898,18 @@ _RETRYABLE_CODES = {"DB_LOCKED", "INDEX_STALE"}
 # for a given error code. Anchors point at the troubleshooting section of
 # the public docs site so the URL stays stable across roam versions.
 _DOC_LINKS: dict[str, str] = {
-    "INDEX_NOT_FOUND": "https://cranot.github.io/roam-code/troubleshooting.html#index-not-found",
-    "INDEX_STALE": "https://cranot.github.io/roam-code/troubleshooting.html#index-stale",
-    "DB_LOCKED": "https://cranot.github.io/roam-code/troubleshooting.html#db-locked",
-    "NOT_GIT_REPO": "https://cranot.github.io/roam-code/troubleshooting.html#not-a-git-repo",
-    "PERMISSION_DENIED": "https://cranot.github.io/roam-code/troubleshooting.html#permission-denied",
-    "NO_RESULTS": "https://cranot.github.io/roam-code/troubleshooting.html#no-results",
-    "USAGE_ERROR": "https://cranot.github.io/roam-code/troubleshooting.html#usage-error",
-    "GATE_FAILURE": "https://cranot.github.io/roam-code/troubleshooting.html#gate-failure",
-    "PARTIAL_FAILURE": "https://cranot.github.io/roam-code/troubleshooting.html#partial-failure",
-    "RATE_LIMITED": "https://cranot.github.io/roam-code/troubleshooting.html#rate-limited",
-    "COMMAND_FAILED": "https://cranot.github.io/roam-code/troubleshooting.html#command-failed",
-    "UNKNOWN": "https://cranot.github.io/roam-code/troubleshooting.html",
+    "INDEX_NOT_FOUND": "https://roam-code.com/docs/troubleshooting#index-not-found",
+    "INDEX_STALE": "https://roam-code.com/docs/troubleshooting#index-stale",
+    "DB_LOCKED": "https://roam-code.com/docs/troubleshooting#db-locked",
+    "NOT_GIT_REPO": "https://roam-code.com/docs/troubleshooting#not-a-git-repo",
+    "PERMISSION_DENIED": "https://roam-code.com/docs/troubleshooting#permission-denied",
+    "NO_RESULTS": "https://roam-code.com/docs/troubleshooting#no-results",
+    "USAGE_ERROR": "https://roam-code.com/docs/troubleshooting#usage-error",
+    "GATE_FAILURE": "https://roam-code.com/docs/troubleshooting#gate-failure",
+    "PARTIAL_FAILURE": "https://roam-code.com/docs/troubleshooting#partial-failure",
+    "RATE_LIMITED": "https://roam-code.com/docs/troubleshooting#rate-limited",
+    "COMMAND_FAILED": "https://roam-code.com/docs/troubleshooting#command-failed",
+    "UNKNOWN": "https://roam-code.com/docs/troubleshooting.html",
 }
 
 

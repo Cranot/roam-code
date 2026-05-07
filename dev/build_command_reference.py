@@ -1,4 +1,4 @@
-"""Pass 95 — auto-generate the complete command reference appendix.
+"""auto-generate the complete command reference appendix.
 
 The hand-curated workflow sections in docs/site/command-reference.html
 cover ~70 high-signal commands. This script appends a generated

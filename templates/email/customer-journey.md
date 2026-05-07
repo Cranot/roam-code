@@ -52,7 +52,7 @@ Auto-DQ message for vague/generic answers (no specific tool, no specific pain):
 
 Use at minute 25 of a 30-min call, after they've described pain + goals:
 
-> "Based on what you described, I think the **Standard Audit ($4,500)** is
+> "Based on what you described, I think the **Standard Audit (`[FEE]`)** is
 > the right fit — it covers your repo size, gives you the full report + 2
 > calls + 30-day Q&A. Shall I send the proposal now to lock this week's
 > slot, or do you want me to follow up after you discuss with [boss/team]?"
@@ -69,7 +69,7 @@ the deal forward.
 > **Scope**: 1 repo (~[X] LoC), 10-day delivery, full 15-page report + 2
 > walkthrough calls + 30-day Q&A Slack channel.
 >
-> **Investment**: $4,500. (Founding-customer pricing: 30% off → **$3,150** if
+> **Investment**: `[FEE]`. (Optional founding-customer pricing: `[DISCOUNT]`% off if
 > you can share a public testimonial after delivery — your call.)
 >
 > **Timeline**: Kickoff [date], delivery [date].

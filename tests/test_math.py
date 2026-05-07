@@ -1004,7 +1004,7 @@ class TestDetectors:
 
 
 class TestSerialAwaitLoop:
-    """T3 (2026-05-06) — serial-await-loop detector for JS/TS Promise.all opportunities."""
+    """ serial-await-loop detector for JS/TS Promise.all opportunities."""
 
     def test_detects_for_of_with_await(self, project_factory, monkeypatch):
         proj = project_factory(

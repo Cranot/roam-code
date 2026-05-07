@@ -134,7 +134,7 @@ def to_sarif(
         "rules": [_build_rule(r) for r in rules],
     }
 
-    # Apply suppressions (R7) — load .roam/suppressions.json if present and stamp
+    # Apply suppressions — load .roam/suppressions.json if present and stamp
     # matching results with the SARIF "suppressions" array.
     suppressions = _load_suppressions()
     if suppressions:

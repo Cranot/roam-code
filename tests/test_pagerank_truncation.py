@@ -1,7 +1,7 @@
 """Tests for PageRank-weighted truncation in budget_truncate_json().
 
-Backlog item #91: when token budget is hit, drop lowest-importance nodes
-first instead of naively keeping the first N items.
+When token budget is hit, drop lowest-importance nodes first instead
+of naively keeping the first N items.
 """
 
 from __future__ import annotations

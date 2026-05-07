@@ -12,7 +12,7 @@ been measured, what hasn't, and how to reproduce.
 | Cross-repo (synthetic) | recall@K on a generic Python microservice (auth + payments + notifications) | 1.000 / 1.000 / 1.000 | `pytest tests/test_retrieve_cross_repo.py` |
 | Detector E2E | every Python idiom detector finds the right line on a fixture project | 12/12 detectors hit the expected line ±2 | `pytest tests/test_python_idioms_e2e.py` |
 | Detector roundup on roam-code | 19 detectors against roam's own ~14k symbols | 0 findings on the 16 high-confidence detectors after self-fix; 24+168+386 on the 3 low-confidence ones (lambda-in-loop / except-pass / broad-except — many legit) | `python -c "import sqlite3; from roam.catalog.python_idioms import *; ..."` (snippet at end) |
-| Detector at scale | 19 detectors against supernode (17k files, 255k symbols) | 167 open-leak + 4 sync-in-async + 146 bare-except real findings | indexed offline; numbers from session log |
+| Detector at scale | 19 detectors against a 17k-file external Python repo (17k files, 255k symbols) | 167 open-leak + 4 sync-in-async + 146 bare-except real findings | indexed offline; numbers from session log |
 
 ## The retrieve arc — what improved over today's iterations
 
@@ -42,7 +42,7 @@ JSONL into CodeRAG-Bench / BEIR / trec_eval directly.
 - **Baseline-vs-roam table** — grep, ripgrep, aider repo map, CKB,
   Codebase-Memory, Cursor (where measurable).
 - **20-30 external repos cross-section** — 5-10 today on synthetic +
-  agi-in-md / supernode / roam-agent-eval / deep-research. Need
+  a long-form notes repo / a 17k-file external Python repo / an agent-eval workspace / a Python research repo. Need
   larger repo sweep with hand-validated answers.
 - **Per-detector precision/recall** — we have raw counts but no
   hand-labelled ground truth.
@@ -93,7 +93,7 @@ high-confidence patterns:
 | py-except-pass | 168 (defensive CLI swallows — low confidence) |
 | py-broad-except | 386 (defensive `except Exception:` — low confidence) |
 
-Real findings on supernode (17k-file external repo):
+Real findings on a 17k-file external Python repo:
 
 | Detector | Real findings |
 |---|---|

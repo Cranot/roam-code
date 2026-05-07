@@ -42,7 +42,7 @@ dependencies = [
 
 [project.urls]
 Homepage = "https://roam-code.com/"
-Documentation = "https://cranot.github.io/roam-code/"
+Documentation = "https://roam-code.com/docs/"
 Repository = "https://github.com/Cranot/roam-code"
 Issues = "https://github.com/Cranot/roam-code/issues"
 Changelog = "https://github.com/Cranot/roam-code/blob/main/CHANGELOG.md"

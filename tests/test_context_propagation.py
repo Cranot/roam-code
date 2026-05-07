@@ -1,4 +1,4 @@
-"""Tests for context propagation through call graph (backlog item 72)."""
+"""Tests for context propagation through call graph."""
 
 from __future__ import annotations
 
