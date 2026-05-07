@@ -10,7 +10,7 @@
       "stars": "286",
       "mcp": "136",
       "local": true,
-      "cli_commands": "193 canonical (+7 alias)",
+      "cli_commands": "194 canonical (+7 alias)",
       "graph": "PageRank + Tarjan + Louvain + layers",
       "arch": 92,
       "agent": 97,
