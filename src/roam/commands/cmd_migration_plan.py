@@ -29,7 +29,6 @@ from __future__ import annotations
 import re
 import sqlite3
 from pathlib import Path
-from typing import Any
 
 import click
 
@@ -75,11 +74,15 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
     if not moves:
         click.echo("VERDICT: NO PLAN  (no target moves provided)", err=False)
         if json_mode:
-            click.echo(to_json(json_envelope(
-                "migration-plan",
-                summary={"verdict": "NO PLAN", "reason": "no target moves provided", "step_count": 0},
-                steps=[],
-            )))
+            click.echo(
+                to_json(
+                    json_envelope(
+                        "migration-plan",
+                        summary={"verdict": "NO PLAN", "reason": "no target moves provided", "step_count": 0},
+                        steps=[],
+                    )
+                )
+            )
         return
 
     with open_db(readonly=True) as conn:
@@ -102,20 +105,24 @@ def migration_plan_cmd(ctx, target_path: str | None, moves_inline: tuple[str, ..
     verdict = _verdict(plan, skipped)
 
     if json_mode:
-        click.echo(to_json(json_envelope(
-            "migration-plan",
-            summary={
-                "verdict": verdict,
-                "step_count": len(plan),
-                "skipped_count": len(skipped),
-                "max_risk": max_risk,
-                "high_risk_steps": sum(1 for s in plan if s["risk"] == "high"),
-                "medium_risk_steps": sum(1 for s in plan if s["risk"] == "medium"),
-                "low_risk_steps": sum(1 for s in plan if s["risk"] == "low"),
-            },
-            steps=plan,
-            skipped=skipped,
-        )))
+        click.echo(
+            to_json(
+                json_envelope(
+                    "migration-plan",
+                    summary={
+                        "verdict": verdict,
+                        "step_count": len(plan),
+                        "skipped_count": len(skipped),
+                        "max_risk": max_risk,
+                        "high_risk_steps": sum(1 for s in plan if s["risk"] == "high"),
+                        "medium_risk_steps": sum(1 for s in plan if s["risk"] == "medium"),
+                        "low_risk_steps": sum(1 for s in plan if s["risk"] == "low"),
+                    },
+                    steps=plan,
+                    skipped=skipped,
+                )
+            )
+        )
         return
 
     click.echo(f"VERDICT: {verdict}")
