@@ -1,5 +1,10 @@
 # Legal templates — first drafts
 
+> Superseded for launch until updated. These files were drafted for the old
+> audit service. Do not use them for PR Replay, Roam Review, Roam Cloud, or
+> Self-Hosted deals without rewriting the scope, pricing, data handling, and
+> order-form terms against `docs/strategy/pricing-v4-launch-2026-05-07.md`.
+
 This directory holds the contract templates used for paid roam-code engagements.
 
 ## ⚠️ REVIEW BEFORE USE
@@ -24,6 +29,9 @@ clause).
 | `nda-mutual.md` | One-page mutual NDA. Sign at first call when discussing a real codebase. |
 | `dpa.md` | Data Processing Agreement (GDPR Article 28-style). Required for EU clients before code access. |
 | `refund-guarantee.md` | Public-facing refund copy plus internal SOP for handling refund requests. |
+| `security-procurement-packet.md` | Pre-fills the questions a typical security or procurement review will ask about Roam Review (hosted PR bot): data flow, GitHub App permissions, sub-processors, retention, no-training/no-retention statement, incident response, SLA. Pair with `dpa.md` for binding terms. |
+| `uspto-trademark-checklist.md` | Trademark filing prep for "roam-code" with USPTO. |
+| `w8ben-e-checklist.md` | W-8BEN-E checklist for Greek IKE / Stripe Atlas C-corp tax forms. |
 
 ## Per-engagement workflow
 

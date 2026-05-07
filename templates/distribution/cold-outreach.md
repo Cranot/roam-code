@@ -1,4 +1,8 @@
-# Cold outreach DM templates
+# Legacy cold outreach DM templates
+
+> Superseded for launch. These drafts still use the old Agent Readiness audit
+> offer. Before sending anything, rewrite around **PR Replay** and **Roam
+> Review** using `docs/strategy/pricing-v4-launch-2026-05-07.md`.
 
 Drafted for Phase 3 launch. Each template personalises in 30-60 seconds with
 one specific reference (their post / their company / their role / a recent

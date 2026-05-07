@@ -1,6 +1,6 @@
-# Product spec — Roam Agent Review
+# Product spec — Roam Review
 
-**Status**: spec, not yet built (2026-05-05).
+**Status**: hosted product not yet built; CLI engine exists. Pricing patched 2026-05-07 after adversarial launch-pricing review.
 **Source plan**: `~/.claude/projects/D--OneDrive---CosmoHac-Project-roam-code/memory/monetization_v2_subscription_pivot.md`.
 **This is the v2 wedge product** — the one that captures the "safe AI coding" budget where CodeRabbit/Greptile/Qodo already operate.
 
@@ -16,14 +16,26 @@
 
 ## Pricing
 
-| Tier | Price | What |
-|---|---|---|
-| **Free** | $0 | Public repos only. 1 PR comment per push. Blast-radius score + top 3 affected files + verdict. |
-| **Team** | **$20/dev/month** | Private repos. Custom architecture rules (`.roam/rules.yml`). Slack / Linear webhooks. Trend graphs. |
-| **Business** | **$499/month** flat | Up to 50 devs. Audit-log export (the EU AI Act hook). Multi-org rollups. SSO. |
-| **Enterprise / Self-Hosted** | custom ($15K+/yr) | Air-gapped install. Dedicated support. Mirrors CodeRabbit Enterprise floor. |
+Launch pricing is flat-rate with explicit usage caps. Do **not** publish a
+`$25/dev/mo` anchor at launch; it invites a direct comparison with CodeRabbit
+while Roam is still being sold as a complement.
 
-Floor of $20/dev/mo intentionally **below** CodeRabbit Pro's $24/user/mo to read as "structural complement, not replacement". Lift to $24/dev/mo only after 100+ Team customers prove price elasticity is fine.
+| Tier | Price | Included | Overage / ceiling |
+|---|---:|---|---|
+| **Community** | $0 | Public repos, free CLI, OSS use | hard stop for private hosted Review |
+| **Starter** | **$99/mo** | 5 repos, 10 active PR authors, 200 reviews/mo | `$12/extra author/mo` to 20; `$0.50/extra review` |
+| **Team** | **$299/mo** | 20 repos, 30 active PR authors, 900 reviews/mo, current-run Cloud dashboard | `$10/extra author/mo` to 75; `$0.40/extra review` |
+| **Business** | **$799/mo** | 100 repos, 100 active PR authors, 3,000 reviews/mo, SSO, audit export | `$8/extra author/mo` to 150; `$0.30/extra review` |
+| **Scale** | **$1,499/mo annual only** | 250 active PR authors, 8,000 reviews/mo, SAML/SCIM, priority support | `$6/extra author/mo`; custom quote above 300 authors |
+
+**Active PR author** means a unique human author of a reviewed PR in the
+trailing 30 days. Bots, Dependabot, Renovate, and generated release PR authors
+do not count. Overage is opt-in; by default the product warns at 80% and 100%
+instead of surprising the customer with a bill.
+
+Existing launch customers are grandfathered through the 2027 renewal. Renewal
+increases are capped at 15% unless the account exceeds included limits for 2
+consecutive months.
 
 ## Functional spec (MVP)
 
@@ -31,7 +43,7 @@ On every PR opened or pushed:
 
 1. Webhook fires from GitHub / GitLab.
 2. Service clones the PR's HEAD into a sandboxed worker.
-3. Runs `roam init` + a focused `roam pr-risk` analysis on the diff.
+3. Runs `roam init` + a focused `roam pr-analyze` analysis on the diff.
 4. Computes:
    - **Blast-radius score (0-100)**: composite of files affected, layers crossed, fan-in of touched symbols.
    - **AI-likelihood score (0-100)**: heuristics for AI-generated diffs (rapid feature-add velocity, characteristic comment density, structural anti-patterns common in agent output).
@@ -46,7 +58,7 @@ On every PR opened or pushed:
 ### Sample PR comment
 
 ```
-🛡️ Roam Agent Review
+Roam Review
 
 **Verdict**: REVIEW · blast-radius 67/100 · ai-likelihood 84%
 
@@ -90,12 +102,13 @@ rules:
 
 ## MRR path
 
-- 100 Team devs × $20 = $2,000 MRR
-- 500 Team devs × $20 = $10,000 MRR (the headline target)
-- 5 Business × $499 = $2,495 MRR
-- 2 Self-Hosted × $15K/yr = $2,500 MRR equivalent
+- 20 Starter accounts × $99 = $1,980 MRR
+- 20 Team accounts × $299 = $5,980 MRR
+- 5 Business accounts × $799 = $3,995 MRR
+- 2 Scale accounts × $1,499 = $2,998 MRR
 
-**Realistic month-6 outcome**: $5K-$15K MRR from Agent Review alone if it lands.
+**Realistic month-6 outcome**: $5K-$15K MRR from Review if the GitHub App
+lands and COGS per review stays inside the caps above.
 
 ## Build phases
 
@@ -103,11 +116,11 @@ rules:
 |---|---|---|
 | **Phase 1** — MVP | GitHub App, Webhook handler, PR comment with blast-radius + verdict, public-repo free tier | 3-4 weeks |
 | **Phase 2** — AI scoring | AI-likelihood heuristics + signal extraction; threshold-configurable BLOCK gate | 2-3 weeks |
-| **Phase 3** — Team tier | `.roam/rules.yml` enforcement, Slack/Linear webhooks, custom thresholds, billing | 2-3 weeks |
+| **Phase 3** — Launch billing | Starter/Team billing, active-author counting, review caps, usage warnings, COGS telemetry | 2-3 weeks |
 | **Phase 4** — Business tier | Multi-org rollups, audit-log export, SSO, dashboard | 3-4 weeks |
-| **Phase 5** — Self-hosted | Docker/Helm packaging + license key | 2-3 weeks |
+| **Phase 5** — Scale / self-hosted | Scale tier, Docker/Helm packaging + license key only after measured demand | 2-3 weeks |
 
-**Total to first revenue (Team tier)**: ~8-10 weeks.
+**Total to first revenue (Starter/Team tiers)**: ~8-10 weeks.
 **Total to enterprise-ready**: ~16-20 weeks.
 
 ## Distribution
@@ -117,17 +130,18 @@ rules:
 - **Anthropic Skills**: the v1 plan's `@roam analyze this PR` skill IS this product. Ship the Skill as a thin wrapper that calls the GitHub App.
 - **Awareness**: same Phase 3 channels (Show HN, X, Reddit).
 
-## Why this is the v2 wedge (vs. just a feature of Cloud Lite)
+## Why this is the v2 wedge (vs. just a feature of Cloud)
 
-1. **Different buyer journey.** Cloud Lite buyers want trends + dashboards;
-   Agent Review buyers want catch-it-before-merge.
-2. **Different unit economics.** Cloud Lite is per-repo billing; Agent Review
-   is per-dev billing — much higher ARPU at scale.
-3. **Different competitive frame.** Agent Review goes head-to-head with
-   CodeRabbit / Greptile (a known $40M-ARR market). Cloud Lite competes
+1. **Different buyer journey.** Cloud buyers want trends + dashboards;
+   Review buyers want catch-it-before-merge.
+2. **Different unit economics.** Cloud is per-repo billing; Review is
+   author/review-usage-backed flat pricing — higher ARPU at scale without a
+   launch-day per-seat procurement fight.
+3. **Different competitive frame.** Review goes head-to-head with
+   CodeRabbit / Greptile (a known $40M-ARR market). Cloud competes
    indirectly with CodeScene + SonarCloud (a slower-growing market).
-4. **Different distribution.** GitHub Marketplace gives Agent Review a
-   built-in install funnel. Cloud Lite needs more direct outbound or
+4. **Different distribution.** GitHub Marketplace gives Review a
+   built-in install funnel. Cloud needs more direct outbound or
    product-led growth.
 
 ## Anti-patterns
@@ -138,14 +152,16 @@ rules:
 2. **Don't gate the PR comment itself.** Free tier MUST get a meaningful
    comment on public repos — that's the marketing surface. Gate the
    custom-rules + integrations + history.
-3. **Don't run roam-code in the user's CI.** Run it in our cloud, with
-   our infrastructure. Customers don't pay $20/dev to provision their own
-   runners. (Self-hosted tier is the exception, intentionally.)
-4. **Don't cross-talk the bot's verdict on every PR.** PRs that pass
+3. **Don't sell the cloud bot before the security packet is ready.** Even
+   `$99/mo` can hit procurement because PR diffs are source-adjacent.
+4. **Don't run roam-code in the user's CI for the hosted SKU.** Run it in our
+   cloud, with our infrastructure. Customers don't pay for Review to provision
+   their own runners. Self-hosted is the exception, intentionally.
+5. **Don't cross-talk the bot's verdict on every PR.** PRs that pass
    thresholds cleanly get a single 🟢 line; only REVIEW/BLOCK PRs get the
    full breakdown. Reviewer fatigue tanks the product faster than slow
    delivery.
-5. **Don't compete with Cursor / Cline / Claude Code on the IDE.** They
+6. **Don't compete with Cursor / Cline / Claude Code on the IDE.** They
    own that surface. Roam lives on the PR surface — different layer, not
    substitutable.
 
@@ -153,11 +169,15 @@ rules:
 
 - Self-host MVP shipping with the Cloud product, or 6 months later? Lean: ship cloud first, self-hosted at month 6 once enterprise pull is real.
 - Build native GitLab/Bitbucket/Azure-DevOps support in MVP, or GitHub-only? Lean: GitHub-only at MVP. GitLab in Phase 4.
-- Charge based on **GitHub seats** (= per dev) or **active PR authors** (= more aligned with value)? Lean: GitHub seats, mirrors CodeRabbit.
+- COGS per review is unknown. Instrument runtime, LLM cost, clone/index time,
+  retries, and support touches from the first private beta.
+- Does flat pricing actually avoid procurement? Treat as unproven; run 20 buyer
+  calls and ask whether they can buy Review on a card this month.
 
 ## Cross-references
 
 - v2 strategy: `monetization_v2_subscription_pivot.md`
-- Sister product specs: `roam-cloud-lite-spec.md`, `roam-self-hosted-spec.md`
-- CLI dependency: `roam pr-risk`, `roam impact`, `roam preflight`, `roam owner` already exist; need a thin `roam pr-analyze --diff` aggregator command (or an internal API in the worker)
+- Pricing v4: `../strategy/pricing-v4-launch-2026-05-07.md`
+- Sister product specs: `roam-cloud.md`, `roam-self-hosted.md`
+- CLI dependency: `roam pr-analyze`, `roam impact`, `roam preflight`, `roam owner`
 - Related v1 plan section: `roam_code_plan_v1.md` "The eventual SaaS — recommended v1 (build month 4-6 if services validate)" — that's THIS product, but built earlier in the v2 timeline.

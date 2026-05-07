@@ -1,4 +1,9 @@
-# README Services CTA snippets
+# Legacy README Services CTA snippets
+
+> Superseded for launch. Do not merge these snippets as written. The current
+> commercial motion leads with **Roam Review** and uses **PR Replay** as the
+> proof/upsell path; source pricing and copy from
+> `docs/strategy/pricing-v4-launch-2026-05-07.md`.
 
 Drafted Phase-1, **held for Phase-3 coordinated launch**. Do not merge into the
 public READMEs until the commercial page is live, the audit template is

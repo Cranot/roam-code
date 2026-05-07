@@ -11,7 +11,7 @@ prose.
 3. [Set up a CI gate that fails on high-severity findings](#3-set-up-a-ci-gate-that-fails-on-high-severity-findings)
 4. [Find dead code that's safe to delete](#4-find-dead-code-thats-safe-to-delete)
 5. [Trace what calls a function](#5-trace-what-calls-a-function)
-6. [Generate an EU AI Act Article 12 readiness report](#6-generate-an-eu-ai-act-article-12-readiness-report)
+6. [Generate an Article 12 scope/readiness report](#6-generate-an-article-12-scopereadiness-report)
 7. [Replay current detectors against past commits](#7-replay-current-detectors-against-past-commits)
 8. [Wire roam into Claude Code as a skill](#8-wire-roam-into-claude-code-as-a-skill)
 9. [Compare two indices to measure a refactor](#9-compare-two-indices-to-measure-a-refactor)
@@ -109,15 +109,17 @@ roam impact my_function --depth 3
 
 ---
 
-## 6. Generate an EU AI Act Article 12 readiness report
+## 6. Generate an Article 12 scope/readiness report
 
 ```bash
 roam article-12-check
 ```
 
-What you get: 6-item Markdown checklist (audit-trail dir, trail records,
+What you get: a 6-item Markdown checklist (audit-trail dir, trail records,
 retention policy, technical docs, attestation surface, high-risk
-classification heuristic). Score out of 6.
+classification heuristic). This is a scoping/readiness report for actual
+Annex III high-risk AI-system buyers, not a claim that every software team has
+an Article 12 obligation.
 
 For PDF (requires `reportlab`):
 
