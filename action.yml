@@ -100,7 +100,7 @@ runs:
   steps:
     # ---- 1. Setup Python ----------------------------------------------------
     - name: Set up Python
-      uses: actions/setup-python@v5
+      uses: actions/setup-python@v6
       with:
         python-version: ${{ inputs.python-version }}
 
