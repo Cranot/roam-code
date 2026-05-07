@@ -7,6 +7,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+
+- **`edge_kinds` filter on dependency rules** — dependency rules in
+  `.roam/fitness.yaml` now accept an optional `edge_kinds: [import]`
+  field.  When set, only edges whose kind matches one of the listed
+  values are evaluated; edges of all other kinds are skipped.
+  Backwards-compatible: rules without `edge_kinds` behave exactly as
+  before.  This eliminates high false-positive rates caused by
+  name-based edge matching across unrelated symbols (e.g. a local
+  variable named `Settings` matching a `Settings` component from a
+  different module even though there is no real import).
+
+  Example:
+
+  ```yaml
+  - name: V2 must not import legacy v1 components
+    type: dependency
+    from: "frontend/v2/**"
+    to: "frontend/components/**"
+    edge_kinds: [import]
+  ```
+
 ## [12.46] - 2026-05-07
 
 ### CI fix — ruff lint cleanup on overnight files

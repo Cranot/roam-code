@@ -18,6 +18,7 @@ Example .roam/fitness.yaml:
       from: "**/services/**"
       to: "**/controllers/**"
       allow: false
+      edge_kinds: [import]   # optional: restrict to import edges only
 
     - name: "Max function complexity"
       type: metric
@@ -137,10 +138,17 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
 
     Verifies that symbols in 'from' glob don't have edges to symbols
     in 'to' glob (or vice versa if allow=true).
+
+    Optional ``edge_kinds`` field restricts the check to specific edge
+    kinds (e.g. ``[import]``).  When omitted all edge kinds are matched,
+    preserving the existing behaviour.
     """
     from_pattern = rule.get("from", "**")
     to_pattern = rule.get("to", "**")
     allow = rule.get("allow", False)
+    edge_kinds = rule.get("edge_kinds")  # None → match all kinds (backwards-compatible)
+    if edge_kinds is not None and not isinstance(edge_kinds, list):
+        edge_kinds = [edge_kinds]
 
     # Get all edges with file paths
     rows = conn.execute(
@@ -158,6 +166,8 @@ def _check_dependency_rule(rule, conn) -> list[dict]:
 
     violations = []
     for r in rows:
+        if edge_kinds is not None and r["kind"] not in edge_kinds:
+            continue
         src_match = matches_gitignore(r["source_path"], from_pattern)
         tgt_match = matches_gitignore(r["target_path"], to_pattern)
 
