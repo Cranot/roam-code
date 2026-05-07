@@ -48,7 +48,7 @@ body {
   background: var(--bg);
 }
 
-code, .mono { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
+code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
@@ -284,6 +284,13 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   border: 1px solid var(--border);
   border-radius: var(--radius);
   padding: 14px 14px;
+  text-decoration: none;
+  color: inherit;
+  display: block;
+}
+a.verb-cell:hover {
+  background: var(--accent-soft);
+  text-decoration: none;
 }
 .verb-cell code {
   display: block;
