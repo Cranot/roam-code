@@ -3,8 +3,8 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Pricing — Roam · Free CLI + $25/dev PR bot + $19/repo dashboard</title>
-  <meta name="description" content="Free open-source CLI. Paid PR bot at $25/dev/mo, dashboard at $19/repo/mo, self-hosted on request. Detailed feature breakdown across all four tiers.">
+  <title>Pricing — Roam · Free CLI + PR bot from $99/mo + dashboard from $19/repo/mo</title>
+  <meta name="description" content="Free open-source CLI. Roam Review from $99/mo Starter, $299 Team, $799 Business, $1,499 Scale (flat tiers with usage caps). Cloud dashboard from $19/repo/mo. Self-hosted on request.">
   <link rel="canonical" href="https://roam-code.com/pricing">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <meta name="theme-color" content="#0049b7">
@@ -18,7 +18,7 @@
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="Pricing — Roam">
-  <meta property="og:description" content="Free CLI. $25/dev/mo PR bot. $19/repo/mo dashboard. Self-hosted on request.">
+  <meta property="og:description" content="Free CLI. Roam Review from $99/mo. Cloud dashboard from $19/repo/mo. Self-hosted on request.">
   <meta property="og:url" content="https://roam-code.com/pricing">
   <meta property="og:image" content="https://roam-code.com/og.png">
   <meta name="twitter:card" content="summary_large_image">
@@ -44,8 +44,9 @@
       <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
       <ul class="nav-links">
         <li><a href="/">Home</a></li>
-        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/pricing" aria-current="page">Pricing</a></li>
         <li><a href="/compare">Compare</a></li>
+        <li><a href="/setup">Setup</a></li>
         <li><a href="/docs/">Docs</a></li>
         <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
       </ul>
@@ -85,14 +86,14 @@
             <tr>
               <th scope="row">Price</th>
               <td><strong>Free, forever</strong></td>
-              <td>$25 /dev/mo</td>
+              <td>from $99 /mo</td>
               <td>from $19 /repo/mo</td>
               <td>Custom</td>
             </tr>
             <tr>
               <th scope="row">Billing</th>
               <td>—</td>
-              <td>annual</td>
+              <td>monthly or annual</td>
               <td>monthly or annual</td>
               <td>annual</td>
             </tr>
@@ -104,7 +105,7 @@
               <td>commercial</td>
             </tr>
             <tr>
-              <th scope="row">194 CLI commands</th>
+              <th scope="row">202 CLI commands</th>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
@@ -118,7 +119,7 @@
               <td class="yes">Yes</td>
             </tr>
             <tr>
-              <th scope="row">28 languages, 5 cross-language bridges</th>
+              <th scope="row">28 languages, 6 cross-language bridges</th>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
               <td class="yes">Yes</td>
@@ -162,8 +163,8 @@
             <tr>
               <th scope="row">SSO/SAML, custom rules, audit logs</th>
               <td class="no">—</td>
-              <td class="ltd">SSO on Pro+</td>
-              <td class="ltd">SSO on Growth+</td>
+              <td class="ltd">SSO on Business+</td>
+              <td class="ltd">SSO on Growth</td>
               <td class="yes">Yes</td>
             </tr>
             <tr>
@@ -189,7 +190,7 @@
             </tr>
             <tr>
               <th scope="row">30-day money-back</th>
-              <td>—</td>
+              <td class="no">—</td>
               <td class="ltd">14-day EU withdrawal</td>
               <td class="yes">Yes</td>
               <td class="yes">via order form</td>
@@ -208,9 +209,15 @@
     <div class="persona-band-inner">
       <p class="lede" style="text-align: center; max-width: 820px; margin: 0 auto 0;">
         Trying it solo? <strong>Free CLI</strong>.
-        Team of 5-50? <strong>Roam Review</strong>.
+        Team of 5-150? <strong>Roam Review</strong>.
         Multi-team org? <strong>Roam Cloud</strong>.
         Regulated or EU? <strong>Roam Self-Hosted</strong>.
+      </p>
+      <p class="persona-band-detail">
+        The CLI is the same engine in all three. The difference: the CLI runs
+        when an engineer remembers to pipe a diff. Roam Review runs on every
+        PR. Roam Cloud collects the metrics. Self-Hosted moves all of it
+        inside your network.
       </p>
     </div>
   </section>
@@ -222,8 +229,8 @@
       <h3>Roam Review</h3>
       <p class="tagline">A second opinion on every pull request.</p>
       <div class="price">
-        <span class="price-amount">$25<span class="price-unit">/dev/mo</span></span>
-        <span class="price-note">Annual · Free for open-source forever · 14-day Pro+ trial</span>
+        <span class="price-amount">from $99<span class="price-unit">/mo</span></span>
+        <span class="price-note">$99 Starter · $299 Team · $799 Business · $1,499 Scale · monthly or annual · 14-day trial · free for open-source forever</span>
       </div>
       <a class="btn-primary" href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access">Get early access</a>
     </div>
@@ -241,9 +248,75 @@
       <p class="tagline">Roam running entirely inside your network.</p>
       <div class="price">
         <span class="price-amount">Custom</span>
-        <span class="price-note">Annual. Sized to team and compliance scope.</span>
+        <span class="price-note">Annual · sized to team and compliance scope · regulated-pilot option for a small number of design partners</span>
       </div>
       <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Self-Hosted%20enquiry">Book a 30-min call</a>
+    </div>
+  </section>
+
+  <section class="limits" aria-labelledby="limits-heading" style="padding-top: 32px;">
+    <div class="compare-inner">
+      <h2 id="limits-heading">Limits and definitions</h2>
+      <p>
+        Roam Review tiers are flat-rate with explicit usage caps. We warn at 80% and 100% of every cap; we never apply overage charges unless you opt in. Below the caps, your bill never moves.
+      </p>
+      <div class="compare-table-wrap">
+        <table class="compare-table">
+          <caption class="visually-hidden">Roam Review tier limits and overage rates.</caption>
+          <thead>
+            <tr>
+              <th scope="col">Tier</th>
+              <th scope="col">Repos</th>
+              <th scope="col">Active PR authors</th>
+              <th scope="col">Reviews / month</th>
+              <th scope="col">Overage (opt-in)</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr>
+              <th scope="row">Starter — $99/mo</th>
+              <td>5</td>
+              <td>10</td>
+              <td>200</td>
+              <td>$12/extra author/mo to 20 · $0.50/extra review</td>
+            </tr>
+            <tr>
+              <th scope="row">Team — $299/mo</th>
+              <td>20</td>
+              <td>30</td>
+              <td>900</td>
+              <td>$10/extra author/mo to 75 · $0.40/extra review</td>
+            </tr>
+            <tr>
+              <th scope="row">Business — $799/mo</th>
+              <td>100</td>
+              <td>100</td>
+              <td>3,000</td>
+              <td>$8/extra author/mo to 150 · $0.30/extra review</td>
+            </tr>
+            <tr>
+              <th scope="row">Scale — $1,499/mo (annual only)</th>
+              <td>negotiated</td>
+              <td>250</td>
+              <td>8,000</td>
+              <td>$6/extra author/mo · custom quote above 300 authors</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+      <h3>Definitions</h3>
+      <ul>
+        <li><strong>Active PR author</strong> — a unique human author of a reviewed pull request in the trailing 30 days. Bots, Dependabot, Renovate, and generated release-PR authors do not count.</li>
+        <li><strong>Review</strong> — one Roam structural-risk verdict posted on a pull request (open or push). Re-runs on the same PR within 24h count as one review.</li>
+        <li><strong>Repo</strong> — one git remote you have installed the Roam Review GitHub App on. Monorepos count as one repo unless you ask for split billing.</li>
+        <li><strong>Warnings</strong> — at 80% of any cap we email the org admin; at 100% we surface a banner in the dashboard and offer either upgrade or opt-in overage.</li>
+        <li><strong>No surprise bills</strong> — overage rates above are opt-in. Default behaviour at the cap is "next review skipped, banner shown" until you upgrade or enable overage.</li>
+        <li><strong>Renewal protection</strong> — launch customers keep their package through their next renewal. Renewal increases are capped at 15% unless you have exceeded a cap for two consecutive months.</li>
+      </ul>
+      <h3>Why flat tiers, not per-developer pricing?</h3>
+      <p>
+        Per-developer pricing forces a procurement comparison with semantic reviewers like CodeRabbit ($24/user/mo) and creates a per-seat expansion trap. Roam reviews architecture, not semantics — different layer, complementary to whatever code-review bot you already run. Flat tiers with usage caps keep the buying decision at engineering-manager discretion and let you pilot without a per-seat headcount conversation. We will revisit usage-based pricing once we have measured COGS across at least 50 paying Review customers.
+      </p>
     </div>
   </section>
 

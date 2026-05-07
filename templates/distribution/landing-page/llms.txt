@@ -4,32 +4,32 @@
 
 roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
 symbols, call graphs, dependencies, architectural layers, and git history into
-a SQLite database in your repo's `.roam/` directory. The CLI exposes 194
+a SQLite database in your repo's `.roam/` directory. The CLI exposes 202
 commands and 136 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
 can call to answer questions like "what else does this PR break", "what tests
-exercise this function", "is this clone of another implementation".
+exercise this function", "is this a clone of another implementation".
 
-100% local. No telemetry. No API keys. Apache 2.0.
+100% local. No telemetry. No API keys. Apache 2.0. 28 languages supported.
 
 ## Products
 
 - [Free CLI](https://pypi.org/project/roam-code/) — `pip install roam-code`. The full engine. Always free, forever.
-- [Roam Review](https://roam-code.com/#review) — $25/dev/mo. PR bot that posts a structural-risk verdict on every pull request.
-- [Roam Cloud](https://roam-code.com/#cloud) — $19/repo/mo. Hosted dashboard for code-health metrics over time. Source code never uploaded.
-- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network.
+- [Roam Review](https://roam-code.com/#review) — flat tiers from $99/mo (Starter $99, Team $299, Business $799, Scale $1,499). PR bot that posts a structural-risk verdict on every pull request. Usage caps with no surprise overage.
+- [Roam Cloud](https://roam-code.com/#cloud) — from $19/repo/mo (Team $99/mo, Growth $299/mo). Hosted dashboard for code-health metrics over time. Source code never uploaded; metrics-only payload.
+- [Roam Self-Hosted](https://roam-code.com/#self-hosted) — custom annual pricing, contact sales. The full Roam stack inside your own network. For regulated buyers.
 
 ## Key links
 
-- Docs: redacted
+- Docs: https://roam-code.com/docs/
 - GitHub: https://github.com/Cranot/roam-code
 - PyPI: https://pypi.org/project/roam-code/
 - Landing page: https://roam-code.com/
-- MCP server card: redacted.well-known/mcp-server-card.json
+- MCP server card: https://roam-code.com/.well-known/mcp-server-card.json
 
 ## Compliance
 
-- EU AI Act Article 12 audit-trail support: every analysis emits in-toto v1 attestations and a chained audit-trail JSONL file.
-- Run `roam article-12-check` for a one-page readiness assessment.
+- Tamper-evident audit trail: every analysis can emit in-toto v1 attestations and a SHA-256-chained audit-trail JSONL file. Designed as supporting evidence for SOC 2 CC8.1 (change management), ISO 42001 (AI management system), and internal AI-governance review.
+- `roam article-12-check` is a scoping/readiness assessment for buyers who actually fall under EU AI Act Article 12 (Annex III high-risk AI providers). Code-generation tooling itself is not Annex III — Article 12 applies to Roam's outputs only when the buyer's product is in scope.
 - License: Apache-2.0
 
 ## Differentiation
