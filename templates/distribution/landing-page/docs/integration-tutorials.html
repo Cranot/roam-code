@@ -1,0 +1,226 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Integration Tutorials — Roam Docs · Claude Code, Cursor, Gemini, Codex, Amp</title>
+  <meta name="description" content="End-to-end MCP setup for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Per-platform commands and the cross-platform validation checklist.">
+  <link rel="canonical" href="https://roam-code.com/docs/integration-tutorials">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="dns-prefetch" href="//pypi.org">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Integration Tutorials — Roam Docs">
+  <meta property="og:description" content="MCP setup for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp.">
+  <meta property="og:url" content="https://roam-code.com/docs/integration-tutorials">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "Integration Tutorials", "item": "https://roam-code.com/docs/integration-tutorials"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <nav class="docs-subnav" aria-label="Documentation sections">
+    <div class="docs-subnav-inner">
+      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/integration-tutorials" aria-current="page">Integrations</a>
+      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/architecture">Architecture</a>
+    </div>
+  </nav>
+
+  <main id="main" class="docs-page">
+    <p class="eyebrow">Adoption</p>
+    <h1>Integration Tutorials</h1>
+    <p class="subtitle">
+      End-to-end MCP setup and daily workflow for Claude Code, Cursor, Gemini CLI, Codex CLI, and Amp (Sourcegraph). Goal: make the first successful query fast, then standardise a repeatable loop.
+    </p>
+    <div class="callout">
+      Scope: 5 MCP-aware coding platforms. Non-goal: cloud-hosted Roam deployment (use Self-Hosted for that).
+    </div>
+
+    <section>
+      <h2>Quick Setup Matrix</h2>
+      <table>
+        <thead>
+          <tr><th>Platform</th><th>Fast setup command</th><th>Config fallback</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>Claude Code</td><td><code>roam mcp-setup claude-code</code></td><td><code>.mcp.json</code> in project root</td></tr>
+          <tr><td>Cursor</td><td><code>roam mcp-setup cursor</code></td><td><code>.cursor/mcp.json</code></td></tr>
+          <tr><td>Gemini CLI</td><td><code>roam mcp-setup gemini-cli</code></td><td><code>~/.gemini/settings.json</code></td></tr>
+          <tr><td>Codex CLI</td><td><code>roam mcp-setup codex-cli</code></td><td><code>~/.codex/config.json</code> or CLI flag</td></tr>
+          <tr><td>Amp (Sourcegraph)</td><td>Manual stdio entry</td><td>Amp MCP settings with command <code>roam mcp</code></td></tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2 id="claude-code">Claude Code</h2>
+      <h3>1. Register Roam as an MCP server</h3>
+<pre><code>roam mcp-setup claude-code
+claude mcp add roam-code -- roam mcp</code></pre>
+      <h3>2. Verify tool visibility</h3>
+<pre><code>roam mcp --list-tools
+ROAM_MCP_PRESET=core roam mcp</code></pre>
+      <h3>3. First end-to-end workflow</h3>
+<pre><code>roam init
+roam context PaymentService
+roam impact PaymentService
+roam preflight PaymentService</code></pre>
+    </section>
+
+    <section>
+      <h2 id="cursor">Cursor</h2>
+      <h3>1. Generate MCP config snippet</h3>
+<pre><code>roam mcp-setup cursor</code></pre>
+      <h3>2. Add generated JSON to Cursor MCP config</h3>
+      <p>Place the emitted config at <code>.cursor/mcp.json</code> in your project.</p>
+      <h3>3. Agent workflow loop</h3>
+<pre><code>roam init
+roam understand
+roam check-rules --severity error
+roam health --gate</code></pre>
+    </section>
+
+    <section>
+      <h2 id="gemini-cli">Gemini CLI</h2>
+      <h3>1. Generate Gemini MCP config</h3>
+<pre><code>roam mcp-setup gemini-cli</code></pre>
+      <h3>2. Install into Gemini settings</h3>
+      <p>Merge emitted JSON into <code>~/.gemini/settings.json</code>.</p>
+      <h3>3. Recommended first session</h3>
+<pre><code>roam init
+roam search-semantic "authentication flow"
+roam trace AuthController AuthRepository
+roam test-gaps --changed</code></pre>
+    </section>
+
+    <section>
+      <h2 id="codex-cli">Codex CLI</h2>
+      <h3>1. Configure via command or config file</h3>
+<pre><code>roam mcp-setup codex-cli
+codex --mcp roam-code="roam mcp"</code></pre>
+      <h3>2. Persist config (optional)</h3>
+      <p>Add emitted JSON to <code>~/.codex/config.json</code> for repeat sessions.</p>
+      <h3>3. Refactor-safe loop</h3>
+<pre><code>roam init
+roam suggest-refactoring --limit 10
+roam plan-refactor PaymentService
+roam debt --roi</code></pre>
+    </section>
+
+    <section>
+      <h2 id="amp">Amp (Sourcegraph)</h2>
+      <h3>1. Add a stdio MCP server entry</h3>
+      <p>
+        In Amp MCP settings, register a server named <code>roam-code</code> with command
+        <code>roam</code> and args <code>["mcp"]</code>.
+      </p>
+<pre><code>{
+  "mcpServers": {
+    "roam-code": {
+      "command": "roam",
+      "args": ["mcp"]
+    }
+  }
+}</code></pre>
+      <h3>2. Validate and run a first path</h3>
+<pre><code>roam init
+roam mcp --list-tools
+roam deps src/
+roam layers</code></pre>
+    </section>
+
+    <section>
+      <h2>Cross-Platform Validation Checklist</h2>
+      <ul>
+        <li><code>roam mcp --list-tools</code> shows non-empty tool output.</li>
+        <li><code>roam context &lt;symbol&gt;</code> returns ranked files/lines.</li>
+        <li><code>roam check-rules</code> runs without configuration errors.</li>
+        <li><code>roam health --gate</code> returns deterministic gate output.</li>
+      </ul>
+    </section>
+
+    <nav class="docs-footer-nav" aria-label="Pagination">
+      <a href="/docs/getting-started">
+        <span class="label">← Previous</span>
+        Getting Started
+      </a>
+      <a href="/docs/command-reference" class="next">
+        <span class="label">Next →</span>
+        Command Reference
+      </a>
+    </nav>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,262 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Architecture — Roam Docs · System design and subsystem map</title>
+  <meta name="description" content="Roam architecture: local-first analysis system. Index pipeline, storage, graph engines, retrieval, patch verifier — and how they fit together for CLI and MCP clients.">
+  <link rel="canonical" href="https://roam-code.com/docs/architecture">
+  <link rel="icon" type="image/svg+xml" href="/favicon.svg">
+  <meta name="theme-color" content="#0049b7">
+  <meta name="apple-mobile-web-app-title" content="Roam">
+  <link rel="apple-touch-icon" href="/favicon.svg">
+  <link rel="manifest" href="/manifest.webmanifest">
+  <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="dns-prefetch" href="//github.com">
+  <link rel="stylesheet" href="/landing.css">
+  <meta name="robots" content="index,follow">
+  <meta property="og:title" content="Architecture — Roam Docs">
+  <meta property="og:description" content="Local-first analysis system. Index, store, query, gate.">
+  <meta property="og:url" content="https://roam-code.com/docs/architecture">
+  <meta property="og:image" content="https://roam-code.com/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://roam-code.com/og.png">
+
+  <script type="application/ld+json">
+  {
+    "@context": "https://schema.org",
+    "@type": "BreadcrumbList",
+    "itemListElement": [
+      {"@type": "ListItem", "position": 1, "name": "Home", "item": "https://roam-code.com/"},
+      {"@type": "ListItem", "position": 2, "name": "Docs", "item": "https://roam-code.com/docs/"},
+      {"@type": "ListItem", "position": 3, "name": "Architecture", "item": "https://roam-code.com/docs/architecture"}
+    ]
+  }
+  </script>
+</head>
+<body>
+
+  <a class="skip-link" href="#main">Skip to content</a>
+
+  <nav class="site-nav" aria-label="Main navigation">
+    <div class="nav-inner">
+      <a href="/" class="site-logo">roam<span class="logo-dot">.</span></a>
+      <ul class="nav-links">
+        <li><a href="/">Home</a></li>
+        <li><a href="/pricing">Pricing</a></li>
+        <li><a href="/compare">Compare</a></li>
+        <li><a href="/docs/" aria-current="page">Docs</a></li>
+        <li><a href="https://github.com/Cranot/roam-code">GitHub</a></li>
+      </ul>
+    </div>
+  </nav>
+
+  <nav class="docs-subnav" aria-label="Documentation sections">
+    <div class="docs-subnav-inner">
+      <a href="/docs/getting-started">Getting Started</a>
+      <a href="/docs/integration-tutorials">Integrations</a>
+      <a href="/docs/command-reference">Command Reference</a>
+      <a href="/docs/architecture" aria-current="page">Architecture</a>
+    </div>
+  </nav>
+
+  <main id="main" class="docs-page">
+    <p class="eyebrow">System Design</p>
+    <h1>Roam Architecture</h1>
+    <p class="subtitle">
+      Roam is a local-first analysis system: parse source once, store structural facts in SQLite, expose deterministic query primitives to CLI and MCP clients.
+    </p>
+    <div class="callout">
+      Design goal: minimise repeated file scanning for agents by turning codebases into a queryable structural index. Query-time latency stays low because expensive parsing happens during index builds, not every command call.
+    </div>
+
+    <section>
+      <h2>Pipeline at a Glance</h2>
+<pre><code>Repository ──&gt; Index Pipeline ──&gt; SQLite Storage
+                                           │
+                          ┌────────────────┼────────────────┐
+                          ▼                ▼                ▼
+                 Graph Analytics    Retrieval +      CLI / MCP
+                 Rules Engine       Patch Verifier   Interfaces
+                 Security           Code Graph       JSON / SARIF
+                                    Attestation</code></pre>
+      <p>
+        The index is built once per repo with <code>roam init</code>. Subsequent runs are
+        incremental — only changed files re-parse. All downstream consumers (CLI, MCP, CI gates)
+        read from the same SQLite artefact at <code>.roam/index.db</code>.
+      </p>
+    </section>
+
+    <section>
+      <h2>Subsystem Responsibilities</h2>
+      <table>
+        <thead>
+          <tr><th>Subsystem</th><th>Main modules</th><th>Responsibility</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Index Pipeline</td>
+            <td><code>index/indexer.py</code>, <code>index/parser.py</code>, <code>index/symbols.py</code></td>
+            <td>Build and refresh the structural index from source + git history.</td>
+          </tr>
+          <tr>
+            <td>Storage</td>
+            <td><code>db/schema.py</code>, <code>db/connection.py</code></td>
+            <td>SQLite schema, migrations, batched query helpers.</td>
+          </tr>
+          <tr>
+            <td>Graph Intelligence</td>
+            <td><code>graph/builder.py</code>, <code>graph/layers.py</code>, <code>graph/clusters.py</code>, <code>graph/pagerank.py</code></td>
+            <td>Centrality, layering, communities, cycle analysis, AST clone clustering.</td>
+          </tr>
+          <tr>
+            <td>Retrieval</td>
+            <td><code>retrieve/pipeline.py</code>, <code>retrieve/rerank.py</code></td>
+            <td>Graph-aware FTS5 + structural reranker (PageRank + co-change + clones + runtime hot).</td>
+          </tr>
+          <tr>
+            <td>Patch Verifier</td>
+            <td><code>critique/checks.py</code>, <code>critique/aggregator.py</code></td>
+            <td>Diff parsing + clones-not-edited + blast-radius + intent-alignment for <code>roam critique</code>.</td>
+          </tr>
+          <tr>
+            <td>Taint &amp; Reachability</td>
+            <td><code>security/taint_engine.py</code></td>
+            <td>Graph-reach BFS over edges with sanitiser-stop nodes; OpenVEX-correct.</td>
+          </tr>
+          <tr>
+            <td>Code Graph Attestation</td>
+            <td><code>attest/cga.py</code></td>
+            <td>in-toto v1 statement builder. Merkle root over symbol fingerprints + edge bundle digest. Cosign-signable.</td>
+          </tr>
+          <tr>
+            <td>Fleet Planner</td>
+            <td><code>fleet/manifest.py</code></td>
+            <td>Multi-agent partitioner (Louvain + co-change + PageRank anchors); emits <code>.roam-fleet.json</code>.</td>
+          </tr>
+          <tr>
+            <td>Rule Engine</td>
+            <td><code>rules/builtin.py</code>, <code>rules/engine.py</code></td>
+            <td>Built-in rules + YAML rule packs (path / symbol / AST / dataflow patterns).</td>
+          </tr>
+          <tr>
+            <td>Interfaces</td>
+            <td><code>commands/cmd_*.py</code>, <code>mcp_server.py</code>, <code>mcp_extras/</code></td>
+            <td>Deterministic queries for CLI and MCP clients. Sampling-driven compression, watcher-based invalidation, per-session memory.</td>
+          </tr>
+          <tr>
+            <td>Output Contracts</td>
+            <td><code>output/formatter.py</code>, <code>output/sarif.py</code>, <code>output/schema_registry.py</code></td>
+            <td>Stable text / JSON / SARIF envelopes for agents and CI; every <code>--json</code> error path returns a parseable envelope.</td>
+          </tr>
+        </tbody>
+      </table>
+    </section>
+
+    <section>
+      <h2>Index Pipeline Stages</h2>
+      <ol>
+        <li><strong>Discovery</strong> — collect tracked files (via <code>git ls-files</code> + <code>.gitignore</code>) and classify file roles.</li>
+        <li><strong>Parsing</strong> — tree-sitter parse per file with language routing across 28 supported languages.</li>
+        <li><strong>Extraction</strong> — symbols (classes, functions, methods, fields), signatures, docstrings, references.</li>
+        <li><strong>Resolution</strong> — convert references into graph edges (caller&rarr;callee, import chains, inheritance).</li>
+        <li><strong>Metrics</strong> — cognitive complexity, centrality (PageRank, betweenness), churn, co-change, cognitive load.</li>
+        <li><strong>Persistence</strong> — upsert into SQLite with incremental diffing; only changed files re-parse.</li>
+      </ol>
+<pre><code>discover -> parse -> extract -> resolve -> metrics -> persist
+                 (incremental path executes only changed files)</code></pre>
+    </section>
+
+    <section>
+      <h2>Command-to-Data Flow</h2>
+      <h3>Example: <code>roam preflight AuthService</code></h3>
+<pre><code>CLI cmd_preflight
+  -> ensure_index()
+  -> query symbols/edges/metrics
+  -> run health/rule checks
+  -> aggregate verdict + risk factors
+  -> render text or JSON envelope</code></pre>
+
+      <h3>Example: <code>roam cga emit --include-taint --sign</code></h3>
+<pre><code>CLI cmd_cga
+  -> ensure_index()
+  -> attest.cga.build_statement()
+       -> _symbol_fingerprints()       # Merkle root over (qname, kind, sig, path)
+       -> _edge_bundle_digest()        # graph snapshot fingerprint
+       -> security.taint_engine.run()  # graph-reach BFS, sanitizer stops
+            -> _finding_to_vex_claim() # OpenVEX status + justification
+  -> in-toto v1 Statement
+       (predicateType: roam-code.dev/CodeGraph/v1)
+  -> cosign sign-blob --bundle         # optional, graceful skip if absent
+  -> .roam/attestations/&lt;sha&gt;.intoto.json + .sig</code></pre>
+      <p>
+        <strong>Property</strong>: the CGA chain is reproducible — same source tree + same git HEAD &rarr;
+        same Merkle root &rarr; same predicate digest. Signing layers identity onto a deterministic fingerprint.
+      </p>
+      <p>
+        <strong>Tradeoff</strong>: static structure gives speed and determinism, but cannot model
+        fully dynamic runtime behavior without trace ingestion (<code>roam ingest-trace</code>).
+      </p>
+    </section>
+
+    <section>
+      <h2>Why SQLite</h2>
+      <ul>
+        <li><strong>Zero-dep</strong>: ships with Python; no client/server, no infrastructure.</li>
+        <li><strong>FTS5</strong>: full-text search built-in, used for symbol search and retrieval.</li>
+        <li><strong>Determinism</strong>: same input source &rarr; identical SQLite file (modulo timestamps). Diffable, reproducible.</li>
+        <li><strong>Portable</strong>: <code>roam index-export</code> emits a tarball with manifest SHA-256 + optional cosign signature; <code>index-import</code> verifies before extracting.</li>
+        <li><strong>Local</strong>: index lives at <code>.roam/index.db</code> in your repo. No source code leaves the machine for the free CLI.</li>
+      </ul>
+    </section>
+
+    <nav class="docs-footer-nav" aria-label="Pagination">
+      <a href="/docs/command-reference">
+        <span class="label">← Previous</span>
+        Command Reference
+      </a>
+      <a href="/docs/" class="next">
+        <span class="label">Back to →</span>
+        Documentation index
+      </a>
+    </nav>
+  </main>
+
+  <footer>
+    <div class="footer-inner">
+      <div class="footer-col">
+        <strong>Roam</strong>
+        <span>A second opinion on AI-generated code.</span>
+        <span class="footer-meta">Built in Athens. Made in the EU.</span>
+      </div>
+      <div class="footer-col">
+        <a href="https://github.com/Cranot/roam-code">GitHub</a>
+        <a href="https://pypi.org/project/roam-code/">PyPI</a>
+        <a href="/docs/">Docs</a>
+      </div>
+      <div class="footer-col">
+        <a href="/setup">Setup</a>
+        <a href="/about">About</a>
+        <a href="/press">Press</a>
+        <a href="/changelog">Changelog</a>
+        <a href="/status">Status</a>
+        <a href="/security">Security</a>
+        <a href="/accessibility">Accessibility</a>
+      </div>
+      <div class="footer-col">
+        <a href="/privacy">Privacy</a>
+        <a href="/terms">Terms</a>
+        <a href="/refund">Refund</a>
+        <a href="/no-cookies">No cookies</a>
+      </div>
+      <div class="footer-col">
+        <a href="mailto:hello@roam-code.com">hello@roam-code.com</a>
+        <a href="mailto:security@roam-code.com">security@roam-code.com</a>
+        <span class="footer-meta">No cookies. No tracking. No analytics.</span>
+        <span class="footer-meta"><a href="https://github.com/Cranot/roam-code/tree/main/templates/distribution/landing-page">This page is open source</a></span>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
