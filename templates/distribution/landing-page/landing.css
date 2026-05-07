@@ -705,6 +705,27 @@ a.verb-cell:hover {
   color: var(--muted);
 }
 
+/* ─── Back-to-product CTA strip (on info/legal pages) ─── */
+.page-cta-strip {
+  background: var(--accent-soft);
+  padding: 28px 24px;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  text-align: center;
+}
+.page-cta-inner p {
+  margin: 0;
+  font-size: 15px;
+  color: var(--text);
+}
+.page-cta-inner .btn-primary {
+  display: inline-block;
+  margin: 0 6px;
+  padding: 8px 18px;
+  font-size: 14px;
+  vertical-align: middle;
+}
+
 /* ─── Status page dots ─── */
 .status-grid { display: flex; flex-direction: column; gap: 12px; margin: 24px 0 32px; }
 .status-row {
