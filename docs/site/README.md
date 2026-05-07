@@ -1,6 +1,6 @@
 # roam-code Website
 
-This directory is the static GitHub Pages artifact deployed to `redacted`.
+This directory holds the legacy GitHub Pages artifact, which now redirects to `https://roam-code.com/docs/` (the canonical docs URL).
 
 ## Page structure
 
@@ -21,7 +21,7 @@ This directory is the static GitHub Pages artifact deployed to `redacted`.
 
 - Workflow: `.github/workflows/pages.yml`
 - Artifact root: `docs/site`
-- Expected URL: `redacted`
+- Expected URL: `https://roam-code.com/docs/`
 
 ## Update workflow
 

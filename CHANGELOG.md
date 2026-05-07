@@ -43,7 +43,7 @@ whitespace-only changes. No behavior change.
 
 ### CI fix — register the two new detectors in the catalog
 
-Hotfix after 12.43. The two new async detectors added in R5
+Hotfix after 12.43. The two new async detectors
 (async-fire-and-forget-task, async-nested-run) were registered in
 the detector dispatch table but missing from the catalog/tasks.py
 CATALOG dict. test_math.py::test_detector_registry_covers_catalog
@@ -163,11 +163,9 @@ on 2026-05-07:
 - Documentation: + cookbook (10 recipes)
 
 
-R4 (Dart Tier 1 extractor), R11 (migration-plan CLI), R13 (parallel
-parse for monorepos), R14 (LLM-augmented MCP tool), R15 (why-slow CLI
-via runtime traces), R16 (open-issues sweep), R18 (GraphQL bridge),
-R19 (incremental MCP hot-reload). Each documented in the project task
-list with notes on scope + risk.
+Deferred to follow-up releases: Dart Tier-1 extractor, parallel parse
+for monorepos, LLM-augmented MCP tool, why-slow CLI via runtime traces,
+open-issues sweep, GraphQL bridge, incremental MCP hot-reload.
 
 ## [12.42] - 2026-05-06
 
@@ -192,14 +190,13 @@ behavior change; documentation-only fix to restore CI green.
 
 ## [12.40] - 2026-05-06
 
-### Pivot to monetization — Phase 0 free-OSS funnel artifacts + commercial landing page
+### New commands + commercial landing page
 
 After 8 CI iterations restoring the matrix to green (12.31 → 12.39),
-this release pivots from polish to monetization-aligned shipping.
-Lands the Phase 0 commands from `the build plan` plus a
-starter landing-page implementation for the `roam.review` umbrella.
+this release lands three new CLI commands and a starter landing page
+for the hosted product surface.
 
-### New commands (3 — hosted-product groundwork)
+### New commands
 
 - **`roam permit`** — structural-permission verdict facade for AI
   agents. Returns `{verdict, reason, allowed_actions, blocked_actions}`
@@ -207,36 +204,27 @@ starter landing-page implementation for the `roam.review` umbrella.
   a target symbol (`--symbol`). Wraps `roam critique` + `roam preflight`.
   Exit codes: 0=ALLOW, 5=BLOCK, 6=REVIEW. Drops into Cursor rules,
   Claude Code permission hooks, pre-commit, GitHub Actions branch
-  protection. **Engine reused by the Roam Review GitHub App at PR
-  time.**
+  protection.
 - **`roam postmortem <commit-range>`** — replays current detectors
   against past commits. Walks `HEAD~30..HEAD` (or any range), runs
   `roam critique` against each commit's diff, reports findings that
-  would have surfaced pre-merge. The single highest-conversion buyer-
-  meeting demo per the v2 plan: *"if it retroactively catches my Q1
-  incidents, redacted."*
-- **`roam article-12-check`** — EU AI Act Article 12 readiness
-  assessment. 6-item checklist (audit-trail dir, trail records,
-  retention policy, technical docs, attestation surface, high-risk
-  classification heuristic) → 1-page Markdown report (or PDF with
-  `--pdf out.pdf` if reportlab installed). Captures Article-12-curious
-  leads before they pick another vendor.
+  would have surfaced pre-merge. Useful pre-purchase signal: would
+  today's detector set have flagged your last-quarter incidents?
+- **`roam article-12-check`** — scoping/readiness assessment for
+  EU AI Act Article 12 record-keeping (Annex III high-risk providers
+  only). 6-item checklist → 1-page Markdown report (or PDF with
+  `--pdf out.pdf` if reportlab installed).
 
 ### Commercial landing page (starter)
 
 New directory `templates/distribution/landing-page/` with:
 
-- `index.html` — hero + 3 product cards + buyer-pain band citing
-  PocketOS / Amazon Treadwell / DORA 2025 + audit upsell + trust
-  strip + FAQ + footer
-- `landing.css` — single 6KB stylesheet, IBM Plex Mono + Space
-  Grotesk fonts (matches docs/site visual language)
-- `README.md` — domain priority list (`roam.review` recommended
-  primary, with `roamreview.com` / `roam.cloud` / `roamaudit.com`
-  as backups), 3 deploy paths (Cloudflare Pages / Vercel / GitHub
-  Pages), content TODOs before going live
+- `index.html` — hero + 3 product cards + buyer-pain band + audit
+  upsell + trust strip + FAQ + footer
+- `landing.css` — single 6KB stylesheet (IBM Plex Mono + Space
+  Grotesk fonts, matches docs/site visual language)
 
-`templates/distribution/landing-page-spec.md` updated to reflect
+
 the new domain recommendation.
 
 ### Surface counts
@@ -3608,7 +3596,7 @@ Pydantic / dataclass / pytest fixture / parametrize.
   badge** in ``roam context``. ``[pydantic model]`` / ``[dataclass
   model]`` / ``[enum model]`` etc. surfaces above the signature so
   agents reading context immediately know the class shape. Found
-  14 pydantic + 31 dataclass + 1 enum in deep-research.
+  14 pydantic + 31 dataclass + 1 enum in a Python research repo.
 - **`@pytest.fixture` / `@pytest.mark.parametrize` /
   `@pytest.mark.asyncio` badge** in ``roam context``. ``[pytest
   fixture]`` / ``[parametrize]`` / ``[async test]``.
@@ -3649,13 +3637,13 @@ Pydantic / dataclass / pytest fixture / parametrize.
 - 646 focused tests pass (was 541).
 - Bench held: recall@5 0.656, recall@10 0.769, recall@20 0.900.
 - All 11 idiom detectors verified on synthetic + scaled to a 17k-file
-  codebase (supernode: 167 open-leaks, 4 sync-in-async, 146 bare-except).
+  codebase (a 17k-file external Python repo: 167 open-leaks, 4 sync-in-async, 146 bare-except).
 - roam-code itself: 0 findings across all 11 detectors (post-fix).
 
 ## [12.4.0] - 2026-05-02
 
 A Python-pivot release. Three super-passes of dogfooding on real
-Python codebases (deep-research, roam-agent-eval, supernode) surfaced
+Python codebases (a Python research repo, an agent-eval workspace, a 17k-file external Python repo) surfaced
 gaps that the language-agnostic surface couldn't catch. v12.4 adds
 Python-specific structural signals and idiom detection without
 adding new commands — existing commands give better Python answers.

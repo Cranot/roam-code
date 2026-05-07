@@ -229,7 +229,7 @@ def _check_controller_direct_returns(
 ) -> list[dict]:
     """Check controller files for direct model returns (without API Resources).
 
-    redacted: scope the check to method bodies that actually use the
+    scope the check to method bodies that actually use the
     model. Real-world FP from a Vue 3 + Laravel codebase: `MyDataController` was flagged for
     over-fetching `LedgerAccount` because `LedgerAccount` was imported at
     the top of the file — but the controller actually returns AADE service
@@ -516,7 +516,7 @@ def analyze_over_fetch(conn, threshold: int, limit: int) -> list[dict]:
             reasons.append(f"Serializes {fillable_count} fields per item in list APIs")
             if not has_resource:
                 reasons.append("No API Resource found to control output")
-            # redacted — when the model is *huge* (>=50 fields) and
+            # when the model is *huge* (>=50 fields) and
             # has no shaping at all, lead with a concrete artefact suggestion
             # because the right fix is unambiguous: scaffold a Resource.
             if fillable_count >= 50:

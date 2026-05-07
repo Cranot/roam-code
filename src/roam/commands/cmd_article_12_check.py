@@ -15,11 +15,10 @@ This command runs a checklist over the indexed repo and emits a
 is installed). Each item references the specific Article (12, 18, 19)
 or Annex (III) it maps to.
 
-redacted.: stand-alone OSS funnel artifact
-that captures redacted before they pick another
-vendor. The pull quote is:
-
-    "becomes the vendor my DPO calls when Article 12 does apply."
+A scoping/readiness helper for buyers whose product may fall under
+Article 12 (Annex III high-risk providers). Code-generation tooling
+itself is not in Annex III — Article 12 only applies to Roam's outputs
+when the buyer's product is in scope.
 
 Usage:
 
@@ -342,8 +341,10 @@ def article_12_check_cmd(ctx, output_path: str | None, pdf_path: str | None):
       roam article-12-check --pdf assessment.pdf
       roam --json article-12-check > envelope.json
 
-    redacted. — captures Article-12-curious
-    leads before they pick another vendor.
+    A scoping/readiness helper. Article 12 only applies when the
+    buyer's product is in EU AI Act Annex III; this command checks
+    whether the artifacts (audit-trail dir, retention, etc.) are in
+    place if it does.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

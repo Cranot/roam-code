@@ -1,7 +1,7 @@
 {
     "$schema": "https://static.modelcontextprotocol.io/schemas/2025-12-11/server.schema.json",
     "name": "io.github.cranot/roam-code",
-    "description": "Architectural sight for AI agents before they edit. Local graph, 27 langs, no API keys.",
+    "description": "Architectural sight for AI agents before they edit. Local graph, 28 languages, no API keys.",
     "version": "12.46",
     "packages": [
         {
@@ -22,5 +22,5 @@
     ],
     "remotes": [],
     "repository": {"url": "https://github.com/Cranot/roam-code", "source": "github"},
-    "websiteUrl": "redacted"
+    "websiteUrl": "https://roam-code.com/"
 }

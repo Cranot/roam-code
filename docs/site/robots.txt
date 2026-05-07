@@ -1,4 +1,4 @@
 User-agent: *
 Allow: /
 
-Sitemap: redactedsitemap.xml
+Sitemap: https://roam-code.com/sitemap.xml

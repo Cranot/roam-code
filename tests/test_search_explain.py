@@ -1,4 +1,4 @@
-"""Tests for roam search --explain flag (backlog item #55).
+"""Tests for roam search --explain flag.
 
 Covers:
   - --explain flag adds explanation to text output

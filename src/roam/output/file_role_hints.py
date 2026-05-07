@@ -7,7 +7,7 @@ This module centralises the path-hint set so all those commands stay
 in sync — extracted in v12.4 from per-command duplicates after the
 Python-pivot dogfood notes flagged ``workspaces/`` (agent-generated
 benchmark artifacts) as another category that polluted the headlines
-on ``roam-agent-eval``.
+on ``an agent-eval workspace``.
 
 Hints are matched against the *path* (case-sensitive, both Unix and
 Windows separators) by checking whether ``/<hint>/`` appears anywhere

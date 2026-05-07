@@ -540,7 +540,7 @@ def diff_cmd(ctx, commit_range, staged, full, tests, coupling, fitness, since_ta
         click.echo(f"Changed files: {len(file_map)}  Symbols defined: {total_syms}")
         click.echo(f"Affected symbols: {len(all_affected_syms)}  Affected files: {len(all_affected_files)}")
 
-        # redacted — surface the top-3 affected symbols by PageRank
+        # surface the top-3 affected symbols by PageRank
         # so reviewers see "this change ripples into central abstractions"
         # vs "this change is in a leaf module" without scrolling. Quiet
         # when no PageRank data is available.

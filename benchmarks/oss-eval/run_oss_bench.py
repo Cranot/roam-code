@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """Run roam quality snapshots across a local OSS repository corpus.
 
-This is a reproducible harness for backlog item #37.
-It expects repositories to exist locally (by default under bench-repos/).
+A reproducible harness for cross-repo benchmarking. Repositories must
+exist locally (by default under bench-repos/).
 """
 
 from __future__ import annotations

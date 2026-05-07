@@ -11,7 +11,7 @@
 
 This Statement of Work ("**SOW**") is entered into on `[EFFECTIVE_DATE]` between:
 
-- **Provider**: `[PROVIDER_LEGAL_NAME]`, `[PROVIDER_ENTITY_TYPE]` (e.g. redacted Α.Φ.Μ. `[VAT_ID]`), with registered address at `[PROVIDER_ADDRESS]` ("**Provider**", "we", "us").
+- **Provider**: `[PROVIDER_LEGAL_NAME]`, `[PROVIDER_ENTITY_TYPE]` (e.g. C-corp, LLC, sole-trader), with registered address at `[PROVIDER_ADDRESS]` ("**Provider**", "we", "us").
 - **Client**: `[CLIENT_LEGAL_NAME]`, with registered address at `[CLIENT_ADDRESS]` ("**Client**", "you").
 
 This SOW incorporates by reference the mutual non-disclosure agreement signed `[NDA_DATE]` (the "**NDA**") and, where applicable, the data processing agreement signed `[DPA_DATE]` (the "**DPA**").
@@ -20,18 +20,18 @@ This SOW incorporates by reference the mutual non-disclosure agreement signed `[
 
 ## 1. Engagement
 
-Provider will perform an **AI Agent Readiness Audit** at the **`[TIER]`** tier (one of: Indie / Standard / Enterprise) and any add-ons selected below, on the codebase identified in **Section 2 (Scope)**.
+Provider will perform a **Codebase Architecture Audit** at the **`[TIER]`** tier and any add-ons selected below, on the codebase identified in **Section 2 (Scope)**.
 
 **Tier selected** (mark one):
 
-- [ ] **Indie / Startup Audit** — USD **$1,800** — 1 repo ≤30K LoC — 5 business-day turnaround.
-- [ ] **Standard Audit** — USD **$4,500** — 1 repo 30-200K LoC — 10 business-day turnaround.
-- [ ] **Monorepo / Enterprise Audit** — USD **$12,000** — multi-repo or >200K LoC — 3-week turnaround.
+- [ ] **`[TIER_1_NAME]`** — USD **`[TIER_1_FEE]`** — `[TIER_1_SCOPE]` — `[TIER_1_TURNAROUND]`.
+- [ ] **`[TIER_2_NAME]`** — USD **`[TIER_2_FEE]`** — `[TIER_2_SCOPE]` — `[TIER_2_TURNAROUND]`.
+- [ ] **`[TIER_3_NAME]`** — USD **`[TIER_3_FEE]`** — `[TIER_3_SCOPE]` — `[TIER_3_TURNAROUND]`.
 
 **Optional add-ons:**
 
-- [ ] **Rollout Lite** — USD **$4,800** — CI integration on 1 repo + team training (2 hrs).
-- [ ] **Full Rollout** — USD **$14,500** — multi-repo CI, MCP server, dashboards, half-day workshop.
+- [ ] **`[ADDON_1_NAME]`** — USD **`[ADDON_1_FEE]`** — `[ADDON_1_SCOPE]`.
+- [ ] **`[ADDON_2_NAME]`** — USD **`[ADDON_2_FEE]`** — `[ADDON_2_SCOPE]`.
 - [ ] **Custom rules pack** — USD **$3,500** for 5 rules (or `[CUSTOM]`).
 
 ---
@@ -90,13 +90,13 @@ This SOW does **not** include:
 
 Total fee: **USD `[TOTAL_FEE]`** (sum of selected tier and add-ons).
 
-Payment terms by tier:
+Payment terms:
 
-- **Indie ($1,800)** and **Standard ($4,500)**: 100% upfront via Stripe Checkout at `[CHECKOUT_URL]`. Engagement begins on payment confirmation.
-- **Enterprise ($12,000+)**: 50% upfront / 50% on delivery via Stripe Invoicing, NET 7. Provider may pause delivery if invoice exceeds 7 days past due.
-- **Rollout / Custom Rules add-ons**: priced per Section 1; payment terms match the audit tier.
+- **Smaller tiers**: 100% upfront via `[PAYMENT_LINK]`. Engagement begins on payment confirmation.
+- **Larger tiers**: 50% upfront / 50% on delivery via invoice, NET 7. Provider may pause delivery if invoice exceeds 7 days past due.
+- **Add-ons**: priced per Section 1; payment terms match the audit tier.
 
-All fees are quoted in USD. Bank fees, currency conversion, and applicable VAT (if any) are Client's responsibility. Provider is `[VAT_STATUS]` (e.g. "not VAT-registered" / "VAT-registered Α.Φ.Μ. ___ — applies reverse-charge per Article 14 L.2859/2000 to EU B2B").
+All fees are quoted in USD. Bank fees, currency conversion, and applicable VAT (if any) are Client's responsibility. Provider's VAT status: `[VAT_STATUS]`.
 
 ---
 

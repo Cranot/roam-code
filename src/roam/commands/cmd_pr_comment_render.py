@@ -21,7 +21,7 @@ import click
 from roam.output.formatter import json_envelope, to_json
 
 _GITHUB_LINK = "https://github.com/Cranot/roam-code"
-_DOCS_LINK = "redacted"
+_DOCS_LINK = "https://roam-code.com/docs/"
 
 
 DEFAULT_BASELINE_PATH = "_baseline_default_"  # sentinel — resolved to .roam/last-pr-analysis.json
@@ -241,7 +241,7 @@ def _section_concerns(concerns: list[dict]) -> list[str]:
         evidence = (c.get("evidence", "") or "").strip()
         if evidence:
             out.append(f"   {evidence}")
-        # redacted — surface matched_patterns when present so reviewers
+        # surface matched_patterns when present so reviewers
         # see WHY the concern fired, not just THAT it fired. Quiet when absent.
         patterns = c.get("matched_patterns") or []
         if patterns:

@@ -281,13 +281,11 @@
 <li>Documentation: + cookbook (10 recipes)</li>
 </ul>
 
-<h3>What was deferred to next session</h3>
+<h3>Deferred to follow-up releases</h3>
 
-<p>R4 (Dart Tier 1 extractor), R11 (migration-plan CLI), R13 (parallel</p>
-<p>parse for monorepos), R14 (LLM-augmented MCP tool), R15 (why-slow CLI</p>
-<p>via runtime traces), R16 (open-issues sweep), R18 (GraphQL bridge),</p>
-<p>R19 (incremental MCP hot-reload). Each documented in the project task</p>
-<p>list with notes on scope + risk.</p>
+<p>Dart Tier-1 extractor, parallel parse for monorepos, LLM-augmented MCP</p>
+<p>tool, why-slow CLI via runtime traces, open-issues sweep, GraphQL</p>
+<p>bridge, incremental MCP hot-reload.</p>
 
 <h2>[12.42] - 2026-05-06</h2>
 
@@ -312,64 +310,44 @@
 
 <h2>[12.40] - 2026-05-06</h2>
 
-<h3>Pivot to monetization — Phase 0 free-OSS funnel artifacts + commercial landing page</h3>
+<h3>New commands + commercial landing page</h3>
 
 <p>After 8 CI iterations restoring the matrix to green (12.31 → 12.39),</p>
-<p>this release pivots from polish to monetization-aligned shipping.</p>
-<p>Lands the Phase 0 commands from <code>the build plan</code> plus a</p>
-<p>starter landing-page implementation for the <code>roam.review</code> umbrella.</p>
+<p>this release lands three new CLI commands and a starter landing page</p>
+<p>for the hosted product surface.</p>
 
-<h3>New commands (3 — hosted-product groundwork)</h3>
+<h3>New commands</h3>
 
 <ul>
-<li><strong><code>roam permit</code></strong> — structural-permission verdict facade for AI</li>
+<li><strong><code>roam permit</code></strong> — structural-permission verdict facade for AI agents.</li>
 </ul>
-<p>  agents. Returns <code>{verdict, reason, allowed_actions, blocked_actions}</code></p>
+<p>  Returns <code>{verdict, reason, allowed_actions, blocked_actions}</code></p>
 <p>  over staged changes (<code>--staged</code>), an arbitrary diff (<code>--input</code>), or</p>
 <p>  a target symbol (<code>--symbol</code>). Wraps <code>roam critique</code> + <code>roam preflight</code>.</p>
 <p>  Exit codes: 0=ALLOW, 5=BLOCK, 6=REVIEW. Drops into Cursor rules,</p>
-<p>  Claude Code permission hooks, pre-commit, GitHub Actions branch</p>
-<p>  protection. **Engine reused by the Roam Review GitHub App at PR</p>
-<p>  time.**</p>
+<p>  Claude Code permission hooks, pre-commit, GitHub Actions branch protection.</p>
 <ul>
-<li><strong><code>roam postmortem <commit-range></code></strong> — replays current detectors</li>
+<li><strong><code>roam postmortem &lt;commit-range&gt;</code></strong> — replays current detectors</li>
 </ul>
 <p>  against past commits. Walks <code>HEAD~30..HEAD</code> (or any range), runs</p>
 <p>  <code>roam critique</code> against each commit's diff, reports findings that</p>
-<p>  would have surfaced pre-merge. The single highest-conversion buyer-</p>
-<p>  meeting demo per the v2 plan: *"if it retroactively catches my Q1</p>
-<p>  incidents, redacted."*</p>
+<p>  would have surfaced pre-merge. Useful pre-purchase signal: would today's</p>
+<p>  detector set have flagged your last-quarter incidents?</p>
 <ul>
-<li><strong><code>roam article-12-check</code></strong> — EU AI Act Article 12 readiness</li>
+<li><strong><code>roam article-12-check</code></strong> — scoping/readiness assessment for EU AI Act</li>
 </ul>
-<p>  assessment. 6-item checklist (audit-trail dir, trail records,</p>
-<p>  retention policy, technical docs, attestation surface, high-risk</p>
-<p>  classification heuristic) → 1-page Markdown report (or PDF with</p>
-<p>  <code>--pdf out.pdf</code> if reportlab installed). Captures Article-12-curious</p>
-<p>  leads before they pick another vendor.</p>
+<p>  Article 12 record-keeping (Annex III high-risk providers only).</p>
+<p>  6-item checklist → 1-page Markdown report (or PDF with</p>
+<p>  <code>--pdf out.pdf</code> if reportlab installed).</p>
 
 <h3>Commercial landing page (starter)</h3>
 
 <p>New directory <code>templates/distribution/landing-page/</code> with:</p>
 
 <ul>
-<li><code>index.html</code> — hero + 3 product cards + buyer-pain band citing</li>
+<li><code>index.html</code> — hero + 3 product cards + buyer-pain band + audit upsell + trust strip + FAQ + footer</li>
+<li><code>landing.css</code> — single 6KB stylesheet (IBM Plex Mono + Space Grotesk fonts, matches docs/site visual language)</li>
 </ul>
-<p>  PocketOS / Amazon Treadwell / DORA 2025 + audit upsell + trust</p>
-<p>  strip + FAQ + footer</p>
-<ul>
-<li><code>landing.css</code> — single 6KB stylesheet, IBM Plex Mono + Space</li>
-</ul>
-<p>  Grotesk fonts (matches docs/site visual language)</p>
-<ul>
-<li><code>README.md</code> — domain priority list (<code>roam.review</code> recommended</li>
-</ul>
-<p>  primary, with <code>roamreview.com</code> / <code>roam.cloud</code> / <code>roamaudit.com</code></p>
-<p>  as backups), 3 deploy paths (Cloudflare Pages / Vercel / GitHub</p>
-<p>  Pages), content TODOs before going live</p>
-
-<p><code>templates/distribution/landing-page-spec.md</code> updated to reflect</p>
-<p>the new domain recommendation.</p>
 
 <h3>Surface counts</h3>
 

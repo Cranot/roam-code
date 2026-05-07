@@ -69,7 +69,7 @@ Selected rule sets: E, F, W, I, T20 (pyflakes, pycodestyle, isort, print stateme
 - **Output format:** Plain ASCII only -- no emojis, no colors, no box-drawing characters. This keeps output token-efficient for LLM consumption.
 - **Output abbreviations:** `fn` (function), `cls` (class), `meth` (method) -- via `abbrev_kind()`
 
-See the [Architecture Guide](redactedarchitecture.html) for the complete conventions reference.
+See the [Architecture Guide](https://roam-code.com/docs/architecture) for the complete conventions reference.
 
 ## Pre-commit Hooks
 
@@ -191,7 +191,7 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
 - **Batched IN-clauses:** Never write raw `WHERE id IN (...)` with a list > 400 items. Use `batched_in()` from `connection.py`.
 - **Lazy-loading:** Commands are lazy-loaded via `LazyGroup` in `cli.py` to avoid importing networkx on every CLI call.
 
-See the [Architecture Guide](redactedarchitecture.html) for the full list of patterns and conventions.
+See the [Architecture Guide](https://roam-code.com/docs/architecture) for the full list of patterns and conventions.
 
 ## PR Guidelines
 
@@ -225,7 +225,7 @@ roam-code is organized into these key areas:
 | `src/roam/mcp_server.py` | MCP server with 101 tools |
 | `tests/` | Test suite (186 test files) |
 
-For full architectural details, see the [Architecture Guide](redactedarchitecture.html).
+For full architectural details, see the [Architecture Guide](https://roam-code.com/docs/architecture).
 
 ## Good First Contributions
 
@@ -240,4 +240,4 @@ For full architectural details, see the [Architecture Guide](redactedarchitectur
 
 - Open an [issue](https://github.com/Cranot/roam-code/issues) for questions
 - Check [existing issues](https://github.com/Cranot/roam-code/issues) before creating new ones
-- See the [Architecture Guide](redactedarchitecture.html) for detailed technical conventions
+- See the [Architecture Guide](https://roam-code.com/docs/architecture) for detailed technical conventions

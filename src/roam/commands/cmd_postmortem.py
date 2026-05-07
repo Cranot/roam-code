@@ -1,7 +1,7 @@
 """``roam postmortem`` — replay current detectors against past commits.
 
-Answers the question every prospect asks: *"would Roam have caught
-the incident we shipped on Q1?"* Walks a commit range, runs the
+Answers the question "would today's detector set have caught the
+incident we shipped last quarter?" Walks a commit range, runs the
 critique + diff-blast-radius detectors against each commit's
 **outgoing diff** as if it were a PR, and reports which findings
 would have surfaced pre-merge.
@@ -12,13 +12,6 @@ old commits. Instead it inspects each commit's diff with the
 current detector set; the detection rules are usually stable
 enough across the time-window of interest (last 30-90 days) that
 this gives an honest answer.
-
-redacted.: stand-alone OSS artifact
-that becomes the redacted demo. The pull
-quote we want is:
-
-    "If it retroactively catches the incident I shipped in Q1,
-    I'll sign the PO by Friday."
 
 Usage:
 

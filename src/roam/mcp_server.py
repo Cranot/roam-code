@@ -898,18 +898,18 @@ _RETRYABLE_CODES = {"DB_LOCKED", "INDEX_STALE"}
 # for a given error code. Anchors point at the troubleshooting section of
 # the public docs site so the URL stays stable across roam versions.
 _DOC_LINKS: dict[str, str] = {
-    "INDEX_NOT_FOUND": "redactedtroubleshooting.html#index-not-found",
-    "INDEX_STALE": "redactedtroubleshooting.html#index-stale",
-    "DB_LOCKED": "redactedtroubleshooting.html#db-locked",
-    "NOT_GIT_REPO": "redactedtroubleshooting.html#not-a-git-repo",
-    "PERMISSION_DENIED": "redactedtroubleshooting.html#permission-denied",
-    "NO_RESULTS": "redactedtroubleshooting.html#no-results",
-    "USAGE_ERROR": "redactedtroubleshooting.html#usage-error",
-    "GATE_FAILURE": "redactedtroubleshooting.html#gate-failure",
-    "PARTIAL_FAILURE": "redactedtroubleshooting.html#partial-failure",
-    "RATE_LIMITED": "redactedtroubleshooting.html#rate-limited",
-    "COMMAND_FAILED": "redactedtroubleshooting.html#command-failed",
-    "UNKNOWN": "redactedtroubleshooting.html",
+    "INDEX_NOT_FOUND": "https://roam-code.com/docs/troubleshooting#index-not-found",
+    "INDEX_STALE": "https://roam-code.com/docs/troubleshooting#index-stale",
+    "DB_LOCKED": "https://roam-code.com/docs/troubleshooting#db-locked",
+    "NOT_GIT_REPO": "https://roam-code.com/docs/troubleshooting#not-a-git-repo",
+    "PERMISSION_DENIED": "https://roam-code.com/docs/troubleshooting#permission-denied",
+    "NO_RESULTS": "https://roam-code.com/docs/troubleshooting#no-results",
+    "USAGE_ERROR": "https://roam-code.com/docs/troubleshooting#usage-error",
+    "GATE_FAILURE": "https://roam-code.com/docs/troubleshooting#gate-failure",
+    "PARTIAL_FAILURE": "https://roam-code.com/docs/troubleshooting#partial-failure",
+    "RATE_LIMITED": "https://roam-code.com/docs/troubleshooting#rate-limited",
+    "COMMAND_FAILED": "https://roam-code.com/docs/troubleshooting#command-failed",
+    "UNKNOWN": "https://roam-code.com/docs/troubleshooting.html",
 }
 
 

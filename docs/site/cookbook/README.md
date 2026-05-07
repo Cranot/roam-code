@@ -202,5 +202,5 @@ permission check before it lands. Blocks high-severity changes;
 flags medium ones.
 
 For richer integration (Cursor rule, Claude Code permission hook),
-see the [`roam permit`](redactedcommand-reference.html#permit)
+see the [`roam permit`](https://roam-code.com/docs/command-reference#permit)
 documentation.

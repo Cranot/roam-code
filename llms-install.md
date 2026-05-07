@@ -1,13 +1,13 @@
 # Installing roam-code
 
 roam-code provides instant codebase comprehension for AI coding agents.
-194 commands, 136 MCP tools, 27 languages, 100% local, zero API keys.
+202 commands, 136 MCP tools, 28 languages, 100% local, zero API keys.
 
 ## Documentation Hub
 
-- Getting started tutorial: `docs/site/getting-started.html`
-- Command reference with examples: `docs/site/command-reference.html`
-- Architecture diagram and subsystem guide: `docs/site/architecture.html`
+- Getting started tutorial: <https://roam-code.com/docs/getting-started>
+- Command reference with examples: <https://roam-code.com/docs/command-reference>
+- Architecture diagram and subsystem guide: <https://roam-code.com/docs/architecture>
 
 ## Quick install
 
@@ -78,4 +78,4 @@ Add to your MCP config:
 | `roam context <symbol>` | Files and line ranges to read |
 | `roam diff` | Blast radius of uncommitted changes |
 
-Run `roam --help` for all 194 commands (+ alias pairs).
+Run `roam --help` for all 202 commands (+ alias pairs).

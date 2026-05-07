@@ -944,7 +944,7 @@ def auth_gaps_cmd(ctx, limit, routes_only, controllers_only, min_confidence):
     # --- Controllers section ---
     if ctrl_findings:
         click.echo(f"Controllers without authorization ({len(ctrl_findings)}):")
-        # redacted — when many findings cluster on a few controllers
+        # when many findings cluster on a few controllers
         # (e.g. ~115 methods of DynamicResourceController-derived classes),
         # a per-controller rollup makes triage radically faster than skimming
         # 100+ detail rows. Threshold: only show rollup when >= 10 findings.

@@ -1,4 +1,4 @@
-"""Tests for standardized CLI exit codes (backlog item #19).
+"""Tests for standardized CLI exit codes.
 
 Validates that:
 - Exit code constants have correct values

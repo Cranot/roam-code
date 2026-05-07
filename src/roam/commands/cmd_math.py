@@ -96,7 +96,7 @@ def _apply_task_cap(findings: list[dict], limit: int, max_per_task: int) -> tupl
     type=click.Path(exists=True, dir_okay=False),
     default=None,
     help=(
-        "T5 — show only NEW findings vs the JSON envelope at this path. "
+        "show only NEW findings vs the JSON envelope at this path. "
         "Pair with `roam --json math > .roam/math-baseline.json` to take a "
         "snapshot, then `roam math --since .roam/math-baseline.json` to see "
         "only what regressed since."
@@ -168,7 +168,7 @@ def math_cmd(
 
     from roam.catalog.detectors import autodetect_framework_profile, run_detectors
 
-    # redacted — auto-detect when no --framework was passed.
+    # auto-detect when no --framework was passed.
     # Sniffs package.json / composer.json for known stack signals and
     # silently activates a profile. Surfaces the choice in the verdict
     # text so it's not invisible.
@@ -198,7 +198,7 @@ def math_cmd(
                 err=True,
             )
 
-        # redacted — `--since baseline.json`: keep only findings whose
+        # `--since baseline.json`: keep only findings whose
         # (task_id, location, symbol_name) tuple isn't in the baseline. The
         # tuple is the same shape used by `_finding()` for finding_id derivation,
         # so two runs over the same indexed code produce stable matches.
@@ -294,7 +294,7 @@ def math_cmd(
         # Suppressed findings stay in `findings` so they appear in JSON; we
         # subtract from `total` for the verdict line (unsuppressed candidates).
         unsuppressed_total = total - suppressed_count
-        # redacted — when many findings cluster on one detector, hint
+        # when many findings cluster on one detector, hint
         # at the dominant category in the verdict line so users skim it before
         # the detail. e.g. "12 algorithmic improvements (10 high; mostly: io-in-loop)"
         category_hint = ""
@@ -357,7 +357,7 @@ def math_cmd(
                             "detector_metadata": detector_meta.get("detector_metadata", {}),
                             "profile": detector_meta.get("profile", profile),
                             "profile_filtered": detector_meta.get("profile_filtered", 0),
-                            # redacted — surface T7 auto-detection in JSON summary
+                            # surface T7 auto-detection in JSON summary
                             # so CI / dashboards can record which framework profile was
                             # active without having to re-derive it from the verdict text.
                             "framework": detector_meta.get("framework"),
@@ -396,7 +396,7 @@ def math_cmd(
             f"(filtered {detector_meta.get('profile_filtered', 0)} low-signal findings)"
         )
         # redacted — surface the active framework profile inline so
-        # users see the cache allowlist that's been layered on. T7 — when
+        # users see the cache allowlist that's been layered on. when
         # we auto-detected, mark it so the user knows the profile wasn't
         # silently chosen.
         if detector_meta.get("framework"):

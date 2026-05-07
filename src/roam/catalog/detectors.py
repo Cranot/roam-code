@@ -59,7 +59,7 @@ def _finding(
 ):
     """Build a finding dict.
 
-    redacted: when ``match_line`` is supplied, the finding's
+    when ``match_line`` is supplied, the finding's
     ``location`` field points at the exact AST node where the pattern
     matched (e.g. the line containing the .sort() call) — not the
     enclosing function declaration. The function-start line is
@@ -102,7 +102,7 @@ def _finding(
     if context_lines:
         evidence = dict(evidence)
         evidence["context_lines"] = context_lines
-    # T6 — matched_patterns is the explainability hook. Always copy the
+    # matched_patterns is the explainability hook. Always copy the
     # input list so detector mutations don't leak into shared state.
     if matched_patterns:
         evidence = dict(evidence) if not context_lines else evidence
@@ -277,7 +277,7 @@ def _dedupe(seq: list[str]) -> list[str]:
 # from sibling detectors over the same row. Caching the file content
 # once per path (not per slice) lets repeat slices hit memory.
 #
-# redacted — bounded with FIFO eviction. Without a cap a single
+# bounded with FIFO eviction. Without a cap a single
 # `roam math` on a 50K-file monorepo would hold every loop-bearing file's
 # full source in memory simultaneously. Eviction by insertion order
 # (Python dict invariant) keeps the cap honest with O(1) overhead.
@@ -1198,7 +1198,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         "watcher",
     }
 
-    # T2 — sleep arg less than this many seconds counts as a "spin" in spirit;
+    # sleep arg less than this many seconds counts as a "spin" in spirit;
     # >= 1 second sleeps are operator-paced poll loops, not busy waits.
     _SPIN_THRESHOLD_SECONDS = 1.0
     _RE_SLEEP_ARG = re.compile(
@@ -1236,7 +1236,7 @@ def detect_busy_wait(conn: sqlite3.Connection) -> list[dict]:
         name_lower = (r["name"] or "").lower()
         if any(kw in name_lower for kw in _POLL_NAMES):
             continue
-        # T2 — peek at the snippet: if every literal sleep argument is
+        # peek at the snippet: if every literal sleep argument is
         # >= 1 second, this is operator-paced polling, not a busy wait.
         snippet = _read_symbol_source(
             r["file_path"],
@@ -1680,7 +1680,7 @@ def list_framework_profiles() -> list[str]:
 
 
 def autodetect_framework_profile() -> str | None:
-    """redacted — sniff package.json / composer.json for known stacks.
+    """ sniff package.json / composer.json for known stacks.
 
     Inspects ``package.json`` and ``composer.json`` from the project root
     (current working directory) for the dependency signals that map onto
@@ -1968,7 +1968,7 @@ def _io_emit_finding(
         "wrap the loop in a batch/eager guard (e.g. `with()` or `map()`+`Promise.all`), OR "
         "add `# roam: ignore-math[io-in-loop]` on the function line if the call is intentional"
     )
-    # redacted — assemble matched_patterns once for all branches.
+    # assemble matched_patterns once for all branches.
     # Surfaces in `evidence.matched_patterns` so users see which classifier
     # branches contributed (high-leaf / framework-pack / ambiguous-bare /
     # dev-gated / batch-iteration). Quiet (empty list) when no signal.
@@ -2329,7 +2329,7 @@ def detect_sort_to_select(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — JS/TS-specific: serial-await inside a for-of loop is a
+# JS/TS-specific: serial-await inside a for-of loop is a
 # Promise.all opportunity. Each `await` round-trips before the next call
 # starts, so 100 awaits = 100x the latency of one. The fix is
 # `await Promise.all(items.map(item => fetch(item)))`. Distinct from
@@ -2485,7 +2485,7 @@ def detect_async_blocking_sleep(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — `asyncio.create_task(coro())` whose return value is
+# `asyncio.create_task(coro())` whose return value is
 # discarded. The task is gc-collected before it runs to completion. The
 # fix is to either store the task in a long-lived collection or `await`
 # it. PEP 649 / Python 3.11+ docs explicitly call this a footgun.
@@ -2555,7 +2555,7 @@ def detect_async_fire_and_forget(conn: sqlite3.Connection) -> list[dict]:
     return results
 
 
-# redacted — `asyncio.run(...)` inside an async function. This
+# `asyncio.run(...)` inside an async function. This
 # raises RuntimeError because the event loop is already running. The
 # fix is to call the coroutine directly with `await` instead.
 _RE_NESTED_ASYNCIO_RUN = re.compile(

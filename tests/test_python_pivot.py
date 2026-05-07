@@ -2,7 +2,7 @@
 generated-dir exclusion, Python idiom detectors.
 
 Each test corresponds to a finding from the dogfood pass on
-``deep-research`` / ``roam-agent-eval`` so the fix doesn't regress.
+``a Python research repo`` / ``an agent-eval workspace`` so the fix doesn't regress.
 """
 
 from __future__ import annotations

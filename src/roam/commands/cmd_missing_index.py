@@ -189,7 +189,7 @@ _MODEL_TABLE_OVERRIDES: dict[str, str] = {}
 def _build_model_table_overrides(root, model_paths: list[str]) -> dict[str, str]:
     """Walk model files; build {ClassName: explicit_table_name}.
 
-    redacted: on a Vue 3 + Laravel codebase, models like ``PayrollAdvance`` set
+    on a Vue 3 + Laravel codebase, models like ``PayrollAdvance`` set
     ``$table = 'payroll_advances'`` (not the Eloquent default
     ``payroll_advances`` from the class name). Without this index, queries
     against ``PayrollAdvance::where(...)`` were attributed to the table
