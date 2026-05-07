@@ -905,6 +905,134 @@ a.verb-cell:hover {
   border-top: 1px solid var(--bg-alt);
   text-align: center;
 }
+
+.product-card.popular {
+  border-color: var(--accent);
+  border-width: 2px;
+  position: relative;
+  box-shadow: 0 8px 24px rgba(0, 73, 183, 0.08);
+}
+.popular-badge {
+  position: absolute;
+  top: -12px;
+  left: 50%;
+  transform: translateX(-50%);
+  background: var(--accent);
+  color: #fff;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  padding: 4px 12px;
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.persona-band {
+  background: var(--bg-alt);
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+  padding: var(--s-5) 0;
+}
+.persona-band-inner {
+  max-width: var(--max-w);
+  margin: 0 auto;
+  padding: 0 var(--s-5);
+}
+.persona-band .lede {
+  margin: 0;
+  font-size: var(--t-md);
+  line-height: var(--lh-snug);
+  color: var(--text);
+}
+
+/* ─── Scenarios grid (3 case-study cards) ─── */
+.scenarios-grid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-5);
+  margin-top: var(--s-5);
+}
+.scenario {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+}
+.scenario h3 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-md);
+  font-weight: 600;
+  color: var(--accent);
+}
+.scenario-cite {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  font-style: italic;
+  margin: 0 0 var(--s-3);
+  line-height: var(--lh-snug);
+}
+.scenario p {
+  font-size: var(--t-sm);
+  margin: 0 0 var(--s-3);
+  line-height: var(--lh-snug);
+}
+.scenario .terminal {
+  font-size: var(--t-xs);
+  margin: 0 0 var(--s-3);
+  padding: var(--s-3);
+}
+.scenario .tie-back {
+  margin-top: auto;
+  font-weight: 500;
+  color: var(--text);
+  border-top: 1px solid var(--bg-alt);
+  padding-top: var(--s-3);
+}
+@media (max-width: 880px) {
+  .scenarios-grid { grid-template-columns: 1fr; }
+}
+
+/* ─── Dogfood band ─── */
+.dogfood-band {
+  padding: var(--s-7) 0;
+  border-top: 1px solid var(--border);
+  border-bottom: 1px solid var(--border);
+}
+.dogfood-band-inner {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 0 var(--s-5);
+}
+.dogfood-list {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 var(--s-5);
+}
+.dogfood-list li {
+  padding: var(--s-3) 0;
+  border-bottom: 1px solid var(--bg-alt);
+  font-size: var(--t-sm);
+  line-height: var(--lh-snug);
+}
+.dogfood-list li:last-child {
+  border-bottom: none;
+}
+.dogfood-list code {
+  background: var(--bg-alt);
+  padding: 2px 6px;
+  border-radius: 3px;
+  font-size: var(--t-xs);
+}
+.dogfood-list a {
+  color: var(--accent);
+}
+.dogfood-foot {
+  font-size: var(--t-sm);
+  color: var(--muted);
+  text-align: center;
+  margin: var(--s-3) 0 0;
+}
 .price-amount {
   display: block;
   font-size: 32px;
