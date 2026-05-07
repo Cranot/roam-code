@@ -6,7 +6,7 @@
 
 A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 196 specialised commands are advanced surface for specialised workflows.
 
-*202 commands · 136 MCP tools · 27 languages · 100% local · zero API keys*
+*202 commands · 136 MCP tools · 28 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -30,7 +30,7 @@ Unlike LSPs (editor-bound, language-specific) or Sourcegraph (hosted search), Ro
 Codebase ──> [Index] ──> Semantic Graph ──> 194 Commands ──> AI Agent
               │              │                  │
            tree-sitter    symbols            comprehend
-           27 languages   + edges            govern
+           28 languages   + edges            govern
            git history    + metrics          refactor
            runtime traces + architecture     orchestrate
 ```
@@ -112,7 +112,7 @@ $ roam diff                    # blast radius of uncommitted changes
 ### v11.1.2 -- SQL + Scala Tier 1, 27 Languages
 - **SQL DDL promoted to Tier 1** with dedicated `SqlExtractor` -- tables, columns, views, functions, triggers, schemas, types (enums), sequences, ALTER TABLE ADD COLUMN. Foreign keys produce graph edges; views and triggers reference source tables. Database-schema projects now work with `roam health`, `roam layers`, `roam impact`, `roam coupling` and all graph commands.
 - **Scala promoted to Tier 1** with dedicated `ScalaExtractor` -- classes, traits, objects, case classes, sealed hierarchies, val/var properties, type aliases, imports, and inheritance. Full `extends` + `with` trait mixin resolution.
-- **27 languages** with 16 dedicated Tier 1 extractors.
+- **28 languages** with 17 dedicated Tier 1 extractors.
 - `server.json` for official MCP Registry submission.
 
 ### v11.1.1 -- Command Quality Audit
@@ -338,7 +338,7 @@ roam health
 | `roam api [--scope <dir>]` | List the public API surface (exported public symbols + signatures) |
 | `roam exit-codes` | List every roam exit code with its meaning |
 | `roam version [--check]` | Show installed version; with `--check` also queries PyPI for newer releases |
-| `roam audit [--brief]` | One-shot AI Agent Readiness Audit — chains health + debt + dead + risk + test-pyramid + api into a single envelope |
+| `roam audit [--brief]` | One-shot AI-governance audit envelope — chains health + debt + dead + risk + test-pyramid + api into a single envelope |
 | `roam disambiguate <name>` | List every symbol matching the name with file/line/kind/signature/docstring snippet to pick the right one |
 | `roam pre-commit [--install\|--print]` | Install or preview a roam-critique git pre-commit hook |
 | `roam mcp-status` | MCP server health: preset, registered tools, backpressure limits, cache entries, watcher state |
@@ -1456,7 +1456,7 @@ Codebase
     |
 [1] Discovery ──── git ls-files (respects .gitignore + .roamignore)
     |
-[2] Parse ──────── tree-sitter AST per file (27 languages)
+[2] Parse ──────── tree-sitter AST per file (28 languages)
     |
 [3] Extract ────── symbols + references (calls, imports, inheritance)
     |
