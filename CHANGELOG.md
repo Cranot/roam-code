@@ -100,9 +100,35 @@ git directory regardless of whether `roam index` has been built.
 #### Surface count
 
 - CLI commands: 202 → **204** (adds `stale-refs`, `pr-replay`).
-- MCP tools: 136 → **137** (adds `roam_stale_refs` with `ignore`,
-  `ignore_target`, `check_absolute_routes` parameters).
+- MCP tools: 136 → **137** (adds `roam_stale_refs` with full
+  v12.48 flag exposure: `ignore`, `ignore_target`, `check_absolute_routes`,
+  `no_anchors`, `diff`, `sort_by`, `fix`, `by_file`).
 - Ask recipes: 24 → **25** (adds `find-broken-links`).
+
+#### Polish iterations after the initial v12.48 ship
+
+- **In-page anchor validation** — pure-fragment URLs (``[x](#section)``
+  with no path) now validate against the source file's own anchor set.
+  Caught 38 real broken table-of-contents anchors in roam-code's own
+  README that were silently passing pre-fix.
+- **Case-insensitive anchor matching** — ``#Setup`` matches header
+  ``# Setup`` regardless of case (GitHub semantics).
+- **Code-fenced headers ignored** — ``# Heading`` inside ``` ``` ```
+  or ``~~~`` blocks no longer creates phantom anchor targets.
+- **GitHub duplicate-header suffixes** — repeated headers slugifying
+  to the same string emit ``setup``, ``setup-1``, ``setup-2``, …
+  matching how GitHub renders them.
+- **Atomic ``--fix apply`` writes** — tempfile + ``os.replace`` so an
+  interrupted run cannot leave a half-written source file on disk.
+- **SARIF anchor rule** — ``stale-refs/anchor`` rule with anchor-
+  specific message ("Anchor '#X' not found in 'path'") instead of the
+  misleading "missing target" phrasing for the path-finding kinds.
+- **Better ``--fix`` empty-result message** — explains why nothing was
+  rewritten (``0 fixable / N total finding(s)``) and points at
+  ``--ignore`` for intentional dangling refs.
+- **Recency-stat memoisation** — ``_recency_score`` caches per-file
+  mtime resolution so the priority sort doesn't ``stat`` the same
+  source file once per missing-target group.
 
 ### `roam pr-replay` — productised PR Replay report
 

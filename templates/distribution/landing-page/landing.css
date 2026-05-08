@@ -1533,17 +1533,90 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 /* ─── Audit upsell ─── */
 .audit-upsell {
   background: var(--bg-alt);
-  padding: var(--section-y-tight) 0;
+  padding: var(--section-y) 0;
   border-top: 1px solid var(--border);
 }
 .audit-upsell-inner {
-  max-width: 720px;
+  max-width: var(--max-w);
   margin: 0 auto;
   padding: 0 var(--container-x);
   text-align: center;
 }
-.audit-upsell h2 { font-size: clamp(20px, 3.5vw, 24px); margin: 0 0 12px; }
+.audit-upsell h2 { font-size: var(--t-section-h); margin: 0 0 var(--s-3); }
+.audit-upsell .lede {
+  font-size: 16px;
+  color: var(--muted);
+  max-width: 720px;
+  margin: 0 auto var(--s-6);
+}
 .audit-upsell p { font-size: 16px; color: var(--text); }
+
+/* PR Replay tier picker — three side-by-side cards on desktop, stacked
+   on phones. Each card has a name, price, body, and CTA. The Sample
+   card replaces its CTA with the install command since the user can run
+   it without an email exchange. */
+.replay-tiers {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: var(--s-5);
+  margin-top: var(--s-5);
+  text-align: left;
+}
+@media (max-width: 880px) {
+  .replay-tiers { grid-template-columns: 1fr; }
+}
+.replay-tier {
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: var(--s-5);
+  display: flex;
+  flex-direction: column;
+}
+.replay-tier h3 {
+  margin: 0 0 var(--s-2);
+  font-size: var(--t-card-h);
+  font-weight: 600;
+  color: var(--accent);
+}
+.replay-tier .replay-price {
+  margin: 0 0 var(--s-3);
+  font-size: var(--t-base);
+  color: var(--text);
+}
+.replay-tier .replay-price strong {
+  font-size: var(--t-md);
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+.replay-tier .replay-body {
+  font-size: var(--t-sm);
+  line-height: var(--lh-snug);
+  color: var(--muted);
+  margin: 0 0 var(--s-4);
+  flex-grow: 1;
+}
+.replay-tier .replay-cmd {
+  margin: 0 0 var(--s-3);
+  font-size: 13px;
+  /* Inline command stays scrollable on narrow viewports — same rule as
+     the hero install-cmd. */
+  display: block;
+  text-align: left;
+}
+.replay-tier .replay-foot {
+  font-size: var(--t-xs);
+  color: var(--muted);
+  margin: 0;
+  font-style: italic;
+}
+/* Sample tier sits between two paid tiers — give it a softer affordance
+   so the eye lands on Team and Deep first; sample is a self-serve nudge,
+   not the intended commercial path. */
+.replay-tier--sample {
+  background: var(--bg-alt);
+  border-style: dashed;
+}
 
 /* ─── Trust strip ─── */
 .trust-strip {

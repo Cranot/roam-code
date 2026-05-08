@@ -459,15 +459,9 @@ def stale_refs_to_sarif(targets: list[dict]) -> dict:
             if kind == "anchor":
                 anchor = src.get("anchor", "?")
                 anchor_file = src.get("anchor_target_file", target_path.split("#", 1)[0])
-                message = (
-                    f"Anchor '#{anchor}' not found in '{anchor_file}' "
-                    f"(raw: '{src.get('raw', '?')}')"
-                )
+                message = f"Anchor '#{anchor}' not found in '{anchor_file}' (raw: '{src.get('raw', '?')}')"
             else:
-                message = (
-                    f"Reference points at missing target '{target_path}' "
-                    f"(raw: '{src.get('raw', '?')}')"
-                )
+                message = f"Reference points at missing target '{target_path}' (raw: '{src.get('raw', '?')}')"
             if rename_hint and kind != "anchor":
                 message += f". Rename hint: {rename_hint}"
             results.append(
