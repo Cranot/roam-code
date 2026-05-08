@@ -40,6 +40,21 @@ jobs:
       - name: Build sdist and wheel
         run: python -m build
 
+      - name: Twine check
+        run: |
+          pip install twine
+          twine check --strict dist/*
+
+      - name: Verify wheel ships PEP 639 License-Expression metadata
+        # Pre-12.50 wheels shipped to PyPI with no license metadata
+        # because the build ran on setuptools < 77 (which silently
+        # drops the license expression). Block any future regression.
+        run: |
+          set -e
+          unzip -p dist/*.whl '*/METADATA' \
+            | grep -q '^License-Expression: Apache-2.0$' \
+            || (echo "::error::License-Expression missing — needs setuptools >= 77" && exit 1)
+
       - name: Verify wheel contains v2 commands
         # Belt-and-suspenders: if the wheel is missing a v2 command file
         # (because pyproject package-data drifted), fail before PyPI sees it.
@@ -77,3 +92,28 @@ jobs:
           # Idempotency: when a manual twine upload already shipped the wheel,
           # the workflow should no-op cleanly instead of erroring on file collision.
           skip-existing: true
+
+  smoke:
+    # Post-publish: install the just-released package from PyPI in a
+    # clean environment and run --version. Catches the class of failure
+    # where the wheel passes local checks but PyPI's CDN serves the
+    # wrong file or a packaging error breaks ``pip install`` post-upload.
+    needs: publish
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Wait for CDN propagation
+        # PyPI can take ~30s to surface a freshly-uploaded version on
+        # the JSON API; pip's index resolver hits the same edge.
+        run: sleep 45
+
+      - name: Install + verify
+        run: python scripts/verify_release.py --pypi --install
+
+      - name: Verify production security headers
+        run: python scripts/verify_release.py --headers

@@ -14,7 +14,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-
 DOCS_ROOT = Path(__file__).resolve().parents[1] / "templates" / "distribution" / "landing-page" / "docs"
 
 
@@ -40,6 +39,4 @@ def test_docs_pages_declare_canonical_url():
         path = DOCS_ROOT / filename
         text = path.read_text(encoding="utf-8")
         # The pages all use a ``<link rel="canonical" href="…">`` declaration.
-        assert f'rel="canonical" href="{canonical}"' in text, (
-            f"{filename} should declare canonical={canonical}"
-        )
+        assert f'rel="canonical" href="{canonical}"' in text, f"{filename} should declare canonical={canonical}"
