@@ -7,6 +7,162 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.48] - 2026-05-08
+
+### `roam stale-refs` — dangling file-reference scanner
+
+Index-free scanner that finds markdown links, HTML `href`/`src` attributes,
+and backtick file paths whose target no longer exists on disk. Closes the
+gap between symbol-graph commands (`uses`, `impact`, `refs`) — which only
+see indexed call/import edges — and prose mentions of file paths in docs,
+READMEs, and YAML/JSON configs. Pure filesystem operation; runs in any
+git directory regardless of whether `roam index` has been built.
+
+#### Detection surface
+
+- **Markdown inline links** `[text](path)` and image syntax `![alt](path)`
+- **Markdown reference-style links** `[label]: path "title"`
+- **HTML `href` / `src` attributes** (single or double quoted)
+- **Backtick-wrapped paths** `` `internal backlog` `` — limited to
+  doc-shaped extensions to keep prose noise out
+
+#### False-positive filters
+
+- Schemes (`http://`, `mailto:`, `data:` …), pure anchor refs `#header`,
+  and protocol-relative `//cdn.example.com/foo` are skipped.
+- URL fragments `#section` and query strings `?v=1` are stripped before
+  the existence check.
+- Placeholders `<project_root>/foo`, globs `docs/*.html`, and brace
+  patterns `prompts/{task}.txt` are recognised as documentation patterns,
+  not concrete paths.
+- Runtime-generated path prefixes (`.roam/`, `.git/`, `node_modules/`,
+  `.next/`, `.cache/` …) are skipped — those are intentionally absent
+  from VCS.
+- Bare basenames (no `/`) referenced from source code (`.py`, `.ts`)
+  are treated as placeholders unless the file actually exists somewhere
+  in the repo — eliminates the `auth.py` / `cmd_FOO.py` false-positive
+  class that markdown-link regex would otherwise drag in from regex
+  character classes.
+- Bare dotfile basenames (`.eslintrc`, `.roam-gates.yml`) are recognised
+  as documentation about user-creatable optional config files.
+- Extensionless absolute URLs (`href="/setup"`, `/pricing`) are treated
+  as static-site router paths, not file references; pass
+  `--check-absolute-routes` to flip to strict file-system lookup.
+- Absolute URLs with extensions try project-root, then `public/` /
+  `static/` / `assets/`, then walk the source file's ancestor chain —
+  so `<img src="/favicon.svg">` from `templates/site/about.html` resolves
+  to `templates/site/favicon.svg` when that's the deploy root.
+
+#### Reporting
+
+- **Verdict line**: `74 stale ref(s) · 65 missing target(s) · 1541 refs
+  checked · 3326 files · 2.778s` — counts and timing in one line.
+- **Rename hints** via basename matching — when `templates/audit-report/
+  sample-redacted.md` references `commands/cmd_dead.py`, the report
+  surfaces "did you mean `src/roam/commands/cmd_dead.py`?".
+- **`--by-file`** inverts the report so you can see which document owns
+  the most stale refs (one-doc-at-a-time fix workflow).
+- **`--ignore GLOB` / `--ignore-target GLOB`** suppress historical or
+  optional-config noise; both forms accept Windows backslashes and
+  POSIX forward slashes interchangeably.
+- **`--gate`** exits with code 5 when any stale ref is found, for CI
+  integration.
+- **`--sarif`** emits SARIF 2.1.0 with one rule per reference kind
+  (`stale-refs/md_inline`, `stale-refs/md_reference`, `stale-refs/html_attr`,
+  `stale-refs/backtick`) so GitHub Code Scanning surfaces dangling-link
+  findings as discrete categories.
+
+#### Discoverability
+
+- **`roam ask "find broken links"`** now classifies to the new
+  `find-broken-links` recipe (top-1 confidence). 25 recipes total.
+- Cross-referenced from `doc-staleness` and `docs-coverage` docstrings
+  as the "where do the docs point?" counterpart to those two "what do
+  the docs say?" commands.
+- `verify-patch` recipe followups now suggest `roam stale-refs` after
+  rename-heavy diffs.
+
+#### Internals
+
+- New `src/roam/commands/cmd_stale_refs.py` (~570 lines).
+- New `stale_refs_to_sarif()` in `src/roam/output/sarif.py`.
+- Cheap `_has_ref_triggers()` content sniff (`[`, `<`, `` ` ``) skips
+  the regex pass on lock-files and binary-shaped text — observed ~30%
+  wall-clock reduction on manifest-heavy repos.
+- 41 dedicated tests in `tests/test_stale_refs.py` covering smoke,
+  detection coverage, JSON envelope, false-positive filters
+  (regex-noise / runtime-path / placeholder / bare-basename / dotfile),
+  absolute-route handling, public-folder + deploy-root fallbacks,
+  `--ignore` source/target globs, backtick project-root fallback,
+  edge cases (empty repo, `..` escape, `.roamignore`, backslash
+  glob normalisation), SARIF envelope shape, and `--by-file` output.
+
+#### Surface count
+
+- CLI commands: 202 → **204** (adds `stale-refs`, `pr-replay`).
+- MCP tools: 136 → **137** (adds `roam_stale_refs` with `ignore`,
+  `ignore_target`, `check_absolute_routes` parameters).
+- Ask recipes: 24 → **25** (adds `find-broken-links`).
+
+### `roam pr-replay` — productised PR Replay report
+
+Wraps `roam postmortem` with tier-aware buyer-facing framing, an aggregated
+detector-class breakdown, and a markdown narrative ready to hand to a
+prospect. The productised version of "would Roam have caught my last 30
+incidents?" — the qualifier on the path to a Roam Review subscription.
+
+#### Three tiers, one engine
+
+- **`--tier sample`** — DIY 5-PR sample. Free, watermarked, self-serve.
+  A prospect can run it locally without a sales call. The watermark
+  makes it clear the report is the abbreviated form.
+- **`--tier team`** — 30-PR Team report. Paid ($2,500). Includes a
+  30-minute founder walk-through.
+- **`--tier deep`** — 90-PR Deep report. Paid ($6,000). Per-detector
+  deep-dive plus a 90-minute walk-through with a written remediation
+  plan.
+
+#### Report shape
+
+- Executive summary with verdict line and severity totals.
+- "What Roam would have flagged" table — detector class × total findings
+  × PRs-with-finding ratio. Surfaces the single highest-leverage CI gate
+  to wire up given the buyer's actual incident pattern.
+- Per-PR breakdown ranked high → medium → total, with top-N hits per PR
+  capped by tier.
+- Recommended next steps: tier-shaped — Sample suggests an upgrade to a
+  paid Team or Deep engagement; paid tiers point at concrete CI gates.
+- Methodology block on every report so the buyer can verify what was
+  measured.
+
+#### Tooling
+
+- New `src/roam/commands/cmd_pr_replay.py`. Wraps `roam postmortem` in
+  JSON mode (single source of truth for the analysis), so detector-class
+  changes propagate automatically.
+- New `tests/test_pr_replay.py` — 14 tests covering smoke per-tier,
+  watermark presence/absence, `--client` injection (suppressed on
+  sample), JSON envelope shape, `--output` file writes, custom
+  `--range` overrides, and pure-function aggregator behaviour.
+- Categorised in `cli.py _CATEGORIES["Daily Workflow"]` next to
+  `postmortem`.
+
+#### Landing-page integration
+
+- `templates/distribution/landing-page/index.html` audit-upsell rewritten
+  with concrete CTAs: an inline `pip install roam-code && roam pr-replay
+  --tier sample` for self-serve evaluation plus paid-tier pricing.
+- `docs/site/cookbook/README.md` recipe 7 (postmortem) now cross-references
+  `roam pr-replay` for the buyer-facing report shape.
+
+#### Why this ships now
+
+PR Replay is the lowest-friction path to redacted: paid up-front,
+no SaaS recurring infra needed, the artifact redacted.
+Per `pricing_v4` build priorities, this is P2 (conversion + proof). The
+sample tier doubles as marketing — anyone evaluating Roam can run the
+DIY 5-PR sample and see what the paid product looks like.
+
 ## [12.47] - 2026-05-08
 
 ### Internal cleanup + anti-drift CI gates

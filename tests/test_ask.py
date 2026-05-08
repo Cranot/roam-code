@@ -54,12 +54,14 @@ class TestRecipes:
             "explore-tests",
             "dependency-update",
             "visualize-architecture",
+            # v12.48 — dangling-doc-reference scan
+            "find-broken-links",
         }
 
     def test_recipe_count(self):
         # Lock in the recipe surface — bump together with surface counts
         # in CLAUDE.md / README when changing.
-        assert len(RECIPES) == 24
+        assert len(RECIPES) == 25
 
     def test_readme_recipe_count_matches_registry(self):
         readme = (Path(__file__).resolve().parents[1] / "README.md").read_text(encoding="utf-8")

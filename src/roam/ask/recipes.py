@@ -144,7 +144,7 @@ RECIPES: list[Recipe] = [
         ),
         phase="review",
         perspectives=("blast-radius", "clone-consistency", "intent-alignment"),
-        followups=("roam rules --changed", "roam test-impact"),
+        followups=("roam rules --changed", "roam test-impact", "roam stale-refs (after rename-heavy diffs)"),
         gates=("Stop on high-severity critique findings", "Add or run impacted tests before merge"),
     ),
     Recipe(
@@ -640,6 +640,52 @@ RECIPES: list[Recipe] = [
         perspectives=("structure", "layers", "clusters"),
         followups=("roam visualize --focus <symbol>", "roam fingerprint"),
         gates=("Diagrams complement reading the code, they don't replace it",),
+    ),
+    Recipe(
+        name="find-broken-links",
+        intent="Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing",
+        examples=(
+            "find broken links",
+            "any dead doc links in this repo",
+            "check for stale file references",
+            "what docs point at deleted files",
+            "audit my readme for missing links",
+            "broken doc links after the rename",
+        ),
+        keywords=(
+            # NOTE: keyword bonus is substring-matched against the query
+            # (`"ref" in "refresh"` would over-match), so we keep tokens
+            # that are unlikely to appear inside unrelated words. Tokens
+            # like "ref" / "refs" / "link" are dropped for that reason —
+            # the longer forms below still pick up real intent.
+            "broken",
+            "dangling",
+            "stale",
+            "links",
+            "reference",
+            "references",
+            "dead link",
+            "dead links",
+        ),
+        commands=(("stale-refs", ()),),
+        summary=(
+            "Scans every text file in the repo, surfaces dangling markdown "
+            "links, HTML href/src, and backtick paths whose target no "
+            "longer exists. Includes basename-match rename hints. Pure "
+            "filesystem scan — no index needed."
+        ),
+        phase="audit",
+        perspectives=("doc-hygiene", "post-refactor-cleanup", "ci-gate"),
+        followups=(
+            "roam stale-refs --gate (CI gate, exit 5 on findings)",
+            "roam stale-refs --by-file (group by source doc)",
+            "roam doc-staleness (stale docstring content)",
+            "roam docs-coverage (missing public-symbol docs)",
+        ),
+        gates=(
+            "Use --gate in CI to block merges with broken doc references",
+            "Suppress historical mentions with --ignore CHANGELOG.md if needed",
+        ),
     ),
 ]
 

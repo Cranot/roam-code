@@ -167,7 +167,9 @@ def docs_coverage(ctx, limit, days, threshold, quality):
 
     Unlike ``doc-staleness`` (which scans ALL symbols including private
     ones for stale docstrings), this command focuses on the exported public
-    API surface and prioritizes missing docs by symbol importance.
+    API surface and prioritizes missing docs by symbol importance. For
+    dangling file references (markdown links and backtick paths whose
+    target no longer exists), see ``stale-refs``.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()

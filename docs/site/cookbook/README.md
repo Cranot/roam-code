@@ -143,6 +143,23 @@ What you get: every finding the current detector set would have flagged
 on each of the last 30 commits — pre-merge. A great signal for "is
 adopting Roam worth it" conversations.
 
+For a buyer-facing report (markdown ready to share), use **PR Replay**:
+
+```bash
+# Free 5-PR DIY sample, watermarked
+roam pr-replay --tier sample
+
+# Paid Team report (30 PRs), written to file
+roam pr-replay --tier team --client "Acme Inc" --output acme.md
+
+# Paid Deep report (90 PRs)
+roam pr-replay --tier deep --output q1-replay.md
+```
+
+The DIY sample is the same engine just with a smaller window plus a
+watermark — anyone can run it locally before requesting a paid Team or
+Deep engagement. See <https://roam-code.com/#audit>.
+
 ---
 
 ## 8. Wire roam into Claude Code as a skill

@@ -414,6 +414,79 @@ def dead_to_sarif(dead_exports: list[dict]) -> dict:
     return to_sarif(_TOOL_NAME, _get_version(), rules, results)
 
 
+# ── Stale references ─────────────────────────────────────────────────
+
+
+def stale_refs_to_sarif(targets: list[dict]) -> dict:
+    """Convert ``stale-refs`` findings to SARIF.
+
+    Each *target* dict is expected to carry:
+
+    - ``target`` (str): the missing path the references point at
+    - ``ref_count`` (int): how many references point at it
+    - ``rename_hint`` (str, optional): basename-match suggestion
+    - ``sources`` (list[dict]): per-source records ``{file, line, kind, raw}``
+
+    Each source becomes one SARIF result, ruleId scoped by reference kind
+    (``stale-refs/md_inline``, ``stale-refs/backtick``, …) so GitHub Code
+    Scanning surfaces them as discrete categories.
+    """
+    rule_specs = {
+        "md_inline": ("Markdown link target missing", "warning"),
+        "md_reference": ("Markdown reference-style link target missing", "warning"),
+        "html_attr": ("HTML href/src target missing", "warning"),
+        "backtick": ("Backtick-wrapped path target missing", "note"),
+        "anchor": ("Markdown anchor / fragment missing in target file", "note"),
+    }
+
+    seen_rules: dict[str, dict] = {}
+    results: list[dict] = []
+
+    for tgt in targets:
+        target_path = tgt.get("target", "?")
+        rename_hint = tgt.get("rename_hint")
+        for src in tgt.get("sources", []):
+            kind = src.get("kind", "md_inline")
+            spec = rule_specs.get(kind, ("Stale file reference", "warning"))
+            rule_id = f"stale-refs/{kind}"
+            if rule_id not in seen_rules:
+                seen_rules[rule_id] = {
+                    "id": rule_id,
+                    "shortDescription": spec[0],
+                    "helpUri": _HELP_BASE + "stale-refs",
+                    "defaultLevel": spec[1],
+                }
+            if kind == "anchor":
+                anchor = src.get("anchor", "?")
+                anchor_file = src.get("anchor_target_file", target_path.split("#", 1)[0])
+                message = (
+                    f"Anchor '#{anchor}' not found in '{anchor_file}' "
+                    f"(raw: '{src.get('raw', '?')}')"
+                )
+            else:
+                message = (
+                    f"Reference points at missing target '{target_path}' "
+                    f"(raw: '{src.get('raw', '?')}')"
+                )
+            if rename_hint and kind != "anchor":
+                message += f". Rename hint: {rename_hint}"
+            results.append(
+                {
+                    "ruleId": rule_id,
+                    "level": spec[1],
+                    "message": {"text": message},
+                    "locations": [_location(src.get("file", ""), src.get("line"))],
+                }
+            )
+
+    return to_sarif(
+        _TOOL_NAME,
+        _get_version(),
+        list(seen_rules.values()),
+        results,
+    )
+
+
 # ── Complexity ───────────────────────────────────────────────────────
 
 

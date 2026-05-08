@@ -391,7 +391,8 @@ def doc_staleness(ctx, limit, days, include_prose_drift):
 
     Unlike ``docs-coverage`` (which reports missing docs for exported public
     symbols, ranked by PageRank), this command focuses on existing docs that
-    have gone stale.
+    have gone stale. Audits *what* the docs say. For *where* the docs point —
+    dangling links, missing files referenced by README — see ``stale-refs``.
     """
     json_mode = ctx.obj.get("json") if ctx.obj else False
     ensure_index()
