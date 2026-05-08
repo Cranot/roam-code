@@ -77,17 +77,19 @@ jobs:
 ## 4. Find dead code that's safe to delete
 
 ```bash
-roam dead --safe
+roam dead
 ```
 
-What you get: list of symbols with zero callers, no test coverage, no
-public exports. The `--safe` flag excludes anything that might be
-called dynamically.
+What you get: list of unreferenced exported symbols with confidence
+scores, grouped by removal verdict (SAFE, REVIEW, INTENTIONAL).
 
-To narrow to a single file:
+Useful add-ons:
 
 ```bash
-roam dead --path src/legacy/old_module.py
+roam dead --summary               # aggregate counts only
+roam dead --clusters              # find dead subgraphs (symbols that
+                                  # only reference each other)
+roam dead --aging --effort        # age + estimated removal hours
 ```
 
 ---
