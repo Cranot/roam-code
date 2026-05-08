@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width,initial-scale=1">
-  <title>Command Reference — Roam Docs · 202 commands grouped by intent</title>
+  <title>Command Reference — Roam Docs · 203 commands grouped by intent</title>
   <meta name="description" content="Roam command reference: the 5 core verbs plus the most-used commands grouped by intent — exploration, health, refactoring, security, governance, runtime.">
   <link rel="canonical" href="https://roam-code.com/docs/command-reference">
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
@@ -65,7 +65,7 @@
     <p class="eyebrow">Reference</p>
     <h1>Command Reference</h1>
     <p class="subtitle">
-      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Run <code>roam --help</code> for the full 202-command surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
+      The five core verbs that cover ~80% of agent workflows, plus the most-used commands grouped by intent. Run <code>roam --help</code> for the full 203-command surface; <code>roam &lt;cmd&gt; --help</code> for any command's flags.
     </p>
     <div class="callout">
       Every command supports <code>--json</code> for machine output and (where applicable) <code>--sarif</code> for CI Code Scanning. Verdicts use <code>VERDICT:</code> first-line convention.
@@ -152,6 +152,7 @@
           <tr><td><code>roam simulate move &lt;sym&gt; &lt;file&gt;</code></td><td>What-if architecture — clone the graph and apply a move</td></tr>
           <tr><td><code>roam clones --persist</code></td><td>Detect AST-level clones; persist to <code>clone_pairs</code> for critique</td></tr>
           <tr><td><code>roam migration-plan</code></td><td>Current architecture &rarr; target architecture roadmap</td></tr>
+          <tr><td><code>roam stale-refs [--gate] [--by-file]</code></td><td>Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. Index-free; supports SARIF.</td></tr>
         </tbody>
       </table>
     </section>
@@ -177,7 +178,7 @@
         <thead><tr><th>Command</th><th>What it does</th></tr></thead>
         <tbody>
           <tr><td><code>roam mcp</code></td><td>Start the MCP server (stdio transport)</td></tr>
-          <tr><td><code>roam mcp --list-tools</code></td><td>Print all 136 MCP tools the server exposes</td></tr>
+          <tr><td><code>roam mcp --list-tools</code></td><td>Print all 137 MCP tools the server exposes</td></tr>
           <tr><td><code>roam mcp-setup &lt;client&gt;</code></td><td>Generate config for Claude Code, Cursor, Gemini, Codex</td></tr>
           <tr><td><code>roam fleet plan</code></td><td>Partition work across N agents (Louvain + co-change + PageRank)</td></tr>
           <tr><td><code>roam orchestrate</code></td><td>Multi-agent coordination plan with zero-conflict guarantees</td></tr>
@@ -203,7 +204,7 @@
     <section>
       <h2>Where to find more</h2>
       <ul>
-        <li><strong>All 202 commands</strong>: run <code>roam --help</code> in a terminal.</li>
+        <li><strong>All 203 commands</strong>: run <code>roam --help</code> in a terminal.</li>
         <li><strong>Per-command flags</strong>: <code>roam &lt;cmd&gt; --help</code>.</li>
         <li><strong>Cookbook recipes</strong>: <a href="https://github.com/Cranot/roam-code/tree/main/docs/cookbook">github.com/Cranot/roam-code/docs/cookbook</a>.</li>
         <li><strong>Source</strong>: each command lives in <code>src/roam/commands/cmd_*.py</code>. Apache 2.0.</li>

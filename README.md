@@ -4,9 +4,9 @@
 
 **Architectural sight for AI coding agents — before they edit.**
 
-A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 197 specialised commands are advanced surface for specialised workflows.
+A local code graph (SQLite + tree-sitter + git history) that gives any agent — Claude Code, Cursor, Aider, Continue, your own — five high-leverage verbs: `understand`, `retrieve`, `context`, `preflight`, `critique`. The other 199 specialised commands are advanced surface for specialised workflows.
 
-*202 commands · 136 MCP tools · 28 languages · 100% local · zero API keys*
+*204 commands · 137 MCP tools · 28 languages · 100% local · zero API keys*
 
 [![PyPI version](https://img.shields.io/pypi/v/roam-code?style=flat-square&color=blue)](https://pypi.org/project/roam-code/)
 [![GitHub stars](https://img.shields.io/github/stars/Cranot/roam-code?style=flat-square)](https://github.com/Cranot/roam-code/stargazers)
@@ -100,7 +100,7 @@ $ roam diff                    # blast radius of uncommitted changes
 - **`personalized_pagerank()`** in `graph/pagerank.py`: NetworkX `personalization=` wrapper with empty-seed fallback to global PR; biases ranking toward query-relevant nodes for the retrieve reranker.
 - **`.roam/config.toml`** (new): zero-dep TOML loader (stdlib `tomllib` → `tomli` → in-tree subset parser). Tunable retrieve weights (`alpha`/`beta`/`gamma`/`delta`/`epsilon`), `tokens_per_line`, `lexical_baseline`, `first_stage_token_cap`, `default_budget`, `default_k`, `default_rerank`.
 - **DX corrections from dogfood pass**: `roam --detail <cmd>` is the canonical group-level flag; misleading "use --detail" hints in 7 commands rewritten to point users at `roam --detail <cmd>`. `--top N` aliased on `complexity`/`algo`/`rules` (`--top 0` means unlimited on `rules`). `roam fingerprint` no longer refuses graphs ≥5,000 symbols (new soft-warn threshold 20k, hard cap 100k).
-- **202 CLI commands, 136 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
+- **204 CLI commands, 137 MCP tools** (`fleet`, `ask`, `workflow`, `cga`, `eval-retrieve` remain CLI-only; v12 exposes `roam_retrieve`, `roam_critique`, `roam_fleet_plan`, plus 5 v12.1 boolean oracles (`roam_oracle_*`), `roam_taint_classify`, `roam_pytest_fixtures`, and `roam_hover` as MCP tools). 35-tool `core` preset is the default for token-budget-conscious clients.
 
 ## What's New in v11
 
@@ -274,7 +274,7 @@ roam health
 
 ## Commands
 
-**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~197 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **202 commands organised into 7 categories** (plus 6 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`), but you don't need to know that to start.
+**Lead with the 5 verbs.** The [5 core commands](#core-commands) cover ~80% of agent workflows: `understand`, `context`, `retrieve`, `preflight`, `critique`. The remaining ~199 commands are detail surface for specialised workflows (taint, fleet, cga, oracle, eval, …) — they're called by agents on demand, not memorised. This is intentional design; under the hood the canonical surface is **204 commands organised into 7 categories** (plus 7 aliases for muscle memory: `algo` → `math`, `weather` → `churn`, `digest` / `snapshot` / `trend` → `trends`, `onboard` → `understand`, `refs` → `uses`), but you don't need to know that to start.
 
 <details>
 <summary><strong>Full command reference</strong></summary>
@@ -318,6 +318,7 @@ roam health
 | `roam pr-prep [<range>]` | One-shot pre-PR fitness check that bundles diff + critique + pr-risk into one envelope |
 | `roam pr-analyze [<range>] [--input F] [--rules F] [--gate]` | Agent-aware PR risk verdict: aggregates `pr-prep` with AI-likelihood scoring, `.roam/rules.yml` enforcement, and INTENTIONAL/SAFE/REVIEW/BLOCK mapping; CI gate via `--gate` (exit 5 on BLOCK); governance audit trail via `--audit-trail` |
 | `roam pr-comment-render --input F` | Render a markdown PR comment from a `pr-analyze` JSON envelope; styles: `github`, `gitlab`, `plain` |
+| `roam pr-replay [<sha>] [--audit-trail]` | Replay a PR's analysis at a specific commit (or HEAD); useful for reproducing audit decisions and validating cache stability |
 | `roam metrics-push [--token T] [--anonymize] [--dry-run]` | Push metrics-only summary (no source-code bodies) from `roam audit` to a Roam Cloud endpoint; `--dry-run` prints the payload locally |
 | `roam audit-trail-verify [--input F] [--gate]` | Walk the EU AI Act audit-trail JSONL and verify SHA-256 chain integrity; exit 5 on broken chain |
 | `roam audit-trail-export [--format md\|json\|csv] [--since T] [--verdict V] [--aggregate]` | Export the audit trail for procurement / compliance review; `--aggregate` rolls up per actor / repo / verdict / month |
@@ -357,7 +358,7 @@ roam health
 | `roam retrieve <task> [--budget N] [--k N] [--seed-files PATH]` | Graph-aware context for free-form tasks: FTS5 + structural rerank (PageRank + clones) + token budget |
 | `roam critique [--input DIFF] [--intent TEXT] [--high-callers N]` | Verify a patch against the graph: clones-not-edited + blast radius + intent-vs-semantic-diff. Pipe `git diff` in. Exit 5 on high severity. |
 | `roam fleet plan <goal> [--n-agents N] [--adapter raw\|composio\|copilot]` | Graph-aware planner: Louvain partition + co-change + PageRank anchors → `.roam-fleet.json` for Composio/Copilot CLI/raw. |
-| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 24-recipe registry with phase, review-lens, gate, and follow-up metadata — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling to cover the most common workflows. |
+| `roam ask <query> [--list] [--explain] [--recipe NAME]` | One-phrase intent classifier over a 25-recipe registry with phase, review-lens, gate, and follow-up metadata — composes preflight/retrieve/critique/fleet/understand/diagnose/trace/trends/hotspots/debt/taint/dead/coupling/stale-refs to cover the most common workflows. |
 | `roam workflow [RECIPE] [--list] [--query TEXT]` | Inspect a recipe DAG, review lenses, gates, rendered command arguments, and follow-up commands without running the workflow. |
 | `roam taint [--rules-dir PATH] [--rule NAME] [--rules-pack PACK] [--ci]` | Graph-reach taint analysis with OpenVEX-correct VEX justifications. YAML rule packs (10 starter packs: sqli, xss, ssrf, path-traversal, command-injection, deserialization, open-redirect, urllib, socketio, fileupload). |
 | `roam cga emit [--include-taint] [--sign --key]` | Code Graph Attestation — in-toto v1 statement with `roam-code.dev/CodeGraph/v1` predicate, Merkle root + edge bundle digest. `--include-taint` embeds OpenVEX-shaped reachability claims from `roam taint`. `--sign` signs with cosign (graceful skip if absent); `roam cga verify` round-trips both predicate digest and cosign signature. |
@@ -602,6 +603,7 @@ The sentinel pair `<!-- roam:minimap -->` / `<!-- /roam:minimap -->` is replaced
 | `roam bus-factor [--brain-methods]` | Knowledge loss risk per module |
 | `roam doc-staleness` | Detect stale docstrings |
 | `roam docs-coverage` | Public-symbol doc coverage + stale docs + PageRank-ranked missing-doc hotlist |
+| `roam stale-refs [--gate]` | Find dangling file references — markdown links, HTML href/src, backtick paths whose target is missing |
 | `roam suggest-refactoring [--limit N] [--min-score N]` | Proactive refactoring recommendations ranked by complexity, coupling, churn, smells, coverage gaps, and debt |
 | `roam plan-refactor <symbol> [--operation auto\|extract\|move]` | Ordered refactor plan with blast radius, test gaps, layer risk, and simulation-based strategy preview |
 | `roam test-scaffold <name\|file> [--write] [--framework F]` | Generate test file/function/import skeletons from symbol data (pytest, jest, Go, JUnit, RSpec) |
@@ -926,7 +928,7 @@ pip install "roam-code[mcp]"
 roam mcp
 ```
 
-136 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
+137 tools, 10 resources, and 5 prompts are available in the full preset. Most tools are read-only index queries; side-effect tools are explicitly annotated.
 
 **MCP v2 highlights (v11):**
 - In-process MCP execution (no subprocess shell-out per call)
@@ -957,7 +959,7 @@ ROAM_MCP_LITE=0 roam mcp
 Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`, `roam_complete`, `roam_complexity_report`, `roam_context`, `roam_dead_code`, `roam_deps`, `roam_diagnose`, `roam_diagnose_issue`, `roam_diff`, `roam_expand_toolset`, `roam_explore`, `roam_file_info`, `roam_health`, `roam_impact`, `roam_pr_risk`, `roam_preflight`, `roam_prepare_change`, `roam_review_change`, `roam_search_symbol`, `roam_syntax_check`, `roam_trace`, `roam_understand`, `roam_uses`.
 
 <details>
-<summary><strong>MCP tool list (all 136)</strong></summary>
+<summary><strong>MCP tool list (all 137)</strong></summary>
 
 *New in v12.26: `roam_pr_analyze`, `roam_pr_comment_render`, `roam_metrics_push`, `roam_audit_trail_verify`, `roam_audit_trail_export`, `roam_audit_trail_conformance_check`, `roam_rules_validate`, `roam_dogfood` — Roam Review + Cloud engines + governance audit-trail toolkit + production-grade rules linting + one-shot v2 stack runner.*
 
@@ -1050,6 +1052,7 @@ Core preset tools: `roam_affected_tests`, `roam_batch_get`, `roam_batch_search`,
 | `roam_weather` | Code hotspots: churn x complexity ranking |
 | `roam_debt` | Hotspot-weighted technical debt prioritization with optional ROI estimate |
 | `roam_docs_coverage` | Doc coverage and stale-doc drift with PageRank-ranked missing docs |
+| `roam_stale_refs` | Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing |
 | `roam_suggest_refactoring` | Rank proactive refactoring candidates using complexity, coupling, churn, smells, and coverage gaps |
 | `roam_plan_refactor` | Build an ordered refactor plan for one symbol with risk/test/simulation context |
 | `roam_n1` | Detect N+1 I/O patterns in ORM code |
@@ -1665,8 +1668,8 @@ roam-code/
 ├── action.yml                         # Reusable GitHub Action
 ├── src/roam/
 │   ├── __init__.py                    # Version (from pyproject.toml)
-│   ├── cli.py                         # Click CLI (194 canonical + 7 aliases)
-│   ├── mcp_server.py                  # MCP server (136 tools, 10 resources, 5 prompts)
+│   ├── cli.py                         # Click CLI (196 canonical + 7 aliases)
+│   ├── mcp_server.py                  # MCP server (137 tools, 10 resources, 5 prompts)
 │   ├── db/
 │   │   ├── connection.py              # SQLite (WAL, pragmas, batched IN)
 │   │   ├── schema.py                  # Tables, indexes, migrations
@@ -1760,7 +1763,7 @@ Optional: Local semantic ONNX stack (`numpy`, `onnxruntime`, `tokenizers`) via `
 ### Shipped
 
 - [x] MCP v2 agent surface: in-process execution, compound operations, presets, schemas, annotations, and compatibility profiles.
-- [x] Full command and MCP inventory parity in docs: 197 canonical CLI commands and 136 MCP tools.
+- [x] Full command and MCP inventory parity in docs: 196 canonical CLI commands and 137 MCP tools.
 - [x] CI hardening: composite action, changed-only mode, trend-aware gates, sticky PR updater, and SARIF guardrails.
 - [x] Performance foundation: FTS5/BM25 search, O(changed) incremental indexing, DB/index optimizations.
 - [x] Agent governance suite: `vibe-check`, `ai-readiness`, `verify`, `ai-ratio`, `duplicates`, advanced `algo` scoring/SARIF.

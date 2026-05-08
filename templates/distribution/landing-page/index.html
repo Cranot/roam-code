@@ -64,7 +64,7 @@
     "author": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "publisher": {"@type": "Organization", "name": "Cranot", "url": "https://github.com/Cranot"},
     "sameAs": ["https://github.com/Cranot/roam-code", "https://pypi.org/project/roam-code/"],
-    "featureList": "202 CLI commands; 136 MCP tools; 28 languages; clones-not-edited detector; blast-radius analysis; in-toto v1 attestations; SARIF 2.1.0 export; structural-review records for SOC 2 / ISO 42001 / internal AI-governance evidence"
+    "featureList": "204 CLI commands; 137 MCP tools; 28 languages; clones-not-edited detector; blast-radius analysis; in-toto v1 attestations; SARIF 2.1.0 export; structural-review records for SOC 2 / ISO 42001 / internal AI-governance evidence"
   }
   </script>
 
@@ -133,8 +133,8 @@
         Asks the same questions a senior engineer would, before you merge.
       </p>
       <div class="numbers-grid">
-        <div class="num-cell"><strong>202</strong><span>CLI commands</span></div>
-        <div class="num-cell"><strong>136</strong><span>tools your AI agent can call</span></div>
+        <div class="num-cell"><strong>203</strong><span>CLI commands</span></div>
+        <div class="num-cell"><strong>137</strong><span>tools your AI agent can call</span></div>
         <div class="num-cell"><strong>28</strong><span>languages</span></div>
         <div class="num-cell"><strong>459</strong><span>GitHub stars</span></div>
         <div class="num-cell"><strong>7,731</strong><span>PyPI installs / month</span></div>
@@ -168,7 +168,7 @@
       <p class="lede">
         Roam is a Model Context Protocol server. Your coding agent —
         Claude Code, Cursor, Codex, anything that speaks MCP —
-        can call Roam's 136 tools to understand your codebase before it edits it.
+        can call Roam's 137 tools to understand your codebase before it edits it.
       </p>
       <ol class="flow">
         <li>
@@ -381,7 +381,7 @@
             </tr>
             <tr>
               <th scope="row">Exposes the code graph to agents via MCP</th>
-              <td class="yes">Yes (136 tools)</td>
+              <td class="yes">Yes (137 tools)</td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Consumes MCP<sup>***</sup></td>
               <td class="ltd">Enterprise tier<sup>***</sup></td>
@@ -415,7 +415,7 @@
         </table>
       </div>
       <p class="compare-foot">
-        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (136 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
+        Reflects publicly available vendor information as of 2026-05-07; <sup>*</sup>self-host available on Enterprise tiers; <sup>**</sup>annual billing (monthly Qodo is $38/user); <sup>***</sup>Roam exposes the code graph as an MCP server (137 tools); CodeRabbit and Greptile consume MCP for tool/context integration; Qodo lists Enterprise MCP tools; SonarQube shipped a standalone MCP Server in October 2025 and an embedded version in SonarQube Cloud in March 2026.
         Roam runs <em>alongside</em> a semantic reviewer (CodeRabbit, Greptile, Qodo) — different layer, different bugs.
         See something wrong? <a href="mailto:hello@roam-code.com?subject=Comparison%20correction">hello@roam-code.com</a>.
       </p>
@@ -442,7 +442,7 @@
         </div>
         <div class="num-cell">
           <strong>+ Cursor / Claude Code / Copilot</strong>
-          <span>They write code. Roam exposes the code graph as an MCP server (136 tools) so the agent can ask <code>roam preflight &lt;name&gt;</code> before editing.</span>
+          <span>They write code. Roam exposes the code graph as an MCP server (137 tools) so the agent can ask <code>roam preflight &lt;name&gt;</code> before editing.</span>
         </div>
         <div class="num-cell">
           <strong>+ GitHub / GitLab CI</strong>
@@ -809,13 +809,24 @@
        ────────────────────────────────────────────────────────── -->
   <section class="audit-upsell" id="audit">
     <div class="audit-upsell-inner">
-      <h2>Want help getting started?</h2>
+      <h2>PR Replay — see what Roam would have flagged on your last quarter</h2>
       <p>
-        <strong>PR Replay</strong> runs Roam against the last 30-90 days of your
-        merged PRs and ships a written report — what today's detector set would
-        have caught pre-merge, AI-likelihood patterns, and structural risks
-        worth wiring into CI. A pre-purchase signal: would you have shipped
-        the same incidents knowing what Roam would have flagged? Email
+        Roam runs against your merged PRs and ships a written structural-review
+        report — what today's detector set would have caught pre-merge,
+        AI-shaped patterns, and the gates worth wiring into CI. A pre-purchase
+        signal: would you have shipped the same incidents knowing what Roam
+        would have flagged?
+      </p>
+      <p style="margin-top: 16px;">
+        <strong>Run the free sample yourself</strong> (no email required):
+      </p>
+      <p class="install-cmd" style="margin-top: 8px;">
+        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
+      </p>
+      <p style="margin-top: 16px;">
+        Or upgrade to a paid report: <strong>Team</strong> ($2,500, 30 PRs +
+        30-min walk-through) or <strong>Deep</strong> ($6,000, 90 PRs +
+        90-min walk-through with a written remediation plan). Email
         <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20enquiry">hello@roam-code.com</a>.
       </p>
     </div>

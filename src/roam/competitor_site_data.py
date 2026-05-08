@@ -1361,8 +1361,8 @@ MAP_METADATA: dict[str, dict[str, object]] = {
         "relationship": "self",
         "peer": True,
         "graph": "PageRank + Tarjan + Louvain + layers",
-        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 136 MCP tools, 190 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.40). Phase 0 monetization commands: permit / postmortem / article-12-check.",
-        "version_evaluated": "12.47",
+        "note": "Graph algorithms (PageRank, SCC, Louvain, Fiedler) on tree-sitter ASTs fused with git history in SQLite. 137 MCP tools, 203 CLI commands. 19 Python idiom detectors (v12.7+). 54 algo detectors (12.40). Phase 0 monetization commands: permit / postmortem / article-12-check.",
+        "version_evaluated": "12.48",
         "repo_url": "https://github.com/Cranot/roam-code",
     },
     "CKB/CodeMCP": {

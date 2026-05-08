@@ -5732,6 +5732,114 @@ def roam_docs_coverage(limit: int = 20, days: int = 90, threshold: int = 0, root
 
 
 @_tool(
+    name="roam_stale_refs",
+    description="Find dangling file references — markdown links / HTML href-src / backtick paths whose target is missing. v12.48 adds anchor validation, confidence-tagged hints, --diff branch filter, --fix preview/apply, and --sort-by ranking.",
+)
+def roam_stale_refs(
+    limit: int = 20,
+    rename_hint: bool = True,
+    kind: str = "",
+    ignore: str = "",
+    ignore_target: str = "",
+    check_absolute_routes: bool = False,
+    no_anchors: bool = False,
+    diff: str = "",
+    sort_by: str = "priority",
+    fix: str = "",
+    by_file: bool = False,
+    root: str = ".",
+) -> dict:
+    """Detect references to files that no longer exist.
+
+    WHEN TO USE: docs hygiene, post-refactor / post-rename cleanup, CI gate
+    against broken doc links. Pure filesystem scan — no index required.
+    Catches what symbol-graph commands miss: prose mentions of paths,
+    markdown links, HTML href/src, backtick file references. Also
+    validates ``#anchor`` fragments — refs to headers that no longer
+    exist in target files surface as ``kind=anchor`` findings.
+
+    Parameters
+    ----------
+    limit:
+        Maximum number of missing targets returned (default 20).
+    rename_hint:
+        If True, surface a confidence-tagged rename hint per target.
+        Hints carry ``{target, confidence, reason, source}`` —
+        confidence is HIGH (deterministic git-history rename or unique
+        basename match in shared subtree), MEDIUM (single match
+        elsewhere), or LOW (multiple candidates, similarity-ranked).
+    kind:
+        Comma-separated filter restricting reference kinds. Choices:
+        ``md_inline``, ``md_reference``, ``html_attr``, ``backtick``,
+        ``anchor``. Empty (default) means all kinds.
+    ignore:
+        Comma-separated globs of source files to skip (e.g.
+        ``CHANGELOG.md,docs/legacy/*.md``). Suppresses historical
+        documents that intentionally mention deleted files.
+    ignore_target:
+        Comma-separated globs of missing-target paths to suppress
+        (e.g. ``AGENTS.md,docs/old/*``).
+    check_absolute_routes:
+        If True, also check absolute-path URLs without file extensions
+        (``href="/setup"``). Off by default — those are usually
+        static-site router paths, not file references.
+    no_anchors:
+        If True, skip markdown anchor validation entirely. By default,
+        ``[deploy](docs/cd.md#cloudflare)`` is flagged when the file
+        exists but ``#cloudflare`` doesn't.
+    diff:
+        Branch-diff filter. Only report findings new in the current
+        branch since merge-base with this ref (sourced from changed
+        files OR targeting deleted files). Pass ``"auto"`` to let roam
+        pick the base (origin/main → main → master → HEAD~1), or any
+        valid git ref / SHA. Empty (default) disables the filter.
+        Makes ``roam_stale_refs`` practical as a per-PR check.
+    sort_by:
+        ``priority`` (default — importance × recency × ref count),
+        ``ref-count`` (most-referenced first), or ``alpha`` (target
+        path alphabetical).
+    fix:
+        ``preview`` to print a unified diff of HIGH-confidence
+        rewrites; ``apply`` to write them to disk. Empty (default)
+        disables. Only edits lines with a single unambiguous stale ref.
+    by_file:
+        If True, group findings by source file instead of by missing
+        target — useful when fixing one document at a time.
+    root:
+        Working directory (project root).
+
+    Returns: targets list with per-target source locations, confidence-
+    tagged rename hints, and a verdict / counts summary including
+    ``scan_seconds`` and (when --diff is active) ``diff_base``.
+    """
+    args = ["stale-refs", "--limit", str(limit), "--sort-by", sort_by]
+    if not rename_hint:
+        args.append("--no-rename-hint")
+    if kind:
+        for k in (k.strip() for k in kind.split(",") if k.strip()):
+            args.extend(["--kind", k])
+    if ignore:
+        for pat in (p.strip() for p in ignore.split(",") if p.strip()):
+            args.extend(["--ignore", pat])
+    if ignore_target:
+        for pat in (p.strip() for p in ignore_target.split(",") if p.strip()):
+            args.extend(["--ignore-target", pat])
+    if check_absolute_routes:
+        args.append("--check-absolute-routes")
+    if no_anchors:
+        args.append("--no-anchors")
+    if diff:
+        # ``"auto"`` is our convention for "use the bare ``--diff`` flag";
+        # any other value is passed through as the base ref / SHA.
+        args.extend(["--diff", "" if diff == "auto" else diff])
+    if fix:
+        args.extend(["--fix", fix])
+    if by_file:
+        args.append("--by-file")
+    return _run_roam(args, root)
+
+
+@_tool(
     name="roam_suggest_refactoring",
     description="Rank proactive refactoring candidates using complexity/coupling/churn/smells.",
 )

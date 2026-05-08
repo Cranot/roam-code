@@ -4,8 +4,8 @@
 
 roam-code (`pip install roam-code`) is a local code-graph engine: it indexes
 symbols, call graphs, dependencies, architectural layers, and git history into
-a SQLite database in your repo's `.roam/` directory. The CLI exposes 202
-commands and 136 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
+a SQLite database in your repo's `.roam/` directory. The CLI exposes 203
+commands and 137 MCP tools that AI agents (Claude Code, Cursor, Codex, etc.)
 can call to answer questions like "what else does this PR break", "what tests
 exercise this function", "is this a clone of another implementation".
 

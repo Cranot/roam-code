@@ -14,7 +14,7 @@ import click
 
 # Lazy-loading command group: imports command modules only when invoked.
 # This avoids importing networkx (~500ms) on every CLI call.
-# Total: 158 invokable command names (155 canonical commands + 3 alias names).
+# Total: 204 invokable command names (197 canonical commands + 7 alias names).
 # If this changes, update README.md, CLAUDE.md, llms-install.md, and docs copy.
 # deprecated commands map to their replacement.  When a user
 # invokes a deprecated name, we still resolve it (no breaking change)
@@ -75,6 +75,7 @@ _COMMANDS = {
     "breaking": ("roam.commands.cmd_breaking", "breaking"),
     "safe-zones": ("roam.commands.cmd_safe_zones", "safe_zones"),
     "doc-staleness": ("roam.commands.cmd_doc_staleness", "doc_staleness"),
+    "stale-refs": ("roam.commands.cmd_stale_refs", "stale_refs"),
     "docs-coverage": ("roam.commands.cmd_docs_coverage", "docs_coverage"),
     "suggest-refactoring": ("roam.commands.cmd_suggest_refactoring", "suggest_refactoring"),
     "plan-refactor": ("roam.commands.cmd_plan_refactor", "plan_refactor"),
@@ -85,6 +86,7 @@ _COMMANDS = {
     "preflight": ("roam.commands.cmd_preflight", "preflight"),
     "permit": ("roam.commands.cmd_permit", "permit_cmd"),
     "postmortem": ("roam.commands.cmd_postmortem", "postmortem_cmd"),
+    "pr-replay": ("roam.commands.cmd_pr_replay", "pr_replay_cmd"),
     "article-12-check": ("roam.commands.cmd_article_12_check", "article_12_check_cmd"),
     "capabilities": ("roam.commands.cmd_capabilities", "capabilities_cmd"),
     "skill-generate": ("roam.commands.cmd_skill_generate", "skill_generate_cmd"),
@@ -282,6 +284,7 @@ _CATEGORIES = {
         "preflight",
         "permit",
         "postmortem",
+        "pr-replay",
         "guard",
         "agent-plan",
         "agent-context",
@@ -437,6 +440,7 @@ _CATEGORIES = {
         "fn-coupling",
         "doc-staleness",
         "docs-coverage",
+        "stale-refs",
         "suggest-refactoring",
         "plan-refactor",
         "conventions",
@@ -936,7 +940,7 @@ def _run_help_all(ctx: click.Context, param: click.Parameter, value: bool) -> No
     "--sarif",
     "sarif_mode",
     is_flag=True,
-    help="Output in SARIF 2.1.0 format (for dead, health, complexity, rules, secrets, algo)",
+    help="Output in SARIF 2.1.0 format (for dead, health, complexity, rules, secrets, algo, stale-refs)",
 )
 @click.option("--budget", type=int, default=0, help="Max output tokens (0=unlimited)")
 @click.option(
