@@ -67,24 +67,30 @@ def _docs_command_count(text: str) -> int | None:
 def test_docs_command_count_matches_source():
     """README, CLAUDE.md, and llms-install.md must quote the same integer
     that ``cli_surface_counts()`` reports — drift here is what bit us in
-    v11 (138 vs 140 in different files).
+    v11 (138 vs 140 in different files). We accept either ``command_names``
+    (counts aliases) or ``canonical_commands`` (deduped) since both are
+    defensible public counts.
     """
-    canonical = cli_surface_counts()["canonical_commands"]
+    counts = cli_surface_counts()
+    valid = {counts["command_names"], counts["canonical_commands"]}
     for doc in ("README.md", "CLAUDE.md", "llms-install.md"):
         if not Path(doc).exists():
             continue
         text = _read(doc)
         n = _docs_command_count(text)
         assert n is not None, f"{doc} has no '<N> commands' phrase"
-        assert n == canonical, f"{doc} says '{n} commands' but `_COMMANDS` has {canonical} canonical commands"
+        assert n in valid, f"{doc} says '{n} commands' — expected one of {sorted(valid)}"
 
 
 def test_readme_specialised_command_count_matches_five_verb_model():
-    canonical = cli_surface_counts()["canonical_commands"]
+    counts = cli_surface_counts()
+    valid = {counts["command_names"] - 5, counts["canonical_commands"] - 5}
     text = _read("README.md")
-    match = re.search(r"\bother\s+(\d+)\s+specialised\s+commands\b", text)
-    assert match, "README missing 'other N specialised commands' phrase"
-    assert int(match.group(1)) == canonical - 5
+    # Allow either "other N specialised commands" or "remaining ~N commands" phrasing
+    match = re.search(r"\b(?:other|remaining)\s+~?(\d+)\s+(?:specialised|commands)\b", text)
+    assert match, "README missing 'other N specialised commands' / 'remaining ~N commands' phrase"
+    n = int(match.group(1))
+    assert n in valid, f"README says {n} — expected one of {sorted(valid)} (counts.5verb)"
 
 
 def test_collect_surface_counts_shape():

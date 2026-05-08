@@ -2063,17 +2063,13 @@ def build_site_payload(tracker_path: Path | None = None) -> dict[str, object]:
         surface = collect_surface_counts()
         cli_counts = surface.get("cli", {})
         mcp_counts = surface.get("mcp", {})
-        canonical = int(cli_counts.get("canonical_commands", 0) or 0)
-        alias_count = int(cli_counts.get("alias_names", 0) or 0)
+        public = int(cli_counts.get("command_names", 0) or 0)
         mcp_tools = int(mcp_counts.get("registered_tools", 0) or 0)
         for entry in competitors:
             if entry.get("name") != "roam-code":
                 continue
             entry["mcp"] = str(mcp_tools)
-            if alias_count > 0:
-                entry["cli_commands"] = f"{canonical} canonical (+{alias_count} alias)"
-            else:
-                entry["cli_commands"] = str(canonical)
+            entry["cli_commands"] = f"{public} commands"
             break
     except Exception:
         # Do not fail payload generation if local surface-count parsing fails.

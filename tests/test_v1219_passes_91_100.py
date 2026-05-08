@@ -101,13 +101,12 @@ def test_pass94_adversarial_completes_without_n1():
 
 
 def test_pass95_command_reference_appendix_present():
-    """Auto-generated complete-reference appendix must exist."""
-    from pathlib import Path
+    """The legacy docs/site/command-reference.html now redirects to roam-code.com/docs/.
 
-    text = Path("docs/site/command-reference.html").read_text(encoding="utf-8")
-    assert "<!-- BEGIN auto-reference -->" in text
-    assert "<!-- END auto-reference -->" in text
-    assert 'id="complete-reference"' in text
+    Skipped because the auto-reference appendix lives in the live docs site
+    (separate Cloudflare Pages deploy), not in this repo any more.
+    """
+    pytest.skip("docs/site/command-reference.html is now a redirect to roam-code.com/docs/")
 
 
 def test_pass96_orphan_imports_lang_filter_runs():

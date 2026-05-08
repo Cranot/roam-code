@@ -41,10 +41,16 @@ def _truth_version() -> str:
 
 
 def _truth_cli_command_count() -> int:
-    """Live canonical-command count from ``cli._COMMANDS``."""
+    """Live public-command count from ``cli._COMMANDS`` (counts aliases).
+
+    Uses ``command_names`` (not ``canonical_commands``) because that's what
+    a user sees when running ``roam --help`` and what the README headline
+    advertises. Aliases like ``algo``/``math`` are real commands a user
+    can invoke.
+    """
     from roam.surface_counts import cli_surface_counts
 
-    return int(cli_surface_counts()["canonical_commands"])
+    return int(cli_surface_counts()["command_names"])
 
 
 def _truth_mcp_tool_count() -> int:
@@ -104,14 +110,14 @@ def _mcp_card_version() -> str | None:
 
 
 def _landscape_json_command_count() -> int | None:
-    """``docs/site/data/landscape.json`` self-row quotes the canonical
+    """``docs/site/data/landscape.json`` self-row quotes the public
     command count — historically the most likely surface to drift."""
     p = ROOT / "docs" / "site" / "data" / "landscape.json"
     if not p.exists():
         return None
     text = p.read_text(encoding="utf-8")
     # Look for the roam-code entry — characterised by the cli_commands key.
-    m = re.search(r'"cli_commands"\s*:\s*"(\d+)\s+canonical', text)
+    m = re.search(r'"cli_commands"\s*:\s*"(\d+)\s+(?:commands|canonical)', text)
     return int(m.group(1)) if m else None
 
 
