@@ -159,8 +159,20 @@ h1, h2, h3, h4 {
 
 code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
-a { color: var(--accent); text-decoration: none; }
-a:hover { text-decoration: underline; }
+a {
+  color: var(--accent);
+  text-decoration: none;
+  /* Animated underline: thicker on hover, smooth ramp instead of an
+     instant CSS-default snap. text-decoration-thickness 0 -> 2px in
+     0.15s reads as a hover affirmation, not a layout shift. */
+  text-decoration-thickness: 1px;
+  text-underline-offset: 0.18em;
+  transition: text-decoration-thickness 0.15s ease, color 0.15s ease;
+}
+a:hover {
+  text-decoration: underline;
+  text-decoration-thickness: 2px;
+}
 
 /* Single source of truth for focus-visible outlines. Any focusable element
    gets the same accent ring at the same offset; element-specific overrides
@@ -563,7 +575,7 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   font-size: 16px;
   color: var(--muted);
   max-width: 720px;
-  margin: 0 auto 28px;
+  margin: 0 auto var(--s-6);
 }
 .demo-block .lede code {
   background: var(--bg-alt);
@@ -589,9 +601,9 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
      freely on touch. */
   -webkit-overflow-scrolling: touch;
 }
-.terminal .t-prompt { color: #888; }
+.terminal .t-prompt { color: #6a6a6a; user-select: none; }
 .terminal .t-cmd { color: #fff; font-weight: 500; }
-.terminal .t-line { color: #e8e8e8; }
+.terminal .t-line { color: #d6d6d6; }
 .terminal .t-em { color: #79c0ff; }
 .demo-foot {
   font-size: 13px;
@@ -804,12 +816,12 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 0 var(--container-x);
   text-align: center;
 }
-.compare h2 { font-size: var(--t-section-h); margin: 0 0 12px; }
+.compare h2 { font-size: var(--t-section-h); margin: 0 0 var(--s-3); }
 .compare .lede {
   font-size: 16px;
   color: var(--muted);
   max-width: 720px;
-  margin: 0 auto 32px;
+  margin: 0 auto var(--s-6);
 }
 .compare-table-wrap {
   overflow-x: auto;
@@ -1181,6 +1193,10 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
   padding: 4px 12px;
   border-radius: 999px;
   white-space: nowrap;
+  /* Lift the badge over its card with a soft shadow that matches the
+     card's hover-lift shadow so they read as the same elevation. */
+  box-shadow: 0 2px 8px rgba(0, 73, 183, 0.25);
+  letter-spacing: 0.2px;
 }
 
 .persona-band {
@@ -1587,7 +1603,10 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .faq summary::after {
   content: "▾";
   float: right;
-  transition: transform 0.2s ease;
+  /* Slow the chevron rotation slightly + add a tiny spring via cubic-bezier
+     so the open/close feels purposeful rather than mechanical. */
+  transition: transform 0.25s cubic-bezier(0.2, 0, 0.2, 1.4);
+  display: inline-block;
 }
 .faq details[open] summary::after { transform: rotate(180deg); }
 .faq details p {

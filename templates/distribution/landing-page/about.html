@@ -12,9 +12,9 @@
   <link rel="apple-touch-icon" href="/favicon.svg">
   <link rel="manifest" href="/manifest.webmanifest">
   <link rel="preload" href="/fonts/space-grotesk-variable.woff2" as="font" type="font/woff2" crossorigin>
-  <link rel="dns-prefetch" href="//github.com">
-  <link rel="dns-prefetch" href="//pypi.org">
-  <link rel="dns-prefetch" href="//roam-code.com/docs">
+  <link rel="preconnect" href="//github.com" crossorigin>
+  <link rel="preconnect" href="//pypi.org" crossorigin>
+  <link rel="preload" href="./landing.css" as="style">
   <link rel="stylesheet" href="./landing.css">
   <meta name="robots" content="index,follow">
   <meta property="og:title" content="About — Roam">
@@ -139,9 +139,8 @@
       <p>
         See the <a href="/changelog">changelog</a> for what's shipped.
         Near-term: GitHub App MVP for Roam Review, Cloud dashboard
-        scaffold, expanded language support (Dart for Flutter,
-        cross-language bridges for GraphQL). Each ships when it ships.
-        We don't pre-announce roadmap items because plans are guesses
+        scaffold, more cross-language bridges. Each ships when it ships;
+        we don't pre-announce roadmap items because plans are guesses
         until they're code.
       </p>
 
