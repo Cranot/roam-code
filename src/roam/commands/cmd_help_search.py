@@ -1,6 +1,6 @@
 """``roam help-search <query>`` — fuzzy match across every command's help.
 
-replaces having to grep ``--help-all`` output of 158 commands.
+replaces having to grep ``--help-all`` output of 200+ commands.
 The default ranking weights name matches above docstring matches so
 ``roam help-search docs`` surfaces ``docs-coverage`` first, then
 commands that mention "documentation" in their docstring.

@@ -322,16 +322,71 @@ class SymbolGraphHintProvider:
 # ---------------------------------------------------------------------------
 
 
+# Module-level plug-in registry. Extra providers can be appended via
+# ``register_hint_provider`` (in-process) or by setting
+# ``ROAM_STALE_REFS_PROVIDERS`` to a comma-separated list of
+# ``module:Class`` import specs. Custom providers run AFTER the
+# built-ins so they never override deterministic git-history /
+# symbol-graph evidence — they're meant for domain-specific fallbacks
+# (e.g. a Sphinx-config-aware provider, a vendor-docs lookup, etc.).
+_EXTRA_PROVIDERS: list["HintProvider"] = []
+
+
+def register_hint_provider(provider: "HintProvider") -> None:
+    """Register an additional hint provider.
+
+    Idempotent — calling twice with the same instance is a no-op.
+    Plug-in providers run AFTER the built-ins; they cannot override a
+    HIGH-confidence built-in hint.
+    """
+    if provider not in _EXTRA_PROVIDERS:
+        _EXTRA_PROVIDERS.append(provider)
+
+
+def _load_env_providers() -> list["HintProvider"]:
+    """Load providers from ``ROAM_STALE_REFS_PROVIDERS`` env var.
+
+    Format: ``mypkg.providers:VendorDocsHintProvider,other:Foo``. Each
+    spec is resolved with ``importlib`` and instantiated with no
+    arguments. Failures are swallowed silently — a typo in the env
+    var should never crash the scan.
+    """
+    spec_list = os.environ.get("ROAM_STALE_REFS_PROVIDERS", "").strip()
+    if not spec_list:
+        return []
+    out: list["HintProvider"] = []
+    for spec in spec_list.split(","):
+        spec = spec.strip()
+        if not spec or ":" not in spec:
+            continue
+        mod_name, _, cls_name = spec.partition(":")
+        try:
+            import importlib
+
+            mod = importlib.import_module(mod_name)
+            cls = getattr(mod, cls_name, None)
+            if cls is None:
+                continue
+            out.append(cls())
+        except Exception:
+            continue
+    return out
+
+
 def default_providers() -> list[HintProvider]:
     """Priority order — git history first, then symbol graph, then basename.
 
     Reorder cautiously: providers can short-circuit on the first ``HIGH``
-    confidence hit, so ordering changes the output.
+    confidence hit, so ordering changes the output. Plug-in providers
+    appended via ``register_hint_provider`` or
+    ``ROAM_STALE_REFS_PROVIDERS`` env var run AFTER the built-ins.
     """
     return [
         GitHistoryHintProvider(),
         SymbolGraphHintProvider(),
         BasenameHintProvider(),
+        *_EXTRA_PROVIDERS,
+        *_load_env_providers(),
     ]
 
 

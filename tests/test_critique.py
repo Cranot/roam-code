@@ -652,7 +652,11 @@ class TestBenchHint:
         from roam.commands.cmd_critique import _bench_relevance_hint
         from roam.critique.checks import ChangedRegion
 
-        regions = [ChangedRegion(file_path="docs/site/index.html", hunks=((1, 1),), additions=1, deletions=0)]
+        regions = [
+            ChangedRegion(
+                file_path="templates/distribution/landing-page/index.html", hunks=((1, 1),), additions=1, deletions=0
+            )
+        ]
         assert _bench_relevance_hint(regions) == ""
 
     def test_overrides_take_precedence(self):

@@ -96,11 +96,43 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Internal-roadmap phrasing in shipped docs",
         re.compile(r"\bdeferred from MVP\b|\bdeferred to (phase|wave|sprint)\b", re.IGNORECASE),
     ),
+    # Sales / strategy positioning words that have meaning in our internal
+    # docs but make customer-facing comments read like a strategy memo.
+    # "buyer wedge" / "wedge identified by …" / "first dollar" /
+    # "closes Roam Review deals" — all collected from real leaks.
+    (
+        "Sales-positioning shorthand",
+        re.compile(
+            r"\bbuyer wedge\b|wedge identified by|"
+            r"\bfirst dollar\b|closes Roam Review deals|"
+            r"\bproduct agent\b",
+            re.IGNORECASE,
+        ),
+    ),
+    # Internal-pricing-doc cross-references in shipped files.
+    # ``Per pricing_v3 build priorities``, ``per pricing_v4 P2``, etc.
+    (
+        "Pricing-doc cross-reference",
+        re.compile(r"pricing_v\d+ build priorities|pricing_v\d+ P\d+", re.IGNORECASE),
+    ),
+    # Phasing of unrelated-to-this-file design work in module docstrings.
+    # ``Phase 1 of the daemon design``, ``Phase 2 of the agent rollout``.
+    # Sequencing belongs in commits / planning docs, not shipped code.
+    (
+        "Phase-of-design module docstring",
+        re.compile(r"Phase \d+ of (?:the )?[a-z][a-z\- ]+ (?:design|rollout|plan)", re.IGNORECASE),
+    ),
 ]
 
 
 # Files where these patterns are intentional product behaviour or test
 # fixtures FOR the patterns themselves — not real leaks.
+#
+# CHANGELOG.md is INTENTIONALLY NOT WHITELISTED: it is served publicly
+# at roam-code.com/changelog and via raw GitHub. A "we removed these
+# phrases" entry that names the phrases verbatim is itself the leak.
+# Cleanup acknowledgements should describe scrubs in neutral terms —
+# refer to "the pattern catalogue" rather than enumerating phrases.
 WHITELIST_FILES = {
     # This file itself owns the pattern catalogue.
     "tests/test_no_internal_language.py",
@@ -108,11 +140,6 @@ WHITELIST_FILES = {
     "src/roam/security/aibom_extension.py",
     "tests/test_ai_ratio.py",
     "tests/test_v12_2.py",
-    # CHANGELOG documents historical scrubs by name; the entries name what
-    # was removed, which is intentional (auditors can verify the cleanup
-    # actually happened). New leaks won't ride in via CHANGELOG because
-    # changelog entries describe past commits, not present state.
-    "CHANGELOG.md",
 }
 
 

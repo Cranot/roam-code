@@ -1642,6 +1642,16 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
      weight low — this is a "or" link, not a peer CTA. */
 }
 
+/* Pre-launch checkout note: the primary CTA is currently a mailto:
+   while Stripe Payment Links are being set up. This subordinate line
+   manages expectations without breaking the visual hierarchy. */
+.replay-checkout-note {
+  margin-top: var(--s-1);
+  font-size: var(--t-xs);
+  color: var(--ink-60);
+  text-align: center;
+}
+
 /* ─── Trust strip ─── */
 .trust-strip {
   padding: var(--section-y) 0;

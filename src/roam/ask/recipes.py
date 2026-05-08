@@ -679,6 +679,11 @@ RECIPES: list[Recipe] = [
         followups=(
             "roam stale-refs --gate (CI gate, exit 5 on findings)",
             "roam stale-refs --by-file (group by source doc)",
+            "roam stale-refs --watch (always-on terminal during refactor)",
+            "roam stale-refs --fix preview (auto-rewrite HIGH-confidence)",
+            "roam stale-refs --baseline-save b.json (freeze acknowledged debt)",
+            "roam stale-refs --check-external (validate http(s) URLs too)",
+            "roam lsp (squiggly underlines in your editor as you type)",
             "roam doc-staleness (stale docstring content)",
             "roam docs-coverage (missing public-symbol docs)",
         ),

@@ -32,6 +32,7 @@ Beyond plain dangling-path detection, this command layers on:
 from __future__ import annotations
 
 import fnmatch
+import json
 import os
 import re
 import subprocess
@@ -456,19 +457,102 @@ def _read_text_safe(path: Path, max_bytes: int = 1_000_000) -> str | None:
 # ---------------------------------------------------------------------------
 
 
+def basename_idx_paths(basename_idx: dict[str, list[str]]) -> list[str]:
+    """Flatten a basename → [paths] map back to a list of repo-relative paths.
+
+    Used by the ``--with-candidates`` JSON path to surface repo files for
+    the MCP-side LLM enricher to choose from.
+    """
+    out: list[str] = []
+    for paths in basename_idx.values():
+        out.extend(paths)
+    return out
+
+
+def _is_prose_path(rel_path: str) -> bool:
+    """Heuristic: is this path the kind of file users typically link to in docs?
+
+    Used to up-weight prose-shaped paths in the ``--with-candidates`` sample
+    so the LLM enricher has them in front of it.
+    """
+    ext = rel_path.rsplit(".", 1)[-1].lower() if "." in rel_path else ""
+    return ext in {"md", "markdown", "rst", "txt", "html", "htm"} or "/" not in rel_path
+
+
+def _glob_to_regex(pattern: str) -> re.Pattern[str]:
+    """Translate a glob with ``**`` recursion into a ``re.Pattern``.
+
+    fnmatch.fnmatchcase treats ``**`` as a single-segment wildcard,
+    surprising users typing ``docs/**/*.md`` who expect recursive
+    descent. We compile a small custom translator:
+
+    * ``**`` → matches any number of path segments (zero or more,
+      including no path component at all). ``docs/**/*.md`` matches
+      ``docs/foo.md`` AND ``docs/sub/foo.md`` AND ``docs/a/b/c.md``.
+    * ``*`` → matches any sequence of non-separator chars in one
+      segment.
+    * ``?`` → matches any single non-separator char.
+    * Other regex meta-chars are escaped.
+
+    We cache compiled patterns at the call site (LRU) for hot-path
+    perf; the translation itself is one-shot.
+    """
+    out: list[str] = []
+    i = 0
+    while i < len(pattern):
+        c = pattern[i]
+        if c == "*" and i + 1 < len(pattern) and pattern[i + 1] == "*":
+            # ``**`` consumes any remaining slashes optionally too — the
+            # idiomatic ``docs/**/*.md`` would otherwise need a literal
+            # ``docs/foo.md`` to match ``foo.md`` directly under docs.
+            # We absorb a trailing slash if present.
+            if i + 2 < len(pattern) and pattern[i + 2] == "/":
+                out.append(r"(?:.*/)?")
+                i += 3
+            else:
+                out.append(r".*")
+                i += 2
+        elif c == "*":
+            out.append(r"[^/]*")
+            i += 1
+        elif c == "?":
+            out.append(r"[^/]")
+            i += 1
+        else:
+            out.append(re.escape(c))
+            i += 1
+    return re.compile("^" + "".join(out) + "$")
+
+
 def _matches_any_glob(rel_path: str, patterns: tuple[str, ...]) -> bool:
     """Return True when *rel_path* matches any glob in *patterns*.
 
-    Patterns use :mod:`fnmatch` semantics (``*`` is single-segment) and are
-    matched against the full path; users typically pass ``CHANGELOG.md`` or
-    ``docs/legacy/*.md``. Both *rel_path* and the patterns are normalised
-    to forward slashes so Windows users can pass either ``docs/old/*`` or
-    ``docs\\old\\*`` interchangeably.
+    Two pattern flavours, picked per-pattern based on shape:
+
+    * **Patterns containing ``**``** use a segment-aware translator:
+      ``*`` matches one segment, ``**`` matches any depth.
+      ``docs/**/*.md`` correctly matches every ``.md`` under ``docs/``
+      at any depth.
+    * **Patterns without ``**``** use ``fnmatch.fnmatchcase`` for
+      backwards compatibility — substring-style ``*foo*`` patterns and
+      single-segment ``docs/old/*`` patterns behave the same way they
+      always have.
+
+    The split avoids breaking pre-existing patterns while unlocking
+    recursive-glob semantics for users who explicitly type ``**``.
     """
     if not patterns:
         return False
     norm = rel_path.replace("\\", "/")
-    return any(fnmatch.fnmatchcase(norm, p.replace("\\", "/")) for p in patterns)
+    for p in patterns:
+        normalised = p.replace("\\", "/")
+        if "**" in normalised:
+            if _glob_to_regex(normalised).match(norm):
+                return True
+        else:
+            if fnmatch.fnmatchcase(norm, normalised):
+                return True
+    return False
 
 
 def _scan_project(
@@ -479,10 +563,10 @@ def _scan_project(
     ignore_source: tuple[str, ...] = (),
     ignore_target: tuple[str, ...] = (),
     check_anchors: bool = True,
-) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]]]:
+) -> tuple[dict[str, list[dict]], int, int, dict[str, list[str]], AnchorCache]:
     """Walk the repo and collect every reference.
 
-    Returns ``(stale_by_target, files_scanned, refs_seen, basename_idx)``.
+    Returns ``(stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache)``.
 
     * ``stale_by_target`` maps the resolved missing target (relative path
       string) to a list of source records
@@ -493,6 +577,9 @@ def _scan_project(
       file still group cleanly.
     * ``basename_idx`` is the basename → [paths] map, reusable by the
       caller for rename hints without re-running discovery.
+    * ``anchor_cache`` is the :class:`AnchorCache` populated during the
+      scan; the caller reuses it for "did you mean" anchor hints
+      without re-parsing target files.
     """
     all_files = discover_files(project_root, include_excluded=include_excluded)
 
@@ -620,23 +707,106 @@ def _scan_project(
                 entry["anchor"] = fragment
             stale_by_target[rel_target].append(entry)
 
-    return stale_by_target, files_scanned, refs_seen, basename_idx
+    return stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache
+
+
+_ANCHOR_DID_YOU_MEAN_THRESHOLD = 0.6
+
+
+def _slug_tokens(slug: str) -> set[str]:
+    """Split a slug into its dash-separated tokens, dropping empties."""
+    return {tok for tok in slug.split("-") if tok}
+
+
+def _closest_anchor_hint(
+    missing_anchor: str,
+    candidate_anchors: set[str],
+    *,
+    threshold: float = _ANCHOR_DID_YOU_MEAN_THRESHOLD,
+) -> tuple[str, float] | None:
+    """Return ``(closest_slug, similarity)`` if any candidate clears the threshold.
+
+    Combines two signals and takes the max:
+
+    * **Character ratio** (:class:`difflib.SequenceMatcher`) — strong on
+      typo / dropped-hyphen / plural drift: ``mcp-server`` ↔
+      ``mcp-servers`` scores ~0.95.
+    * **Token Jaccard** (intersection/union over dash-separated tokens)
+      — strong on word-reorder drift: ``docker-setup`` ↔ ``setup-with-docker``
+      scores 2/3 ≈ 0.67 even though the character ratio is mediocre.
+
+    The max of the two is returned because the two signals catch
+    different drift patterns; we want either to fire.
+    """
+    import difflib
+
+    if not candidate_anchors:
+        return None
+    needle = missing_anchor.lower()
+    needle_tokens = _slug_tokens(needle)
+    best_slug: str | None = None
+    best_score = 0.0
+    for anchor in candidate_anchors:
+        char_ratio = difflib.SequenceMatcher(None, needle, anchor).ratio()
+        # Token Jaccard. Only meaningful when both slugs have tokens.
+        anchor_tokens = _slug_tokens(anchor)
+        token_score = 0.0
+        if needle_tokens and anchor_tokens:
+            inter = len(needle_tokens & anchor_tokens)
+            union = len(needle_tokens | anchor_tokens)
+            token_score = inter / union
+        score = max(char_ratio, token_score)
+        if score > best_score:
+            best_score = score
+            best_slug = anchor
+    if best_slug is None or best_score < threshold:
+        return None
+    return best_slug, best_score
 
 
 def _hint_for_target(
     rel_target: str,
     sources: list[dict],
     hint_ctx: HintContext,
+    *,
+    anchor_cache: AnchorCache | None = None,
 ) -> dict | None:
     """Return a rich hint dict for a missing target, or ``None``.
 
-    Anchor-only findings (target file exists, ``#fragment`` missing) get
-    no rename hint — there's nothing to rename to. Regular dangling-path
-    findings consult the provider chain (``git-history`` → ``symbol-graph``
-    → ``basename``) and return the best with confidence + reason.
+    Two flavours:
+
+    * **Path-finding hints** (regular dangling-path) consult the provider
+      chain (``git-history`` → ``symbol-graph`` → ``basename``) for a
+      rename target.
+    * **Anchor-finding hints** (target file exists, ``#fragment`` missing)
+      look up the closest existing anchor in the same file via
+      :func:`_closest_anchor_hint`. Confidence is HIGH when similarity
+      is ≥ 0.85, MEDIUM otherwise. The hint ``target`` is the suggested
+      ``file#anchor`` rewrite, so consumers can pattern-match the same
+      shape they'd see on a path-finding rename.
     """
     if sources and sources[0].get("kind") == "anchor":
-        return None
+        if anchor_cache is None:
+            return None
+        first_source = sources[0]
+        anchor_file = first_source.get("anchor_target_file") or rel_target.split("#", 1)[0]
+        missing_anchor = first_source.get("anchor", "")
+        if not missing_anchor:
+            return None
+        anchors = anchor_cache.anchors_for(anchor_file)
+        if not anchors:
+            return None
+        match = _closest_anchor_hint(missing_anchor, anchors)
+        if match is None:
+            return None
+        suggested_slug, score = match
+        confidence = "HIGH" if score >= 0.85 else "MEDIUM"
+        return {
+            "target": f"{anchor_file}#{suggested_slug}",
+            "confidence": confidence,
+            "reason": f"closest anchor in same file (similarity {score:.2f})",
+            "source": "anchor-similarity",
+        }
     # Strip a synthetic ``#anchor`` segment if it leaked in (defensive).
     bare_target = rel_target.split("#", 1)[0]
     h = best_hint(bare_target, hint_ctx)
@@ -893,31 +1063,89 @@ def _rank_targets_priority(
 def _build_fix_edits(
     targets: list[dict],
     project_root: Path,
+    *,
+    include_medium: bool = False,
 ) -> dict[str, list[dict]]:
-    """Group HIGH-confidence rename rewrites by source file.
+    """Group HIGH-confidence (and optionally MEDIUM) rewrites by source file.
 
-    The output structure is ``{source_file: [{line, raw, replacement, kind}]}``.
+    When *include_medium* is True (CLI: ``--fix-medium``), MEDIUM hints
+    flow through too. The user has explicitly opted into looser auto-fix.
+
+    Output structure: ``{source_file: [{line, raw, replacement, kind}]}``.
     Lines with multiple distinct stale refs (ambiguous edits) are
     skipped — better to leave them for human review than auto-rewrite
-    one and risk a wrong substitution. Anchor-only findings are also
-    skipped because there's no rename target to substitute.
+    one and risk a wrong substitution.
+
+    Two flavours of rewrite are produced:
+
+    * **Path findings** (``kind`` ∈ ``{md_inline, md_reference,
+      html_attr, backtick}``) substitute the path portion of the URL
+      and **preserve any ``#fragment``** that was in the raw URL — so
+      ``[x](old/foo.md#section)`` rewrites to
+      ``[x](docs/foo.md#section)``, not ``[x](docs/foo.md)`` (which
+      would silently drop the fragment).
+    * **Anchor findings** (``kind == "anchor"``) substitute only the
+      ``#fragment`` portion of the URL, preserving everything before
+      the ``#``. Works for both cross-file refs (``docs/x.md#wrong`` →
+      ``docs/x.md#correct``) and in-page refs (``#wrong`` →
+      ``#correct``). This means HIGH-confidence anchor-similarity
+      hints (e.g. ``#mcp-server`` → ``#mcp-servers``) ARE auto-fixable
+      via ``--fix apply``.
     """
     by_source: dict[str, list[dict]] = defaultdict(list)
+    accepted_confidence = {"HIGH"}
+    if include_medium:
+        accepted_confidence.add("MEDIUM")
     for item in targets:
         hint = item.get("hint") or {}
-        if hint.get("confidence") != "HIGH":
+        if hint.get("confidence") not in accepted_confidence:
             continue
         new_target = hint.get("target")
         if not new_target:
             continue
         for s in item["sources"]:
+            raw = s["raw"]
             if s.get("kind") == "anchor":
+                # Anchor-only fix: substitute the fragment portion only.
+                # The hint target is always ``file#anchor`` shape; we
+                # extract the new fragment and rewrite the raw URL by
+                # replacing ``#<old>`` with ``#<new>`` literally so any
+                # surrounding decoration (path prefix, query string)
+                # stays intact.
+                if "#" not in new_target:
+                    continue
+                old_anchor = s.get("anchor") or ""
+                new_anchor = new_target.split("#", 1)[1]
+                if not old_anchor or not new_anchor or old_anchor == new_anchor:
+                    continue
+                old_marker = f"#{old_anchor}"
+                if old_marker not in raw:
+                    # Encoding mismatch (e.g. raw is ``#caf%C3%A9`` but
+                    # the resolved anchor is decoded ``#café``). Skip
+                    # rather than risk a wrong substitution.
+                    continue
+                replacement = raw.replace(old_marker, f"#{new_anchor}", 1)
+                by_source[s["file"]].append(
+                    {
+                        "line": s["line"],
+                        "raw": raw,
+                        "replacement": replacement,
+                        "kind": s["kind"],
+                    }
+                )
                 continue
+            # Path-finding fix: substitute the new path. Preserve any
+            # fragment that was in the raw URL — dropping it would
+            # silently break in-target navigation.
+            replacement = new_target
+            if "#" in raw and "#" not in replacement:
+                fragment = raw.split("#", 1)[1]
+                replacement = f"{replacement}#{fragment}"
             by_source[s["file"]].append(
                 {
                     "line": s["line"],
-                    "raw": s["raw"],
-                    "replacement": new_target,
+                    "raw": raw,
+                    "replacement": replacement,
                     "kind": s["kind"],
                 }
             )
@@ -936,25 +1164,46 @@ def _build_fix_edits(
 def _apply_fix_to_text(content: str, edits: list[dict]) -> tuple[str, int]:
     """Apply edits to *content* and return ``(new_content, applied_count)``.
 
-    Substitution is per-line and replaces the first occurrence of the
-    raw URL on that line — markdown link syntax wraps the URL in
-    parens/brackets, so a substring replace is safe in practice. We do
-    NOT touch the link-text portion ``[text]`` — only the URL.
+    Substitution model:
+
+    * Edits are deduplicated per line by ``(raw, replacement)`` so a line
+      that legitimately has the SAME stale URL twice is rewritten in a
+      single pass. Without dedup, an anchor rewrite where the new
+      fragment is a SUPERSET of the old (``#mcp-server`` → ``#mcp-servers``)
+      would compound — the second pass would re-match the old fragment
+      inside the just-substituted ``#mcp-servers`` and turn it into
+      ``#mcp-serverss``.
+    * For each unique ``(raw, replacement)`` we use ``str.replace`` with
+      no count limit so all occurrences of the raw URL on that line are
+      rewritten atomically.
+    * The reported ``applied`` count still reflects the per-finding
+      total so callers' "N edits applied" stays meaningful.
+    * Edits with identical ``raw == replacement`` are skipped — they're
+      a no-op that would otherwise inflate the applied count.
+
+    We do NOT touch the link-text portion ``[text]`` — only the URL.
     """
     if not edits:
         return content, 0
-    by_line: dict[int, list[dict]] = defaultdict(list)
+    # ``by_line[lineno][(raw, replacement)] = total_findings_collapsed``
+    by_line: dict[int, dict[tuple[str, str], int]] = defaultdict(dict)
     for e in edits:
-        by_line[e["line"]].append(e)
+        if e["raw"] == e["replacement"]:
+            continue
+        key = (e["raw"], e["replacement"])
+        by_line[e["line"]][key] = by_line[e["line"]].get(key, 0) + 1
     new_lines = []
     applied = 0
     for idx, line in enumerate(content.splitlines(keepends=True), start=1):
         if idx in by_line:
             mutated = line
-            for e in by_line[idx]:
-                if e["raw"] in mutated:
-                    mutated = mutated.replace(e["raw"], e["replacement"], 1)
-                    applied += 1
+            # Apply longer raws first to avoid wrecking longer URLs that
+            # contain a shorter raw as a substring (e.g. a hypothetical
+            # raw1 = ``foo`` vs raw2 = ``foobar`` on the same line).
+            for (raw, replacement), count in sorted(by_line[idx].items(), key=lambda kv: -len(kv[0][0])):
+                if raw in mutated:
+                    mutated = mutated.replace(raw, replacement)
+                    applied += count
             new_lines.append(mutated)
         else:
             new_lines.append(line)
@@ -1030,32 +1279,1080 @@ def _atomic_write_text(target: Path, content: str) -> bool:
 def _apply_fixes_in_place(
     project_root: Path,
     edits_by_source: dict[str, list[dict]],
-) -> tuple[int, int]:
+) -> tuple[int, int, list[str]]:
     """Rewrite each source file with its edits, atomically.
 
-    Returns ``(files_written, edits_applied)``. Files where the edit
-    would be a no-op (raw URL no longer appears verbatim) are skipped
-    silently — that's fine; the next scan will pick them up if still
-    relevant. Writes use the tempfile-then-``os.replace`` pattern so an
+    Returns ``(files_written, edits_applied, locked_files)``:
+
+    * ``files_written`` / ``edits_applied`` — successful counts.
+    * ``locked_files`` — paths that we couldn't read OR atomically
+      replace because another process held them (Windows
+      DELETE_PENDING semantics show up here regularly). Surfacing
+      this list helps Windows users debug "why didn't my edits land?"
+      without having to grep stderr.
+
+    Writes use the tempfile-then-``os.replace`` pattern so an
     interrupted run cannot leave a half-written source file on disk.
     """
     files_written = 0
     edits_applied = 0
+    locked_files: list[str] = []
     for src, edits in edits_by_source.items():
         full = project_root / src
         try:
             with open(full, encoding="utf-8", errors="replace") as fh:
                 original = fh.read()
         except OSError:
+            locked_files.append(src)
             continue
         new_content, applied = _apply_fix_to_text(original, edits)
         if applied == 0 or new_content == original:
             continue
         if not _atomic_write_text(full, new_content):
+            locked_files.append(src)
             continue
         files_written += 1
         edits_applied += applied
-    return files_written, edits_applied
+    return files_written, edits_applied, locked_files
+
+
+# ---------------------------------------------------------------------------
+# External HTTP link checker
+# ---------------------------------------------------------------------------
+
+# Match http(s) URLs inside markdown link / HTML attribute / backtick text
+# without bringing in additional regex complexity to the scanner. We DO
+# tolerate leading ``<`` and trailing ``>`` (autolink form) because those
+# show up frequently in markdown without being a separate kind.
+_EXTERNAL_URL_RE = re.compile(
+    r"!?\[(?P<text>[^\]\n]*)\]\(<?(?P<url>https?://[^)\s>]+)>?\)"
+    r"|(?:href|src)=(?:\"(?P<v1>https?://[^\"]+)\"|'(?P<v2>https?://[^']+)')"
+    r"|<(?P<auto>https?://[^>\s]+)>"
+)
+
+
+def _extract_external_urls(content: str) -> list[tuple[int, str]]:
+    """Return ``[(lineno, url)]`` for every external URL on the file's lines.
+
+    Run only when ``--check-external`` is set. We dedupe per-line so a
+    single URL referenced multiple times on one line still costs one
+    HTTP request.
+    """
+    out: list[tuple[int, str]] = []
+    for lineno, line in enumerate(content.splitlines(), start=1):
+        seen_on_line: set[str] = set()
+        for m in _EXTERNAL_URL_RE.finditer(line):
+            url = m.group("url") or m.group("v1") or m.group("v2") or m.group("auto") or ""
+            if not url:
+                continue
+            url = url.rstrip(",.;:").strip()
+            if not url or url in seen_on_line:
+                continue
+            seen_on_line.add(url)
+            out.append((lineno, url))
+    return out
+
+
+def _check_one_external_url(
+    url: str,
+    *,
+    timeout: float,
+    auth_headers: tuple[tuple[str, str], ...] = (),
+    insecure: bool = False,
+) -> tuple[int | None, list[int]]:
+    """Probe *url* and return ``(final_status, redirect_chain)``.
+
+    * **HEAD-first, GET-fallback** — many CDNs reject HEAD with 403
+      while accepting GET. We always GET only when HEAD comes back
+      with a status that suggests the HEAD itself was the problem.
+    * **Custom auth headers** (``auth_headers`` tuple of ``(name, value)``
+      pairs) — supports private URLs like Confluence / Jira /
+      Cloudflare-Access-protected pages. Each header is sent verbatim.
+    * **Optional cert-validation skip** (``insecure=True``) — falls
+      back to a permissive ``ssl.SSLContext`` for self-signed
+      internal services. Default off.
+    * **Redirect chain capture** — a custom ``HTTPRedirectHandler`` records
+      every 30x along the way, returned in the second tuple slot. Lets
+      callers diagnose "200 via 3 redirects" patterns that hint at link
+      rot. The final status is the destination status (or the last
+      redirect status when the chain dead-ends).
+    """
+    import ssl
+    import urllib.error
+    import urllib.request
+
+    headers = {
+        "User-Agent": ("Mozilla/5.0 (compatible; roam-code-stale-refs/1.0; +https://roam-code.com/)"),
+        "Accept": "*/*",
+    }
+    for name, value in auth_headers:
+        headers[name] = value
+
+    chain: list[int] = []
+
+    class _ChainCapturingRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, hdrs, newurl):
+            chain.append(int(code))
+            return super().redirect_request(req, fp, code, msg, hdrs, newurl)
+
+    handlers = [_ChainCapturingRedirectHandler()]
+    if insecure:
+        ctx = ssl.create_default_context()
+        ctx.check_hostname = False
+        ctx.verify_mode = ssl.CERT_NONE
+        handlers.append(urllib.request.HTTPSHandler(context=ctx))
+    opener = urllib.request.build_opener(*handlers)
+
+    def _try(method: str) -> int | None:
+        req = urllib.request.Request(url, method=method, headers=headers)
+        try:
+            with opener.open(req, timeout=timeout) as resp:
+                return int(resp.status)
+        except urllib.error.HTTPError as exc:
+            return int(exc.code)
+        except (urllib.error.URLError, OSError, ValueError):
+            return None
+
+    code = _try("HEAD")
+    if code is None or code >= 400:
+        # Reset chain so we don't double-count redirects across HEAD + GET.
+        chain.clear()
+        code_get = _try("GET")
+        if code_get is not None:
+            return code_get, chain
+    return code, chain
+
+
+_PER_DOMAIN_CONCURRENCY = 2
+
+
+def _domain_of(url: str) -> str:
+    """Return the netloc (host[:port]) of *url*, lowercased; '' on parse failure.
+
+    Used to bucket the per-domain semaphore so repos with many links
+    to one origin don't fire all the workers at it simultaneously.
+    """
+    import urllib.parse
+
+    try:
+        return urllib.parse.urlparse(url).netloc.lower()
+    except Exception:
+        return ""
+
+
+def _check_external_urls_parallel(
+    urls_with_meta: list[tuple[str, str, int]],
+    *,
+    timeout: float,
+    concurrency: int,
+    auth_headers: tuple[tuple[str, str], ...] = (),
+    insecure: bool = False,
+) -> dict[str, tuple[int | None, list[int]]]:
+    """Concurrently HEAD/GET every distinct URL; return ``{url: status}``.
+
+    Two layers of throttle:
+
+    * **Global** ``concurrency`` cap (default 8, max 32) — total
+      simultaneous requests across all domains.
+    * **Per-domain** semaphore (:data:`_PER_DOMAIN_CONCURRENCY`,
+      default 2) — caps simultaneous requests against any one host so
+      doc-heavy repos with 100 links to a single origin don't trigger
+      anti-bot blocks or rate limits.
+
+    Per-URL dedup happens here so a URL referenced 50 times costs one
+    request, not 50.
+    """
+    import threading
+    from collections import defaultdict
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
+    distinct = sorted({u for u, _, _ in urls_with_meta})
+    if not distinct:
+        return {}
+    workers = max(1, min(32, concurrency))
+    domain_locks: dict[str, threading.Semaphore] = defaultdict(lambda: threading.Semaphore(_PER_DOMAIN_CONCURRENCY))
+
+    def _check_with_domain_lock(u: str) -> tuple[int | None, list[int]]:
+        sem = domain_locks[_domain_of(u)]
+        with sem:
+            return _check_one_external_url(u, timeout=timeout, auth_headers=auth_headers, insecure=insecure)
+
+    results: dict[str, tuple[int | None, list[int]]] = {}
+    with ThreadPoolExecutor(max_workers=workers) as pool:
+        future_to_url = {pool.submit(_check_with_domain_lock, u): u for u in distinct}
+        for fut in as_completed(future_to_url):
+            url = future_to_url[fut]
+            try:
+                results[url] = fut.result()
+            except Exception:
+                results[url] = (None, [])
+    return results
+
+
+def _is_external_finding(status: int | None) -> bool:
+    """Return True when a status code should surface as a stale-ref finding.
+
+    * ``None`` (timeout / DNS / connection error) → finding (link broken).
+    * 4xx / 5xx → finding (link unreachable in a documented way).
+    * 2xx / 3xx → live, no finding.
+    """
+    if status is None:
+        return True
+    return status >= 400
+
+
+_EXTERNAL_CACHE_FILENAME = "external-check-cache.json"
+
+
+def _load_external_cache(project_root: Path, ttl_seconds: float) -> dict[str, int]:
+    """Load the URL → status cache, expiring entries older than *ttl_seconds*.
+
+    Cache shape on disk::
+
+        {
+            "schema": "roam-stale-refs-external-cache-v1",
+            "checked_at": <unix epoch float>,
+            "results": {"https://...": <status_code_or_null>, ...}
+        }
+
+    Returns the live (non-expired) entries as a dict. On any read or
+    parse failure returns an empty dict — the caller falls back to
+    fresh probes.
+
+    The simple-but-correct shape: one timestamp shared across all
+    cache entries written in the same scan. When expired, the whole
+    file is treated as stale. Per-URL TTLs would over-engineer this.
+    """
+    if ttl_seconds <= 0:
+        return {}
+    path = project_root / ".roam" / _EXTERNAL_CACHE_FILENAME
+    if not path.exists():
+        return {}
+    try:
+        import json as _json
+
+        with open(path, encoding="utf-8") as fh:
+            payload = _json.load(fh)
+    except (OSError, ValueError):
+        return {}
+    if not isinstance(payload, dict):
+        return {}
+    checked_at = payload.get("checked_at", 0)
+    if not isinstance(checked_at, (int, float)):
+        return {}
+    if (time.time() - float(checked_at)) > ttl_seconds:
+        return {}
+    results = payload.get("results")
+    if not isinstance(results, dict):
+        return {}
+    out: dict[str, int] = {}
+    for url, status in results.items():
+        if not isinstance(url, str):
+            continue
+        if status is None:
+            # Cached "unreachable" entries persist too — refreshing
+            # too aggressively would obscure flaky-vs-broken signal.
+            out[url] = -1
+        elif isinstance(status, int):
+            out[url] = status
+    return out
+
+
+def _save_external_cache(project_root: Path, results: dict[str, int | None]) -> None:
+    """Persist the URL → status results to ``.roam/external-check-cache.json``.
+
+    Best-effort. Fails silently when ``.roam/`` doesn't exist or isn't
+    writable — the cache is an optimisation, not a correctness layer.
+    """
+    import json as _json
+
+    cache_dir = project_root / ".roam"
+    try:
+        cache_dir.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return
+    serialisable: dict[str, int | None] = {}
+    for url, status in results.items():
+        if status is None or status == -1:
+            serialisable[url] = None
+        else:
+            serialisable[url] = int(status)
+    payload = {
+        "schema": "roam-stale-refs-external-cache-v1",
+        "checked_at": time.time(),
+        "results": serialisable,
+    }
+    try:
+        with open(cache_dir / _EXTERNAL_CACHE_FILENAME, "w", encoding="utf-8") as fh:
+            _json.dump(payload, fh, indent=2, sort_keys=True)
+    except OSError:
+        pass
+
+
+def _scan_external_urls(
+    project_root: Path,
+    *,
+    include_excluded: bool,
+    ignore_source: tuple[str, ...],
+    timeout: float,
+    concurrency: int,
+    cache_ttl: float = 0.0,
+    allow_status: tuple[int, ...] = (),
+    auth_headers: tuple[tuple[str, str], ...] = (),
+    insecure: bool = False,
+) -> tuple[list[dict], dict[str, int]]:
+    """Walk the repo, extract external URLs, check them, return broken ones.
+
+    Returns ``(findings, cache_meta)`` where ``cache_meta`` is::
+
+        {"hits": int, "misses": int, "checked_total": int}
+
+    so the caller can surface per-scan cache stats. When *cache_ttl* > 0,
+    we consult ``.roam/external-check-cache.json`` to skip URLs probed
+    within the TTL window — repeat CI scans pay HEAD/GET cost only on
+    URLs that haven't been seen recently.
+    """
+    all_files = discover_files(project_root, include_excluded=include_excluded)
+    urls_with_meta: list[tuple[str, str, int]] = []
+    for rel in all_files:
+        ext = os.path.splitext(rel)[1].lower()
+        if ext not in _SCANNABLE_EXTS:
+            continue
+        if _matches_any_glob(rel, ignore_source):
+            continue
+        full = project_root / rel
+        content = _read_text_safe(full)
+        if content is None:
+            continue
+        for lineno, url in _extract_external_urls(content):
+            urls_with_meta.append((url, rel, lineno))
+
+    cache_meta = {"hits": 0, "misses": 0, "checked_total": 0}
+    if not urls_with_meta:
+        return [], cache_meta
+
+    cached = _load_external_cache(project_root, cache_ttl)
+    distinct_urls = sorted({u for u, _, _ in urls_with_meta})
+    cache_meta["checked_total"] = len(distinct_urls)
+    cache_meta["hits"] = sum(1 for u in distinct_urls if u in cached)
+
+    # Build the to-probe list: only URLs not in cache.
+    to_probe = [(u, src, line) for u, src, line in urls_with_meta if u not in cached]
+    cache_meta["misses"] = len({u for u, _, _ in to_probe})
+
+    fresh_results: dict[str, tuple[int | None, list[int]]] = {}
+    if to_probe:
+        fresh_results = _check_external_urls_parallel(
+            to_probe,
+            timeout=timeout,
+            concurrency=concurrency,
+            auth_headers=auth_headers,
+            insecure=insecure,
+        )
+
+    # Merge cached + fresh into one status map. Cache stores statuses
+    # only (no chain), so cached entries get an empty chain on read —
+    # losing redirect-chain detail in exchange for not invalidating
+    # the cache when the chain capture changed.
+    statuses: dict[str, int | None] = {}
+    chains: dict[str, list[int]] = {}
+    for url in distinct_urls:
+        if url in cached:
+            value = cached[url]
+            statuses[url] = None if value == -1 else value
+            chains[url] = []
+        else:
+            fresh = fresh_results.get(url, (None, []))
+            statuses[url] = fresh[0]
+            chains[url] = fresh[1]
+    if cache_ttl > 0 and to_probe:
+        # Persist ONLY if we actually probed something new — preserves
+        # the existing cache's checked_at timestamp otherwise. We merge
+        # cached + fresh so the saved file represents the union.
+        merged: dict[str, int | None] = {}
+        for url in distinct_urls:
+            merged[url] = statuses[url]
+        _save_external_cache(project_root, merged)
+
+    allow_set = set(allow_status)
+
+    findings: list[dict] = []
+    for url, source_file, lineno in urls_with_meta:
+        status = statuses.get(url)
+        # Allow-list takes precedence: user-listed status codes count
+        # as "live" even though they'd otherwise be findings.
+        if status is not None and status in allow_set:
+            continue
+        if not _is_external_finding(status):
+            continue
+        finding: dict = {
+            "file": source_file,
+            "line": lineno,
+            "kind": "external",
+            "raw": url,
+            "status": status if status is not None else "unreachable",
+        }
+        chain = chains.get(url) or []
+        if chain:
+            finding["redirect_chain"] = chain
+        findings.append(finding)
+    return findings, cache_meta
+
+
+# ---------------------------------------------------------------------------
+# Persistent baseline
+# ---------------------------------------------------------------------------
+
+
+_BASELINE_SCHEMA = "roam-stale-refs-baseline-v2"
+
+
+def _baseline_record_for(target: str, source: dict) -> str:
+    """Stable line-tolerant identity for a finding.
+
+    Format: ``"<target>|<file>:<kind>"`` — line numbers deliberately
+    excluded so baselined findings survive cosmetic text shifts (a
+    user adding a copyright header that pushes every line down by 5).
+    The pipe is unlikely to appear in any real path or kind name.
+
+    Trade-off: a file with two refs to the same target shows as ONE
+    baseline record. If only one of them gets fixed (the URL is
+    rewritten in place), the still-broken one stays baselined — which
+    is correct, since the user's "I acknowledge this debt" decision
+    extended to the (target, file, kind) tuple. New findings (different
+    target, different file, or different kind) still surface for the
+    gate.
+    """
+    return f"{target}|{source['file']}:{source['kind']}"
+
+
+def _save_baseline(stale_by_target: dict[str, list[dict]], path: str) -> None:
+    """Write a deterministic JSON snapshot of every finding to *path*.
+
+    Schema::
+
+        {
+            "schema": "roam-stale-refs-baseline-v2",
+            "saved_at": "<UTC ISO>",
+            "finding_count": N,
+            "findings": ["<target>|<file>:<kind>", ...]
+        }
+
+    Records are deduplicated and sorted so subsequent saves on the same
+    scan produce identical files (good for git diff-ability) and
+    multiple sources of the same (target, file, kind) collapse to one
+    entry.
+
+    The schema name is bumped to v2 because line numbers are no longer
+    encoded — see :func:`_baseline_record_for`. v1 baselines (which
+    include line numbers) are still accepted by :func:`_load_baseline`
+    via post-load normalisation.
+    """
+    import json
+    from datetime import datetime, timezone
+
+    records: set[str] = set()
+    for target, sources in stale_by_target.items():
+        for s in sources:
+            records.add(_baseline_record_for(target, s))
+    record_list = sorted(records)
+    payload = {
+        "schema": _BASELINE_SCHEMA,
+        "saved_at": datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "finding_count": len(record_list),
+        "findings": record_list,
+    }
+    with open(path, "w", encoding="utf-8") as fh:
+        json.dump(payload, fh, indent=2, sort_keys=True)
+        fh.write("\n")
+
+
+def _normalise_baseline_record(record: str) -> str:
+    """Translate a v1 record (with line) into the v2 line-less form.
+
+    v1: ``<target>|<file>:<line>:<kind>``
+    v2: ``<target>|<file>:<kind>``
+
+    We split off everything before the first ``|`` (the target — may
+    contain colons in URLs / anchors), then look at the remainder. If
+    the post-pipe portion has 3 colon-separated parts (file:line:kind),
+    we drop the middle part. If it has 2 (already v2), we keep it.
+
+    Records we can't classify are returned unchanged so a future schema
+    we don't recognise still flows through cleanly.
+    """
+    if "|" not in record:
+        return record
+    target, _, rest = record.partition("|")
+    parts = rest.split(":")
+    if len(parts) == 3:
+        # v1 → v2: drop the middle (line) part.
+        return f"{target}|{parts[0]}:{parts[2]}"
+    return record
+
+
+def _load_baseline(path: str) -> set[str]:
+    """Load baseline records into a set for fast membership checks.
+
+    Accepts both v1 (line-precise) and v2 (line-tolerant) baselines —
+    v1 records are normalised on read so they match v2 records produced
+    by the current scanner. Returns an empty set on any read or schema
+    error so the caller can proceed without the baseline filter rather
+    than crash.
+    """
+    import json
+
+    try:
+        with open(path, encoding="utf-8") as fh:
+            payload = json.load(fh)
+    except (OSError, ValueError):
+        return set()
+    findings = payload.get("findings") if isinstance(payload, dict) else None
+    if not isinstance(findings, list):
+        return set()
+    return {_normalise_baseline_record(str(r)) for r in findings if isinstance(r, str)}
+
+
+def _filter_against_baseline(
+    stale_by_target: dict[str, list[dict]],
+    baseline: set[str],
+) -> dict[str, list[dict]]:
+    """Drop sources matching the baseline; keep targets that retain >0 sources."""
+    if not baseline:
+        return stale_by_target
+    out: dict[str, list[dict]] = {}
+    for target, sources in stale_by_target.items():
+        kept = [s for s in sources if _baseline_record_for(target, s) not in baseline]
+        if kept:
+            out[target] = kept
+    return out
+
+
+# ---------------------------------------------------------------------------
+# Repo config (.roam/stale-refs.toml)
+# ---------------------------------------------------------------------------
+
+
+_CONFIG_FILENAME = "stale-refs.toml"
+
+
+def _load_repo_config(project_root: Path) -> dict:
+    """Load ``.roam/stale-refs.toml`` if present; return ``{}`` otherwise.
+
+    Schema is intentionally flat — keys mirror CLI flag names with
+    underscores instead of dashes:
+
+    .. code-block:: toml
+
+        ignore = ["CHANGELOG.md", "docs/legacy/**"]
+        ignore_target = ["AGENTS.md"]
+        sort_by = "priority"
+        check_anchors = true
+        check_external = false
+        # external_allow_status = [401, 403]
+        # external_auth_header = ["Authorization: Bearer $TOKEN"]
+
+    CLI flags always override config values — config is for repo
+    defaults. Loaded by the Click command at the start of each run;
+    individual flags can be made config-aware by checking ``ctx.obj``.
+
+    Uses Python 3.11+ stdlib ``tomllib`` when available; falls back to
+    a minimal parser for ≤3.10 (currently roam supports 3.9+).
+    """
+    config_path = project_root / ".roam" / _CONFIG_FILENAME
+    if not config_path.exists():
+        return {}
+    try:
+        try:
+            import tomllib  # type: ignore[import-not-found]
+
+            with open(config_path, "rb") as fh:
+                return tomllib.load(fh)
+        except ImportError:
+            # Python < 3.11 — fall back to ``tomli`` if available; if
+            # neither is installed, parse a minimal subset by hand. We
+            # don't add a hard dep just for this config file.
+            try:
+                import tomli  # type: ignore[import-not-found]
+
+                with open(config_path, "rb") as fh:
+                    return tomli.load(fh)
+            except ImportError:
+                return _parse_minimal_toml(config_path)
+    except (OSError, ValueError):
+        return {}
+
+
+def _parse_minimal_toml(path: Path) -> dict:
+    """Last-resort TOML parser for config files we wrote ourselves.
+
+    Handles only the shapes ``init`` emits: top-level scalar/string
+    keys, scalar/string lists, booleans. No tables, no arrays of
+    tables, no inline arrays of dicts. Anything we can't parse is
+    silently skipped so a future TOML feature in the file doesn't
+    break old CLIs.
+    """
+    out: dict = {}
+    try:
+        text = path.read_text(encoding="utf-8")
+    except OSError:
+        return out
+    for raw_line in text.splitlines():
+        line = raw_line.strip()
+        if not line or line.startswith("#") or line.startswith("["):
+            continue
+        if "=" not in line:
+            continue
+        key, _, value = line.partition("=")
+        key = key.strip()
+        value = value.strip().rstrip(",")
+        if value.startswith("[") and value.endswith("]"):
+            inner = value[1:-1].strip()
+            if not inner:
+                out[key] = []
+                continue
+            items: list = []
+            for tok in _split_toml_array(inner):
+                tok = tok.strip().rstrip(",").strip()
+                if not tok:
+                    continue
+                if tok.startswith('"') and tok.endswith('"'):
+                    items.append(tok[1:-1])
+                elif tok in ("true", "false"):
+                    items.append(tok == "true")
+                else:
+                    try:
+                        items.append(int(tok))
+                    except ValueError:
+                        try:
+                            items.append(float(tok))
+                        except ValueError:
+                            items.append(tok)
+            out[key] = items
+        elif value.startswith('"') and value.endswith('"'):
+            out[key] = value[1:-1]
+        elif value in ("true", "false"):
+            out[key] = value == "true"
+        else:
+            try:
+                out[key] = int(value)
+            except ValueError:
+                try:
+                    out[key] = float(value)
+                except ValueError:
+                    pass
+    return out
+
+
+def _split_toml_array(inner: str) -> list[str]:
+    """Split an inline TOML array body, respecting quoted-string commas."""
+    parts: list[str] = []
+    buf: list[str] = []
+    in_string = False
+    for ch in inner:
+        if ch == '"':
+            in_string = not in_string
+            buf.append(ch)
+        elif ch == "," and not in_string:
+            parts.append("".join(buf))
+            buf = []
+        else:
+            buf.append(ch)
+    if buf:
+        parts.append("".join(buf))
+    return parts
+
+
+def _render_github_step_summary(
+    *,
+    verdict: str,
+    targets: list[dict],
+    files_scanned: int,
+    refs_seen: int,
+) -> str:
+    """Render a GitHub-flavoured Actions step summary.
+
+    Single H2 + a table: target / confidence / hint / source files. The
+    ``$GITHUB_STEP_SUMMARY`` file accepts markdown verbatim and renders
+    inline on the workflow run page. We cap rows at 50 to stay under
+    GitHub's 1MB summary limit even on a doc-thrashed PR.
+    """
+    lines: list[str] = []
+    lines.append("## roam stale-refs")
+    lines.append("")
+    lines.append(f"**Verdict:** {verdict}")
+    lines.append("")
+    lines.append(f"_Scanned {files_scanned} files, checked {refs_seen} references._")
+    lines.append("")
+    if not targets:
+        lines.append("All references resolve. No findings.")
+        return "\n".join(lines) + "\n"
+    lines.append("| Missing target | Confidence | Hint | Sources |")
+    lines.append("|---|---|---|---|")
+    for tgt in targets[:50]:
+        hint = tgt.get("hint") or {}
+        conf = hint.get("confidence", "—")
+        hint_str = hint.get("target", "—")
+        sources = tgt.get("sources") or []
+        # Show up to 3 source-file refs, comma-separated.
+        src_str = ", ".join(f"`{s.get('file', '?')}`:{s.get('line', '?')}" for s in sources[:3])
+        if len(sources) > 3:
+            src_str += f" (+{len(sources) - 3})"
+        lines.append(f"| `{tgt['target']}` | {conf} | {hint_str} | {src_str} |")
+    if len(targets) > 50:
+        lines.append("")
+        lines.append(f"_…and {len(targets) - 50} more (truncated)._")
+    return "\n".join(lines) + "\n"
+
+
+def _log_hint_acceptances(
+    project_root: Path,
+    targets: list[dict],
+    edits_by_source: dict,
+) -> None:
+    """Append accepted-hint provenance rows to ``.roam/hint-acceptances.jsonl``.
+
+    Captured per acceptance: timestamp, source provider, source confidence,
+    rewritten URL → new URL, source file path. Append-only JSONL so a
+    future smarter ranker can mine the file for "this provider's
+    HIGH-confidence hints get accepted N% of the time" stats.
+
+    Best-effort. We never crash the scan because telemetry hit a
+    PermissionError — log dirs on Windows can be locked by a parallel
+    process and that's fine.
+    """
+    try:
+        edited_paths = set(edits_by_source.keys())
+        if not edited_paths:
+            return
+        log_dir = project_root / ".roam"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_path = log_dir / "hint-acceptances.jsonl"
+        ts = int(time.time())
+        rows: list[str] = []
+        for tgt in targets:
+            hint = tgt.get("hint")
+            if not hint or hint.get("confidence") not in {"HIGH", "MEDIUM"}:
+                continue
+            sources = tgt.get("sources") or []
+            for s in sources:
+                src_file = s.get("file")
+                if src_file in edited_paths:
+                    rows.append(
+                        json.dumps(
+                            {
+                                "ts": ts,
+                                "missing": tgt["target"],
+                                "rewrite": hint["target"],
+                                "confidence": hint["confidence"],
+                                "source": hint.get("source", "unknown"),
+                                "src_file": src_file,
+                                "src_line": s.get("line"),
+                                "kind": s.get("kind"),
+                            },
+                            separators=(",", ":"),
+                        )
+                    )
+        if rows:
+            with open(log_path, "a", encoding="utf-8") as fh:
+                for row in rows:
+                    fh.write(row + "\n")
+    except OSError:
+        return
+
+
+def build_stale_refs_attestation(
+    *,
+    project_root: Path,
+    summary: dict,
+    targets: list[dict],
+    findings: list[dict],
+) -> dict:
+    """Build an in-toto v1 Statement wrapping a stale-refs scan.
+
+    Predicate type is ``https://roam-code.dev/StaleRefs/v1`` — distinct
+    from the CGA / CGA-AIBOM predicates so verifiers can tell the
+    artifacts apart. Subject is the git commit SHA so the attestation
+    binds to a specific repo state.
+
+    Returned statement is unsigned. Sign it via
+    ``roam.attest.cga.cosign_sign_statement`` or pipe it through cosign
+    out-of-band. Verifying side calls
+    ``verify_stale_refs_attestation`` (see below).
+
+    Predicate fields (the things auditors care about):
+
+    * ``scan_summary`` — verbatim copy of the verdict-bearing summary
+      block (verdict / counts / by_confidence / by_kind etc).
+    * ``targets`` — full per-target list with deterministic ordering.
+    * ``findings_count`` — total raw finding rows scanned.
+    * ``tool`` — name + version + git SHA so the artifact is reproducible.
+
+    The shape mirrors the CGA flow: deterministic JSON serialisation
+    (sort_keys=True, no whitespace) so digest stability is guaranteed
+    across runs on the same repo state.
+    """
+    from roam.attest.cga import (
+        STATEMENT_TYPE,
+        _detect_tool_version,
+        _git_commit_sha,
+        _git_remote_url,
+    )
+
+    sha = _git_commit_sha(project_root) or "unknown"
+    remote = _git_remote_url(project_root)
+    subject_name = remote or str(project_root.resolve()).replace("\\", "/")
+    sorted_targets = sorted(
+        ({k: v for k, v in t.items() if k != "rename_hint"} for t in targets),
+        key=lambda t: t.get("target", ""),
+    )
+    predicate = {
+        "scan_summary": dict(summary),
+        "targets": sorted_targets,
+        "findings_count": len(findings),
+        "tool": {
+            "name": "roam-stale-refs",
+            "version": _detect_tool_version(),
+            "predicate_type": "https://roam-code.dev/StaleRefs/v1",
+        },
+    }
+    return {
+        "_type": STATEMENT_TYPE,
+        "predicateType": "https://roam-code.dev/StaleRefs/v1",
+        "subject": [{"name": subject_name, "digest": {"git_commit_sha1": sha}}],
+        "predicate": predicate,
+    }
+
+
+def verify_stale_refs_attestation(
+    statement: dict,
+    *,
+    expected_commit_sha: str | None = None,
+) -> tuple[bool, str]:
+    """Lightweight predicate-shape check on a stale-refs in-toto statement.
+
+    Returns ``(True, "")`` on success, ``(False, reason)`` otherwise.
+    Verifying signatures is delegated to ``cosign verify-blob`` (out
+    of band) — this function only validates *structure*.
+    """
+    if not isinstance(statement, dict):
+        return False, "statement is not an object"
+    if statement.get("predicateType") != "https://roam-code.dev/StaleRefs/v1":
+        return False, "wrong predicateType"
+    subject = statement.get("subject") or []
+    if not isinstance(subject, list) or len(subject) != 1:
+        return False, "subject must be a single-element list"
+    predicate = statement.get("predicate") or {}
+    if "scan_summary" not in predicate:
+        return False, "missing scan_summary"
+    if "targets" not in predicate:
+        return False, "missing targets"
+    if expected_commit_sha:
+        digest = (subject[0] or {}).get("digest", {})
+        if digest.get("git_commit_sha1") != expected_commit_sha:
+            return False, "subject SHA does not match expected commit"
+    return True, ""
+
+
+def _suggest_config_for_repo(project_root: Path) -> dict:
+    """Walk the repo and propose sensible default ``.roam/stale-refs.toml`` content.
+
+    Heuristics (kept conservative — better to under-suggest than over-suggest):
+
+    * Always include ``CHANGELOG.md`` in ``ignore`` if it exists —
+      historical entries reference deleted files routinely.
+    * Add ``docs/legacy/**`` if such a directory exists.
+    * Add ``ignore_target`` entries for common documentation
+      placeholders (``AGENTS.md``, ``GEMINI.md``, ``CLAUDE.md``,
+      ``CONVENTIONS.md``) that a doc site might mention without
+      requiring them to exist.
+    * Default ``sort_by = "priority"`` — most useful for triage.
+
+    Returns the dict shape; callers serialise it as TOML.
+    """
+    suggestions: dict = {"sort_by": "priority"}
+    ignore: list[str] = []
+    if (project_root / "CHANGELOG.md").exists():
+        ignore.append("CHANGELOG.md")
+    if (project_root / "docs" / "legacy").is_dir():
+        ignore.append("docs/legacy/**")
+    if ignore:
+        suggestions["ignore"] = ignore
+    suggested_targets: list[str] = []
+    for placeholder in ("AGENTS.md", "GEMINI.md", "CLAUDE.md", "CONVENTIONS.md"):
+        if not (project_root / placeholder).exists():
+            suggested_targets.append(placeholder)
+    if suggested_targets:
+        suggestions["ignore_target"] = suggested_targets
+    return suggestions
+
+
+def _serialise_config_toml(config: dict) -> str:
+    """Write the dict as TOML text; safe for our suggested key shape."""
+    lines: list[str] = []
+    lines.append("# .roam/stale-refs.toml — repo-level defaults for `roam stale-refs`.")
+    lines.append("# CLI flags override these values. Generated by `roam stale-refs init`.")
+    lines.append("")
+    for key, value in config.items():
+        if isinstance(value, bool):
+            lines.append(f"{key} = {'true' if value else 'false'}")
+        elif isinstance(value, (int, float)):
+            lines.append(f"{key} = {value}")
+        elif isinstance(value, str):
+            escaped = value.replace('"', '\\"')
+            lines.append(f'{key} = "{escaped}"')
+        elif isinstance(value, list):
+            if not value:
+                lines.append(f"{key} = []")
+            else:
+                inner = ", ".join(f'"{v}"' if isinstance(v, str) else str(v) for v in value)
+                lines.append(f"{key} = [{inner}]")
+    lines.append("")
+    return "\n".join(lines)
+
+
+# ---------------------------------------------------------------------------
+# --watch mode
+# ---------------------------------------------------------------------------
+
+
+def _scan_finding_set(stale_by_target: dict[str, list[dict]]) -> set[tuple[str, str, int, str]]:
+    """Flatten findings into a set of ``(target, source_file, line, kind)``.
+
+    Used by ``--watch`` to diff between consecutive scans. The tuple is
+    intentionally identity-bearing (target + location + kind) so that
+    rewriting the same line to a different target shows as one resolved
+    + one new, not as a "modified" finding.
+    """
+    out: set[tuple[str, str, int, str]] = set()
+    for target, sources in stale_by_target.items():
+        for s in sources:
+            out.add((target, s["file"], int(s["line"]), s["kind"]))
+    return out
+
+
+def _collect_mtimes(project_root: Path, *, include_excluded: bool) -> dict[str, float]:
+    """Return ``{rel_path: mtime}`` for every scannable repo file.
+
+    Watch mode uses this signature to detect changes before doing the
+    expensive rescan. Files that fail to ``stat`` are simply absent from
+    the map — they'll trigger "missing" or "added" deltas naturally.
+
+    Implementation: ``discover_files`` enumerates the candidates;
+    ``os.scandir`` then batches ``stat`` info per parent directory in a
+    single syscall instead of one ``Path.stat`` per file. On a 10K-file
+    repo this cuts ~80% of the per-poll overhead.
+    """
+    out: dict[str, float] = {}
+    try:
+        all_files = discover_files(project_root, include_excluded=include_excluded)
+    except Exception:
+        return out
+
+    # Bucket files by their parent dir so each scandir() call returns
+    # mtimes for many files at once. The ``DirEntry.stat`` returned by
+    # scandir is cached on Linux/macOS and only costs one extra syscall
+    # on Windows — still strictly faster than Path.stat per-file.
+    by_parent: dict[str, list[str]] = defaultdict(list)
+    for rel in all_files:
+        ext = os.path.splitext(rel)[1].lower()
+        if ext not in _SCANNABLE_EXTS:
+            continue
+        norm = rel.replace("\\", "/")
+        parent = norm.rsplit("/", 1)[0] if "/" in norm else ""
+        by_parent[parent].append(norm)
+
+    for parent, rels in by_parent.items():
+        wanted = set(rels)
+        scan_dir = project_root if parent == "" else project_root / parent
+        try:
+            with os.scandir(scan_dir) as it:
+                for entry in it:
+                    rel_norm = entry.name if parent == "" else f"{parent}/{entry.name}"
+                    if rel_norm not in wanted:
+                        continue
+                    try:
+                        out[rel_norm] = entry.stat().st_mtime
+                    except OSError:
+                        continue
+        except OSError:
+            # Directory disappeared between discover_files and scandir
+            # (rare race). Just skip; the next poll will catch up.
+            continue
+    return out
+
+
+def _format_finding_line(target: str, source_file: str, line: int, kind: str) -> str:
+    """Single-line representation used inside the watch loop's delta output."""
+    return f"  {source_file}:{line}  [{kind}]  → {target}"
+
+
+def _run_watch_loop(
+    project_root: Path,
+    *,
+    interval: float,
+    scan_kwargs: dict,
+    on_initial: callable,
+    on_delta: callable,
+    baseline: set[str] | None = None,
+) -> None:
+    """Drive the ``--watch`` polling loop until interrupted.
+
+    Strategy:
+
+    * Run the initial scan once and call ``on_initial(stale_by_target,
+      meta)`` so the caller can render the welcome banner.
+    * Snapshot mtimes for every scannable file.
+    * Sleep ``interval`` seconds; recheck mtimes. If anything changed,
+      sleep an additional ~30% of ``interval`` to debounce flurries
+      (editors that rapid-rewrite on save), then rescan and call
+      ``on_delta(added, resolved, total)``.
+    * On KeyboardInterrupt, return cleanly so the Click command exits
+      with code 0.
+
+    When *baseline* is provided (from a ``--baseline-from`` file at the
+    Click command level), it's applied to every scan — initial + each
+    polled rescan — so the watch deltas reflect only the
+    non-baselined finding set. Without this, a user with 100 baselined
+    findings would see them all appear in the initial banner and
+    re-flicker on every cycle, defeating the purpose of the baseline.
+
+    All scan work happens inline on the main thread — no background
+    threads, no signals — because the polling cadence is slow enough
+    that a blocking rescan is acceptable and keeping the event loop
+    serial avoids debugging surprises.
+    """
+    include_excluded = scan_kwargs.get("include_excluded", False)
+    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(project_root, **scan_kwargs)
+    if baseline:
+        stale_by_target = _filter_against_baseline(stale_by_target, baseline)
+    on_initial(stale_by_target, files_scanned, refs_seen)
+    last_findings = _scan_finding_set(stale_by_target)
+    last_mtimes = _collect_mtimes(project_root, include_excluded=include_excluded)
+
+    try:
+        while True:
+            time.sleep(max(0.1, interval))
+            current_mtimes = _collect_mtimes(project_root, include_excluded=include_excluded)
+            if current_mtimes == last_mtimes:
+                continue
+            # Debounce: editor saves often produce 2-3 rapid mtime
+            # bumps in a row. Sleep ~30% of interval before rescanning.
+            time.sleep(max(0.05, interval * 0.3))
+            last_mtimes = _collect_mtimes(project_root, include_excluded=include_excluded)
+
+            stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(
+                project_root, **scan_kwargs
+            )
+            if baseline:
+                stale_by_target = _filter_against_baseline(stale_by_target, baseline)
+            current_findings = _scan_finding_set(stale_by_target)
+            added = current_findings - last_findings
+            resolved = last_findings - current_findings
+            on_delta(added, resolved, current_findings)
+            last_findings = current_findings
+    except KeyboardInterrupt:
+        return
 
 
 def _compact_sources(sources: list[dict]) -> list[dict]:
@@ -1151,6 +2448,134 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     ),
 )
 @click.option(
+    "--with-candidates",
+    is_flag=True,
+    default=False,
+    help=(
+        "Include a sample of repo file paths in the JSON envelope under "
+        "``summary.repo_paths_sample``. Used by the MCP wrapper's "
+        "LLM-enrichment path so the calling agent's model can suggest "
+        "semantic matches for findings the deterministic providers miss."
+    ),
+)
+@click.option(
+    "--watch",
+    is_flag=True,
+    default=False,
+    help=(
+        "Continuous mode: run an initial scan, then poll the repo for "
+        "file changes and rescan. Prints only newly-introduced and "
+        "newly-resolved findings on each cycle so the terminal stays "
+        "useful during a refactoring session. Ctrl+C to exit."
+    ),
+)
+@click.option(
+    "--watch-interval",
+    type=float,
+    default=1.5,
+    show_default=True,
+    help="Seconds between watch-mode polls. Lower = more responsive, more CPU.",
+)
+@click.option(
+    "--baseline-save",
+    "baseline_save",
+    type=click.Path(dir_okay=False, writable=True),
+    default=None,
+    help=(
+        "Save the current findings to FILE as a JSON baseline. Use it "
+        "later with ``--baseline-from FILE`` to filter scans down to "
+        "newly-introduced findings (unlike ``--diff`` which is "
+        "git-based, the baseline is a frozen snapshot — useful when "
+        "your team has agreed to acknowledge a chunk of legacy "
+        "findings and only wants to gate on regressions). "
+        "Composing ``--baseline-from a.json --baseline-save b.json`` "
+        "saves the POST-filter findings — useful for incremental "
+        'rebaselining ("forget the old debt I already acknowledged '
+        "and freeze the new findings I'm choosing to live with too\")."
+    ),
+)
+@click.option(
+    "--baseline-from",
+    "baseline_from",
+    type=click.Path(dir_okay=False, exists=True, readable=True),
+    default=None,
+    help=(
+        "Filter findings to only those NOT in the saved baseline FILE. "
+        "Composes with ``--gate`` so CI fails only on newly-introduced "
+        "findings while pre-existing ones stay visible but ignored."
+    ),
+)
+@click.option(
+    "--check-external",
+    is_flag=True,
+    default=False,
+    help=(
+        "Also check ``http(s)://`` URLs via HEAD requests. Opt-in "
+        "(off by default to keep the scan fully local + offline). "
+        "Findings surface with ``kind=external``. Concurrent + cached "
+        "per scan."
+    ),
+)
+@click.option(
+    "--external-timeout",
+    type=float,
+    default=5.0,
+    show_default=True,
+    help="Per-URL HTTP timeout in seconds (used only with --check-external).",
+)
+@click.option(
+    "--external-concurrency",
+    type=int,
+    default=8,
+    show_default=True,
+    help="Parallel HTTP requests during --check-external (1-32).",
+)
+@click.option(
+    "--external-cache-ttl",
+    type=float,
+    default=86400.0,
+    show_default=True,
+    help=(
+        "Cache external check results in ``.roam/external-check-cache.json`` "
+        "for this many seconds. Default 24h. Pass 0 to disable caching "
+        "(re-probe every run). CI scans benefit massively from caching; "
+        "interactive runs may want fresher data."
+    ),
+)
+@click.option(
+    "--external-allow-status",
+    "external_allow_status",
+    multiple=True,
+    metavar="CODE",
+    help=(
+        "HTTP status codes to treat as live (not findings). Repeatable. "
+        "Use case: internal docs link to auth-gated services that 401/403 "
+        "but are healthy. ``--external-allow-status 401 --external-allow-status 403`` "
+        "or comma-separated ``--external-allow-status 401,403``."
+    ),
+)
+@click.option(
+    "--external-auth-header",
+    "external_auth_header",
+    multiple=True,
+    metavar='"NAME: VALUE"',
+    help=(
+        "Custom HTTP header sent with --check-external probes. Repeatable. "
+        'Format: ``"Authorization: Bearer ${TOKEN}"``. Useful for '
+        "private dashboards or internal-network probes."
+    ),
+)
+@click.option(
+    "--external-insecure",
+    is_flag=True,
+    default=False,
+    help=(
+        "Skip TLS cert verification on --check-external. For self-signed "
+        "internal services. Default off (secure) — only enable when you "
+        "know the URLs you're probing."
+    ),
+)
+@click.option(
     "--no-anchors",
     "no_anchors",
     is_flag=True,
@@ -1204,6 +2629,73 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
         "is the recommended workflow."
     ),
 )
+@click.option(
+    "--fix-medium",
+    is_flag=True,
+    default=False,
+    help=(
+        "When combined with ``--fix preview/apply``, also act on "
+        "MEDIUM-confidence hints (single-basename-match-elsewhere, "
+        "anchor-similarity ≥ 0.6). Off by default — MEDIUM hints are "
+        "advisory and shouldn't auto-rewrite without an explicit opt-in. "
+        "Useful for one-shot post-refactor cleanups where the user trusts "
+        "the suggestions and will review the diff via git afterwards."
+    ),
+)
+@click.option(
+    "--init",
+    is_flag=True,
+    default=False,
+    help=(
+        "Generate ``.roam/stale-refs.toml`` with sensible defaults for "
+        "this repo (ignores CHANGELOG.md, common doc placeholders, etc) "
+        "and exit. Subsequent `roam stale-refs` runs read the file as "
+        "default config — CLI flags still override. Use --init-force to "
+        "overwrite an existing file."
+    ),
+)
+@click.option(
+    "--init-force",
+    is_flag=True,
+    default=False,
+    help="Overwrite an existing .roam/stale-refs.toml when running --init.",
+)
+@click.option(
+    "--attest",
+    "attest_path",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Write an in-toto v1 attestation of the scan results to PATH "
+        "(JSON, predicateType ``https://roam-code.dev/StaleRefs/v1``). "
+        "Sign out-of-band with cosign for tamper-evident provenance. "
+        "Pass ``-`` to write to stdout instead of a file."
+    ),
+)
+@click.option(
+    "--root",
+    "root_override",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Scan a different repo / monorepo subtree from the current "
+        "working directory. PATH is treated as the project root, "
+        "overriding the auto-detected git root. Useful for monorepos "
+        "where each top-level dir is a sub-project."
+    ),
+)
+@click.option(
+    "--github-summary",
+    "github_summary_path",
+    default=None,
+    metavar="PATH",
+    help=(
+        "Write a GitHub-flavoured markdown summary table to PATH "
+        "(use ``$GITHUB_STEP_SUMMARY`` from inside Actions). One "
+        "row per missing target, with confidence / hint / source "
+        "file links. Renders inline on the workflow run page."
+    ),
+)
 @click.pass_context
 def stale_refs(
     ctx,
@@ -1215,10 +2707,28 @@ def stale_refs(
     ignore_source,
     ignore_target,
     by_file,
+    with_candidates,
+    watch,
+    watch_interval,
+    baseline_save,
+    baseline_from,
+    check_external,
+    external_timeout,
+    external_concurrency,
+    external_cache_ttl,
+    external_allow_status,
+    external_auth_header,
+    external_insecure,
     no_anchors,
     diff_base,
     sort_by,
     fix,
+    fix_medium,
+    init,
+    init_force,
+    attest_path,
+    root_override,
+    github_summary_path,
 ):
     """Find dangling file references — markdown links, HTML href/src, backtick paths.
 
@@ -1250,9 +2760,139 @@ def stale_refs(
     sarif_mode = ctx.obj.get("sarif") if ctx.obj else False
     include_excluded = ctx.obj.get("include_excluded", False) if ctx.obj else False
 
-    project_root = find_project_root()
+    if root_override:
+        # ``--root foo/`` — treat the supplied path as the project
+        # root rather than auto-detecting the surrounding git repo.
+        # Required for monorepo workflows where each subtree is its
+        # own scan, and for CI runs where the repo doesn't have a git
+        # working tree (sparse checkouts, archive scans).
+        project_root = Path(root_override).resolve()
+        if not project_root.is_dir():
+            raise click.UsageError(f"--root path {root_override!r} is not a directory")
+    else:
+        project_root = find_project_root()
+
+    # ---- ``--init`` short-circuits everything ---------------------
+    if init:
+        suggested = _suggest_config_for_repo(project_root)
+        toml_text = _serialise_config_toml(suggested)
+        config_path = project_root / ".roam" / _CONFIG_FILENAME
+        if config_path.exists() and not init_force:
+            click.echo(f"VERDICT: {config_path} already exists. Pass --init-force to overwrite, or hand-edit the file.")
+            return
+        config_path.parent.mkdir(parents=True, exist_ok=True)
+        config_path.write_text(toml_text, encoding="utf-8")
+        click.echo(f"VERDICT: wrote {config_path}\n")
+        click.echo("Suggested config:\n")
+        click.echo(toml_text.rstrip())
+        click.echo()
+        click.echo("Edit the file to fit your repo, then run `roam stale-refs` normally.")
+        return
+
+    # ---- Repo config (loaded once, CLI flags still override) ------
+    repo_config = _load_repo_config(project_root)
+    if repo_config:
+        # Each config key is folded into the matching CLI param ONLY when
+        # the user didn't explicitly pass that flag. We detect "unset"
+        # using empty tuples / default values; not perfect but covers
+        # the common cases without a Click introspection ladder.
+        if not ignore_source and isinstance(repo_config.get("ignore"), list):
+            ignore_source = tuple(p for p in repo_config["ignore"] if isinstance(p, str))
+        if not ignore_target and isinstance(repo_config.get("ignore_target"), list):
+            ignore_target = tuple(p for p in repo_config["ignore_target"] if isinstance(p, str))
+        # Phase 4B fix: ``sort_by``, ``check_external``, ``no_anchors``,
+        # and ``limit`` were silently dropped by the v12.49 first-pass
+        # loader — the suggested config file even wrote ``sort_by =
+        # "priority"`` and the runtime ignored it. Wire them in so the
+        # config file is the single source of repo-level defaults.
+        if sort_by == "priority" and isinstance(repo_config.get("sort_by"), str):
+            cfg_sort = repo_config["sort_by"]
+            if cfg_sort in {"priority", "ref-count", "alpha"}:
+                sort_by = cfg_sort
+        if not check_external and isinstance(repo_config.get("check_external"), bool):
+            check_external = repo_config["check_external"]
+        if not no_anchors and repo_config.get("check_anchors") is False:
+            # Inverted polarity: TOML reads better as ``check_anchors =
+            # false`` than ``no_anchors = true`` for the operator.
+            no_anchors = True
+        if limit == 20 and isinstance(repo_config.get("limit"), int):
+            cfg_limit = repo_config["limit"]
+            if 1 <= cfg_limit <= 1000:
+                limit = cfg_limit
+
+    # ---- Watch mode short-circuits the regular flow ----------------
+    if watch:
+        if json_mode or sarif_mode:
+            # Streaming structured output isn't a sensible mental model
+            # for a continuous loop. Fail fast rather than emit
+            # malformed concatenated payloads.
+            raise click.UsageError("--watch is not compatible with --json or --sarif.")
+        if check_external:
+            # Polling external URLs every interval would hammer servers
+            # and trip rate limits. The user almost certainly meant
+            # "watch local refs, run --check-external manually before
+            # commit". Refuse rather than silently mis-behave.
+            raise click.UsageError(
+                "--watch is not compatible with --check-external. Run external link checks as a separate one-shot scan."
+            )
+        if fix is not None:
+            # Auto-rewriting source files behind the user's back inside
+            # a poll loop is a foot-gun. Watch is informational; --fix
+            # is a deliberate action.
+            raise click.UsageError("--watch is not compatible with --fix.")
+
+        # Load the baseline once at watch start (if any) so the loop
+        # filters every rescan against the same reference set. Re-loading
+        # on every cycle would be wasted work — the baseline file is
+        # frozen.
+        baseline_set: set[str] | None = None
+        if baseline_from:
+            loaded = _load_baseline(baseline_from)
+            baseline_set = loaded if loaded else None
+
+        scan_kwargs = dict(
+            include_excluded=include_excluded,
+            check_absolute_routes=check_absolute_routes,
+            ignore_source=tuple(ignore_source),
+            ignore_target=tuple(ignore_target),
+            check_anchors=not no_anchors,
+        )
+
+        def _on_initial(stale_by_target_, files_scanned_, refs_seen_):
+            click.echo(f"WATCH: monitoring {project_root} (interval {watch_interval}s) — Ctrl+C to exit\n")
+            count = sum(len(v) for v in stale_by_target_.values())
+            tgt_count = len(stale_by_target_)
+            if count == 0:
+                click.echo(f"  initial: clean ({refs_seen_} refs across {files_scanned_} files)\n")
+            else:
+                click.echo(f"  initial: {count} stale ref(s) across {tgt_count} target(s)\n")
+
+        def _on_delta(added, resolved, current_findings):
+            from datetime import datetime
+
+            stamp = datetime.now().strftime("%H:%M:%S")
+            if not added and not resolved:
+                # Files changed but findings identical — silent.
+                return
+            click.echo(f"--- {stamp} (Δ +{len(added)} / −{len(resolved)} · total {len(current_findings)}) ---")
+            for target, source_file, line, kind in sorted(added):
+                click.echo(f"+ {_format_finding_line(target, source_file, line, kind)[2:]}")
+            for target, source_file, line, kind in sorted(resolved):
+                click.echo(f"- {_format_finding_line(target, source_file, line, kind)[2:]}")
+            click.echo()
+
+        _run_watch_loop(
+            project_root,
+            interval=watch_interval,
+            scan_kwargs=scan_kwargs,
+            on_initial=_on_initial,
+            on_delta=_on_delta,
+            baseline=baseline_set,
+        )
+        return
+
     t_start = time.perf_counter()
-    stale_by_target, files_scanned, refs_seen, basename_idx = _scan_project(
+    stale_by_target, files_scanned, refs_seen, basename_idx, anchor_cache = _scan_project(
         project_root,
         include_excluded=include_excluded,
         check_absolute_routes=check_absolute_routes,
@@ -1270,6 +2910,84 @@ def stale_refs(
             if filtered:
                 kept[tgt] = filtered
         stale_by_target = kept
+
+    # ---- External link check ----------------------------------------
+    external_meta: dict[str, int] = {}
+    if check_external:
+        # Parse the multi-value flags. ``--external-allow-status 401,403``
+        # and ``--external-allow-status 401 --external-allow-status 403``
+        # both produce the same set; auth headers are split on the
+        # first colon so values can contain colons (URLs in Bearer
+        # tokens, etc).
+        allow_status_parsed: list[int] = []
+        for raw in external_allow_status:
+            for token in str(raw).split(","):
+                token = token.strip()
+                if not token:
+                    continue
+                try:
+                    allow_status_parsed.append(int(token))
+                except ValueError:
+                    continue
+        auth_headers_parsed: list[tuple[str, str]] = []
+        for raw in external_auth_header:
+            if ":" not in raw:
+                continue
+            name, _, value = raw.partition(":")
+            name = name.strip()
+            value = value.strip()
+            if name and value:
+                auth_headers_parsed.append((name, value))
+
+        external_findings, cache_meta = _scan_external_urls(
+            project_root,
+            include_excluded=include_excluded,
+            ignore_source=tuple(ignore_source),
+            timeout=external_timeout,
+            concurrency=external_concurrency,
+            cache_ttl=external_cache_ttl,
+            allow_status=tuple(allow_status_parsed),
+            auth_headers=tuple(auth_headers_parsed),
+            insecure=external_insecure,
+        )
+        external_meta["external_checked"] = sum(
+            1
+            for _ in external_findings  # only failures end up here
+        )
+        external_meta["external_cache_hits"] = cache_meta["hits"]
+        external_meta["external_cache_misses"] = cache_meta["misses"]
+        # Group external findings under their URL as the synthetic target
+        # so existing rendering / sort / aggregation paths handle them
+        # naturally. The "target" is the URL itself.
+        for f in external_findings:
+            entry: dict = {
+                "file": f["file"],
+                "line": f["line"],
+                "kind": "external",
+                "raw": f["raw"],
+                "status": f["status"],
+            }
+            if "redirect_chain" in f:
+                entry["redirect_chain"] = f["redirect_chain"]
+            if _matches_any_glob(f["raw"], tuple(ignore_target)):
+                continue
+            stale_by_target.setdefault(f["raw"], []).append(entry)
+        external_meta["external_findings"] = sum(
+            len(v) for k, v in stale_by_target.items() if k.startswith(("http://", "https://"))
+        )
+
+    # ---- Baseline filter ----------------------------------------
+    baseline_meta: dict[str, int] = {}
+    if baseline_from:
+        baseline = _load_baseline(baseline_from)
+        if baseline:
+            pre_count = sum(len(v) for v in stale_by_target.values())
+            stale_by_target = _filter_against_baseline(stale_by_target, baseline)
+            post_count = sum(len(v) for v in stale_by_target.values())
+            baseline_meta = {
+                "baseline_size": len(baseline),
+                "filtered_out": pre_count - post_count,
+            }
 
     diff_info: dict[str, str] = {}
     diff_warning: str | None = None
@@ -1314,7 +3032,7 @@ def stale_refs(
             "sources": sources if all_sources else sources[:10],
         }
         if rename_hint:
-            hint = _hint_for_target(tgt, sources, hint_ctx)
+            hint = _hint_for_target(tgt, sources, hint_ctx, anchor_cache=anchor_cache)
             if hint is not None:
                 item["hint"] = hint
                 # Backwards-compat: keep the old flat ``rename_hint`` field.
@@ -1353,6 +3071,17 @@ def stale_refs(
             f"{refs_seen} refs checked · {files_scanned} files · {scan_seconds}s"
         )
 
+    # ---- Baseline write side --------------------------------------
+    # Save BEFORE applying the baseline-from filter result to the output
+    # paths so the saved file represents the unfiltered findings — that
+    # way ``--baseline-save x.json`` followed by ``--baseline-from x.json``
+    # gives a "no findings" verdict on a clean repo. We use the
+    # post-kind-filter, post-diff-filter ``stale_by_target`` because
+    # those filters reflect the user's intent for what counts as a
+    # finding in their workflow.
+    if baseline_save:
+        _save_baseline(stale_by_target, baseline_save)
+
     # ---- Actionable next steps (consumed by JSON callers + text mode)
     next_steps = suggest_next_steps(
         "stale-refs",
@@ -1366,7 +3095,7 @@ def stale_refs(
 
     # ---- --fix mode short-circuits all other output paths
     if fix is not None:
-        edits_by_source = _build_fix_edits(full_targets_with_hints, project_root)
+        edits_by_source = _build_fix_edits(full_targets_with_hints, project_root, include_medium=fix_medium)
         if fix == "preview":
             diff_text, files_touched, edits_planned = _render_fix_diff(project_root, edits_by_source)
             if json_mode:
@@ -1411,8 +3140,19 @@ def stale_refs(
                     click.echo(diff_text or "(empty diff)")
             return
         # fix == "apply"
-        files_written, edits_applied = _apply_fixes_in_place(project_root, edits_by_source)
-        msg = f"--fix apply · wrote {edits_applied} edit(s) to {files_written} file(s)"
+        files_written, edits_applied, locked_files = _apply_fixes_in_place(project_root, edits_by_source)
+        # Smarter-3: log accepted hints to .roam/hint-acceptances.jsonl
+        # so future scans / future smarter ranker can learn which
+        # provider+source combinations the user actually accepts. The
+        # file is append-only JSONL — one line per acceptance, with
+        # the source provider, target, and timestamp. Best-effort: any
+        # IO failure is swallowed (this is observability, not gating).
+        if files_written > 0:
+            _log_hint_acceptances(project_root, full_targets_with_hints, edits_by_source)
+        lock_note = ""
+        if locked_files:
+            lock_note = f" · {len(locked_files)} file(s) skipped due to file locks"
+        msg = f"--fix apply · wrote {edits_applied} edit(s) to {files_written} file(s){lock_note}"
         if json_mode:
             click.echo(
                 to_json(
@@ -1423,15 +3163,28 @@ def stale_refs(
                             "fix_mode": "apply",
                             "edits_applied": edits_applied,
                             "files_written": files_written,
+                            "files_locked": len(locked_files),
                             "missing_targets": target_count,
                             "stale_refs": total_refs,
                             "scan_seconds": scan_seconds,
                         },
+                        locked_files=locked_files,
                     )
                 )
             )
         else:
             click.echo(f"VERDICT: {msg}")
+            if locked_files:
+                click.echo(
+                    f"Skipped {len(locked_files)} file(s) — another process "
+                    "held them locked (common on Windows during open editor "
+                    "sessions). Close the file(s) and re-run, or use `git "
+                    "status` to see which:"
+                )
+                for path in sorted(locked_files)[:10]:
+                    click.echo(f"  {path}")
+                if len(locked_files) > 10:
+                    click.echo(f"  (+{len(locked_files) - 10} more)")
             if files_written:
                 click.echo("Re-run `roam stale-refs` to confirm and address remaining findings.")
             else:
@@ -1442,6 +3195,66 @@ def stale_refs(
                         f"0 fixable / {target_count} total finding(s). Run `roam stale-refs --fix preview` to inspect."
                     )
         return
+
+    # ---- --attest writes an in-toto v1 statement before any other output
+    # mode. Must run BEFORE sarif/json/text branches so a CI run that
+    # uses ``--sarif --attest`` together still produces both artifacts.
+    if attest_path:
+        attest_summary = {
+            "verdict": verdict,
+            "missing_targets": target_count,
+            "stale_refs": total_refs,
+            "files_scanned": files_scanned,
+            "refs_checked": refs_seen,
+            "scan_seconds": scan_seconds,
+            "sort_by": sort_by,
+            "anchor_findings": anchor_findings,
+            "fixable_count": fixable_count,
+            "by_kind": dict(by_kind),
+            "by_confidence": dict(by_confidence),
+        }
+        statement = build_stale_refs_attestation(
+            project_root=project_root,
+            summary=attest_summary,
+            targets=full_targets_with_hints,
+            findings=[s for srcs in stale_by_target.values() for s in srcs],
+        )
+        # Canonical form so the digest is reproducible across runs.
+        rendered = json.dumps(statement, sort_keys=True, separators=(",", ":"))
+        if attest_path == "-":
+            # In SARIF/JSON modes, the stdout channel is reserved for
+            # the structured envelope — emitting the attestation there
+            # would corrupt it. Fall back to stderr so the artefact
+            # still lands somewhere observable.
+            if sarif_mode or json_mode:
+                click.echo(rendered, err=True)
+            else:
+                click.echo(rendered)
+        else:
+            atomic_path = Path(attest_path)
+            atomic_path.parent.mkdir(parents=True, exist_ok=True)
+            _atomic_write_text(atomic_path, rendered + "\n")
+
+    # ---- --github-summary writes a markdown table for GitHub Actions ---
+    # Runs alongside SARIF / JSON / text just like ``--attest``.
+    if github_summary_path:
+        try:
+            md = _render_github_step_summary(
+                verdict=verdict,
+                targets=full_targets_with_hints,
+                files_scanned=files_scanned,
+                refs_seen=refs_seen,
+            )
+            sp = Path(github_summary_path)
+            sp.parent.mkdir(parents=True, exist_ok=True)
+            # GITHUB_STEP_SUMMARY semantics: append, not overwrite — a
+            # workflow with multiple steps each writing a section ends
+            # up with a stacked summary on the run page.
+            with open(sp, "a", encoding="utf-8") as fh:
+                fh.write(md)
+        except OSError:
+            # Best-effort: a write failure here shouldn't fail CI.
+            pass
 
     if sarif_mode:
         from roam.output.sarif import stale_refs_to_sarif, write_sarif
@@ -1467,6 +3280,8 @@ def stale_refs(
             "by_confidence": dict(by_confidence),
             "next_steps": next_steps,
         }
+        if attest_path:
+            summary["attestation_path"] = "stdout" if attest_path == "-" else str(Path(attest_path))
         if diff_info:
             summary["diff_base"] = diff_info["base_sha"]
             summary["diff_base_ref"] = diff_info["base_ref"]
@@ -1474,6 +3289,22 @@ def stale_refs(
             summary["diff_deleted_files"] = int(diff_info["deleted_files"])
         if diff_warning:
             summary["diff_warning"] = diff_warning
+        if baseline_meta:
+            summary["baseline_size"] = baseline_meta["baseline_size"]
+            summary["baseline_filtered_out"] = baseline_meta["filtered_out"]
+        if baseline_save:
+            summary["baseline_saved_to"] = baseline_save
+        if external_meta:
+            summary["external_findings"] = external_meta.get("external_findings", 0)
+        if with_candidates:
+            # Sample repo paths for the LLM enricher: prefer prose-shaped
+            # files (md/rst/txt/html) since those are by far the most
+            # common rename targets in doc references. Cap at 500 to stay
+            # well under any reasonable sampling token budget.
+            prose_paths = [p for p in basename_idx_paths(basename_idx) if _is_prose_path(p)]
+            other_paths = [p for p in basename_idx_paths(basename_idx) if not _is_prose_path(p)]
+            sample = (prose_paths[:300] + other_paths[:200])[:500]
+            summary["repo_paths_sample"] = sorted(sample)
         click.echo(
             to_json(
                 json_envelope(

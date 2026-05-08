@@ -102,63 +102,17 @@ def _server_json_version() -> str | None:
     return json.loads(p.read_text(encoding="utf-8")).get("version")
 
 
+# GitHub Pages was disabled on 2026-05-08; the canonical public
+# mcp-server-card.json moved to the Cloudflare-served landing-page tree.
+# The bundled wheel copy lives under ``src/roam/`` for ``roam mcp --card``.
+_PUBLIC_MCP_CARD = ROOT / "templates" / "distribution" / "landing-page" / ".well-known" / "mcp-server-card.json"
+
+
 def _mcp_card_version() -> str | None:
-    p = ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json"
+    p = _PUBLIC_MCP_CARD
     if not p.exists():
         return None
     return json.loads(p.read_text(encoding="utf-8")).get("version")
-
-
-def _landscape_json_command_count() -> int | None:
-    """``docs/site/data/landscape.json`` self-row quotes the public
-    command count — historically the most likely surface to drift."""
-    p = ROOT / "docs" / "site" / "data" / "landscape.json"
-    if not p.exists():
-        return None
-    text = p.read_text(encoding="utf-8")
-    # Look for the roam-code entry — characterised by the cli_commands key.
-    m = re.search(r'"cli_commands"\s*:\s*"(\d+)\s+(?:commands|canonical)', text)
-    return int(m.group(1)) if m else None
-
-
-def _landscape_json_mcp_count() -> int | None:
-    p = ROOT / "docs" / "site" / "data" / "landscape.json"
-    if not p.exists():
-        return None
-    text = p.read_text(encoding="utf-8")
-    m = re.search(r"(\d+)\s+MCP\s+tools", text)
-    return int(m.group(1)) if m else None
-
-
-def _landscape_json_version() -> str | None:
-    """The roam-code self-row's ``version_evaluated`` field — should
-    track the package version reasonably closely.
-
-    v12.12.2: parse the JSON properly instead of regex-near-string.
-    The previous heuristic (500-char window around ``"cli_commands"``)
-    silently returned None whenever the row's structure grew past that
-    window, so the consistency test was passing only by skipping. The
-    parse-and-find-by-name approach is location-independent.
-    """
-    p = ROOT / "docs" / "site" / "data" / "landscape.json"
-    if not p.exists():
-        return None
-    try:
-        data = json.loads(p.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return None
-    rows = data.get("competitors") if isinstance(data, dict) else None
-    if not isinstance(rows, list):
-        return None
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
-        name = (row.get("name") or "").lower()
-        if "roam-code" in name or "roam_code" in name:
-            v = row.get("version_evaluated")
-            if isinstance(v, str) and v:
-                return v
-    return None
 
 
 # ---------------------------------------------------------------------------
@@ -191,37 +145,34 @@ class TestVersionConsistency:
         assert actual is not None, "mcp-server-card.json missing"
         assert actual == truth, f"mcp-server-card.json {actual!r} != pyproject {truth!r}"
 
-    def test_bundled_card_matches_docs_site_card(self):
+    def test_bundled_card_matches_public_card(self):
         """The wheel ships ``src/roam/mcp-server-card.json`` so
         ``roam mcp --card`` works post-install without a source
-        checkout. The docs/site/.well-known copy stays canonical for
-        the hosted /well-known URL. v12.12.2 — both must match
-        byte-for-byte so they don't drift across releases.
+        checkout. The Cloudflare-served public copy is canonical for
+        the hosted ``/.well-known`` URL. Both must match byte-for-byte
+        so they don't drift across releases.
         """
         bundled = ROOT / "src" / "roam" / "mcp-server-card.json"
-        canonical = ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json"
+        canonical = _PUBLIC_MCP_CARD
         if not bundled.exists() or not canonical.exists():
             pytest.skip("card files not both present")
         a = bundled.read_text(encoding="utf-8")
         b = canonical.read_text(encoding="utf-8")
         assert a == b, (
             "src/roam/mcp-server-card.json drifted from "
-            "docs/site/.well-known/mcp-server-card.json — "
+            f"{canonical.relative_to(ROOT).as_posix()} — "
             "re-copy after editing either file."
         )
 
     def test_card_tool_count_matches_live_count(self):
-        """v12.12.4 — the card's ``capabilities.tools.total`` must
-        match the live MCP tool count from ``surface_counts``. The
-        card had been at 120 with 33-tool ``core`` preset for several
-        releases while the live numbers had grown to 122 / 35.
-        """
+        """The card's ``capabilities.tools.total`` must match the live
+        MCP tool count from ``surface_counts``."""
         try:
             from roam.surface_counts import collect_surface_counts
         except ImportError:
             pytest.skip("surface_counts unavailable")
         live = collect_surface_counts()
-        card = json.loads((ROOT / "docs" / "site" / ".well-known" / "mcp-server-card.json").read_text(encoding="utf-8"))
+        card = json.loads(_PUBLIC_MCP_CARD.read_text(encoding="utf-8"))
         live_total = live["mcp"]["registered_tools"]
         live_core = live["mcp"]["core_tools"]
         card_total = card["capabilities"]["tools"]["total"]
@@ -237,25 +188,17 @@ class TestVersionConsistency:
             f"card capabilities.tools.presets.full = {card_full} but live total = {live_total}"
         )
 
-    def test_landscape_json_self_row_version_matches(self):
-        """The roam-code row in landscape.json should show the current
-        package version (or a recent nearby tag)."""
-        truth = _truth_version()
-        actual = _landscape_json_version()
-        if actual is None:
-            pytest.skip("landscape.json roam-code self-row missing")
-        # Allow the landscape eval-version to lag by at most one minor;
-        # full equality enforced when same major/minor.
-        truth_major_minor = ".".join(truth.split(".")[:2])
-        actual_major_minor = ".".join(actual.lstrip("v").split(".")[:2])
-        assert actual_major_minor == truth_major_minor, (
-            f"landscape.json self-row says {actual!r} but pyproject is {truth!r}"
-        )
+    # ``test_landscape_json_self_row_version_matches`` removed
+    # 2026-05-08: ``docs/site/data/landscape.json`` was deleted when GH
+    # Pages was disabled. The roam-code self-row data still lives in
+    # ``src/roam/competitor_site_data.py`` and the gitignored internal
+    # tracker; neither needs a public-version-stamp consistency check.
 
 
 class TestCommandCountConsistency:
     """CLI command count must agree across README, llms-install.md,
-    landscape.json, and the live ``cli._COMMANDS`` count."""
+    and the live ``cli._COMMANDS`` count. (``landscape.json`` consistency
+    check removed when GH Pages was disabled — file no longer exists.)"""
 
     def test_truth_command_count_is_positive(self):
         n = _truth_cli_command_count()
@@ -274,16 +217,10 @@ class TestCommandCountConsistency:
             pytest.skip("llms-install.md not present or no count")
         assert actual == truth, f"llms-install.md says '{actual} commands' but truth is {truth}"
 
-    def test_landscape_json_matches_source(self):
-        truth = _truth_cli_command_count()
-        actual = _landscape_json_command_count()
-        if actual is None:
-            pytest.skip("landscape.json roam-code self-row missing")
-        assert actual == truth, f"landscape.json says '{actual} canonical commands' but truth is {truth}"
-
 
 class TestMcpToolCountConsistency:
-    """MCP tool count must agree across README + landscape.json + live count."""
+    """MCP tool count must agree across README + the live count.
+    (``landscape.json`` consistency check removed; see above.)"""
 
     def test_truth_mcp_count_is_positive(self):
         n = _truth_mcp_tool_count()
@@ -295,50 +232,48 @@ class TestMcpToolCountConsistency:
         assert actual is not None, "README missing 'N MCP tools' phrase"
         assert actual == truth, f"README says '{actual} MCP tools' but live count is {truth}"
 
-    def test_landscape_json_matches_source(self):
-        truth = _truth_mcp_tool_count()
-        actual = _landscape_json_mcp_count()
-        if actual is None:
-            pytest.skip("landscape.json missing MCP tool count")
-        assert actual == truth, f"landscape.json says '{actual} MCP tools' but live count is {truth}"
-
 
 # ---------------------------------------------------------------------------
 # Internal-docs link audit
 # ---------------------------------------------------------------------------
 
-# README and CHANGELOG link out to ``docs/site/*.html`` and a few sibling
-# files. When we rename or delete a docs page, the link silently rots.
-# Catch broken intra-repo doc links in CI.
+# Historically README and CHANGELOG linked out to ``docs/site/*.html``
+# and a few sibling files. After GitHub Pages was disabled on
+# 2026-05-08 and ``docs/site/`` was deleted, the docs live entirely at
+# https://roam-code.com/docs/. New markdown link references to
+# ``docs/site/*`` are now leaks pointing at deleted paths — catch them.
 
 _DOC_LINK_RE = re.compile(r"\(docs/site/([^)#?]+\.(?:html|md))\)")
-_REPO_RELATIVE_RE = re.compile(r"\]\((?!https?://|mailto:|#)([^)#?]+\.(?:md|html))\)")
 
 
 def _scrape_doc_links(text: str) -> set[str]:
-    """All ``docs/site/*.{html,md}`` paths referenced by ``text``."""
+    """All ``docs/site/*.{html,md}`` markdown links referenced by ``text``."""
     return {f"docs/site/{m}" for m in _DOC_LINK_RE.findall(text)}
 
 
 class TestInternalDocLinks:
-    """Every ``docs/site/*.html`` or ``docs/site/*.md`` link in README and
-    CHANGELOG must resolve to a real file."""
+    """No markdown link in README or CHANGELOG should reference the
+    deleted ``docs/site/*`` tree. New references are leaks."""
 
-    def test_readme_doc_links_resolve(self):
+    def test_readme_does_not_link_to_deleted_docs_site(self):
         text = (ROOT / "README.md").read_text(encoding="utf-8")
         links = _scrape_doc_links(text)
-        if not links:
-            pytest.skip("README has no docs/site/* links")
-        missing = sorted(p for p in links if not (ROOT / p).exists())
-        assert not missing, f"README links to missing docs pages: {missing}"
+        assert not links, (
+            "README links to deleted docs/site/* paths "
+            "(GH Pages was disabled 2026-05-08; canonical docs live at "
+            f"https://roam-code.com/docs/): {sorted(links)}"
+        )
 
-    def test_changelog_doc_links_resolve(self):
+    def test_changelog_does_not_link_to_deleted_docs_site(self):
         cl = ROOT / "CHANGELOG.md"
         if not cl.exists():
             pytest.skip("CHANGELOG.md missing")
         text = cl.read_text(encoding="utf-8")
         links = _scrape_doc_links(text)
-        if not links:
-            pytest.skip("CHANGELOG has no docs/site/* links")
-        missing = sorted(p for p in links if not (ROOT / p).exists())
-        assert not missing, f"CHANGELOG links to missing docs pages: {missing}"
+        # NEW link references must be zero; historical entries that just
+        # mention paths in prose aren't matched by the link regex.
+        assert not links, (
+            "CHANGELOG has markdown links to deleted docs/site/* paths "
+            "(GH Pages was disabled 2026-05-08; canonical docs live at "
+            f"https://roam-code.com/docs/): {sorted(links)}"
+        )

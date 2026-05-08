@@ -11,10 +11,9 @@ Modes:
 The registry is the source of truth. ``DEFAULT_MODE = "exclusive"`` keeps
 us safe — unknown commands escalate rather than silently corrupt.
 
-Phase 1 (this file) seeds 5 pilot commands. Phase 2 fills out the
-remaining ~145 commands incrementally; the audit env var
-``ROAM_DAEMON_AUDIT=1`` checks per-command DB ``readonly=`` flags
-match the registered mode.
+Initial seed covers 5 pilot commands. Migration is incremental;
+the audit env var ``ROAM_DAEMON_AUDIT=1`` checks per-command DB
+``readonly=`` flags match the registered mode.
 
 Companion: ``runtime/lockmgr.py`` (RWLock + drain semantics).
 """
