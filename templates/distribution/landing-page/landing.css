@@ -50,6 +50,15 @@
   --t-xl: 28px;
   --t-2xl: 34px;
   --t-hero: clamp(28px, 5vw, 48px);
+  /* Fluid section-heading scale — used by .whats-in/how-it-works/compare/
+     faq h2 etc. Floors at 22 px so a 320 px phone shows readable section
+     titles instead of 28 px headlines that wrap to three lines. */
+  --t-section-h: clamp(22px, 4vw, 28px);
+  /* Card h3 ramp (product cards, scenario cards). */
+  --t-card-h: clamp(19px, 3vw, 22px);
+  /* Big-number ramp (.num-cell strong, .price-amount). */
+  --t-numeric: clamp(22px, 4vw, 26px);
+  --t-price: clamp(26px, 5vw, 32px);
   --lh-tight: 1.2;
   --lh-snug: 1.4;
   --lh-base: 1.6;
@@ -65,6 +74,19 @@
   --s-8: 64px;
   --s-9: 96px;
 
+  /* ─── Section + container rhythm — fluid across viewport ─── */
+  /* Vertical padding inside sections. Scales 48 -> 64 px from phone to
+     desktop. Used for headline content sections (whats-in, how-it-works,
+     compare, faq, trust-strip, demo-block). */
+  --section-y: clamp(48px, 7vw, 64px);
+  /* Hero gets a touch more headroom up top, less below. */
+  --section-y-hero-top: clamp(56px, 9vw, 80px);
+  --section-y-hero-bottom: clamp(40px, 6vw, 60px);
+  /* Minor section (audit-upsell, page-cta-strip) — slightly tighter. */
+  --section-y-tight: clamp(32px, 5vw, 48px);
+  /* Horizontal container padding. 16 px on phones, 24 px on tablets+. */
+  --container-x: clamp(16px, 3vw, 24px);
+
   /* ─── Layout ─── */
   --radius: 8px;
   --radius-sm: 4px;
@@ -76,8 +98,36 @@ html {
   /* Pin against iOS' opportunistic font-rescale on rotation. */
   -webkit-text-size-adjust: 100%;
   text-size-adjust: 100%;
+  /* Match the browser-UI chrome (status bar, tab strip) to the page bg
+     instead of the default "auto" which can flash dark on Android. */
+  color-scheme: light;
+  /* iOS / Android default tap flash is a translucent cyan blob that
+     clashes with the brand. Replace with a soft accent tint. */
+  -webkit-tap-highlight-color: rgba(0, 73, 183, 0.12);
+  /* Smooth anchor scrolling. Reduced-motion users opt out via the media
+     block at the bottom of this file. */
+  scroll-behavior: smooth;
 }
-html, body { margin: 0; padding: 0; }
+/* Brand the text-selection color so highlights blend with the accent. */
+::selection {
+  background: var(--accent);
+  color: #fff;
+}
+::-moz-selection {
+  background: var(--accent);
+  color: #fff;
+}
+html, body {
+  margin: 0;
+  padding: 0;
+  /* Hard-clamp horizontal overflow so a single accidental wide element
+     (a 1200-px terminal demo, an unwrapped URL, an embedded svg) can't
+     give the entire page a horizontal scrollbar. Section overflow is
+     opt-in via .compare-table-wrap / .terminal where we want it. We use
+     overflow-x: clip rather than hidden so position:sticky elsewhere
+     (sticky nav, sticky compare-table first column) still works. */
+  overflow-x: clip;
+}
 body {
   font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
   font-size: 17px;
@@ -98,14 +148,32 @@ body {
 }
 img, svg, video { max-width: 100%; height: auto; }
 /* Default heading line-height — without this, h1/h2/h3 inherit body's 1.6,
-   which leaves gaping vertical space inside two-line headlines on mobile. */
-h1, h2, h3, h4 { line-height: var(--lh-snug); }
+   which leaves gaping vertical space inside two-line headlines on mobile.
+   text-wrap: balance redistributes words across lines so a 3-line heading
+   doesn't end on a single dangling word. Progressive-enhanced — Safari
+   17.4+, Chrome 114+, Firefox 121+. Older browsers ignore. */
+h1, h2, h3, h4 {
+  line-height: var(--lh-snug);
+  text-wrap: balance;
+}
 
 code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
 a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
-a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
+
+/* Single source of truth for focus-visible outlines. Any focusable element
+   gets the same accent ring at the same offset; element-specific overrides
+   are reserved for spaced-around components like .faq summary that need a
+   bit more breathing room (configured locally below). */
+a:focus-visible,
+button:focus-visible,
+summary:focus-visible,
+[tabindex]:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: var(--radius-sm);
+}
 
 /* Sticky nav is ~58px; on docs pages a second sticky strip stacks on top
    for ~110px combined. Use the larger value so anchor jumps don't hide
@@ -148,12 +216,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 .nav-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   display: flex;
   align-items: center;
   justify-content: space-between;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: var(--s-4);
 }
 .site-logo {
   font-family: 'IBM Plex Mono', monospace;
@@ -182,12 +250,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 /* ─── Hero ─── */
 .hero {
   background: linear-gradient(180deg, var(--accent-soft) 0%, var(--bg) 100%);
-  padding: 80px 0 60px;
+  padding: var(--section-y-hero-top) 0 var(--section-y-hero-bottom);
 }
 .hero-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
 .eyebrow {
@@ -207,10 +275,13 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 }
 .hero-headline strong { font-weight: 700; }
 .hero-subhead {
-  font-size: 19px;
+  font-size: clamp(17px, 2vw, 19px);
   color: var(--muted);
   max-width: 640px;
   margin: 0 auto 36px;
+  /* Read-flow optimization: text-wrap: pretty drops orphans + balances
+     line lengths. Both progressive-enhanced — older browsers ignore. */
+  text-wrap: pretty;
 }
 .hero-ctas {
   display: flex;
@@ -238,12 +309,23 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   border: 2px solid var(--accent);
 }
 .btn-primary:hover { transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,73,183,.3); text-decoration: none; }
+.btn-primary:active {
+  /* Press-down feedback. Sub-tactile but materially clearer than nothing
+     when the user actually taps on a phone (no hover state to convey
+     "you pressed me"). */
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0,73,183,.25);
+}
 .btn-secondary {
   background: var(--bg);
   color: var(--accent);
   border: 2px solid var(--accent);
 }
 .btn-secondary:hover { background: var(--accent-soft); text-decoration: none; transform: translateY(-1px); box-shadow: 0 4px 12px rgba(0,73,183,.15); }
+.btn-secondary:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(0,73,183,.12);
+}
 
 .hero-trust-strip {
   font-size: 13px;
@@ -253,17 +335,17 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 
 /* ─── What's in the free CLI ─── */
 .whats-in {
-  padding: 56px 0;
+  padding: var(--section-y) 0;
   background: var(--bg);
 }
 .whats-in-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
 .whats-in h2 {
-  font-size: 28px;
+  font-size: var(--t-section-h);
   font-weight: 600;
   margin: 0 0 14px;
 }
@@ -292,11 +374,16 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
 }
 .num-cell strong {
   display: block;
-  font-size: 26px;
+  font-size: var(--t-numeric);
   font-weight: 700;
   color: var(--accent);
   font-family: 'IBM Plex Mono', monospace;
   letter-spacing: -0.5px;
+  /* Tabular figures so "1,499" lines up vertically with "299" / "459" /
+     "7,731" in the numbers grid — varying digit widths look messy on a
+     comparison row. */
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
 }
 .num-cell span {
   display: block;
@@ -311,7 +398,7 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   padding: 16px 20px;
   border-radius: var(--radius);
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 14.5px;
+  font-size: 14px;
   display: inline-block;
   margin: 0 auto 16px;
   text-align: left;
@@ -373,10 +460,15 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   color: inherit;
   display: block;
 }
+a.verb-cell {
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
 a.verb-cell:hover {
   background: var(--accent-soft);
+  border-color: var(--accent);
   text-decoration: none;
 }
+a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
 .verb-cell code {
   display: block;
   font-size: 13px;
@@ -393,7 +485,7 @@ a.verb-cell:hover {
 
 /* ─── How it works (MCP flow) ─── */
 .how-it-works {
-  padding: 56px 0;
+  padding: var(--section-y) 0;
   background: var(--bg-alt);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
@@ -401,11 +493,11 @@ a.verb-cell:hover {
 .how-it-works-inner {
   max-width: 860px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
 .how-it-works h2 {
-  font-size: 28px;
+  font-size: var(--t-section-h);
   font-weight: 600;
   margin: 0 0 12px;
 }
@@ -453,17 +545,17 @@ a.verb-cell:hover {
 
 /* ─── Demo block (terminal screenshot) ─── */
 .demo-block {
-  padding: 64px 0;
+  padding: var(--section-y) 0;
   background: var(--bg);
 }
 .demo-block-inner {
   max-width: 920px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
 .demo-block h2 {
-  font-size: 28px;
+  font-size: var(--t-section-h);
   font-weight: 600;
   margin: 0 0 12px;
 }
@@ -483,7 +575,7 @@ a.verb-cell:hover {
   background: #1a1a1a;
   color: #e8e8e8;
   font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.55;
   padding: 24px 28px;
   border-radius: 8px;
@@ -491,7 +583,11 @@ a.verb-cell:hover {
   overflow-x: auto;
   white-space: pre;
   margin: 0 auto 18px;
-  box-shadow: 0 8px 32px rgba(0,0,0,.12);
+  /* Outer drop + 1px top inner highlight for terminal-window depth. */
+  box-shadow: 0 8px 32px rgba(0,0,0,.12), inset 0 1px 0 rgba(255,255,255,.04);
+  /* Disable smooth-scroll snapping on overflow-x so the user can flick
+     freely on touch. */
+  -webkit-overflow-scrolling: touch;
 }
 .terminal .t-prompt { color: #888; }
 .terminal .t-cmd { color: #fff; font-weight: 500; }
@@ -532,7 +628,7 @@ a.verb-cell:hover {
 .first-5-min ol {
   margin: 0;
   padding-left: 22px;
-  font-size: 14.5px;
+  font-size: 14px;
   line-height: 1.7;
 }
 .first-5-min ol li { margin-bottom: 4px; color: var(--text); }
@@ -570,7 +666,7 @@ a.verb-cell:hover {
   background: rgba(0, 122, 61, 0.08);
   padding: 1px 5px;
   border-radius: 3px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--pop);
 }
 
@@ -643,7 +739,7 @@ a.verb-cell:hover {
   border-left: 3px solid #d1d9e0;
   padding: 10px 12px;
   margin-bottom: 10px;
-  font-size: 13.5px;
+  font-size: 13px;
   line-height: 1.5;
   color: #1f2328;
   background: #f6f8fa;
@@ -666,12 +762,12 @@ a.verb-cell:hover {
   color: #4d555c;
   font-family: 'IBM Plex Mono', monospace;
 }
-.gh-meta { color: #4d555c; font-size: 12.5px; font-family: 'IBM Plex Mono', monospace; }
+.gh-meta { color: #4d555c; font-size: 12px; font-family: 'IBM Plex Mono', monospace; }
 .gh-finding code {
   background: #eaeef2;
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12.5px;
+  font-size: 12px;
   color: #1f2328;
 }
 .gh-fix {
@@ -679,14 +775,14 @@ a.verb-cell:hover {
   margin-top: 6px;
   padding-top: 6px;
   border-top: 1px dashed #d1d9e0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: var(--pop);
 }
 .gh-actions {
   margin-top: 12px;
   padding-top: 12px;
   border-top: 1px solid #d1d9e0;
-  font-size: 12.5px;
+  font-size: 12px;
   color: #59636e;
 }
 .gh-actions code {
@@ -698,17 +794,17 @@ a.verb-cell:hover {
 
 /* ─── Comparison table ─── */
 .compare {
-  padding: 64px 0;
+  padding: var(--section-y) 0;
   background: var(--bg);
   border-top: 1px solid var(--border);
 }
 .compare-inner {
   max-width: 1080px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
-.compare h2 { font-size: 28px; margin: 0 0 12px; }
+.compare h2 { font-size: var(--t-section-h); margin: 0 0 12px; }
 .compare .lede {
   font-size: 16px;
   color: var(--muted);
@@ -717,8 +813,9 @@ a.verb-cell:hover {
 }
 .compare-table-wrap {
   overflow-x: auto;
-  margin: 0 -24px;
-  padding: 0 24px;
+  -webkit-overflow-scrolling: touch;
+  margin: 0 calc(-1 * var(--container-x));
+  padding: 0 var(--container-x);
   /* Subtle scroll-hint shadow on mobile so readers know the table scrolls */
   background:
     linear-gradient(to right, var(--bg) 30%, rgba(253, 253, 253, 0)) 0 0 / 24px 100% no-repeat,
@@ -728,22 +825,40 @@ a.verb-cell:hover {
   background-attachment: local, local, scroll, scroll;
 }
 @media (max-width: 600px) {
-  .compare-table { font-size: 12.5px; }
+  .compare-table { font-size: 12px; }
   .compare-table tbody td,
   .compare-table tbody th { padding: 12px 10px; }
   .compare-table tbody th[scope="row"],
   .compare-table tbody td:first-child { padding-left: 14px; }
   .compare-table thead th:first-child { padding-left: 14px; min-width: 180px; }
+  /* Sticky first column on phones so the user can keep scrolling
+     horizontally without losing track of which row they're reading.
+     border-collapse on the table prevents border on the sticky column,
+     so we re-paint the right edge with a box-shadow. */
+  .compare-table thead th:first-child,
+  .compare-table tbody th[scope="row"],
+  .compare-table tbody td:first-child {
+    position: sticky;
+    left: 0;
+    background: var(--bg);
+    z-index: 2;
+    box-shadow: 1px 0 0 var(--border);
+  }
+  .compare-table thead th:first-child {
+    background: var(--bg-alt);
+  }
 }
 .compare-table {
   width: 100%;
   border-collapse: collapse;
-  font-size: 13.5px;
+  font-size: 13px;
   text-align: left;
   background: var(--bg);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  overflow: hidden;
+  /* No overflow:hidden — it would round the corners but also break Safari's
+     position:sticky on the first column. We'd rather have working sticky
+     than rounded corners on a horizontally-scrolling table. */
   min-width: 760px;
 }
 .compare-table thead th {
@@ -802,6 +917,7 @@ a.verb-cell:hover {
   border-color: var(--accent);
   text-decoration: none;
 }
+.num-cell--link:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
 .compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
 .compare-table .no  { color: var(--muted-soft); font-size: 13px; }
 .compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
@@ -825,7 +941,7 @@ a.verb-cell:hover {
 .legal-page {
   max-width: 760px;
   margin: 0 auto;
-  padding: 56px 24px 80px;
+  padding: var(--section-y) var(--container-x) clamp(56px, 8vw, 80px);
   font-size: 16px;
   line-height: 1.7;
 }
@@ -865,7 +981,7 @@ a.verb-cell:hover {
 /* ─── Back-to-product CTA strip (on info/legal pages) ─── */
 .page-cta-strip {
   background: var(--accent-soft);
-  padding: 28px 24px;
+  padding: var(--s-6) var(--container-x);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
   text-align: center;
@@ -893,7 +1009,7 @@ a.verb-cell:hover {
   background: var(--bg-alt);
   border: 1px solid var(--border);
   border-radius: var(--radius);
-  font-size: 14.5px;
+  font-size: 14px;
 }
 .status-dot {
   width: 12px;
@@ -924,20 +1040,20 @@ a.verb-cell:hover {
   background: var(--pain-bg);
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
-  padding: var(--s-7) 0;
+  padding: var(--section-y) 0;
 }
 .pain-band-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 24px;
+  gap: var(--s-5);
 }
 @media (max-width: 800px) { .pain-band-inner { grid-template-columns: 1fr; } }
 .pain-quote {
   margin: 0;
-  font-size: 14.5px;
+  font-size: 14px;
   color: var(--text);
   border-left: 3px solid var(--warn);
   padding-left: 14px;
@@ -955,17 +1071,17 @@ a.verb-cell:hover {
 
 /* ─── Products intro ─── */
 .products-intro {
-  padding: 64px 0 0;
+  padding: var(--section-y) 0 0;
   background: var(--bg);
 }
 .products-intro-inner {
   max-width: 720px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
 .products-intro h2 {
-  font-size: 28px;
+  font-size: var(--t-section-h);
   font-weight: 600;
   margin: 0 0 12px;
 }
@@ -978,11 +1094,11 @@ a.verb-cell:hover {
 /* ─── Product cards ─── */
 .products {
   max-width: var(--max-w);
-  margin: 32px auto 64px;
-  padding: 0 24px;
+  margin: var(--s-6) auto var(--section-y);
+  padding: 0 var(--container-x);
   display: grid;
   grid-template-columns: 1fr 1fr 1fr;
-  gap: 24px;
+  gap: var(--s-5);
 }
 @media (max-width: 900px) { .products { grid-template-columns: 1fr; } }
 
@@ -993,10 +1109,20 @@ a.verb-cell:hover {
   padding: 28px;
   display: flex;
   flex-direction: column;
+  transition: border-color 0.2s ease, box-shadow 0.2s ease;
+}
+.product-card:hover {
+  border-color: var(--accent);
+  box-shadow: 0 4px 16px rgba(0, 73, 183, 0.08);
+}
+.product-card.popular:hover {
+  /* The popular card already has accent border + heavier shadow at rest;
+     match the lift but keep the existing static shadow. */
+  box-shadow: 0 12px 28px rgba(0, 73, 183, 0.14);
 }
 .product-card h3 {
   margin: 0 0 6px;
-  font-size: 22px;
+  font-size: var(--t-card-h);
   font-weight: 600;
 }
 .product-card .tagline {
@@ -1028,7 +1154,7 @@ a.verb-cell:hover {
   background: var(--bg-alt);
   padding: 1px 4px;
   border-radius: 3px;
-  font-size: 12.5px;
+  font-size: 12px;
 }
 .product-card .price {
   margin: 18px 0;
@@ -1066,7 +1192,7 @@ a.verb-cell:hover {
 .persona-band-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 var(--s-5);
+  padding: 0 var(--container-x);
 }
 .persona-band .lede {
   margin: 0;
@@ -1138,7 +1264,7 @@ a.verb-cell:hover {
 .docs-subnav-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 var(--s-5);
+  padding: 0 var(--container-x);
   display: flex;
   flex-wrap: wrap;
   gap: var(--s-5);
@@ -1160,7 +1286,7 @@ a.verb-cell:hover {
 .docs-page {
   max-width: 800px;
   margin: 0 auto;
-  padding: var(--s-7) var(--s-5);
+  padding: var(--section-y) var(--container-x);
 }
 .docs-page h1 {
   font-size: var(--t-2xl);
@@ -1302,10 +1428,13 @@ a.verb-cell:hover {
   padding: var(--s-3) var(--s-4);
   text-decoration: none;
   color: var(--text);
+  transition: border-color 0.15s ease, background-color 0.15s ease;
 }
 .docs-footer-nav a:hover {
   border-color: var(--accent);
+  background: var(--accent-soft);
 }
+.docs-footer-nav a:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(--accent) 30%); }
 .docs-footer-nav .label {
   display: block;
   font-size: var(--t-xs);
@@ -1324,14 +1453,14 @@ a.verb-cell:hover {
 
 /* ─── Dogfood band ─── */
 .dogfood-band {
-  padding: var(--s-7) 0;
+  padding: var(--section-y) 0;
   border-top: 1px solid var(--border);
   border-bottom: 1px solid var(--border);
 }
 .dogfood-band-inner {
   max-width: 720px;
   margin: 0 auto;
-  padding: 0 var(--s-5);
+  padding: 0 var(--container-x);
 }
 .dogfood-list {
   list-style: none;
@@ -1364,9 +1493,12 @@ a.verb-cell:hover {
 }
 .price-amount {
   display: block;
-  font-size: 32px;
+  font-size: var(--t-price);
   font-weight: 700;
   color: var(--accent);
+  font-variant-numeric: tabular-nums;
+  font-feature-settings: "tnum" 1;
+  line-height: var(--lh-tight);
 }
 .price-unit {
   font-size: 15px;
@@ -1385,30 +1517,30 @@ a.verb-cell:hover {
 /* ─── Audit upsell ─── */
 .audit-upsell {
   background: var(--bg-alt);
-  padding: 48px 0;
+  padding: var(--section-y-tight) 0;
   border-top: 1px solid var(--border);
 }
 .audit-upsell-inner {
   max-width: 720px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   text-align: center;
 }
-.audit-upsell h2 { font-size: 24px; margin: 0 0 12px; }
+.audit-upsell h2 { font-size: clamp(20px, 3.5vw, 24px); margin: 0 0 12px; }
 .audit-upsell p { font-size: 16px; color: var(--text); }
 
 /* ─── Trust strip ─── */
 .trust-strip {
-  padding: 56px 0;
+  padding: var(--section-y) 0;
   background: var(--bg);
 }
 .trust-strip-inner {
   max-width: 980px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 28px 36px;
+  gap: var(--s-6) var(--s-7);
 }
 .trust-strip-inner > .trust-cell:nth-child(odd):last-child { grid-column: 1 / -1; }
 @media (max-width: 700px) { .trust-strip-inner { grid-template-columns: 1fr; } }
@@ -1419,20 +1551,20 @@ a.verb-cell:hover {
   padding: 18px 20px;
 }
 .trust-cell strong { display: block; font-size: 16px; color: var(--accent); margin-bottom: 6px; }
-.trust-cell span { font-size: 13.5px; color: var(--muted); line-height: 1.5; }
+.trust-cell span { font-size: 13px; color: var(--muted); line-height: 1.5; }
 .trust-cell a { color: var(--accent); }
 
 /* ─── FAQ ─── */
 .faq {
   background: var(--bg-alt);
-  padding: 64px 0;
+  padding: var(--section-y) 0;
 }
 .faq-inner {
   max-width: 800px;
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
 }
-.faq h2 { font-size: 28px; margin: 0 0 28px; text-align: center; }
+.faq h2 { font-size: var(--t-section-h); margin: 0 0 28px; text-align: center; }
 .faq details {
   background: var(--bg);
   border: 1px solid var(--border);
@@ -1448,9 +1580,9 @@ a.verb-cell:hover {
   cursor: pointer;
 }
 .faq summary:focus-visible {
-  outline: 2px solid var(--accent);
+  /* FAQ summaries sit inside their padded details box, so the standard
+     2 px offset crowds the accordion chevron. Push the ring further out. */
   outline-offset: 4px;
-  border-radius: 4px;
 }
 .faq summary::after {
   content: "▾";
@@ -1470,16 +1602,16 @@ a.verb-cell:hover {
 footer {
   background: var(--text);
   color: #ccc;
-  padding: 36px 0;
+  padding: var(--section-y-tight) 0;
   font-size: 14px;
 }
 .footer-inner {
   max-width: var(--max-w);
   margin: 0 auto;
-  padding: 0 24px;
+  padding: 0 var(--container-x);
   display: grid;
   grid-template-columns: 2fr 1fr 1fr 1fr;
-  gap: 24px;
+  gap: var(--s-5);
 }
 @media (max-width: 800px) { .footer-inner { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 480px) { .footer-inner { grid-template-columns: 1fr; } }
@@ -1487,14 +1619,82 @@ footer {
 .footer-col span { color: var(--footer-meta); font-size: var(--t-sm); }
 footer a { color: #fff; }
 
+/* ─── Forced-colors (Windows high-contrast, "More contrast" on macOS) ───
+   When the OS overrides our color tokens with system colors, the things
+   we care about most are: focus rings remain visible, button borders
+   exist, gradient/box-shadow fades that conveyed depth get explicit
+   borders, and link/button states remain distinct. */
+@media (forced-colors: active) {
+  /* The accent gradient hero fades the headline into the page; in
+     forced-colors, gradients are stripped, so just paint a flat bg. */
+  .hero { background: Canvas; }
+  /* Buttons rely on background + border for affordance; in forced-colors
+     we lose that, so promote the outline to be explicit. */
+  .btn-primary,
+  .btn-secondary {
+    border: 2px solid ButtonText;
+  }
+  /* Focus rings can disappear into system colors — pin them to
+     CanvasText so they're visible on every theme. */
+  a:focus-visible,
+  button:focus-visible,
+  summary:focus-visible {
+    outline-color: CanvasText;
+  }
+  /* The "popular" product card relies on accent border + drop-shadow.
+     In forced-colors, replace with a thicker explicit border. */
+  .product-card.popular {
+    border: 3px solid Highlight;
+    box-shadow: none;
+  }
+  .popular-badge {
+    background: Highlight;
+    color: HighlightText;
+  }
+  /* Status-dot meaning is conveyed only by color; in forced-colors,
+     bring back the dot with explicit borders. */
+  .status-dot {
+    border: 2px solid CanvasText;
+  }
+}
+
+/* ─── prefers-contrast: more — boost border weight where the page leans
+   on a 1px hairline border for affordance. */
+@media (prefers-contrast: more) {
+  .num-cell,
+  .verb-cell,
+  .product-card,
+  .trust-cell,
+  .scenario,
+  .compare-table {
+    border-width: 2px;
+  }
+  .pain-quote {
+    border-left-width: 4px;
+  }
+}
+
 /* ─── Reduced motion ─── */
 @media (prefers-reduced-motion: reduce) {
+  /* Suppress every transform/transition site-wide. Targeted at every
+     element that animates above (buttons, hero CTAs, FAQ chevron rotate,
+     num-cell-link tint), not just hover states — :active transitions
+     count too. */
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    scroll-behavior: auto !important;
+  }
   .btn-primary:hover,
   .btn-secondary:hover,
+  .btn-primary:active,
+  .btn-secondary:active,
   .faq summary::after,
   .faq details[open] summary::after {
     transform: none;
-    transition: none;
   }
 }
 
@@ -1549,43 +1749,20 @@ footer a { color: #fff; }
   }
 }
 
-/* ─── Container padding — drop from 24px to 16px on phones so 320-360px
-       viewports keep more readable line-length. The 24px desktop pad eats
-       48px of a 320px screen, which on long titles forces ugly hyphenation
-       breaks. ─── */
+/* ─── Tight viewport refinements (≤480px). Container padding is already
+       fluid via --container-x; this block just tightens hero rhythm and
+       shrinks .hero-subhead from 19px to 17px so a 2-line subhead doesn't
+       dominate the fold. ─── */
 @media (max-width: 480px) {
-  .nav-inner,
-  .hero-inner,
-  .whats-in-inner,
-  .how-it-works-inner,
-  .demo-block-inner,
-  .compare-inner,
-  .pain-band-inner,
-  .products-intro-inner,
-  .products,
-  .audit-upsell-inner,
-  .trust-strip-inner,
-  .faq-inner,
-  .footer-inner,
-  .dogfood-band-inner,
-  .docs-subnav-inner {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
   .compare-table-wrap {
-    margin-left: -16px;
-    margin-right: -16px;
-    padding-left: 16px;
-    padding-right: 16px;
+    /* Match the fluid container-x bleed-through. */
+    margin-left: calc(-1 * var(--container-x));
+    margin-right: calc(-1 * var(--container-x));
+    padding-left: var(--container-x);
+    padding-right: var(--container-x);
   }
-  .legal-page {
-    padding-left: 16px;
-    padding-right: 16px;
-  }
-  /* Hero on a tiny viewport: trim vertical air and tighten head→sub gap. */
-  .hero { padding: 56px 0 40px; }
   .hero-headline { margin-bottom: 18px; }
-  .hero-subhead { margin-bottom: 28px; font-size: 17px; }
+  .hero-subhead { margin-bottom: 28px; }
 }
 
 /* ─── Print: legal/info pages should print clean ─── */
@@ -1599,7 +1776,9 @@ footer a { color: #fff; }
   .hero-ctas,
   .btn-primary,
   .btn-secondary,
-  .nav-cta {
+  .nav-cta,
+  .docs-subnav,
+  .docs-footer-nav {
     display: none !important;
   }
   /* Reset to print-friendly defaults */
@@ -1618,6 +1797,23 @@ footer a { color: #fff; }
     max-width: none;
     padding: 0 1cm;
   }
+  /* Force compare-tables and FAQ details to render fully (no scroll, no
+     hidden content) when printed. */
+  .compare-table-wrap { overflow-x: visible; }
+  .compare-table { min-width: 0; }
+  .faq details { /* Open every details so printed pages show all answers. */ }
+  .faq details > summary::after { content: ""; }
+  .faq details > p { display: block; }
+  /* Code blocks should wrap rather than scroll on paper. */
+  .terminal,
+  .docs-page pre {
+    white-space: pre-wrap;
+    overflow-x: visible;
+    box-shadow: none;
+    border: 1pt solid #000;
+    background: #f6f6f6 !important;
+    color: #000 !important;
+  }
   /* Show full URLs after links */
   a[href^="http"]:after,
   a[href^="/"]:after {
@@ -1632,12 +1828,15 @@ footer a { color: #fff; }
   }
   h1, h2, h3 {
     page-break-after: avoid;
+    break-after: avoid;
   }
   h2, h3 {
     page-break-before: auto;
+    break-before: auto;
   }
-  pre, code, table {
+  pre, code, table, blockquote, .pain-quote, .gh-pr, .scenario {
     page-break-inside: avoid;
+    break-inside: avoid;
   }
   /* Header/footer-style at top of every printed page (page meta) */
   .legal-header,
@@ -1647,3 +1846,4 @@ footer a { color: #fff; }
     margin-bottom: 0.5cm;
   }
 }
+
