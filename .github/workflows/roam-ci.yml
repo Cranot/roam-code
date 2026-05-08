@@ -98,6 +98,44 @@ jobs:
       - name: Ruff lint
         run: ruff check src/ tests/
 
+  # -- Doc hygiene: anti-drift gates ---------------------------------------
+  # Three scripts that catch the most common doc-rot patterns:
+  #   - test_no_internal_language.py — fail if any tracked file matches a
+  #     forbidden internal-session pattern (Pass NN, Phase X of v2, dogfood
+  #     notes YYYY-MM-DD, personal Windows paths, day-job customer names).
+  #   - sync_surface_counts.py — fail if README/llms-install/server.json
+  #     quote stale command/MCP-tool/language counts.
+  #   - linkcheck.py — fail if any internal landing-page link 404s.
+  #   - strip_metadata.py — fail if any tracked PDF/PNG/SVG has identifying
+  #     metadata (author, creator, EXIF, embedded paths).
+  doc-hygiene:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # for the test that uses git ls-files
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install
+        run: |
+          pip install -e ".[dev]"
+          pip install pypdf
+
+      - name: Anti-leak language gate
+        run: pytest tests/test_no_internal_language.py -v
+
+      - name: Surface-count drift gate
+        run: python scripts/sync_surface_counts.py
+
+      - name: Internal-link integrity
+        run: python scripts/linkcheck.py --strict
+
+      - name: Binary metadata gate
+        run: python scripts/strip_metadata.py
+
   # -- Self-analysis: roam eats its own dog food on PRs ----------------------
   # Runs the local composite action (uses: ./) to analyse this repo on every
   # pull request. Posts a sticky PR comment with health score and pr-risk,
