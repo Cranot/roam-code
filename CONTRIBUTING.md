@@ -193,6 +193,87 @@ Use the [Feature Request](https://github.com/Cranot/roam-code/issues/new?templat
 
 See the [Architecture Guide](https://roam-code.com/docs/architecture) for the full list of patterns and conventions.
 
+## Commit messages
+
+Format: `<type>: <imperative summary>` — keep the summary under 72 chars.
+
+Types: `feat`, `fix`, `docs`, `refactor`, `test`, `ci`, `chore`, `perf`,
+`build`, `style`.
+
+Body lines are optional. When you add one, explain *why*, not *what* —
+the diff already shows the what. Lead with the user-visible problem or
+the design constraint.
+
+**Good:**
+
+```
+feat: add roam stale-refs --attest for in-toto v1 attestations
+fix: skip changelog.html in linkcheck (auto-rendered, contains examples)
+docs: consolidate to roam-code.com, disable github pages
+refactor: collapse two adjacent provider classes in stale-refs hints
+ci: render changelog.html on every push
+```
+
+**Don't:**
+
+- Phase numbering: `phase 1-5 build: …`, `phase 4C polish`
+- Round numbering: `round 4 #15: …`, `pass 79 polish`
+- Polish-speak: `5 micro passes`, `5 conversion-leverage polish`
+- Session-named bundles: `25-phase polish round (5 leaks + 5 polish + …)`
+
+This is professional, not personal-journal. The CHANGELOG entry is
+where the colour goes; the commit subject is just the index.
+
+## Version + release cadence
+
+Single source of truth: `pyproject.toml` → `version`. Everything else
+(`server.json`, `mcp-server-card.json` x2, README badge, `llms-install`
+counts) syncs from it via `scripts/sync_surface_counts.py`.
+
+**Workflow:**
+
+1. Every PR / direct push lands under `[Unreleased]` in `CHANGELOG.md`.
+2. A *release* is a deliberate event — bump `pyproject.toml`, rename
+   `[Unreleased]` → `[X.Y] - YYYY-MM-DD`, add a fresh empty
+   `[Unreleased]` block, publish to PyPI.
+3. Aim for **weekly to bi-weekly** releases. Patches (`X.Y.Z`) for
+   hotfixes only. Don't bump version per commit.
+
+**SemVer interpretation here:**
+
+| Bump        | Meaning                                                |
+| ----------- | ------------------------------------------------------ |
+| Major (`X`) | Breaking change to CLI / MCP API surface               |
+| Minor (`Y`) | New commands, new MCP tools, new languages, schema     |
+| Patch (`Z`) | Bug fixes, doc updates, internal cleanup, CI tweaks    |
+
+## Doc-hygiene gates (automatic)
+
+CI runs four scripts on every push. If your change fails a gate, fix
+the underlying drift; don't bypass it.
+
+1. `tests/test_no_internal_language.py` — fails on internal-session
+   shorthand (phase numbering, sales-positioning words, day-job
+   customer names, etc.).
+2. `scripts/sync_surface_counts.py` — fails if README / llms-install /
+   landing pages quote stale command / MCP-tool / language counts.
+3. `scripts/build_changelog_html.py` — fails if the rendered
+   `changelog.html` drifts from `CHANGELOG.md`.
+4. `scripts/linkcheck.py` — fails if any internal landing-page link or
+   anchor 404s.
+
+## Deploys
+
+Cloudflare Pages goes out by hand:
+
+```bash
+wrangler pages deploy templates/distribution/landing-page \
+  --project-name roam-code --branch main --commit-dirty=true
+```
+
+PyPI publishes from a tag (`.github/workflows/publish.yml`). After a
+version-bump commit lands on main: `git tag v12.50 && git push origin v12.50`.
+
 ## PR Guidelines
 
 - One feature or fix per PR
