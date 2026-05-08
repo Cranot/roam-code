@@ -72,6 +72,11 @@
 }
 
 * { box-sizing: border-box; }
+html {
+  /* Pin against iOS' opportunistic font-rescale on rotation. */
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
 html, body { margin: 0; padding: 0; }
 body {
   font-family: 'Space Grotesk', -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
@@ -80,6 +85,21 @@ body {
   color: var(--text);
   background: var(--bg);
 }
+/* Long URLs in legal-style prose should wrap rather than blow out the
+   viewport. Scoped to body-text containers so that monospace identifiers
+   and short inline code stay intact. */
+.legal-page,
+.faq details p,
+.trust-cell span,
+.pain-quote,
+.dogfood-list li,
+.compare-foot {
+  overflow-wrap: break-word;
+}
+img, svg, video { max-width: 100%; height: auto; }
+/* Default heading line-height — without this, h1/h2/h3 inherit body's 1.6,
+   which leaves gaping vertical space inside two-line headlines on mobile. */
+h1, h2, h3, h4 { line-height: var(--lh-snug); }
 
 code { font-family: 'IBM Plex Mono', ui-monospace, SFMono-Regular, Menlo, monospace; }
 
@@ -87,7 +107,10 @@ a { color: var(--accent); text-decoration: none; }
 a:hover { text-decoration: underline; }
 a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 3px; }
 
-[id] { scroll-margin-top: 60px; }
+/* Sticky nav is ~58px; on docs pages a second sticky strip stacks on top
+   for ~110px combined. Use the larger value so anchor jumps don't hide
+   the heading under the nav on either layout. */
+[id] { scroll-margin-top: 80px; }
 
 .skip-link {
   position: absolute;
@@ -146,9 +169,15 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   margin: 0;
   padding: 0;
   font-size: 15px;
+  flex-wrap: wrap;
 }
 .nav-links a { color: var(--muted); }
 .nav-links a[aria-current="page"] { color: var(--accent); font-weight: 600; }
+@media (max-width: 600px) {
+  /* Six links × 24px gap = 120px of empty space. On a phone this forces
+     the menu onto three lines. Tighten the gap so it fits on two. */
+  .nav-links { gap: 14px; font-size: 14px; }
+}
 
 /* ─── Hero ─── */
 .hero {
@@ -286,6 +315,12 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   display: inline-block;
   margin: 0 auto 16px;
   text-align: left;
+  /* On phones the command can be wider than the container; scroll instead
+     of either wrapping ("pip install roam-" / "code &&") or overflowing. */
+  max-width: 100%;
+  overflow-x: auto;
+  white-space: nowrap;
+  vertical-align: top;
 }
 .install-cmd code { color: #fff; }
 .install-cmd code::before {
@@ -315,6 +350,20 @@ a:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-
   text-align: left;
 }
 @media (max-width: 900px) { .verbs-grid { grid-template-columns: repeat(2, 1fr); } }
+@media (max-width: 540px) { .verbs-grid { grid-template-columns: 1fr; } }
+/* Class modifiers used in setup.html / 404.html so they collapse correctly
+   on mobile (inline style="grid-template-columns:..." would block the
+   media-query override). */
+.verbs-grid--3,
+.numbers-grid--3 { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 700px) {
+  .verbs-grid--3,
+  .numbers-grid--3 { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .verbs-grid--3,
+  .numbers-grid--3 { grid-template-columns: 1fr; }
+}
 .verb-cell {
   background: var(--bg-alt);
   border: 1px solid var(--border);
@@ -456,7 +505,7 @@ a.verb-cell:hover {
 
 /* ─── Numbers date caption ─── */
 .numbers-date {
-  font-size: 11px;
+  font-size: 12px;
   color: var(--muted);
   font-style: italic;
   margin: -24px 0 28px;
@@ -603,7 +652,7 @@ a.verb-cell:hover {
 .gh-sev {
   display: inline-block;
   font-family: 'IBM Plex Mono', monospace;
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   padding: 2px 6px;
   border-radius: 3px;
@@ -613,7 +662,7 @@ a.verb-cell:hover {
 .gh-sev-high { background: #ffebe9; color: #cf222e; }
 .gh-sev-med  { background: #fff8c5; color: #7a5100; }
 .gh-conf {
-  font-size: 11px;
+  font-size: 12px;
   color: #4d555c;
   font-family: 'IBM Plex Mono', monospace;
 }
@@ -733,11 +782,31 @@ a.verb-cell:hover {
 /* ─── Numbers-grid label variant (used for "+ CodeRabbit / Greptile / Qodo" stack-fit cells) ─── */
 .numbers-grid--labels { grid-template-columns: repeat(2, 1fr); }
 .numbers-grid--labels .num-cell strong { font-size: var(--t-base); color: var(--accent); font-family: 'Space Grotesk', sans-serif; }
+@media (max-width: 540px) { .numbers-grid--labels { grid-template-columns: 1fr; } }
+/* When --3 + --labels combine (e.g. on /404), respect the --3 cascade. */
+.numbers-grid--3.numbers-grid--labels { grid-template-columns: repeat(3, 1fr); }
+@media (max-width: 700px) {
+  .numbers-grid--3.numbers-grid--labels { grid-template-columns: repeat(2, 1fr); }
+}
+@media (max-width: 480px) {
+  .numbers-grid--3.numbers-grid--labels { grid-template-columns: 1fr; }
+}
+/* Link variant of .num-cell — used on the 404 page's destination grid. */
+.num-cell--link {
+  text-decoration: none;
+  color: inherit;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.num-cell--link:hover {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  text-decoration: none;
+}
 .compare-table .yes { color: var(--pop); font-weight: 600; font-size: 13px; }
 .compare-table .no  { color: var(--muted-soft); font-size: 13px; }
 .compare-table .ltd { color: var(--warn); font-weight: 500; font-size: 13px; }
-.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 10px; }
-.compare-table small { display: block; font-size: 11px; color: var(--muted); margin-top: 4px; font-weight: 400; line-height: 1.4; }
+.compare-table sup { font-weight: 400; color: var(--muted); margin-left: 2px; font-size: 11px; vertical-align: super; }
+.compare-table small { display: block; font-size: 12px; color: var(--muted); margin-top: 4px; font-weight: 400; line-height: 1.4; }
 .compare-foot {
   margin: 18px 0 0;
   font-size: 12px;
@@ -761,14 +830,21 @@ a.verb-cell:hover {
   line-height: 1.7;
 }
 .legal-header { margin-bottom: 36px; padding-bottom: 18px; border-bottom: 1px solid var(--border); }
-.legal-header h1 { font-size: 36px; margin: 0 0 8px; font-weight: 600; }
+.legal-header h1 {
+  font-size: clamp(28px, 5vw, 36px);
+  line-height: var(--lh-tight);
+  margin: 0 0 8px;
+  font-weight: 600;
+}
 .legal-meta { font-size: 13px; color: var(--muted); margin: 0; }
 .legal-page article h2 {
   font-size: 20px;
+  line-height: var(--lh-snug);
   font-weight: 600;
   margin: 32px 0 12px;
   color: var(--accent);
 }
+.legal-page article h3 { line-height: var(--lh-snug); }
 .legal-page article p { margin: 0 0 14px; }
 .legal-page article ul, .legal-page article ol { margin: 0 0 14px; padding-left: 26px; }
 .legal-page article li { margin-bottom: 6px; }
@@ -830,8 +906,17 @@ a.verb-cell:hover {
 .status-row strong { color: var(--text); flex-shrink: 0; }
 .status-row .status-text { color: var(--muted); margin-left: auto; text-align: right; }
 @media (max-width: 600px) {
-  .status-row { flex-direction: column; align-items: flex-start; }
-  .status-row .status-text { margin-left: 0; text-align: left; }
+  /* Two-row layout on phones: [dot · name] on the first line, status text
+     wrapping below. Keeps the dot anchored to the service it labels. */
+  .status-row {
+    flex-wrap: wrap;
+    row-gap: 4px;
+  }
+  .status-row .status-text {
+    flex-basis: 100%;
+    margin-left: 24px; /* line up with strong, past the 12px dot + 12px gap */
+    text-align: left;
+  }
 }
 
 /* ─── Buyer-pain band ─── */
@@ -1432,7 +1517,15 @@ footer a { color: #fff; }
   .footer-col a,
   .verb-cell,
   .num-cell,
-  .faq summary {
+  .faq summary,
+  .docs-subnav a,
+  .dogfood-list a,
+  .trust-cell a,
+  .pain-source a,
+  .compare-foot a,
+  .legal-foot a,
+  .legal-page article a,
+  .audit-upsell a {
     min-height: 44px;
     display: inline-flex;
     align-items: center;
@@ -1440,10 +1533,59 @@ footer a { color: #fff; }
   }
   .num-cell {
     min-height: 88px;
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
   }
+  .num-cell--link { padding-block: 12px; }
   .footer-col a {
     padding-block: 10px;
   }
+  /* The legal-page CTA strip uses a smaller button for visual rhythm; on
+     touch screens lift it back above WCAG 2.5.5 minimum. */
+  .page-cta-inner .btn-primary {
+    padding: 12px 18px;
+    min-height: 44px;
+  }
+}
+
+/* ─── Container padding — drop from 24px to 16px on phones so 320-360px
+       viewports keep more readable line-length. The 24px desktop pad eats
+       48px of a 320px screen, which on long titles forces ugly hyphenation
+       breaks. ─── */
+@media (max-width: 480px) {
+  .nav-inner,
+  .hero-inner,
+  .whats-in-inner,
+  .how-it-works-inner,
+  .demo-block-inner,
+  .compare-inner,
+  .pain-band-inner,
+  .products-intro-inner,
+  .products,
+  .audit-upsell-inner,
+  .trust-strip-inner,
+  .faq-inner,
+  .footer-inner,
+  .dogfood-band-inner,
+  .docs-subnav-inner {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .compare-table-wrap {
+    margin-left: -16px;
+    margin-right: -16px;
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  .legal-page {
+    padding-left: 16px;
+    padding-right: 16px;
+  }
+  /* Hero on a tiny viewport: trim vertical air and tighten head→sub gap. */
+  .hero { padding: 56px 0 40px; }
+  .hero-headline { margin-bottom: 18px; }
+  .hero-subhead { margin-bottom: 28px; font-size: 17px; }
 }
 
 /* ─── Print: legal/info pages should print clean ─── */
