@@ -7,6 +7,87 @@ and this project adheres to [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [12.47] - 2026-05-08
+
+### Internal cleanup + anti-drift CI gates
+
+A maintenance release that scrubs internal session shorthand from source
+comments, docstrings, CHANGELOG entries, and template files; aligns
+surface counts across documentation; and lands four CI gates that
+prevent regression.
+
+#### Anti-drift CI gates (new)
+
+- **`tests/test_no_internal_language.py`** — fails any commit that
+  re-introduces 16 forbidden patterns: session-pass numbering, letter-
+  coded date markers (R5/W3/X14/etc.), "Phase X of v2 monetization plan",
+  internal-doc cross-references, dogfood-notes session markers, personal
+  Windows paths, day-job customer names, claude-memory paths, the old
+  cranot.github.io docs URL, CFO-objection sales-pitch language,
+  Greek-vendor exclusion clauses.
+- **`scripts/sync_surface_counts.py`** — single source of truth via
+  `roam.surface_counts` + `roam.languages.registry`. Dry-run reports
+  drift; `--write` rewrites README + llms-install + server.json.
+- **`scripts/linkcheck.py`** — walks every tracked landing-page HTML and
+  asserts every internal href + #anchor resolves. `--external` optional.
+- **`scripts/strip_metadata.py`** — scans every tracked PDF / PNG / SVG
+  for identifying metadata; dry-run reports leaks, `--write` rewrites
+  files with neutral metadata.
+- All four wired into `.github/workflows/roam-ci.yml` as a new
+  `doc-hygiene` job that runs on every PR.
+
+#### Source comments + tests
+
+- Bulk-scrubbed ~110 source files of internal session prefixes
+  (numbered "Pass" comments, letter-coded date markers, "Phase-N
+  polish", "Python-pivot dogfood" annotations).
+- `cmd_audit.py` + `cmd_audit_trail_export.py` + `cmd_postmortem.py` +
+  `cmd_article_12_check.py` + `cmd_permit.py` docstrings rewritten as
+  neutral product descriptions.
+- Restored `if not include_tooling:` guard + `excluded_tooling = 0`
+  initializer + `from roam.output.file_role_hints import is_excluded_path`
+  in `cmd_smells.py` (fixed an indentation regression caught by the
+  test suite).
+- Renamed regression-FP corpus fixtures to neutral names; per-entry
+  description prefixes scrubbed.
+
+#### Documentation + product naming
+
+- Audit deliverable name reframed: "AI Agent Readiness Audit" →
+  "PR Replay" on landing-page upsell + "Codebase Architecture Audit"
+  on legal templates and the audit-report template/sample/PDF.
+- DPA + SOW master template generalized: dropped Stripe-Atlas /
+  Greek-IKE entity-structure language; tier rows replaced with
+  bracketed placeholders.
+- `templates/legal/security-procurement-packet.md` — links into
+  `docs/strategy/...` replaced with public roam-code.com/pricing URL.
+- `templates/email/customer-journey.md` — hard-coded "— Dimitris"
+  signature replaced with `[YOUR_NAME]` placeholder.
+- README + llms-install + server.json + mcp-server-card.json
+  surface counts: 194 → 202 commands, 27 → 28 languages,
+  5 → 6 cross-language bridges (Django bridge added).
+- Old `cranot.github.io` documentation URL replaced with
+  `roam-code.com/docs/` across 9 tracked files (config, source,
+  tests, docs).
+
+#### History rewrites
+
+- Six force-pushes during the cleanup sweep, each documented in the
+  new `internal/runbook-history-rewrite.md` (gitignored). Removed from
+  history: 27 strategic / internal docs (`docs/strategy/*`,
+  `docs/products/*`, `dev/REPORT-*.md`, `internal backlog`,
+  `dev/COMPETITOR-WATCH-*.md`, `templates/distribution/landing-page-spec.md`,
+  Greek-vendor-exclusion templates), 5 session-named regression-FP
+  fixtures (renamed to neutral `corpus_*.json` paths).
+- Author rewrite: 389 commits authored as "redacted" + 11 commits
+  authored as "Claude" rewritten to "Cranot" so GitHub Insights shows
+  uniform attribution. Third-party contributors (Chuck Jewell, holive,
+  Mark Ramsell, Livio Ravetto) untouched.
+
+#### `pyproject.toml`
+
+- `authors` updated to `Cranot` (was `redacted`).
+
 ## [12.46] - 2026-05-07
 
 ### CI fix — ruff lint cleanup
