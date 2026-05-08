@@ -276,13 +276,44 @@ runs:
             esac
           fi
 
+          # Separate stdout (the JSON envelope, what callers consume)
+          # from stderr (progress + warnings, surfaced in workflow logs).
+          # Merging the two streams into the .json file used to break
+          # downstream JSON parsers when a command logged a warning to
+          # stderr that landed in the file.
           echo "::group::roam ${ARGS[*]}"
           set +e
-          roam --json "${ARGS[@]}" > "${RESULTS_DIR}/${CMD}.json" 2>&1
+          roam --json "${ARGS[@]}" \
+            > "${RESULTS_DIR}/${CMD}.json" \
+            2> "${RESULTS_DIR}/${CMD}.stderr"
           CMD_EXIT=$?
           set -e
 
+          # Validate the JSON before downstream steps consume it. If the
+          # output is non-JSON (e.g. a Python crash trace), wrap in a
+          # structured error envelope so dependents see a deterministic
+          # shape.
+          if ! python3 -c "import json,sys; json.load(open('${RESULTS_DIR}/${CMD}.json'))" 2>/dev/null; then
+            python3 - <<EOF > "${RESULTS_DIR}/${CMD}.json"
+        import json, pathlib
+        stdout = pathlib.Path("${RESULTS_DIR}/${CMD}.json").read_text(encoding="utf-8", errors="replace")
+        stderr = pathlib.Path("${RESULTS_DIR}/${CMD}.stderr").read_text(encoding="utf-8", errors="replace")
+        json.dump({
+            "status": "error",
+            "command": "${CMD}",
+            "exit_code": ${CMD_EXIT},
+            "stdout": stdout[:8000],
+            "stderr": stderr[:8000],
+            "reason": "non-JSON output from roam --json",
+        }, open("${RESULTS_DIR}/${CMD}.json", "w"), indent=2)
+        EOF
+          fi
+
           cat "${RESULTS_DIR}/${CMD}.json"
+          if [ -s "${RESULTS_DIR}/${CMD}.stderr" ]; then
+            echo "--- stderr ---"
+            cat "${RESULTS_DIR}/${CMD}.stderr"
+          fi
           echo ""
           echo "::endgroup::"
 

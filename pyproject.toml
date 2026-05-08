@@ -1,10 +1,14 @@
 [build-system]
-requires = ["setuptools>=68.0", "wheel"]
+# setuptools >= 77 is required to emit the PEP 639 ``License-Expression``
+# metadata field. The 12.47 wheel was built with an older setuptools and
+# shipped to PyPI with empty license metadata (the ``Apache-2.0`` SPDX
+# expression below got dropped).
+requires = ["setuptools>=77.0", "wheel"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "roam-code"
-version = "12.48"
+version = "12.50"
 description = "Instant codebase comprehension for AI coding agents"
 readme = "README.md"
 requires-python = ">=3.9"

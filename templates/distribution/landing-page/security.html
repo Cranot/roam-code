@@ -141,17 +141,36 @@
 
       <h3>Supply-chain integrity</h3>
       <ul>
-        <li>PyPI releases use OIDC <strong>Trusted Publishing</strong> (no long-lived API tokens) — see <code>.github/workflows/publish.yml</code></li>
+        <li>PyPI releases use OIDC <strong>Trusted Publishing</strong> (no long-lived API tokens) — see <a href="https://github.com/Cranot/roam-code/blob/main/.github/workflows/publish.yml"><code>.github/workflows/publish.yml</code></a></li>
         <li>Each release is built reproducibly from a tagged commit</li>
         <li>Sigstore attestations are produced by the publish workflow (verifiable provenance)</li>
         <li>The repo enables Dependabot security updates + secret scanning + push-protection</li>
       </ul>
 
+      <h4>Verify a release yourself</h4>
+      <p>
+        After installing from PyPI, you can confirm provenance with the
+        Sigstore client. The wheel and its attestation are both fetched
+        from the publish workflow's GitHub OIDC chain — no per-release
+        keys to manage.
+      </p>
+      <pre class="terminal" aria-label="Sigstore verification commands"><span class="t-prompt">$</span> <span class="t-cmd">pip install sigstore</span>
+<span class="t-prompt">$</span> <span class="t-cmd">pip download roam-code --no-deps -d /tmp/roam</span>
+<span class="t-prompt">$</span> <span class="t-cmd">sigstore verify github \
+    --cert-identity-regexp 'https://github.com/Cranot/roam-code/.github/workflows/publish.yml@.*' \
+    --bundle /tmp/roam/roam_code-*.whl.publish.attestation \
+    /tmp/roam/roam_code-*.whl</span></pre>
+      <p>
+        SBOM (CycloneDX) and the workflow's GitHub Attestations view are
+        linked from each <a href="https://github.com/Cranot/roam-code/releases">GitHub release</a>.
+      </p>
+
       <h3>Audit-trail evidence</h3>
       <p>
         Roam itself emits in-toto v1 attestations and a SHA-256-chained
-        audit-trail JSONL on every analysis. Run <code>roam cga verify</code>
-        on a statement to verify its signature with cosign.
+        audit-trail JSONL on every analysis. Run <code>roam cga verify
+        STATEMENT.json</code> to confirm the predicate's cosign signature
+        before consuming the artefact in CI.
       </p>
 
       <h3>Hosted services posture</h3>
