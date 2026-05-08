@@ -52,6 +52,17 @@ Top 11 PRs ranked by severity (high → medium → total).
 - **Add `roam clones --persist` to your indexing pipeline.** Then `roam critique` picks up clone-not-edited cases on every PR — the single most common AI-shaped bug across replays in similar codebases.
 - **Consider the Deep tier** if the patterns above warrant a 90-PR window, per-detector deep-dive, and a 90-minute walk-through with a written remediation plan: <https://roam-code.com/#audit>.
 
+## Apply this fee toward Roam Review
+
+50% of the engagement fee — **$1,250** — credits toward your first year of [Roam Review](https://roam-code.com/pricing) if you subscribe within **60 days** of report delivery. Roam Review runs the same detectors on every pull request automatically, with a sticky PR comment, BLOCK / REVIEW / APPROVE verdict, and exit-code-5 CI gating. Mention this report when subscribing and we apply the credit to the first invoice.
+
+## What this report does *not* cover
+
+- **Semantic correctness** — whether the code does the right thing. We complement semantic reviewers (CodeRabbit, Greptile, Qodo), we don't replace them.
+- **Security audit** of the kind a third-party penetration test would produce. We surface structural risks (clones, blast radius, layer violations) — not exploit paths.
+- **Performance profiling**. Some findings touch hot paths (when runtime telemetry is wired), but this isn't a benchmark run.
+- **Code review of in-flight PRs.** This report covers *merged* history. For pre-merge gating, install the free CLI plus, when it ships, the Roam Review GitHub App.
+
 ## Methodology
 
 Roam replays the current detector set against each commit's outgoing diff as if it were a PR — no historical re-indexing. Findings reflect what Roam catches today on those PRs, not what an earlier Roam version would have. The detector set is stable across Team (30 PRs) and Deep (90 PRs) windows.

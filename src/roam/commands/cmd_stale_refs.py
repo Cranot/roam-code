@@ -42,6 +42,7 @@ from pathlib import Path
 
 import click
 
+from roam.commands.next_steps import format_next_steps_text, suggest_next_steps
 from roam.commands.stale_refs_anchors import AnchorCache
 from roam.commands.stale_refs_hints import HintContext, best_hint
 from roam.db.connection import find_project_root
@@ -1323,15 +1324,45 @@ def stale_refs(
     full_targets_with_hints = [_build_item(tgt, srcs, all_sources=True) for tgt, srcs in sorted_targets]
     displayed = [_build_item(tgt, srcs, all_sources=False) for tgt, srcs in sorted_targets[:limit]]
 
+    # ---- Aggregations agents/dashboards want ─────────────────────────
+    by_kind: dict[str, int] = defaultdict(int)
+    by_confidence: dict[str, int] = defaultdict(int)
+    fixable_count = 0
+    for item in full_targets_with_hints:
+        # Confidence band: HIGH / MEDIUM / LOW / NONE.
+        hint = item.get("hint")
+        confidence = hint["confidence"] if hint else "NONE"
+        by_confidence[confidence] += 1
+        if confidence == "HIGH" and item["sources"] and item["sources"][0]["kind"] != "anchor":
+            # Anchor findings have no rename target — they aren't fixable.
+            fixable_count += 1
+        # Per-kind tallies are taken from each source so a single target
+        # with mixed kinds (e.g. one md_inline + one html_attr) is
+        # represented accurately.
+        for s in item["sources"]:
+            by_kind[s["kind"]] += 1
+
     if target_count == 0:
         verdict = f"all refs resolve · {refs_seen} checked · {files_scanned} files · {scan_seconds}s"
     else:
         anchor_note = f" · {anchor_findings} anchor" if anchor_findings else ""
+        fix_note = f" · {fixable_count} auto-fixable" if fixable_count else ""
         diff_note = f" · diff base {diff_info['base_sha'][:7]}" if diff_info else ""
         verdict = (
-            f"{total_refs} stale ref(s) · {target_count} missing target(s){anchor_note}{diff_note} · "
+            f"{total_refs} stale ref(s) · {target_count} missing target(s){anchor_note}{fix_note}{diff_note} · "
             f"{refs_seen} refs checked · {files_scanned} files · {scan_seconds}s"
         )
+
+    # ---- Actionable next steps (consumed by JSON callers + text mode)
+    next_steps = suggest_next_steps(
+        "stale-refs",
+        {
+            "missing_targets": target_count,
+            "fixable_count": fixable_count,
+            "anchor_findings": anchor_findings,
+            "by_confidence": dict(by_confidence),
+        },
+    )
 
     # ---- --fix mode short-circuits all other output paths
     if fix is not None:
@@ -1431,6 +1462,10 @@ def stale_refs(
             "scan_seconds": scan_seconds,
             "sort_by": sort_by,
             "anchor_findings": anchor_findings,
+            "fixable_count": fixable_count,
+            "by_kind": dict(by_kind),
+            "by_confidence": dict(by_confidence),
+            "next_steps": next_steps,
         }
         if diff_info:
             summary["diff_base"] = diff_info["base_sha"]
@@ -1458,6 +1493,9 @@ def stale_refs(
     click.echo(f"VERDICT: {verdict}\n")
     if target_count == 0:
         click.echo(f"Scanned {files_scanned} files, checked {refs_seen} references — all targets exist.")
+        if next_steps:
+            click.echo()
+            click.echo(format_next_steps_text(next_steps))
         return
 
     if by_file:
@@ -1484,6 +1522,9 @@ def stale_refs(
         if len(sorted_files) > limit:
             click.echo(f"  (+{len(sorted_files) - limit} more source files, raise --limit to see all)")
         click.echo(f"  Total: {total_refs} stale ref(s) across {len(sorted_files)} source file(s).")
+        if next_steps:
+            click.echo()
+            click.echo(format_next_steps_text(next_steps))
         if gate and target_count > 0:
             ctx.exit(5)
         return
@@ -1508,6 +1549,10 @@ def stale_refs(
     if target_count > limit:
         click.echo(f"  (+{target_count - limit} more missing targets, raise --limit to see all)")
     click.echo(f"  Total: {total_refs} stale ref(s) across {target_count} missing target(s) in {files_scanned} files.")
+
+    if next_steps:
+        click.echo()
+        click.echo(format_next_steps_text(next_steps))
 
     if gate and target_count > 0:
         ctx.exit(5)
