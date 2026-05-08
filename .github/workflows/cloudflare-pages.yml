@@ -1,0 +1,62 @@
+name: Deploy roam-code.com (Cloudflare Pages)
+
+# Auto-deploys the static landing page to Cloudflare Pages whenever
+# anything under ``templates/distribution/landing-page/`` changes on
+# main. Replaces the manual ``wrangler pages deploy …`` workflow.
+#
+# Required GitHub Actions secrets (set with ``gh secret set …``):
+#
+#   CLOUDFLARE_API_TOKEN  — token with the
+#                          ``Cloudflare Pages — Edit`` permission,
+#                          scoped to the ``roam-code`` Pages project.
+#                          Create at https://dash.cloudflare.com/profile/api-tokens
+#   CLOUDFLARE_ACCOUNT_ID — b450baf0922bf8b5f958e641d27a74e7
+#                          (the account UUID; not secret per se but
+#                          stored as a secret for tidiness).
+#
+# The render-changelog step runs first so any CHANGELOG.md edit on
+# this push is reflected in the deployed page. The doc-hygiene CI
+# job already enforces that the rendered file matches CHANGELOG.md
+# on every push, so this is belt-and-braces.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "templates/distribution/landing-page/**"
+      - "CHANGELOG.md"  # rendered into changelog.html
+      - ".github/workflows/cloudflare-pages.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  deployments: write
+
+concurrency:
+  group: "cloudflare-pages"
+  cancel-in-progress: true
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    name: Deploy to Cloudflare Pages
+    environment:
+      name: production
+      url: https://roam-code.com/
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Render CHANGELOG.md → changelog.html
+        run: python scripts/build_changelog_html.py --write
+
+      - name: Deploy via Wrangler
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: pages deploy templates/distribution/landing-page --project-name=roam-code --branch=main --commit-dirty=true

@@ -144,10 +144,24 @@ def render_markdown(md: str) -> str:
             i = j
             continue
 
-        # Plain prose line
+        # Plain prose: greedily collect consecutive non-empty,
+        # non-heading, non-bullet lines into one paragraph. This is
+        # the standard markdown paragraph rule and produces cleaner
+        # HTML than one ``<p>`` per source line (which the prior
+        # hand-rolled changelog.html used and which read awkwardly).
         close_ul()
-        out.append(f"<p>{_inline(stripped)}</p>")
-        i += 1
+        para_lines = [stripped]
+        j = i + 1
+        while j < len(lines):
+            nxt = lines[j].strip()
+            if not nxt:
+                break
+            if nxt.startswith(("#", "- ", "* ")):
+                break
+            para_lines.append(nxt)
+            j += 1
+        out.append(f"<p>{_inline(' '.join(para_lines))}</p>")
+        i = j
 
     close_ul()
     return "\n".join(out) + "\n"
