@@ -83,6 +83,19 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
         "Corporate-structure decision leak",
         re.compile(r"Stripe Atlas Delaware C-corp / Greek freelancer|Greek IKE vs Atlas"),
     ),
+    # Old git-config OneDrive-folder name that leaks the user's local
+    # filesystem layout. Was the default committer name pre-author-rewrite,
+    # then crept back into a generated audit-report sample. Matches stand-
+    # alone occurrences; CHANGELOG history references in passing are OK
+    # via the CHANGELOG.md whitelist below.
+    ("Old git-config CosmoHac string", re.compile(r"\bCosmoHac\b")),
+    # Internal-roadmap phrasing that crept into shipped module docstrings
+    # ("deferred from MVP", "deferred to phase 2", "(future)"). Customers
+    # don't need to know our internal sequencing.
+    (
+        "Internal-roadmap phrasing in shipped docs",
+        re.compile(r"\bdeferred from MVP\b|\bdeferred to (phase|wave|sprint)\b", re.IGNORECASE),
+    ),
 ]
 
 
@@ -95,6 +108,11 @@ WHITELIST_FILES = {
     "src/roam/security/aibom_extension.py",
     "tests/test_ai_ratio.py",
     "tests/test_v12_2.py",
+    # CHANGELOG documents historical scrubs by name; the entries name what
+    # was removed, which is intentional (auditors can verify the cleanup
+    # actually happened). New leaks won't ride in via CHANGELOG because
+    # changelog entries describe past commits, not present state.
+    "CHANGELOG.md",
 }
 
 

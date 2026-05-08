@@ -10,14 +10,36 @@ build/
 # Testing
 .pytest_cache/
 .coverage
+.coverage.*
+coverage.xml
 htmlcov/
 .tox/
+.mypy_cache/
+.ruff_cache/
+.pyre/
+.pytype/
 
 # IDE
 .vscode/
 .idea/
 *.swp
 *.swo
+*.swn
+.history/
+*~
+*.bak
+*.orig
+
+# Local secrets / env
+.env
+.env.*
+!.env.example
+.python-version
+.tool-versions
+*.local
+
+# Editor/AI assistant artefacts that shouldn't ride into the public repo
+.aider*
 
 # Roam index
 .roam/
