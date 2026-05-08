@@ -334,3 +334,51 @@ def test_no_track_engagement_flag_skips_ledger(tmp_path, monkeypatch):
     # Either the ledger doesn't exist or it doesn't contain this run.
     if ledger.exists():
         assert ledger.read_text(encoding="utf-8").strip() == ""
+
+
+# ---------------------------------------------------------------------------
+# PDF rendering
+# ---------------------------------------------------------------------------
+
+
+def test_render_pdf_returns_failure_when_neither_backend_present(tmp_path, monkeypatch):
+    """When pandoc + reportlab are both absent, PDF render fails gracefully."""
+    import sys
+
+    from roam.commands.cmd_pr_replay import _render_pdf
+
+    # Make ``shutil.which("pandoc")`` return None
+    monkeypatch.setattr("shutil.which", lambda _: None)
+    # Block reportlab import by injecting a sentinel that raises on attribute access
+    monkeypatch.setitem(sys.modules, "reportlab", None)
+
+    ok, msg = _render_pdf("# Test\n\nbody", tmp_path / "out.pdf")
+    assert ok is False
+    assert "pandoc" in msg.lower() or "reportlab" in msg.lower()
+
+
+def test_pdf_flag_implies_output_when_unset(tmp_path):
+    """``--pdf`` without ``--output`` writes the markdown source as ``<pdf>.md``."""
+    pdf_target = tmp_path / "report.pdf"
+    code, out = _invoke("--tier", "team", "--pdf", str(pdf_target))
+    # Note: we can't guarantee the PDF render succeeded (pandoc / reportlab
+    # may not be on the test machine), but the markdown sibling MUST be
+    # written regardless.
+    assert code == 0
+    md_sibling = tmp_path / "report.md"
+    assert md_sibling.exists(), f"markdown sibling not written next to {pdf_target}"
+    assert md_sibling.read_text(encoding="utf-8").startswith("# PR Replay Report")
+
+
+def test_json_envelope_exposes_pdf_fields(tmp_path):
+    """``roam --json pr-replay --output X`` carries pdf_path + pdf_backend in summary."""
+    output = tmp_path / "report.md"
+    code, out = _invoke("--tier", "sample", "--output", str(output), json_mode=True)
+    assert code == 0
+    envelope = _json.loads(out[out.find("{") :])
+    summary = envelope["summary"]
+    # When --pdf is unset, both fields should be None.
+    assert "pdf_path" in summary
+    assert "pdf_backend" in summary
+    assert summary["pdf_path"] is None
+    assert summary["pdf_backend"] is None

@@ -470,6 +470,104 @@ def _record_engagement(
 
 
 # ---------------------------------------------------------------------------
+# PDF rendering — pandoc preferred, reportlab fallback.
+# ---------------------------------------------------------------------------
+
+
+def _render_pdf(markdown_text: str, output_path: Path) -> tuple[bool, str]:
+    """Render the report markdown to a PDF at ``output_path``.
+
+    Returns ``(success, backend_used_or_error_message)``.
+
+    Prefers pandoc (better typography, native markdown awareness).
+    Falls back to reportlab (pure-Python, simpler output) when pandoc
+    is missing. If both are unavailable, returns ``(False, message)``
+    so the caller can surface a useful error to the operator.
+    """
+    # ── Path 1: pandoc ────────────────────────────────────────────────────
+    import shutil
+
+    if shutil.which("pandoc"):
+        import subprocess
+        import tempfile
+
+        with tempfile.NamedTemporaryFile(mode="w", suffix=".md", delete=False, encoding="utf-8") as tmp:
+            tmp.write(markdown_text)
+            tmp_path = tmp.name
+        try:
+            result = subprocess.run(
+                ["pandoc", tmp_path, "-o", str(output_path), "--pdf-engine=xelatex"],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result.returncode == 0:
+                return True, "pandoc"
+            # pandoc may fail on systems without xelatex; retry default engine.
+            result2 = subprocess.run(
+                ["pandoc", tmp_path, "-o", str(output_path)],
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            if result2.returncode == 0:
+                return True, "pandoc"
+            err = (result.stderr or result2.stderr or "").strip()[:200]
+            # Fall through to reportlab.
+            pandoc_err = f"pandoc failed: {err}"
+        except (FileNotFoundError, subprocess.TimeoutExpired) as e:
+            pandoc_err = f"pandoc invocation error: {e}"
+        finally:
+            Path(tmp_path).unlink(missing_ok=True)
+    else:
+        pandoc_err = "pandoc not on PATH"
+
+    # ── Path 2: reportlab fallback ────────────────────────────────────────
+    try:
+        from reportlab.lib.pagesizes import A4
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.platypus import Paragraph, SimpleDocTemplate, Spacer
+    except ImportError:
+        return False, (
+            f"PDF rendering unavailable: {pandoc_err} and reportlab not installed. "
+            "Install pandoc (recommended) or `pip install reportlab`."
+        )
+
+    styles = getSampleStyleSheet()
+    doc = SimpleDocTemplate(str(output_path), pagesize=A4)
+    story: list = []
+    # Reportlab is intentionally simple here — render markdown line-by-line
+    # without parsing tables/code-fences. Pandoc is the preferred path; this
+    # branch is the "any PDF is better than no PDF" safety net.
+    for line in markdown_text.splitlines():
+        if not line.strip():
+            story.append(Spacer(1, 6))
+            continue
+        # Map a few markdown shapes to reportlab styles. Anything else =
+        # body paragraph with HTML escaping.
+        if line.startswith("# "):
+            style = styles["Title"]
+            text = line[2:]
+        elif line.startswith("## "):
+            style = styles["Heading1"]
+            text = line[3:]
+        elif line.startswith("### "):
+            style = styles["Heading2"]
+            text = line[4:]
+        else:
+            style = styles["BodyText"]
+            text = line
+        # Escape minimal HTML entities reportlab interprets.
+        text = text.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
+        story.append(Paragraph(text, style))
+    try:
+        doc.build(story)
+        return True, "reportlab"
+    except Exception as e:  # noqa: BLE001 — defensive; report the error
+        return False, f"reportlab build failed: {e}"
+
+
+# ---------------------------------------------------------------------------
 # CLI entry point.
 # ---------------------------------------------------------------------------
 
@@ -526,6 +624,18 @@ def _record_engagement(
     help="Write the markdown report to PATH instead of stdout.",
 )
 @click.option(
+    "--pdf",
+    "pdf_path",
+    default=None,
+    type=click.Path(dir_okay=False, writable=True),
+    help=(
+        "Also write a PDF render of the report to PATH. Requires ``pandoc`` on "
+        "PATH (preferred — better typography) or ``reportlab`` (simpler "
+        "fallback if pandoc unavailable). Implies --output if not set; the "
+        "Markdown source is written next to the PDF as ``<pdf>.md``."
+    ),
+)
+@click.option(
     "--track-engagement/--no-track-engagement",
     default=True,
     show_default=True,
@@ -544,6 +654,7 @@ def pr_replay_cmd(
     commit_range: str | None,
     client: str | None,
     output_path: str | None,
+    pdf_path: str | None,
     track_engagement: bool,
 ):
     """Generate a PR Replay report.
@@ -597,10 +708,56 @@ def pr_replay_cmd(
         generated_at=generated_at,
     )
 
+    # If --pdf is set without --output, derive the markdown sibling path so
+    # the operator always has the editable source next to the PDF deliverable.
+    if pdf_path and not output_path:
+        output_path = str(Path(pdf_path).with_suffix(".md"))
+
     if output_path:
         Path(output_path).write_text(report_md, encoding="utf-8")
         if not json_mode:
             click.echo(f"Wrote {len(report_md):,} bytes to {output_path}")
+
+    pdf_backend = None
+    if pdf_path:
+        ok, info = _render_pdf(report_md, Path(pdf_path))
+        if ok:
+            pdf_backend = info
+            # Strip identifying metadata (timezone leaks in /CreationDate,
+            # MiKTeX/xelatex chain in /Producer). Match the gate that
+            # scripts/strip_metadata.py enforces in CI so the deliverable
+            # we ship to a buyer doesn't carry our timezone.
+            try:
+                from pypdf import PdfReader, PdfWriter
+
+                neutral = {
+                    "/Title": "PR Replay Report",
+                    "/Author": "Roam",
+                    "/Subject": "",
+                    "/Keywords": "",
+                    "/Creator": "pandoc",
+                    "/Producer": "pandoc",
+                }
+                reader = PdfReader(str(pdf_path))
+                writer = PdfWriter()
+                for page in reader.pages:
+                    writer.add_page(page)
+                writer.add_metadata(neutral)
+                with open(pdf_path, "wb") as f:
+                    writer.write(f)
+            except ImportError:
+                # pypdf not available — PDF metadata stays as-is. Operator
+                # can run scripts/strip_metadata.py manually before delivery.
+                pass
+            except Exception:  # noqa: BLE001 — defensive
+                # PDF survives even if the metadata-strip step fails.
+                pass
+            if not json_mode:
+                click.echo(f"Wrote PDF to {pdf_path} (backend: {info})")
+        else:
+            # Surface the error but don't fail the command — markdown is the
+            # primary deliverable; PDF is a convenience.
+            click.echo(f"WARNING: PDF render failed — {info}", err=True)
 
     # Engagement ledger — paid tiers only, only when an output artefact
     # exists. Cheap, append-only JSONL the operator can `cat | jq` later
@@ -636,6 +793,8 @@ def pr_replay_cmd(
                         "output_path": output_path,
                         "generated_at": generated_at,
                         "engagement_logged_to": str(engagement_record) if engagement_record else None,
+                        "pdf_path": pdf_path,
+                        "pdf_backend": pdf_backend,
                     },
                     by_detector=by_detector,
                     commits=commits,
