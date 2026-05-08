@@ -4,7 +4,7 @@
 #
 #   repos:
 #     - repo: https://github.com/Cranot/roam-code
-#       rev: v11.1.2          # pin to a release tag
+#       rev: v12.46           # pin to a release tag
 #       hooks:
 #         - id: roam-secrets  # recommended: always-safe, no index required
 #         - id: roam-syntax-check
