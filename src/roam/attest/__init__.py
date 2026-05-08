@@ -19,7 +19,6 @@ v12.1 ships:
 * Embedded CycloneDX 1.7 + OpenVEX predicates
 * Reachability claims integrated with ``roam taint`` output
 * GitHub Artifact Attestations upload action
-* Multi-repo verification over Tailscale (redacted)
 """
 
 from __future__ import annotations

@@ -134,21 +134,21 @@ _bus factor 1 (min), 53 high-risk, 57 single-owner modules, top risk: tests/_
 
 | Directory | Risk | Bus-factor | Primary author | Share | Stale? |
 |---|---|---|---|---|---|
-| `tests/` | HIGH | 1 | redacted | 99% | no |
-| `src/roam/commands/` | HIGH | 1 | redacted | 100% | no |
-| `src/roam/languages/` | HIGH | 1 | redacted | 94% | no |
-| `src/roam/index/` | HIGH | 1 | redacted | 98% | no |
-| `src/roam/` | HIGH | 1 | redacted | 94% | no |
-| `src/roam/catalog/` | HIGH | 1 | redacted | 100% | no |
-| `src/roam/graph/` | HIGH | 1 | redacted | 100% | no |
-| `docs/site/` | HIGH | 1 | redacted | 100% | no |
-| `rules/community/security/` | HIGH | 1 | redacted | 100% | no |
-| `./` | HIGH | 1 | redacted | 98% | no |
-| `rules/community/correctness/` | HIGH | 1 | redacted | 100% | no |
-| `rules/community/style/language-pack/` | HIGH | 1 | redacted | 100% | no |
-| `src/roam/output/` | HIGH | 1 | redacted | 100% | no |
-| `src/roam/search/` | HIGH | 1 | redacted | 100% | no |
-| `src/roam/rules/` | HIGH | 1 | redacted | 100% | no |
+| `tests/` | HIGH | 1 | Cranot | 99% | no |
+| `src/roam/commands/` | HIGH | 1 | Cranot | 100% | no |
+| `src/roam/languages/` | HIGH | 1 | Cranot | 94% | no |
+| `src/roam/index/` | HIGH | 1 | Cranot | 98% | no |
+| `src/roam/` | HIGH | 1 | Cranot | 94% | no |
+| `src/roam/catalog/` | HIGH | 1 | Cranot | 100% | no |
+| `src/roam/graph/` | HIGH | 1 | Cranot | 100% | no |
+| `docs/site/` | HIGH | 1 | Cranot | 100% | no |
+| `rules/community/security/` | HIGH | 1 | Cranot | 100% | no |
+| `./` | HIGH | 1 | Cranot | 98% | no |
+| `rules/community/correctness/` | HIGH | 1 | Cranot | 100% | no |
+| `rules/community/style/language-pack/` | HIGH | 1 | Cranot | 100% | no |
+| `src/roam/output/` | HIGH | 1 | Cranot | 100% | no |
+| `src/roam/search/` | HIGH | 1 | Cranot | 100% | no |
+| `src/roam/rules/` | HIGH | 1 | Cranot | 100% | no |
 
 
 \newpage
