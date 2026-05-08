@@ -1631,6 +1631,17 @@ a.verb-cell:active { background: color-mix(in srgb, var(--accent-soft) 70%, var(
 .replay-fineprint a { color: var(--muted); text-decoration: underline; }
 .replay-fineprint a:hover { color: var(--accent); }
 
+/* Mailto fallback under the primary Stripe button on each paid tier card.
+   Visually subordinate so the eye lands on Buy first, but easy enough to
+   reach for buyers who want to ask a question before paying. */
+.replay-mailto-fallback {
+  margin-top: var(--s-2);
+  font-size: var(--t-sm);
+  padding: 8px 14px;
+  /* Override .btn-secondary's default 14px 22px to keep the visual
+     weight low — this is a "or" link, not a peer CTA. */
+}
+
 /* ─── Trust strip ─── */
 .trust-strip {
   padding: var(--section-y) 0;
