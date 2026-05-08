@@ -611,9 +611,7 @@ def _no_mutating_options(
 @click.option("--show", is_flag=True, help="Print current configuration.")
 @click.option("--semantic-status", is_flag=True, help="Show semantic backend readiness and embedding coverage.")
 @click.option("--env", "env_inventory", is_flag=True, help="List every ROAM_* env var read by the codebase.")
-@click.option(
-    "--check", "validate_check", is_flag=True, help="Validate .roam/config.json keys against known schema."
-)
+@click.option("--check", "validate_check", is_flag=True, help="Validate .roam/config.json keys against known schema.")
 @click.option(
     "--weights",
     "show_weights",

@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 # bumped to 1.1.0 to signal additive enhancements:
 # `evidence.matched_patterns` on detector findings,
 # `framework`/`framework_autodetected`/`framework_unknown` in math summary
-#, `roi_band` on debt items, `context_lines` on rule
+# , `roi_band` on debt items, `context_lines` on rule
 # violations + concerns (D6). All optional — pre-1.1 consumers continue
 # to work; new consumers can opt in to the richer fields.
 ENVELOPE_SCHEMA_VERSION = "1.1.0"

@@ -1004,7 +1004,7 @@ class TestDetectors:
 
 
 class TestSerialAwaitLoop:
-    """ serial-await-loop detector for JS/TS Promise.all opportunities."""
+    """serial-await-loop detector for JS/TS Promise.all opportunities."""
 
     def test_detects_for_of_with_await(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1068,7 +1068,7 @@ class TestSerialAwaitLoop:
 
 
 class TestAsyncBlockingSleep:
-    """ blocking calls inside async function (event-loop stall)."""
+    """blocking calls inside async function (event-loop stall)."""
 
     def test_detects_time_sleep_in_async(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1115,7 +1115,7 @@ class TestAsyncBlockingSleep:
 
 
 class TestBroadExceptSwallow:
-    """ bare `except Exception:` without re-raise is a swallow."""
+    """bare `except Exception:` without re-raise is a swallow."""
 
     def test_detects_swallow(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1170,7 +1170,7 @@ class TestBroadExceptSwallow:
 
 
 class TestUseEffectMissingDeps:
-    """ React useEffect without deps array."""
+    """React useEffect without deps array."""
 
     def test_detects_missing_deps(self, project_factory, monkeypatch):
         proj = project_factory(
@@ -1214,7 +1214,7 @@ class TestUseEffectMissingDeps:
 
 
 class TestDangerousEval:
-    """ eval / exec / new Function in production source."""
+    """eval / exec / new Function in production source."""
 
     def test_detects_eval(self, project_factory, monkeypatch):
         proj = project_factory(

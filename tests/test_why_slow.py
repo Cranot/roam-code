@@ -5,11 +5,8 @@ from __future__ import annotations
 import json
 import os
 import subprocess
-import sys
-import tempfile
 from pathlib import Path
 
-import pytest
 from click.testing import CliRunner
 
 from roam.cli import cli
@@ -22,9 +19,7 @@ def _make_repo(tmp: Path):
         encoding="utf-8",
     )
     subprocess.run(["git", "init", "-q"], cwd=tmp, check=True)
-    subprocess.run(
-        ["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], cwd=tmp, check=True
-    )
+    subprocess.run(["git", "-c", "user.email=t@t", "-c", "user.name=t", "add", "."], cwd=tmp, check=True)
     subprocess.run(
         ["git", "-c", "user.email=t@t", "-c", "user.name=t", "commit", "-m", "init", "-q"],
         cwd=tmp,

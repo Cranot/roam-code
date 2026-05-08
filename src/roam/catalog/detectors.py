@@ -1680,7 +1680,7 @@ def list_framework_profiles() -> list[str]:
 
 
 def autodetect_framework_profile() -> str | None:
-    """ sniff package.json / composer.json for known stacks.
+    """sniff package.json / composer.json for known stacks.
 
     Inspects ``package.json`` and ``composer.json`` from the project root
     (current working directory) for the dependency signals that map onto

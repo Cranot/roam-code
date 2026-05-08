@@ -37,13 +37,17 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     # "Phase 0/1 of v2 monetization plan"
     ("v2 monetization plan reference", re.compile(r"Phase \d+(?:\.\d+)? of (?:the )?v2 monetization plan")),
     # "(per build_priorities.md)" / "(per internal backlog)"
-    ("Internal-doc cross-reference",
-     re.compile(r"\(per (?:build_priorities\.md|dev/CODE-BACKLOG\.md|the v\d+ plan)\)")),
+    (
+        "Internal-doc cross-reference",
+        re.compile(r"\(per (?:build_priorities\.md|dev/CODE-BACKLOG\.md|the v\d+ plan)\)"),
+    ),
     # "monetization_v2_subscription_pivot.md" filename references
     ("Monetization v2 strategy filename", re.compile(r"\bmonetization_v2_subscription_pivot\.md\b")),
     # "dogfood notes 2026-05-XX" / "dogfood R17 2026-05-01"
-    ("Dogfood-notes session marker",
-     re.compile(r"\bdogfood notes \d{4}-\d{2}-\d{2}\b|\bdogfood R\d+ \d{4}-\d{2}-\d{2}")),
+    (
+        "Dogfood-notes session marker",
+        re.compile(r"\bdogfood notes \d{4}-\d{2}-\d{2}\b|\bdogfood R\d+ \d{4}-\d{2}-\d{2}"),
+    ),
     # "(2026-05-XX dogfood)" parentheticals
     ("Dated dogfood parenthetical", re.compile(r"\(\d{4}-\d{2}-\d{2} dogfood\)")),
     # Personal local-machine paths
@@ -51,26 +55,34 @@ FORBIDDEN_PATTERNS: list[tuple[str, re.Pattern]] = [
     # Real customer name (the user's day-job employer)
     ("Day-job customer name", re.compile(r"\bunion[- ]web\b|\bSecond-Repo\b", re.IGNORECASE)),
     # Internal session reports
-    ("Internal session report filename",
-     re.compile(r"\bOVERNIGHT-\d{4}-\d{2}-\d{2}\.md\b|\bDOGFOOD-RESULTS-\d{4}-\d{2}-\d{2}\.md\b|"
-                r"\bREPORT-\d{4}-\d{2}-\d{2}(?:-round\d+)?\.md\b|\bRELEASE-CHECKLIST\.md\b")),
+    (
+        "Internal session report filename",
+        re.compile(
+            r"\bOVERNIGHT-\d{4}-\d{2}-\d{2}\.md\b|\bDOGFOOD-RESULTS-\d{4}-\d{2}-\d{2}\.md\b|"
+            r"\bREPORT-\d{4}-\d{2}-\d{2}(?:-round\d+)?\.md\b|\bRELEASE-CHECKLIST\.md\b"
+        ),
+    ),
     # Internal claude-memory paths
-    ("Claude-memory path",
-     re.compile(r"~/\.claude/projects/D--OneDrive---CosmoHac-")),
+    ("Claude-memory path", re.compile(r"~/\.claude/projects/D--OneDrive---CosmoHac-")),
     # Old GitHub Pages docs URL (we migrated to roam-code.com/docs/)
     ("Old GH Pages docs URL", re.compile(r"https?://cranot\.github\.io/roam-code/")),
     # CFO-objection sales-pitch script
-    ("CFO-objection script",
-     re.compile(r"signed PO by Friday|highest-conversion buyer-meeting|Article-12-curious leads|"
-                r"Hosted-product Phase 0 helper")),
+    (
+        "CFO-objection script",
+        re.compile(
+            r"signed PO by Friday|highest-conversion buyer-meeting|Article-12-curious leads|"
+            r"Hosted-product Phase 0 helper"
+        ),
+    ),
     # Monetization-v2 phrasing leftovers
     ("Monetization-v2 leftover", re.compile(r"\bv2-monetization\b|\bv2 monetization layer\b")),
     # Greek-vendor exclusion clause (Union conflict-of-interest list)
-    ("Greek-vendor exclusion clause",
-     re.compile(r"Greek B2B accounting/ERP/POS|Union exclusion list|Union conflict")),
+    ("Greek-vendor exclusion clause", re.compile(r"Greek B2B accounting/ERP/POS|Union exclusion list|Union conflict")),
     # Stripe Atlas / Greek IKE corporate-structure decisions in the wrong place
-    ("Corporate-structure decision leak",
-     re.compile(r"Stripe Atlas Delaware C-corp / Greek freelancer|Greek IKE vs Atlas")),
+    (
+        "Corporate-structure decision leak",
+        re.compile(r"Stripe Atlas Delaware C-corp / Greek freelancer|Greek IKE vs Atlas"),
+    ),
 ]
 
 

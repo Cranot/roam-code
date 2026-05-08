@@ -6,8 +6,9 @@ import pytest
 
 pytest.importorskip("tree_sitter_language_pack")
 
-from roam.languages.registry import get_extractor, get_ts_language
 from tree_sitter import Parser
+
+from roam.languages.registry import get_extractor, get_ts_language
 
 
 @pytest.fixture(scope="module")
