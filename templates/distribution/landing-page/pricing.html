@@ -68,6 +68,49 @@
     </div>
   </header>
 
+  <section class="whats-in" style="padding-top: 32px;">
+    <div class="whats-in-inner" style="max-width: 880px; text-align: left;">
+      <h2 style="text-align: center;">The buying path</h2>
+      <p class="lede" style="text-align: center;">
+        Most teams take this in order. Skip rungs as needed.
+      </p>
+      <ol class="flow">
+        <li>
+          <span class="flow-num">1</span>
+          <strong>Install the free CLI.</strong>
+          Apache 2.0, runs locally, no telemetry. Works today, costs nothing,
+          stays free forever. Try it on your repo before paying for anything.
+        </li>
+        <li>
+          <span class="flow-num">2</span>
+          <strong>Join Roam Review early access.</strong>
+          The PR bot is the first paid product — flat tiers from $99/mo,
+          no per-seat conversation. <a href="#review">Tier matrix below.</a>
+        </li>
+        <li>
+          <span class="flow-num">3</span>
+          <strong>Add Roam Cloud once you want history.</strong>
+          The dashboard is the memory layer behind Review — health, debt,
+          danger-zone trends across every commit. From $19/repo/mo.
+          <a href="#cloud">See plans.</a>
+        </li>
+        <li>
+          <span class="flow-num">4</span>
+          <strong>Move to Self-Hosted if your stack requires it.</strong>
+          Regulated teams (healthcare, fintech, defence) run the full
+          Roam stack inside their own network. Custom annual pricing.
+          <a href="#self-hosted">Talk to us.</a>
+        </li>
+      </ol>
+      <p class="how-it-works-foot" style="text-align: center;">
+        Considering Review but want to evaluate first?
+        <a href="/audit"><strong>PR Replay</strong></a> runs Roam against
+        your last 30 or 90 PRs and produces a written report. 50% of the
+        fee credits toward a Review subscription.
+      </p>
+    </div>
+  </section>
+
   <section class="compare" style="padding-top: 32px;">
     <div class="compare-inner">
       <div class="compare-table-wrap">
@@ -224,7 +267,7 @@
 
   <section class="products" style="margin-top: 0;" aria-labelledby="products-heading">
     <h2 id="products-heading" class="visually-hidden">Product tiers</h2>
-    <div class="product-card popular">
+    <div class="product-card popular" id="review">
       <span class="popular-badge">Most teams start here</span>
       <h3>Roam Review</h3>
       <p class="tagline">A second opinion on every pull request.</p>
@@ -234,7 +277,7 @@
       </div>
       <a class="btn-primary" href="mailto:hello@roam-code.com?subject=Roam%20Review%20early%20access">Get early access</a>
     </div>
-    <div class="product-card">
+    <div class="product-card" id="cloud">
       <h3>Roam Cloud</h3>
       <p class="tagline">A dashboard for your code health over time.</p>
       <div class="price">
@@ -243,7 +286,7 @@
       </div>
       <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=Roam%20Cloud%20early%20access">Get early access</a>
     </div>
-    <div class="product-card">
+    <div class="product-card" id="self-hosted">
       <h3>Roam Self-Hosted</h3>
       <p class="tagline">Roam running entirely inside your network.</p>
       <div class="price">

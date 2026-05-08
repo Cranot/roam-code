@@ -49,10 +49,25 @@ quality-baseline: hygiene-strict hygiene-debt todo-guard doctor-env lint test-sm
 
 quality-strict: hygiene-strict hygiene-debt todo-guard doctor-env-strict lint test-core
 
-build:
+build: clean
 	python -m build
 
-publish: build
+verify-build: build
+	# PEP 621 / PEP 639 metadata sanity. Twine catches missing classifiers,
+	# malformed long-description, and license-expression issues that would
+	# otherwise show up as "no license" on the published PyPI page.
+	twine check --strict dist/*
+	# Confirm License-Expression is actually in the wheel METADATA. Pre-12.50
+	# wheels shipped without it because the build ran on setuptools < 77.
+	@unzip -p dist/roam_code-*.whl '*/METADATA' 2>/dev/null \
+		| grep -q '^License-Expression: Apache-2.0$$' \
+		|| (echo "ERROR: License-Expression missing from wheel METADATA — needs setuptools >= 77" && exit 1)
+
+# Production publish path. Recommended path is GitHub Actions / OIDC
+# (publish.yml triggered by a v* tag); this target is the local
+# fallback / dry-run. Refuses to upload without quality-strict + a
+# build that passes twine + license-metadata checks.
+publish: quality-strict verify-build
 	twine upload dist/*
 
 clean:
