@@ -36,6 +36,7 @@ import os
 import re
 import subprocess
 import time
+import urllib.parse
 from collections import defaultdict
 from pathlib import Path
 
@@ -187,7 +188,14 @@ _PROSE_EXTS = frozenset(
 
 
 def _strip_url_decorations(url: str) -> str:
-    """Drop wrapping ``<...>``, trailing punctuation, and any ``#fragment`` / ``?query``."""
+    """Drop wrapping ``<...>``, trailing punctuation, ``#fragment`` / ``?query``,
+    and percent-decode the result.
+
+    URL-encoding matters here: a markdown link to a file with spaces in
+    its name is conventionally written ``[x](docs/file%20with%20spaces.md)``,
+    and the file on disk is named ``file with spaces.md``. Without
+    decoding we'd flag every such reference as missing.
+    """
     url = url.strip()
     if url.startswith("<") and url.endswith(">"):
         url = url[1:-1]
@@ -195,6 +203,13 @@ def _strip_url_decorations(url: str) -> str:
     # Fragments may themselves contain '?', so split on '#' first.
     url = url.split("#", 1)[0]
     url = url.split("?", 1)[0]
+    # Percent-decode after structural decoration is gone. ``unquote`` is
+    # safe on already-decoded input (idempotent on text without ``%XX``
+    # sequences).
+    try:
+        url = urllib.parse.unquote(url)
+    except Exception:
+        pass
     return url
 
 
@@ -203,7 +218,8 @@ def _extract_fragment(url: str) -> str:
 
     Mirrors :func:`_strip_url_decorations` — same wrapping/whitespace
     rules — so the path resolver and the anchor validator see consistent
-    raw inputs from one call.
+    raw inputs from one call. Fragments are also percent-decoded so a
+    reference to ``#caf%C3%A9`` matches a header slug ``café``.
     """
     url = url.strip()
     if url.startswith("<") and url.endswith(">"):
@@ -213,6 +229,10 @@ def _extract_fragment(url: str) -> str:
         return ""
     fragment = url.split("#", 1)[1]
     fragment = fragment.split("?", 1)[0]
+    try:
+        fragment = urllib.parse.unquote(fragment)
+    except Exception:
+        pass
     return fragment.strip()
 
 
@@ -512,6 +532,31 @@ def _scan_project(
             refs_seen += 1
             fragment = _extract_fragment(raw_url) if kind != "backtick" else ""
 
+            # In-page anchor refs (``[x](#section)`` with no path) validate
+            # against the SOURCE file's own header set. Without this branch
+            # the path resolver returns None and the reference is silently
+            # accepted — so ``[broken](#nonexistent)`` in a README would
+            # never be flagged. We run the check before the path resolver
+            # because a pure-anchor URL has no path to resolve.
+            if kind != "backtick" and fragment and not _strip_url_decorations(raw_url).split("#", 1)[0]:
+                if check_anchors and AnchorCache.is_anchor_validatable(rel):
+                    anchors = anchor_cache.anchors_for(rel)
+                    if anchors is not None and fragment.lower() not in anchors:
+                        synthetic = f"{rel}#{fragment}"
+                        if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel, ignore_target):
+                            continue
+                        stale_by_target[synthetic].append(
+                            {
+                                "file": rel,
+                                "line": lineno,
+                                "kind": "anchor",
+                                "raw": raw_url,
+                                "anchor": fragment,
+                                "anchor_target_file": rel,
+                            }
+                        )
+                continue
+
             if kind == "backtick":
                 target = _resolve_backtick_target(
                     raw_url,
@@ -543,7 +588,10 @@ def _scan_project(
                 # File is live; check the anchor when one was specified.
                 if check_anchors and fragment and AnchorCache.is_anchor_validatable(rel_target):
                     anchors = anchor_cache.anchors_for(rel_target)
-                    if anchors is not None and fragment not in anchors:
+                    # Case-insensitive lookup — GitHub matches ``#Setup``
+                    # against header ``# Setup``. Stored slugs are
+                    # lowercased; lowercase the URL fragment too.
+                    if anchors is not None and fragment.lower() not in anchors:
                         synthetic = f"{rel_target}#{fragment}"
                         if _matches_any_glob(synthetic, ignore_target) or _matches_any_glob(rel_target, ignore_target):
                             continue
@@ -765,27 +813,47 @@ def _file_priority_weight(rel_path: str) -> float:
     return 0.5
 
 
-def _recency_score(project_root: Path, rel_path: str, *, now: float) -> float:
+def _recency_score(
+    project_root: Path,
+    rel_path: str,
+    *,
+    now: float,
+    cache: dict[str, float] | None = None,
+) -> float:
     """Map source-file age to ``[0, 1]`` — recent = high.
 
     The map is intentionally coarse: <7 days → 1.0, <30 → 0.85, <90 →
     0.6, <365 → 0.4, else 0.2. We avoid mtime granularity sensitivity
     because git checkouts often touch every file's mtime.
+
+    When *cache* is provided it memoises the resolved score per
+    *rel_path* — useful inside a sort key where the same source file
+    appears under many missing-target groups (without it we'd ``stat``
+    the same path dozens of times).
     """
+    if cache is not None and rel_path in cache:
+        return cache[rel_path]
     try:
         mtime = (project_root / rel_path).stat().st_mtime
     except OSError:
-        return 0.5
+        score = 0.5
+        if cache is not None:
+            cache[rel_path] = score
+        return score
     days = max(0.0, (now - mtime) / 86400.0)
     if days < 7:
-        return 1.0
-    if days < 30:
-        return 0.85
-    if days < 90:
-        return 0.6
-    if days < 365:
-        return 0.4
-    return 0.2
+        score = 1.0
+    elif days < 30:
+        score = 0.85
+    elif days < 90:
+        score = 0.6
+    elif days < 365:
+        score = 0.4
+    else:
+        score = 0.2
+    if cache is not None:
+        cache[rel_path] = score
+    return score
 
 
 def _rank_targets_priority(
@@ -797,15 +865,19 @@ def _rank_targets_priority(
     We take the *max* across sources (one important README mention beats
     100 references in templates/) and bias toward larger absolute counts
     so a 30-ref hub doc still surfaces above a single ref in a peer doc.
+    The recency cache is shared across every score evaluation so each
+    distinct source file is ``stat``'d at most once per sort.
     """
     import math
 
     now = time.time()
+    recency_cache: dict[str, float] = {}
 
     def score(item: tuple[str, list[dict]]) -> float:
         _tgt, sources = item
         per_source = max(
-            _file_priority_weight(s["file"]) * _recency_score(project_root, s["file"], now=now) for s in sources
+            _file_priority_weight(s["file"]) * _recency_score(project_root, s["file"], now=now, cache=recency_cache)
+            for s in sources
         )
         return per_source * math.log2(1 + len(sources))
 
@@ -925,16 +997,46 @@ def _render_fix_diff(
     return "\n".join(chunks), files_touched, edits_planned
 
 
+def _atomic_write_text(target: Path, content: str) -> bool:
+    """Write *content* to *target* atomically.
+
+    Strategy: write to a sibling tempfile (same directory, so the rename
+    is intra-filesystem and atomic on every POSIX/Windows filesystem we
+    support), then ``os.replace`` it onto the destination. If the write
+    is interrupted, the original file remains intact. If the rename fails,
+    we clean up the tempfile and report failure rather than leaving
+    debris behind.
+    """
+    import os as _os
+    import tempfile as _tempfile
+
+    parent = target.parent
+    tmp_fd, tmp_name = _tempfile.mkstemp(prefix=f".{target.name}.", suffix=".tmp", dir=str(parent))
+    try:
+        with _os.fdopen(tmp_fd, "w", encoding="utf-8") as fh:
+            fh.write(content)
+        _os.replace(tmp_name, str(target))
+        return True
+    except OSError:
+        # Best-effort cleanup; ignore errors removing the temp file.
+        try:
+            _os.unlink(tmp_name)
+        except OSError:
+            pass
+        return False
+
+
 def _apply_fixes_in_place(
     project_root: Path,
     edits_by_source: dict[str, list[dict]],
 ) -> tuple[int, int]:
-    """Rewrite each source file with its edits.
+    """Rewrite each source file with its edits, atomically.
 
     Returns ``(files_written, edits_applied)``. Files where the edit
     would be a no-op (raw URL no longer appears verbatim) are skipped
     silently — that's fine; the next scan will pick them up if still
-    relevant.
+    relevant. Writes use the tempfile-then-``os.replace`` pattern so an
+    interrupted run cannot leave a half-written source file on disk.
     """
     files_written = 0
     edits_applied = 0
@@ -948,10 +1050,7 @@ def _apply_fixes_in_place(
         new_content, applied = _apply_fix_to_text(original, edits)
         if applied == 0 or new_content == original:
             continue
-        try:
-            with open(full, "w", encoding="utf-8") as fh:
-                fh.write(new_content)
-        except OSError:
+        if not _atomic_write_text(full, new_content):
             continue
         files_written += 1
         edits_applied += applied
@@ -1094,9 +1193,14 @@ def _compact_sources(sources: list[dict]) -> list[dict]:
     type=click.Choice(["preview", "apply"]),
     default=None,
     help=(
-        "Auto-rename HIGH-confidence findings. ``preview`` prints a unified "
-        "diff and exits 0; ``apply`` rewrites files in place. Only edits "
-        "lines with a single unambiguous stale reference."
+        "Auto-rename HIGH-confidence findings. ``preview`` prints a "
+        "unified diff and exits 0; ``apply`` rewrites files in place via "
+        "atomic tempfile + rename (so an interrupted run cannot corrupt "
+        "source files). Only edits lines with a single unambiguous "
+        "stale reference. Safe with uncommitted changes — substitution "
+        "is per-raw-URL and skips silently if the URL no longer appears "
+        "verbatim — but reviewing the diff via ``--fix preview`` first "
+        "is the recommended workflow."
     ),
 )
 @click.pass_context
@@ -1262,7 +1366,16 @@ def stale_refs(
                     f"{files_touched} file(s) (HIGH-confidence hints only)\n"
                 )
                 if not edits_planned:
-                    click.echo("No HIGH-confidence rename hints to apply.")
+                    if target_count == 0:
+                        click.echo("No findings to fix — all references resolve.")
+                    else:
+                        click.echo(
+                            f"0 fixable / {target_count} total finding(s). "
+                            "No HIGH-confidence rename hints — review manually "
+                            "or use `--ignore` / `--ignore-target` to suppress "
+                            "intentional dangling references (CHANGELOG history, "
+                            "user-creatable optional configs, etc.)."
+                        )
                 else:
                     click.echo(diff_text or "(empty diff)")
             return
@@ -1291,7 +1404,12 @@ def stale_refs(
             if files_written:
                 click.echo("Re-run `roam stale-refs` to confirm and address remaining findings.")
             else:
-                click.echo("No HIGH-confidence rename hints applied (nothing to do).")
+                if target_count == 0:
+                    click.echo("No findings to fix — all references resolve.")
+                else:
+                    click.echo(
+                        f"0 fixable / {target_count} total finding(s). Run `roam stale-refs --fix preview` to inspect."
+                    )
         return
 
     if sarif_mode:

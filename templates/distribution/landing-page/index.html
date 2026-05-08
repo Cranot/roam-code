@@ -807,28 +807,43 @@
   <!-- ──────────────────────────────────────────────────────────
        SECTION 9 — Audit upsell (soft on-ramp at the end)
        ────────────────────────────────────────────────────────── -->
-  <section class="audit-upsell" id="audit">
+  <section class="audit-upsell" id="audit" aria-labelledby="audit-heading">
     <div class="audit-upsell-inner">
-      <h2>PR Replay — see what Roam would have flagged on your last quarter</h2>
-      <p>
-        Roam runs against your merged PRs and ships a written structural-review
-        report — what today's detector set would have caught pre-merge,
-        AI-shaped patterns, and the gates worth wiring into CI. A pre-purchase
-        signal: would you have shipped the same incidents knowing what Roam
-        would have flagged?
+      <h2 id="audit-heading">PR Replay — see what Roam would have flagged on your last quarter</h2>
+      <p class="lede">
+        Roam runs against your last 5 / 30 / 90 merged PRs and produces a
+        written structural-review report. What today's detectors would have
+        caught pre-merge, the patterns worth wiring into CI, and the
+        single-highest-leverage gate to add today.
       </p>
-      <p style="margin-top: 16px;">
-        <strong>Run the free sample yourself</strong> (no email required):
-      </p>
-      <p class="install-cmd" style="margin-top: 8px;">
-        <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
-      </p>
-      <p style="margin-top: 16px;">
-        Or upgrade to a paid report: <strong>Team</strong> ($2,500, 30 PRs +
-        30-min walk-through) or <strong>Deep</strong> ($6,000, 90 PRs +
-        90-min walk-through with a written remediation plan). Email
-        <a href="mailto:hello@roam-code.com?subject=PR%20Replay%20enquiry">hello@roam-code.com</a>.
-      </p>
+      <div class="replay-tiers">
+        <article class="replay-tier replay-tier--sample">
+          <h3>Sample</h3>
+          <p class="replay-price"><strong>Free</strong> · 5 PRs · self-serve</p>
+          <p class="install-cmd replay-cmd">
+            <code>pip install roam-code &amp;&amp; roam pr-replay --tier sample</code>
+          </p>
+          <p class="replay-foot">No email. Watermarked. Same engine as the paid tiers.</p>
+        </article>
+        <article class="replay-tier replay-tier--team">
+          <h3>Team</h3>
+          <p class="replay-price"><strong>$2,500</strong> · 30 PRs · 30-min walk-through</p>
+          <p class="replay-body">
+            Aggregated detector breakdown, ranked PRs, recommended CI gates.
+            <a href="https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md">See sample output</a>.
+          </p>
+          <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=PR%20Replay%20Team%20enquiry">Commission a Team report</a>
+        </article>
+        <article class="replay-tier replay-tier--deep">
+          <h3>Deep</h3>
+          <p class="replay-price"><strong>$6,000</strong> · 90 PRs · 90-min walk-through</p>
+          <p class="replay-body">
+            Everything in Team plus a per-detector deep-dive and a written
+            90-day remediation plan against the highest-leverage CI gates.
+          </p>
+          <a class="btn-secondary" href="mailto:hello@roam-code.com?subject=PR%20Replay%20Deep%20enquiry">Commission a Deep report</a>
+        </article>
+      </div>
     </div>
   </section>
 

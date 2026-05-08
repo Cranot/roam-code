@@ -183,10 +183,10 @@ def _render_report(
     else:
         out.append("# PR Replay Report")
     out.append("")
-    out.append(f"**Tier:** {tier_meta['label']}")
-    out.append(f"**Commit range:** `{commit_range}`")
-    out.append(f"**Generated:** {generated_at}")
-    out.append("**Tool:** `roam pr-replay` (engine: `roam postmortem`, `roam critique`)")
+    out.append(f"**Tier:** {tier_meta['label']}  ")
+    out.append(f"**Commit range:** `{commit_range}`  ")
+    out.append(f"**Generated:** {generated_at}  ")
+    out.append("**Tool:** `roam pr-replay` — `postmortem` + `critique` engine")
     out.append("")
 
     if tier_meta["watermark"]:
@@ -204,15 +204,30 @@ def _render_report(
     # ── Executive summary ─────────────────────────────────────────────────
     out.append("## Executive summary")
     out.append("")
-    verdict = summary.get("verdict") or "no verdict"
-    out.append(f"**Verdict:** {verdict}")
-    out.append("")
     commits_scanned = summary.get("commits_scanned", len(commits))
     commits_with = summary.get("commits_with_findings", 0)
-    out.append(f"- Commits replayed: **{commits_scanned}**")
-    out.append(f"- Commits Roam would have flagged pre-merge: **{commits_with}**")
-    out.append(f"- High-severity findings (would block CI): **{summary.get('total_high', 0)}**")
-    out.append(f"- Medium-severity findings (would gate review): **{summary.get('total_medium', 0)}**")
+    total_high = summary.get("total_high", 0)
+    total_medium = summary.get("total_medium", 0)
+
+    # Reframe the headline: a clean window is a positive observation, not a
+    # neutral scan-count. A flagged window leads with the count of PRs that
+    # would have been blocked.
+    if commits_with == 0:
+        out.append(
+            f"**Verdict:** Clean window. None of the {commits_scanned} PRs replayed would "
+            f"have been flagged by the current detector set."
+        )
+    else:
+        block_word = "block-eligible" if total_high > 0 else "review-eligible"
+        out.append(
+            f"**Verdict:** {commits_with} of {commits_scanned} PRs ({commits_with * 100 // max(commits_scanned, 1)}%) "
+            f"would have surfaced findings — {total_high} {block_word} (high), {total_medium} review-required (medium)."
+        )
+    out.append("")
+    out.append(f"- PRs replayed: **{commits_scanned}**")
+    out.append(f"- PRs Roam would have flagged pre-merge: **{commits_with}**")
+    out.append(f"- High-severity findings (would block CI): **{total_high}**")
+    out.append(f"- Medium-severity findings (would gate review): **{total_medium}**")
     out.append("")
 
     # ── Detector breakdown ────────────────────────────────────────────────
@@ -269,6 +284,30 @@ def _render_report(
             )
         out.append("")
 
+    # ── Per-detector deep-dive (Deep tier only, only when there are hits) ─
+    if tier == "deep" and by_detector:
+        out.append("## Per-detector deep-dive")
+        out.append("")
+        out.append(
+            "For each detector class with hits across this window, the PRs that "
+            "surfaced findings of that class. Use this to triage which detector "
+            "warrants its own CI gate vs. lighter-touch enforcement."
+        )
+        out.append("")
+        for row in by_detector:
+            detector = row["detector"]
+            matching = [c for c in commits if any(k.startswith(detector + " x") for k in (c.get("kinds") or []))]
+            if not matching:
+                continue
+            out.append(f"### `{detector}` — {row['total_findings']} finding(s)")
+            out.append("")
+            for c in matching[:5]:
+                subject = (c.get("subject") or "").replace("|", "/")[:80]
+                out.append(f"- `{c.get('short_sha', '?')}` ({c.get('date', '?')}) — {subject}")
+            if len(matching) > 5:
+                out.append(f"- _… and {len(matching) - 5} more_")
+            out.append("")
+
     # ── What to do with this ──────────────────────────────────────────────
     out.append("## Recommended next steps")
     out.append("")
@@ -277,28 +316,42 @@ def _render_report(
             "- No detector hits surfaced. Pick a longer window or a higher-traffic "
             "branch for a more representative replay."
         )
+        if tier == "sample":
+            out.append(
+                "- A Team report (30 PRs) or Deep report (90 PRs) covers a longer "
+                "window and adds founder review of the patterns that surface: "
+                "<https://roam-code.com/#audit>."
+            )
     else:
+        # Surface the top-3 detector classes, not just the single highest, so
+        # the buyer can see whether the pattern is concentrated or diffuse.
+        top_three = by_detector[:3]
+        labels = ", ".join(f"`{r['detector']}`" for r in top_three)
         out.append(
-            f"- **Wire the top detector class into CI**: `roam critique` returns "
-            f"exit code 5 on any high-severity finding, so a single CI step "
-            f"can gate every PR on the `{by_detector[0]['detector']}` class today. "
-            f"See https://roam-code.com/docs/."
+            f"- **Wire CI gates against the top {len(top_three)} detector class(es)** — {labels}. "
+            f"`roam critique` returns exit code 5 on any high-severity finding, "
+            f"so a single CI step gates every PR. See <https://roam-code.com/docs/>."
         )
         out.append(
             "- **Run `roam preflight <symbol>` before changing high-blast-radius code.** "
-            "The 47-caller blast radius doesn't show up in the diff; it shows up in "
-            "the graph."
+            "The blast radius doesn't show up in the diff; it shows up in the graph."
         )
         out.append(
             "- **Add `roam clones --persist` to your indexing pipeline.** Then "
             "`roam critique` picks up clone-not-edited cases on every PR — the "
-            "single most common AI-shaped bug on this window in similar replays."
+            "single most common AI-shaped bug across replays in similar codebases."
         )
         if tier == "sample":
             out.append(
-                "- **Upgrade to a paid Team or Deep report** to get a founder walk-"
+                "- **Upgrade to a paid Team or Deep report** for a founder walk-"
                 "through tailored to your codebase and a written 90-day "
-                "remediation plan: https://roam-code.com/#audit"
+                "remediation plan: <https://roam-code.com/#audit>."
+            )
+        elif tier == "team":
+            out.append(
+                "- **Consider the Deep tier** if the patterns above warrant a "
+                "90-PR window, per-detector deep-dive, and a 90-minute walk-"
+                "through with a written remediation plan: <https://roam-code.com/#audit>."
             )
 
     out.append("")
@@ -307,15 +360,17 @@ def _render_report(
     out.append("## Methodology")
     out.append("")
     out.append(
-        "Roam runs the current detector set against each commit's outgoing diff "
-        "as if it were a PR. It does not re-index the historical state, so the "
-        "detection rules reflect what Roam catches *today* on those PRs, not "
-        "what an earlier Roam version would have. The detector set is stable "
-        "across the windows used by Team (30 PRs) and Deep (90 PRs) reports — "
-        "we run this same replay against roam-code itself before each release."
+        "Roam replays the current detector set against each commit's outgoing diff "
+        "as if it were a PR — no historical re-indexing. Findings reflect what Roam "
+        "catches today on those PRs, not what an earlier Roam version would have. "
+        "The detector set is stable across Team (30 PRs) and Deep (90 PRs) windows."
     )
     out.append("")
-    out.append(f"This report was generated by `roam pr-replay --tier {tier}` on {generated_at}.")
+    out.append(
+        f"_Generated by `roam pr-replay --tier {tier}` on {generated_at}. Engine: "
+        f"`roam postmortem` walks the range; `roam critique` evaluates each diff. "
+        f"Both ship in the open-source CLI ([github.com/Cranot/roam-code](https://github.com/Cranot/roam-code))._"
+    )
     out.append("")
 
     return "\n".join(out)

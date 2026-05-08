@@ -42,6 +42,12 @@ _ATX_HEADER_RE = re.compile(r"^[ \t]{0,3}#{1,6}[ \t]+(?P<text>.+?)[ \t]*#*[ \t]*
 # We catch them by looking back one line when we see the underline.
 _SETEXT_UNDERLINE_RE = re.compile(r"^[ \t]{0,3}(=+|-+)[ \t]*$")
 
+# Fenced code blocks (```...``` or ~~~...~~~). Lines inside a fence are
+# verbatim — ``# Not a header`` in a code sample must NOT register as an
+# anchor target. We detect opening/closing fences by line shape and skip
+# header parsing while inside.
+_FENCE_OPEN_RE = re.compile(r"^[ \t]{0,3}(?P<fence>`{3,}|~{3,})")
+
 # Explicit HTML id / name attribute anchors that markdown libraries
 # preserve verbatim.
 _HTML_ID_RE = re.compile(
@@ -67,59 +73,102 @@ def _strip_inline_markup(text: str) -> str:
 def slugify(text: str) -> str:
     """Convert header text to a GitHub-flavoured anchor slug.
 
-    Rules (approximate but aligned with how GitHub renders ``id`` on
-    headers as of 2024+):
+    Rules (aligned with how GitHub renders ``id`` on headers as of
+    2024+):
 
-    * Lowercase.
+    * Lowercase (``str.lower`` is Unicode-aware: ``Ü`` → ``ü``).
     * Replace runs of whitespace with a single ``-``.
-    * Drop characters outside ``[a-z0-9_\\-]`` (emojis, punctuation, etc.).
+    * Drop characters that aren't word characters (``\\w``, which
+      Python 3 treats as Unicode-aware: includes letters from any
+      language plus digits and underscore) or hyphen — emojis,
+      punctuation, etc. fall out.
     * Trim leading/trailing dashes.
 
-    Unicode letters that aren't ASCII are dropped — GitHub keeps them in
-    practice but the resulting slug isn't very predictable; agents linking
-    in English-language READMEs almost never need them.
+    Unicode letters are preserved so a header ``# Über`` produces slug
+    ``über`` and a reference ``#über`` validates against it. Pre-polish
+    we used ``[a-z0-9_\\-]`` which silently dropped accented letters and
+    CJK characters — references to non-English headers always failed.
     """
     text = _strip_inline_markup(text)
     text = text.lower()
     text = re.sub(r"\s+", "-", text)
-    text = re.sub(r"[^a-z0-9_\-]+", "", text)
+    # ``\w`` is Unicode-aware in Python 3 by default (no flag needed) and
+    # matches any Unicode letter, digit, or underscore. Combined with the
+    # explicit hyphen, we drop only emojis and punctuation.
+    text = re.sub(r"[^\w\-]+", "", text, flags=re.UNICODE)
     text = text.strip("-")
     return text
 
 
 def extract_anchors(content: str) -> set[str]:
-    """Return the set of valid ``#anchor`` slugs declared by *content*.
+    r"""Return the set of valid ``#anchor`` slugs declared by *content*.
 
-    Includes both header-derived slugs and any explicit HTML
-    ``id``/``name`` attributes. Multiple headers slugifying to the same
-    string just collapse to one entry — we don't model GitHub's numeric
-    suffix scheme (``-1``, ``-2``) because most prose links don't rely on
-    it, and counting collisions across an entire repo is fragile.
+    Stored slugs are lowercased so callers can match case-insensitively
+    (GitHub matches ``#Setup`` against header ``# Setup`` regardless of
+    case). The set includes:
+
+    * Header-derived slugs (ATX + setext), with GitHub-style duplicate
+      suffixes (``setup``, ``setup-1``, ``setup-2``, …) when the same
+      heading text appears twice or more.
+    * Explicit HTML ``id``/``name`` attributes, lowercased for symmetry.
+
+    Lines inside fenced code blocks (triple-backtick or ``~~~``) are
+    skipped — ``# Not a header`` inside a code sample must NOT
+    contaminate the anchor set.
     """
     anchors: set[str] = set()
+    slug_counts: dict[str, int] = {}
     lines = content.splitlines()
+    in_fence = False
+    fence_marker: str | None = None
+
+    def _add_slug(text: str) -> None:
+        slug = slugify(text)
+        if not slug:
+            return
+        # GitHub appends ``-1``, ``-2``, … on collision (case-insensitive).
+        count = slug_counts.get(slug, 0)
+        anchors.add(slug if count == 0 else f"{slug}-{count}")
+        slug_counts[slug] = count + 1
 
     for idx, line in enumerate(lines):
+        # Fence open/close — entry/exit only on lines that start a fence
+        # of length >= the opener's length. We approximate with the
+        # simpler "any fence-shaped line toggles the state" rule, which
+        # is correct for the 99% case of well-formed markdown.
+        fence = _FENCE_OPEN_RE.match(line)
+        if fence:
+            marker = fence.group("fence")[0]  # ` or ~
+            if not in_fence:
+                in_fence = True
+                fence_marker = marker
+            elif fence_marker == marker:
+                in_fence = False
+                fence_marker = None
+            continue
+        if in_fence:
+            continue
+
         # ATX-style: ``# Heading`` … ``###### Heading``
         m = _ATX_HEADER_RE.match(line)
         if m:
-            slug = slugify(m.group("text"))
-            if slug:
-                anchors.add(slug)
+            _add_slug(m.group("text"))
             continue
         # Setext-style: previous non-blank line is the heading text.
         if _SETEXT_UNDERLINE_RE.match(line) and idx > 0:
             prev = lines[idx - 1].strip()
             if prev:
-                slug = slugify(prev)
-                if slug:
-                    anchors.add(slug)
+                _add_slug(prev)
 
-    # Inline HTML ids — scan the whole content (multi-line spans included).
+    # Inline HTML ids — scan the whole content (multi-line spans
+    # included), lowercased for case-insensitive lookup symmetry. We do
+    # NOT apply duplicate suffixing here because raw ``id`` attributes
+    # are author-controlled; if two ``id="foo"`` appear in one file
+    # that's the author's bug, not ours to mimic.
     for m in _HTML_ID_RE.finditer(content):
         anchor = m.group("dq") or m.group("sq")
         if anchor:
-            anchors.add(anchor.strip())
+            anchors.add(anchor.strip().lower())
     return anchors
 
 

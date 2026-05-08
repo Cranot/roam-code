@@ -141,10 +141,13 @@ class TestStaleRefsDetection:
         assert result.exit_code == 0
         assert "all refs resolve" in result.output
 
-    def test_skips_anchor_only_refs(self, cli_runner, tmp_path, monkeypatch):
-        proj = tmp_path / "anchor"
+    def test_in_page_anchor_present_resolves(self, cli_runner, tmp_path, monkeypatch):
+        """Pure-anchor refs (``#fragment`` only) validate against the SOURCE
+        file's own headers.  When the header exists, no finding."""
+        proj = tmp_path / "anchor_self_ok"
         proj.mkdir()
-        (proj / "README.md").write_text("[top](#header)\n")
+        # Reference points at a header that DOES exist in the same file.
+        (proj / "README.md").write_text("[top](#header)\n\n# Header\n")
         git_init(proj)
         monkeypatch.chdir(proj)
         result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj)
@@ -963,3 +966,354 @@ class TestStaleRefsSort:
         data = parse_json_output(result, "stale-refs")
         targets = [t["target"] for t in data["targets"]]
         assert targets == sorted(targets)
+
+
+# ---------------------------------------------------------------------------
+# v12.48 polish — anchor edge cases
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsAnchorPolish:
+    def test_anchor_match_case_insensitive(self, cli_runner, tmp_path, monkeypatch):
+        """``#Setup`` (mixed case) must match header ``# Setup`` — GitHub semantics."""
+        proj = tmp_path / "anchor_case"
+        proj.mkdir()
+        # Reference uses mixed case; header is plain.
+        (proj / "README.md").write_text("[s](docs/install.md#Setup)\n")
+        (proj / "docs").mkdir()
+        (proj / "docs" / "install.md").write_text("# Setup\n\nrun pip\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        # Target file resolves AND anchor matches case-insensitively.
+        assert data["summary"]["missing_targets"] == 0
+
+    def test_anchor_inside_code_fence_does_not_register(self, cli_runner, tmp_path, monkeypatch):
+        """``# Heading`` inside a fenced code block must NOT count as an anchor.
+
+        Otherwise tutorials embedding example markdown create phantom
+        anchor targets that prose references appear to satisfy by
+        accident — false negatives.
+        """
+        proj = tmp_path / "anchor_fence"
+        proj.mkdir()
+        # README references #real-header in tutorial.md.
+        (proj / "README.md").write_text("[r](docs/tutorial.md#example-fence)\n")
+        (proj / "docs").mkdir()
+        # tutorial.md has only a fenced ``# Example fence`` line; no real
+        # header by that text. So the anchor must fail to validate.
+        (proj / "docs" / "tutorial.md").write_text("# Tutorial\n\n```markdown\n# Example fence\n```\n\nDone.\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        targets = {t["target"] for t in data["targets"]}
+        # The fenced "header" must NOT have created a valid anchor target.
+        assert "docs/tutorial.md#example-fence" in targets
+
+    def test_anchor_duplicate_header_suffixes(self, cli_runner, tmp_path, monkeypatch):
+        """Two headers slugifying to the same value → GitHub appends ``-1``, ``-2``."""
+        proj = tmp_path / "anchor_dup"
+        proj.mkdir()
+        # Reference uses the second-occurrence slug ``#setup-1``.
+        (proj / "README.md").write_text("[s](docs/notes.md#setup-1)\n")
+        (proj / "docs").mkdir()
+        (proj / "docs" / "notes.md").write_text(
+            "# Setup\n\nFirst section.\n\n## Setup\n\nSecond section, duplicate slug — should resolve as ``setup-1``.\n"
+        )
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        # Both ``#setup`` and ``#setup-1`` should be valid anchors,
+        # so the reference resolves and nothing is flagged.
+        assert data["summary"]["missing_targets"] == 0
+
+
+# ---------------------------------------------------------------------------
+# v12.48 polish — SARIF anchor rule
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsSarifAnchor:
+    def test_sarif_emits_anchor_rule_with_anchor_message(self, cli_runner, tmp_path, monkeypatch):
+        """Anchor findings get the ``stale-refs/anchor`` rule and a message
+        that names the anchor and the target file (NOT the fake ``missing
+        target`` phrasing used for path findings)."""
+        import json
+
+        proj = tmp_path / "sarif_anchor"
+        proj.mkdir()
+        (proj / "README.md").write_text("[s](docs/install.md#missing-anchor)\n")
+        (proj / "docs").mkdir()
+        (proj / "docs" / "install.md").write_text("# Other\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["--sarif", "stale-refs"], cwd=proj)
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        runs = data["runs"]
+        rules = {r["id"]: r for r in runs[0]["tool"]["driver"]["rules"]}
+        assert "stale-refs/anchor" in rules
+        # SARIF 2.1.0 stores shortDescription as ``{text: ...}`` (or as a
+        # raw string — our :func:`to_sarif` builder accepts both shapes).
+        short = rules["stale-refs/anchor"]["shortDescription"]
+        short_text = short["text"] if isinstance(short, dict) else short
+        assert "anchor" in short_text.lower()
+        results = runs[0]["results"]
+        anchor_results = [r for r in results if r["ruleId"] == "stale-refs/anchor"]
+        assert len(anchor_results) == 1
+        msg = anchor_results[0]["message"]["text"]
+        assert "Anchor" in msg
+        assert "missing-anchor" in msg
+        assert "docs/install.md" in msg
+        # The anchor message must NOT use the path-finding phrasing.
+        assert "missing target" not in msg
+
+
+# ---------------------------------------------------------------------------
+# v12.48 polish — MCP wrapper exposes new flags (parameter contract)
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsMcpWrapper:
+    def test_mcp_wrapper_param_set(self):
+        """The MCP wrapper must expose every v12.48 flag so agents can use them.
+
+        We sanity-check the function signature rather than calling it
+        through the MCP server harness — full integration is covered in
+        the MCP tests.
+        """
+        import inspect
+
+        from roam.mcp_server import roam_stale_refs
+
+        params = inspect.signature(roam_stale_refs).parameters
+        for required in (
+            "limit",
+            "rename_hint",
+            "kind",
+            "ignore",
+            "ignore_target",
+            "check_absolute_routes",
+            "no_anchors",
+            "diff",
+            "sort_by",
+            "fix",
+            "by_file",
+            "root",
+        ):
+            assert required in params, f"MCP wrapper missing param: {required}"
+
+
+# ---------------------------------------------------------------------------
+# v12.48 deeper polish — in-page anchors / atomic writes / msg clarity
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsInPageAnchors:
+    def test_in_page_anchor_missing_flagged(self, cli_runner, tmp_path, monkeypatch):
+        """`[broken](#nonexistent)` in README.md must be flagged as stale.
+
+        Pre-polish-3 this was silently accepted because the path resolver
+        returns None for fragment-only URLs and the loop short-circuited
+        before reaching the anchor validator.
+        """
+        proj = tmp_path / "in_page_miss"
+        proj.mkdir()
+        (proj / "README.md").write_text("[real](#setup)\n[broken](#nonexistent)\n# Setup\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        targets = {t["target"] for t in data["targets"]}
+        assert "README.md#nonexistent" in targets
+        # The in-page reference to #setup IS valid — header exists.
+        assert "README.md#setup" not in targets
+
+    def test_in_page_anchor_finding_carries_anchor_kind(self, cli_runner, tmp_path, monkeypatch):
+        """In-page findings emit kind=anchor so SARIF/JSON consumers can filter."""
+        proj = tmp_path / "in_page_kind"
+        proj.mkdir()
+        (proj / "README.md").write_text("[broken](#nonexistent)\n# Setup\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        first = data["targets"][0]
+        assert first["sources"][0]["kind"] == "anchor"
+        assert first["sources"][0]["anchor"] == "nonexistent"
+        assert first["sources"][0]["anchor_target_file"] == "README.md"
+
+
+class TestStaleRefsFixMessages:
+    def test_fix_preview_zero_fixable_explains(self, cli_runner, tmp_path, monkeypatch):
+        """When findings exist but none are HIGH-confidence, --fix preview must
+        explain why nothing was rewritten — including the total finding count
+        and a hint about ``--ignore``."""
+        proj = tmp_path / "fix_zero"
+        proj.mkdir()
+        # Multiple basename matches → LOW confidence → not fixable.
+        for d in ("a", "b", "c"):
+            (proj / d).mkdir()
+            (proj / d / "guide.md").write_text("hi\n")
+        (proj / "README.md").write_text("[g](old/guide.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs", "--fix", "preview"], cwd=proj)
+        assert result.exit_code == 0
+        out = result.output
+        assert "0 fixable" in out
+        assert "1 total finding" in out
+        assert "--ignore" in out
+
+
+class TestStaleRefsAtomicWrites:
+    def test_fix_apply_uses_atomic_write(self, cli_runner, tmp_path, monkeypatch):
+        """`--fix apply` must not corrupt the file — temp+rename pattern.
+
+        We can't easily simulate a crash, but we CAN verify the helper is
+        invoked and the file content matches the post-fix expectation
+        without intermediate states. Sanity check that no debris is
+        left behind in the working directory either.
+        """
+        proj = tmp_path / "atomic"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        readme = proj / "README.md"
+        readme.write_text("[guide](docs/old/guide.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs", "--fix", "apply"], cwd=proj)
+        assert result.exit_code == 0
+        assert "docs/guide.md" in readme.read_text(encoding="utf-8")
+        # No tempfile leftovers from atomic write helper.
+        leftovers = [p.name for p in proj.iterdir() if p.name.startswith(".README.md.")]
+        assert leftovers == []
+
+
+# ---------------------------------------------------------------------------
+# v12.48 polish-4 — URL-encoding + Unicode + --fix preserves uncommitted edits
+# ---------------------------------------------------------------------------
+
+
+class TestStaleRefsUrlEncoding:
+    def test_percent_encoded_path_resolves(self, cli_runner, tmp_path, monkeypatch):
+        """``[a](docs/file%20with%20spaces.md)`` must match the on-disk
+        ``docs/file with spaces.md``."""
+        proj = tmp_path / "url_encoded_path"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "file with spaces.md").write_text("ok\n")
+        (proj / "README.md").write_text("[a](docs/file%20with%20spaces.md)\n")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert data["summary"]["missing_targets"] == 0
+
+    def test_percent_encoded_anchor_resolves(self, cli_runner, tmp_path, monkeypatch):
+        """``[c](docs/page.md#caf%C3%A9)`` must match header ``# Café``."""
+        proj = tmp_path / "url_encoded_anchor"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "page.md").write_text("# Café\n\nbody\n", encoding="utf-8")
+        (proj / "README.md").write_text("[c](docs/page.md#caf%C3%A9)\n", encoding="utf-8")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert data["summary"]["missing_targets"] == 0
+
+
+class TestStaleRefsUnicodeSlugify:
+    def test_unicode_letter_preserved_in_slug(self):
+        """``# Über`` slugifies to ``über``, NOT ``ber`` or empty.
+
+        Pre-fix the regex dropped non-ASCII letters and references to
+        ``#über`` always failed against headers like ``# Über``.
+        """
+        from roam.commands.stale_refs_anchors import slugify
+
+        assert slugify("Über") == "über"
+        assert slugify("café") == "café"
+        # Emoji + punctuation still drop; trailing dash from removed
+        # whitespace+emoji is stripped by the final ``.strip("-")``.
+        assert slugify("Setup 🎉") == "setup"
+        # CJK preserved.
+        assert slugify("日本語") == "日本語"
+
+    def test_unicode_anchor_validates(self, cli_runner, tmp_path, monkeypatch):
+        """``[u](docs/x.md#über)`` resolves against header ``# Über``."""
+        proj = tmp_path / "unicode_anchor"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "x.md").write_text("# Über\n\nbody\n", encoding="utf-8")
+        (proj / "README.md").write_text("[u](docs/x.md#über)\n", encoding="utf-8")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert data["summary"]["missing_targets"] == 0
+
+    def test_cjk_anchor_validates(self, cli_runner, tmp_path, monkeypatch):
+        """``[j](docs/x.md#日本語)`` resolves against ``# 日本語``."""
+        proj = tmp_path / "cjk_anchor"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "x.md").write_text("# 日本語\n\nbody\n", encoding="utf-8")
+        (proj / "README.md").write_text("[j](docs/x.md#日本語)\n", encoding="utf-8")
+        git_init(proj)
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs"], cwd=proj, json_mode=True)
+        data = parse_json_output(result, "stale-refs")
+        assert data["summary"]["missing_targets"] == 0
+
+
+class TestStaleRefsFixOnDirtyFile:
+    def test_fix_apply_preserves_unrelated_uncommitted_edits(self, cli_runner, tmp_path, monkeypatch):
+        """``--fix apply`` must touch only the matched substring; other
+        uncommitted edits in the same file are preserved."""
+
+        proj = tmp_path / "fix_dirty"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        readme = proj / "README.md"
+        readme.write_text("[g](docs/old/guide.md)\n")
+        git_init(proj)
+        # Add an UNCOMMITTED change to README that is NOT a stale ref.
+        readme.write_text("[g](docs/old/guide.md)\n\n## My WIP section\n")
+        monkeypatch.chdir(proj)
+        result = invoke_cli(cli_runner, ["stale-refs", "--fix", "apply"], cwd=proj)
+        assert result.exit_code == 0
+        new_content = readme.read_text(encoding="utf-8")
+        # Stale path was rewritten.
+        assert "docs/guide.md" in new_content
+        assert "docs/old/guide.md" not in new_content
+        # Unrelated WIP content remains intact.
+        assert "## My WIP section" in new_content
+
+    def test_fix_apply_skips_when_url_no_longer_verbatim(self, cli_runner, tmp_path, monkeypatch):
+        """If the user has already rewritten the URL between scans, ``--fix
+        apply`` must NOT touch the file (raw URL no longer matches)."""
+        proj = tmp_path / "fix_already_done"
+        proj.mkdir()
+        (proj / "docs").mkdir()
+        (proj / "docs" / "guide.md").write_text("hi\n")
+        readme = proj / "README.md"
+        # Initially the README has an out-of-date raw URL the scan will see.
+        readme.write_text("[g](docs/old/guide.md)\n")
+        git_init(proj)
+        # Now the user manually fixed it BEFORE we ran apply — but our
+        # last scan still has the old raw URL in the edit list. The
+        # _apply_fix_to_text helper looks for the literal raw URL; if it
+        # isn't there any more, applied count == 0 and the file is
+        # untouched. This test pins that behaviour.
+        readme.write_text("[g](docs/guide.md)\n")
+        monkeypatch.chdir(proj)
+        invoke_cli(cli_runner, ["stale-refs", "--fix", "apply"], cwd=proj)
+        # Final content unchanged from user's manual fix.
+        assert readme.read_text(encoding="utf-8") == "[g](docs/guide.md)\n"

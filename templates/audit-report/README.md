@@ -1,19 +1,24 @@
-# Audit report template
+# Audit report templates
 
-This directory holds the markdown template plus render script for a
-codebase-architecture report. Reuse it as the basis for a paid audit
-deliverable, a customer-onboarding handover, or an OSS case study.
+This directory holds the markdown template + render script for a
+codebase-architecture report, plus a sample of the **PR Replay** report
+that `roam pr-replay` emits today.
 
 ## Files
 
 - `audit-report.md.tmpl` — Markdown skeleton with `{{PLACEHOLDER}}` slots for
-  auto-generated content and `<!-- TODO[narrative]: ... -->` slots for the auditor's prose.
+  auto-generated content and `<!-- TODO[narrative]: ... -->` slots for the
+  auditor's prose. Used by the older codebase-architecture audit deliverable.
 - `render.py` — Chains `roam audit --json` plus supporting commands, fills the
-  auto-generated slots, and emits a partial markdown file ready for narrative completion.
+  auto-generated slots, and emits a partial markdown file ready for narrative
+  completion.
 - `sample-redacted.md` / `sample-redacted.pdf` — Redacted, narrative-complete
-  example output (~12 pages). Useful as a reference for the prose in the
-  `<!-- TODO[narrative]: ... -->` slots; share with prospects who ask
-  "what does the deliverable look like?"
+  example of the codebase-architecture audit (~12 pages).
+- `sample-pr-replay-team.md` — **PR Replay sample** (illustrative, not real
+  customer data). The shape `roam pr-replay --tier team` produces today.
+  Share with prospects who ask "what does the Team-tier deliverable look
+  like?". Read this before quoting a paid PR Replay engagement so you and
+  the buyer align on the artefact shape.
 
 ## Workflow
 

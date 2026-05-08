@@ -13,9 +13,10 @@ prose.
 5. [Trace what calls a function](#5-trace-what-calls-a-function)
 6. [Generate an Article 12 scope/readiness report](#6-generate-an-article-12-scopereadiness-report)
 7. [Replay current detectors against past commits](#7-replay-current-detectors-against-past-commits)
-8. [Wire roam into Claude Code as a skill](#8-wire-roam-into-claude-code-as-a-skill)
-9. [Compare two indices to measure a refactor](#9-compare-two-indices-to-measure-a-refactor)
-10. [Ship a structural-permission verdict to a pre-commit hook](#10-ship-a-structural-permission-verdict-to-a-pre-commit-hook)
+8. [Generate a PR Replay report (DIY sample or paid)](#8-generate-a-pr-replay-report-diy-sample-or-paid)
+9. [Wire roam into Claude Code as a skill](#9-wire-roam-into-claude-code-as-a-skill)
+10. [Compare two indices to measure a refactor](#10-compare-two-indices-to-measure-a-refactor)
+11. [Ship a structural-permission verdict to a pre-commit hook](#11-ship-a-structural-permission-verdict-to-a-pre-commit-hook)
 
 ---
 
@@ -140,29 +141,53 @@ roam postmortem HEAD~30..HEAD
 ```
 
 What you get: every finding the current detector set would have flagged
-on each of the last 30 commits — pre-merge. A great signal for "is
-adopting Roam worth it" conversations.
-
-For a buyer-facing report (markdown ready to share), use **PR Replay**:
-
-```bash
-# Free 5-PR DIY sample, watermarked
-roam pr-replay --tier sample
-
-# Paid Team report (30 PRs), written to file
-roam pr-replay --tier team --client "Acme Inc" --output acme.md
-
-# Paid Deep report (90 PRs)
-roam pr-replay --tier deep --output q1-replay.md
-```
-
-The DIY sample is the same engine just with a smaller window plus a
-watermark — anyone can run it locally before requesting a paid Team or
-Deep engagement. See <https://roam-code.com/#audit>.
+on each of the last 30 commits — pre-merge. A signal for "is adopting
+Roam worth it" conversations. Raw output. For a polished, buyer-facing
+narrative, use recipe 8 (`roam pr-replay`).
 
 ---
 
-## 8. Wire roam into Claude Code as a skill
+## 8. Generate a PR Replay report (DIY sample or paid)
+
+Three tiers, same engine. The free sample is the buyer-facing entry
+point; Team and Deep are paid engagements.
+
+```bash
+# Free 5-PR DIY sample (watermarked, self-serve, no email needed)
+roam pr-replay --tier sample
+
+# Paid Team report — 30 PRs, written to file with client name
+roam pr-replay --tier team --client "Acme Inc" --output acme.md
+
+# Paid Deep report — 90 PRs with per-detector deep-dive
+roam pr-replay --tier deep --client "Acme Inc" --output acme-deep.md
+
+# Custom range (overrides tier-default commit count, keeps tier framing)
+roam pr-replay --tier deep --range "v1.0..main" --output q1-replay.md
+```
+
+What you get: an executive summary with a verdict line, an aggregated
+detector-class breakdown table (which class keeps surfacing), per-PR
+ranking, recommended CI gates surfacing from the actual finding pattern,
+and a methodology block. Deep tier adds a per-detector deep-dive
+section.
+
+JSON envelope for machine consumption:
+
+```bash
+roam --json pr-replay --tier sample > replay.json
+# .summary, .commits, .by_detector, .report_markdown
+```
+
+A polished sample of the Team-tier output lives at
+[`templates/audit-report/sample-pr-replay-team.md`](https://github.com/Cranot/roam-code/blob/main/templates/audit-report/sample-pr-replay-team.md)
+— share with prospects who ask "what does the deliverable look like?".
+
+See <https://roam-code.com/#audit>.
+
+---
+
+## 9. Wire roam into Claude Code as a skill
 
 ```bash
 mkdir -p ~/.claude/skills/roam
@@ -182,7 +207,7 @@ For Continue or Aider, see `roam skill-generate --help`.
 
 ---
 
-## 9. Compare two indices to measure a refactor
+## 10. Compare two indices to measure a refactor
 
 After a big refactor, did coupling actually go down?
 
@@ -202,7 +227,7 @@ symbols added/removed/moved, files that got more or less complex.
 
 ---
 
-## 10. Ship a structural-permission verdict to a pre-commit hook
+## 11. Ship a structural-permission verdict to a pre-commit hook
 
 `.git/hooks/pre-commit`:
 
